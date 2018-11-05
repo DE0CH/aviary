@@ -1,5 +1,5 @@
 <template>
-    <div class="uk-background-primary background">
+    <div class="background uk-background-primary">
 
         <div>
             <img src="core/gfx/cloud-logo-invert.svg" width="50%">
@@ -34,9 +34,13 @@ export default {
 
   methods: {
     authenticate () {
-      this.$store.dispatch('authenticate', { provider: 'oauth2' }).then(() => {
-        this.$router.push('/')
-      })
+      this.$store.dispatch('authenticate', { provider: 'oauth2' })
+        .then(() => {
+          this.$router.push('/')
+        })
+        .catch(() => {
+          this.$router.push('/error')
+        })
     }
   }
 }
