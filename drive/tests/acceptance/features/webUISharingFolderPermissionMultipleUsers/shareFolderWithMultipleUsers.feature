@@ -57,17 +57,5 @@ Feature: Sharing folders with multiple internal users with different permissions
       | Editor               | Editor                  | ,                             | ,                     | read, update, delete, create |
       | Advanced permissions | Viewer                  | ,                             | ,                     | read                         |
       | Advanced permissions | Viewer                  | share                         | share                 | read, share                  |
-      | Advanced permissions | Advanced permissions    | delete                        | delete                | read, delete                 |
-      | Advanced permissions | Advanced permissions    | update                        | update                | read, update                 |
-      | Advanced permissions | Advanced permissions    | create                        | create                | read, create                 |
-      | Advanced permissions | Advanced permissions    | share, delete                 | share, delete         | read, share, delete          |
-      | Advanced permissions | Advanced permissions    | share, update                 | share, update         | read, update, share          |
-      | Advanced permissions | Advanced permissions    | share, create                 | share, create         | read, share, create          |
-      | Advanced permissions | Advanced permissions    | delete, update                | delete, update        | read, delete, update         |
-      | Advanced permissions | Advanced permissions    | delete, create                | delete, create        | read, delete, create         |
-      | Advanced permissions | Advanced permissions    | update, create                | update, create        | read, update, create         |
-      | Advanced permissions | Advanced permissions    | share, delete, update         | share, delete, update | read, share, delete, update  |
-      | Advanced permissions | Advanced permissions    | share, create, delete         | share, create, delete | read, share, delete, create  |
-      | Advanced permissions | Advanced permissions    | share, update, create         | share, update, create | read, share, update, create  |
       | Advanced permissions | Editor                  | delete, update, create        | ,                     | read, delete, update, create |
       | Advanced permissions | Editor                  | share, delete, update, create | share                 | all                          |
