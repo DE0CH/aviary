@@ -5,7 +5,9 @@ Feature: Sharing folders with multiple internal users using advanced permissions
   So that I can control the access on those folders by other collaborators
 
   Background:
-    Given these users have been created with default attributes:
+    Given the setting "shareapi_auto_accept_share" of app "core" has been set to "no"
+    And the administrator has set the default folder for received shares to "Shares"
+    And these users have been created with default attributes:
       | username |
       | user1    |
       | user2    |
@@ -28,6 +30,8 @@ Feature: Sharing folders with multiple internal users using advanced permissions
     And the user removes "User Four" as a collaborator from the share
     And the user removes "Regular User" as a collaborator from the share
     And the user shares with the selected collaborators
+    And user "user2" accepts the share "simple-folder" offered by user "user1" using the sharing API
+    And user "user3" accepts the share "simple-folder" offered by user "user1" using the sharing API
     Then custom permissions "<displayed-permissions>" should be set for user "User Two" for folder "simple-folder" on the webUI
     And custom permissions "<displayed-permissions>" should be set for user "User Three" for folder "simple-folder" on the webUI
     And user "User Two" should be listed as "<displayed-role>" in the collaborators list for folder "simple-folder" on the webUI
@@ -36,20 +40,20 @@ Feature: Sharing folders with multiple internal users using advanced permissions
       | field       | value                |
       | uid_owner   | user1                |
       | share_with  | user2                |
-      | file_target | /simple-folder (2)   |
+      | file_target | /Shares/simple-folder   |
       | item_type   | folder               |
       | permissions | <actual-permissions> |
     And user "user3" should have received a share with these details:
       | field       | value                |
       | uid_owner   | user1                |
       | share_with  | user3                |
-      | file_target | /simple-folder (2)   |
+      | file_target | /Shares/simple-folder   |
       | item_type   | folder               |
       | permissions | <actual-permissions> |
     But user "Regular User" should not be listed in the collaborators list on the webUI
-    And as "user0" folder "simple-folder (2)" should not exist
+    And as "user0" folder "/Shares/simple-folder" should not exist
     And user "User Four" should not be listed in the collaborators list on the webUI
-    And as "user4" folder "simple-folder (2)" should not exist
+    And as "user4" folder "/Shares/simple-folder" should not exist
     Examples:
       | role                 | displayed-role       | extra-permissions             | displayed-permissions | actual-permissions           |
       | Advanced permissions | Advanced permissions | delete                        | delete                | read, delete                 |
