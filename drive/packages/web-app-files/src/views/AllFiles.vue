@@ -1,6 +1,5 @@
 <template>
-  <section>
-    <app-bar :class="isSidebarOpen ? 'files-app-bar-squashed' : null" />
+  <div>
     <oc-table-files
       :class="isSidebarOpen ? 'files-table-squashed' : 'files-table'"
       :resources="activeFiles"
@@ -12,19 +11,16 @@
         <quick-actions :item="props.resource" :actions="app.quickActions" />
       </template>
     </oc-table-files>
-    <sidebar v-if="isSidebarOpen" @reset="setHighlightedFile(null)" />
-  </section>
+  </div>
 </template>
 
 <script>
 import { mapGetters, mapState, mapActions } from 'vuex'
 
-import AppBar from '../components/AppBar.vue'
 import QuickActions from '../components/FilesLists/QuickActions.vue'
-import Sidebar from '../components/Sidebar.vue'
 
 export default {
-  components: { AppBar, QuickActions, Sidebar },
+  components: { QuickActions },
 
   computed: {
     ...mapState(['app']),
