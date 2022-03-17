@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import Trashbin from '@files/src/views/Trashbin.vue'
+import Trashbin from '@files/src/components/Trashbin.vue'
 import { getStore, localVue, createFile } from '@files/tests/unit/views/views.setup.js'
 
 const stubs = {
@@ -20,7 +20,7 @@ const contextActionsStub = 'context-actions-stub'
 const listInfoStub = 'list-info-stub'
 const paginationStub = 'pagination-stub'
 
-describe('Trashbin View', () => {
+describe('Trashbin component', () => {
   it('should show the list loader when the view is still loading', () => {
     const wrapper = getMountedWrapper({ loading: true })
 
