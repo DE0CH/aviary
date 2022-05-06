@@ -100,10 +100,10 @@ import { basename, join } from 'path'
 import PQueue from 'p-queue'
 import { createLocationSpaces } from '../router'
 import { useResourcesViewDefaults } from '../composables'
-import { fetchResources } from '../services/folder/loaderPersonal'
+import { fetchResources } from '../services/folder'
 import { defineComponent } from '@vue/composition-api'
 import { Resource } from '../helpers/resource'
-import { useCapabilitySpacesEnabled } from 'web-pkg/src/composables'
+import { useCapabilityShareJailEnabled } from 'web-pkg/src/composables'
 
 const visibilityObserver = new VisibilityObserver()
 
@@ -132,7 +132,7 @@ export default defineComponent({
     return {
       ...useResourcesViewDefaults<Resource, any, any[]>(),
       resourceTargetLocation: createLocationSpaces('files-spaces-personal-home'),
-      hasSpaces: useCapabilitySpacesEnabled()
+      hasShareJail: useCapabilityShareJailEnabled()
     }
   },
 
@@ -153,12 +153,12 @@ export default defineComponent({
     },
 
     breadcrumbs() {
-      const personalRouteName = this.hasSpaces
+      const personalRouteName = this.hasShareJail
         ? this.$gettext('Personal')
         : this.$gettext('All files')
       return concatBreadcrumbs(
-        { text: personalRouteName, to: '/' },
-        ...breadcrumbsFromPath(this.$route.path, this.$route.params.item)
+        { text: personalRouteName, to: { path: '/' } },
+        ...breadcrumbsFromPath(this.$route, this.$route.params.item)
       )
     },
 
