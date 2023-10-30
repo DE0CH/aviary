@@ -17,7 +17,7 @@ import { FileAction, FileActionOptions } from '../../actions'
 export const useFileActionsAcceptShare = ({ store }: { store?: Store<any> } = {}) => {
   store = store || useStore()
   const router = useRouter()
-  const { $ngettext } = useGettext()
+  const { $gettext, $ngettext } = useGettext()
 
   const hasResharing = useCapabilityFilesSharingResharing()
   const hasShareJail = useCapabilityShareJailEnabled()
@@ -60,8 +60,8 @@ export const useFileActionsAcceptShare = ({ store }: { store?: Store<any> } = {}
       if (isLocationSpacesActive(router, 'files-spaces-generic')) {
         store.dispatch('showMessage', {
           title: $ngettext(
-            'The selected share was accepted successfully',
-            'The selected shares were accepted successfully',
+            'Sync for the selected share was enabled successfully',
+            'Sync for the selected shares was enabled successfully',
             resources.length
           )
         })
@@ -72,8 +72,8 @@ export const useFileActionsAcceptShare = ({ store }: { store?: Store<any> } = {}
 
     store.dispatch('showErrorMessage', {
       title: $ngettext(
-        'Failed to accept the selected share.',
-        'Failed to accept selected shares.',
+        'Failed to enable sync for the the selected share',
+        'Failed to enable sync for the selected shares',
         resources.length
       ),
       errors
@@ -85,7 +85,7 @@ export const useFileActionsAcceptShare = ({ store }: { store?: Store<any> } = {}
       name: 'accept-share',
       icon: 'check',
       handler: (args) => loadingService.addTask(() => handler(args)),
-      label: ({ resources }) => $ngettext('Accept share', 'Accept shares', resources.length),
+      label: () => $gettext('Enable sync'),
       isEnabled: ({ space, resources }) => {
         if (
           !isLocationSharesActive(router, 'files-shares-with-me') &&
