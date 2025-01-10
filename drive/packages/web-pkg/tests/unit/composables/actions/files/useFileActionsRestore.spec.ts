@@ -4,11 +4,11 @@ import {
   defaultComponentMocks,
   getComposableWrapper,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useMessages, useResourcesStore } from '../../../../../src/composables/piniaStores'
 import { unref } from 'vue'
-import { HttpError, Resource, TrashResource } from '@ownclouders/web-client'
-import { ProjectSpaceResource, SpaceResource } from '@ownclouders/web-client'
+import { HttpError, Resource, TrashResource } from '@opencloud-eu/web-client'
+import { ProjectSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
 import { useRestoreWorker } from '../../../../../src/composables/webWorkers/restoreWorker'
 
 vi.mock('../../../../../src/composables/webWorkers/restoreWorker')

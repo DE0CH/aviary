@@ -19,10 +19,8 @@ import designTokens from '../../assets/tokens/ods.json'
 
 /**
  * A framework for creating a predictable and harmonious spacing system. These
- * tokens are used for padding, margins, and position together with
- * [spacing utilities](https://github.com/owncloud/owncloud-design-system/wiki/spacing).
- * To edit spacing, see
- * [/src/tokens/spacing.yml](https://github.com/owncloud/web/blob/master/packages/design-system/src/tokens/spacing.yml).
+ * tokens are used for padding, margins, and position. To edit spacing, see
+ * [/src/tokens/ods/space.yaml](https://github.com/opencloud-eu/web/blob/main/packages/design-system/src/tokens/ods/space.yaml).
  */
 export default defineComponent({
   name: 'DocsSpacingTokens',

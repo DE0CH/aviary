@@ -13,7 +13,7 @@
 </template>
 <script lang="ts">
 import { computed, defineComponent, ref, unref } from 'vue'
-import { useMessages, useThemeStore, WebThemeType } from '@ownclouders/web-pkg'
+import { useMessages, useThemeStore, WebThemeType } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 import { useGettext } from 'vue3-gettext'
 

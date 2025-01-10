@@ -1,8 +1,8 @@
 import UploadInfo from '../../../src/components/UploadInfo.vue'
-import { defaultPlugins, shallowMount, defaultComponentMocks } from '@ownclouders/web-test-helpers'
-import { ResourceListItem, OcUppyFile } from '@ownclouders/web-pkg'
+import { defaultPlugins, shallowMount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
+import { ResourceListItem, OcUppyFile } from '@opencloud-eu/web-pkg'
 import { nextTick } from 'vue'
-import { HttpError } from '@ownclouders/web-client'
+import { HttpError } from '@opencloud-eu/web-client'
 
 const selectors = {
   overlay: '#upload-info',

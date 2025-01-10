@@ -1,7 +1,7 @@
 import { buildSpace } from '../../../../src/helpers/space'
 import { mock } from 'vitest-mock-extended'
-import { Ability, GraphSharePermission, ShareRole } from '@ownclouders/web-client'
-import { Drive, User } from '@ownclouders/web-client/graph/generated'
+import { Ability, GraphSharePermission, ShareRole } from '@opencloud-eu/web-client'
+import { Drive, User } from '@opencloud-eu/web-client/graph/generated'
 
 const noPermissionsRole = mock<ShareRole>({ id: '1', rolePermissions: [] })
 const canUploadRole = mock<ShareRole>({

@@ -6,10 +6,10 @@ import {
   CapabilityStore,
   useSharesStore
 } from '../../../../../src/composables/piniaStores'
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import { useLinkTypes } from '../../../../../src/composables/links/useLinkTypes'
 
 vi.mock('../../../../../src/composables/links/useLinkTypes', () => ({

@@ -1,8 +1,8 @@
 import { unref } from 'vue'
 import { useFileActionsCopyPermanentLink } from '../../../../../src/composables/actions/files'
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { useClipboard } from '../../../../../src/composables/clipboard'
 
 vi.mock('../../../../../src/composables/clipboard', () => ({

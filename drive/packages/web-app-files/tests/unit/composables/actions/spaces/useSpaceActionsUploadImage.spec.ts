@@ -4,12 +4,12 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref, VNodeRef } from 'vue'
-import { eventBus, useMessages, useSpaceHelpers } from '@ownclouders/web-pkg'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { eventBus, useMessages, useSpaceHelpers } from '@opencloud-eu/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useSpaceHelpers: vi.fn()
 }))

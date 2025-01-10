@@ -32,7 +32,7 @@
 <script lang="ts">
 import { DateTime } from 'luxon'
 import { watch, defineComponent, customRef, PropType, unref } from 'vue'
-import { useModals } from '@ownclouders/web-pkg'
+import { useModals } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import DatePickerModal from '../../../../Modals/DatePickerModal.vue'
 

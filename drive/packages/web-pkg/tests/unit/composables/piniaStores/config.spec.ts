@@ -1,4 +1,4 @@
-import { createTestingPinia, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { createTestingPinia, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { RawConfig, useAppsStore, useConfigStore } from '../../../../src/composables/piniaStores'
 
 describe('useConfigStore', () => {

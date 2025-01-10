@@ -5,10 +5,10 @@ import {
   contextQueryToFileContextProps,
   queryItemAsString,
   WebRouteMeta
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 /**
- * Checks if the `to` route or the route it was reached from (i.e. the `contextRoute`) needs authentication from the IdP and a successfully fetched ownCloud user.
+ * Checks if the `to` route or the route it was reached from (i.e. the `contextRoute`) needs authentication from the IdP and a successfully fetched OpenCloud user.
  *
  * @param router {Router}
  * @param to {Route}
@@ -31,7 +31,7 @@ export const isUserContextRequired = (router: Router, to: RouteLocation): boolea
 }
 
 /**
- * Checks if the `to` route or the route it was reached from (i.e. the `contextRoute`) needs authentication from the IdP but should not try to fetch an ownCloud user.
+ * Checks if the `to` route or the route it was reached from (i.e. the `contextRoute`) needs authentication from the IdP but should not try to fetch an OpenCloud user.
  *
  * @param router {Router}
  * @param to {Route}

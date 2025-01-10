@@ -4,7 +4,7 @@ import { useGetMatchingSpace } from '../spaces'
 import { createFileRouteOptions } from '../../helpers/router'
 import { createLocationSpaces } from '../../router'
 import { CreateTargetRouteOptions } from '../../helpers/folderLink/types'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { ConfigStore } from '../piniaStores'
 
 export type ResourceRouteResolverOptions = {

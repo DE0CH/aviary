@@ -1,5 +1,5 @@
 import Users from '../../../src/views/Users.vue'
-import { ItemFilter, OptionsConfig, UserAction, useAppDefaults } from '@ownclouders/web-pkg'
+import { ItemFilter, OptionsConfig, UserAction, useAppDefaults } from '@opencloud-eu/web-pkg'
 import { mock, mockDeep } from 'vitest-mock-extended'
 import {
   defaultComponentMocks,
@@ -7,13 +7,13 @@ import {
   mount,
   shallowMount,
   useAppDefaultsMock
-} from '@ownclouders/web-test-helpers'
-import { ClientService, queryItemAsString } from '@ownclouders/web-pkg'
-import { Group, User } from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/web-test-helpers'
+import { ClientService, queryItemAsString } from '@opencloud-eu/web-pkg'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
 import { useUserActionsCreateUser } from '../../../src/composables/actions/users/useUserActionsCreateUser'
 import { ref } from 'vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   useAppDefaults: vi.fn()
@@ -40,7 +40,7 @@ const getDefaultUser = (): User => {
         id: '1',
         principalId: '1',
         principalType: 'User',
-        resourceDisplayName: 'ownCloud Infinite Scale',
+        resourceDisplayName: 'OpenCloud',
         resourceId: 'some-graph-app-id'
       }
     ]
@@ -68,7 +68,7 @@ const getDefaultApplications = () => {
           id: '4'
         }
       ],
-      displayName: 'ownCloud Infinite Scale',
+      displayName: 'OpenCloud',
       id: 'some-graph-app-id'
     }
   ]

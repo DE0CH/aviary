@@ -1,8 +1,8 @@
-import { eventBus } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { computed } from 'vue'
-import { GroupAction } from '@ownclouders/web-pkg'
+import { GroupAction } from '@opencloud-eu/web-pkg'
 
 export const useGroupActionsEdit = () => {
   const { $gettext } = useGettext()

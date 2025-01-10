@@ -1,4 +1,4 @@
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import Table from './OcTable.vue'
 
 const ASC = 'ascending'

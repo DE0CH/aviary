@@ -1,5 +1,5 @@
 {
-  "extends": "@ownclouders/tsconfig",
+  "extends": "@opencloud-eu/tsconfig",
 
   // necessary for building web-pkg standalone, otherwise we get errors with inferred types
   "compilerOptions": {

@@ -1,8 +1,8 @@
 import RemoveFromGroupsModal from '../../../../src/components/Users/RemoveFromGroupsModal.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Group, User } from '@ownclouders/web-client/graph/generated'
-import { Modal, useMessages } from '@ownclouders/web-pkg'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
+import { Modal, useMessages } from '@opencloud-eu/web-pkg'
 import { useUserSettingsStore } from '../../../../src/composables/stores/userSettings'
 
 describe('RemoveFromGroupsModal', () => {

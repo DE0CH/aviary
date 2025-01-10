@@ -103,18 +103,18 @@ import {
   ItemFilter,
   useAppsStore,
   useResourcesStore
-} from '@ownclouders/web-pkg'
-import { AppBar, ItemFilterInline } from '@ownclouders/web-pkg'
-import { queryItemAsString, useRouteQuery } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { AppBar, ItemFilterInline } from '@opencloud-eu/web-pkg'
+import { queryItemAsString, useRouteQuery } from '@opencloud-eu/web-pkg'
 import SharedWithMeSection from '../../components/Shares/SharedWithMeSection.vue'
 import { computed, defineComponent, onMounted, ref, unref, watch } from 'vue'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
-import { useGetMatchingSpace, useSort } from '@ownclouders/web-pkg'
-import { useGroupingSettings } from '@ownclouders/web-pkg'
+import { useGetMatchingSpace, useSort } from '@opencloud-eu/web-pkg'
+import { useGroupingSettings } from '@opencloud-eu/web-pkg'
 import SharesNavigation from '../../components/AppBar/SharesNavigation.vue'
 import { useGettext } from 'vue3-gettext'
-import { useOpenWithDefaultApp, defaultFuseOptions } from '@ownclouders/web-pkg'
-import { IncomingShareResource, ShareTypes } from '@ownclouders/web-client'
+import { useOpenWithDefaultApp, defaultFuseOptions } from '@opencloud-eu/web-pkg'
+import { IncomingShareResource, ShareTypes } from '@opencloud-eu/web-client'
 import { uniq } from 'lodash-es'
 
 export default defineComponent({

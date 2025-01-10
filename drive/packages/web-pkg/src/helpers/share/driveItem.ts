@@ -1,5 +1,5 @@
-import { SpaceResource } from '@ownclouders/web-client'
-import { Graph } from '@ownclouders/web-client/graph'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
 import { SpacesStore } from '../../composables'
 
 /**

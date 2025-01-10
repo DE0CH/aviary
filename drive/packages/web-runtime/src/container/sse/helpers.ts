@@ -1,5 +1,5 @@
-import { ResourcesStore } from '@ownclouders/web-pkg'
-import { extractNodeId } from '@ownclouders/web-client'
+import { ResourcesStore } from '@opencloud-eu/web-pkg'
+import { extractNodeId } from '@opencloud-eu/web-client'
 import { eventSchema, SseEventWrapperOptions } from './types'
 
 export const sseEventWrapper = (options: SseEventWrapperOptions) => {

@@ -43,7 +43,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref, unref } from 'vue'
-import { useClientService, useRoute, useRouter, useMessages } from '@ownclouders/web-pkg'
+import { useClientService, useRoute, useRouter, useMessages } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

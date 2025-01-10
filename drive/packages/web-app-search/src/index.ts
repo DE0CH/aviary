@@ -3,7 +3,7 @@ import List from './views/List.vue'
 
 // @ts-ignore
 import translations from '../l10n/translations.json'
-import { ApplicationInformation, defineWebApplication } from '@ownclouders/web-pkg'
+import { ApplicationInformation, defineWebApplication } from '@opencloud-eu/web-pkg'
 import { extensions } from './extensions'
 import { extensionPoints } from './extensionPoints'
 

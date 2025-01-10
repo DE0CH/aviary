@@ -1,6 +1,6 @@
 import kebabCase from 'lodash-es/kebabCase'
 import isNil from 'lodash-es/isNil'
-import { isShareSpaceResource } from '@ownclouders/web-client'
+import { isShareSpaceResource } from '@opencloud-eu/web-client'
 import { routeToContextQuery } from '../../appDefaults'
 import { isLocationTrashActive } from '../../../router'
 import { computed, unref } from 'vue'
@@ -36,7 +36,7 @@ import {
   useExtensionRegistry
 } from '../../piniaStores'
 import { ApplicationFileExtension } from '../../../apps'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 import { useEmbedMode } from '../../embedMode'
 import { RouteRecordName } from 'vue-router'

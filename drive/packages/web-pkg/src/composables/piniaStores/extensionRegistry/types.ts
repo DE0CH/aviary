@@ -1,7 +1,7 @@
 import { Action } from '../../actions'
 import { SearchProvider, SideBarPanel } from '../../../components'
 import { AppNavigationItem } from '../../../apps'
-import { Item } from '@ownclouders/web-client'
+import { Item } from '@opencloud-eu/web-client'
 import { FolderView } from '../../../ui'
 import { Component, Slot } from 'vue'
 import { StringUnionOrAnyString } from '../../../utils'

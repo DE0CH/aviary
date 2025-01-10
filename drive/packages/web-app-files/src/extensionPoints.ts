@@ -3,7 +3,7 @@ import {
   ExtensionPoint,
   FolderViewExtension,
   SidebarPanelExtension
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
 export const uploadMenuExtensionPoint: ExtensionPoint<ActionExtension> = {

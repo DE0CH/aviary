@@ -29,9 +29,9 @@
 
 <script lang="ts">
 import { computed, defineComponent, onMounted, onBeforeUnmount, ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { useService, ResourceIcon } from '@ownclouders/web-pkg'
-import type { UppyService } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { useService, ResourceIcon } from '@opencloud-eu/web-pkg'
+import type { UppyService } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   components: { ResourceIcon },

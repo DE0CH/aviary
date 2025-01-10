@@ -1,21 +1,21 @@
 import FileShares from '../../../../../src/components/SideBar/Shares/FileShares.vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { SpaceResource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { v4 as uuidV4 } from 'uuid'
-import { CollaboratorShare, ShareRole, ShareTypes } from '@ownclouders/web-client'
+import { CollaboratorShare, ShareRole, ShareTypes } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
   shallowMount,
   defaultComponentMocks,
   defaultStubs
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import CollaboratorListItem from '../../../../../src/components/SideBar/Shares/Collaborators/ListItem.vue'
-import { AncestorMetaData, CapabilityStore, useCanShare, useModals } from '@ownclouders/web-pkg'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { AncestorMetaData, CapabilityStore, useCanShare, useModals } from '@opencloud-eu/web-pkg'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useCanShare: vi.fn()
 }))

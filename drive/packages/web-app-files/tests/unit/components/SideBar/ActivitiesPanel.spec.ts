@@ -1,6 +1,6 @@
 import ActivitiesPanel from '../../../../src/components/SideBar/ActivitiesPanel.vue'
-import { defaultComponentMocks, defaultPlugins, mount } from '@ownclouders/web-test-helpers'
-import { Resource } from '@ownclouders/web-client'
+import { defaultComponentMocks, defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
+import { Resource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import { nextTick } from 'vue'
 

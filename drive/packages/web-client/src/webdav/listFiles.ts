@@ -47,7 +47,10 @@ export const ListFilesFactory = (
           r.filename = r.filename.split('/').slice(1).join('/')
         })
 
-        // FIXME: This is a workaround for https://github.com/owncloud/ocis/issues/4758
+        /**
+         * FIXME: This is a workaround for invalid href and downloadURL from the server.
+         * this might have been already fixed in the meantime.
+         */
         if (webDavResources.length === 1) {
           webDavResources[0].filename = urlJoin(space.id, path, {
             leadingSlash: true

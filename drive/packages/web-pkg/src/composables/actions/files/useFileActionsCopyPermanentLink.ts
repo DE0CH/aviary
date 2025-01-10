@@ -3,7 +3,7 @@ import { useGettext } from 'vue3-gettext'
 import { FileAction } from '../types'
 import { useClipboard } from '../../clipboard'
 import { useMessages } from '../../piniaStores'
-import { isPublicSpaceResource } from '@ownclouders/web-client'
+import { isPublicSpaceResource } from '@opencloud-eu/web-client'
 
 export const useFileActionsCopyPermanentLink = () => {
   const { showMessage, showErrorMessage } = useMessages()

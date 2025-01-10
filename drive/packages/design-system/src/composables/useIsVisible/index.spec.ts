@@ -1,6 +1,6 @@
 import { ref, nextTick } from 'vue'
 import { useIsVisible } from './index'
-import { mount } from '@ownclouders/web-test-helpers'
+import { mount } from '@opencloud-eu/web-test-helpers'
 
 const mockIntersectionObserver = () => {
   const enable = () => {

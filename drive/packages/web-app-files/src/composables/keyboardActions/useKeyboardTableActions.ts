@@ -4,7 +4,7 @@ import {
   Modifier,
   useClipboardStore,
   useResourcesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 export const useKeyboardTableActions = (keyActions: KeyboardActions) => {
   const resourcesStore = useResourcesStore()

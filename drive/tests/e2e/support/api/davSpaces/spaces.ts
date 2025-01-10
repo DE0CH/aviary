@@ -25,7 +25,7 @@ export const folderExists = async ({
 const createFolder = async ({
   user,
   folder,
-  webDavEndPathToRoot // the root of the WebDAV path. This is `spaces/<space-id>` for ocis or `files/<user>` for oC10
+  webDavEndPathToRoot // the root of the WebDAV path, this is `spaces/<space-id>`.
 }: {
   user: User
   folder: string
@@ -53,7 +53,7 @@ const createFile = async ({
   user,
   pathToFile,
   content,
-  webDavEndPathToRoot, // the root of the WebDAV path. This is `spaces/<space-id>` for ocis or `files/<user>` for oC10
+  webDavEndPathToRoot, // the root of the WebDAV path, this is `spaces/<space-id>`.
   mtimeDeltaDays
 }: {
   user: User

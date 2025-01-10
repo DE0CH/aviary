@@ -9,10 +9,10 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import { useClipboard } from '@vueuse/core'
-import { useMessages } from '@ownclouders/web-pkg'
+import { useMessages } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   props: {

@@ -23,7 +23,7 @@
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
 import GroupInfoBox from './GroupInfoBox.vue'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 export default defineComponent({
   name: 'DetailsPanel',

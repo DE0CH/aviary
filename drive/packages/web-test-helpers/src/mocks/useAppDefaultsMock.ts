@@ -1,8 +1,8 @@
 import { mock } from 'vitest-mock-extended'
 import { ref } from 'vue'
-import { FileContext, useAppDefaults, AppConfigObject } from '@ownclouders/web-pkg'
-import { FileResource, Resource } from '@ownclouders/web-client'
-import { GetFileContentsResponse } from '@ownclouders/web-client/webdav'
+import { FileContext, useAppDefaults, AppConfigObject } from '@opencloud-eu/web-pkg'
+import { FileResource, Resource } from '@opencloud-eu/web-client'
+import { GetFileContentsResponse } from '@opencloud-eu/web-client/webdav'
 
 export const useAppDefaultsMock = (
   options: Partial<ReturnType<typeof useAppDefaults>> = {}

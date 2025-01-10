@@ -1,6 +1,6 @@
 import Fuse from 'fuse.js'
 import { defaultFuseOptions } from '../fuse'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 export const filterResources = <T extends Resource>(
   resources: T[],

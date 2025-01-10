@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { ClipboardActions } from '../../helpers'
 import { useGettext } from 'vue3-gettext'
 import { useMessages } from './messages'

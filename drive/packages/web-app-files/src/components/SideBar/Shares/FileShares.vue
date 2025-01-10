@@ -110,10 +110,10 @@ import {
   useSharesStore,
   useResourcesStore,
   useCanShare
-} from '@ownclouders/web-pkg'
-import { isLocationSharesActive } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { isLocationSharesActive } from '@opencloud-eu/web-pkg'
 import { textUtils } from '../../../helpers/textUtils'
-import { isShareSpaceResource, ShareTypes } from '@ownclouders/web-client'
+import { isShareSpaceResource, ShareTypes } from '@opencloud-eu/web-client'
 import InviteCollaboratorForm from './Collaborators/InviteCollaborator/InviteCollaboratorForm.vue'
 import CollaboratorListItem from './Collaborators/ListItem.vue'
 import {
@@ -127,8 +127,8 @@ import {
   SpaceResource,
   CollaboratorShare,
   isSpaceResource
-} from '@ownclouders/web-client'
-import { getSharedAncestorRoute } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-client'
+import { getSharedAncestorRoute } from '@opencloud-eu/web-pkg'
 import CopyPrivateLink from '../../Shares/CopyPrivateLink.vue'
 
 export default defineComponent({

@@ -1,4 +1,4 @@
-import { Action, triggerDownloadWithFilename } from '@ownclouders/web-pkg'
+import { Action, triggerDownloadWithFilename } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { App, AppVersion } from '../../types'
 

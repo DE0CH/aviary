@@ -29,7 +29,7 @@
 
 <script lang="ts">
 import { defineComponent, PropType, ref } from 'vue'
-import { Modal } from '@ownclouders/web-pkg'
+import { Modal } from '@opencloud-eu/web-pkg'
 import { DateTime } from 'luxon'
 
 export default defineComponent({

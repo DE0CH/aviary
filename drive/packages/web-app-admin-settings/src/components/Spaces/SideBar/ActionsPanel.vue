@@ -13,7 +13,7 @@
 </template>
 
 <script lang="ts">
-import { ActionMenuItem } from '@ownclouders/web-pkg'
+import { ActionMenuItem } from '@opencloud-eu/web-pkg'
 import {
   useSpaceActionsDelete,
   useSpaceActionsDisable,
@@ -21,9 +21,9 @@ import {
   useSpaceActionsEditQuota,
   useSpaceActionsRename,
   useSpaceActionsRestore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, inject, unref } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'ActionsPanel',

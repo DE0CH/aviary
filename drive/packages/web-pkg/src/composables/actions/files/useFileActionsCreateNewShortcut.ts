@@ -3,7 +3,7 @@ import { FileAction, useModals, useResourcesStore } from '../../../composables'
 import CreateShortcutModal from '../../../components/CreateShortcutModal.vue'
 import { useGettext } from 'vue3-gettext'
 import { storeToRefs } from 'pinia'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 
 export const useFileActionsCreateNewShortcut = ({ space }: { space: Ref<SpaceResource> }) => {
   const { dispatchModal } = useModals()

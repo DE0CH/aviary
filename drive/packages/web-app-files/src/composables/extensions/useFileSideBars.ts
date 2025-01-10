@@ -22,9 +22,9 @@ import {
   useCapabilityStore,
   useCanListShares,
   useCanListVersions
-} from '@ownclouders/web-pkg'
-import { isProjectSpaceResource, SpaceResource } from '@ownclouders/web-client'
-import { Resource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { isProjectSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import { unref } from 'vue'
 import { fileSideBarExtensionPoint } from '../../extensionPoints'
@@ -42,7 +42,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
 
   return [
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.no-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.no-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -69,7 +69,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.trash-no-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.trash-no-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -84,7 +84,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.details-single-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.details-single-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -109,7 +109,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.details-multi-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.details-multi-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -137,7 +137,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.exif',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.exif',
       type: 'sidebarPanel',
       extensionPointIds: ['global.files.sidebar'],
       panel: {
@@ -158,7 +158,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.audio-meta',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.audio-meta',
       type: 'sidebarPanel',
       extensionPointIds: ['global.files.sidebar'],
       panel: {
@@ -179,7 +179,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.actions',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.actions',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -203,7 +203,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.sharing',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.sharing',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -231,7 +231,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.versions',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.versions',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -251,7 +251,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.projects.no-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.projects.no-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -270,7 +270,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.projects.details-single-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.projects.details-single-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -285,7 +285,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.projects.details-multi-selection',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.projects.details-multi-selection',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -303,7 +303,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.projects.actions',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.projects.actions',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -330,7 +330,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.projects.sharing',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.projects.sharing',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {
@@ -350,7 +350,7 @@ export const useSideBarPanels = (): SidebarPanelExtension<SpaceResource, Resourc
       }
     },
     {
-      id: 'com.github.owncloud.web.files.sidebar-panel.activities',
+      id: 'com.github.opencloud-eu.web.files.sidebar-panel.activities',
       type: 'sidebarPanel',
       extensionPointIds: [fileSideBarExtensionPoint.id],
       panel: {

@@ -3,18 +3,18 @@ import { useResourcesViewDefaults } from '../../../../src/composables'
 import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
 import { ref } from 'vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { OutgoingShareResource } from '@ownclouders/web-client'
+import { OutgoingShareResource } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
   defaultComponentMocks,
   defaultStubs,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
-import { ResourceTable } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { ResourceTable } from '@opencloud-eu/web-pkg'
 
 vi.mock('../../../../src/composables')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActions: vi.fn()
 }))

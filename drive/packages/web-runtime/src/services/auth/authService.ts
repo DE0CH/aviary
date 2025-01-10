@@ -8,7 +8,7 @@ import {
   ConfigStore,
   useTokenTimerWorker,
   AuthServiceInterface
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { RouteLocation, Router } from 'vue-router'
 import {
   extractPublicLinkToken,
@@ -18,10 +18,10 @@ import {
   isUserContextRequired
 } from '../../router'
 import { unref } from 'vue'
-import { Ability } from '@ownclouders/web-client'
+import { Ability } from '@opencloud-eu/web-client'
 import { Language } from 'vue3-gettext'
-import { PublicLinkType } from '@ownclouders/web-client'
-import { WebWorkersStore } from '@ownclouders/web-pkg'
+import { PublicLinkType } from '@opencloud-eu/web-client'
+import { WebWorkersStore } from '@opencloud-eu/web-pkg'
 import { isSilentRedirectRoute } from '../../helpers/silentRedirect'
 
 export class AuthService implements AuthServiceInterface {
@@ -377,7 +377,7 @@ export class AuthService implements AuthServiceInterface {
       return
     }
 
-    if (event.data?.name !== 'owncloud-embed:update-token') {
+    if (event.data?.name !== 'opencloud-embed:update-token') {
       return
     }
 

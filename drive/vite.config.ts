@@ -107,21 +107,19 @@ export default defineConfig(({ mode, command }) => {
   const production = mode === 'production'
 
   /**
-     When setting `OWNCLOUD_WEB_CONFIG_URL` make sure to configure the oauth/oidc client
+     When setting `OPENCLOUD_WEB_CONFIG_URL` make sure to configure the oauth/oidc client
 
+     For OpenCloud instances you can use `./dev/docker/opencloud.idp.config.yaml`.
+     In docker setups you need to mount it to `/etc/opencloud/idp.yaml`.
+     E.g. with docker-compose you could add a volume to the OpenCloud container like this:
+     - /home/youruser/projects/oc-web/dev/docker/opencloud.idp.config.yaml:/etc/opencloud/idp.yaml
 
-     # oCIS
-     For oCIS instances you can use `./dev/docker/ocis.idp.config.yaml`.
-     In docker setups you need to mount it to `/etc/ocis/idp.yaml`.
-     E.g. with docker-compose you could add a volume to the ocis container like this:
-     - /home/youruser/projects/oc-web/dev/docker/ocis.idp.config.yaml:/etc/ocis/idp.yaml
-
-     To use the oCIS deployment examples start vite like this:
-     OWNCLOUD_WEB_CONFIG_URL="https://ocis.owncloud.test/config.json" pnpm vite
+     Example:
+     OPENCLOUD_WEB_CONFIG_URL="https://your-open-cloud.test/config.json" pnpm vite
 
      */
   const configUrl =
-    process.env.OWNCLOUD_WEB_CONFIG_URL || 'https://host.docker.internal:9200/config.json'
+    process.env.OPENCLOUD_WEB_CONFIG_URL || 'https://host.docker.internal:9200/config.json'
 
   const config: UserConfig = {
     ...(!production && {
@@ -172,7 +170,10 @@ export default defineConfig(({ mode, command }) => {
       css: {
         preprocessorOptions: {
           scss: {
-            additionalData: `@import "${projectRootDir}/packages/design-system/src/styles/styles";${stripScssMarker}`,
+            additionalData: `
+                @use "sass:math";
+                @import "${projectRootDir}/packages/design-system/src/styles/styles";${stripScssMarker};
+            `,
             silenceDeprecations: ['legacy-js-api', 'import']
           }
         }
@@ -196,7 +197,7 @@ export default defineConfig(({ mode, command }) => {
         // The downside of this approach is that @extend does not work because it modifies the global styles, thus we emit
         // a warning if `@extend` is used in the code base.
         {
-          name: '@ownclouders/vite-plugin-strip-css',
+          name: '@opencloud-eu/vite-plugin-strip-css',
           transform(src: string, id: string) {
             if (id.endsWith('.vue') && !id.includes('node_modules') && src.includes('@extend')) {
               console.warn(
@@ -236,19 +237,11 @@ export default defineConfig(({ mode, command }) => {
               }
             ]
 
-            // in development this is handled by the proxy
-            if (production) {
-              targets.push({
-                src: `./packages/web-runtime/themes/*`,
-                dest: `themes`
-              })
-            }
-
             return targets
           })()
         }),
         {
-          name: '@ownclouders/vite-plugin-runtime-config',
+          name: '@opencloud-eu/vite-plugin-runtime-config',
           configureServer(server: ViteDevServer) {
             server.middlewares.use(async (request, response, next) => {
               if (request.url === '/config.json') {
@@ -269,7 +262,7 @@ export default defineConfig(({ mode, command }) => {
           }
         },
         {
-          name: '@ownclouders/vite-plugin-docs',
+          name: '@opencloud-eu/vite-plugin-docs',
           transform(src, id) {
             if (id.includes('type=docs')) {
               return {
@@ -291,7 +284,7 @@ export default defineConfig(({ mode, command }) => {
                 data: {
                   buildConfig,
 
-                  title: process.env.TITLE || 'ownCloud',
+                  title: process.env.TITLE || 'OpenCloud',
                   compilationTimestamp: new Date().getTime(),
                   supportedBrowsersRegex: supportedBrowsersRegex
                 }
@@ -313,7 +306,7 @@ export default defineConfig(({ mode, command }) => {
               if (bundle) {
                 moduleNames = Object.keys(bundle)
                 // We are in production mode here and need to provide paths relative to the module that contains the import, i.e. web-runtime-*.mjs
-                // so it works when oC Web is hosted in a sub folder, e.g. when using the oC 10 integration app
+                // so it works when OpenCloud Web is hosted in a sub folder
                 buildModulePath = (moduleName: string) => moduleName.replace('js/', './')
               } else {
                 // We are in development mode here, so we can just use absolute module paths

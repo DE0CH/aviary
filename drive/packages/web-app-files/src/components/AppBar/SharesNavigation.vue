@@ -13,7 +13,7 @@
         </oc-button>
       </li>
     </oc-list>
-    <div class="oc-hidden@s">
+    <div id="shares-navigation-mobile" class="oc-hidden@s">
       <oc-button id="shares_navigation_mobile" appearance="raw">
         <span v-text="currentNavItem.text" />
         <oc-icon name="arrow-down-s" fill-type="line" size="small" />
@@ -23,11 +23,11 @@
           <li v-for="navItem in navItems" :key="`shares-navigation-mobile-${navItem.to}`">
             <oc-button
               type="router-link"
-              class="oc-my-xs shares-nav-mobile"
+              class="shares-nav-mobile"
               :to="navItem.to"
-              :class="{ 'oc-background-primary-gradient': navItem.active }"
-              :appearance="navItem.active ? 'raw-inverse' : 'raw'"
-              :variation="navItem.active ? 'primary' : 'passive'"
+              :class="{ 'oc-background-highlight': navItem.active }"
+              appearance="raw"
+              variation="passive"
             >
               <span class="icon-box" :class="{ 'icon-box-active': navItem.active }">
                 <oc-icon :name="navItem.icon" />
@@ -42,16 +42,16 @@
 </template>
 
 <script lang="ts">
-import { isLocationSharesActive, RouteShareTypes } from '@ownclouders/web-pkg'
+import { isLocationSharesActive, RouteShareTypes } from '@opencloud-eu/web-pkg'
 import {
   locationSharesViaLink,
   locationSharesWithMe,
   locationSharesWithOthers
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 import { computed, defineComponent, unref } from 'vue'
-import { useRouter } from '@ownclouders/web-pkg'
-import { useActiveLocation } from '@ownclouders/web-pkg'
+import { useRouter } from '@opencloud-eu/web-pkg'
+import { useActiveLocation } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { RouteRecordNormalized } from 'vue-router'
 
@@ -109,8 +109,31 @@ export default defineComponent({
 </script>
 <style lang="scss" scoped>
 #shares-navigation {
+  &-mobile {
+    li {
+      margin: var(--oc-space-xsmall) 0;
+
+      &:first-child {
+        margin-top: 0;
+      }
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+    }
+
+    a {
+      &:focus,
+      &:hover {
+        @media (max-width: $oc-breakpoint-xsmall-max) {
+          background-color: var(--oc-color-background-hover);
+        }
+      }
+    }
+  }
+
   a {
-    gap: var(--oc-space-medium);
+    gap: var(--oc-space-small);
     width: 100%;
 
     &:focus,
@@ -128,9 +151,6 @@ export default defineComponent({
       align-items: center;
       width: 40px;
       height: 40px;
-    }
-    .icon-box-active {
-      box-shadow: 2px 0 6px rgba(0, 0, 0, 0.14);
     }
   }
 

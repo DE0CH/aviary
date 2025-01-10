@@ -1,4 +1,4 @@
-import { shallowMount } from '@ownclouders/web-test-helpers'
+import { shallowMount } from '@opencloud-eu/web-test-helpers'
 
 import Table from './OcTableSimple.vue'
 

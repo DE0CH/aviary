@@ -14,7 +14,7 @@ import { defineComponent } from 'vue'
 import FileLinks from './FileLinks.vue'
 import FileShares from './FileShares.vue'
 import SpaceMembers from './SpaceMembers.vue'
-import { useSharesStore } from '@ownclouders/web-pkg'
+import { useSharesStore } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 
 export default defineComponent({

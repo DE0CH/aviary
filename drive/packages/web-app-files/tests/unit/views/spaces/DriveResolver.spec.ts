@@ -1,12 +1,12 @@
 import DriveResolver from '../../../../src/views/spaces/DriveResolver.vue'
-import { queryItemAsString, useDriveResolver, useRouteParam } from '@ownclouders/web-pkg'
+import { queryItemAsString, useDriveResolver, useRouteParam } from '@opencloud-eu/web-pkg'
 import { computed, ref } from 'vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { ClientService } from '@ownclouders/web-pkg'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
-import { locationPublicUpload } from '@ownclouders/web-pkg'
-import { PublicSpaceResource, Resource, SpaceResource } from '@ownclouders/web-client'
-import { SharePermissionBit } from '@ownclouders/web-client'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { locationPublicUpload } from '@opencloud-eu/web-pkg'
+import { PublicSpaceResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { SharePermissionBit } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
@@ -14,9 +14,9 @@ import {
   defaultStubs,
   RouteLocation,
   useGetMatchingSpaceMock
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useGetMatchingSpace: vi.fn(),
   useDriveResolver: vi.fn(),

@@ -56,8 +56,8 @@ import {
   useResourcesStore,
   useRouter,
   useSpacesStore
-} from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import { storeToRefs } from 'pinia'
 
@@ -104,7 +104,7 @@ export default defineComponent({
 
     const emitSelect = (): void => {
       if (unref(chooseFileName)) {
-        postMessage<embedModeLocationPickMessageData>('owncloud-embed:select', {
+        postMessage<embedModeLocationPickMessageData>('opencloud-embed:select', {
           resources: JSON.parse(JSON.stringify(selectedFiles.value)),
           fileName: unref(fileName),
           locationQuery: JSON.parse(JSON.stringify(routeToContextQuery(unref(router.currentRoute))))
@@ -113,13 +113,13 @@ export default defineComponent({
 
       // TODO: adjust type to embedModeLocationPickMessageData later (breaking)
       postMessage<Resource[]>(
-        'owncloud-embed:select',
+        'opencloud-embed:select',
         JSON.parse(JSON.stringify(selectedFiles.value))
       )
     }
 
     const emitCancel = (): void => {
-      postMessage<null>('owncloud-embed:cancel', null)
+      postMessage<null>('opencloud-embed:cancel', null)
     }
 
     return {

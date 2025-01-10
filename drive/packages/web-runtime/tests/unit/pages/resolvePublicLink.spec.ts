@@ -1,15 +1,15 @@
 import ResolvePublicLink from '../../../src/pages/resolvePublicLink.vue'
-import { defaultPlugins, defaultComponentMocks, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, defaultComponentMocks, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mockDeep } from 'vitest-mock-extended'
-import { CapabilityStore, ClientService, useRouteParam, useRouteQuery } from '@ownclouders/web-pkg'
-import { DavHttpError, SpaceResource } from '@ownclouders/web-client'
+import { CapabilityStore, ClientService, useRouteParam, useRouteQuery } from '@opencloud-eu/web-pkg'
+import { DavHttpError, SpaceResource } from '@opencloud-eu/web-client'
 import { authService } from '../../../src/services/auth'
 import { ref } from 'vue'
-import { DavErrorCode } from '@ownclouders/web-client/webdav'
+import { DavErrorCode } from '@opencloud-eu/web-client/webdav'
 
 vi.mock('../../../src/services/auth')
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRouteParam: vi.fn(),
   useRouteQuery: vi.fn()

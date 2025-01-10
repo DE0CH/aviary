@@ -1,4 +1,4 @@
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import {
   type WebWorker,

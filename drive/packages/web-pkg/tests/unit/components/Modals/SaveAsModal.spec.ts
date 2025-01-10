@@ -4,10 +4,10 @@ import {
   defaultPlugins,
   nextTicks,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { ListFilesResult } from '@ownclouders/web-client/webdav'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { ListFilesResult } from '@opencloud-eu/web-client/webdav'
 import { Modal, useMessages, useModals } from '../../../../src/composables/piniaStores'
 import { ClientService } from '../../../../src'
 
@@ -23,18 +23,18 @@ describe('SaveAsModal', () => {
     })
     it('sets the iframe title correctly', () => {
       const { wrapper } = getWrapper()
-      expect(wrapper.vm.iframeTitle).toEqual('ownCloud')
+      expect(wrapper.vm.iframeTitle).toEqual('OpenCloud')
     })
   })
   describe('method "onLocationPick"', () => {
-    it('does nothing if the event message does not equal "owncloud-embed:select"', () => {
+    it('does nothing if the event message does not equal "opencloud-embed:select"', () => {
       const { mocks } = getWrapper()
 
       expect(mocks.$clientService.webdav.listFiles).not.toHaveBeenCalled()
       expect(mocks.$clientService.webdav.putFileContents).not.toHaveBeenCalled()
       expect(window.open).not.toHaveBeenCalled()
     })
-    it('saves the file when message does equal "owncloud-embed:select"', async () => {
+    it('saves the file when message does equal "opencloud-embed:select"', async () => {
       const { wrapper, mocks } = getWrapper()
       const modalStore = useModals()
       const messageStore = useMessages()
@@ -44,7 +44,7 @@ describe('SaveAsModal', () => {
       wrapper.vm.onLocationPick(
         mock<MessageEvent>({
           data: {
-            name: 'owncloud-embed:select',
+            name: 'opencloud-embed:select',
             data: {
               resources: [mock<Resource>({ storageId: '1' })],
               fileName: 'test with new name.txt'
@@ -58,7 +58,7 @@ describe('SaveAsModal', () => {
       expect(modalStore.removeModal).toHaveBeenCalled()
       expect(window.open).toHaveBeenCalled()
     })
-    it('shows an error message when the file when message does equal "owncloud-embed:select and request fails"', async () => {
+    it('shows an error message when the file when message does equal "opencloud-embed:select and request fails"', async () => {
       console.error = vi.fn()
       const { wrapper, mocks } = getWrapper()
       const modalStore = useModals()
@@ -69,7 +69,7 @@ describe('SaveAsModal', () => {
       wrapper.vm.onLocationPick(
         mock<MessageEvent>({
           data: {
-            name: 'owncloud-embed:select',
+            name: 'opencloud-embed:select',
             data: {
               resources: [mock<Resource>({ storageId: '1' })],
               fileName: 'test with new name.txt'

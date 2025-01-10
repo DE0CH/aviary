@@ -1,5 +1,5 @@
 import OcLogo from './OcLogo.vue'
-import { shallowMount, mount } from '@ownclouders/web-test-helpers'
+import { shallowMount, mount } from '@opencloud-eu/web-test-helpers'
 import OcImage from '../OcImage/OcImage.vue'
 
 describe('OcLogo', () => {

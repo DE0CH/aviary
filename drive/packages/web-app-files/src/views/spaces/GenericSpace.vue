@@ -119,14 +119,14 @@ import {
 } from 'vue'
 import { RouteLocationNamedRaw } from 'vue-router'
 import { useGettext } from 'vue3-gettext'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   isPersonalSpaceResource,
   isProjectSpaceResource,
   isPublicSpaceResource,
   isShareSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 
 import {
   ResourceTransfer,
@@ -140,7 +140,7 @@ import {
   useResourcesStore,
   useRouter,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 import {
   AppBar,
@@ -163,19 +163,19 @@ import {
   useRoute,
   useRouteQuery,
   FolderLoaderOptions
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import CreateAndUpload from '../../components/AppBar/CreateAndUpload.vue'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
 import ListInfo from '../../components/FilesList/ListInfo.vue'
 import NotFoundMessage from '../../components/FilesList/NotFoundMessage.vue'
 import QuickActions from '../../components/FilesList/QuickActions.vue'
 import ResourceDetails from '../../components/FilesList/ResourceDetails.vue'
-import { ResourceTiles } from '@ownclouders/web-pkg'
+import { ResourceTiles } from '@opencloud-eu/web-pkg'
 import SpaceHeader from '../../components/Spaces/SpaceHeader.vue'
 import WhitespaceContextMenu from '../../components/Spaces/WhitespaceContextMenu.vue'
-import { eventBus } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
 import { useResourcesViewDefaults } from '../../composables'
-import { BreadcrumbItem } from '@ownclouders/design-system/helpers'
+import { BreadcrumbItem } from '@opencloud-eu/design-system/helpers'
 import { v4 as uuidV4 } from 'uuid'
 import {
   useKeyboardTableMouseActions,

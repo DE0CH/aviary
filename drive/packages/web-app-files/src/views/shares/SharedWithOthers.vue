@@ -86,25 +86,25 @@ import {
   useLoadPreview,
   useResourcesStore,
   useRouteQuery
-} from '@ownclouders/web-pkg'
-import { ItemFilter } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { ItemFilter } from '@opencloud-eu/web-pkg'
 import { uniq } from 'lodash-es'
 
-import { FileSideBar, ResourceTable } from '@ownclouders/web-pkg'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { AppBar } from '@ownclouders/web-pkg'
+import { FileSideBar, ResourceTable } from '@opencloud-eu/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { AppBar } from '@opencloud-eu/web-pkg'
 import ListInfo from '../../components/FilesList/ListInfo.vue'
-import { Pagination } from '@ownclouders/web-pkg'
-import { ContextActions } from '@ownclouders/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
+import { ContextActions } from '@opencloud-eu/web-pkg'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
 
 import { useResourcesViewDefaults } from '../../composables'
 import { defineComponent, computed, unref } from 'vue'
-import { useGroupingSettings } from '@ownclouders/web-pkg'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
+import { useGroupingSettings } from '@opencloud-eu/web-pkg'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
 import SharesNavigation from '../../components/AppBar/SharesNavigation.vue'
-import { OutgoingShareResource, ShareTypes } from '@ownclouders/web-client'
+import { OutgoingShareResource, ShareTypes } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 import { useGettext } from 'vue3-gettext'
 

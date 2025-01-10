@@ -1,6 +1,6 @@
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { CapabilityStore, useFolderLink } from '../../../../src/composables'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 describe('useFolderLink', () => {
   it('getFolderLink should return the correct folder link', () => {

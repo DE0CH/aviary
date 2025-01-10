@@ -329,8 +329,7 @@ export default defineComponent({
   &-input {
     border-radius: 25px !important;
     border: none;
-    padding: var(--oc-space-medium);
-    color: var(--oc-color-input-text-muted) !important;
+    padding: var(--oc-space-medium) !important;
 
     &:focus {
       background-color: var(--oc-color-input-bg);

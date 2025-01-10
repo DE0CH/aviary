@@ -81,20 +81,20 @@ import {
   useSideBar,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
-import { createLocationTrash } from '@ownclouders/web-pkg'
-import { createFileRouteOptions } from '@ownclouders/web-pkg'
-import { AppBar } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { createLocationTrash } from '@opencloud-eu/web-pkg'
+import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
+import { AppBar } from '@opencloud-eu/web-pkg'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
 import {
   isPersonalSpaceResource,
   isProjectSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { FieldType } from '@ownclouders/design-system/helpers'
-import { useFileListHeaderPosition } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-client'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { FieldType } from '@opencloud-eu/design-system/helpers'
+import { useFileListHeaderPosition } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'TrashOverview',

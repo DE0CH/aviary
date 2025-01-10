@@ -5,8 +5,8 @@ import {
   defaultPlugins,
   shallowMount,
   useGetMatchingSpaceMock
-} from '@ownclouders/web-test-helpers'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import AppTopBar from '../../../src/components/AppTopBar.vue'
 import { Action } from '../../../src/composables/actions'
 import { useGetMatchingSpace } from '../../../src/composables/spaces/useGetMatchingSpace'

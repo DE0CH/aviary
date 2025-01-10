@@ -1,9 +1,9 @@
-import { ConfigStore, useAuthStore, useConfigStore } from '@ownclouders/web-pkg'
+import { ConfigStore, useAuthStore, useConfigStore } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { Router } from 'vue-router'
 import { AuthService } from '../../../../src/services/auth/authService'
 import { UserManager } from '../../../../src/services/auth/userManager'
-import { RouteLocation, createRouter, createTestingPinia } from '@ownclouders/web-test-helpers'
+import { RouteLocation, createRouter, createTestingPinia } from '@opencloud-eu/web-test-helpers'
 
 const mockUpdateContext = vi.fn()
 console.debug = vi.fn()

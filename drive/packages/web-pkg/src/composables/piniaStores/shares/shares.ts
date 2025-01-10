@@ -5,7 +5,7 @@ import {
   ShareRole,
   ShareTypes,
   isProjectSpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { defineStore } from 'pinia'
 import { Ref, ref, unref } from 'vue'
 import {
@@ -18,7 +18,7 @@ import {
 } from './types'
 import { useResourcesStore } from '../resources'
 import { useThemeStore } from '../theme'
-import { Permission, UnifiedRoleDefinition } from '@ownclouders/web-client/graph/generated'
+import { Permission, UnifiedRoleDefinition } from '@opencloud-eu/web-client/graph/generated'
 
 export const useSharesStore = defineStore('shares', () => {
   const resourcesStore = useResourcesStore()

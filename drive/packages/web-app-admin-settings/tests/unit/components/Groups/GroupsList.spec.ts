@@ -4,11 +4,11 @@ import {
   defaultPlugins,
   mount,
   shallowMount
-} from '@ownclouders/web-test-helpers'
-import { displayPositionedDropdown, eventBus, queryItemAsString } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { displayPositionedDropdown, eventBus, queryItemAsString } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { useGroupSettingsStore } from '../../../../src/composables'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 const getGroupMocks = () =>
   [
@@ -16,7 +16,7 @@ const getGroupMocks = () =>
     { id: '2', members: [] }
   ] as Group[]
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   displayPositionedDropdown: vi.fn()
@@ -60,7 +60,7 @@ describe('GroupsList', () => {
       const { wrapper } = getWrapper()
 
       expect(
-        wrapper.vm.filter([{ displayName: 'admins' }, { displayName: 'users' }], 'ownClouders')
+        wrapper.vm.filter([{ displayName: 'admins' }, { displayName: 'users' }], 'guests')
       ).toEqual([])
     })
   })

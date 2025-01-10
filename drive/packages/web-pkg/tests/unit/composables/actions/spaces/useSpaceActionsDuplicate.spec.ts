@@ -1,13 +1,13 @@
 import { useSpaceActionsDuplicate } from '../../../../../src/composables/actions/spaces'
-import { AbilityRule, SpaceResource } from '@ownclouders/web-client'
+import { AbilityRule, SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { ListFilesResult } from '@ownclouders/web-client/webdav'
+import { ListFilesResult } from '@opencloud-eu/web-client/webdav'
 import {
   useMessages,
   useResourcesStore,

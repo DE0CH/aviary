@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { navItems } from '../../src/index'
-import { useSpacesStore } from '@ownclouders/web-pkg'
-import { SpaceResource } from '@ownclouders/web-client'
+import { useSpacesStore } from '@opencloud-eu/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 
 describe('Web app files', () => {

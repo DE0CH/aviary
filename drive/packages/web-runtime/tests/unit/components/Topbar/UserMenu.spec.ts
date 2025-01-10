@@ -5,10 +5,10 @@ import {
   mount,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { SpaceResource } from '@ownclouders/web-client'
-import { Quota } from '@ownclouders/web-client/graph/generated'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
 
 const totalQuota = 1000
 const basicQuota = 300

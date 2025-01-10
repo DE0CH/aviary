@@ -4,15 +4,15 @@ COLLABORA_CODE = "collabora/code:24.04.10.2.1"
 CS3ORG_WOPI_SERVER = "cs3org/wopiserver:v10.3.0"
 KEYCLOAK = "quay.io/keycloak/keycloak:25.0.0"
 MINIO_MC = "minio/mc:RELEASE.2021-10-07T04-19-58Z"
-OC_CI_ALPINE = "owncloudci/alpine:latest"
-OC_CI_BAZEL_BUILDIFIER = "owncloudci/bazel-buildifier"
-OC_CI_DRONE_ANSIBLE = "owncloudci/drone-ansible:latest"
-OC_CI_DRONE_SKIP_PIPELINE = "owncloudci/drone-skip-pipeline"
-OC_CI_GOLANG = "owncloudci/golang:1.22"
-OC_CI_HUGO = "owncloudci/hugo:0.115.2"
-OC_CI_NODEJS = "owncloudci/nodejs:20"
-OC_CI_WAIT_FOR = "owncloudci/wait-for:latest"
-OC_UBUNTU = "owncloud/ubuntu:20.04"
+OC_CI_ALPINE = "opencloud-eu/alpine:latest"
+OC_CI_BAZEL_BUILDIFIER = "opencloud-eu/bazel-buildifier"
+OC_CI_DRONE_ANSIBLE = "opencloud-eu/drone-ansible:latest"
+OC_CI_DRONE_SKIP_PIPELINE = "opencloud-eu/drone-skip-pipeline"
+OC_CI_GOLANG = "opencloud-eu/golang:1.22"
+OC_CI_HUGO = "opencloud-eu/hugo:0.115.2"
+OC_CI_NODEJS = "opencloud-eu/nodejs:20"
+OC_CI_WAIT_FOR = "opencloud-eu/wait-for:latest"
+OC_UBUNTU = "opencloud-eu/ubuntu:20.04"
 ONLYOFFICE_DOCUMENT_SERVER = "onlyoffice/documentserver:8.1.3"
 PLUGINS_DOCKER = "plugins/docker:20.14"
 PLUGINS_GH_PAGES = "plugins/gh-pages:1"
@@ -26,20 +26,20 @@ SONARSOURCE_SONAR_SCANNER_CLI = "sonarsource/sonar-scanner-cli:5.0"
 TOOLHIPPIE_CALENS = "toolhippie/calens:latest"
 
 WEB_PUBLISH_NPM_PACKAGES = ["babel-preset", "design-system", "eslint-config", "extension-sdk", "prettier-config", "tsconfig", "web-client", "web-pkg", "web-test-helpers"]
-WEB_PUBLISH_NPM_ORGANIZATION = "@ownclouders"
+WEB_PUBLISH_NPM_ORGANIZATION = "@opencloud-eu"
 
 dir = {
-    "base": "/var/www/owncloud",
-    "web": "/var/www/owncloud/web",
-    "ocis": "/var/www/owncloud/ocis",
-    "commentsFile": "/var/www/owncloud/web/comments.file",
+    "base": "/var/www/opencloud",
+    "web": "/var/www/opencloud/web",
+    "opencloud": "/var/www/opencloud/opencloud",
+    "commentsFile": "/var/www/opencloud/web/comments.file",
     "app": "/srv/app",
-    "ocisConfig": "/var/www/owncloud/web/tests/drone/config-ocis.json",
-    "ocisIdentifierRegistrationConfig": "/var/www/owncloud/web/tests/drone/identifier-registration.yml",
-    "ocisRevaDataRoot": "/srv/app/tmp/ocis/owncloud/data/",
-    "federatedOcisConfig": "/var/www/owncloud/web/tests/drone/config-ocis-federated.json",
-    "ocmProviders": "/var/www/owncloud/web/tests/drone/providers.json",
-    "playwrightBrowsersArchive": "/var/www/owncloud/web/playwright-browsers.tar.gz",
+    "openCloudConfig": "/var/www/opencloud/web/tests/drone/config-opencloud.json",
+    "openCloudIdentifierRegistrationConfig": "/var/www/opencloud/web/tests/drone/identifier-registration.yml",
+    "openCloudRevaDataRoot": "/srv/app/tmp/opencloud/opencloud/data/",
+    "federatedOpenCloudConfig": "/var/www/opencloud/web/tests/drone/config-opencloud-federated.json",
+    "ocmProviders": "/var/www/opencloud/web/tests/drone/providers.json",
+    "playwrightBrowsersArchive": "/var/www/opencloud/web/playwright-browsers.tar.gz",
 }
 
 config = {
@@ -108,7 +108,7 @@ config = {
                 "NATS_NATS_PORT": 9233,
                 "COLLABORA_DOMAIN": "collabora:9980",
                 "ONLYOFFICE_DOMAIN": "onlyoffice:443",
-                "FRONTEND_APP_HANDLER_SECURE_VIEW_APP_ADDR": "com.owncloud.api.collaboration.Collabora",
+                "FRONTEND_APP_HANDLER_SECURE_VIEW_APP_ADDR": "eu.opencloud.api.collaboration.Collabora",
                 "WEB_UI_CONFIG_FILE": None,
             },
         },
@@ -139,8 +139,8 @@ config = {
                 "ocm",
             ],
             "extraServerEnvironment": {
-                "OCIS_ADD_RUN_SERVICES": "ocm",
-                "OCIS_ENABLE_OCM": True,
+                "OC_ADD_RUN_SERVICES": "ocm",
+                "OC_ENABLE_OCM": True,
                 "GRAPH_INCLUDE_OCM_SHAREES": True,
                 "OCM_OCM_INVITE_MANAGER_INSECURE": True,
                 "OCM_OCM_SHARE_PROVIDER_INSECURE": True,
@@ -215,7 +215,7 @@ def beforePipelines(ctx):
            documentation(ctx) + \
            changelog(ctx) + \
            pnpmCache(ctx) + \
-           cacheOcisPipeline(ctx) + \
+           cacheOpenCloudPipeline(ctx) + \
            pipelinesDependsOn(buildCacheWeb(ctx), pnpmCache(ctx)) + \
            pipelinesDependsOn(pnpmlint(ctx), pnpmCache(ctx))
 
@@ -396,8 +396,8 @@ def changelog(ctx):
                     ],
                     "message": "Automated changelog update [skip ci]",
                     "branch": "master",
-                    "author_email": "devops@owncloud.com",
-                    "author_name": "ownClouders",
+                    "author_email": "info@opencloud.eu",
+                    "author_name": "opencloud-eu",
                     "netrc_machine": "github.com",
                     "netrc_username": {
                         "from_secret": "github_username",
@@ -500,7 +500,7 @@ def unitTests(ctx):
                          "name": "clone",
                          "image": ALPINE_GIT,
                          "commands": [
-                                         # Always use the owncloud/web repository as base to have an up to date default branch.
+                                         # Always use the opencloud-eu/web repository as base to have an up to date default branch.
                                          # This is needed for the skipIfUnchanged step, since it references a commit on master (which could be absent on a fork)
                                          "git clone https://github.com/%s.git ." % (ctx.repo.slug),
                                      ] + fork_handling +
@@ -553,7 +553,7 @@ def e2eTests(ctx):
         "name": "gopath",
         "temp": {},
     }, {
-        "name": "ocis-config",
+        "name": "opencloud-config",
         "temp": {},
     }]
 
@@ -603,7 +603,7 @@ def e2eTests(ctx):
             "HEADLESS": "true",
             "RETRY": "1",
             "REPORT_TRACING": params["reportTracing"],
-            "BASE_URL_OCIS": "ocis:9200",
+            "BASE_URL_OC": "opencloud:9200",
             "FAIL_ON_UNCAUGHT_CONSOLE_ERR": "true",
             "PLAYWRIGHT_BROWSERS_PATH": ".playwright",
             "BROWSER": "chromium",
@@ -616,9 +616,9 @@ def e2eTests(ctx):
                 restoreBuildArtifactCache(ctx, "web-dist", "dist")
 
         if ctx.build.event == "cron":
-            steps += restoreBuildArtifactCache(ctx, "ocis", "ocis")
+            steps += restoreBuildArtifactCache(ctx, "opencloud", "opencloud")
         else:
-            steps += restoreOcisCache()
+            steps += restoreOpenCloudCache()
 
         if "app-provider" in suite:
             environment["FAIL_ON_UNCAUGHT_CONSOLE_ERR"] = False
@@ -627,17 +627,17 @@ def e2eTests(ctx):
             steps += collaboraService() + \
                      onlyofficeService() + \
                      waitForServices("online-offices", ["collabora:9980", "onlyoffice:443"]) + \
-                     ocisService(params["extraServerEnvironment"]) + \
+                     openCloudService(params["extraServerEnvironment"]) + \
                      wopiCollaborationService("collabora") + \
                      wopiCollaborationService("onlyoffice") + \
                      waitForServices("wopi", ["wopi-collabora:9300", "wopi-onlyoffice:9300"])
         elif "ocm" in suite:
-            steps += ocisService(params["extraServerEnvironment"]) + \
-                     (ocisService(params["extraServerEnvironment"], "federation") if params["federationServer"] else [])
+            steps += openCloudService(params["extraServerEnvironment"]) + \
+                     (openCloudService(params["extraServerEnvironment"], "federation") if params["federationServer"] else [])
         else:
-            # oCIS specific steps
+            # OpenCloud specific steps
             steps += (tikaService() if params["tikaNeeded"] else []) + \
-                     ocisService(params["extraServerEnvironment"])
+                     openCloudService(params["extraServerEnvironment"])
 
         command = "bash run-e2e.sh "
         if "suites" in matrix:
@@ -666,7 +666,7 @@ def e2eTests(ctx):
             "name": "e2e-tests-%s" % suite,
             "workspace": e2e_workspace,
             "steps": steps,
-            "depends_on": ["cache-ocis"],
+            "depends_on": ["cache-opencloud"],
             "trigger": e2e_trigger,
             "volumes": e2e_volumes,
         })
@@ -758,7 +758,7 @@ def buildDockerImage():
             },
             "auto_tag": True,
             "dockerfile": "docker/Dockerfile",
-            "repo": "owncloud/web",
+            "repo": "opencloud-eu/web",
         },
         "when": {
             "ref": {
@@ -944,47 +944,47 @@ def documentation(ctx):
         },
     ]
 
-def ocisService(extra_env_config = {}, deploy_type = "ocis"):
+def openCloudService(extra_env_config = {}, deploy_type = "opencloud"):
     environment = {
-        "IDM_ADMIN_PASSWORD": "admin",  # override the random admin password from `ocis init`
-        "OCIS_INSECURE": "true",
-        "OCIS_LOG_LEVEL": "error",
-        "OCIS_JWT_SECRET": "some-ocis-jwt-secret",
+        "IDM_ADMIN_PASSWORD": "admin",  # override the random admin password from `opencloud init`
+        "OC_INSECURE": "true",
+        "OC_LOG_LEVEL": "error",
+        "OC_JWT_SECRET": "some-opencloud-jwt-secret",
         "LDAP_GROUP_SUBSTRING_FILTER_TYPE": "any",
         "LDAP_USER_SUBSTRING_FILTER_TYPE": "any",
         "PROXY_ENABLE_BASIC_AUTH": True,
         "WEB_ASSET_CORE_PATH": "%s/dist" % dir["web"],
         "FRONTEND_SEARCH_MIN_LENGTH": "2",
-        "OCIS_PASSWORD_POLICY_BANNED_PASSWORDS_LIST": "%s/tests/drone/banned-passwords.txt" % dir["web"],
+        "OC_PASSWORD_POLICY_BANNED_PASSWORDS_LIST": "%s/tests/drone/banned-passwords.txt" % dir["web"],
         "PROXY_CSP_CONFIG_FILE_LOCATION": "%s/tests/drone/csp.yaml" % dir["web"],
         # Needed for enabling all roles
         "GRAPH_AVAILABLE_ROLES": "b1e2218d-eef8-4d4c-b82d-0f1a1b48f3b5,a8d5fe5e-96e3-418d-825b-534dbdf22b99,fb6c3e19-e378-47e5-b277-9732f9de6e21,58c63c02-1d89-4572-916a-870abc5a1b7d,2d00ce52-1fc2-4dbc-8b95-a73b73395f5a,1c996275-f1c9-4e71-abdf-a42f6495e960,312c0871-5ef7-4b3a-85b6-0e4074c64049,aa97fe03-7980-45ac-9e50-b325749fd7e6,63e64e19-8d43-42ec-a738-2b6af2610efa",
     }
 
     if deploy_type == "federation":
-        environment["OCIS_URL"] = "https://federation-ocis:10200"
-        environment["PROXY_HTTP_ADDR"] = "federation-ocis:10200"
-        environment["WEB_UI_CONFIG_FILE"] = dir["federatedOcisConfig"]
-        container_name = "federation-ocis"
-        ocis_domain = "federation-ocis:10200"
+        environment["OC_URL"] = "https://federation-opencloud:10200"
+        environment["PROXY_HTTP_ADDR"] = "federation-opencloud:10200"
+        environment["WEB_UI_CONFIG_FILE"] = dir["federatedOpenCloudConfig"]
+        container_name = "federation-opencloud"
+        opencloud_domain = "federation-opencloud:10200"
     else:
-        container_name = "ocis"
-        ocis_domain = "ocis:9200"
-        environment["OCIS_URL"] = "https://ocis:9200"
-        environment["WEB_UI_CONFIG_FILE"] = dir["ocisConfig"]
+        container_name = "opencloud"
+        opencloud_domain = "opencloud:9200"
+        environment["OC_URL"] = "https://opencloud:9200"
+        environment["WEB_UI_CONFIG_FILE"] = dir["openCloudConfig"]
 
     for config in extra_env_config:
         environment[config] = extra_env_config[config]
 
-    wait_for_service = waitForServices("ocis", ["ocis:9200"])
-    if "OCIS_EXCLUDE_RUN_SERVICES" not in environment or "idp" not in environment["OCIS_EXCLUDE_RUN_SERVICES"]:
+    wait_for_service = waitForServices("opencloud", ["opencloud:9200"])
+    if "OC_EXCLUDE_RUN_SERVICES" not in environment or "idp" not in environment["OC_EXCLUDE_RUN_SERVICES"]:
         wait_for_service = [
             {
                 "name": "wait-for-%s" % container_name,
                 "image": OC_CI_ALPINE,
                 "commands": [
                     "timeout 300 bash -c 'while [ $(curl -sk -uadmin:admin " +
-                    "%s/graph/v1.0/users/admin " % environment["OCIS_URL"] +
+                    "%s/graph/v1.0/users/admin " % environment["OC_URL"] +
                     "-w %{http_code} -o /dev/null) != 200 ]; do sleep 1; done'",
                 ],
             },
@@ -997,11 +997,11 @@ def ocisService(extra_env_config = {}, deploy_type = "ocis"):
             "detach": True,
             "environment": environment,
             "commands": [
-                "mkdir -p %s" % dir["ocisRevaDataRoot"],
-                "mkdir -p /srv/app/tmp/ocis/storage/users/",
-                "./ocis init",
-                "cp %s/tests/drone/app-registry.yaml /root/.ocis/config/app-registry.yaml" % dir["web"],
-                "./ocis server",
+                "mkdir -p %s" % dir["openCloudRevaDataRoot"],
+                "mkdir -p /srv/app/tmp/opencloud/storage/users/",
+                "./opencloud init",
+                "cp %s/tests/drone/app-registry.yaml /root/.opencloud/config/app-registry.yaml" % dir["web"],
+                "./opencloud server",
             ],
             "volumes": [{
                 "name": "gopath",
@@ -1010,8 +1010,8 @@ def ocisService(extra_env_config = {}, deploy_type = "ocis"):
         },
     ] + wait_for_service
 
-def checkForExistingOcisCache(ctx):
-    web_repo_path = "https://raw.githubusercontent.com/owncloud/web/%s" % ctx.build.commit
+def checkForExistingOpenCloudCache(ctx):
+    web_repo_path = "https://raw.githubusercontent.com/opencloud-eu/web/%s" % ctx.build.commit
     return [
         {
             "name": "check-for-existing-cache",
@@ -1022,27 +1022,27 @@ def checkForExistingOcisCache(ctx):
                 "curl -o script.sh %s/tests/drone/script.sh" % web_repo_path,
                 ". ./.drone.env",
                 "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
-                "mc ls --recursive s3/$CACHE_BUCKET/ocis-build",
-                "bash script.sh check_ocis_cache",
+                "mc ls --recursive s3/$CACHE_BUCKET/opencloud-build",
+                "bash script.sh check_opencloud_cache",
             ],
         },
     ]
 
-def cacheOcisPipeline(ctx):
+def cacheOpenCloudPipeline(ctx):
     steps = []
 
     if ctx.build.event == "cron":
-        steps = getOcislatestCommitId(ctx) + \
-                buildOcis() + \
-                rebuildBuildArtifactCache(ctx, "ocis", "ocis")
+        steps = getOpenCloudlatestCommitId(ctx) + \
+                buildOpenCloud() + \
+                rebuildBuildArtifactCache(ctx, "opencloud", "opencloud")
     else:
-        steps = checkForExistingOcisCache(ctx) + \
-                buildOcis(enableVips = True) + \
-                cacheOcis()
+        steps = checkForExistingOpenCloudCache(ctx) + \
+                buildOpenCloud(enableVips = True) + \
+                cacheOpenCloud()
     return [{
         "kind": "pipeline",
         "type": "docker",
-        "name": "cache-ocis",
+        "name": "cache-opencloud",
         "workspace": web_workspace,
         "clone": {
             "disable": True,
@@ -1062,78 +1062,78 @@ def cacheOcisPipeline(ctx):
         },
     }]
 
-def restoreOcisCache():
+def restoreOpenCloudCache():
     return [{
-        "name": "restore-ocis-cache",
+        "name": "restore-opencloud-cache",
         "image": MINIO_MC,
         "environment": minio_mc_environment,
         "commands": [
             ". ./.drone.env",
             "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
-            "mc cp -r -a s3/$CACHE_BUCKET/ocis-build/$OCIS_COMMITID/ocis %s" % dir["web"],
+            "mc cp -r -a s3/$CACHE_BUCKET/opencloud-build/$OPENCLOUD_COMMITID/opencloud %s" % dir["web"],
         ],
     }]
 
-def buildOcis(enableVips = False):
-    ocis_repo_url = "https://github.com/owncloud/ocis.git"
+def buildOpenCloud(enableVips = False):
+    opencloud_repo_url = "https://github.com/opencloud-eu/opencloud.git"
     if enableVips:
         build_command = "retry -t 3 'make build ENABLE_VIPS=1'"
     else:
         build_command = "retry -t 3 'make build'"
     return [
         {
-            "name": "clone-ocis",
+            "name": "clone-opencloud",
             "image": OC_CI_GOLANG,
             "commands": [
                 "source .drone.env",
-                # NOTE: it is important to not start repo name with ocis*
-                # because we copy ocis binary to root workspace
-                # and upload binary <workspace>/ocis to cache bucket.
-                # This prevents accidental upload of ocis repo to the cache
-                "git clone -b $OCIS_BRANCH --single-branch %s repo_ocis" % ocis_repo_url,
-                "cd repo_ocis",
-                "git checkout $OCIS_COMMITID",
+                # NOTE: it is important to not start repo name with opencloud*
+                # because we copy opencloud binary to root workspace
+                # and upload binary <workspace>/opencloud to cache bucket.
+                # This prevents accidental upload of opencloud repo to the cache
+                "git clone -b $OPENCLOUD_BRANCH --single-branch %s repo_opencloud" % opencloud_repo_url,
+                "cd repo_opencloud",
+                "git checkout $OPENCLOUD_COMMITID",
             ],
             "volumes": go_step_volumes,
         },
         {
-            "name": "generate-ocis",
+            "name": "generate-opencloud",
             "image": OC_CI_NODEJS,
             "commands": [
-                "cd repo_ocis",
+                "cd repo_opencloud",
                 "retry -t 3 'make ci-node-generate'",
             ],
             "volumes": go_step_volumes,
         },
         {
-            "name": "build-ocis",
+            "name": "build-opencloud",
             "image": OC_CI_GOLANG,
             "commands": [
                 "source .drone.env",
-                "cd repo_ocis/ocis",
+                "cd repo_opencloud/opencloud",
                 build_command,
-                "cp bin/ocis %s" % dir["web"],
+                "cp bin/opencloud %s" % dir["web"],
             ],
             "volumes": go_step_volumes,
         },
     ]
 
-def cacheOcis():
+def cacheOpenCloud():
     return [{
-        "name": "upload-ocis-cache",
+        "name": "upload-opencloud-cache",
         "image": MINIO_MC,
         "environment": minio_mc_environment,
         "commands": [
             ". ./.drone.env",
             "mc alias set s3 $MC_HOST $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY",
-            "mc cp -a %s/ocis s3/$CACHE_BUCKET/ocis-build/$OCIS_COMMITID/" % dir["web"],
-            "mc ls --recursive s3/$CACHE_BUCKET/ocis-build",
+            "mc cp -a %s/opencloud s3/$CACHE_BUCKET/opencloud-build/$OPENCLOUD_COMMITID/" % dir["web"],
+            "mc ls --recursive s3/$CACHE_BUCKET/opencloud-build",
         ],
     }]
 
 def example_deploys(ctx):
     on_merge_deploy = [
-        "ocis_web/master.yml",
+        "opencloud_web/master.yml",
     ]
     nightly_deploy = []
 
@@ -1170,7 +1170,7 @@ def deploy(ctx, config, rebuild):
                 "image": ALPINE_GIT,
                 "commands": [
                     "cd deployments/continuous-deployment-config",
-                    "git clone https://github.com/owncloud-devops/continuous-deployment.git",
+                    "git clone https://github.com/opencloud-eu/continuous-deployment.git",
                 ],
             },
             {
@@ -1590,7 +1590,7 @@ def logTracingResult(ctx, suite):
         "commands": [
             "cd %s/reports/e2e/playwright/tracing/" % dir["web"],
             'echo "To see the trace, please open the following link in the console"',
-            'for f in *.zip; do echo "npx playwright show-trace https://cache.owncloud.com/public/${DRONE_REPO}/${DRONE_BUILD_NUMBER}/tracing/$f \n"; done',
+            'for f in *.zip; do echo "npx playwright show-trace https://cache.opencloud.eu/public/${DRONE_REPO}/${DRONE_BUILD_NUMBER}/tracing/$f \n"; done',
         ],
         "when": {
             "status": status,
@@ -1624,7 +1624,7 @@ def collaboraService():
             "detach": True,
             "environment": {
                 "DONT_GEN_SSL_CERT": "set",
-                "extra_params": "--o:ssl.enable=true --o:ssl.termination=true --o:welcome.enable=false --o:net.frame_ancestors=https://ocis:9200",
+                "extra_params": "--o:ssl.enable=true --o:ssl.termination=true --o:welcome.enable=false --o:net.frame_ancestors=https://opencloud:9200",
             },
             "commands": [
                 "coolconfig generate-proof-key",
@@ -1660,12 +1660,12 @@ def wopiCollaborationService(name):
     service_name = "wopi-%s" % name
     environment = {
         "MICRO_REGISTRY": "nats-js-kv",
-        "MICRO_REGISTRY_ADDRESS": "ocis:9233",
+        "MICRO_REGISTRY_ADDRESS": "opencloud:9233",
         "COLLABORATION_GRPC_ADDR": "0.0.0.0:9301",
         "COLLABORATION_HTTP_ADDR": "0.0.0.0:9300",
         "COLLABORATION_APP_INSECURE": True,
         "COLLABORATION_CS3API_DATAGATEWAY_INSECURE": True,
-        "OCIS_JWT_SECRET": "some-ocis-jwt-secret",
+        "OC_JWT_SECRET": "some-opencloud-jwt-secret",
         "COLLABORATION_WOPI_SECRET": "some-wopi-secret",
     }
 
@@ -1688,7 +1688,7 @@ def wopiCollaborationService(name):
             "detach": True,
             "environment": environment,
             "commands": [
-                "./ocis collaboration server",
+                "./opencloud collaboration server",
             ],
         },
     ]
@@ -1698,7 +1698,7 @@ def buildDesignSystemDocs():
         "name": "build-design-system-docs",
         "image": OC_CI_NODEJS,
         "commands": [
-            "pnpm --filter @ownclouders/design-system build:docs",
+            "pnpm --filter @opencloud-eu/design-system build:docs",
         ],
     }]
 
@@ -1762,7 +1762,7 @@ def keycloakService():
                "image": KEYCLOAK,
                "detach": True,
                "environment": {
-                   "OCIS_DOMAIN": "ocis:9200",
+                   "OC_DOMAIN": "opencloud:9200",
                    "KC_HOSTNAME": "keycloak",
                    "KC_PORT": 8443,
                    "KC_DB": "postgres",
@@ -1777,7 +1777,7 @@ def keycloakService():
                },
                "commands": [
                    "mkdir -p /opt/keycloak/data/import",
-                   "cp tests/drone/ocis_keycloak/ocis-ci-realm.dist.json /opt/keycloak/data/import/ocis-realm.json",
+                   "cp tests/drone/opencloud_keycloak/opencloud-ci-realm.dist.json /opt/keycloak/data/import/opencloud-realm.json",
                    "/opt/keycloak/bin/kc.sh start-dev --proxy-headers xforwarded --spi-connections-http-client-default-disable-trust-manager=true --import-realm --health-enabled=true",
                ],
                "volumes": [
@@ -1816,7 +1816,7 @@ def e2eTestsOnKeycloak(ctx):
             "temp": {},
         },
         {
-            "name": "ocis-config",
+            "name": "opencloud-config",
             "temp": {},
         },
         {
@@ -1834,33 +1834,33 @@ def e2eTestsOnKeycloak(ctx):
             keycloakService() + \
             restoreBuildArtifactCache(ctx, "web-dist", "dist")
     if ctx.build.event == "cron":
-        steps += restoreBuildArtifactCache(ctx, "ocis", "ocis")
+        steps += restoreBuildArtifactCache(ctx, "opencloud", "opencloud")
     else:
-        steps += restoreOcisCache()
+        steps += restoreOpenCloudCache()
 
-    # configs to setup ocis with keycloak
+    # configs to setup opencloud with keycloak
     environment = {
         "PROXY_AUTOPROVISION_ACCOUNTS": "true",
         "PROXY_ROLE_ASSIGNMENT_DRIVER": "oidc",
-        "OCIS_OIDC_ISSUER": "https://keycloak:8443/realms/oCIS",
+        "OC_OIDC_ISSUER": "https://keycloak:8443/realms/OpenCloud",
         "PROXY_OIDC_REWRITE_WELLKNOWN": "true",
         "WEB_OIDC_CLIENT_ID": "web",
         "PROXY_USER_OIDC_CLAIM": "preferred_username",
         "PROXY_USER_CS3_CLAIM": "username",
-        "OCIS_ADMIN_USER_ID": "",
-        "OCIS_EXCLUDE_RUN_SERVICES": "idp",
+        "OC_ADMIN_USER_ID": "",
+        "OC_EXCLUDE_RUN_SERVICES": "idp",
         "GRAPH_ASSIGN_DEFAULT_USER_ROLE": "false",
         "GRAPH_USERNAME_MATCH": "none",
         "KEYCLOAK_DOMAIN": "keycloak:8443",
     }
 
-    steps += ocisService(environment) + \
+    steps += openCloudService(environment) + \
              [
                  {
                      "name": "e2e-tests",
                      "image": OC_CI_NODEJS,
                      "environment": {
-                         "BASE_URL_OCIS": "ocis:9200",
+                         "BASE_URL_OC": "opencloud:9200",
                          "HEADLESS": "true",
                          "RETRY": "1",
                          "REPORT_TRACING": "with-tracing" in ctx.build.title.lower(),
@@ -1896,17 +1896,17 @@ def e2eTestsOnKeycloak(ctx):
         },
     }]
 
-def getOcislatestCommitId(ctx):
-    web_repo_path = "https://raw.githubusercontent.com/owncloud/web/%s" % ctx.build.commit
+def getOpenCloudlatestCommitId(ctx):
+    web_repo_path = "https://raw.githubusercontent.com/opencloud-eu/web/%s" % ctx.build.commit
     return [
         {
-            "name": "get-ocis-latest-commit-id",
+            "name": "get-opencloud-latest-commit-id",
             "image": OC_CI_ALPINE,
             "commands": [
                 "curl -o .drone.env %s/.drone.env" % web_repo_path,
                 "curl -o script.sh %s/tests/drone/script.sh" % web_repo_path,
                 ". ./.drone.env",
-                "bash script.sh get_latest_ocis_commit_id",
+                "bash script.sh get_latest_opencloud_commit_id",
             ],
         },
     ]

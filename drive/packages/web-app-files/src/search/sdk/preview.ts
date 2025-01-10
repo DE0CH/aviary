@@ -1,7 +1,7 @@
-import { ConfigStore, SearchFunction, SearchPreview, SearchResult } from '@ownclouders/web-pkg'
+import { ConfigStore, SearchFunction, SearchPreview, SearchResult } from '@opencloud-eu/web-pkg'
 import { Component, unref } from 'vue'
 import { Router } from 'vue-router'
-import { ResourcePreview } from '@ownclouders/web-pkg'
+import { ResourcePreview } from '@opencloud-eu/web-pkg'
 
 export const previewSearchLimit = 8
 

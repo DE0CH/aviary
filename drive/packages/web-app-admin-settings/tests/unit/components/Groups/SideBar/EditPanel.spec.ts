@@ -4,10 +4,10 @@ import {
   defaultPlugins,
   mockAxiosReject,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { eventBus, useMessages } from '@ownclouders/web-pkg'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { eventBus, useMessages } from '@opencloud-eu/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 describe('EditPanel', () => {
   it('renders all available inputs', () => {

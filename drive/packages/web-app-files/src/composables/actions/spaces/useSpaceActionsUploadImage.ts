@@ -1,5 +1,5 @@
 import { computed, unref, VNodeRef } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   useClientService,
   useLoadingService,
@@ -9,11 +9,11 @@ import {
   useSpacesStore,
   useSpaceHelpers,
   useSharesStore
-} from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { SpaceAction, SpaceActionOptions } from '@ownclouders/web-pkg'
-import { useCreateSpace } from '@ownclouders/web-pkg'
+import { SpaceAction, SpaceActionOptions } from '@opencloud-eu/web-pkg'
+import { useCreateSpace } from '@opencloud-eu/web-pkg'
 
 export const useSpaceActionsUploadImage = ({ spaceImageInput }: { spaceImageInput: VNodeRef }) => {
   const userStore = useUserStore()

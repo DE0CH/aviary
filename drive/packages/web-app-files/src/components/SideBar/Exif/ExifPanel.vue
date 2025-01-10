@@ -41,8 +41,8 @@
 
 <script lang="ts">
 import { computed, defineComponent, inject, Ref, unref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { formatDateFromISO, useMessages } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { formatDateFromISO, useMessages } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { useClipboard } from '@vueuse/core'
 

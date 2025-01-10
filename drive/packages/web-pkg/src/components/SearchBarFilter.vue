@@ -18,7 +18,7 @@
             size="medium"
             justify-content="space-between"
             class="search-bar-filter-item oc-flex oc-flex-middle oc-width-1-1 oc-py-xs oc-px-s"
-            :class="{ 'oc-mt-s': isIndexGreaterZero(index) }"
+            :class="{ 'oc-background-highlight': option.id === currentSelection.id }"
             :disabled="!option.enabled"
             :data-test-id="option.id"
             @click="onOptionSelected(option)"
@@ -73,10 +73,6 @@ export default defineComponent({
       }
     ])
 
-    const isIndexGreaterZero = (index: number): boolean => {
-      return index > 0
-    }
-
     watch(
       () => props.currentFolderAvailable,
       () => {
@@ -124,7 +120,6 @@ export default defineComponent({
     return {
       currentSelection,
       currentSelectionTitle,
-      isIndexGreaterZero,
       onOptionSelected,
       locationOptions
     }
@@ -142,7 +137,13 @@ export default defineComponent({
   }
 }
 .search-bar-filter-item {
-  &:hover {
+  margin-top: var(--oc-space-xsmall);
+
+  &:first-child {
+    margin-top: 0;
+  }
+
+  &:hover:not(.oc-background-highlight):not(:disabled) {
     background-color: var(--oc-color-background-hover) !important;
   }
 }

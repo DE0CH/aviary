@@ -1,13 +1,13 @@
-import { ActionExtension, useEmbedMode } from '@ownclouders/web-pkg'
+import { ActionExtension, useEmbedMode } from '@opencloud-eu/web-pkg'
 import QuickActions from '../../../../src/components/FilesList/QuickActions.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { useExtensionRegistry } from '@ownclouders/web-pkg'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { useExtensionRegistry } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { quickActionsExtensionPoint } from '../../../../src/extensionPoints'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useEmbedMode: vi.fn()
 }))

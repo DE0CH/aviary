@@ -1,8 +1,8 @@
 import LoadingIndicator from '../../../src/components/LoadingIndicator.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { LoadingService } from '../../../src/services'
-import { OcProgress } from '@ownclouders/design-system/components'
+import { OcProgress } from '@opencloud-eu/design-system/components'
 
 const selectors = {
   loadingIndicator: '#oc-loading-indicator',

@@ -1,9 +1,9 @@
 import { computed, unref } from 'vue'
 import { useAbility } from '../ability'
 import { useCapabilityStore } from '../piniaStores'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import { useGettext } from 'vue3-gettext'
-import { ShareRole } from '@ownclouders/web-client'
+import { ShareRole } from '@opencloud-eu/web-client'
 
 export const useLinkTypes = () => {
   const { $gettext } = useGettext()

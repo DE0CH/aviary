@@ -1,15 +1,15 @@
 import { DateTime } from 'luxon'
 import FileVersions from '../../../../../src/components/SideBar/Versions/FileVersions.vue'
-import { defaultComponentMocks, defaultStubs } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultStubs } from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { ShareResource, ShareSpaceResource } from '@ownclouders/web-client'
-import { DavPermission } from '@ownclouders/web-client/webdav'
-import { defaultPlugins, mount, shallowMount } from '@ownclouders/web-test-helpers'
-import { useDownloadFile, useResourcesStore } from '@ownclouders/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { ShareResource, ShareSpaceResource } from '@opencloud-eu/web-client'
+import { DavPermission } from '@opencloud-eu/web-client/webdav'
+import { defaultPlugins, mount, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { useDownloadFile, useResourcesStore } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useDownloadFile: vi.fn()
 }))

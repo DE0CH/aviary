@@ -1,4 +1,4 @@
-import { useMessages } from '@ownclouders/web-pkg'
+import { useMessages } from '@opencloud-eu/web-pkg'
 import { useGeneralActionsUploadLogo } from '../../../../../src/composables/actions/general/useGeneralActionsUploadLogo'
 import { mock } from 'vitest-mock-extended'
 import { VNodeRef } from 'vue'
@@ -8,7 +8,7 @@ import {
   mockAxiosResolve,
   mockAxiosReject,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 describe('uploadImage', () => {
   beforeEach(() => {

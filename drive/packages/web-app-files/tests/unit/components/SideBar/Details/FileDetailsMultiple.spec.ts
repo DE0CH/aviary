@@ -1,6 +1,7 @@
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import FileDetailsMultiple from '../../../../../src/components/SideBar/Details/FileDetailsMultiple.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { OcDefinitionList } from '@opencloud-eu/design-system/components'
 
 const selectors = {
   selectedFilesText: '[data-testid="selectedFilesText"]',
@@ -41,24 +42,33 @@ const fileB = {
 describe('Details Multiple Selection SideBar Item', () => {
   it('should display information for two selected folders', () => {
     const { wrapper } = createWrapper([folderA, folderB])
+    const definitionList = wrapper.findComponent<typeof OcDefinitionList>('oc-definition-list-stub')
+    const items = definitionList.props('items')
+
     expect(wrapper.find(selectors.selectedFilesText).text()).toBe('2 items selected')
-    expect(wrapper.find(selectors.filesCount).text()).toBe('Files 0')
-    expect(wrapper.find(selectors.foldersCount).text()).toBe('Folders 2')
-    expect(wrapper.find(selectors.size).text()).toBe('Size 1 kB')
+    expect(items.find(({ term }) => term === 'Files').definition).toBe(0)
+    expect(items.find(({ term }) => term === 'Folders').definition).toBe(2)
+    expect(items.find(({ term }) => term === 'Size').definition).toBe('1 kB')
   })
   it('should display information for two selected files', () => {
     const { wrapper } = createWrapper([fileA, fileB])
+    const definitionList = wrapper.findComponent<typeof OcDefinitionList>('oc-definition-list-stub')
+    const items = definitionList.props('items')
+
     expect(wrapper.find(selectors.selectedFilesText).text()).toBe('2 items selected')
-    expect(wrapper.find(selectors.filesCount).text()).toBe('Files 2')
-    expect(wrapper.find(selectors.foldersCount).text()).toBe('Folders 0')
-    expect(wrapper.find(selectors.size).text()).toBe('Size 1 kB')
+    expect(items.find(({ term }) => term === 'Files').definition).toBe(2)
+    expect(items.find(({ term }) => term === 'Folders').definition).toBe(0)
+    expect(items.find(({ term }) => term === 'Size').definition).toBe('1 kB')
   })
   it('should display information for one selected file, one selected folder', () => {
     const { wrapper } = createWrapper([fileA, folderA])
+    const definitionList = wrapper.findComponent<typeof OcDefinitionList>('oc-definition-list-stub')
+    const items = definitionList.props('items')
+
     expect(wrapper.find(selectors.selectedFilesText).text()).toBe('2 items selected')
-    expect(wrapper.find(selectors.filesCount).text()).toBe('Files 1')
-    expect(wrapper.find(selectors.foldersCount).text()).toBe('Folders 1')
-    expect(wrapper.find(selectors.size).text()).toBe('Size 1 kB')
+    expect(items.find(({ term }) => term === 'Files').definition).toBe(1)
+    expect(items.find(({ term }) => term === 'Folders').definition).toBe(1)
+    expect(items.find(({ term }) => term === 'Size').definition).toBe('1 kB')
   })
 })
 

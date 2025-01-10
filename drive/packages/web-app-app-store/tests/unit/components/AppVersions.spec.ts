@@ -1,6 +1,6 @@
 import { App, AppVersion } from '../../../src/types'
 import AppVersions from '../../../src/components/AppVersions.vue'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 
 const version1: AppVersion = {
@@ -10,12 +10,12 @@ const version1: AppVersion = {
 const version2: AppVersion = {
   url: 'https://wololo.com/download-1.1.0.zip',
   version: '1.1.0',
-  minOCIS: '6.5.0'
+  minOpenCloud: '6.5.0'
 }
 const version3: AppVersion = {
   url: 'https://wololo.com/download-1.1.1.zip',
   version: '1.1.1',
-  minOCIS: '6.5.0'
+  minOpenCloud: '6.5.0'
 }
 const version4: AppVersion = {
   url: 'wololo',
@@ -23,7 +23,7 @@ const version4: AppVersion = {
 }
 const version5: AppVersion = {
   url: 'https://wololo.com/download-1.3.0.zip',
-  minOCIS: '6.5.0'
+  minOpenCloud: '6.5.0'
 }
 const validVersions = [version1, version2, version3]
 const versions = [...validVersions, version4, version5]
@@ -32,7 +32,7 @@ const mostRecentVersion = version2
 const selectors = {
   versionRow: 'tbody tr',
   tableCellVersion: '.oc-table-data-cell-version',
-  tableCellMinOCIS: '.oc-table-data-cell-minOCIS',
+  tableCellMinOpenCloud: '.oc-table-data-cell-minOpenCloud',
   tableCellActions: '.oc-table-data-cell-actions',
   downloadButton: '[data-testid="action-handler"]'
 }
@@ -62,16 +62,16 @@ describe('AppVersions.vue', () => {
       }
     })
   })
-  it('renders the minimum required ocis version if present or "-" if not', () => {
+  it('renders the minimum required OpenCloud version if present or "-" if not', () => {
     const { wrapper } = getWrapper()
     const rows = wrapper.findAll(selectors.versionRow)
     rows.forEach((row, index) => {
-      const minOCISCell = row.find(selectors.tableCellMinOCIS)
-      expect(minOCISCell.exists()).toBeTruthy()
-      if (versions[index].minOCIS) {
-        expect(minOCISCell.text()).toBe(`v${versions[index].minOCIS}`)
+      const minOpenCloudCell = row.find(selectors.tableCellMinOpenCloud)
+      expect(minOpenCloudCell.exists()).toBeTruthy()
+      if (versions[index].minOpenCloud) {
+        expect(minOpenCloudCell.text()).toBe(`v${versions[index].minOpenCloud}`)
       } else {
-        expect(minOCISCell.text()).toBe('-')
+        expect(minOpenCloudCell.text()).toBe('-')
       }
     })
   })

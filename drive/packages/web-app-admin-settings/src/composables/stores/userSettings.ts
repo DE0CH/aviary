@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 export const useUserSettingsStore = defineStore('userSettings', () => {
   const users = ref<User[]>([])

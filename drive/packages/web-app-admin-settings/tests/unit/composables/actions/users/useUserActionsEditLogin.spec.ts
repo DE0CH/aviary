@@ -1,9 +1,9 @@
 import { useUserActionsEditLogin } from '../../../../../src/composables/actions/users/useUserActionsEditLogin'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { getComposableWrapper, writable } from '@ownclouders/web-test-helpers'
-import { useCapabilityStore, useModals } from '@ownclouders/web-pkg'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { getComposableWrapper, writable } from '@opencloud-eu/web-test-helpers'
+import { useCapabilityStore, useModals } from '@opencloud-eu/web-pkg'
 
 describe('useUserActionsEditLogin', () => {
   describe('method "isVisible"', () => {

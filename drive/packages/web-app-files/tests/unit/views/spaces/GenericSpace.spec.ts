@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import GenericSpace from '../../../../src/views/spaces/GenericSpace.vue'
 import { useResourcesViewDefaults } from '../../../../src/composables/resourcesViewDefaults'
 import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
@@ -12,16 +12,16 @@ import {
   RouteLocation,
   ComponentProps,
   PartialComponentProps
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import {
   AppBar,
   FolderViewExtension,
   useBreadcrumbsFromPath,
   useExtensionRegistry
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useBreadcrumbsFromPathMock } from '../../../mocks/useBreadcrumbsFromPathMock'
 import { h } from 'vue'
-import { BreadcrumbItem } from '@ownclouders/design-system/helpers'
+import { BreadcrumbItem } from '@opencloud-eu/design-system/helpers'
 import {
   folderViewsFavoritesExtensionPoint,
   folderViewsFolderExtensionPoint,
@@ -33,7 +33,7 @@ const mockUseEmbedMode = vi.fn().mockReturnValue({ isEnabled: computed(() => fal
 
 vi.mock('../../../../src/composables/resourcesViewDefaults')
 vi.mock('../../../../src/composables/keyboardActions')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useBreadcrumbsFromPath: vi.fn(),
   useFileActionsCreateNewFolder: () => ({
@@ -289,7 +289,7 @@ function getMountedWrapper({
 
   const extensions = [
     {
-      id: 'com.github.owncloud.web.files.folder-view.resource-table',
+      id: 'com.github.opencloud-eu.web.files.folder-view.resource-table',
       type: 'folderView',
       extensionPointIds: [
         folderViewsFolderExtensionPoint.id,

@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { UserAction, useModals, useCapabilityStore, UserActionOptions } from '@ownclouders/web-pkg'
+import { UserAction, useModals, useCapabilityStore, UserActionOptions } from '@opencloud-eu/web-pkg'
 import LoginModal from '../../../components/Users/LoginModal.vue'
 
 export const useUserActionsEditLogin = () => {

@@ -175,7 +175,6 @@ Feature: link
       | simple.pdf | file |
     When "Brian" opens the public link "imageLink"
     And "Brian" unlocks the public link with password "%public%"
-    # https://github.com/owncloud/ocis/issues/8602
     Then "Brian" is in a media-viewer
     And "Brian" closes the file viewer
     And "Brian" downloads the following public link resources using the single share view
@@ -187,7 +186,6 @@ Feature: link
     And "Carol" logs in
     When "Carol" opens the public link "folderLink"
     And "Carol" unlocks the public link with password "%public%"
-    # https://github.com/owncloud/web/issues/10473
     And "Carol" downloads the following public link resources using the sidebar panel
       | resource  | type |
       | lorem.txt | file |
@@ -211,7 +209,6 @@ Feature: link
       | simple.pdf | file |
     When "Carol" opens the public link "imageLink"
     And "Carol" unlocks the public link with password "%public%"
-    # https://github.com/owncloud/ocis/issues/8602
     Then "Carol" is in a media-viewer
     And "Carol" closes the file viewer
     And "Carol" downloads the following public link resources using the single share view
@@ -245,7 +242,6 @@ Feature: link
       | simple.pdf | file |
     When "Anonymous" opens the public link "imageLink"
     And "Anonymous" unlocks the public link with password "%public%"
-    # https://github.com/owncloud/ocis/issues/8602
     Then "Anonymous" is in a media-viewer
     And "Anonymous" closes the file viewer
     And "Anonymous" downloads the following public link resources using the single share view
@@ -267,13 +263,13 @@ Feature: link
     And "Alice" creates a public link of following resource using the sidebar panel
       | resource  | password |
       | lorem.txt | %public% |
-    When "Alice" tries to sets a new password "ownCloud-1" of the public link named "Unnamed link" of resource "lorem.txt"
+    When "Alice" tries to sets a new password "OpenCloud-1" of the public link named "Unnamed link" of resource "lorem.txt"
     Then "Alice" should see an error message
       """
       Unfortunately, your password is commonly used. please pick a harder-to-guess password for your safety
       """
     And "Alice" closes the public link password dialog box
-    When "Alice" tries to sets a new password "ownCloud-1" of the public link named "Unnamed link" of resource "lorem.txt"
+    When "Alice" tries to sets a new password "OpenCloud-1" of the public link named "Unnamed link" of resource "lorem.txt"
     Then "Alice" should see an error message
       """
       Unfortunately, your password is commonly used. please pick a harder-to-guess password for your safety

@@ -5,11 +5,11 @@ import {
   useMessages,
   useModals,
   useRouteQuery
-} from '@ownclouders/web-pkg'
-import { useClientService } from '@ownclouders/web-pkg'
-import { UserAction, UserActionOptions } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { useClientService } from '@opencloud-eu/web-pkg'
+import { UserAction, UserActionOptions } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { useUserSettingsStore } from '../../stores/userSettings'
 
 export const useUserActionsDelete = () => {

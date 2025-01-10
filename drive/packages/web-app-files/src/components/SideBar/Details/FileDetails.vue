@@ -27,21 +27,17 @@
         <oc-status-indicators :resource="resource" :indicators="shareIndicators" />
         <p class="oc-my-rm oc-mx-s" v-text="detailSharingInformation" />
       </div>
-      <table
-        class="details-table oc-width-1-1"
+      <dl
+        class="details-list oc-m-rm"
         :aria-label="$gettext('Overview of the information about the selected file')"
       >
-        <col class="oc-width-1-3" />
-        <col class="oc-width-2-3" />
-        <tr v-if="hasDeletionDate" data-testid="delete-timestamp">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Deleted at')" />
-          <td>
-            <span v-text="capitalizedDeletionDate"></span>
-          </td>
-        </tr>
-        <tr v-if="hasTimestamp" data-testid="timestamp">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Last modified')" />
-          <td>
+        <template v-if="hasDeletionDate">
+          <dt>{{ $gettext('Deleted at') }}</dt>
+          <dd data-testid="delete-timestamp">{{ capitalizedTimestamp }}</dd>
+        </template>
+        <template v-if="hasTimestamp">
+          <dt>{{ $gettext('Last modified') }}</dt>
+          <dd data-testid="timestamp">
             <oc-button
               v-if="showVersions"
               v-oc-tooltip="seeVersionsLabel"
@@ -52,49 +48,44 @@
               {{ capitalizedTimestamp }}
             </oc-button>
             <span v-else v-text="capitalizedTimestamp" />
-          </td>
-        </tr>
-        <tr v-if="resource.locked" data-testid="locked-by">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Locked via')" />
-          <td>
+          </dd>
+        </template>
+        <template v-if="resource.locked">
+          <dt>{{ $gettext('Locked via') }}</dt>
+          <dd data-testid="locked-by">
             <span>{{ resource.lockOwner }}</span>
             <span v-if="resource.lockTime">({{ formatDateRelative(resource.lockTime) }})</span>
-          </td>
-        </tr>
-        <tr v-if="showSharedVia" data-testid="shared-via">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Shared via')" />
-          <td>
+          </dd>
+        </template>
+        <template v-if="showSharedVia">
+          <dt>{{ $gettext('Shared via') }}</dt>
+          <dd data-testid="shared-via">
             <router-link :to="sharedAncestorRoute">
               <span v-oc-tooltip="sharedViaTooltip" v-text="sharedAncestor.path" />
             </router-link>
-          </td>
-        </tr>
-        <tr v-if="showSharedBy" data-testid="shared-by">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Shared by')" />
-          <td>
-            <span v-text="sharedByDisplayNames" />
-          </td>
-        </tr>
-        <tr
-          v-if="ownerDisplayName && ownerDisplayName !== sharedByDisplayNames"
-          data-testid="ownerDisplayName"
-        >
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Owner')" />
-          <td>
+          </dd>
+        </template>
+        <template v-if="showSharedBy">
+          <dt>{{ $gettext('Shared by') }}</dt>
+          <dd data-testid="shared-by">{{ sharedByDisplayNames }}</dd>
+        </template>
+        <template v-if="ownerDisplayName && ownerDisplayName !== sharedByDisplayNames">
+          <dt>{{ $gettext('Owner') }}</dt>
+          <dd data-testid="ownerDisplayName">
             <p class="oc-m-rm">
               {{ ownerDisplayName }}
               <span v-if="ownedByCurrentUser" v-translate>(me)</span>
             </p>
-          </td>
-        </tr>
-        <tr v-if="showSize" data-testid="sizeInfo">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Size')" />
-          <td v-text="resourceSize" />
-        </tr>
+          </dd>
+        </template>
+        <template v-if="showSize">
+          <dt>{{ $gettext('Size') }}</dt>
+          <dd data-testid="sizeInfo">{{ resourceSize }}</dd>
+        </template>
         <web-dav-details v-if="showWebDavDetails" :space="space" />
-        <tr v-if="showVersions" data-testid="versionsInfo">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Versions')" />
-          <td>
+        <template v-if="showVersions">
+          <dt>{{ $gettext('Version') }}</dt>
+          <dd data-testid="versionsInfo">
             <oc-button
               v-oc-tooltip="seeVersionsLabel"
               appearance="raw"
@@ -103,27 +94,27 @@
             >
               {{ versions.length }}
             </oc-button>
-          </td>
-        </tr>
+          </dd>
+        </template>
         <portal-target
           name="app.files.sidebar.file.details.table"
           :slot-props="{ space, resource }"
           :multiple="true"
         />
-        <tr v-if="hasTags" data-testid="tags">
-          <th scope="col" class="oc-pr-s oc-font-semibold">
+        <template v-if="hasTags">
+          <dt>
             {{ $gettext('Tags') }}
             <oc-contextual-helper
               v-if="contextualHelper?.isEnabled"
               v-bind="contextualHelper?.data"
               class="oc-pl-xs"
             ></oc-contextual-helper>
-          </th>
-          <td>
-            <tags-select :resource="resource"></tags-select>
-          </td>
-        </tr>
-      </table>
+          </dt>
+          <dd data-testid="tags">
+            <tags-select :resource="resource" class="oc-width-1"></tags-select>
+          </dd>
+        </template>
+      </dl>
     </div>
     <p v-else data-testid="noContentText" v-text="$gettext('No information to display')" />
   </div>
@@ -141,31 +132,31 @@ import {
   formatDateFromJSDate,
   useResourceContents,
   useLoadPreview
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import upperFirst from 'lodash-es/upperFirst'
 import {
   isShareResource,
   isShareSpaceResource,
   isTrashResource,
   ShareTypes
-} from '@ownclouders/web-client'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
-import { getIndicators } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-client'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { getIndicators } from '@opencloud-eu/web-pkg'
 import {
   formatDateFromHTTP,
   formatFileSize,
   formatRelativeDateFromJSDate
-} from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
-import { getSharedAncestorRoute } from '@ownclouders/web-pkg'
-import { ResourceIcon } from '@ownclouders/web-pkg'
+import { getSharedAncestorRoute } from '@opencloud-eu/web-pkg'
+import { ResourceIcon } from '@opencloud-eu/web-pkg'
 import { tagsHelper } from '../../../helpers/contextualHelpers'
-import { ContextualHelper } from '@ownclouders/design-system/helpers'
+import { ContextualHelper } from '@opencloud-eu/design-system/helpers'
 import TagsSelect from './TagsSelect.vue'
-import { WebDavDetails } from '@ownclouders/web-pkg'
+import { WebDavDetails } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'FileDetails',
@@ -401,15 +392,6 @@ export default defineComponent({
 })
 </script>
 <style lang="scss" scoped>
-.details-table {
-  text-align: left;
-  table-layout: fixed;
-
-  tr {
-    height: 1.5rem;
-  }
-}
-
 .details-preview,
 .details-icon-wrapper {
   background-color: var(--oc-color-background-muted);

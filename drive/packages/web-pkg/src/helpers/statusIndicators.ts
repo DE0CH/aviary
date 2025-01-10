@@ -1,15 +1,15 @@
-import { ShareTypes } from '@ownclouders/web-client'
+import { ShareTypes } from '@opencloud-eu/web-client'
 import { eventBus } from '../services'
 import { SideBarEventTopics } from '../composables/sideBar'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { AncestorMetaData } from '../types'
 import {
   ResourceIndicator,
   SpaceResource,
   isPersonalSpaceResource,
   isProjectSpaceResource
-} from '@ownclouders/web-client'
-import { User } from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/web-client'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 // dummy to trick gettext string extraction into recognizing strings
 const $gettext = (str: string): string => {

@@ -19,7 +19,7 @@ import {
 import { DavProperty } from '../../webdav/constants'
 import { buildWebDavPublicPath, buildWebDavOcmPath } from '../publicLink'
 import { urlJoin } from '../../utils'
-import { Drive, DriveItem } from '@ownclouders/web-client/graph/generated'
+import { Drive, DriveItem } from '@opencloud-eu/web-client/graph/generated'
 import { GraphSharePermission, ShareRole } from '../share'
 
 export function buildWebDavSpacesPath(storageId: string, path?: string) {
@@ -219,7 +219,7 @@ export function buildSpace(
       if (ability?.can('delete-all', 'Drive')) {
         return true
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -228,7 +228,7 @@ export function buildSpace(
       if (ability?.can('update-all', 'Drive')) {
         return true
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -237,7 +237,7 @@ export function buildSpace(
       if (ability?.can('update-all', 'Drive')) {
         return true
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -249,7 +249,7 @@ export function buildSpace(
       if (ability?.can('update-all', 'Drive')) {
         return true
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -261,7 +261,7 @@ export function buildSpace(
       if (ability?.can('delete-all', 'Drive')) {
         return true
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -275,7 +275,7 @@ export function buildSpace(
       if (this.disabled) {
         return false
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -284,7 +284,7 @@ export function buildSpace(
       if (this.disabled) {
         return false
       }
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )
@@ -293,7 +293,7 @@ export function buildSpace(
       return getPermissionsForSpaceMember(this, user).includes(GraphSharePermission.updateDeleted)
     },
     canDeleteFromTrashBin: function ({ user }: { user?: User } = {}) {
-      // FIXME: server permissions are a mess currently: https://github.com/owncloud/ocis/issues/9862
+      // FIXME: server permissions are a mess currently: https://github.com/opencloud-eu/opencloud/issues/10
       return getPermissionsForSpaceMember(this, user).includes(
         GraphSharePermission.deletePermissions
       )

@@ -2,7 +2,7 @@
 title: 'Getting Started'
 date: 2018-05-02T00:00:00+00:00
 weight: 10
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs
 geekdocFilePath: getting-started.md
 ---
@@ -25,9 +25,9 @@ This setup currently doesn't work on Windows out of the box.
 </details>
 {{< /hint >}}
 
-After cloning the [source code](https://github.com/owncloud/web), install the dependencies via `pnpm install` and bundle the frontend code by running `pnpm build:w`.
+After cloning the [source code](https://github.com/opencloud-eu/web), install the dependencies via `pnpm install` and bundle the frontend code by running `pnpm build:w`.
 
-Then, you can start the server by running `docker-compose up ocis` and access it via [https://host.docker.internal:9200](https://host.docker.internal:9200). If you're not using Docker Desktop, you might have to modify your `/etc/hosts` and add `127.0.0.1 host.docker.internal` to make the `host.docker.internal` links work.
+Then, you can start the server by running `docker-compose up opencloud` and access it via [https://host.docker.internal:9200](https://host.docker.internal:9200). If you're not using Docker Desktop, you might have to modify your `/etc/hosts` and add `127.0.0.1 host.docker.internal` to make the `host.docker.internal` links work.
 
 The bundled frontend code automatically gets mounted into the Docker containers, recompiles on changes and you can log in using the demo user (admin/admin) and take a look around!
 
@@ -35,12 +35,12 @@ For more details on how to set up Web for development, please see [tooling]({{< 
 
 ### Source Code
 
-The source code is hosted at [https://github.com/owncloud/web](https://github.com/owncloud/web).
+The source code is hosted at [https://github.com/opencloud-eu/web](https://github.com/opencloud-eu/web).
 Please refer to the [build documentation for Web]({{< ref "./building.md" >}}).
 
 ## Configuration
 
-Depending on the backend you are using, there are sample config files provided in the [config folder](https://github.com/owncloud/web/tree/master/config) of the ownCloud Web git repository. See below for available backends. Also, find some of the configuration details below.
+Depending on the backend you are using, there are sample config files provided in the [config folder](https://github.com/opencloud-eu/web/tree/main/config) of the OpenCloud Web git repository. See below for available backends. Also, find some of the configuration details below.
 
 - `customTranslations` You can specify one or multiple files to overwrite existing translations. For example set this option to `[{url: "https://localhost:9200/customTranslations.json"}]`.
 
@@ -49,13 +49,13 @@ Depending on the backend you are using, there are sample config files provided i
 - `options.accountEditLink` This accepts an object with the following optional fields to have a link on the account page:
     - `options.accountEditLink.href` Set a different target URL for the edit link. Make sure to prepend it with `http(s)://`.
 - `options.disableFeedbackLink` Set this option to `true` to disable the feedback link in the topbar. Keeping it enabled (value `false` or absence of the option)
-  allows ownCloud to get feedback from your user base through a dedicated survey website.
+  allows OpenCloud to get feedback from your user base through a dedicated survey website.
 - `options.feedbackLink` This accepts an object with the following optional fields to customize the feedback link in the topbar:
-    - `options.feedbackLink.href` Set a different target URL for the feedback link. Make sure to prepend it with `http(s)://`. Defaults to `https://owncloud.com/web-design-feedback`.
-    - `options.feedbackLink.ariaLabel` Since the link only has an icon, you can set an e.g. screen reader accessible label. Defaults to `ownCloud feedback survey`.
-    - `options.feedbackLink.description` Provide any description you want to see as tooltip and as accessible description. Defaults to `Provide your feedback: We'd like to improve the web design and would be happy to hear your feedback. Thank you! Your ownCloud team.`
+    - `options.feedbackLink.href` Set a different target URL for the feedback link. Make sure to prepend it with `http(s)://`. Defaults to `https://opencloud.eu/web-design-feedback`.
+    - `options.feedbackLink.ariaLabel` Since the link only has an icon, you can set an e.g. screen reader accessible label. Defaults to `OpenCloud feedback survey`.
+    - `options.feedbackLink.description` Provide any description you want to see as tooltip and as accessible description. Defaults to `Provide your feedback: We'd like to improve the web design and would be happy to hear your feedback. Thank you! Your OpenCloud team.`
 - `options.sharingRecipientsPerPage` Sets the amount of users shown as recipients in the dropdown when sharing resources. Default amount is 200.
-- `options.runningOnEos` Set this option to `true` if running on an [EOS storage backend](https://eos-web.web.cern.ch/eos-web/) to enable its specific features. Defaults to `false`, and we recommend reaching out to [the ownCloud web team](https://talk.owncloud.com/channel/web) if you're not CERN and thinking about enabling this feature flag.
+- `options.runningOnEos` Set this option to `true` if running on an [EOS storage backend](https://eos-web.web.cern.ch/eos-web/) to enable its specific features. Defaults to `false`.
 - `options.cernFeatures` Enabling this will activate CERN-specific features. Defaults to `false`.
 - `options.editor.autosaveEnabled` Specifies if the autosave for the editor apps is enabled.
 - `options.editor.autosaveInterval` Specifies the time interval for the autosave of editor apps in seconds.
@@ -97,13 +97,8 @@ integration libraries.
 
 ## Setting up backend and running
 
-Newer versions of Web (> 7.0.2) can only run against [oCIS](https://github.com/owncloud/ocis), whereas older versions (< 7.1.0) can run against [ownCloud 10](https://github.com/owncloud/core/) as well.
-Depending which one you chose, please check the matching section:
-
-- [Setting up with oCIS as backend]({{< ref "backend-ocis.md" >}})
-- [Setting up with ownCloud as backend]({{< ref "backend-oc10.md" >}})
+- [Setting up with OpenCloud as backend]({{< ref "backend-opencloud.md" >}})
 
 ## Running
 
-- [Running with oCIS as backend]({{< ref "backend-ocis.md#running-web" >}})
-- [Running with ownCloud as backend]({{< ref "backend-oc10.md#running-web" >}})
+- [Running with OpenCloud as backend]({{< ref "backend-opencloud.md#running-web" >}})

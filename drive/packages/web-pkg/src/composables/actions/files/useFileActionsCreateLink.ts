@@ -3,7 +3,7 @@ import { useGettext } from 'vue3-gettext'
 import { FileAction, FileActionOptions } from '../../actions'
 import CreateLinkModal from '../../../components/CreateLinkModal.vue'
 import { useAbility } from '../../ability'
-import { LinkShare, isProjectSpaceResource } from '@ownclouders/web-client'
+import { LinkShare, isProjectSpaceResource } from '@opencloud-eu/web-client'
 import { useLinkTypes } from '../../links'
 import { useLoadingService } from '../../loadingService'
 import {

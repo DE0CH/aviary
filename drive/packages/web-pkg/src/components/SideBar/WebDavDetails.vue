@@ -1,41 +1,37 @@
 <template>
-  <tr>
-    <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('WebDAV path')" />
-    <td class="oc-flex oc-flex-middle">
-      <div v-oc-tooltip="webDavPath" class="oc-text-truncate" v-text="webDavPath" />
-      <oc-button
-        v-oc-tooltip="$gettext('Copy WebDAV path')"
-        class="oc-ml-s"
-        appearance="raw"
-        size="small"
-        :aria-label="$gettext('Copy WebDAV path to clipboard')"
-        @click="copyWebDAVPathToClipboard"
-      >
-        <oc-icon :name="copyWebDAVPathIcon" />
-      </oc-button>
-    </td>
-  </tr>
-  <tr>
-    <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('WebDAV URL')" />
-    <td class="oc-flex oc-flex-middle">
-      <div v-oc-tooltip="webDavUrl" class="oc-text-truncate" v-text="webDavUrl" />
-      <oc-button
-        v-oc-tooltip="$gettext('Copy WebDAV URL')"
-        class="oc-ml-s"
-        appearance="raw"
-        size="small"
-        :aria-label="$gettext('Copy WebDAV URL to clipboard')"
-        @click="copyWebDAVUrlToClipboard"
-      >
-        <oc-icon :name="copyWebDAVUrlIcon" />
-      </oc-button>
-    </td>
-  </tr>
+  <dt>{{ $gettext('WebDAV path') }}</dt>
+  <dd class="oc-flex">
+    <div v-oc-tooltip="webDavPath" class="oc-text-truncate" v-text="webDavPath" />
+    <oc-button
+      v-oc-tooltip="$gettext('Copy WebDAV path')"
+      class="oc-ml-s"
+      appearance="raw"
+      size="small"
+      :aria-label="$gettext('Copy WebDAV path to clipboard')"
+      @click="copyWebDAVPathToClipboard"
+    >
+      <oc-icon :name="copyWebDAVPathIcon" />
+    </oc-button>
+  </dd>
+  <dt>{{ $gettext('WebDAV URL') }}</dt>
+  <dd class="oc-flex">
+    <div v-oc-tooltip="webDavUrl" class="oc-text-truncate" v-text="webDavUrl" />
+    <oc-button
+      v-oc-tooltip="$gettext('Copy WebDAV URL')"
+      class="oc-ml-s"
+      appearance="raw"
+      size="small"
+      :aria-label="$gettext('Copy WebDAV URL to clipboard')"
+      @click="copyWebDAVUrlToClipboard"
+    >
+      <oc-icon :name="copyWebDAVUrlIcon" />
+    </oc-button>
+  </dd>
 </template>
 
 <script lang="ts">
 import { defineComponent, inject, ref, Ref, computed, unref, PropType } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { encodePath } from '../../utils'
 
 export default defineComponent({

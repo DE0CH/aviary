@@ -1,7 +1,7 @@
 import { computed, unref, WritableComputedRef, Ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { useGetMatchingSpace } from '../spaces'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { useResourcesStore } from '../piniaStores'
 
 export interface SelectedResourcesResult {

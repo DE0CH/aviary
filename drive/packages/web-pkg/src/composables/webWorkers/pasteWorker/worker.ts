@@ -1,6 +1,6 @@
 import PQueue from 'p-queue'
 import { join } from 'path'
-import { webdav as _webdav } from '@ownclouders/web-client'
+import { webdav as _webdav } from '@opencloud-eu/web-client'
 import type { WorkerTopic } from '../../piniaStores/webWorkers'
 import { TransferType } from '../../../helpers/resource/conflictHandling/types'
 import type { TransferData } from '../../../helpers/resource/conflictHandling'

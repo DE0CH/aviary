@@ -12,7 +12,7 @@
 <script lang="ts">
 import { formatFileSize } from '../../../../helpers'
 import { computed, defineComponent, PropType, unref } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

@@ -1,6 +1,6 @@
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import ResourceListItem from '../../../../src/components/FilesList/ResourceListItem.vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 const fileResource = {
   name: 'forest.jpg',

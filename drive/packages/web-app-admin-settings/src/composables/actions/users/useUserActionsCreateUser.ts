@@ -1,7 +1,7 @@
-import { useModals, useCapabilityStore } from '@ownclouders/web-pkg'
+import { useModals, useCapabilityStore } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { UserAction } from '@ownclouders/web-pkg'
+import { UserAction } from '@opencloud-eu/web-pkg'
 import CreateUserModal from '../../../components/Users/CreateUserModal.vue'
 
 export const useUserActionsCreateUser = () => {

@@ -38,8 +38,8 @@ import {
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
 
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { urlJoin } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import {
   isSameResource,
   useCapabilityStore,
@@ -50,12 +50,12 @@ import {
   useRoute,
   queryItemAsString,
   useRouteQuery
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import {
   isProjectSpaceResource,
   isPublicSpaceResource,
   isShareSpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'ExternalApp',

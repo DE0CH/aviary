@@ -1,8 +1,8 @@
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { Resource } from '@opencloud-eu/web-client'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import CopyPrivateLink from '../../../../src/components/Shares/CopyPrivateLink.vue'
-import { useMessages } from '@ownclouders/web-pkg'
+import { useMessages } from '@opencloud-eu/web-pkg'
 import { useClipboard } from '@vueuse/core'
 import { ref } from 'vue'
 

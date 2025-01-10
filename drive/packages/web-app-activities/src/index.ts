@@ -1,8 +1,8 @@
 import translations from '../l10n/translations.json'
 import { useGettext } from 'vue3-gettext'
 import { computed } from 'vue'
-import { AppMenuItemExtension, defineWebApplication, Extension } from '@ownclouders/web-pkg'
-import { urlJoin } from '@ownclouders/web-client'
+import { AppMenuItemExtension, defineWebApplication, Extension } from '@opencloud-eu/web-pkg'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { RouteRecordRaw } from 'vue-router'
 import { APPID } from './appid'
 

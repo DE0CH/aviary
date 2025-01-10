@@ -1,5 +1,5 @@
 import DetailsPanel from '../../../../../src/components/Groups/SideBar/DetailsPanel.vue'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 describe('DetailsPanel', () => {
   describe('computed method "group"', () => {

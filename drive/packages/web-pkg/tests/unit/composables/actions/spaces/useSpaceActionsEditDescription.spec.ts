@@ -4,10 +4,10 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 
 describe('editDescription', () => {
   describe('handler', () => {

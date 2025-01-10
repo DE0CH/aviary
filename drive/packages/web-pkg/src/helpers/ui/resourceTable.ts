@@ -1,4 +1,4 @@
-import { Resource, ShareResource } from '@ownclouders/web-client'
+import { Resource, ShareResource } from '@opencloud-eu/web-client'
 import { SortDir, SortField } from '../../composables/sort'
 
 export const determineResourceTableSortFields = (firstResource: Resource): SortField[] => {

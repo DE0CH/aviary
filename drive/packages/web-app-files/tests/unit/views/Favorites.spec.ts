@@ -3,15 +3,15 @@ import { useResourcesViewDefaults } from '../../../src/composables'
 import { useResourcesViewDefaultsMock } from '../../../tests/mocks/useResourcesViewDefaultsMock'
 import { h, ref } from 'vue'
 import { mockDeep, mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   defaultStubs,
   mount,
   defaultComponentMocks
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { RouteLocation } from 'vue-router'
-import { FolderViewExtension, useExtensionRegistry } from '@ownclouders/web-pkg'
+import { FolderViewExtension, useExtensionRegistry } from '@opencloud-eu/web-pkg'
 import {
   folderViewsFavoritesExtensionPoint,
   folderViewsFolderExtensionPoint,
@@ -19,7 +19,7 @@ import {
 } from '../../../src/extensionPoints'
 
 vi.mock('../../../src/composables')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActions: vi.fn()
 }))
@@ -67,7 +67,7 @@ function getMountedWrapper({
 
   const extensions = [
     {
-      id: 'com.github.owncloud.web.files.folder-view.resource-table',
+      id: 'com.github.opencloud-eu.web.files.folder-view.resource-table',
       type: 'folderView',
       extensionPointIds: [
         folderViewsFolderExtensionPoint.id,

@@ -170,6 +170,7 @@ export default defineComponent({
         `oc-button-justify-content-${this.justifyContent}`,
         `oc-button-gap-${getSizeClass(this.gapSize)}`,
         `oc-button-${this.variation}`,
+        `oc-button-${this.appearance}`,
         `oc-button-${this.variation}-${this.appearance}`
       ]
     },
@@ -200,7 +201,7 @@ export default defineComponent({
 
 <style lang="scss">
 @mixin oc-button-gap($factor) {
-  gap: round(calc($oc-space-small * $factor / 2)) * 2;
+  gap: math.round(calc($oc-space-small * $factor / 2)) * 2;
 }
 
 @mixin oc-button-line-height($factor) {
@@ -430,7 +431,6 @@ export default defineComponent({
 
     &-filled {
       color: var(--oc-color-swatch-primary-contrast) !important;
-      @include oc-background-primary-gradient;
 
       span > svg {
         fill: var(--oc-color-swatch-primary-contrast) !important;
@@ -463,13 +463,6 @@ export default defineComponent({
       var(--oc-color-swatch-danger-muted),
       var(--oc-color-swatch-danger-contrast)
     );
-
-    &-filled:hover {
-      color: var(--oc-color-swatch-danger-default) !important;
-      span > svg {
-        fill: var(--oc-color-swatch-danger-default) !important;
-      }
-    }
   }
 
   &:disabled {

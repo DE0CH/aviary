@@ -7,7 +7,7 @@ import {
   useSharesStore,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import {
   EventSchemaType,
   onSSEFileLockingEvent,
@@ -20,8 +20,8 @@ import {
 } from '../../../../src/container/sse'
 import { Router } from 'vue-router'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 import { Language } from 'vue3-gettext'
 import PQueue from 'p-queue'
 

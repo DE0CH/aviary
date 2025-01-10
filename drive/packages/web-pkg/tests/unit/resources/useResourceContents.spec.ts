@@ -4,9 +4,9 @@ import {
   defaultComponentMocks,
   getComposableWrapper,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { describe } from 'vitest'
 
 describe('resourceContents', () => {

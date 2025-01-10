@@ -58,13 +58,13 @@
 
 <script lang="ts">
 import { DateTime } from 'luxon'
-import { LinkRoleDropdown, useAbility, useLinkTypes, useModals } from '@ownclouders/web-pkg'
-import { LinkShare } from '@ownclouders/web-client'
+import { LinkRoleDropdown, useAbility, useLinkTypes, useModals } from '@opencloud-eu/web-pkg'
+import { LinkShare } from '@opencloud-eu/web-client'
 import { computed, defineComponent, inject, PropType, Ref, ref, unref } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import SetLinkPasswordModal from '../../../Modals/SetLinkPasswordModal.vue'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import ExpirationDateIndicator from '../ExpirationDateIndicator.vue'
 import CopyLink from './CopyLink.vue'
 import EditDropdown from './EditDropdown.vue'

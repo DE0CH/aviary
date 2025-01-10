@@ -64,14 +64,14 @@ Before(async function (this: World, { pickle }: ITestCaseHookParameter) {
   if (!config.basicAuth) {
     const user = this.usersEnvironment.getUser({ key: 'admin' })
     if (config.keycloak) {
-      await api.keycloak.setAccessTokenForKeycloakOcisUser(user)
+      await api.keycloak.setAccessTokenForKeycloakOpenCloudUser(user)
       await api.keycloak.setAccessTokenForKeycloakUser(user)
       await storeKeycloakGroups(user, this.usersEnvironment)
     } else {
       await api.token.setAccessAndRefreshToken(user)
       if (isOcm(pickle)) {
         config.federatedServer = true
-        // need to set tokens for federated oCIS admin
+        // need to set tokens for federated OpenCloud admin
         await api.token.setAccessAndRefreshToken(user)
         config.federatedServer = false
       }
@@ -124,11 +124,11 @@ After(async function (this: World, { result, willBeRetried, pickle }: ITestCaseH
   if (config.keycloak) {
     const user = this.usersEnvironment.getUser({ key: 'admin' })
     await api.keycloak.refreshAccessTokenForKeycloakUser(user)
-    await api.keycloak.refreshAccessTokenForKeycloakOcisUser(user)
+    await api.keycloak.refreshAccessTokenForKeycloakOpenCloudUser(user)
   }
 
   if (isOcm(pickle)) {
-    // need to set federatedServer config to true to delete federated oCIS users
+    // need to set federatedServer config to true to delete federated OpenCloud users
     config.federatedServer = true
     await cleanUpUser(store.federatedUserStore, this.usersEnvironment.getUser({ key: 'admin' }))
     config.federatedServer = false

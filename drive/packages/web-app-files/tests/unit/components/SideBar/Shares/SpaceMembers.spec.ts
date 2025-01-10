@@ -4,21 +4,21 @@ import {
   ShareRole,
   CollaboratorShare,
   GraphSharePermission
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
-import { ProjectSpaceResource, SpaceResource } from '@ownclouders/web-client'
+import { ProjectSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
   shallowMount,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { useCanShare, useModals, useSpacesStore } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { useCanShare, useModals, useSpacesStore } from '@opencloud-eu/web-pkg'
 import ListItem from '../../../../../src/components/SideBar/Shares/Collaborators/ListItem.vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useCanShare: vi.fn()
 }))

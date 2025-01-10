@@ -10,7 +10,7 @@
 <script lang="ts">
 import { defineComponent, onMounted, ref } from 'vue'
 import { useAppsStore } from './piniaStores'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'LayoutContainer',

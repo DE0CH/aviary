@@ -6,10 +6,10 @@ import {
   isProjectSpaceResource,
   SpaceResource,
   type Resource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { getIndicators, getParentPaths } from '../../helpers'
 import { AncestorMetaData, AncestorMetaDataValue } from '../../types'
-import { DavProperty, WebDAV } from '@ownclouders/web-client/webdav'
+import { DavProperty, WebDAV } from '@opencloud-eu/web-client/webdav'
 import { useSpacesStore } from './spaces'
 import { useUserStore } from './user'
 import { useConfigStore } from './config'

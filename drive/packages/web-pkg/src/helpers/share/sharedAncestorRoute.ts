@@ -1,4 +1,4 @@
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { createLocationSpaces } from '../../router'
 import { createFileRouteOptions } from '../../helpers/router'
 import { RouteLocationNamedRaw } from 'vue-router'

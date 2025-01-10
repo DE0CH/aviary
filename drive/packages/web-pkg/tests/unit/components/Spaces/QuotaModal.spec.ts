@@ -4,9 +4,9 @@ import {
   defaultPlugins,
   defaultStubs,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useMessages, useSpacesStore } from '../../../../src/composables/piniaStores'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 
 describe('QuotaModal', () => {

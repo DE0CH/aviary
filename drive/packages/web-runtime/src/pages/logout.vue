@@ -26,7 +26,7 @@
 </template>
 <script lang="ts">
 import { computed, defineComponent, onMounted } from 'vue'
-import { useConfigStore, useModals, useThemeStore } from '@ownclouders/web-pkg'
+import { useConfigStore, useModals, useThemeStore } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { storeToRefs } from 'pinia'
 

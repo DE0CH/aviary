@@ -28,7 +28,7 @@ import designTokens from '../../assets/tokens/ods.json'
  * should be used purposefully to communicate how things function in the
  * interface. Keep in mind that `vermilion` is only used in special cases
  * like destructive actions and error messages. To edit the colors, see
- * [/src/tokens/color.yml](https://github.com/owncloud/owncloud-design-system/blob/master/src/tokens/color.yml).
+ * [/src/tokens/ods/color.yml](https://github.com/opencloud-eu/web/blob/main/packages/design-system/src/tokens/ods/color.yaml).
  */
 export default defineComponent({
   name: 'DocsColorTokens',

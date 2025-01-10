@@ -1,7 +1,7 @@
 import { FocusTrap } from 'focus-trap-vue'
 import OcDrop from '../OcDrop/OcDrop.vue'
 import OcInfoDrop from './OcInfoDrop.vue'
-import { PartialComponentProps, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { PartialComponentProps, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 describe('OcInfoDrop', () => {
   function getWrapperWithProps(props: PartialComponentProps<typeof OcInfoDrop>) {
@@ -41,9 +41,9 @@ describe('OcInfoDrop', () => {
       })
     })
     it('should set a readMore link', () => {
-      const wrapper = getWrapperWithProps({ readMoreLink: 'owncloud.design' })
+      const wrapper = getWrapperWithProps({ readMoreLink: 'opencloud.design' })
       const attributes = wrapper.find('.info-more-link').attributes()
-      expect(attributes['href']).toBe('owncloud.design')
+      expect(attributes['href']).toBe('opencloud.design')
       expect(attributes['target']).toBe('_blank')
     })
     it('should set end-text prop', () => {

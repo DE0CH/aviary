@@ -75,7 +75,7 @@ import {
   SideBarPanelContext,
   Action,
   useIsTopBarSticky
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import {
   defineComponent,
   inject,
@@ -87,12 +87,12 @@ import {
   VNodeRef,
   watch
 } from 'vue'
-import { eventBus, useAppDefaults } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
-import { SideBarPanel } from '@ownclouders/web-pkg'
-import { BreadcrumbItem } from '@ownclouders/design-system/helpers'
-import { ViewOptions } from '@ownclouders/web-pkg'
-import { Item } from '@ownclouders/web-client'
+import { eventBus, useAppDefaults } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
+import { SideBarPanel } from '@opencloud-eu/web-pkg'
+import { BreadcrumbItem } from '@opencloud-eu/design-system/helpers'
+import { ViewOptions } from '@opencloud-eu/web-pkg'
+import { Item } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   components: {

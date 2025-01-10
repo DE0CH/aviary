@@ -2,7 +2,7 @@
 title: 'Extension system'
 date: 2024-01-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system
 geekdocFilePath: _index.md
 geekdocCollapseSection: true
@@ -12,11 +12,11 @@ geekdocCollapseSection: true
 
 ## Concepts and Building Blocks
 
-ownCloud Web can be extended through various entry points with custom **apps** and **extensions**.
+OpenCloud Web can be extended through various entry points with custom **apps** and **extensions**.
 
 ### Distinction between Apps and Extensions
 
-An Application in the context of ownCloud Web is an artifact which can be installed in an ownCloud Infinite Scale instance.
+An Application in the context of OpenCloud Web is an artifact which can be installed in an OpenCloud instance.
 It serves two main purposes:
 1. It makes the full app viewport (everything below the top bar) available to the application developer for any custom
    application code. This includes the ability to define views with routes, navigation items for the left sidebar, and more.
@@ -29,7 +29,7 @@ no custom application code at all and only host extensions to be registered in t
 
 ### Examples
 
-You can find open source examples for apps and extensions in our [curated list of ownCloud apps and extensions](https://github.com/owncloud/awesome-ocis).
+You can find open source examples for apps and extensions in our [curated list of OpenCloud apps and extensions](https://github.com/opencloud-eu/awesome-apps).
 Feel free to contribute or just be inspired for your own apps or extensions.
 
 ### Apps
@@ -37,19 +37,19 @@ Feel free to contribute or just be inspired for your own apps or extensions.
 To get started, define a `src/index.ts`. Below is the most basic example of its content:
 
 ```typescript
-// Install '@ownclouders/web-pkg' as a devDependency first (only relevant for types and autocompletion, dependency is already provided by ownCloud Web at runtime). 
+// Install '@opencloud-eu/web-pkg' as a devDependency first (only relevant for types and autocompletion, dependency is already provided by OpenCloud Web at runtime). 
 import {
   AppWrapperRoute,
   ApplicationFileExtension,
   defineWebApplication
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 
 export default defineWebApplication({
   setup({ applicationConfig }) {
     // Here, you have access to the full injection context, meaning you can use all composables that we provide via web-pkg
 
-    // Needs to be unique within all installed applications in any ownCloud web instance
+    // Needs to be unique within all installed applications in any OpenCloud web instance
     // Should be short, unique and expressive as it is used as prefix on all routes within your application
     const appId = 'your-extension' 
 
@@ -72,7 +72,7 @@ export default defineWebApplication({
       appInfo: {
         name: $gettext('Your application name'),
         id: appId,
-        icon: 'aliens', // See https://owncloud.design/#/Design%20Tokens/IconList for available options
+        icon: 'aliens', // See https://opencloud.design/#/Design%20Tokens/IconList for available options
       },
       extensions,
       navItems,
@@ -91,7 +91,7 @@ Additional dynamic navigation items can be registered via the extension registry
 
 If you want to learn how to implement an app for viewing and editing specific file types, please consult the [relevant documentation]({{< ref "viewer-editor-apps.md" >}}) for detailed instructions and guidance.
 
-To learn how to integrate an app into ownCloud Web, please refer to the "Web Apps" section of the Web service docs ("Services" > "Web").
+To learn how to integrate an app into OpenCloud Web, please refer to the "Web Apps" section of the Web service docs ("Services" > "Web").
 
 ### Extensions
 
@@ -99,15 +99,15 @@ In contrast to applications, extensions usually have a rather small scope and de
 
 #### Extension Registry
 
-The globally available extension registry provided by the ownCloud Web runtime can be used to both register and query extensions. All extensions
+The globally available extension registry provided by the OpenCloud Web runtime can be used to both register and query extensions. All extensions
 which are being made available via an `app` get registered in the extension registry automatically. In your custom application code you can
-then query any of the available extensions by providing an `extensionPoint` entity. Throughout the ownCloud Web platform
+then query any of the available extensions by providing an `extensionPoint` entity. Throughout the OpenCloud Web platform
 and most prominently also in the `files` app we have defined some extension points which automatically use certain extensions, see the 
 `Extension Points` section below.
 
 #### Extension Types
 
-For building an extension you can choose from the types predefined by the ownCloud Web extension system. See the full list of available extension types below.
+For building an extension you can choose from the types predefined by the OpenCloud Web extension system. See the full list of available extension types below.
 
 1. `ActionExtension` (type `action`) - An extension that can register `Action` items which then get shown in various places (e.g. context menus, batch actions), depending on the 
 extension points referenced in the extension respectively. Most commonly used for file and folder actions (e.g. copy, rename, delete, etc.). For details, please refer to the [action docs]({{< ref "extension-types/actions.md" >}}).
@@ -121,14 +121,14 @@ For details, please refer to the [folder view docs]({{< ref "extension-types/fol
 [custom component docs]({{< ref "extension-types/custom-components.md" >}})
 
 You're free to introduce your own extension types within your application code and use the extension registry to query the available ones. However, if you have the impression
-that an important extension type is missing and would be beneficial for the platform, please reach out to us by opening a [GitHub issue](https://github.com/owncloud/web/issues/new/choose).
+that an important extension type is missing and would be beneficial for the platform, please reach out to us by opening a [GitHub issue](https://github.com/opencloud-eu/web/issues/new/choose).
 
 #### Extension Base Configuration
 
 Any extension is required to define at least an `id` and a `type` in order to fulfill the generic `Extension` interface.
 
-The `id` is supposed to be unique throughout the ownCloud Web ecosystem. In order to keep `id`s readable for humans we didn't want to enforce uniqueness through e.g. uuids. 
-Instead, we chose to use dot-formatted namespaces like e.g. `com.github.owncloud.web.files.search`. We'd like to encourage you to follow the same format for your own extensions.
+The `id` is supposed to be unique throughout the OpenCloud Web ecosystem. In order to keep `id`s readable for humans we didn't want to enforce uniqueness through e.g. uuids. 
+Instead, we chose to use dot-formatted namespaces like e.g. `com.github.opencloud-eu.web.files.search`. We'd like to encourage you to follow the same format for your own extensions.
 
 For the `type` you can choose from the ones listed above or define a custom one.
 
@@ -138,7 +138,7 @@ You can find predefined extension point ids in the extension points section belo
 
 #### Extension Points
 
-There are standardized components and places where extensions are being used automatically. The following ones are currently provided by the ownCloud Web runtime or 
+There are standardized components and places where extensions are being used automatically. The following ones are currently provided by the OpenCloud Web runtime or 
 the `files` app. If you decide to develop an extension which fulfills the type and registers itself for the extensionPointId of the respective extension point, 
 your extension will be used automatically.
 
@@ -168,5 +168,5 @@ The user can then select one out of all the extensions which have been registere
 
 We currently offer the following packages that can be integrated into your app, providing useful utilities and types.
 
-- `web-client` - This package serves as an abstraction layer between the server APIs and an app or extension. It converts raw API data into objects with helpful types and utilities. For details, please refer to the package's [README.md](https://github.com/owncloud/web/blob/master/packages/web-client/README.md).
-- `web-pkg` - This package provides utilities, most importantly a variety of components and composables, that can be useful when developing apps and extensions. For details, please refer to the package's [README.md](https://github.com/owncloud/web/blob/master/packages/web-pkg/README.md).
+- `web-client` - This package serves as an abstraction layer between the server APIs and an app or extension. It converts raw API data into objects with helpful types and utilities. For details, please refer to the package's [README.md](https://github.com/opencloud-eu/web/blob/main/packages/web-client/README.md).
+- `web-pkg` - This package provides utilities, most importantly a variety of components and composables, that can be useful when developing apps and extensions. For details, please refer to the package's [README.md](https://github.com/opencloud-eu/web/blob/main/packages/web-pkg/README.md).

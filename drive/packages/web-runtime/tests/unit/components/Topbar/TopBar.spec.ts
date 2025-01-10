@@ -1,17 +1,17 @@
-import { Capabilities } from '@ownclouders/web-client/ocs'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
 import {
   ApplicationInformation,
   AppMenuItemExtension,
   useExtensionRegistry
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { computed } from 'vue'
 import TopBar from '../../../../src/components/Topbar/TopBar.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 const mockUseEmbedMode = vi.fn().mockReturnValue({ isEnabled: computed(() => false) })
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useEmbedMode: vi.fn().mockImplementation(() => mockUseEmbedMode())
 }))

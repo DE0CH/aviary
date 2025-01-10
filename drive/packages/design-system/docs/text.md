@@ -11,7 +11,7 @@ Use one of the following classes to enforce a certain wrapping behaviour.
 
 ## Text sizes
 
-The ownCloud Design System uses a default font size which can be set on the html root element and then lets you use the
+The OpenCloud Design System uses a default font size which can be set on the html root element and then lets you use the
 following text size classes to choose a size relative to the default font size.
 
 | Class           | Description                                                                                         |

@@ -179,9 +179,9 @@ import {
   useRouteQuery,
   queryItemAsString,
   useLoadPreview
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
-import { AppBar, CreateSpace } from '@ownclouders/web-pkg'
+import { AppBar, CreateSpace } from '@opencloud-eu/web-pkg'
 import {
   useAbility,
   useClientService,
@@ -195,22 +195,22 @@ import {
   Pagination,
   FileSideBar,
   NoContentMessage
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import SpaceContextActions from '../../components/Spaces/SpaceContextActions.vue'
 import {
   getSpaceManagers,
   isProjectSpaceResource,
   ProjectSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
-import { ResourceTable, ResourceTiles } from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
-import { SideBarEventTopics, useSideBar } from '@ownclouders/web-pkg'
-import { sortFields as availableSortFields, translateSortFields } from '@ownclouders/web-pkg'
-import { defaultFuseOptions, formatFileSize, ResourceIcon } from '@ownclouders/web-pkg'
+import { ResourceTable, ResourceTiles } from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics, useSideBar } from '@opencloud-eu/web-pkg'
+import { sortFields as availableSortFields, translateSortFields } from '@opencloud-eu/web-pkg'
+import { defaultFuseOptions, formatFileSize, ResourceIcon } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { useKeyboardActions } from '@ownclouders/web-pkg'
+import { useKeyboardActions } from '@opencloud-eu/web-pkg'
 import {
   useKeyboardTableNavigation,
   useKeyboardTableMouseActions,

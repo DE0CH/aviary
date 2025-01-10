@@ -1,6 +1,6 @@
 import { computed, unref } from 'vue'
 import { useConfigStore } from '../piniaStores'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { LocationQuery } from '../router'
 
 export interface embedModeFilePickMessageData {

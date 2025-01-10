@@ -9,7 +9,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref, unref } from 'vue'
-import { queryItemAsString, useRouteQuery } from '@ownclouders/web-pkg'
+import { queryItemAsString, useRouteQuery } from '@opencloud-eu/web-pkg'
 import { useAvailableProviders } from '../composables'
 
 export default defineComponent({

@@ -64,13 +64,13 @@
 <script lang="ts">
 import last from 'lodash-es/last'
 import { computed, defineComponent, inject, PropType, ref, Ref, unref, useSlots } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   isPersonalSpaceResource,
   isProjectSpaceResource,
   isShareSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import BatchActions from '../BatchActions.vue'
 import ContextActions from '../FilesList/ContextActions.vue'
 import ViewOptions from '../ViewOptions.vue'
@@ -100,7 +100,7 @@ import {
   ActionExtension,
   useIsTopBarSticky
 } from '../../composables'
-import { BreadcrumbItem, EVENT_ITEM_DROPPED } from '@ownclouders/design-system/helpers'
+import { BreadcrumbItem, EVENT_ITEM_DROPPED } from '@opencloud-eu/design-system/helpers'
 import { useActiveLocation } from '../../composables'
 import { useGettext } from 'vue3-gettext'
 import {

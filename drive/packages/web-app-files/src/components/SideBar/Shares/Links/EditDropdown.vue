@@ -49,14 +49,14 @@ import {
   useGetMatchingSpace,
   useModals,
   useResourcesStore
-} from '@ownclouders/web-pkg'
-import { LinkShare } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { LinkShare } from '@opencloud-eu/web-client'
 import { computed, defineComponent, inject, PropType, Ref, unref, useTemplateRef } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { createFileRouteOptions } from '@ownclouders/web-pkg'
-import { OcDrop } from '@ownclouders/design-system/components'
+import { Resource } from '@opencloud-eu/web-client'
+import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 import { useGettext } from 'vue3-gettext'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import DatePickerModal from '../../../Modals/DatePickerModal.vue'
 import { RouteLocationNamedRaw } from 'vue-router'
 import ContextMenuItem from './ContextMenuItem.vue'

@@ -48,7 +48,7 @@ export default defineComponent({
         .map((version) => {
           return {
             ...version,
-            minOCIS: version.minOCIS ? `v${version.minOCIS}` : '-',
+            minOpenCloud: version.minOpenCloud ? `v${version.minOpenCloud}` : '-',
             id: version.version
           }
         })
@@ -63,11 +63,11 @@ export default defineComponent({
           title: $gettext('App Version')
         },
         {
-          name: 'minOCIS',
+          name: 'minOpenCloud',
           type: 'raw',
           width: 'shrink',
           wrap: 'nowrap',
-          title: $gettext('Infinite Scale Version')
+          title: $gettext('OpenCloud Version')
         },
         {
           name: 'actions',

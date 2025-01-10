@@ -5,9 +5,9 @@ import {
   defaultPlugins,
   defaultStubs,
   mount
-} from '@ownclouders/web-test-helpers'
-import { UppyService } from '@ownclouders/web-pkg'
-import { OcButton } from '@ownclouders/design-system/components'
+} from '@opencloud-eu/web-test-helpers'
+import { UppyService } from '@opencloud-eu/web-pkg'
+import { OcButton } from '@opencloud-eu/design-system/components'
 
 describe('Resource Upload Component', () => {
   describe('file upload', () => {

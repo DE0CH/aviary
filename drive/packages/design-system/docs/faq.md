@@ -1,10 +1,10 @@
-## What is the ownCloud Design System?
+## What is the OpenCloud Design System?
 
-ownCloud Design System is an open source tool for building UI Design Systems with [Vue.js](https://vuejs.org). It provides you and your team a set of organized tools, patterns & practices that work as the foundation for your application development. [Read more about it](https://viljamis.com/2018/vue-design-system/).
+OpenCloud Design System is an open source tool for building UI Design Systems with [Vue.js](https://vuejs.org). It provides you and your team a set of organized tools, patterns & practices that work as the foundation for your application development. [Read more about it](https://viljamis.com/2018/vue-design-system/).
 
 ## What browsers are supported?
 
-The development environment supports the following browsers. To tweak browsers supported in production you will want to edit the [browsers list in package.json](https://github.com/owncloud/owncloud-design-system/blob/master/package.json#L172-L180). To see what browsers are selected by the browser list, run `npx browserslist --config="package.json"` in the root directory of this project.
+The development environment supports the following browsers. To tweak browsers supported in production you will want to edit the [browsers list in package.json](https://github.com/opencloud-eu/web/blob/main/packages/design-system/package.json#L172-L180). To see what browsers are selected by the browser list, run `npx browserslist --config="package.json"` in the root directory of this project.
 
 | BROWSER         | VERSION |
 | --------------- | ------- |
@@ -16,11 +16,11 @@ The development environment supports the following browsers. To tweak browsers s
 
 ## How do I get started?
 
-See the [Getting Started guide](https://github.com/owncloud/owncloud-design-system/wiki/getting-started) on GitHub.
+See the [Getting Started guide](https://github.com/opencloud-eu/web/blob/main/packages/design-system/docs/getting-started.md) on GitHub.
 
 ## I want to use this in existing Vue project, is that possible?
 
-Definitely possible, see instructions in [Getting Started guide](https://github.com/owncloud/owncloud-design-system/wiki/getting-started#using-vue-design-system-in-an-existing-project).
+Definitely possible, see instructions in [Getting Started guide](https://github.com/opencloud-eu/web/blob/main/packages/design-system/docs/getting-started.md).
 
 ## Why Vue and not React, Jekyll, or some other tool?
 
@@ -28,23 +28,23 @@ The reason for choosing Vue.js over React or some other library is how easy it i
 
 ## Is this tool only for Vue.js based applications?
 
-Organizations that have more than just Vue.js based applications can benefit from ownCloud Design System as well. Tokens which store visual design attributes are universal and can be used on any platform. ownCloud Design System also renders all components in both Vue.js & HTML which allows you to use the components on any web based platform. Additionally, it’s possible to configure the build process to output Web Components instead of Vue.js Components.
+Organizations that have more than just Vue.js based applications can benefit from OpenCloud Design System as well. Tokens which store visual design attributes are universal and can be used on any platform. OpenCloud Design System also renders all components in both Vue.js & HTML which allows you to use the components on any web based platform. Additionally, it’s possible to configure the build process to output Web Components instead of Vue.js Components.
 
 ## Why aren’t there more components by default?
 
-ownCloud Design System is not a front-end component library and never will be. Instead it tries to provide you and your team a set of organized tools, patterns & practices to build upon, so that you can get started with the actual design system faster.
+OpenCloud Design System is not a front-end component library and never will be. Instead it tries to provide you and your team a set of organized tools, patterns & practices to build upon, so that you can get started with the actual design system faster.
 
 ## Can I convert JSON tokens to more than just SCSS and JSON?
 
-Definitely. See [style-dictionary’s docs](https://github.com/amzn/style-dictionary). It allows you to convert the tokens to almost any format you can think of. The formats used are being configured in [build/build-tokens.js](https://github.com/owncloud/owncloud-design-system/blob/master/build/build-tokens.js).
+Definitely. See [style-dictionary’s docs](https://github.com/amzn/style-dictionary). It allows you to convert the tokens to almost any format you can think of. The formats used are being configured in [build/build-tokens.js](https://github.com/opencloud-eu/web/blob/main/packages/design-system/build/build-tokens.js).
 
-## Does ownCloud Design System work on Windows?
+## Does OpenCloud Design System work on Windows?
 
-Yes, follow the [getting started guide](https://github.com/owncloud/owncloud-design-system/wiki/getting-started) to get things up and running.
+Yes, follow the [getting started guide](https://github.com/opencloud-eu/web/blob/main/packages/design-system/docs/getting-started.md) to get things up and running.
 
 ## Any plan to support different component states?
 
-ownCloud Design System uses a customized version of [Vue Styleguidist](https://github.com/vue-styleguidist/vue-styleguidist) for the styleguide part which already supports something similar. You can for example define multiple examples in markdown format in the component’s `<docs>` section. I’ve added an example of this in the documentation’s [Components section](/#/Components?id=forminput). See the [documentation for Vue Styleguidist](https://github.com/vue-styleguidist/vue-styleguidist) and React Styleguidist’s [explanation on the differences between Storybook and Styleguidist](https://react-styleguidist.js.org/docs/cookbook.html#whats-the-difference-between-styleguidist-and-storybook).
+OpenCloud Design System uses a customized version of [Vue Styleguidist](https://github.com/vue-styleguidist/vue-styleguidist) for the styleguide part which already supports something similar. You can for example define multiple examples in markdown format in the component’s `<docs>` section. I’ve added an example of this in the documentation’s [Components section](/#/Components?id=forminput). See the [documentation for Vue Styleguidist](https://github.com/vue-styleguidist/vue-styleguidist) and React Styleguidist’s [explanation on the differences between Storybook and Styleguidist](https://react-styleguidist.js.org/docs/cookbook.html#whats-the-difference-between-styleguidist-and-storybook).
 
 ## I can’t figure out what icons are available?
 
@@ -52,7 +52,7 @@ Icons are inside `src/assets/icons` directory, so you can just add any icons tha
 
 ## How do I change the default typeface/font?
 
-ownCloud Design System uses Typekit’s [Web Font Loader](https://github.com/typekit/webfontloader) which is easy to configure. To load your own font files, see [Getting Started with WebFontLoader](https://github.com/typekit/webfontloader#get-started). Currently, the design system bundles and loads _Inter_. See `src/utils/webFontLoader.js` for an example.
+OpenCloud Design System uses Typekit’s [Web Font Loader](https://github.com/typekit/webfontloader) which is easy to configure. To load your own font files, see [Getting Started with WebFontLoader](https://github.com/typekit/webfontloader#get-started). Currently, the design system bundles and loads _Inter_. See `src/utils/webFontLoader.js` for an example.
 
 ## How to use design tokens in JavaScript?
 
@@ -95,7 +95,7 @@ Once done, you can utilize tokens inside `<template>` like this:
 
 ## How to disable browser from auto opening a new window?
 
-Remove `--open` option from [this line in package.json](https://github.com/owncloud/owncloud-design-system/blob/master/package.json#L24).
+Remove `--open` option from [this line in package.json](https://github.com/opencloud-eu/web/blob/main/packages/design-system/package.json#L24).
 
 ## How do I use static image assets?
 
@@ -103,17 +103,17 @@ You can put your assets under `src/assets`. It’s ok to create new directories 
 
 For component’s `<docs>` section things work a bit differently. Using `<img src="img/example.jpg" />` without `@/assets/` works there. This is because [Styleguidist](https://github.com/vue-styleguidist/vue-styleguidist) handles the assets directory a bit differently.
 
-## Does ownCloud Design System work with Nuxt.js?
+## Does OpenCloud Design System work with Nuxt.js?
 
 Yes! While we don’t currently have extensive documentation on this, there’s an official example and instructions provided, here: [github.com/viljamis/nuxt-design-system](https://github.com/viljamis/nuxt-design-system).
 
-## I can’t get ownCloud Design System working as an NPM dependency?
+## I can’t get OpenCloud Design System working as an NPM dependency?
 
-Please see the official example first: [github.com/viljamis/vue-design-system-example](https://github.com/owncloud/owncloud-design-system-example). If you’re getting an error about `export 'default' was not found` you’re probably trying to import the provided UMD module as an ES Module.
+Please see the official example first: [github.com/viljamis/vue-design-system-example](github.com/viljamis/vue-design-system-example-website). If you’re getting an error about `export 'default' was not found` you’re probably trying to import the provided UMD module as an ES Module.
 
 ## Can I use the components from the system on our static website?
 
-Yes you can. See the official example on GitHub: [github.com/viljamis/vue-design-system-example-website](https://github.com/owncloud/owncloud-design-system-example-website)
+Yes you can. See the official example on GitHub: [github.com/viljamis/vue-design-system-example-website](github.com/viljamis/vue-design-system-example-website)
 
 ## I want to use CSS Modules, are those supported?
 

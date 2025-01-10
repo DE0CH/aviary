@@ -45,7 +45,7 @@ import {
   queryItemAsString,
   useRouteQuery,
   useRouter
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import AppContextualHelper from '../components/AppContextualHelper.vue'
 
 export default defineComponent({

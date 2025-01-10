@@ -531,6 +531,13 @@ export default defineComponent({
     background-color: var(--oc-color-background-hover);
   }
 
+  &-hover
+    tr:hover
+    td:not(:last-child)
+    span:not(.avatarInitials):not(button span):not(.oc-table-highlighted span) {
+    color: var(--oc-color-swatch-brand-contrast) !important;
+  }
+
   &-highlighted {
     background-color: var(--oc-color-background-highlight) !important;
   }

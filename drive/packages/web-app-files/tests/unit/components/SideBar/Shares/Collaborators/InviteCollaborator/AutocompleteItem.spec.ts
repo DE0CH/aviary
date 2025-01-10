@@ -1,6 +1,6 @@
 import AutocompleteItem from '../../../../../../../src/components/SideBar/Shares/Collaborators/InviteCollaborator/AutocompleteItem.vue'
-import { CollaboratorAutoCompleteItem, ShareTypes } from '@ownclouders/web-client'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { CollaboratorAutoCompleteItem, ShareTypes } from '@opencloud-eu/web-client'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 describe('AutocompleteItem component', () => {
   it.each(ShareTypes.all)('sets a class that reflects the share type', (shareType) => {

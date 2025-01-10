@@ -3,7 +3,7 @@ import { useWebWorker } from '@vueuse/core'
 import PasteWorker from '../../../../../src/composables/webWorkers/pasteWorker/worker?worker'
 import { TransferType } from '../../../../../src/helpers/resource/conflictHandling'
 import { mock } from 'vitest-mock-extended'
-import type { WebDAV } from '@ownclouders/web-client/webdav'
+import type { WebDAV } from '@opencloud-eu/web-client/webdav'
 
 const resourceMock = {
   id: 'resourceId',
@@ -48,7 +48,7 @@ describe('paste worker', () => {
       resolveTest = resolve
     })
 
-    vi.doMock('@ownclouders/web-client', async (importOriginal) => ({
+    vi.doMock('@opencloud-eu/web-client', async (importOriginal) => ({
       ...(await importOriginal<any>()),
       webdav: () => webDavMock
     }))

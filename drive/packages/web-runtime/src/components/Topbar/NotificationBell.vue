@@ -3,7 +3,7 @@
     id="oc-notifications-bell"
     v-oc-tooltip="notificationsLabel"
     appearance="raw-inverse"
-    variation="brand"
+    variation="primary"
     :aria-label="notificationsLabel"
   >
     <oc-icon

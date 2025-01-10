@@ -1,6 +1,6 @@
 import CreateAndUpload from '../../../../src/components/AppBar/CreateAndUpload.vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   FileAction,
   useFileActionsCreateNewFile,
@@ -11,14 +11,14 @@ import {
   useFileActionsPaste,
   useExtensionRegistry,
   OcUppyFile
-} from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
-import { defaultPlugins, shallowMount, defaultComponentMocks } from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { defaultPlugins, shallowMount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
 import { RouteLocation } from 'vue-router'
 import { computed, ref } from 'vue'
-import { OcButton } from '@ownclouders/design-system/components'
+import { OcButton } from '@opencloud-eu/design-system/components'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRequest: vi.fn(),
   useFileActionsCreateNewFile: vi.fn(),

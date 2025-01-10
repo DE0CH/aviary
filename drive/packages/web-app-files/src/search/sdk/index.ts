@@ -8,7 +8,7 @@ import {
   SearchList,
   SearchPreview,
   SearchProvider
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 function $gettext(msg: string) {
   return msg

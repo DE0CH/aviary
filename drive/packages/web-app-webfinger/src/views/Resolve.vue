@@ -29,10 +29,10 @@ import {
   useLoadingService,
   useRoute,
   useRouteMeta
-} from '@ownclouders/web-pkg'
-import { OwnCloudServer, WebfingerDiscovery } from '../discovery'
+} from '@opencloud-eu/web-pkg'
+import { OpenCloudServer, WebfingerDiscovery } from '../discovery'
 import { useGettext } from 'vue3-gettext'
-import { useAuthService } from '@ownclouders/web-pkg'
+import { useAuthService } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'WebfingerResolve',
@@ -49,13 +49,13 @@ export default defineComponent({
       return $gettext(unref(title))
     })
 
-    const ownCloudServers = ref<OwnCloudServer[]>([])
+    const openCloudServers = ref<OpenCloudServer[]>([])
     const hasError = ref(false)
     const webfingerDiscovery = new WebfingerDiscovery(configStore.serverUrl, clientService)
     loadingService.addTask(async () => {
       try {
-        const servers = await webfingerDiscovery.discoverOwnCloudServers()
-        ownCloudServers.value = servers
+        const servers = await webfingerDiscovery.discoverOpenCloudServers()
+        openCloudServers.value = servers
         if (servers.length === 0) {
           hasError.value = true
         }
@@ -68,17 +68,17 @@ export default defineComponent({
       }
     })
 
-    watch(ownCloudServers, (instances) => {
+    watch(openCloudServers, (instances) => {
       if (instances.length === 0) {
         return
       }
       // we can't deal with multi-instance results. just pick the first one for now.
-      window.location.href = ownCloudServers.value[0].href
+      window.location.href = openCloudServers.value[0].href
     })
 
     return {
       pageTitle,
-      ownCloudInstances: ownCloudServers,
+      openCloudInstances: openCloudServers,
       hasError
     }
   }

@@ -7,7 +7,7 @@ import {
   RouterLinkStub,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import Pagination from '../../../src/components/Pagination.vue'
 
 const filesPersonalRoute = { name: 'files-personal', path: '/files/home' }

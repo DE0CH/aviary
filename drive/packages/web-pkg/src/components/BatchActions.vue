@@ -53,8 +53,8 @@ export default defineComponent({
     padding-right: var(--oc-space-small) !important;
     gap: var(--oc-space-xsmall) !important;
   }
-  .action-menu-item:hover:not([disabled]),
-  .action-menu-item:focus:not([disabled]) {
+  .action-menu-item:hover:not([disabled]):not(.oc-button-filled),
+  .action-menu-item:focus:not([disabled]):not(.oc-button-filled) {
     background-color: var(--oc-color-background-hover);
     border-color: var(--oc-color-background-hover);
   }

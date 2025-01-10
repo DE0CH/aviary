@@ -1,17 +1,17 @@
 {
-  "name": "@ownclouders/web-pkg",
-  "version": "11.0.6",
-  "description": "ownCloud web pkg",
+  "name": "@opencloud-eu/web-pkg",
+  "version": "0.0.0",
+  "description": "OpenCloud web pkg",
   "license": "AGPL-3.0",
   "main": "src/index.ts",
   "types": "types.d.ts",
   "private": false,
-  "author": "ownCloud GmbH <devops@owncloud.com>",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
   "type": "module",
-  "homepage": "https://github.com/owncloud/web/tree/master/packages/web-pkg",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/web-pkg",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/web-pkg"
   },
   "files": [
@@ -37,8 +37,8 @@
     "@casl/ability": "^6.7.1",
     "@casl/vue": "^2.2.2",
     "@microsoft/fetch-event-source": "^2.0.1",
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:^",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:^",
     "@sentry/vue": "^8.33.1",
     "@toast-ui/editor-plugin-code-syntax-highlight": "^3.1.0",
     "@toast-ui/editor": "^3.2.2",
@@ -73,7 +73,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:^",
+    "@opencloud-eu/web-test-helpers": "workspace:^",
     "@types/dompurify": "3.0.5",
     "@types/lodash-es": "4.17.12",
     "@vitest/web-worker": "2.1.5",

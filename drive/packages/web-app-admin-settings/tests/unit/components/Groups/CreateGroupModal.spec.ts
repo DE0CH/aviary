@@ -5,11 +5,11 @@ import {
   mockAxiosReject,
   mockAxiosResolve,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Modal, eventBus, useMessages } from '@ownclouders/web-pkg'
+import { Modal, eventBus, useMessages } from '@opencloud-eu/web-pkg'
 import { useGroupSettingsStore } from '../../../../src/composables'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 describe('CreateGroupModal', () => {
   describe('computed method "isFormInvalid"', () => {

@@ -1,5 +1,5 @@
 import { navItems, routes } from '../../src/index'
-import { Ability } from '@ownclouders/web-client'
+import { Ability } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 
 const getAbilityMock = (hasPermission: boolean) => mock<Ability>({ can: () => hasPermission })

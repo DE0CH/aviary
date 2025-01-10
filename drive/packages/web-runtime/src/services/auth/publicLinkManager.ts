@@ -1,5 +1,5 @@
-import { AuthStore, CapabilityStore, ClientService } from '@ownclouders/web-pkg'
-import { PublicLinkType } from '@ownclouders/web-client'
+import { AuthStore, CapabilityStore, ClientService } from '@opencloud-eu/web-pkg'
+import { PublicLinkType } from '@opencloud-eu/web-client'
 
 export interface PublicLinkManagerOptions {
   clientService: ClientService

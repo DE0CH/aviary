@@ -1,4 +1,4 @@
-import { SearchProvider, useExtensionRegistry } from '@ownclouders/web-pkg'
+import { SearchProvider, useExtensionRegistry } from '@opencloud-eu/web-pkg'
 import { computed, Ref } from 'vue'
 import { searchProviderExtensionPoint } from '../extensionPoints'
 

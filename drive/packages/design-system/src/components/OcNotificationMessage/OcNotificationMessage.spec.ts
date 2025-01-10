@@ -1,5 +1,5 @@
 import OcNotificationMessage from './OcNotificationMessage.vue'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 describe('OcNotificationMessage', () => {
   beforeEach(() => {

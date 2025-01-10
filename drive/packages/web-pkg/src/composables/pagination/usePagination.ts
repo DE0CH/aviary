@@ -5,7 +5,7 @@ import { PaginationConstants } from './constants'
 import { eventBus } from '../../services'
 import { findIndex } from 'lodash-es'
 import { useRoute, useRouter } from 'vue-router'
-import { Item } from '@ownclouders/web-client'
+import { Item } from '@opencloud-eu/web-client'
 
 interface PaginationOptions<T> {
   items: MaybeRef<Array<T>>

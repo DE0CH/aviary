@@ -1,7 +1,7 @@
 import { MimeType, MimeTypesToAppsSchema } from './schemas'
 import { ref, unref } from 'vue'
 import { ClientService } from '../client'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 export class AppProviderService {
   private _mimeTypes = ref<MimeType[]>([])

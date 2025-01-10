@@ -1,4 +1,4 @@
-import type { Resource, SpaceResource } from '@ownclouders/web-client'
+import type { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export enum ResolveStrategy {
   SKIP,

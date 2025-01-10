@@ -6,9 +6,9 @@
 
 <script lang="ts">
 import { authService } from '../services/auth'
-import { queryItemAsString, useRouteQuery } from '@ownclouders/web-pkg'
+import { queryItemAsString, useRouteQuery } from '@opencloud-eu/web-pkg'
 import { defineComponent, unref } from 'vue'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'LoginPage',

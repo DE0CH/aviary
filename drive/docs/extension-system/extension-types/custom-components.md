@@ -2,7 +2,7 @@
 title: 'Custom component extensions'
 date: 2024-02-14T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: custom-components.md
 geekdocCollapseSection: true
@@ -40,7 +40,7 @@ targeted at the `global-progress-bar` extension point as render target.
 
 ```typescript
 const extension = {
-    id: 'com.github.owncloud.web.app.progress-bars.nyan-cat',
+    id: 'com.github.opencloud-eu.web.app.progress-bars.nyan-cat',
     type: 'customComponent',
     extensionPointIds: ['app.runtime.global-progress-bar'],
     content: (slots) => [h(NyanCat, slots)],

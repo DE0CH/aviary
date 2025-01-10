@@ -1,10 +1,10 @@
 [
   {
-    "name": "ocis",
-    "full_name": "first-ocis-instance",
-    "organization": "Owncloud",
-    "domain": "ocis:9200",
-    "homepage": "https://owncloud.com",
+    "name": "opencloud",
+    "full_name": "first-opencloud-instance",
+    "organization": "OpenCloud",
+    "domain": "opencloud:9200",
+    "homepage": "https://opencloud.eu",
     "services": [
       {
         "endpoint": {
@@ -13,20 +13,20 @@
             "description": "CERNBox Open Cloud Mesh API"
           },
           "name": "CERNBox - OCM API",
-          "path": "https://ocis:9200/ocm/",
+          "path": "https://opencloud:9200/ocm/",
           "is_monitored": true
         },
         "api_version": "0.0.1",
-        "host": "ocis:9200"
+        "host": "opencloud:9200"
       }
     ]
   },
   {
-    "name": "federation-ocis",
-    "full_name": "Federation ocis",
-    "organization": "Owncloud",
-    "domain": "federation-ocis:10200",
-    "homepage": "https://owncloud.com",
+    "name": "federation-opencloud",
+    "full_name": "Federation opencloud",
+    "organization": "OpenCloud",
+    "domain": "federation-opencloud:10200",
+    "homepage": "https://opencloud.eu",
     "services": [
       {
         "endpoint": {
@@ -35,11 +35,11 @@
             "description": "CERNBox Open Cloud Mesh API"
           },
           "name": "CERNBox - OCM API",
-          "path": "https://federation-ocis:10200/ocm/",
+          "path": "https://federation-opencloud:10200/ocm/",
           "is_monitored": true
         },
         "api_version": "0.0.1",
-        "host": "federation-ocis:10200"
+        "host": "federation-opencloud:10200"
       }
     ]
   }

@@ -6,13 +6,13 @@ import {
   useModals,
   useResourcesStore
 } from '../../../../../src/composables/piniaStores'
-import { ShareSpaceResource, SpaceResource } from '@ownclouders/web-client'
-import { FolderResource, Resource } from '@ownclouders/web-client'
+import { ShareSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
+import { FolderResource, Resource } from '@opencloud-eu/web-client'
 import {
   RouteLocation,
   defaultComponentMocks,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useScrollToMock } from '../../../../mocks/useScrollToMock'
 import { useScrollTo } from '../../../../../src/composables/scrollTo'
 

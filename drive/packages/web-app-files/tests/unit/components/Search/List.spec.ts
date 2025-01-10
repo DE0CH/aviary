@@ -5,15 +5,15 @@ import { useResourcesViewDefaults } from '../../../../src/composables'
 import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
-import { defaultComponentMocks, defaultPlugins } from '@ownclouders/web-test-helpers'
-import { AppBar, ItemFilter, queryItemAsString, useResourcesStore } from '@ownclouders/web-pkg'
+import { defaultComponentMocks, defaultPlugins } from '@opencloud-eu/web-test-helpers'
+import { AppBar, ItemFilter, queryItemAsString, useResourcesStore } from '@opencloud-eu/web-pkg'
 import { ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
-import { Capabilities } from '@ownclouders/web-client/ocs'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
 
 vi.mock('../../../../src/composables')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   useAppDefaults: vi.fn(),

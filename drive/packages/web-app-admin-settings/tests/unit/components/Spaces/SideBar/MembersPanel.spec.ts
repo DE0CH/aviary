@@ -1,7 +1,7 @@
 import MembersPanel from '../../../../../src/components/Spaces/SideBar/MembersPanel.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { ShareRole, SpaceResource } from '@ownclouders/web-client'
+import { ShareRole, SpaceResource } from '@opencloud-eu/web-client'
 import MembersRoleSection from '../../../../../src/components/Spaces/SideBar/MembersRoleSection.vue'
 
 const graphRoles = {

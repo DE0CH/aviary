@@ -43,46 +43,39 @@
         <span class="oc-text-small" v-text="$gettext('Show')" />
       </oc-button>
     </div>
-    <table class="details-table oc-width-1-1" :aria-label="detailsTableLabel">
-      <col class="oc-width-1-3" />
-      <col class="oc-width-2-3" />
-      <tr>
-        <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Last activity')" />
-        <td v-text="lastModifiedDate" />
-      </tr>
-      <tr v-if="resource.description">
-        <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Subtitle')" />
-        <td v-text="resource.description" />
-      </tr>
-      <tr>
-        <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Manager')" />
-        <td>
-          <span v-text="ownerUsernames" />
-        </td>
-      </tr>
-      <tr v-if="!resource.disabled">
-        <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Quota')" />
-        <td>
-          <space-quota :space-quota="resource.spaceQuota" />
-        </td>
-      </tr>
-      <tr v-if="showSize" data-testid="sizeInfo">
-        <th scope="col" class="oc-pr-s oc-font-semibold" v-text="$gettext('Size')" />
-        <td v-text="size" />
-      </tr>
+    <dl
+      class="details-list oc-m-rm"
+      :aria-label="$gettext('Overview of the information about the selected space')"
+    >
+      <dt>{{ $gettext('Last activity') }}</dt>
+      <dd>{{ lastModifiedDate }}</dd>
+      <template v-if="resource.description">
+        <dt>{{ $gettext('Subtitle') }}</dt>
+        <dd>{{ resource.description }}</dd>
+      </template>
+      <dt>{{ $gettext('Manger') }}</dt>
+      <dd>{{ ownerUsernames }}</dd>
+      <template v-if="!resource.disabled">
+        <dt>{{ $gettext('Quota') }}</dt>
+        <dd><space-quota :space-quota="resource.spaceQuota" /></dd>
+      </template>
+      <template v-if="showSize">
+        <dt>{{ $gettext('Size') }}</dt>
+        <dd>{{ size }}</dd>
+      </template>
       <web-dav-details v-if="showWebDavDetails" :space="resource" />
       <portal-target
         name="app.files.sidebar.space.details.table"
         :slot-props="{ space: resource, resource }"
         :multiple="true"
       />
-    </table>
+    </dl>
   </div>
 </template>
 <script lang="ts">
 import { storeToRefs } from 'pinia'
 import { defineComponent, inject, ref, Ref, computed, unref, watch } from 'vue'
-import { buildSpaceImageResource, getSpaceManagers, SpaceResource } from '@ownclouders/web-client'
+import { buildSpaceImageResource, getSpaceManagers, SpaceResource } from '@opencloud-eu/web-client'
 import {
   useUserStore,
   useSharesStore,
@@ -121,7 +114,7 @@ export default defineComponent({
     const resourcesStore = useResourcesStore()
     const { resourceContentsText } = useResourceContents({ showSizeInformation: false })
     const router = useRouter()
-    const { current: currentLanguage } = useGettext()
+    const { $gettext, current: currentLanguage } = useGettext()
     const { loadPreview, previewsLoading } = useLoadPreview()
 
     const sharesStore = useSharesStore()
@@ -162,6 +155,23 @@ export default defineComponent({
       { immediate: true }
     )
 
+    const ownerUsernames = computed(() => {
+      const managers = getSpaceManagers(unref(resource))
+      return managers
+        .map((share) => {
+          const member = share.grantedTo.user || share.grantedTo.group
+          if (member.id === unref(user)?.id) {
+            return $gettext('%{displayName} (me)', { displayName: member.displayName })
+          }
+          return member.displayName
+        })
+        .join(', ')
+    })
+
+    const lastModifiedDate = computed(() => {
+      return formatDateFromISO(unref(resource).mdate, currentLanguage)
+    })
+
     return {
       spaceImage,
       resource,
@@ -171,7 +181,9 @@ export default defineComponent({
       resourceContentsText,
       showSize,
       size,
-      previewsLoading
+      previewsLoading,
+      lastModifiedDate,
+      ownerUsernames
     }
   },
   computed: {
@@ -218,24 +230,6 @@ export default defineComponent({
     openSharesPanelMembersHint() {
       return this.$gettext('Open member list in share panel')
     },
-    detailsTableLabel() {
-      return this.$gettext('Overview of the information about the selected space')
-    },
-    lastModifiedDate() {
-      return formatDateFromISO(this.resource.mdate, this.$language.current)
-    },
-    ownerUsernames() {
-      const managers = getSpaceManagers(this.resource)
-      return managers
-        .map((share) => {
-          const member = share.grantedTo.user || share.grantedTo.group
-          if (member.id === this.user?.id) {
-            return this.$gettext('%{displayName} (me)', { displayName: member.displayName })
-          }
-          return member.displayName
-        })
-        .join(', ')
-    },
     hasMemberShares() {
       return this.memberShareCount > 0
     },
@@ -275,15 +269,6 @@ export default defineComponent({
     max-height: 150px;
     object-fit: cover;
     width: 100%;
-  }
-}
-
-.details-table {
-  text-align: left;
-  table-layout: fixed;
-
-  tr {
-    height: 1.5rem;
   }
 }
 </style>

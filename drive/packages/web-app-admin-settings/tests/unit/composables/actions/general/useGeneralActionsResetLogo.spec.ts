@@ -1,4 +1,4 @@
-import { useMessages } from '@ownclouders/web-pkg'
+import { useMessages } from '@opencloud-eu/web-pkg'
 import { useGeneralActionsResetLogo } from '../../../../../src/composables/actions/general/useGeneralActionsResetLogo'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
@@ -7,7 +7,7 @@ import {
   RouteLocation,
   mockAxiosResolve,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 describe('resetLogo', () => {
   beforeEach(() => {

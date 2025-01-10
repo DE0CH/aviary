@@ -1,4 +1,4 @@
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 import Pagination from './OcPagination.vue'
 

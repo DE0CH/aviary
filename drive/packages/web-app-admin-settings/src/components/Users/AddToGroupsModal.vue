@@ -10,9 +10,9 @@
 <script lang="ts">
 import { defineComponent, PropType, Ref, ref, unref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { Group, User } from '@ownclouders/web-client/graph/generated'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
 import GroupSelect from './GroupSelect.vue'
-import { useClientService, Modal, useMessages } from '@ownclouders/web-pkg'
+import { useClientService, Modal, useMessages } from '@opencloud-eu/web-pkg'
 import { useUserSettingsStore } from '../../composables/stores/userSettings'
 
 export default defineComponent({

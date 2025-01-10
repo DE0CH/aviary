@@ -33,7 +33,6 @@ Feature: lock
     And "Alice" should not be able to edit file "test.odt"
 
     # checking that user cannot delete or change share of the locked file
-    # https://github.com/owncloud/web/issues/10507
     And "Alice" should not be able to manage share of a file "test.odt" for user "Brian"
 
     # checking that sharing and creating link of the locked file is possible

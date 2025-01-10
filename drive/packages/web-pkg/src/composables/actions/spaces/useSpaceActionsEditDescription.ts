@@ -4,7 +4,7 @@ import { useRoute } from '../../router'
 import { useAbility } from '../../ability'
 import { useClientService } from '../../clientService'
 import { useGettext } from 'vue3-gettext'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   useMessages,
   useModals,

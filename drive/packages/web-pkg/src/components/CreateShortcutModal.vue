@@ -118,7 +118,7 @@ import {
   watch,
   onMounted
 } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   Modal,
   useClientService,
@@ -128,11 +128,11 @@ import {
   useRouter,
   useSearch
 } from '../composables'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import DOMPurify from 'dompurify'
 import Mark from 'mark.js'
-import { OcDrop } from '@ownclouders/design-system/components'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 import { resolveFileNameDuplicate } from '../helpers'
 import { useTask } from 'vue-concurrency'
 import { debounce } from 'lodash-es'

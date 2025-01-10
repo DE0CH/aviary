@@ -1,7 +1,7 @@
 import RecipientContainer from '../../../../../../../src/components/SideBar/Shares/Collaborators/InviteCollaborator/RecipientContainer.vue'
-import { CollaboratorAutoCompleteItem, ShareTypes } from '@ownclouders/web-client'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
-import { CapabilityStore } from '@ownclouders/web-pkg'
+import { CollaboratorAutoCompleteItem, ShareTypes } from '@opencloud-eu/web-client'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
+import { CapabilityStore } from '@opencloud-eu/web-pkg'
 
 vi.mock('../../../../../../../src/helpers/user/avatarUrl', () => ({
   avatarUrl: vi.fn().mockReturnValue('avatarUrl')

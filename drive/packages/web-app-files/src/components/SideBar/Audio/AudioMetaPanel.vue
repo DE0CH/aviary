@@ -23,7 +23,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, inject, Ref, unref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { Duration } from 'luxon'
 
 export default defineComponent({

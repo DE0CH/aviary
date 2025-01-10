@@ -5,12 +5,12 @@ import {
   defaultStubs,
   mount,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { nextTick } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
-import { SortDir } from '@ownclouders/web-pkg'
-import { OcTable } from '@ownclouders/design-system/components'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { SortDir } from '@opencloud-eu/web-pkg'
+import { OcTable } from '@opencloud-eu/design-system/components'
 
 const spaceMocks = [
   {

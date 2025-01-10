@@ -1,8 +1,8 @@
-import { AppProviderCapability, Capabilities } from '@ownclouders/web-client/ocs'
+import { AppProviderCapability, Capabilities } from '@opencloud-eu/web-client/ocs'
 import { defineStore } from 'pinia'
 import { computed, ref, unref } from 'vue'
 import merge from 'lodash-es/merge'
-import { SharePermissionBit } from '@ownclouders/web-client'
+import { SharePermissionBit } from '@opencloud-eu/web-client'
 
 const defaultValues = {
   core: {

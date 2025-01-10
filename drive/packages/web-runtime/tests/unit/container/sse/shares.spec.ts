@@ -8,7 +8,7 @@ import {
   useSharesStore,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import {
   EventSchemaType,
   onSSELinkCreatedEvent,
@@ -21,9 +21,9 @@ import {
   onSSESpaceShareUpdatedEvent
 } from '../../../../src/container/sse'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { DriveItem, User } from '@ownclouders/web-client/graph/generated'
-import { ShareTypes, Resource, SpaceResource } from '@ownclouders/web-client'
-import { createTestingPinia, defaultComponentMocks } from '@ownclouders/web-test-helpers'
+import { DriveItem, User } from '@opencloud-eu/web-client/graph/generated'
+import { ShareTypes, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { createTestingPinia, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
 import { Language } from 'vue3-gettext'
 import PQueue from 'p-queue'
 import { RouteLocation } from 'vue-router'

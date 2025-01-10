@@ -7,13 +7,13 @@ import { UsersEnvironment } from '../../environment'
 import { keycloakRealmRoles } from '../../store'
 import { state } from '../../../cucumber/environment/shared'
 import { initializeUser } from '../../utils/tokenHelper'
-import { setAccessTokenForKeycloakOcisUser } from './ocisUserToken'
+import { setAccessTokenForKeycloakOpenCloudUser } from './openCloudUserToken'
 
-const ocisKeycloakUserRoles: Record<string, string> = {
-  Admin: 'ocisAdmin',
-  'Space Admin': 'ocisSpaceAdmin',
-  User: 'ocisUser',
-  'User Light': 'ocisGuest'
+const openCloudKeycloakUserRoles: Record<string, string> = {
+  Admin: 'openCloudAdmin',
+  'Space Admin': 'openCloudSpaceAdmin',
+  User: 'openCloudUser',
+  'User Light': 'openCloudGuest'
 }
 
 export const createUser = async ({ user, admin }: { user: User; admin: User }): Promise<User> => {
@@ -29,7 +29,7 @@ export const createUser = async ({ user, admin }: { user: User; admin: User }): 
     // Issue in Keycloak:
     //  - https://github.com/keycloak/keycloak/issues/9354
     //  - https://github.com/keycloak/keycloak/issues/16449
-    // realmRoles: ['ocisUser', 'offline_access'],
+    // realmRoles: ['openCloudUser', 'offline_access'],
     enabled: true
   })
 
@@ -57,18 +57,18 @@ export const createUser = async ({ user, admin }: { user: User; admin: User }): 
     user: { ...user, uuid: keycloakUUID, role: defaultNewUserRole }
   })
 
-  // login to initialize the user in oCIS Web
+  // login to initialize the user in OpenCloud Web
   await initializeUser({
     browser: state.browser,
     user,
     waitForSelector: '#web-content'
   })
 
-  // store oCIS user information
+  // store OpenCloud user information
   usersEnvironment.storeCreatedUser({
     user: { ...user, uuid: await getUserId({ user, admin }), role: defaultNewUserRole }
   })
-  await setAccessTokenForKeycloakOcisUser(user)
+  await setAccessTokenForKeycloakOpenCloudUser(user)
   return user
 }
 
@@ -86,7 +86,7 @@ export const assignRole = async ({
     method: 'POST',
     path: join(realmBasePath, 'users', uuid, 'role-mappings', 'realm'),
     body: JSON.stringify([
-      await getRealmRole(ocisKeycloakUserRoles[role], admin),
+      await getRealmRole(openCloudKeycloakUserRoles[role], admin),
       await getRealmRole('offline_access', admin)
     ]),
     user: admin,
@@ -107,7 +107,7 @@ export const unAssignRole = async ({
   const response = await request({
     method: 'DELETE',
     path: join(realmBasePath, 'users', uuid, 'role-mappings', 'realm'),
-    body: JSON.stringify([await getRealmRole(ocisKeycloakUserRoles[role], admin)]),
+    body: JSON.stringify([await getRealmRole(openCloudKeycloakUserRoles[role], admin)]),
     user: admin,
     header: { 'Content-Type': 'application/json' }
   })
@@ -116,7 +116,7 @@ export const unAssignRole = async ({
 }
 
 export const deleteUser = async ({ user, admin }: { user: User; admin: User }): Promise<User> => {
-  // first delete ocis user
+  // first delete OpenCloud user
   // deletes the user data
   await graphDeleteUser({ user, admin })
 

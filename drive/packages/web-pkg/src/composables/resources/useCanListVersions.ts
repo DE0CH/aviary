@@ -1,5 +1,5 @@
 import { useUserStore } from '../piniaStores'
-import { isSpaceResource, isTrashResource, Resource, SpaceResource } from '@ownclouders/web-client'
+import { isSpaceResource, isTrashResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export const useCanListVersions = () => {
   const userStore = useUserStore()

@@ -1,4 +1,4 @@
-import { useScrollTo } from '@ownclouders/web-pkg'
+import { useScrollTo } from '@opencloud-eu/web-pkg'
 
 export const useScrollToMock = (
   options: Partial<ReturnType<typeof useScrollTo>> = {}

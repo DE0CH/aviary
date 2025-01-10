@@ -12,7 +12,7 @@ import serve from 'rollup-plugin-serve'
 
 const distDir = 'dist'
 
-const certsDir = process.env.OWNCLOUD_CERTS_DIR
+const certsDir = process.env.OPENCLOUD_CERTS_DIR
 const defaultHttps = () =>
   certsDir && {
     key: readFileSync(join(certsDir, 'server.key')),
@@ -61,13 +61,13 @@ export const defineConfig = (overrides = {}) => {
               'pinia',
               'vue3-gettext',
 
-              '@ownclouders/web-client',
-              '@ownclouders/web-client/graph',
-              '@ownclouders/web-client/graph/generated',
-              '@ownclouders/web-client/ocs',
-              '@ownclouders/web-client/sse',
-              '@ownclouders/web-client/webdav',
-              '@ownclouders/web-pkg',
+              '@opencloud-eu/web-client',
+              '@opencloud-eu/web-client/graph',
+              '@opencloud-eu/web-client/graph/generated',
+              '@opencloud-eu/web-client/ocs',
+              '@opencloud-eu/web-client/sse',
+              '@opencloud-eu/web-client/webdav',
+              '@opencloud-eu/web-pkg',
               'web-client',
               'web-pkg'
             ],

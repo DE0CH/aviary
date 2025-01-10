@@ -15,7 +15,7 @@ import ModalWrapper from './components/ModalWrapper.vue'
 import { useLayout } from './composables/layout'
 import { computed, defineComponent, unref, watch } from 'vue'
 import { additionalTranslations } from './helpers/additionalTranslations' // eslint-disable-line
-import { eventBus, useResourcesStore, useRouter, useThemeStore } from '@ownclouders/web-pkg'
+import { eventBus, useResourcesStore, useRouter, useThemeStore } from '@opencloud-eu/web-pkg'
 import { useHead } from './composables/head'
 import { RouteLocation } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -141,7 +141,7 @@ body {
 }
 
 #web {
-  background-color: var(--oc-color-swatch-brand-default);
+  background-color: var(--oc-color-background-chrome);
   height: 100vh;
   max-height: 100vh;
   overflow-y: hidden;

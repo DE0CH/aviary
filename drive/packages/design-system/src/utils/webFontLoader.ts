@@ -1,5 +1,5 @@
 /**
- * Web Font Loader takes care of ownCloud Design System’s font loading.
+ * Web Font Loader takes care of OpenCloud Design System’s font loading.
  * For full documentation, see: https://github.com/typekit/webfontloader
  */
 
@@ -8,7 +8,7 @@ import WebFont from 'webfontloader'
 
 WebFont.load({
   custom: {
-    families: ['Inter'],
-    urls: ['/fonts/inter.css']
+    families: ['OpenCloud'],
+    urls: ['/fonts/opencloud.css']
   }
 })

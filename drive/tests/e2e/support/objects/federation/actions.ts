@@ -34,7 +34,7 @@ export const generateInvitation = async (args: { page: Page; user: string }): Pr
 
   const serverHostname = new URL(config.baseUrl).host
 
-  // Generate the invitation code by Base64 encoding "token@oCISUrl"
+  // Generate the invitation code by Base64 encoding "token@openCloudUrl"
   inviteCode = btoa(inviteCode + '@' + serverHostname)
   await expect(page.locator(util.format(invitationToken, inviteCode))).toBeVisible()
   federatedInvitationCode.set(user, { code: inviteCode })

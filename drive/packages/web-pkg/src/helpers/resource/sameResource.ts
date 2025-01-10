@@ -1,4 +1,4 @@
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 export const isSameResource = (r1: Resource, r2: Resource): boolean => {
   if (!r1 || !r2) {

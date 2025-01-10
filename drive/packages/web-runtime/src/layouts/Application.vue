@@ -53,15 +53,15 @@ import {
   useAuthStore,
   useExtensionRegistry,
   useLocalStorage
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import TopBar from '../components/Topbar/TopBar.vue'
 import MessageBar from '../components/MessageBar.vue'
 import SidebarNav from '../components/SidebarNav/SidebarNav.vue'
 import UploadInfo from '../components/UploadInfo.vue'
 import MobileNav from '../components/MobileNav.vue'
 import { NavItem, getExtensionNavItems } from '../helpers/navItems'
-import { LoadingIndicator } from '@ownclouders/web-pkg'
-import { useActiveApp, useRoute, useRouteMeta, useSpacesLoading } from '@ownclouders/web-pkg'
+import { LoadingIndicator } from '@opencloud-eu/web-pkg'
+import { useActiveApp, useRoute, useRouteMeta, useSpacesLoading } from '@opencloud-eu/web-pkg'
 import {
   computed,
   defineComponent,
@@ -186,7 +186,7 @@ export default defineComponent({
       navBarClosed.value = value
     }
 
-    const progressBarExtensionId = 'com.github.owncloud.web.runtime.default-progress-bar'
+    const progressBarExtensionId = 'com.github.opencloud-eu.web.runtime.default-progress-bar'
     const progressBarExtensionPointId = 'app.runtime.global-progress-bar'
     const defaultProgressBarExtension: CustomComponentExtension = {
       id: progressBarExtensionId,

@@ -6,7 +6,7 @@ import {
   isProjectSpaceResource,
   Resource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { FolderViewModeConstants } from '../viewMode'
 import { usePreviewService } from '../previewService'
 import { ProcessorType } from '../../services'

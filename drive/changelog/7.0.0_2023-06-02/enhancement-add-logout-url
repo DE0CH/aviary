@@ -1,6 +1,0 @@
-Enhancement: Add logout url
-
-We've added "Logout from active devices" in the account settings
-
-https://github.com/owncloud/web/pull/8630
-https://github.com/owncloud/web/issues/8609

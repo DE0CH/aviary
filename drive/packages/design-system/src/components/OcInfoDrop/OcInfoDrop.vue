@@ -242,7 +242,7 @@ export default {
           {text: "Everyone with the link can access. Note: If you share this link with people from the list \"Invited people\", they need to login-in so that their individual assigned permissions can take effect. If they are not logged-in, the permissions of the link take effect." }
         ],
         endText: "Invited persons can not see who else has access",
-        readMoreLink: "https://owncloud.design"
+        readMoreLink: "https://opencloud.design"
       }
     }
   },

@@ -9,9 +9,9 @@ import {
   defineWebApplication,
   useOpenEmptyEditor,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 export default defineWebApplication({
   setup({ applicationConfig }) {

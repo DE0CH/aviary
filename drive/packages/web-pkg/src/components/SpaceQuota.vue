@@ -12,7 +12,7 @@
 
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { Quota } from '@ownclouders/web-client/graph/generated'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
 import { formatFileSize } from '../helpers'
 import { useGettext } from 'vue3-gettext'
 

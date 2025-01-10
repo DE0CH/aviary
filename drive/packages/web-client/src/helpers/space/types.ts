@@ -11,7 +11,7 @@ import {
   Quota,
   SharePointIdentitySet,
   User
-} from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/web-client/graph/generated'
 import { Ability, Resource } from '../resource'
 
 export const SHARE_JAIL_ID = 'a0ca6a90-a365-4782-871e-d44447bbc668'

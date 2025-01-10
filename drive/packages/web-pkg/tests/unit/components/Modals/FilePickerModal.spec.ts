@@ -1,7 +1,7 @@
 import FilePickerModal from '../../../../src/components/Modals/FilePickerModal.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { Modal, useModals } from '../../../../src/composables/piniaStores'
 import { RouteLocation } from 'vue-router'
 
@@ -17,22 +17,22 @@ describe('FilePickerModal', () => {
     })
     it('sets the iframe title correctly', () => {
       const { wrapper } = getWrapper()
-      expect(wrapper.vm.iframeTitle).toEqual('ownCloud')
+      expect(wrapper.vm.iframeTitle).toEqual('OpenCloud')
     })
   })
   describe('method "onFilePick"', () => {
-    it('does nothing if the event message does not equal "owncloud-embed:file-pick"', () => {
+    it('does nothing if the event message does not equal "opencloud-embed:file-pick"', () => {
       const { wrapper } = getWrapper()
       wrapper.vm.onFilePick(mock<MessageEvent>({ data: { name: 'some-other-event' } }))
       expect(window.open).not.toHaveBeenCalled()
     })
-    it('opens resource in new window when message does equal "owncloud-embed:file-pick"', () => {
+    it('opens resource in new window when message does equal "opencloud-embed:file-pick"', () => {
       const { wrapper } = getWrapper()
       const modalStore = useModals()
       wrapper.vm.onFilePick(
         mock<MessageEvent>({
           data: {
-            name: 'owncloud-embed:file-pick',
+            name: 'opencloud-embed:file-pick',
             data: {
               resource: mock<Resource>({ storageId: '1' }),
               originRoute: mock<RouteLocation>()

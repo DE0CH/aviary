@@ -1,8 +1,8 @@
 import { useUserActionsEdit } from '../../../../../src/composables/actions/users/useUserActionsEdit'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 
 describe('useUserActionsEdit', () => {
   describe('method "isVisible"', () => {

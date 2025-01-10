@@ -13,10 +13,10 @@
 
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { useMessages } from '@ownclouders/web-pkg'
+import { useMessages } from '@opencloud-eu/web-pkg'
 import { useClipboard } from '@vueuse/core'
 import { useGettext } from 'vue3-gettext'
-import { LinkShare } from '@ownclouders/web-client'
+import { LinkShare } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'CopyLink',

@@ -6,7 +6,7 @@ import { EDITOR_MODE_EDIT, useFileActions } from './files'
 import { storeToRefs } from 'pinia'
 import { unref } from 'vue'
 import { resolveFileNameDuplicate } from '../../helpers'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 // open an editor with an empty file within the current folder
 export const useOpenEmptyEditor = () => {

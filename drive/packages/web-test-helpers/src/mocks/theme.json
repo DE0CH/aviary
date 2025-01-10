@@ -1,7 +1,7 @@
 {
   "common": {
-    "name": "ownCloud",
-    "slogan": "ownCloud – A safe home for all your data"
+    "name": "OpenCloud",
+    "slogan": "Excellent file sharing"
   },
   "clients": {
     "android": {},
@@ -11,9 +11,9 @@
       "defaults": {
         "appBanner": {},
         "logo": {
-          "topbar": "themes/owncloud/assets/logo.svg",
-          "favicon": "themes/owncloud/assets/favicon.jpg",
-          "login": "themes/owncloud/assets/logo.svg"
+          "topbar": "themes/opencloud/assets/logo.svg",
+          "favicon": "themes/opencloud/assets/favicon.jpg",
+          "login": "themes/opencloud/assets/logo.svg"
         }
       },
       "themes": [

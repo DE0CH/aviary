@@ -1,10 +1,10 @@
 import App from '../../src/App.vue'
 import { nextTick, ref } from 'vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { FileContext, queryItemAsString } from '@ownclouders/web-pkg'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { FileContext, queryItemAsString } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   createFileRouteOptions: vi.fn(() => ({ params: {}, query: {} }))

@@ -2,7 +2,7 @@
 title: 'Viewer and editor apps'
 date: 2024-03-12T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system
 geekdocFilePath: viewer-editor-apps.md
 geekdocCollapseSection: true
@@ -12,15 +12,15 @@ geekdocCollapseSection: true
 
 ## Viewer and editor apps
 
-ownCloud Web allows developers to implement apps for viewing and editing specific file types. For instance, the built-in preview app serves as the default application for opening media files like images, videos, or audio.
+OpenCloud Web allows developers to implement apps for viewing and editing specific file types. For instance, the built-in preview app serves as the default application for opening media files like images, videos, or audio.
 
-This section will guide you through the process of implementing such an app within ownCloud Web.
+This section will guide you through the process of implementing such an app within OpenCloud Web.
 
 ### Basic app structure
 
 An app is essentially a distinct package that must be specified as an external application in the Web configuration.
 
-The structure of an app is quite simple and straightforward. Consider, for example, the [pdf-viewer app](https://github.com/owncloud/web/tree/master/packages/web-app-pdf-viewer). It consists of a `package.json` file, a `src` directory containing all the source code, and a `l10n` directory for translations. Optionally, you may also include a `tests` directory if your application requires testing.
+The structure of an app is quite simple and straightforward. Consider, for example, the [pdf-viewer app](https://github.com/opencloud-eu/web/tree/main/packages/web-app-pdf-viewer). It consists of a `package.json` file, a `src` directory containing all the source code, and a `l10n` directory for translations. Optionally, you may also include a `tests` directory if your application requires testing.
 
 To learn more about apps in general, please refer to the [Web app docs]({{< ref "_index.md#apps" >}}).
 
@@ -29,7 +29,7 @@ To learn more about apps in general, please refer to the [Web app docs]({{< ref 
 Inside the `src` folder you will need an `index.ts` file that sets up the app so it can be registered by the Web runtime. It follows the basic structure as described in [the apps section]({{< ref "_index.md#apps" >}}), so it may look like this:
 
 ```typescript
-import { AppWrapperRoute, defineWebApplication, AppMenuItemExtension } from '@ownclouders/web-pkg'
+import { AppWrapperRoute, defineWebApplication, AppMenuItemExtension } from '@opencloud-eu/web-pkg'
 import translations from '../l10n/translations.json'
 import { useGettext } from 'vue3-gettext'
 import { computed } from 'vue'

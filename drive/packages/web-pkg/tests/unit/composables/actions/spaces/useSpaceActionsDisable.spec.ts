@@ -1,14 +1,14 @@
 import { useSpaceActionsDisable } from '../../../../../src/composables/actions/spaces'
 import { useMessages, useModals } from '../../../../../src/composables/piniaStores'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 describe('disable', () => {
   describe('isVisible property', () => {

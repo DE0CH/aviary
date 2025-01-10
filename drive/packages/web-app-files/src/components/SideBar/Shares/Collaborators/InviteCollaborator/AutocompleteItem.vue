@@ -45,7 +45,7 @@
 
 <script lang="ts">
 import { computed, PropType } from 'vue'
-import { CollaboratorAutoCompleteItem, ShareTypes } from '@ownclouders/web-client'
+import { CollaboratorAutoCompleteItem, ShareTypes } from '@opencloud-eu/web-client'
 
 export default {
   name: 'AutocompleteItem',

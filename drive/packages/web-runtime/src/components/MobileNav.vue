@@ -20,11 +20,11 @@
         >
           <oc-button
             type="router-link"
-            :appearance="item.active ? 'raw-inverse' : 'raw'"
-            :variation="item.active ? 'primary' : 'passive'"
+            appearance="raw"
+            variation="passive"
             :to="item.route"
             class="oc-display-block oc-p-s"
-            :class="{ 'oc-background-primary-gradient router-link-active': item.active }"
+            :class="{ 'oc-background-highlight router-link-active': item.active }"
           >
             <span class="oc-flex">
               <oc-icon :name="item.icon" variation="inherit" />
@@ -58,3 +58,27 @@ export default defineComponent({
   }
 })
 </script>
+
+<style lang="scss" scoped>
+#mobile-nav {
+  li {
+    margin: var(--oc-space-xsmall) 0;
+
+    &:first-child {
+      margin-top: 0;
+    }
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+
+    a {
+      &:focus,
+      &:hover {
+        background-color: var(--oc-color-background-hover);
+        text-decoration: none;
+      }
+    }
+  }
+}
+</style>

@@ -43,10 +43,10 @@ import { defineComponent } from 'vue'
 import designTokens from '../../assets/tokens/ods.json'
 
 /**
- * A list of available tokens in ownCloud Design System. Use these tokens in place
+ * A list of available tokens in OpenCloud Design System. Use these tokens in place
  * of hard-coded values in order to maintain a scalable and consistent system.
  * To edit these tokens and add more, see
- * [/src/tokens/](https://github.com/owncloud/owncloud-design-system/blob/master/src/tokens).
+ * [/src/tokens/](https://github.com/opencloud-eu/web/tree/main/packages/design-system/src/tokens).
  */
 export default defineComponent({
   name: 'DocsAllTokens',

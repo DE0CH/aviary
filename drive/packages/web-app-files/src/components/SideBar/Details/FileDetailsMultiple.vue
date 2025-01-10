@@ -7,31 +7,18 @@
       </div>
     </div>
     <div>
-      <table class="details-table" :aria-label="detailsTableLabel" role="presentation">
-        <tr data-testid="filesCount">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="filesText" />
-          <td v-text="filesCount" />
-        </tr>
-        <tr data-testid="foldersCount">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="foldersText" />
-          <td v-text="foldersCount" />
-        </tr>
-        <tr v-if="showSpaceCount" data-testid="spacesCount">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="spacesText" />
-          <td v-text="spacesCount" />
-        </tr>
-        <tr v-if="hasSize" data-testid="size">
-          <th scope="col" class="oc-pr-s oc-font-semibold" v-text="sizeText" />
-          <td v-text="sizeValue" />
-        </tr>
-      </table>
+      <oc-definition-list
+        :aria-label="$gettext('Overview of the information about the selected files')"
+        :items="details"
+      />
     </div>
   </div>
 </template>
 <script lang="ts">
 import { computed, defineComponent, unref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { formatFileSize, useResourcesStore } from '@ownclouders/web-pkg'
+import { formatFileSize, useResourcesStore } from '@opencloud-eu/web-pkg'
+import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({
   name: 'FileDetailsMultiple',
@@ -39,6 +26,7 @@ export default defineComponent({
     showSpaceCount: { type: Boolean, default: false }
   },
   setup() {
+    const { $gettext, current: currentLanguage } = useGettext()
     const resourcesStore = useResourcesStore()
     const { selectedResources } = storeToRefs(resourcesStore)
 
@@ -46,7 +34,32 @@ export default defineComponent({
       return unref(selectedResources).some((resource) => Object.hasOwn(resource, 'size'))
     })
 
-    return { hasSize, selectedResources }
+    const filesCount = computed(() => {
+      return unref(selectedResources).filter((i) => i.type === 'file').length
+    })
+
+    const foldersCount = computed(() => {
+      return unref(selectedResources).filter((i) => i.type === 'folder').length
+    })
+
+    const spacesCount = computed(() => {
+      return unref(selectedResources).filter((i) => i.type === 'space').length
+    })
+
+    const sizeValue = computed(() => {
+      let size = 0
+      unref(selectedResources).forEach((i) => (size += parseInt(i.size?.toString() || '0')))
+      return formatFileSize(size, currentLanguage)
+    })
+
+    const details = [
+      { term: $gettext('Files'), definition: unref(filesCount) },
+      { term: $gettext('Folders'), definition: unref(foldersCount) },
+      { term: $gettext('Spaces'), definition: unref(spacesCount) },
+      { term: $gettext('Size'), definition: unref(sizeValue) }
+    ]
+
+    return { hasSize, selectedResources, details }
   },
   computed: {
     selectedFilesCount() {
@@ -61,35 +74,6 @@ export default defineComponent({
           itemCount: this.selectedFilesCount.toString()
         }
       )
-    },
-    sizeValue() {
-      let size = 0
-      this.selectedResources.forEach((i) => (size += parseInt(i.size?.toString() || '0')))
-      return formatFileSize(size, this.$language.current)
-    },
-    sizeText() {
-      return this.$gettext('Size')
-    },
-    filesCount() {
-      return this.selectedResources.filter((i) => i.type === 'file').length
-    },
-    filesText() {
-      return this.$gettext('Files')
-    },
-    foldersCount() {
-      return this.selectedResources.filter((i) => i.type === 'folder').length
-    },
-    foldersText() {
-      return this.$gettext('Folders')
-    },
-    spacesCount() {
-      return this.selectedResources.filter((i) => i.type === 'space').length
-    },
-    spacesText() {
-      return this.$gettext('Spaces')
-    },
-    detailsTableLabel() {
-      return this.$gettext('Overview of the information about the selected files')
     }
   }
 })
@@ -118,14 +102,6 @@ export default defineComponent({
     .preview-text {
       display: block;
     }
-  }
-}
-
-.details-table {
-  text-align: left;
-
-  tr {
-    height: 1.5rem;
   }
 }
 </style>

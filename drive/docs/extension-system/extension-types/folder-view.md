@@ -2,7 +2,7 @@
 title: 'Folder View extensions'
 date: 2024-01-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: folder-view.md
 geekdocCollapseSection: true
@@ -33,21 +33,21 @@ For the folderView object, you have the following configuration options:
 
 - `name` - The name of the action (not displayed in the UI)
 - `label` - The text to be displayed to the user when switching between different FolderView options
-- `icon` - Object, expecting an icon `name` and a corresponding `IconFillType`, see https://owncloud.design/#/Design%20Tokens/IconList for available options
+- `icon` - Object, expecting an icon `name` and a corresponding `IconFillType`, see https://opencloud.design/#/Design%20Tokens/IconList for available options
 - `isScrollable` - Optional boolean, determines whether the user can scroll inside the component or it statically fills the viewport
 - `component` - The Vue component to render the resources. It should expect a prop of type `Resource[]`
 - `componentAttrs` - Optional additional configuration for the component mentioned above
 
 ### Example
 
-The following example shows how an extension for a custom folder view could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/owncloud/web/tree/master/packages/web-pkg) package.
+The following example shows how an extension for a custom folder view could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/opencloud-eu/web/tree/main/packages/web-pkg) package.
 
 ```typescript
 export const useCustomFolderViewExtension = () => {
   const { $gettext } = useGettext()
 
   const extension = computed<FolderViewExtension>(() => ({
-    id: 'com.github.owncloud.web.files.folder-view.custom',
+    id: 'com.github.opencloud-eu.web.files.folder-view.custom',
     type: 'folderView',
     scopes: ['resource', 'space', 'favorite'],
     folderView: {

@@ -4,7 +4,7 @@ import {
   defaultPlugins,
   mount,
   nextTicks
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useAppsStore } from '../../src/piniaStores'
 
 const selectors = {

@@ -3,10 +3,10 @@ import {
   defaultComponentMocks,
   getComposableWrapper,
   writable
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { useCapabilityStore, useModals } from '@ownclouders/web-pkg'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { useCapabilityStore, useModals } from '@opencloud-eu/web-pkg'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 describe('useUserActionsEditQuota', () => {
   describe('isVisible property', () => {

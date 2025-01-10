@@ -1,6 +1,6 @@
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource, TrashResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource, TrashResource } from '@opencloud-eu/web-client'
 import { useCanListVersions } from '../../../../src/composables/resources'
 
 describe('useCanListVersions', () => {

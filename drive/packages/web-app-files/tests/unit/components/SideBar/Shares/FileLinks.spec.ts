@@ -1,11 +1,11 @@
 import FileLinks from '../../../../../src/components/SideBar/Shares/FileLinks.vue'
 import ListItem from '../../../../../src/components/SideBar/Shares/Links/ListItem.vue'
-import { defaultPlugins, shallowMount, defaultComponentMocks } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { LinkShare, ShareTypes, Resource, AbilityRule } from '@ownclouders/web-client'
-import { FileAction, useCanShare, useFileActionsCreateLink } from '@ownclouders/web-pkg'
+import { LinkShare, ShareTypes, Resource, AbilityRule } from '@opencloud-eu/web-client'
+import { FileAction, useCanShare, useFileActionsCreateLink } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 
 const defaultLinksList = [
   {
@@ -34,7 +34,7 @@ const selectors = {
   listItemStub: 'list-item-stub'
 }
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActionsCreateLink: vi.fn(),
   useCanShare: vi.fn()

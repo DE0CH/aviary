@@ -42,7 +42,7 @@
       :aria-label="$gettext('Click to display and focus the search bar')"
       class="mobile-search-btn oc-mr-l"
       appearance="raw-inverse"
-      variation="brand"
+      variation="primary"
       @click="showSearchBar"
     >
       <oc-icon name="search" fill-type="line"></oc-icon>
@@ -113,18 +113,18 @@ import {
   useAuthStore,
   useCapabilityStore,
   useResourcesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import Mark from 'mark.js'
 import { storeToRefs } from 'pinia'
 import { debounce } from 'lodash-es'
-import { useRouteQuery, useRouter } from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
+import { useRouteQuery, useRouter } from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, inject, Ref, ref, unref, watch } from 'vue'
-import { SearchLocationFilterConstants } from '@ownclouders/web-pkg'
-import { SearchBarFilter } from '@ownclouders/web-pkg'
+import { SearchLocationFilterConstants } from '@opencloud-eu/web-pkg'
+import { SearchBarFilter } from '@opencloud-eu/web-pkg'
 import { useAvailableProviders } from '../composables'
 import { RouteLocationNormalizedLoaded } from 'vue-router'
-import { OcDrop } from '@ownclouders/design-system/components'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 
 export default defineComponent({
   name: 'SearchBar',

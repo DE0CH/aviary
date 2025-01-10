@@ -1,5 +1,5 @@
 import { useFileActions } from './files'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export function useOpenWithDefaultApp() {
   const { getDefaultAction } = useFileActions()

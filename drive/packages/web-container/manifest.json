@@ -1,8 +1,8 @@
 {
-	"name": "ownCloud",
-	"short_name": "ownCloud",
+	"name": "OpenCloud",
+	"short_name": "OpenCloud",
 	"icons": [{
-		"src": "img/owncloud-app-icon.png",
+		"src": "img/opencloud-app-icon.png",
 		"sizes": "512x512",
 		"type": "image/png"
 	}],

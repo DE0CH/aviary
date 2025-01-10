@@ -25,7 +25,7 @@
 </template>
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
-import { ShareTypes, SpaceMember } from '@ownclouders/web-client'
+import { ShareTypes, SpaceMember } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'MembersRoleSection',

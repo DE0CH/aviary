@@ -121,11 +121,11 @@ import {
   useMessages,
   useSpacesStore,
   useSharesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import GroupSelect from '../GroupSelect.vue'
 import { cloneDeep, isEmpty, isEqual, omit } from 'lodash-es'
-import { AppRole, AppRoleAssignment, Group, User } from '@ownclouders/web-client/graph/generated'
-import { MaybeRef, useClientService } from '@ownclouders/web-pkg'
+import { AppRole, AppRoleAssignment, Group, User } from '@opencloud-eu/web-client/graph/generated'
+import { MaybeRef, useClientService } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 import { diff } from 'deep-object-diff'
 import { useUserSettingsStore } from '../../../composables/stores/userSettings'

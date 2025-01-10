@@ -1,10 +1,10 @@
 import resolvePrivateLink from '../../../src/pages/resolvePrivateLink.vue'
-import { defaultPlugins, defaultComponentMocks, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, defaultComponentMocks, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { queryItemAsString, useGetResourceContext } from '@ownclouders/web-pkg'
-import { Resource, SHARE_JAIL_ID, SpaceResource } from '@ownclouders/web-client'
+import { queryItemAsString, useGetResourceContext } from '@opencloud-eu/web-pkg'
+import { Resource, SHARE_JAIL_ID, SpaceResource } from '@opencloud-eu/web-client'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRouteQuery: vi.fn((str) => str),
   useRouteParam: vi.fn((str) => str),

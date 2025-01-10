@@ -11,7 +11,7 @@ const roleIdv1Tov2Map = {
   viewer: 'a8d5fe5e-96e3-418d-825b-534dbdf22b99'
 }
 
-// FIXME: convert old v1 drive to v2 drive. remove with https://github.com/owncloud/ocis/issues/9884
+// FIXME: convert old v1 drive to v2 drive.
 const v1Tov2Drive = (drive: Drive) => {
   drive.root?.permissions?.forEach((p) => {
     p.grantedToV2 = p.grantedToV2 || p.grantedToIdentities?.[0]

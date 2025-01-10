@@ -1,9 +1,0 @@
-Enhancement: Improve performance when loading folders and share indicators
-
-The performance when loading folders and share indicators has been improved by optimizing the way how shares are being loaded.
-
-https://github.com/owncloud/web/issues/7721
-https://github.com/owncloud/web/pull/8349
-https://github.com/owncloud/web/pull/8482
-https://github.com/owncloud/web/pull/8667
-https://github.com/owncloud/web/pull/8915

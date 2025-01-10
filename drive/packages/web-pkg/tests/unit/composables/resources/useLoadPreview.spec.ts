@@ -1,14 +1,14 @@
 import { ref } from 'vue'
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { buildSpaceImageResource, Resource, SpaceResource } from '@ownclouders/web-client'
+import { buildSpaceImageResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { useLoadPreview } from '../../../../src/composables/resources'
 import { usePreviewService } from '../../../../src/composables/previewService'
 import { PreviewService, ProcessorType } from '../../../../src/services'
 import { FolderViewModeConstants, ImageDimension } from '../../../../src'
 
 vi.mock('../../../../src/composables/previewService/usePreviewService')
-vi.mock('@ownclouders/web-client', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-client', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   buildSpaceImageResource: vi.fn()
 }))

@@ -1,4 +1,4 @@
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 describe('proper-url-join', () => {
   it.each([

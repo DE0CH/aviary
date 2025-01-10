@@ -1,4 +1,4 @@
-import { ApplicationInformation } from '@ownclouders/web-pkg'
+import { ApplicationInformation } from '@opencloud-eu/web-pkg'
 import { merge } from 'lodash-es'
 import { Language, Translations } from 'vue3-gettext'
 

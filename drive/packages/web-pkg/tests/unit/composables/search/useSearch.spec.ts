@@ -1,6 +1,6 @@
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { CapabilityStore, useSearch } from '../../../../src/composables'
-import { SearchResource, SpaceResource } from '@ownclouders/web-client'
+import { SearchResource, SpaceResource } from '@opencloud-eu/web-client'
 
 describe('useSearch', () => {
   describe('method "search"', () => {

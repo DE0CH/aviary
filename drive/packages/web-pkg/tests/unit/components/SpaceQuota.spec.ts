@@ -1,7 +1,7 @@
-import { OcProgress } from '@ownclouders/design-system/components'
+import { OcProgress } from '@opencloud-eu/design-system/components'
 import { SpaceQuota } from '../../../src/components'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { Quota } from '@ownclouders/web-client/graph/generated'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
 
 describe('SpaceQuota component', () => {
   it('renders the space storage quota label', () => {

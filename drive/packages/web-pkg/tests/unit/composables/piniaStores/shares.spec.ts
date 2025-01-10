@@ -1,4 +1,4 @@
-import { createTestingPinia, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { createTestingPinia, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import {
   AddLinkOptions,
   AddShareOptions,
@@ -11,8 +11,8 @@ import {
 } from '../../../../src/composables/piniaStores'
 import { mock, mockDeep } from 'vitest-mock-extended'
 import { ClientService } from '../../../../src/services'
-import { CollaboratorShare, LinkShare, Resource } from '@ownclouders/web-client'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { CollaboratorShare, LinkShare, Resource } from '@opencloud-eu/web-client'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 describe('useSharesStore', () => {
   beforeEach(() => {

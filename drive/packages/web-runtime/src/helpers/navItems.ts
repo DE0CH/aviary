@@ -1,4 +1,4 @@
-import { AppNavigationItem, ExtensionRegistry, SidebarNavExtension } from '@ownclouders/web-pkg'
+import { AppNavigationItem, ExtensionRegistry, SidebarNavExtension } from '@opencloud-eu/web-pkg'
 
 export interface NavItem extends Omit<AppNavigationItem, 'name'> {
   name: string

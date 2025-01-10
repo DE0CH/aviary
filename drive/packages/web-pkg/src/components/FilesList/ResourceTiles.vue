@@ -126,7 +126,7 @@ import {
   watch
 } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { isSpaceResource, Resource, SpaceResource } from '@ownclouders/web-client'
+import { isSpaceResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 // Constants should match what is being used in OcTable/ResourceTable
 // Alignment regarding naming would be an API-breaking change and can
@@ -299,7 +299,7 @@ export default defineComponent({
     }
     const emitTileClick = (resource: Resource) => {
       if (unref(isEmbedModeEnabled) && unref(isFilePicker)) {
-        return postMessage<embedModeFilePickMessageData>('owncloud-embed:file-pick', {
+        return postMessage<embedModeFilePickMessageData>('opencloud-embed:file-pick', {
           resource: JSON.parse(JSON.stringify(resource)),
           locationQuery: JSON.parse(JSON.stringify(routeToContextQuery(unref(router.currentRoute))))
         })

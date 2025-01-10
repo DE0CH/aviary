@@ -6,7 +6,7 @@ import {
   defaultComponentMocks,
   defaultStubs,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 describe('DriveRedirect view', () => {
   it('redirects to "projects" route if no personal space exist', () => {

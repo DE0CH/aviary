@@ -1,6 +1,6 @@
 import { mock } from 'vitest-mock-extended'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
-import { SpaceResource } from '@ownclouders/web-client'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
 
 export const useGetMatchingSpaceMock = (
   options: Partial<ReturnType<typeof useGetMatchingSpace>> = {}

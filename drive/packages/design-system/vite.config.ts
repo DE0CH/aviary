@@ -10,7 +10,10 @@ export default defineConfig({
   css: {
     preprocessorOptions: {
       scss: {
-        additionalData: `@import "${projectRootDir}/packages/design-system/src/styles/styles";`,
+        additionalData: `
+          @use "sass:math";
+          @import "${projectRootDir}/packages/design-system/src/styles/styles";
+        `,
         silenceDeprecations: ['legacy-js-api', 'import']
       }
     }
@@ -49,7 +52,7 @@ export default defineConfig({
     vue(),
     dts({ exclude: ['**/tests', '**/*.spec.ts'] }),
     {
-      name: '@ownclouders/vite-plugin-docs',
+      name: '@opencloud-eu/vite-plugin-docs',
       transform(src, id) {
         if (id.includes('type=docs')) {
           return {

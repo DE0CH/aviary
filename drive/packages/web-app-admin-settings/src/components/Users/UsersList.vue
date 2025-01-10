@@ -127,12 +127,12 @@ import {
   useIsTopBarSticky,
   useKeyboardActions,
   useRouteQuery
-} from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
-import { AppRole, User } from '@ownclouders/web-client/graph/generated'
-import { ContextMenuQuickAction } from '@ownclouders/web-pkg'
-import { useFileListHeaderPosition, usePagination } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
+import { AppRole, User } from '@opencloud-eu/web-client/graph/generated'
+import { ContextMenuQuickAction } from '@opencloud-eu/web-pkg'
+import { useFileListHeaderPosition, usePagination } from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
 import { perPageDefault, perPageStoragePrefix } from '../../defaults'
 import { storeToRefs } from 'pinia'
 import { useUserSettingsStore } from '../../composables/stores/userSettings'

@@ -3,7 +3,7 @@ import { triggerDownloadWithFilename } from '../../../src/helpers'
 import { useGettext } from 'vue3-gettext'
 import { ClientService } from '../../services'
 import { useCapabilityStore, useMessages, useUserStore } from '../piniaStores'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export interface DownloadFileOptions {
   clientService?: ClientService

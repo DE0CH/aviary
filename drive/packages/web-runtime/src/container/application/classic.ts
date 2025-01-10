@@ -4,9 +4,9 @@ import { App } from 'vue'
 import { isFunction, isObject } from 'lodash-es'
 import { NextApplication } from './next'
 import { Router } from 'vue-router'
-import { RuntimeError, useAppsStore } from '@ownclouders/web-pkg'
-import { AppConfigObject, AppReadyHookArgs, ClassicApplicationScript } from '@ownclouders/web-pkg'
-import { useExtensionRegistry } from '@ownclouders/web-pkg'
+import { RuntimeError, useAppsStore } from '@opencloud-eu/web-pkg'
+import { AppConfigObject, AppReadyHookArgs, ClassicApplicationScript } from '@opencloud-eu/web-pkg'
+import { useExtensionRegistry } from '@opencloud-eu/web-pkg'
 
 /**
  * this wraps a classic application structure into a next application format.

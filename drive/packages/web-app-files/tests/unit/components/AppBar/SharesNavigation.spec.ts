@@ -1,5 +1,5 @@
 import SharesNavigation from '../../../../src/components/AppBar/SharesNavigation.vue'
-import { locationSharesWithMe } from '@ownclouders/web-pkg'
+import { locationSharesWithMe } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { RouteRecordNormalized } from 'vue-router'
 import {
@@ -8,7 +8,7 @@ import {
   shallowMount,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 const routes = [
   mock<RouteRecordNormalized>({

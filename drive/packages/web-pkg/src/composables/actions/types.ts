@@ -1,5 +1,5 @@
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { Group, User } from '@ownclouders/web-client/graph/generated'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
 import { RouteLocationRaw } from 'vue-router'
 import { IconFillType } from '../../helpers'
 import { StringUnionOrAnyString } from '../../utils'

@@ -2,7 +2,7 @@
 title: 'Theming'
 date: 2021-04-01T00:00:00+00:00
 weight: 55
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/theming
 geekdocFilePath: _index.md
 geekdocCollapseSection: true
@@ -12,24 +12,24 @@ geekdocCollapseSection: true
 
 ## Introduction
 
-By providing your own theme, you can customize the user experience for your own ownCloud installation. This is being achieved by providing a `json` file that contains text snippets (like brand name and slogan), paths to images (e.g. logos or favicon) and design tokens for various color, sizing and spacing parameters.
+By providing your own theme, you can customize the user experience for your own OpenCloud installation. This is being achieved by providing a `json` file that contains text snippets (like brand name and slogan), paths to images (e.g. logos or favicon) and design tokens for various color, sizing and spacing parameters.
 
 This page documents the setup and configuration options, and provides a template for you to get started.
 
 ## Ways of providing a theme
 
-Generally, your theming configuration lives inside a `.json` file, e.g. `theme.json`. To load this file, it needs to be correctly referenced inside your `config/config.json` (example configurations can be [found on GitHub](https://github.com/owncloud/web/tree/master/config)).
+Generally, your theming configuration lives inside a `.json` file, e.g. `theme.json`. To load this file, it needs to be correctly referenced inside your `config/config.json` (example configurations can be [found on GitHub](https://github.com/opencloud-eu/web/tree/main/config)).
 
 To reference your theme, you have two options:
 
-- Using a URL, e.g. `"theme": "https://externalurl.example.com/theme-name/theme.json",`. To avoid CORS issues, please make sure that you host the URL on the same URL as your ownCloud web hosting.
-- For development and testing purposes, you can store your `theme.json` inside `packages/web-runtime/themes/{theme-name}/` and reference it in the `config.json`. However, this isn't recommended for production use since your changes may get lost when updating oCIS or the `web` app in OC10.
+- Using a URL, e.g. `"theme": "https://externalurl.example.com/theme-name/theme.json",`. To avoid CORS issues, please make sure that you host the URL on the same URL as your OpenCloud web hosting.
+- For development and testing purposes, you can store your `theme.json` inside `packages/web-runtime/themes/{theme-name}/` and reference it in the `config.json`. However, this isn't recommended for production use since your changes may get lost when updating OpenCloud.
 
-**Hint:** If no theme is provided, the loading of your custom theme fails or the theme can't be parsed correctly, the standard ownCloud theme will be loaded as a fallback and an error with further information will be logged on the browser console.
+**Hint:** If no theme is provided, the loading of your custom theme fails or the theme can't be parsed correctly, the standard OpenCloud theme will be loaded as a fallback and an error with further information will be logged on the browser console.
 
 ## Configuring a theme
 
-Inside your `theme.json`, there is a `common` key, which is explained in the next section, and a `clients` key: Here, you can find the available ownCloud clients - please note that the documentation below focuses on `web` and check the respective documentation for other clients for details on their themability.
+Inside your `theme.json`, there is a `common` key, which is explained in the next section, and a `clients` key: Here, you can find the available OpenCloud clients - please note that the documentation below focuses on `web` and check the respective documentation for other clients for details on their themability.
 
 The general top-level structure of a valid `theme.json` is outlined below:
 
@@ -53,19 +53,20 @@ The structure of a valid `common` section is outlined below:
 
 ```json
 "common": {
-  "name": "ownCloud",
-  "slogan": "ownCloud – A safe home for all your data",
-  "logo": "themes/owncloud/assets/logo.svg",
+  "name": "OpenCloud",
+  "slogan": "OpenCloud – Excellent file sharing",
+  "logo": "themes/opencloud/assets/logo.svg",
   "urls": {
     "accessDeniedHelp": "",
     "imprint": "",
     "privacy": ""
-  }, 
+  },
   "shareRoles": {}
 }
 ```
 
 All of the below parameters are required:
+
 - `name` specifies the publicly visible name
 - `slogan` specifies the publicly visible slogan
 - `logo` specifies the logo in e.g. the top bar within the web UI
@@ -114,15 +115,15 @@ Configures a app banner that gets shown on mobile devices and suggests downloadi
 
 Example structure:
 
-```json 
+```json
 {
   "appBanner": {
-    "title": "ownCloud",
-    "publisher": "ownCloud GmbH",
+    "title": "OpenCloud",
+    "publisher": "OpenCloud GmbH",
     "additionalInformation": "",
     "ctaText": "OPEN",
-    "icon": "themes/owncloud/assets/owncloud-app-icon.png",
-    "appScheme": "owncloud"
+    "icon": "themes/opencloud/assets/opencloud-app-icon.png",
+    "appScheme": "opencloud"
   }
 }
 ```
@@ -131,7 +132,7 @@ Example structure:
 - `additionalInformation` can be used to specify pricing information, such as "FREE" or a catchphrase like "Don't miss out on our awesome app!".
 - `ctaText` refers to the text in the call to action button on the right side. The `icon` directive may be used to specify your own app icon.
 - `icon` links the icon to be displayed as a preview for the final app icon within the app banner
-- `appScheme` is the first part of the URL that is used to tell the mobile OS which app to open, so using `ownCloud` will generate links such as `owncloud://yourdomain.com/f/2b61b822...`.
+- `appScheme` is the first part of the URL that is used to tell the mobile OS which app to open, so using `opencloud` will generate links such as `opencloud://yourdomain.com/f/2b61b822...`.
 
 ##### The "logo" options
 
@@ -139,9 +140,9 @@ Here, you can specify the images to be used in the `"topbar"`, for the `"favicon
 
 ```json
 "logo": {
-  "topbar": "themes/owncloud/assets/logo.svg",
-  "favicon": "themes/owncloud/assets/favicon.jpg",
-  "login": "themes/owncloud/assets/logo.svg"
+  "topbar": "themes/opencloud/assets/logo.svg",
+  "favicon": "themes/opencloud/assets/favicon.ico",
+  "login": "themes/opencloud/assets/logo.svg"
 },
 ```
 
@@ -151,15 +152,15 @@ You can set the background image for the login page by providing an image file i
 
 ```json
 "loginPage": {
-  "backgroundImg": "themes/owncloud/assets/loginBackground.jpg"
+  "backgroundImg": "themes/opencloud/assets/background.png"
 },
 ```
 
 ##### The "designTokens" options
 
-To further customize your ownCloud instance, you can provide your own styles. To give you an idea of how a working design system looks like, feel free to head over to the [ownCloud design tokens](https://owncloud.design/#/Design%20Tokens) for inspiration.
+To further customize your OpenCloud instance, you can provide your own styles. To give you an idea of how a working design system looks like, feel free to head over to the [OpenCloud design tokens](https://opencloud.design/#/Design%20Tokens) for inspiration.
 
-**Hint:** All the variables are initialized using the [ownCloud design tokens](https://owncloud.design/#/Design%20Tokens) and then overwritten by your theme variables. Therefore, you don't have to provide all the variables and can use the default ownCloud colors as a fallback.
+**Hint:** All the variables are initialized using the [OpenCloud design tokens](https://opencloud.design/#/Design%20Tokens) and then overwritten by your theme variables. Therefore, you don't have to provide all the variables and can use the default OpenCloud colors as a fallback.
 
 In general, the theme loader looks for a `designTokens` key inside your theme configuration. Inside the `designTokens`, it expects to find a `colorPalette`, `fontSizes` and `spacing` collection. The structure is outlined below:
 
@@ -186,7 +187,7 @@ In general, the theme loader looks for a `designTokens` key inside your theme co
 
 ###### Breakpoints
 
-If you'd like to set different breakpoints than the default ones in the ownCloud design system, you can set them using theming variables.
+If you'd like to set different breakpoints than the default ones in the OpenCloud design system, you can set them using theming variables.
 
 Breakpoint variables get prepended with `--oc-breakpoint-`, so e.g. _"large-default"_ creates the custom CSS property `--oc-breakpoint-large-default`.
 
@@ -211,7 +212,7 @@ For the color values, you can use any valid CSS color format, e.g. **hex** (#fff
 
 Color variables get prepended with `--oc-color-`, so e.g. _"background-default"_ creates the custom CSS property `--oc-color-background-default`.
 
-Again, you can use the [ownCloud design tokens](https://owncloud.design/#/Design%20Tokens) as a reference implementation.
+Again, you can use the [OpenCloud design tokens](https://opencloud.design/#/Design%20Tokens) as a reference implementation.
 
 ```json
 {
@@ -245,8 +246,6 @@ Again, you can use the [ownCloud design tokens](https://owncloud.design/#/Design
     "swatch-primary-hover": "",
     "swatch-primary-muted": "",
     "swatch-primary-muted-hover": "",
-    "swatch-primary-gradient": "",
-    "swatch-primary-gradient-hover": "",
     "swatch-primary-contrast": "",
     "swatch-success-default": "",
     "swatch-success-hover": "",
@@ -265,7 +264,7 @@ Again, you can use the [ownCloud design tokens](https://owncloud.design/#/Design
 
 ###### Font sizes
 
-You can change the `default`, `large` and `medium` font sizes according to your needs. If you need more customization options regarding font sizes, please [open an issue on GitHub](https://github.com/owncloud/web/issues/new) with a detailed description.
+You can change the `default`, `large` and `medium` font sizes according to your needs. If you need more customization options regarding font sizes, please [open an issue on GitHub](https://github.com/opencloud-eu/web/issues/new) with a detailed description.
 
 Font size variables get prepended with `--oc-font-size-`, so e.g. _"default"_ creates the custom CSS property `--oc-font-size-default`.
 
@@ -294,7 +293,7 @@ Please note that you also need to make the font available as a `font-face` via C
 ###### Sizes
 
 Use sizing variables to change various UI elements, such as icon and logo appearance, table row or checkbox sizes, according to your needs.
-If you need more customization options regarding sizes, please [open an issue on GitHub](https://github.com/owncloud/web/issues/new) with a detailed description.
+If you need more customization options regarding sizes, please [open an issue on GitHub](https://github.com/opencloud-eu/web/issues/new) with a detailed description.
 
 Size variables get prepended with `--oc-size-`, so e.g. _"icon-default"_ creates the custom CSS property `--oc-size-icon-default`.
 
@@ -316,7 +315,7 @@ Size variables get prepended with `--oc-size-`, so e.g. _"icon-default"_ creates
 
 ###### Spacing
 
-Use the six spacing options (`xsmall | small | medium | large | xlarge | xxlarge`) to create a more (or less) condensed version of the user interface. If you need more customization options regarding sizes, please [open an issue on GitHub](https://github.com/owncloud/web/issues/new) with a detailed description.
+Use the six spacing options (`xsmall | small | medium | large | xlarge | xxlarge`) to create a more (or less) condensed version of the user interface. If you need more customization options regarding sizes, please [open an issue on GitHub](https://github.com/opencloud-eu/web/issues/new) with a detailed description.
 
 Spacing variables get prepended with `--oc-space-`, so e.g. _"xlarge"_ creates the custom CSS property `--oc-space-xlarge`.
 
@@ -360,10 +359,12 @@ Apart from the `defaults`, you need to provide one or more themes in the `themes
 Again, both the global `common` section as well as the `defaults` will get merged into your themes, but locally provided information takes precedence.
 
 Required information
+
 - `name` for the visible name in the theme switcher and to save the current theme to localStorage
 - `isDark` to provide the user agent with additional information
 
 Optional information
+
 - `appBanner` see section above
 - `common` see section above
 - `designTokens` see section above
@@ -381,9 +382,9 @@ A full template for your custom theme is provided below, and you can use the ins
 ```json
 {
   "common": {
-    "name": "ownCloud",
-    "slogan": "ownCloud – A safe home for all your data",
-    "logo": "themes/owncloud/assets/logo.svg",
+    "name": "OpenCloud",
+    "slogan": "OpenCloud – Excellent file sharing",
+    "logo": "themes/opencloud/assets/logo.svg",
     "urls": {
       "accessDeniedHelp": "",
       "imprint": "",
@@ -431,12 +432,12 @@ A full template for your custom theme is provided below, and you can use the ins
     "web": {
       "defaults": {
         "logo": {
-          "topbar": "themes/owncloud/assets/logo.svg",
-          "favicon": "themes/owncloud/assets/favicon.jpg",
-          "login": "themes/owncloud/assets/logo.svg"
+          "topbar": "themes/opencloud/assets/logo.svg",
+          "favicon": "themes/opencloud/assets/favicon.ico",
+          "login": "themes/opencloud/assets/logo.svg"
         },
         "loginPage": {
-          "backgroundImg": "themes/owncloud/assets/loginBackground.jpg"
+          "backgroundImg": "themes/opencloud/assets/background.png"
         },
         "designTokens": {
           "breakpoints": {
@@ -513,8 +514,6 @@ A full template for your custom theme is provided below, and you can use the ins
               "swatch-primary-hover": "#80a7d7",
               "swatch-primary-muted": "#2c588e",
               "swatch-primary-muted-hover": "rgb(36, 75, 119)",
-              "swatch-primary-gradient": "#4e85c8",
-              "swatch-primary-gradient-hover": "rgb(59, 118, 194)",
               "swatch-primary-contrast": "#ffffff",
               "swatch-success-default": "rgb(3, 84, 63)",
               "swatch-success-hover": "#023b2c",
@@ -572,8 +571,6 @@ A full template for your custom theme is provided below, and you can use the ins
               "swatch-primary-hover": "#7bafef",
               "swatch-primary-muted": "",
               "swatch-primary-muted-hover": "#2282f7",
-              "swatch-primary-gradient": "#4e85c8",
-              "swatch-primary-gradient-hover": "#76a1d5",
               "swatch-primary-contrast": "#dadcdf",
               "swatch-success-background": "rgba(0, 188, 140, 0)",
               "swatch-success-default": "rgb(0, 188, 140)",

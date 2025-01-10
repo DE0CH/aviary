@@ -1,11 +1,11 @@
 import { HttpClient } from '../../../src/http'
 import { ClientService, useAuthStore, useConfigStore } from '../../../src/'
 import { Language } from 'vue3-gettext'
-import { graph, ocs, webdav } from '@ownclouders/web-client'
-import { Graph } from '@ownclouders/web-client/graph'
-import { OCS } from '@ownclouders/web-client/ocs'
-import { WebDAV } from '@ownclouders/web-client/webdav'
-import { createTestingPinia, writable } from '@ownclouders/web-test-helpers'
+import { graph, ocs, webdav } from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
+import { OCS } from '@opencloud-eu/web-client/ocs'
+import { WebDAV } from '@opencloud-eu/web-client/webdav'
+import { createTestingPinia, writable } from '@opencloud-eu/web-test-helpers'
 import axios from 'axios'
 import { mock } from 'vitest-mock-extended'
 
@@ -25,7 +25,7 @@ const getClientServiceMock = () => {
 }
 const v4uuid = '00000000-0000-0000-0000-000000000000'
 vi.mock('uuid', () => ({ v4: () => v4uuid }))
-vi.mock('@ownclouders/web-client', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-client', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   graph: vi.fn(),
   ocs: vi.fn(),

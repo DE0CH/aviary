@@ -25,7 +25,7 @@
               :aria-label="contextMenuLabel"
               appearance="raw-inverse"
               class="oc-p-xs"
-              variation="brand"
+              variation="primary"
             >
               <oc-icon name="more-2" />
             </oc-button>
@@ -67,14 +67,14 @@
                 resources: [resource]
               }"
               appearance="raw-inverse"
-              variation="brand"
+              variation="primary"
             />
           </template>
           <oc-button
             id="app-top-bar-close"
             v-oc-tooltip="closeButtonLabel"
             appearance="raw-inverse"
-            variation="brand"
+            variation="primary"
             :aria-label="closeButtonLabel"
             @click="$emit('close')"
           >
@@ -99,7 +99,7 @@ import {
   useResourcesStore
 } from '../composables'
 import ResourceListItem from './FilesList/ResourceListItem.vue'
-import { isPublicSpaceResource, Resource } from '@ownclouders/web-client'
+import { isPublicSpaceResource, Resource } from '@opencloud-eu/web-client'
 import { Duration } from 'luxon'
 
 export default defineComponent({
@@ -207,7 +207,7 @@ export default defineComponent({
 
   .oc-resource-indicators {
     .text {
-      color: var(--oc-color-swatch-brand-contrast);
+      color: var(--oc-color-swatch-inverse-default);
     }
   }
 }

@@ -3,12 +3,12 @@ import {
   isMountPointSpaceResource,
   OCM_PROVIDER_ID,
   buildSpace
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { computed, unref } from 'vue'
 import { useClientService } from '../clientService'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { useSpacesStore, useSharesStore } from '../piniaStores'
-import { DavProperty } from '@ownclouders/web-client/webdav'
+import { DavProperty } from '@opencloud-eu/web-client/webdav'
 
 export const useGetResourceContext = () => {
   const clientService = useClientService()

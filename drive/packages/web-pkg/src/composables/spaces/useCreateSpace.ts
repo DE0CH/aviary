@@ -1,4 +1,4 @@
-import { extractStorageId, SpaceResource } from '@ownclouders/web-client'
+import { extractStorageId, SpaceResource } from '@opencloud-eu/web-client'
 import { useClientService } from '../clientService'
 import { useResourcesStore, useSharesStore } from '../piniaStores'
 

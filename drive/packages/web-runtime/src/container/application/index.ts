@@ -1,7 +1,7 @@
 import { Router } from 'vue-router'
 import { NextApplication } from './next'
 import { convertClassicApplication } from './classic'
-import { RuntimeError, ConfigStore } from '@ownclouders/web-pkg'
+import { RuntimeError, ConfigStore } from '@opencloud-eu/web-pkg'
 import { applicationStore } from '../store'
 import { isObject } from 'lodash-es'
 
@@ -10,17 +10,17 @@ import * as vue from 'vue'
 import * as luxon from 'luxon'
 import * as vueGettext from 'vue3-gettext'
 import * as pinia from 'pinia'
-import * as webPkg from '@ownclouders/web-pkg'
-import * as webClient from '@ownclouders/web-client'
-import * as webClientGraph from '@ownclouders/web-client/graph'
-import * as webClientGraphGenerated from '@ownclouders/web-client/graph/generated'
-import * as webClientOcs from '@ownclouders/web-client/ocs'
-import * as webClientSse from '@ownclouders/web-client/sse'
-import * as webClientWebdav from '@ownclouders/web-client/webdav'
+import * as webPkg from '@opencloud-eu/web-pkg'
+import * as webClient from '@opencloud-eu/web-client'
+import * as webClientGraph from '@opencloud-eu/web-client/graph'
+import * as webClientGraphGenerated from '@opencloud-eu/web-client/graph/generated'
+import * as webClientOcs from '@opencloud-eu/web-client/ocs'
+import * as webClientSse from '@opencloud-eu/web-client/sse'
+import * as webClientWebdav from '@opencloud-eu/web-client/webdav'
 
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { App } from 'vue'
-import { AppConfigObject, ClassicApplicationScript } from '@ownclouders/web-pkg'
+import { AppConfigObject, ClassicApplicationScript } from '@opencloud-eu/web-pkg'
 
 export { NextApplication } from './next'
 
@@ -34,13 +34,13 @@ const injectionMap = {
   pinia,
   vue,
   'vue3-gettext': vueGettext,
-  '@ownclouders/web-pkg': webPkg,
-  '@ownclouders/web-client': webClient,
-  '@ownclouders/web-client/graph': webClientGraph,
-  '@ownclouders/web-client/graph/generated': webClientGraphGenerated,
-  '@ownclouders/web-client/ocs': webClientOcs,
-  '@ownclouders/web-client/sse': webClientSse,
-  '@ownclouders/web-client/webdav': webClientWebdav,
+  '@opencloud-eu/web-pkg': webPkg,
+  '@opencloud-eu/web-client': webClient,
+  '@opencloud-eu/web-client/graph': webClientGraph,
+  '@opencloud-eu/web-client/graph/generated': webClientGraphGenerated,
+  '@opencloud-eu/web-client/ocs': webClientOcs,
+  '@opencloud-eu/web-client/sse': webClientSse,
+  '@opencloud-eu/web-client/webdav': webClientWebdav,
   'web-pkg': webPkg,
   'web-client': webClient
 }

@@ -4,13 +4,13 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import {
   useFileActionsOpenWithApp,
   useIsFilesAppActive,
   useModals
 } from '../../../../../src/composables'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { ApplicationInformation } from '../../../../../src'
 
 vi.mock('../../../../../src/composables/actions/helpers/useIsFilesAppActive')

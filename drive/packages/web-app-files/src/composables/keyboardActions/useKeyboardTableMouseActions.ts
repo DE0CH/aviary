@@ -1,8 +1,8 @@
 import { onBeforeUnmount, onMounted, unref, Ref, watchEffect } from 'vue'
-import { QueryValue, FolderViewModeConstants, useResourcesStore } from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
-import { KeyboardActions } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+import { QueryValue, FolderViewModeConstants, useResourcesStore } from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { KeyboardActions } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 import { findIndex } from 'lodash-es'
 import { storeToRefs } from 'pinia'
 

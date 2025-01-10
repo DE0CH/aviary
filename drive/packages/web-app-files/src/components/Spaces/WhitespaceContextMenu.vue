@@ -30,10 +30,10 @@ import {
   useFileActionsPaste,
   useFileActionsShowDetails,
   useResourcesStore
-} from '@ownclouders/web-pkg'
-import { useFileActionsCreateNewFolder } from '@ownclouders/web-pkg'
-import { SpaceResource } from '@ownclouders/web-client'
-import { ActionMenuItem } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { useFileActionsCreateNewFolder } from '@opencloud-eu/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { ActionMenuItem } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 
 export default defineComponent({

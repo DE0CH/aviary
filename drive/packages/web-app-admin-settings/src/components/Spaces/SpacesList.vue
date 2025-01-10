@@ -126,7 +126,7 @@ import {
   useKeyboardActions,
   ContextMenuBtnClickEventData,
   useIsTopBarSticky
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import {
   ComponentPublicInstance,
   computed,
@@ -137,15 +137,20 @@ import {
   unref,
   watch
 } from 'vue'
-import { getSpaceManagers, SpaceResource } from '@ownclouders/web-client'
+import { getSpaceManagers, SpaceResource } from '@opencloud-eu/web-client'
 import Mark from 'mark.js'
 import Fuse from 'fuse.js'
 import { useGettext } from 'vue3-gettext'
-import { eventBus, SortDir } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
-import { ContextMenuQuickAction } from '@ownclouders/web-pkg'
-import { useFileListHeaderPosition, useRoute, useRouter, usePagination } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
+import { eventBus, SortDir } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
+import { ContextMenuQuickAction } from '@opencloud-eu/web-pkg'
+import {
+  useFileListHeaderPosition,
+  useRoute,
+  useRouter,
+  usePagination
+} from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
 import { perPageDefault, perPageStoragePrefix } from '../../defaults'
 import { findIndex } from 'lodash-es'
 import {

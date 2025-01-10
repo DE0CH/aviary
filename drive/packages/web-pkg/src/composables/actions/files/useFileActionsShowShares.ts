@@ -1,5 +1,5 @@
 import { isLocationTrashActive } from '../../../router'
-import { ShareResource } from '@ownclouders/web-client'
+import { ShareResource } from '@opencloud-eu/web-client'
 import { eventBus } from '../../../services'
 import { SideBarEventTopics } from '../../sideBar'
 import { computed } from 'vue'

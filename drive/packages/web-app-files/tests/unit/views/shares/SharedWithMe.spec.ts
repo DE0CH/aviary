@@ -6,18 +6,18 @@ import {
   useSort,
   useOpenWithDefaultApp,
   ItemFilter
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
 import { ref } from 'vue'
-import { defaultStubs, RouteLocation } from '@ownclouders/web-test-helpers'
+import { defaultStubs, RouteLocation } from '@opencloud-eu/web-test-helpers'
 import { useSortMock } from '../../../../tests/mocks/useSortMock'
 import { mock } from 'vitest-mock-extended'
-import { defaultPlugins, mount, defaultComponentMocks } from '@ownclouders/web-test-helpers'
-import { ShareTypes, IncomingShareResource, ShareType } from '@ownclouders/web-client'
+import { defaultPlugins, mount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
+import { ShareTypes, IncomingShareResource, ShareType } from '@opencloud-eu/web-client'
 import SharedWithMeSection from '../../../../src/components/Shares/SharedWithMeSection.vue'
 
 vi.mock('../../../../src/composables/resourcesViewDefaults')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useSort: vi.fn().mockImplementation(() => useSortMock()),
   queryItemAsString: vi.fn(),

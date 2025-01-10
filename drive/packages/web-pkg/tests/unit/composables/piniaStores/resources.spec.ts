@@ -1,7 +1,7 @@
-import { createTestingPinia, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { createTestingPinia, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { useResourcesStore } from '../../../../src/composables/piniaStores'
 import { mock } from 'vitest-mock-extended'
-import { Resource, ShareTypes, SpaceResource } from '@ownclouders/web-client'
+import { Resource, ShareTypes, SpaceResource } from '@opencloud-eu/web-client'
 
 describe('useResourcesStore', () => {
   beforeEach(() => {

@@ -17,7 +17,7 @@
 <script lang="ts">
 import { defineComponent } from 'vue'
 
-import { useCapabilityStore, useConfigStore } from '@ownclouders/web-pkg'
+import { useCapabilityStore, useConfigStore } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 
 export default defineComponent({

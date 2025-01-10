@@ -1,17 +1,21 @@
 import EditDropdown from '../../../../../../src/components/SideBar/Shares/Links/EditDropdown.vue'
-import { LinkShare, ShareTypes, SpaceResource } from '@ownclouders/web-client'
+import { LinkShare, ShareTypes, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   shallowMount,
   defaultComponentMocks,
   useGetMatchingSpaceMock
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { AncestorMetaDataValue, useGetMatchingSpace, useResourcesStore } from '@ownclouders/web-pkg'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
-import { Resource } from '@ownclouders/web-client'
+import {
+  AncestorMetaDataValue,
+  useGetMatchingSpace,
+  useResourcesStore
+} from '@opencloud-eu/web-pkg'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
+import { Resource } from '@opencloud-eu/web-client'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useGetMatchingSpace: vi.fn()
 }))

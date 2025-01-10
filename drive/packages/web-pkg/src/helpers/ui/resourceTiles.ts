@@ -1,4 +1,4 @@
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { SortDir, SortField } from '../../composables/sort'
 import { Language } from 'vue3-gettext'
 

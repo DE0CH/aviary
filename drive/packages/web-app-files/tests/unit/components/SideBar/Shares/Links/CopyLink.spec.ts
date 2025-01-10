@@ -1,10 +1,10 @@
 import { ref } from 'vue'
-import { LinkShare } from '@ownclouders/web-client'
-import { useMessages } from '@ownclouders/web-pkg'
+import { LinkShare } from '@opencloud-eu/web-client'
+import { useMessages } from '@opencloud-eu/web-pkg'
 import CopyLink from '../../../../../../src/components/SideBar/Shares/Links/CopyLink.vue'
 import { useClipboard } from '@vueuse/core'
 import { mock } from 'vitest-mock-extended'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 const linkShare = {
   displayName: 'Example link',

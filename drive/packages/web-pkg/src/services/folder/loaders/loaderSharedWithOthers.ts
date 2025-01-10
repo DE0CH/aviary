@@ -3,7 +3,7 @@ import { unref } from 'vue'
 import { Router } from 'vue-router'
 import { useTask } from 'vue-concurrency'
 import { isLocationSharesActive } from '../../../router'
-import { buildOutgoingShareResource, call } from '@ownclouders/web-client'
+import { buildOutgoingShareResource, call } from '@opencloud-eu/web-client'
 
 export class FolderLoaderSharedWithOthers implements FolderLoader {
   public isEnabled(): boolean {

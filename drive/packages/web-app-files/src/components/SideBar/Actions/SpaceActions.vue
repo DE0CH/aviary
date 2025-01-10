@@ -23,14 +23,14 @@
 
 <script lang="ts">
 import { computed, defineComponent, inject, Ref, ref, unref, VNodeRef } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   ActionMenuItem,
   FileActionOptions,
   SpaceActionOptions,
   useSpaceActionsSetIcon
-} from '@ownclouders/web-pkg'
-import { usePreviewService } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { usePreviewService } from '@opencloud-eu/web-pkg'
 import {
   useSpaceActionsDelete,
   useSpaceActionsDisable,
@@ -40,9 +40,9 @@ import {
   useSpaceActionsEditReadmeContent,
   useSpaceActionsRename,
   useSpaceActionsRestore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useSpaceActionsUploadImage } from '../../../composables'
-import { useFileActionsDownloadArchive } from '@ownclouders/web-pkg'
+import { useFileActionsDownloadArchive } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'SpaceActions',

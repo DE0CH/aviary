@@ -1,9 +1,9 @@
 import { mock, mockDeep } from 'vitest-mock-extended'
 import { Language } from 'vue3-gettext'
 import { UploadResourceConflict } from '../../../../../src/helpers/resource'
-import { ResolveStrategy, OcUppyFile, useResourcesStore } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { ResolveStrategy, OcUppyFile, useResourcesStore } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 
 const getResourceConflictInstance = ({
   currentFiles = [mockDeep<Resource>()]

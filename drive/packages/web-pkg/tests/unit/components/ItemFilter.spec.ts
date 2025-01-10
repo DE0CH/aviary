@@ -4,9 +4,9 @@ import {
   defaultComponentMocks,
   defaultPlugins,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { queryItemAsString } from '../../../src/composables/appDefaults'
-import { OcCheckbox } from '@ownclouders/design-system/components'
+import { OcCheckbox } from '@opencloud-eu/design-system/components'
 
 vi.mock('../../../src/composables/appDefaults')
 

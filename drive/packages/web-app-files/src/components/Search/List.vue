@@ -155,12 +155,12 @@ import {
   useConfigStore,
   useResourcesStore,
   useSearch
-} from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { ResourceTable } from '@ownclouders/web-pkg'
-import { ContextActions, FileSideBar } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { ResourceTable } from '@opencloud-eu/web-pkg'
+import { ContextActions, FileSideBar } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { AppBar } from '@ownclouders/web-pkg'
+import { AppBar } from '@opencloud-eu/web-pkg'
 import {
   computed,
   defineComponent,
@@ -173,10 +173,10 @@ import {
   watch
 } from 'vue'
 import ListInfo from '../FilesList/ListInfo.vue'
-import { Pagination } from '@ownclouders/web-pkg'
-import { useFileActions } from '@ownclouders/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
+import { useFileActions } from '@opencloud-eu/web-pkg'
 import { searchLimit } from '../../search/sdk/list'
-import { Resource, SearchResource, call } from '@ownclouders/web-client'
+import { Resource, SearchResource, call } from '@opencloud-eu/web-client'
 import FilesViewWrapper from '../FilesViewWrapper.vue'
 import {
   queryItemAsString,
@@ -187,20 +187,20 @@ import {
   useRouteQuery,
   useRouter,
   useLoadPreview
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useTask } from 'vue-concurrency'
-import { eventBus } from '@ownclouders/web-pkg'
-import { ItemFilter } from '@ownclouders/web-pkg'
-import { isLocationCommonActive } from '@ownclouders/web-pkg'
-import { ItemFilterToggle } from '@ownclouders/web-pkg'
-import { useKeyboardActions, ResourceIcon } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { ItemFilter } from '@opencloud-eu/web-pkg'
+import { isLocationCommonActive } from '@opencloud-eu/web-pkg'
+import { ItemFilterToggle } from '@opencloud-eu/web-pkg'
+import { useKeyboardActions, ResourceIcon } from '@opencloud-eu/web-pkg'
 import {
   useKeyboardTableNavigation,
   useKeyboardTableMouseActions,
   useKeyboardTableActions
 } from '../../composables/keyboardActions'
-import { extractDomSelector } from '@ownclouders/web-client'
+import { extractDomSelector } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 
 type Tag = {

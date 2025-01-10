@@ -141,7 +141,7 @@ import {
   useUserActionsEditQuota,
   useUserActionsCreateUser
 } from '../composables'
-import { User, Group, AppRole, Quota } from '@ownclouders/web-client/graph/generated'
+import { User, Group, AppRole, Quota } from '@opencloud-eu/web-client/graph/generated'
 import {
   ItemFilter,
   NoContentMessage,
@@ -157,7 +157,7 @@ import {
   useCapabilityStore,
   useConfigStore,
   QueryValue
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, ref, onBeforeUnmount, onMounted, unref, watch, Ref } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
@@ -166,7 +166,7 @@ import { omit } from 'lodash-es'
 import { storeToRefs } from 'pinia'
 
 import { useUserSettingsStore } from '../composables/stores/userSettings'
-import { call } from '@ownclouders/web-client'
+import { call } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'UsersView',

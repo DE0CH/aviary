@@ -1,7 +1,7 @@
 {
-  "name": "@ownclouders/design-system",
-  "version": "11.0.6",
-  "description": "ownCloud Design System is based on VueDesign Systems and is used to design ownCloud UI components",
+  "name": "@opencloud-eu/design-system",
+  "version": "0.0.0",
+  "description": "OpenCloud Design System is based on VueDesign Systems and is used to design OpenCloud UI components",
   "keywords": [
     "vue design system",
     "design system",
@@ -10,14 +10,14 @@
     "design",
     "system"
   ],
-  "homepage": "https://owncloud.design/",
+  "homepage": "https://opencloud.design/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/design-system"
   },
   "license": "AGPL-3.0",
-  "author": "ownClouders",
+  "author": "OpenCloud",
   "main": "src/index.ts",
   "private": false,
   "scripts": {
@@ -116,7 +116,7 @@
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.23.0",
     "@lezer/highlight": "^1.2.0",
-    "@ownclouders/web-test-helpers": "workspace:*",
+    "@opencloud-eu/web-test-helpers": "workspace:*",
     "@vitejs/plugin-vue": "5.2.0",
     "autoprefixer": "10.4.20",
     "babel-core": "7.0.0-bridge.0",

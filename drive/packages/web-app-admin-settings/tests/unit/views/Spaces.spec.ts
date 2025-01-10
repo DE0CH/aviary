@@ -1,16 +1,16 @@
-import { SpaceResource } from '@ownclouders/web-client'
-import { Graph } from '@ownclouders/web-client/graph'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
 import { mockDeep } from 'vitest-mock-extended'
-import { ClientService, useAppDefaults } from '@ownclouders/web-pkg'
+import { ClientService, useAppDefaults } from '@opencloud-eu/web-pkg'
 import {
   defaultComponentMocks,
   defaultPlugins,
   mount,
   useAppDefaultsMock
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import Spaces from '../../../src/views/Spaces.vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   useAppDefaults: vi.fn(),

@@ -1,8 +1,8 @@
-import { Resource } from '@ownclouders/web-client'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { Resource } from '@opencloud-eu/web-client'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import AudioMetaPanel from '../../../../../src/components/SideBar/Audio/AudioMetaPanel.vue'
 import { mock } from 'vitest-mock-extended'
-import { Audio } from '@ownclouders/web-client/graph/generated'
+import { Audio } from '@opencloud-eu/web-client/graph/generated'
 
 describe('AudioMeta SideBar Panel', () => {
   const keys = ['title', 'duration', 'artist', 'album', 'genre', 'year', 'track', 'disc']

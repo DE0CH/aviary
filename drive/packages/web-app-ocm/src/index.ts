@@ -1,5 +1,5 @@
 import App from './views/App.vue'
-import { ApplicationInformation, defineWebApplication, useRouter } from '@ownclouders/web-pkg'
+import { ApplicationInformation, defineWebApplication, useRouter } from '@opencloud-eu/web-pkg'
 import translations from '../l10n/translations.json'
 import { extensions } from './extensions'
 import { RouteRecordRaw } from 'vue-router'

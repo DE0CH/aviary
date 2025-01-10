@@ -19,10 +19,10 @@
 
 <script lang="ts">
 import { avatarUrl } from '../../../../../helpers/user'
-import { CollaboratorAutoCompleteItem, ShareTypes } from '@ownclouders/web-client'
+import { CollaboratorAutoCompleteItem, ShareTypes } from '@opencloud-eu/web-client'
 import { computed, defineComponent, PropType } from 'vue'
-import { Recipient } from '@ownclouders/design-system/helpers'
-import { useCapabilityStore, useConfigStore } from '@ownclouders/web-pkg'
+import { Recipient } from '@opencloud-eu/design-system/helpers'
+import { useCapabilityStore, useConfigStore } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 
 export default defineComponent({

@@ -3,7 +3,7 @@
     <oc-button
       v-oc-tooltip="toolTip"
       :type="handler ? 'button' : 'router-link'"
-      :appearance="active ? 'raw-inverse' : 'raw'"
+      appearance="raw"
       :variation="active ? 'primary' : 'passive'"
       :class="['oc-sidebar-nav-item-link', 'oc-oc-width-1-1', { active: active }]"
       :data-nav-id="index"
@@ -119,7 +119,11 @@ export default defineComponent({
   }
 
   &:hover:not(.active) {
-    color: var(--oc-color-swatch-brand-hover) !important;
+    background-color: var(--oc-color-swatch-brand-hover) !important;
+    color: var(--oc-color-swatch-brand-contrast) !important;
+    svg {
+      fill: var(--oc-color-swatch-brand-contrast) !important;
+    }
   }
 
   &:hover,

@@ -1,5 +1,5 @@
-import { cacheService, ClientService } from '@ownclouders/web-pkg'
-import { ImageDimension } from '@ownclouders/web-pkg'
+import { cacheService, ClientService } from '@opencloud-eu/web-pkg'
+import { ImageDimension } from '@opencloud-eu/web-pkg'
 
 interface AvatarUrlOptions {
   clientService: ClientService

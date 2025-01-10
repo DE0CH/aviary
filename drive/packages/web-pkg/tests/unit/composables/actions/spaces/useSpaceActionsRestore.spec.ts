@@ -1,13 +1,13 @@
 import { useSpaceActionsRestore } from '../../../../../src/composables/actions/spaces'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { useMessages, useModals } from '../../../../../src/composables/piniaStores'
 
 describe('restore', () => {

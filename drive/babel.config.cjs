@@ -1,3 +1,3 @@
 module.exports = {
-  presets: ['@ownclouders/babel-preset']
+  presets: ['@opencloud-eu/babel-preset']
 }

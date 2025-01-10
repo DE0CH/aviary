@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { ResolveConflict, ResolveStrategy } from './types'
 import { useModals } from '../../../composables'
 import SpaceMoveInfoModal from '../../../components/Modals/SpaceMoveInfoModal.vue'

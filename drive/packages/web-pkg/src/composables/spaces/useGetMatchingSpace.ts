@@ -1,5 +1,5 @@
 import { useRouteParam } from '../router'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   MountPointSpaceResource,
   extractStorageId,
@@ -8,7 +8,7 @@ import {
   ShareTypes,
   OCM_PROVIDER_ID,
   isShareResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { computed, Ref, unref } from 'vue'
 import { basename } from 'path'
 import { useSpacesStore, useUserStore, useConfigStore } from '../piniaStores'

@@ -4,17 +4,17 @@ import {
   defaultComponentMocks,
   defaultPlugins,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { PasswordPolicyService } from '../../../src/services'
 import { usePasswordPolicyService } from '../../../src/composables/passwordPolicyService'
-import { AbilityRule, LinkShare, Resource, ShareRole } from '@ownclouders/web-client'
-import { PasswordPolicy } from '@ownclouders/design-system/helpers'
+import { AbilityRule, LinkShare, Resource, ShareRole } from '@opencloud-eu/web-client'
+import { PasswordPolicy } from '@opencloud-eu/design-system/helpers'
 import { useEmbedMode } from '../../../src/composables/embedMode'
 import { useLinkTypes } from '../../../src/composables/links'
 import { nextTick, ref } from 'vue'
 import { CapabilityStore, Modal, useSharesStore } from '../../../src/composables/piniaStores'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import { describe } from 'vitest'
 
 vi.mock('../../../src/composables/embedMode')
@@ -114,7 +114,7 @@ describe('CreateLinkModal', () => {
       const { addLink } = useSharesStore()
       vi.mocked(addLink).mockResolvedValue(link)
       await wrapper.vm.onConfirm()
-      expect(mocks.postMessageMock).toHaveBeenCalledWith('owncloud-embed:share', [link.webUrl])
+      expect(mocks.postMessageMock).toHaveBeenCalledWith('opencloud-embed:share', [link.webUrl])
     })
     it('shows error messages for links that failed to be created', async () => {
       const consoleMock = vi.fn(() => undefined)

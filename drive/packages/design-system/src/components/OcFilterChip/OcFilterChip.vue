@@ -149,7 +149,7 @@ export default defineComponent({
   }
   &-button-selected.oc-pill,
   &-button-selected.oc-pill:hover {
-    background-color: var(--oc-color-swatch-primary-default) !important;
+    background-color: var(--oc-color-swatch-passive-default) !important;
     color: var(--oc-color-text-inverse) !important;
     border-top-left-radius: 99px !important;
     border-bottom-left-radius: 99px !important;
@@ -159,7 +159,7 @@ export default defineComponent({
   }
   &-clear,
   &-clear:hover {
-    background-color: var(--oc-color-swatch-primary-default) !important;
+    background-color: var(--oc-color-swatch-passive-default) !important;
     color: var(--oc-color-text-inverse) !important;
     border-top-left-radius: 0px !important;
     border-bottom-left-radius: 0px !important;

@@ -1,13 +1,13 @@
 {
-  "name": "@ownclouders/tsconfig",
+  "name": "@opencloud-eu/tsconfig",
   "private": false,
-  "version": "0.0.6",
+  "version": "0.0.0",
   "license": "AGPL-3.0",
-  "author": "ownCloud GmbH <devops@owncloud.com>",
-  "homepage": "https://github.com/owncloud/web/tree/master/packages/tsconfig",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/tsconfig",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/tsconfig"
   }
 }

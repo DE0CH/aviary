@@ -9,7 +9,7 @@ import { ActionOptions, FileAction } from '../types'
 import { computed, unref } from 'vue'
 import { useRouter } from '../../router'
 import { useClipboardStore, useResourcesStore } from '../../piniaStores'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 
 export const useFileActionsMove = () => {

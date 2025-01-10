@@ -8,7 +8,7 @@ import {
   SharesStore,
   SpacesStore,
   UserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { Router } from 'vue-router'
 import { Language } from 'vue3-gettext'
 import PQueue from 'p-queue'

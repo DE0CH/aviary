@@ -1,15 +1,15 @@
 import FileDetails from '../../../../../src/components/SideBar/Details/FileDetails.vue'
-import { Resource, ShareResource, ShareTypes } from '@ownclouders/web-client'
+import { Resource, ShareResource, ShareTypes } from '@opencloud-eu/web-client'
 import {
   mount,
   defaultComponentMocks,
   defaultPlugins,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { SpaceResource } from '@ownclouders/web-client'
-import { AncestorMetaData } from '@ownclouders/web-pkg/'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { AncestorMetaData } from '@opencloud-eu/web-pkg/'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 const getResourceMock = ({
   type = 'file',

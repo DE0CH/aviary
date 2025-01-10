@@ -1,6 +1,6 @@
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { useCanBeOpenedWithSecureView } from '../../../../src/composables/resources'
 import { ApplicationFileExtension } from '../../../../src/apps/types'
 

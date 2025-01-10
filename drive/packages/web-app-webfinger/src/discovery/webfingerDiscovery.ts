@@ -1,13 +1,13 @@
-import { OwnCloudServer } from './types'
-import { ClientService } from '@ownclouders/web-pkg'
-import { urlJoin } from '@ownclouders/web-client'
+import { OpenCloudServer } from './types'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { urlJoin } from '@opencloud-eu/web-client'
 
-interface OwnCloudInstancesResponse {
+interface OpenCloudInstancesResponse {
   subject: string
-  links: OwnCloudServer[]
+  links: OpenCloudServer[]
 }
 
-const OWNCLOUD_REL = 'http://webfinger.owncloud/rel/server-instance'
+const OPENCLOUD_REL = 'http://webfinger.opencloud/rel/server-instance'
 
 export class WebfingerDiscovery {
   private serverUrl: string
@@ -18,11 +18,11 @@ export class WebfingerDiscovery {
     this.clientService = clientService
   }
 
-  public async discoverOwnCloudServers(): Promise<OwnCloudServer[]> {
+  public async discoverOpenCloudServers(): Promise<OpenCloudServer[]> {
     const client = this.clientService.httpAuthenticated
     const url =
       urlJoin(this.serverUrl, '.well-known', 'webfinger') + `?resource=${encodeURI(this.serverUrl)}`
-    const response = (await client.get<OwnCloudInstancesResponse>(url)).data
-    return response.links.filter((o) => o.rel === OWNCLOUD_REL)
+    const response = (await client.get<OpenCloudInstancesResponse>(url)).data
+    return response.links.filter((o) => o.rel === OPENCLOUD_REL)
   }
 }

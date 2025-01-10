@@ -4,14 +4,14 @@ import {
   getOcSelectOptions,
   mount,
   nextTicks
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import App from '../../src/App.vue'
-import { useLocalStorage } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+import { useLocalStorage } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import { ref } from 'vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useLocalStorage: vi.fn()
 }))

@@ -1,6 +1,6 @@
 import { Language } from 'vue3-gettext'
-import { Resource } from '@ownclouders/web-client'
-import { extractExtensionFromFile } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
+import { extractExtensionFromFile } from '@opencloud-eu/web-client'
 import {
   ConflictDialog,
   OcUppyFile,
@@ -10,7 +10,7 @@ import {
   ResourceConflictModal,
   ResourcesStore,
   useModals
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 interface ConflictedResource {
   name: string

@@ -1,10 +1,10 @@
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import ContextActions from '../../../../src/components/Groups/ContextActions.vue'
 import { useGroupActionsDelete, useGroupActionsEdit } from '../../../../src/composables/actions'
 import { computed, ref } from 'vue'
-import { Action } from '@ownclouders/web-pkg'
+import { Action } from '@opencloud-eu/web-pkg'
 
 function createMockActionComposables(module: Record<string, unknown>) {
   const mockModule: Record<string, any> = {}
@@ -14,7 +14,7 @@ function createMockActionComposables(module: Record<string, unknown>) {
   return mockModule
 }
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => {
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => {
   const original = await importOriginal<any>()
   return createMockActionComposables(original)
 })

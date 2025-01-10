@@ -1,6 +1,6 @@
 import ActionMenuItem from '../../../../src/components/ContextActions/ActionMenuItem.vue'
 import { FileAction } from '../../../../src/composables/actions'
-import { defaultPlugins, mount, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 const selectors = {
   handler: '[data-testid="action-handler"]',
@@ -29,8 +29,8 @@ const fileActions = {
   redirect: {
     name: 'redirect',
     icon: 'external',
-    href: () => 'https://owncloud.com',
-    label: () => 'Visit ownCloud',
+    href: () => 'https://opencloud.eu',
+    label: () => 'Visit OpenCloud',
     class: 'oc-files-actions-redirect-trigger'
   } as unknown as FileAction
 }
@@ -43,7 +43,7 @@ describe('ActionMenuItem component', () => {
     expect(wrapper.find(selectors.icon).attributes().name).toBe(action.icon)
   })
   it('renders an image if there is one defined in the action', () => {
-    const action = { ...fileActions.download, img: 'https://owncloud.tld/img.png' }
+    const action = { ...fileActions.download, img: 'https://opencloud.eu/img.png' }
     const { wrapper } = getWrapper(action)
     expect(wrapper.find(selectors.icon).exists()).toBeFalsy()
     expect(wrapper.find(selectors.img).exists()).toBeTruthy()

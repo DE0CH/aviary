@@ -266,9 +266,9 @@ import {
   isProjectSpaceResource,
   Resource,
   TrashResource
-} from '@ownclouders/web-client'
-import { extractDomSelector, SpaceResource } from '@ownclouders/web-client'
-import { ShareTypes, isShareResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
+import { extractDomSelector, SpaceResource } from '@opencloud-eu/web-client'
+import { ShareTypes, isShareResource } from '@opencloud-eu/web-client'
 
 import {
   SortDir,
@@ -312,9 +312,9 @@ import { createLocationCommon } from '../../router'
 import get from 'lodash-es/get'
 import CollapsibleOcTable from './../../cern/components/CollapsibleOcTable.vue'
 import { storeToRefs } from 'pinia'
-import { OcButton, OcTable } from '@ownclouders/design-system/components'
-import { FieldType } from '@ownclouders/design-system/helpers'
-import { OcSpinner } from '@ownclouders/design-system/components'
+import { OcButton, OcTable } from '@opencloud-eu/design-system/components'
+import { FieldType } from '@opencloud-eu/design-system/helpers'
+import { OcSpinner } from '@opencloud-eu/design-system/components'
 
 const TAGS_MINIMUM_SCREEN_WIDTH = 850
 
@@ -1103,7 +1103,7 @@ export default defineComponent({
       }
 
       if (this.isEmbedModeEnabled && this.isFilePicker && !resource.isFolder) {
-        return this.postMessage<embedModeFilePickMessageData>('owncloud-embed:file-pick', {
+        return this.postMessage<embedModeFilePickMessageData>('opencloud-embed:file-pick', {
           resource: JSON.parse(JSON.stringify(resource)),
           locationQuery: JSON.parse(
             JSON.stringify(routeToContextQuery(unref(this.router.currentRoute)))

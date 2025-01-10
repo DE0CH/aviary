@@ -25,7 +25,7 @@ import {
   ExtensionPoint,
   useExtensionPreferencesStore,
   useExtensionRegistry
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'ExtensionRegistry',

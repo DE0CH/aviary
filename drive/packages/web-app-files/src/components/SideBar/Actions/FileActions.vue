@@ -11,10 +11,10 @@
 </template>
 
 <script lang="ts">
-import { ActionMenuItem } from '@ownclouders/web-pkg'
-import { useFileActions } from '@ownclouders/web-pkg'
+import { ActionMenuItem } from '@opencloud-eu/web-pkg'
+import { useFileActions } from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, inject, Ref, unref } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'FileActions',

@@ -3,9 +3,9 @@ import {
   defaultComponentMocks,
   getComposableWrapper,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, ShareSpaceResource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, ShareSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
 import { useSpacesStore } from '../../../../src/composables/piniaStores'
 
 describe('useSpaceHelpers', () => {

@@ -22,18 +22,18 @@
 
 <script lang="ts">
 import { computed, defineComponent, onMounted, PropType, ref, unref } from 'vue'
-import { Activity as GraphActivity, User } from '@ownclouders/web-client/graph/generated'
+import { Activity as GraphActivity, User } from '@opencloud-eu/web-client/graph/generated'
 import { DateTime } from 'luxon'
 import {
   formatDateFromDateTime,
   formatRelativeDateFromDateTime,
   ResourceListItem,
   useClientService
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
-//FIXME: Use original type Activity from web-client when it's corrected https://github.com/owncloud/ocis/issues/10151
+//FIXME: Use original type Activity from web-client when it's containing the variables field
 type Activity = GraphActivity & {
   template: {
     variables?: {

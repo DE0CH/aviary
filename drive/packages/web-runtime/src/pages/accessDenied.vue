@@ -42,7 +42,7 @@ import {
   useConfigStore,
   useRouteQuery,
   useThemeStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'AccessDeniedPage',

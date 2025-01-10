@@ -1,4 +1,4 @@
-import { OcDrop } from '@ownclouders/design-system/components'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 import { ComponentPublicInstance } from 'vue'
 
 export type ContextMenuBtnClickEventData = {

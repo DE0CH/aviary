@@ -1,4 +1,4 @@
-import { Ability } from '@ownclouders/web-client'
+import { Ability } from '@opencloud-eu/web-client'
 import {
   ArchiverService,
   ClientService,

@@ -60,23 +60,23 @@ import {
   useFileActions,
   useLoadPreview,
   useResourcesStore
-} from '@ownclouders/web-pkg'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { AppBar } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { AppBar } from '@opencloud-eu/web-pkg'
 import ListInfo from '../../components/FilesList/ListInfo.vue'
-import { ContextActions } from '@ownclouders/web-pkg'
+import { ContextActions } from '@opencloud-eu/web-pkg'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
-import { ResourceTable } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
+import { ResourceTable } from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
 
 import { useResourcesViewDefaults } from '../../composables'
 import { defineComponent, unref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
 import SharesNavigation from '../../../src/components/AppBar/SharesNavigation.vue'
 import { storeToRefs } from 'pinia'
-import { OutgoingShareResource } from '@ownclouders/web-client'
+import { OutgoingShareResource } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   components: {

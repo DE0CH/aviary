@@ -101,7 +101,7 @@ import {
   unref,
   watch
 } from 'vue'
-import { buildSpaceImageResource, SpaceResource } from '@ownclouders/web-client'
+import { buildSpaceImageResource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   useClientService,
   ProcessorType,
@@ -109,13 +109,13 @@ import {
   TextEditor,
   useFileActions,
   useLoadPreview
-} from '@ownclouders/web-pkg'
-import { ImageDimension } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { ImageDimension } from '@opencloud-eu/web-pkg'
 import SpaceContextActions from './SpaceContextActions.vue'
-import { eventBus } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { DriveItem } from '@ownclouders/web-client/graph/generated'
+import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
 
 const markdownContainerCollapsedClass = 'collapsed'
 

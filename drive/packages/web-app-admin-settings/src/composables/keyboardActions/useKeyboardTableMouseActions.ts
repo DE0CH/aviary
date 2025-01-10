@@ -1,9 +1,9 @@
 import { onBeforeUnmount, onMounted, unref, Ref } from 'vue'
-import { eventBus } from '@ownclouders/web-pkg'
-import { KeyboardActions } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { KeyboardActions } from '@opencloud-eu/web-pkg'
 import { findIndex, find } from 'lodash-es'
-import { Resource } from '@ownclouders/web-client'
-import { Item } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
+import { Item } from '@opencloud-eu/web-client'
 
 export const useKeyboardTableMouseActions = (
   keyActions: KeyboardActions,

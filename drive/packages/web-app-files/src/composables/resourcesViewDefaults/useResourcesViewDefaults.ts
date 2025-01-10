@@ -8,26 +8,26 @@ import {
   useRouteName,
   useResourcesStore,
   folderService
-} from '@ownclouders/web-pkg'
-import { useSideBar } from '@ownclouders/web-pkg'
-import { queryItemAsString, useRouteQuery } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { useSideBar } from '@opencloud-eu/web-pkg'
+import { queryItemAsString, useRouteQuery } from '@opencloud-eu/web-pkg'
 import {
   determineResourceTableSortFields,
   determineResourceTilesSortFields,
   translateSortFields
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { Task } from 'vue-concurrency'
-import { Resource } from '@ownclouders/web-client'
-import { useSelectedResources, SelectedResourcesResult } from '@ownclouders/web-pkg'
-import { ReadOnlyRef } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { useSelectedResources, SelectedResourcesResult } from '@opencloud-eu/web-pkg'
+import { ReadOnlyRef } from '@opencloud-eu/web-pkg'
 import {
   useFileListHeaderPosition,
   useViewMode,
   useViewSize,
   FolderViewModeConstants
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
-import { ScrollToResult, useScrollTo } from '@ownclouders/web-pkg'
+import { ScrollToResult, useScrollTo } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 interface ResourcesViewDefaultsOptions<T, U extends any[]> {

@@ -3,7 +3,7 @@ import {
   CustomComponentExtension,
   Extension,
   ExtensionPoint
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
 export const appMenuExtensionPoint: ExtensionPoint<AppMenuItemExtension> = {

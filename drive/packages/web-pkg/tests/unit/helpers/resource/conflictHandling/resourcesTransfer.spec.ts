@@ -5,10 +5,10 @@ import {
   resolveFileNameDuplicate
 } from '../../../../../src/helpers/resource/conflictHandling'
 import { mock, mockDeep, mockReset } from 'vitest-mock-extended'
-import { buildSpace, Resource, SpaceResource } from '@ownclouders/web-client'
-import { ListFilesResult } from '@ownclouders/web-client/webdav'
-import { Drive } from '@ownclouders/web-client/graph/generated'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { buildSpace, Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { ListFilesResult } from '@opencloud-eu/web-client/webdav'
+import { Drive } from '@opencloud-eu/web-client/graph/generated'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 import { ClientService } from '../../../../../src/services'
 import { computed } from 'vue'
 

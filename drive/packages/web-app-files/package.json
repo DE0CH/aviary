@@ -2,15 +2,15 @@
   "name": "web-app-files",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud web files",
+  "description": "OpenCloud web files",
   "license": "AGPL-3.0",
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
     "@uppy/core": "4.3.1",
     "@vueuse/core": "^11.0.0 || ^12.0.0",
     "axios": "1.7.9",

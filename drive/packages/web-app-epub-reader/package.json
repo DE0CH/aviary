@@ -2,17 +2,17 @@
   "name": "epub-reader",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud Web epub-reader",
+  "description": "OpenCloud Web epub-reader",
   "license": "AGPL-3.0",
   "dependencies": {
     "epubjs": "^0.3.93"
   },
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "peerDependencies": {
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
     "vue3-gettext": "2.4.0"
   }
 }

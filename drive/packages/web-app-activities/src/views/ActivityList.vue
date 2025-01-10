@@ -16,10 +16,10 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
-import { Activity } from '@ownclouders/web-client/graph/generated'
+import { Activity } from '@opencloud-eu/web-client/graph/generated'
 import { DateTime } from 'luxon'
 import ActivityItem from '../components/ActivityItem.vue'
-import { formatDateFromDateTime } from '@ownclouders/web-pkg'
+import { formatDateFromDateTime } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 type DateActivityCollection = Record<string, Activity[]>

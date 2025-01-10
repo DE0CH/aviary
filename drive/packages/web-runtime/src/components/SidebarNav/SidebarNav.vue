@@ -23,7 +23,7 @@
       <div
         v-show="isAnyNavItemActive"
         id="nav-highlighter"
-        class="oc-ml-s oc-background-primary-gradient"
+        class="oc-ml-s"
         v-bind="highlighterAttrs"
         :aria-hidden="true"
       />
@@ -69,7 +69,7 @@ import { v4 as uuidV4 } from 'uuid'
 import SidebarNavItem from './SidebarNavItem.vue'
 import { NavItem } from '../../helpers/navItems'
 import { getBackendVersion, getWebVersion } from '../../container/versions'
-import { useCapabilityStore } from '@ownclouders/web-pkg'
+import { useCapabilityStore } from '@opencloud-eu/web-pkg'
 
 type NavItemRef = InstanceType<typeof SidebarNavItem>
 
@@ -170,12 +170,16 @@ export default defineComponent({
   position: absolute;
   border-radius: 5px;
   transition: transform 0.2s cubic-bezier(0.51, 0.06, 0.56, 1.37);
+  background: var(--oc-color-swatch-inverse-default);
+  color: var(--oc-color-swatch-inverse-contrast);
+  svg {
+    fill: var(--oc-color-swatch-inverse-contrast);
+  }
 }
 
 #web-nav-sidebar {
-  background-color: var(--oc-color-background-default);
+  background-color: var(--oc-color-background-sidebar);
   border-radius: 15px 0 0 15px;
-  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -205,24 +209,6 @@ export default defineComponent({
     align-items: flex-start;
     justify-content: flex-end;
     flex-grow: 1;
-  }
-
-  .oc-sidebar-nav li a:not(.active),
-  .oc-sidebar-nav li button:not(.active) {
-    &:hover,
-    &:focus {
-      text-decoration: none !important;
-      background-color: var(--oc-color-background-hover);
-      color: var(--oc-color-swatch-passive-default);
-    }
-  }
-
-  .oc-sidebar-nav li a.active,
-  .oc-sidebar-nav li button.active {
-    &:focus,
-    &:hover {
-      color: var(--oc-color-swatch-primary-contrast);
-    }
   }
 }
 

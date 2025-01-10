@@ -3,9 +3,9 @@
  * as workaround export it from a js file
  */
 import CoreTranslations from '../../l10n/translations.json'
-import ClientTranslations from '@ownclouders/web-client/l10n'
-import PkgTranslations from '@ownclouders/web-pkg/l10n/translations.json'
-import OdsTranslations from '@ownclouders/design-system/l10n'
+import ClientTranslations from '@opencloud-eu/web-client/l10n'
+import PkgTranslations from '@opencloud-eu/web-pkg/l10n/translations.json'
+import OdsTranslations from '@opencloud-eu/design-system/l10n'
 
 export const coreTranslations = CoreTranslations
 export const clientTranslations = ClientTranslations

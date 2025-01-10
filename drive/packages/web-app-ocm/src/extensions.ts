@@ -6,11 +6,11 @@ import {
   useMessages,
   useUserStore,
   useWindowOpen
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { computed } from 'vue'
-import { Extension } from '@ownclouders/web-pkg'
-import { OCM_PROVIDER_ID, urlJoin } from '@ownclouders/web-client'
+import { Extension } from '@opencloud-eu/web-pkg'
+import { OCM_PROVIDER_ID, urlJoin } from '@opencloud-eu/web-client'
 
 export const extensions = (appInfo: ApplicationInformation) => {
   const { showErrorMessage } = useMessages()
@@ -51,7 +51,7 @@ export const extensions = (appInfo: ApplicationInformation) => {
 
   return computed<Extension[]>(() => [
     {
-      id: 'com.github.owncloud.web.open-file-remote',
+      id: 'com.github.opencloud-eu.web.open-file-remote',
       type: 'action',
       extensionPointIds: ['global.files.context-actions'],
       action: {

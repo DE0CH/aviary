@@ -4,15 +4,15 @@ import {
   defaultPlugins,
   mount,
   shallowMount
-} from '@ownclouders/web-test-helpers'
-import { SortDir, eventBus, queryItemAsString } from '@ownclouders/web-pkg'
-import { displayPositionedDropdown } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { SortDir, eventBus, queryItemAsString } from '@opencloud-eu/web-pkg'
+import { displayPositionedDropdown } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { nextTick } from 'vue'
 import { useSpaceSettingsStore } from '../../../../src/composables'
 import { mock } from 'vitest-mock-extended'
-import { OcTable } from '@ownclouders/design-system/components'
-import { GraphSharePermission, SpaceMember, SpaceResource } from '@ownclouders/web-client'
+import { OcTable } from '@opencloud-eu/design-system/components'
+import { GraphSharePermission, SpaceMember, SpaceResource } from '@opencloud-eu/web-client'
 
 const spaceMocks = [
   mock<SpaceResource>({
@@ -77,7 +77,7 @@ const selectors = {
   ocTableStub: 'oc-table-stub'
 }
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   displayPositionedDropdown: vi.fn(),
   queryItemAsString: vi.fn()

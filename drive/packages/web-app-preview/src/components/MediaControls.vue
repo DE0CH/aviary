@@ -72,7 +72,7 @@
           <oc-button
             v-oc-tooltip="imageZoomDescription"
             class="preview-controls-image-zoom"
-            appearance="raw-inverse"
+            appearance="raw"
             variation="brand"
             :aria-label="imageZoomDescription"
             @click="imageZoom"
@@ -121,7 +121,7 @@
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'MediaControls',

@@ -29,7 +29,7 @@
 
 <script lang="ts">
 import { computed, defineComponent } from 'vue'
-import { Resource, extractDomSelector } from '@ownclouders/web-client'
+import { Resource, extractDomSelector } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

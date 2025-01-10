@@ -10,10 +10,10 @@ import {
   isShareSpaceResource,
   SpaceMember,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { unref } from 'vue'
 import { FolderLoaderOptions } from './types'
-import { DriveItem } from '@ownclouders/web-client/graph/generated'
+import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
 import { isLocationSpacesActive, isLocationPublicActive } from '../../../router'
 import { SharesStore, SpacesStore, useFileRouteReplace, UserStore } from '../../../composables'
 import { getIndicators, getSharedDriveItem } from '../../../helpers'

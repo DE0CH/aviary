@@ -1,15 +1,15 @@
 {
-  "name": "@ownclouders/web-client",
-  "version": "11.0.6",
-  "description": "ownCloud web client",
+  "name": "@opencloud-eu/web-client",
+  "version": "0.0.0",
+  "description": "OpenCloud web client",
   "license": "AGPL-3.0",
   "private": false,
   "type": "module",
-  "author": "ownCloud GmbH <devops@owncloud.com>",
-  "homepage": "https://github.com/owncloud/web/tree/master/packages/web-client",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/web-client",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/web-client"
   },
   "files": [
@@ -75,7 +75,7 @@
     }
   },
   "scripts": {
-    "generate-openapi": "rm -rf src/graph/generated && docker run --rm -v \"${PWD}/src/graph:/local\" openapitools/openapi-generator-cli generate -i https://raw.githubusercontent.com/owncloud/libre-graph-api/main/api/openapi-spec/v1.0.yaml  -g typescript-axios -o /local/generated",
+    "generate-openapi": "rm -rf src/graph/generated && docker run --rm -v \"${PWD}/src/graph:/local\" openapitools/openapi-generator-cli generate -i https://raw.githubusercontent.com/opencloud-eu/libre-graph-api/main/api/openapi-spec/v1.0.yaml  -g typescript-axios -o /local/generated",
     "vite": "vite",
     "prepublishOnly": "rm -rf ./package && clean-publish && rm -rf package/dist/tests && find package && cat package/package.json",
     "postpublish": "rm -rf ./package"

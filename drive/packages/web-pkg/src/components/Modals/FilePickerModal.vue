@@ -28,7 +28,7 @@ import {
 import { ApplicationInformation } from '../../apps'
 import { RouteLocationRaw } from 'vue-router'
 import AppLoadingSpinner from '../AppLoadingSpinner.vue'
-import { isShareSpaceResource } from '@ownclouders/web-client'
+import { isShareSpaceResource } from '@opencloud-eu/web-client'
 import { unref } from 'vue'
 
 export default defineComponent({
@@ -67,7 +67,7 @@ export default defineComponent({
     }
 
     const onFilePick = ({ data }: MessageEvent) => {
-      if (data.name !== 'owncloud-embed:file-pick') {
+      if (data.name !== 'opencloud-embed:file-pick') {
         return
       }
 
@@ -93,7 +93,7 @@ export default defineComponent({
     }
 
     const onCancel = ({ data }: MessageEvent) => {
-      if (data.name !== 'owncloud-embed:cancel') {
+      if (data.name !== 'opencloud-embed:cancel') {
         return
       }
 

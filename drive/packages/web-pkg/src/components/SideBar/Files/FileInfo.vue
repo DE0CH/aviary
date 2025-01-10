@@ -26,7 +26,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, inject } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { useResourcesStore } from '../../../composables'
 import ResourceIcon from '../../FilesList/ResourceIcon.vue'
 import ResourceName from '../../FilesList/ResourceName.vue'

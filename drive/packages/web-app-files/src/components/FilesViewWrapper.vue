@@ -12,7 +12,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import { useEmbedMode } from '@ownclouders/web-pkg'
+import { useEmbedMode } from '@opencloud-eu/web-pkg'
 import EmbedActions from './EmbedActions/EmbedActions.vue'
 
 export default defineComponent({

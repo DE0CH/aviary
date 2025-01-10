@@ -81,15 +81,15 @@ import {
   useSharesStore,
   useAbility,
   CreateSpace
-} from '@ownclouders/web-pkg'
-import { call, SpaceResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { call, SpaceResource } from '@opencloud-eu/web-client'
 import { computed, defineComponent, onBeforeUnmount, onMounted, ref, unref } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
 
 import { useSpaceSettingsStore } from '../composables'
 import { storeToRefs } from 'pinia'
-import { Quota } from '@ownclouders/web-client/graph/generated'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
 
 export default defineComponent({
   name: 'SpacesView',

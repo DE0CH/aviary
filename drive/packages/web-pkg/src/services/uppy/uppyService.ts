@@ -5,7 +5,7 @@ import XHRUpload, { XHRUploadOptions } from '@uppy/xhr-upload'
 import { Language } from 'vue3-gettext'
 import { eventBus } from '../eventBus'
 import DropTarget from '@uppy/drop-target'
-import { Resource, urlJoin } from '@ownclouders/web-client'
+import { Resource, urlJoin } from '@opencloud-eu/web-client'
 
 // @ts-ignore
 import generateFileID from '@uppy/utils/lib/generateFileID'

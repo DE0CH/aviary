@@ -1,9 +1,9 @@
-import { defaultComponentMocks, mount, defaultPlugins } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, mount, defaultPlugins } from '@opencloud-eu/web-test-helpers'
 import TagsSelect from '../../../../src/components/SideBar/Details/TagsSelect.vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { ClientService, eventBus, useMessages } from '@ownclouders/web-pkg'
-import { OcSelect } from '@ownclouders/design-system/components'
+import { Resource } from '@opencloud-eu/web-client'
+import { ClientService, eventBus, useMessages } from '@opencloud-eu/web-pkg'
+import { OcSelect } from '@opencloud-eu/design-system/components'
 
 describe('Tag Select', () => {
   it('show tags input form if loaded successfully', () => {

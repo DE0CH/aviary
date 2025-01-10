@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 import { computed, ref, unref } from 'vue'
 import { useLocalStorage, usePreferredDark } from '@vueuse/core'
 import { z } from 'zod'
-import { applyCustomProp } from '@ownclouders/design-system/helpers'
-import { ShareRole } from '@ownclouders/web-client'
+import { applyCustomProp } from '@opencloud-eu/design-system/helpers'
+import { ShareRole } from '@opencloud-eu/web-client'
 
 const AppBanner = z.object({
   title: z.string().optional(),
@@ -84,6 +84,7 @@ export const ThemingConfig = z.object({
 
 export type WebThemeType = z.infer<typeof WebTheme>
 export type WebThemeConfigType = z.infer<typeof WebThemeConfig>
+export type ThemingConfigType = z.infer<typeof ThemingConfig>
 
 const themeStorageKey = 'oc_currentThemeName'
 

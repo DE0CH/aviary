@@ -51,7 +51,7 @@
 import { computed, defineComponent, unref } from 'vue'
 import { App } from '../types'
 import { APPID } from '../appid'
-import { TextEditor, useRouteParam, useRouter } from '@ownclouders/web-pkg'
+import { TextEditor, useRouteParam, useRouter } from '@opencloud-eu/web-pkg'
 import { useAppsStore } from '../piniaStores'
 import AppResources from '../components/AppResources.vue'
 import AppTags from '../components/AppTags.vue'

@@ -9,9 +9,9 @@ import {
   defaultComponentMocks,
   RouteLocation,
   nextTicks
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useAvailableProviders } from '../../../src/composables'
-import { SearchBarFilter, SearchLocationFilterConstants } from '@ownclouders/web-pkg'
+import { SearchBarFilter, SearchLocationFilterConstants } from '@opencloud-eu/web-pkg'
 
 const component = defineComponent({
   emits: ['click', 'keyup'],

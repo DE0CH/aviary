@@ -7,8 +7,8 @@ import {
   Extension,
   useAbility,
   useUserStore
-} from '@ownclouders/web-pkg'
-import { urlJoin } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { RouteRecordRaw } from 'vue-router'
 import { useRepositoriesStore } from './piniaStores'
 import { AppStoreConfigSchema, AppStoreRepository } from './types'
@@ -23,8 +23,8 @@ export default defineWebApplication({
 
     const defaultRepositories: AppStoreRepository[] = [
       {
-        name: 'awesome-ocis',
-        url: 'https://raw.githubusercontent.com/owncloud/awesome-ocis/main/webApps/apps.json'
+        name: 'awesome-apps',
+        url: 'https://raw.githubusercontent.com/opencloud-eu/awesome-apps/main/webApps/apps.json'
       }
     ]
     if (applicationConfig?.repositories) {

@@ -1,13 +1,13 @@
-import { defaultComponentMocks, defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 import ResourceTiles from '../../../../src/components/FilesList/ResourceTiles.vue'
 import { sortFields } from '../../../../src/helpers/ui/resourceTiles'
-import { Resource, ResourceIndicator, SpaceResource } from '@ownclouders/web-client'
+import { Resource, ResourceIndicator, SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import { ComponentPublicInstance, computed } from 'vue'
-import { extractDomSelector } from '@ownclouders/web-client'
+import { extractDomSelector } from '@opencloud-eu/web-client'
 import { useCanBeOpenedWithSecureView } from '../../../../src/composables/resources'
 import { displayPositionedDropdown } from '../../../../src/helpers/contextMenuDropdown'
-import { OcSelect } from '@ownclouders/design-system/components'
+import { OcSelect } from '@opencloud-eu/design-system/components'
 
 vi.mock('../../../../src/helpers/contextMenuDropdown')
 vi.mock('../../../../src/composables/viewMode', async (importOriginal) => ({

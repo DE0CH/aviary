@@ -5,7 +5,7 @@ import {
   mount,
   RouteLocation,
   PartialComponentProps
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import ViewOptions from '../../../src/components/ViewOptions.vue'
 import {
@@ -15,7 +15,7 @@ import {
   useRouteQueryPersisted
 } from '../../../src/composables'
 import { FolderView } from '../../../src'
-import { OcPageSize, OcSwitch } from '@ownclouders/design-system/components'
+import { OcPageSize, OcSwitch } from '@opencloud-eu/design-system/components'
 
 vi.mock('../../../src/composables/router', async (importOriginal) => ({
   ...(await importOriginal<any>()),

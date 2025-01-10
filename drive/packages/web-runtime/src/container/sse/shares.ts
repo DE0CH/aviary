@@ -2,13 +2,13 @@ import {
   buildIncomingShareResource,
   buildOutgoingShareResource,
   ShareTypes
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import {
   eventBus,
   getIndicators,
   isLocationSharesActive,
   isLocationSpacesActive
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { SSEEventOptions } from './types'
 import { isItemInCurrentFolder } from './helpers'
 

@@ -3,11 +3,11 @@ import {
   defineWebApplication,
   ApplicationInformation,
   Extension
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import translations from '../l10n/translations.json'
 import App from './App.vue'
 import { useGettext } from 'vue3-gettext'
-import { useAppProviderService } from '@ownclouders/web-pkg/src/composables/appProviderService'
+import { useAppProviderService } from '@opencloud-eu/web-pkg/src/composables/appProviderService'
 import Redirect from './Redirect.vue'
 import { useApplicationReadyStore } from './piniaStores'
 import { computed } from 'vue'

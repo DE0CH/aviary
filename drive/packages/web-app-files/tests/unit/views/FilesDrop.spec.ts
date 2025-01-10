@@ -5,10 +5,10 @@ import {
   defaultComponentMocks,
   defaultStubs,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { ClientService } from '@ownclouders/web-pkg'
-import { ListFilesResult } from '@ownclouders/web-client/webdav'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { ListFilesResult } from '@opencloud-eu/web-client/webdav'
 
 describe('FilesDrop view', () => {
   describe('different files view states', () => {

@@ -1,7 +1,7 @@
 ---
 font:
   face:
-    value: 'Inter, sans-serif'
+    value: 'OpenCloud, sans-serif'
   weight:
     bold:
       value: '700'

@@ -4,10 +4,10 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { computed, unref } from 'vue'
 import { describe } from 'vitest'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 const mockUseEmbedMode = vi.fn().mockReturnValue({ isEnabled: computed(() => false) })
 vi.mock('../../../../../src/composables/embedMode', () => ({

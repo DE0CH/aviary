@@ -44,7 +44,7 @@
 
 <script lang="ts">
 import { defineComponent, computed, unref, VNodeRef, ref } from 'vue'
-import { ContextActionMenu, useThemeStore } from '@ownclouders/web-pkg'
+import { ContextActionMenu, useThemeStore } from '@opencloud-eu/web-pkg'
 import {
   useGeneralActionsResetLogo,
   useGeneralActionsUploadLogo
@@ -113,7 +113,7 @@ export default defineComponent({
     width: 100%;
     max-height: 100%;
     object-fit: cover;
-    background: var(--oc-color-swatch-brand-default);
+    background: var(--oc-color-background-muted);
   }
 }
 </style>

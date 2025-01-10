@@ -65,7 +65,7 @@ import { ref } from 'vue'
 const req = (require as any).context('../../../src/assets/icons/', true, /^\.\/.*\.svg$/)
 
 /**
- * All known icons in the ownCloud Design System
+ * All known icons in the OpenCloud Design System
  * <p>
  *  Icons made by <a href="https://remixicon.com/">Remixicon</a> and, in the case of the `resource-type-*` icons, <a href="https://fontawesome.com/">Font Awesome</a> (available under the [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) license).
  * </p>

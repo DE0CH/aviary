@@ -1,4 +1,4 @@
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import { useClientService } from '../clientService'
 

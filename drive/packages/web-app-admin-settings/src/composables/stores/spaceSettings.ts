@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, unref } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 
 export const useSpaceSettingsStore = defineStore('spaceSettings', () => {
   const spaces = ref<SpaceResource[]>([])

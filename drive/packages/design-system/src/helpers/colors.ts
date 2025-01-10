@@ -69,7 +69,7 @@ export function getContrastRatio(rgbColorA: Array<number>, rgbColorB: Array<numb
 }
 
 /**
- * Gives you a random hashed color for a string, e.g. if you give it 'owncloud' it will always return the same color
+ * Gives you a random hashed color for a string, e.g. if you give it 'OpenCloud' it will always return the same color
  * @param {string} name: Can be any string
  * @return {string} Returns a hex color
  **/

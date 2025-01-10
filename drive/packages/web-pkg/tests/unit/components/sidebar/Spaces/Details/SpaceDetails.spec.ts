@@ -6,11 +6,11 @@ import {
   Resource,
   SpaceMember,
   GraphSharePermission
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { RouteLocation } from 'vue-router'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 const spaceMock = {
   type: 'space',

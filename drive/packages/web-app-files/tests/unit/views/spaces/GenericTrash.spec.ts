@@ -3,8 +3,8 @@ import { useResourcesViewDefaults } from '../../../../src/composables'
 import { useResourcesViewDefaultsMock } from '../../../../tests/mocks/useResourcesViewDefaultsMock'
 import { ref } from 'vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { SpaceResource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
@@ -13,8 +13,8 @@ import {
   RouteLocation,
   PartialComponentProps,
   ComponentProps
-} from '@ownclouders/web-test-helpers'
-import { AppBar } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { AppBar } from '@opencloud-eu/web-pkg'
 
 vi.mock('../../../../src/composables')
 

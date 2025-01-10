@@ -3,9 +3,9 @@ import {
   defaultPlugins,
   defaultStubs,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import ContextActions from '../../../../src/components/FilesList/ContextActions.vue'
 
 import {

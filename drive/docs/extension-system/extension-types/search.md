@@ -2,7 +2,7 @@
 title: 'Search extensions'
 date: 2024-01-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: search.md
 geekdocCollapseSection: true
@@ -49,7 +49,7 @@ The `searchProvider` object configures the actual provider. It consist of the fo
 The listSearch object consists of:
 
 - `component` - Vue component that can render the values from the SearchResult below
-- `search(term: string)` - Function that exectues the search, based on a given term. The term is formatted in [KQL](https://owncloud.dev/services/search/#query-language). Please note that the returned values needs to be formatted to fit either `SearchResource` or `GenericSearchResultItem` type
+- `search(term: string)` - Function that exectues the search, based on a given term. The term is formatted in [KQL](https://docs.opencloud.eu/services/search/#query-language). Please note that the returned values needs to be formatted to fit either `SearchResource` or `GenericSearchResultItem` type
 
 #### PreviewSearch
 
@@ -59,7 +59,7 @@ The previewSearch object extends the listSearch with one additional attribute:
 
 ## Example
 
-The following example shows how a search extension that queries a Solr search engine could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/owncloud/web/tree/master/packages/web-pkg) and the [web-client](https://github.com/owncloud/web/tree/master/packages/web-client) packages.
+The following example shows how a search extension that queries a Solr search engine could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/opencloud-eu/web/tree/main/packages/web-pkg) and the [web-client](https://github.com/opencloud-eu/web/tree/main/packages/web-client) packages.
 
 ```typescript
 export const useSolrSearchExtension = () => {
@@ -82,7 +82,7 @@ export const useSolrSearchExtension = () => {
   }
 
   const extension = computed<SearchExtension>(() => ({
-    id: 'com.github.owncloud.web.solr-search',
+    id: 'com.github.opencloud-eu.web.solr-search',
     type: 'search',
     searchProvider
   }))
@@ -100,8 +100,8 @@ The search component for the preview search container may look like this:
 
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { SearchResultValue, ResourceListItem } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { SearchResultValue, ResourceListItem } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'SolarSearchComponent',

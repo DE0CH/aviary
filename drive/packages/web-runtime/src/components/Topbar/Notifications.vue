@@ -83,13 +83,13 @@ import {
   formatDateFromISO,
   formatRelativeDateFromISO,
   useClientService
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import NotificationBell from './NotificationBell.vue'
 import { Notification } from '../../helpers/notifications'
 import { useGettext } from 'vue3-gettext'
 import { useTask } from 'vue-concurrency'
-import { MESSAGE_TYPE } from '@ownclouders/web-client/sse'
-import { call } from '@ownclouders/web-client'
+import { MESSAGE_TYPE } from '@opencloud-eu/web-client/sse'
+import { call } from '@opencloud-eu/web-client'
 import { AxiosHeaders } from 'axios'
 
 const POLLING_INTERVAL = 30000

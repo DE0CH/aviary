@@ -1,7 +1,7 @@
 import { useGettext } from 'vue3-gettext'
 import { computed } from 'vue'
-import { useAbility, useClientService, useMessages, useRouter } from '@ownclouders/web-pkg'
-import { Action } from '@ownclouders/web-pkg'
+import { useAbility, useClientService, useMessages, useRouter } from '@opencloud-eu/web-pkg'
+import { Action } from '@opencloud-eu/web-pkg'
 
 export const useGeneralActionsResetLogo = () => {
   const { showMessage, showErrorMessage } = useMessages()

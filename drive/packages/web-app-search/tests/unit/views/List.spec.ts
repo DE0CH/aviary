@@ -1,8 +1,8 @@
 import List from '../../../src/views/List.vue'
-import { defaultComponentMocks, mount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, mount } from '@opencloud-eu/web-test-helpers'
 import { useAvailableProviders } from '../../../src/composables'
 import { ref } from 'vue'
-import { SearchProvider, queryItemAsString } from '@ownclouders/web-pkg'
+import { SearchProvider, queryItemAsString } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 
 const mockProvider = mock<SearchProvider>({
@@ -14,7 +14,7 @@ const mockProvider = mock<SearchProvider>({
 })
 
 vi.mock('../../../src/composables/useAvailableProviders')
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRouteQuery: vi.fn(),
   queryItemAsString: vi.fn()

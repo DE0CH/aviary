@@ -1,4 +1,4 @@
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { filterResources } from '../../../../src/helpers/resource'
 
 describe('filterResources', () => {

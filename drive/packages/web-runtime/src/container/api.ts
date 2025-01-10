@@ -7,10 +7,10 @@ import {
   ExtensionPoint,
   ExtensionRegistry,
   SidebarNavExtension
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { isEqual, isObject, isArray } from 'lodash-es'
 import { App, Component, computed, h } from 'vue'
-import { AppNavigationItem } from '@ownclouders/web-pkg'
+import { AppNavigationItem } from '@opencloud-eu/web-pkg'
 
 /**
  * inject application specific routes into runtime

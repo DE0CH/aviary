@@ -1,6 +1,6 @@
 # web-client
 
-The `web-client` is a standalone package that allows you to interact with the [ownCloud Infinite Scale (oCIS)](https://github.com/owncloud/ocis/) APIs via TypeScript. It provides an abstraction layer between the server and a (web-) application that converts API data into objects with helpful types and utilities. This abstraction ensures that users of the APIs don't need in-depth knowledge about them, such as required methods or returned status codes.
+The `web-client` is a standalone package that allows you to interact with the [OpenCloud](https://github.com/opencloud-eu/opencloud/) APIs via TypeScript. It provides an abstraction layer between the server and a (web-) application that converts API data into objects with helpful types and utilities. This abstraction ensures that users of the APIs don't need in-depth knowledge about them, such as required methods or returned status codes.
 
 The supported APIs are:
 
@@ -13,22 +13,22 @@ The supported APIs are:
 Depending on your package manager, run one of the following commands:
 
 ```
-$ npm install @ownclouders/web-client
+$ npm install @opencloud-eu/web-client
 
-$ pnpm add @ownclouders/web-client
+$ pnpm add @opencloud-eu/web-client
 
-$ yarn add @ownclouders/web-client
+$ yarn add @opencloud-eu/web-client
 ```
 
 ## Usage
 
 ### Graph
 
-The graph client needs to be instantiated with a base URI corresponding to your oCIS deployment and an axios instance. The axios instance is being used for all requests, which means it needs to include all relevant headers either statically or via interceptor.
+The graph client needs to be instantiated with a base URI corresponding to your OpenCloud deployment and an axios instance. The axios instance is being used for all requests, which means it needs to include all relevant headers either statically or via interceptor.
 
 ```
 import axios from axios
-import { graph } from '@ownclouders/web-client'
+import { graph } from '@opencloud-eu/web-client'
 
 const accessToken = 'some_access_token'
 const baseURI = 'some_base_uri'
@@ -48,11 +48,11 @@ const mySpaces = await graphClient.drives.listMyDrives()
 
 ### OCS
 
-The ocs client needs to be instantiated with a base URI corresponding to your oCIS deployment and an axios instance. The axios instance is being used for all requests, which means it needs to include all relevant headers either statically or via interceptor.
+The ocs client needs to be instantiated with a base URI corresponding to your OpenCloud deployment and an axios instance. The axios instance is being used for all requests, which means it needs to include all relevant headers either statically or via interceptor.
 
 ```
 import axios from axios
-import { ocs } from '@ownclouders/web-client'
+import { ocs } from '@opencloud-eu/web-client'
 
 const accessToken = 'some_access_token'
 const baseURI = 'some_base_uri'
@@ -74,10 +74,10 @@ const signedUrl = await ocsClient.signUrl('some_url_to_sign', 'your_username')
 
 ### WebDav
 
-The webdav client needs to be instantiated with a base URI corresponding to your oCIS deployment. You can also pass a header callback which will be called with every dav request.
+The webdav client needs to be instantiated with a base URI corresponding to your OpenCloud deployment. You can also pass a header callback which will be called with every dav request.
 
 ```
-import { webdav } from '@ownclouders/web-client'
+import { webdav } from '@opencloud-eu/web-client'
 
 const accessToken = 'some_access_token'
 const baseURI = 'some_base_uri'

@@ -1,4 +1,4 @@
-import { DavFileInfoResponse } from '@ownclouders/web-client/webdav'
+import { DavFileInfoResponse } from '@opencloud-eu/web-client/webdav'
 import { Audio, GeoCoordinates, Identity, Image, Photo, User } from '../../graph/generated'
 import { MongoAbility, SubjectRawRule } from '@casl/ability'
 import { DAVResultResponseProps, FileStat } from 'webdav'

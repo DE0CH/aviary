@@ -4,12 +4,12 @@ export const config = {
   // environment
   assets: './tests/e2e/filesForUpload',
   tempAssetsPath: './tests/e2e/filesForUpload/temp',
-  baseUrlOcis: process.env.BASE_URL_OCIS ?? 'host.docker.internal:9200',
+  baseUrlOpenCloud: process.env.BASE_URL_OPEN_CLOUD ?? 'host.docker.internal:9200',
   basicAuth: process.env.BASIC_AUTH === 'true',
   // keycloak config
   keycloak: process.env.KEYCLOAK === 'true',
-  keycloakHost: process.env.KEYCLOAK_HOST ?? 'keycloak.owncloud.test',
-  keycloakRealm: process.env.KEYCLOAK_REALM ?? 'oCIS',
+  keycloakHost: process.env.KEYCLOAK_HOST ?? 'keycloak.opencloud.test',
+  keycloakRealm: process.env.KEYCLOAK_REALM ?? 'openCloud',
   keycloakAdminUser: process.env.KEYCLOAK_ADMIN_USER ?? 'admin',
   keycloakAdminPassword: process.env.KEYCLOAK_ADMIN_PASSWORD ?? 'admin',
   get keycloakUrl() {
@@ -19,10 +19,11 @@ export const config = {
     return withHttp(this.keycloakHost + '/admin/master/console')
   },
   // ocm config
-  federatedBaseUrlOcis: process.env.FEDERATED_BASE_URL_OCIS ?? 'federation-ocis:10200',
+  federatedbaseUrlOpenCloud:
+    process.env.FEDERATED_BASE_URL_OPEN_CLOUD ?? 'federation-open-cloud:10200',
   federatedServer: false,
   get baseUrl() {
-    return withHttp(this.federatedServer ? this.federatedBaseUrlOcis : this.baseUrlOcis)
+    return withHttp(this.federatedServer ? this.federatedbaseUrlOpenCloud : this.baseUrlOpenCloud)
   },
   debug: process.env.DEBUG === 'true',
   logLevel: process.env.LOG_LEVEL || 'silent',

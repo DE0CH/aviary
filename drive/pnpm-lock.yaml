@@ -45,16 +45,16 @@ importers:
       '@noble/hashes':
         specifier: 1.5.0
         version: 1.5.0
-      '@ownclouders/babel-preset':
+      '@opencloud-eu/babel-preset':
         specifier: workspace:*
         version: link:packages/babel-preset
-      '@ownclouders/eslint-config':
+      '@opencloud-eu/eslint-config':
         specifier: workspace:*
         version: link:packages/eslint-config
-      '@ownclouders/prettier-config':
+      '@opencloud-eu/prettier-config':
         specifier: workspace:*
         version: link:packages/prettier-config
-      '@ownclouders/tsconfig':
+      '@opencloud-eu/tsconfig':
         specifier: workspace:*
         version: link:packages/tsconfig
       '@playwright/test':
@@ -274,7 +274,7 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.0
         version: 1.2.1
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
       '@vitejs/plugin-vue':
@@ -502,13 +502,13 @@ importers:
 
   packages/web-app-activities:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       luxon:
@@ -527,19 +527,19 @@ importers:
         specifier: ^2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-admin-settings:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:^
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:^
         version: link:../web-pkg
       axios:
@@ -573,19 +573,19 @@ importers:
         specifier: 4.2.5
         version: 4.2.5(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-app-store:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       axios:
@@ -616,16 +616,16 @@ importers:
         specifier: 3.24.0
         version: 3.24.0
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-epub-reader:
     dependencies:
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       epubjs:
@@ -635,16 +635,16 @@ importers:
         specifier: 2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-external:
     dependencies:
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       lodash-es:
@@ -672,19 +672,19 @@ importers:
         specifier: 3.24.0
         version: 3.24.0
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-files:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       '@uppy/core':
@@ -736,19 +736,19 @@ importers:
         specifier: workspace:*
         version: link:../web-app-search
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-ocm:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:*
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       axios:
@@ -778,23 +778,23 @@ importers:
 
   packages/web-app-pdf-viewer:
     dependencies:
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       vue3-gettext:
         specifier: 2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-preview:
     dependencies:
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       '@panzoom/panzoom':
@@ -810,19 +810,19 @@ importers:
         specifier: 2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-search:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:*
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       lodash-es:
@@ -841,7 +841,7 @@ importers:
         specifier: 2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
       flush-promises:
@@ -850,10 +850,10 @@ importers:
 
   packages/web-app-text-editor:
     dependencies:
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       vue-concurrency:
@@ -863,23 +863,23 @@ importers:
         specifier: 2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
   packages/web-app-webfinger:
     dependencies:
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
@@ -947,10 +947,10 @@ importers:
       '@microsoft/fetch-event-source':
         specifier: ^2.0.1
         version: 2.0.1
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:^
         version: link:../web-client
       '@sentry/vue':
@@ -1050,7 +1050,7 @@ importers:
         specifier: ^3.23.8
         version: 3.24.0
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:^
         version: link:../web-test-helpers
       '@types/dompurify':
@@ -1084,13 +1084,13 @@ importers:
       '@microsoft/fetch-event-source':
         specifier: 2.0.1
         version: 2.0.1
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:*
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:*
         version: link:../web-pkg
       '@sentry/vue':
@@ -1193,7 +1193,7 @@ importers:
         specifier: 3.24.0
         version: 3.24.0
     devDependencies:
-      '@ownclouders/web-test-helpers':
+      '@opencloud-eu/web-test-helpers':
         specifier: workspace:*
         version: link:../web-test-helpers
 
@@ -1205,13 +1205,13 @@ importers:
       '@casl/vue':
         specifier: ^2.2.2
         version: 2.2.2(@casl/ability@6.7.2)(vue@3.5.13(typescript@5.6.3))
-      '@ownclouders/design-system':
+      '@opencloud-eu/design-system':
         specifier: workspace:^
         version: link:../design-system
-      '@ownclouders/web-client':
+      '@opencloud-eu/web-client':
         specifier: workspace:^
         version: link:../web-client
-      '@ownclouders/web-pkg':
+      '@opencloud-eu/web-pkg':
         specifier: workspace:^
         version: link:../web-pkg
       '@pinia/testing':
@@ -10195,7 +10195,7 @@ snapshots:
       '@cucumber/ci-environment': 9.1.0
       '@cucumber/cucumber-expressions': 16.1.1
       '@cucumber/gherkin': 26.0.3
-      '@cucumber/gherkin-streams': 5.0.1(@cucumber/gherkin@26.0.3)(@cucumber/message-streams@4.0.1(@cucumber/messages@21.0.1))(@cucumber/messages@21.0.1)
+      '@cucumber/gherkin-streams': 5.0.1(@cucumber/gherkin@26.0.3)(@cucumber/message-streams@4.0.1(@cucumber/messages@27.0.2))(@cucumber/messages@21.0.1)
       '@cucumber/gherkin-utils': 8.0.2
       '@cucumber/html-formatter': 20.2.1(@cucumber/messages@21.0.1)
       '@cucumber/message-streams': 4.0.1(@cucumber/messages@21.0.1)
@@ -10233,7 +10233,7 @@ snapshots:
       yaml: 2.6.0
       yup: 0.32.11
 
-  '@cucumber/gherkin-streams@5.0.1(@cucumber/gherkin@26.0.3)(@cucumber/message-streams@4.0.1(@cucumber/messages@21.0.1))(@cucumber/messages@21.0.1)':
+  '@cucumber/gherkin-streams@5.0.1(@cucumber/gherkin@26.0.3)(@cucumber/message-streams@4.0.1(@cucumber/messages@27.0.2))(@cucumber/messages@21.0.1)':
     dependencies:
       '@cucumber/gherkin': 26.0.3
       '@cucumber/message-streams': 4.0.1(@cucumber/messages@21.0.1)

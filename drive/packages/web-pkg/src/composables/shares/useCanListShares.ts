@@ -6,9 +6,9 @@ import {
   isTrashResource,
   Resource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useCapabilityStore, useUserStore } from '../piniaStores'
-import { isShareSpaceResource } from '@ownclouders/web-client'
+import { isShareSpaceResource } from '@opencloud-eu/web-client'
 import { useGetMatchingSpace } from '../spaces'
 
 export const useCanListShares = () => {

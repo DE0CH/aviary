@@ -2,7 +2,7 @@
 title: 'Right sidebar panel extensions'
 date: 2024-01-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: right-sidebar-panels.md
 geekdocCollapseSection: true
@@ -87,14 +87,14 @@ will automatically become available in all environments that display the `FileSi
 
 ## Example
 
-The following example shows how a sidebar panel for displaying exif data for a resource could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/owncloud/web/tree/master/packages/web-pkg) and the [web-client](https://github.com/owncloud/web/tree/master/packages/web-client) packages.
+The following example shows how a sidebar panel for displaying exif data for a resource could look like. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/opencloud-eu/web/tree/main/packages/web-pkg) and the [web-client](https://github.com/opencloud-eu/web/tree/main/packages/web-client) packages.
 
 ```typescript
 export const useExifDataPanelExtension = () => {
   const { $gettext } = useGettext()
 
   const extension = computed<SidebarPanelExtension<SpaceResource, Resource, Resource>>(() => ({
-    id: 'com.github.owncloud.web.files.sidebar-panel.exif-data',
+    id: 'com.github.opencloud-eu.web.files.sidebar-panel.exif-data',
     type: 'sidebarPanel',
     scopes: ['resource'],
     panel: {

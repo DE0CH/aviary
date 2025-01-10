@@ -4,14 +4,14 @@ import {
   defaultPlugins,
   mount,
   shallowMount
-} from '@ownclouders/web-test-helpers'
-import { displayPositionedDropdown, eventBus, queryItemAsString } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { displayPositionedDropdown, eventBus, queryItemAsString } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { useUserSettingsStore } from '../../../../src/composables/stores/userSettings'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 const getUserMocks = () => [{ id: '1', displayName: 'jan' }] as User[]
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   displayPositionedDropdown: vi.fn(),
   queryItemAsString: vi.fn()

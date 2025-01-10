@@ -1,10 +1,10 @@
 import { unref } from 'vue'
 import { useLinkTypes } from '../../../../src/composables/links/useLinkTypes'
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
-import { AbilityRule } from '@ownclouders/web-client'
-import { Capabilities } from '@ownclouders/web-client/ocs'
-import { PasswordEnforcedForCapability } from '@ownclouders/web-client/ocs'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
+import { AbilityRule } from '@opencloud-eu/web-client'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
+import { PasswordEnforcedForCapability } from '@opencloud-eu/web-client/ocs'
 
 describe('useLinkTypes', () => {
   it('should be valid', () => {

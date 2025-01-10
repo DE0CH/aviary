@@ -25,8 +25,8 @@ import {
   useMessages,
   usePasswordPolicyService,
   useSharesStore
-} from '@ownclouders/web-pkg'
-import { LinkShare, Resource, SpaceResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { LinkShare, Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'SetLinkPasswordModal',

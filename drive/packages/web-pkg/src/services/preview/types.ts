@@ -1,4 +1,4 @@
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { z } from 'zod'
 
 export const ProcessorType = z.enum(['fit', 'resize', 'fill', 'thumbnail'])

@@ -4,11 +4,11 @@ import { mock, mockDeep } from 'vitest-mock-extended'
 import { ClientService } from '../../../src/services'
 import { unref, ref, Ref } from 'vue'
 import { AxiosResponse } from 'axios'
-import { ArchiverCapability } from '@ownclouders/web-client/ocs'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { ArchiverCapability } from '@opencloud-eu/web-client/ocs'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 import { useUserStore } from '../../../src/composables/piniaStores'
 
-const serverUrl = 'https://demo.owncloud.com'
+const serverUrl = 'https://demo.opencloud.eu'
 const getArchiverServiceInstance = (capabilities: Ref<ArchiverCapability[]>) => {
   createTestingPinia()
   const userStore = useUserStore()

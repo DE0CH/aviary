@@ -3,18 +3,18 @@ import {
   defaultPlugins,
   defaultStubs,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import ActionsPanel from '../../../../../src/components/Spaces/SideBar/ActionsPanel.vue'
 import {
   useSpaceActionsDisable,
   useSpaceActionsEditDescription,
   useSpaceActionsEditQuota,
   useSpaceActionsRename
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, ref } from 'vue'
-import { Action } from '@ownclouders/web-pkg'
+import { Action } from '@opencloud-eu/web-pkg'
 
 function createMockActionComposables(module: Record<string, any>) {
   const mockModule: Record<string, any> = {}
@@ -24,7 +24,7 @@ function createMockActionComposables(module: Record<string, any>) {
   return mockModule
 }
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => {
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => {
   const original = await importOriginal()
   return createMockActionComposables(original)
 })

@@ -1,4 +1,4 @@
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { computed, unref } from 'vue'
 import { SpaceAction, SpaceActionOptions } from '../types'
 import { useRoute } from '../../router'
@@ -6,7 +6,7 @@ import { useAbility } from '../../ability'
 import { useClientService } from '../../clientService'
 import { useLoadingService } from '../../loadingService'
 import { useGettext } from 'vue3-gettext'
-import { isProjectSpaceResource } from '@ownclouders/web-client'
+import { isProjectSpaceResource } from '@opencloud-eu/web-client'
 import {
   useMessages,
   useModals,

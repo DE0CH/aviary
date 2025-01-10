@@ -1,4 +1,4 @@
-import { createFileRouteOptions, getIndicators, ImageDimension } from '@ownclouders/web-pkg'
+import { createFileRouteOptions, getIndicators, ImageDimension } from '@opencloud-eu/web-pkg'
 import { SSEEventOptions } from './types'
 import { isItemInCurrentFolder } from './helpers'
 

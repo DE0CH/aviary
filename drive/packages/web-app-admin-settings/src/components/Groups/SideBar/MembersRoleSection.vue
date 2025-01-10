@@ -13,7 +13,7 @@
 </template>
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 export default defineComponent({
   name: 'MembersRoleSection',

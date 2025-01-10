@@ -6,7 +6,7 @@ import {
   isLocationTrashActive
 } from '../../../router'
 import merge from 'lodash-es/merge'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { createFileRouteOptions } from '../../../helpers/router'
 import { useGetMatchingSpace } from '../../spaces'
 import { useRouter } from '../../router'

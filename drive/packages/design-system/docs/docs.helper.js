@@ -1,5 +1,5 @@
 /**
- * This is ownCloud Design System’s JS helper file for docs.
+ * This is OpenCloud Design System’s JS helper file for docs.
  * You can add more things if/when needed.
  */
 import activeNav from './utils/activeNav'

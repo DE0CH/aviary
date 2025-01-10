@@ -3,9 +3,9 @@ import {
   defaultPlugins,
   defaultStubs,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import ContextActions from '../../../../src/components/Spaces/ContextActions.vue'
 import {
   Action,
@@ -13,7 +13,7 @@ import {
   useSpaceActionsEditDescription,
   useSpaceActionsEditQuota,
   useSpaceActionsRename
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
 describe.skip('ContextActions', () => {

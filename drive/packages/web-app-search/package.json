@@ -2,16 +2,16 @@
   "name": "web-app-search",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud web search",
+  "description": "OpenCloud web search",
   "license": "AGPL-3.0",
   "devDependencies": {
     "flush-promises": "1.0.2",
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:*",
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*",
+    "@opencloud-eu/design-system": "workspace:*",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
     "lodash-es": "^4.17.21",
     "mark.js": "^8.11.1",
     "pinia": "2.3.0",

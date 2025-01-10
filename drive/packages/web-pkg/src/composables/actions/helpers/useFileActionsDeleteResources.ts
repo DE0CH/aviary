@@ -1,6 +1,6 @@
 import { cloneStateObject } from '../../../helpers/store'
 import { isSameResource } from '../../../helpers/resource'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { isLocationSpacesActive } from '../../../router'
 import { dirname } from 'path'
 import { createFileRouteOptions } from '../../../helpers'

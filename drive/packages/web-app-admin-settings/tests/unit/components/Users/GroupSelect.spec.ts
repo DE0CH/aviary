@@ -1,7 +1,7 @@
 import GroupSelect from '../../../../src/components/Users/GroupSelect.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 const groupMock = mock<Group>({ id: '1', groupTypes: [] })
 

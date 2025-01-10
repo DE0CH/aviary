@@ -21,8 +21,8 @@ import { computed, defineComponent, inject, ref, watch, unref, Ref } from 'vue'
 import MembersRoleSection from '../../Groups/SideBar/MembersRoleSection.vue'
 import Fuse from 'fuse.js'
 import Mark from 'mark.js'
-import { Group, User } from '@ownclouders/web-client/graph/generated'
-import { defaultFuseOptions } from '@ownclouders/web-pkg'
+import { Group, User } from '@opencloud-eu/web-client/graph/generated'
+import { defaultFuseOptions } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'GroupsMembersPanel',

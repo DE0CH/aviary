@@ -5,7 +5,7 @@ import {
   defaultPlugins,
   mount,
   PartialComponentProps
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { queryItemAsString } from '../../../../src/composables/appDefaults'
 import { mock } from 'vitest-mock-extended'
 

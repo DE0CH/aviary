@@ -2,7 +2,7 @@ import LayoutPlain from '../../layouts/Plain.vue'
 import LayoutApplication from '../../layouts/Application.vue'
 import { computed, unref } from 'vue'
 import { Router } from 'vue-router'
-import { useRouter, AuthStore } from '@ownclouders/web-pkg'
+import { useRouter, AuthStore } from '@opencloud-eu/web-pkg'
 
 export interface LayoutOptions {
   authStore?: AuthStore

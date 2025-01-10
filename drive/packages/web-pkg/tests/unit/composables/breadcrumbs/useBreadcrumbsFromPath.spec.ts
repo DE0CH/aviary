@@ -1,6 +1,6 @@
 import { mock } from 'vitest-mock-extended'
-import { SpaceResource } from '@ownclouders/web-client'
-import { RouteLocation, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { RouteLocation, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { useBreadcrumbsFromPath } from '../../../../src/composables/breadcrumbs'
 import { ref } from 'vue'
 import { AncestorMetaData } from '../../../../src/types'

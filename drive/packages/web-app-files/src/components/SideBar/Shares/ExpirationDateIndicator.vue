@@ -13,7 +13,7 @@
 <script lang="ts">
 import { computed, defineComponent, PropType, unref } from 'vue'
 import { DateTime } from 'luxon'
-import { formatDateFromDateTime, formatRelativeDateFromDateTime } from '@ownclouders/web-pkg'
+import { formatDateFromDateTime, formatRelativeDateFromDateTime } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

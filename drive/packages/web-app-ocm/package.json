@@ -4,9 +4,9 @@
   "description": "OCM",
   "license": "AGPL-3.0",
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:*",
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*",
+    "@opencloud-eu/design-system": "workspace:*",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
     "axios": "1.7.9",
     "email-validator": "^2.0.4",
     "fuse.js": "7.0.0",

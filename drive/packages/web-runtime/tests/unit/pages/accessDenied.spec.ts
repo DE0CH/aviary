@@ -1,5 +1,5 @@
 import accessDenied from '../../../src/pages/accessDenied.vue'
-import { defaultComponentMocks, defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 const selectors = {
   logInAgainButton: '#exitAnchor'

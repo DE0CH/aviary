@@ -19,7 +19,7 @@ import {
   useAppProviderService,
   useRouteMeta,
   useRouteQuery
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useRouter } from 'vue-router'
 import { omit } from 'lodash-es'
 import { useGettext } from 'vue3-gettext'

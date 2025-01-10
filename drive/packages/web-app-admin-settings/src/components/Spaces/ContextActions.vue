@@ -6,8 +6,8 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType, unref } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
-import { ContextActionMenu } from '@ownclouders/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { ContextActionMenu } from '@opencloud-eu/web-pkg'
 
 import {
   useSpaceActionsDelete,
@@ -17,7 +17,7 @@ import {
   useSpaceActionsRename,
   useSpaceActionsRestore,
   useActionsShowDetails
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'ContextActions',

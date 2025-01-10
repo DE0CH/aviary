@@ -14,7 +14,7 @@
 </template>
 
 <script lang="ts">
-import { Message, useMessages } from '@ownclouders/web-pkg'
+import { Message, useMessages } from '@opencloud-eu/web-pkg'
 import { computed, defineComponent } from 'vue'
 
 export default defineComponent({

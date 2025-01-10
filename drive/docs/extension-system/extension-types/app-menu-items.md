@@ -2,7 +2,7 @@
 title: 'Application menu item extensions'
 date: 2024-07-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: app-menu-items.md
 geekdocCollapseSection: true
@@ -47,7 +47,7 @@ At least one of these properties has to be provided when registering an extensio
 
 ## Example
 
-The following example shows how an app creates an extension that registers an app menu item, linking to an internal page. All helper types and composables are being provided via the [web-pkg](https://github.com/owncloud/web/tree/master/packages/web-pkg) package.
+The following example shows how an app creates an extension that registers an app menu item, linking to an internal page. All helper types and composables are being provided via the [web-pkg](https://github.com/opencloud-eu/web/tree/main/packages/web-pkg) package.
 
 ```typescript
 export default defineWebApplication({
@@ -57,7 +57,7 @@ export default defineWebApplication({
 
     const menuItems = computed<AppMenuItemExtension[]>(() => [
       {
-        id: 'com.github.owncloud.web.my-cool-app.menu-item',
+        id: 'com.github.opencloud-eu.web.my-cool-app.menu-item',
         type: 'appMenuItem',
         label: () => $gettext('My cool app'),
         path: urlJoin(appId),

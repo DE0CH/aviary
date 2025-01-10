@@ -1,10 +1,10 @@
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   extractParentFolderName,
   isProjectSpaceResource,
   isShareRoot,
   isShareSpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 import { unref } from 'vue'
 import { useGetMatchingSpace } from '../spaces'

@@ -8,7 +8,7 @@
       id="_appSwitcherButton"
       v-oc-tooltip="applicationSwitcherLabel"
       appearance="raw-inverse"
-      variation="brand"
+      variation="primary"
       class="oc-topbar-menu-burger"
       :aria-label="applicationSwitcherLabel"
     >
@@ -28,9 +28,9 @@
           <li v-for="(n, nid) in sortedMenuItems" :key="`apps-menu-${nid}`">
             <oc-button
               :key="n.url ? 'apps-menu-external-link' : 'apps-menu-internal-link'"
-              :appearance="isMenuItemActive(n) ? 'raw-inverse' : 'raw'"
-              :variation="isMenuItemActive(n) ? 'primary' : 'passive'"
-              :class="{ 'oc-background-primary-gradient router-link-active': isMenuItemActive(n) }"
+              appearance="raw"
+              variation="passive"
+              :class="{ 'oc-background-highlight router-link-active': isMenuItemActive(n) }"
               :data-test-id="n.id"
               v-bind="getAdditionalAttributes(n)"
               v-on="getAdditionalEventBindings(n)"
@@ -51,10 +51,10 @@
 
 <script lang="ts">
 import { defineComponent, PropType, ref, computed, unref, useTemplateRef } from 'vue'
-import { OcDrop, OcApplicationIcon } from '@ownclouders/design-system/components'
+import { OcDrop, OcApplicationIcon } from '@opencloud-eu/design-system/components'
 import { useGettext } from 'vue3-gettext'
 import { v4 as uuidV4 } from 'uuid'
-import { AppMenuItemExtension, useRouter } from '@ownclouders/web-pkg'
+import { AppMenuItemExtension, useRouter } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   components: {

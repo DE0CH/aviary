@@ -1,5 +1,5 @@
 import FileActions from '../../../../../src/components/SideBar/Actions/FileActions.vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import {
   defaultPlugins,
@@ -7,11 +7,11 @@ import {
   mount,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
-import { useFileActions } from '@ownclouders/web-pkg'
-import { Action } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { useFileActions } from '@opencloud-eu/web-pkg'
+import { Action } from '@opencloud-eu/web-pkg'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActions: vi.fn()
 }))

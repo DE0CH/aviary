@@ -15,8 +15,8 @@
 
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { AppConfigObject, TextEditor as TextEditorComponent } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { AppConfigObject, TextEditor as TextEditorComponent } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'TextEditor',

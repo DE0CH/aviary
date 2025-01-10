@@ -80,7 +80,7 @@ import {
   watch,
   Ref
 } from 'vue'
-import { IncomingShareResource, Resource } from '@ownclouders/web-client'
+import { IncomingShareResource, Resource } from '@opencloud-eu/web-client'
 import {
   AppFileHandlingResult,
   AppFolderHandlingResult,
@@ -96,7 +96,7 @@ import {
   usePreviewService,
   useGetMatchingSpace,
   isLocationSharesActive
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import MediaControls from './components/MediaControls.vue'
 import MediaAudio from './components/Sources/MediaAudio.vue'
 import MediaImage from './components/Sources/MediaImage.vue'

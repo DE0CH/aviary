@@ -6,7 +6,7 @@ import { EventSourceMessage, fetchEventSource } from '@microsoft/fetch-event-sou
 import { SSEAdapter, sse, MESSAGE_TYPE, RetriableError } from '../../src/sse'
 import { Mock } from 'vitest'
 
-const url = 'https://owncloud.test/'
+const url = 'https://opencloud.test/'
 describe('SSEAdapter', () => {
   let mockFetch: Mock
 

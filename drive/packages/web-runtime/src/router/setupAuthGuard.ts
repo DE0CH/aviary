@@ -10,7 +10,7 @@ import {
   queryItemAsString,
   useAuthStore,
   useEmbedMode
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { authService } from '../services/auth/authService'
 import { unref } from 'vue'
 

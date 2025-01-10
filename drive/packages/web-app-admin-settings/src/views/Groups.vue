@@ -70,13 +70,13 @@ import {
   SideBarPanelContext,
   useClientService,
   useSideBar
-} from '@ownclouders/web-pkg'
-import { Group } from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 import { computed, defineComponent, ref, unref, onBeforeUnmount, onMounted } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
 import { storeToRefs } from 'pinia'
-import { call } from '@ownclouders/web-client'
+import { call } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   components: {

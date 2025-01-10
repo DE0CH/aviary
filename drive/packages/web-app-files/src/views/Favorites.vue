@@ -64,27 +64,27 @@ import {
   ref,
   unref
 } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   useExtensionRegistry,
   useConfigStore,
   useResourcesStore,
   useLoadPreview
-} from '@ownclouders/web-pkg'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { FileSideBar, NoContentMessage } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
-import { eventBus } from '@ownclouders/web-pkg'
-import { useGetMatchingSpace } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { FileSideBar, NoContentMessage } from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
+import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
 
-import { AppBar } from '@ownclouders/web-pkg'
+import { AppBar } from '@opencloud-eu/web-pkg'
 import QuickActions from '../components/FilesList/QuickActions.vue'
 import ListInfo from '../components/FilesList/ListInfo.vue'
-import { ContextActions } from '@ownclouders/web-pkg'
-import { ResourceTable } from '@ownclouders/web-pkg'
+import { ContextActions } from '@opencloud-eu/web-pkg'
+import { ResourceTable } from '@opencloud-eu/web-pkg'
 import FilesViewWrapper from '../components/FilesViewWrapper.vue'
 import { useResourcesViewDefaults } from '../composables'
-import { useFileActions } from '@ownclouders/web-pkg'
+import { useFileActions } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 import { folderViewsFavoritesExtensionPoint } from '../extensionPoints'
 

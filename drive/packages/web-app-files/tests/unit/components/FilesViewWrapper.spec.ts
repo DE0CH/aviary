@@ -1,5 +1,9 @@
 import FilesViewWrapper from '../../../src/components/FilesViewWrapper.vue'
-import { defaultComponentMocks, defaultPlugins, RouteLocation } from '@ownclouders/web-test-helpers'
+import {
+  defaultComponentMocks,
+  defaultPlugins,
+  RouteLocation
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { shallowMount } from '@vue/test-utils'
 import { computed } from 'vue'
@@ -12,7 +16,7 @@ const mockUseEmbedMode = vi.fn().mockReturnValue({
   isEnabled: computed(() => false)
 })
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRoute: vi.fn().mockReturnValue({ query: {} }),
   useEmbedMode: vi.fn().mockImplementation(() => mockUseEmbedMode())

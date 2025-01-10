@@ -93,15 +93,15 @@ import {
   useLinkTypes,
   useCanShare,
   UpdateLinkOptions
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { shareViaLinkHelp, shareViaIndirectLinkHelp } from '../../../helpers/contextualHelpers'
-import { isSpaceResource, LinkShare } from '@ownclouders/web-client'
+import { isSpaceResource, LinkShare } from '@opencloud-eu/web-client'
 import ListItem from './Links/ListItem.vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { isLocationSharesActive, useSharesStore } from '@ownclouders/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { isLocationSharesActive, useSharesStore } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { storeToRefs } from 'pinia'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 
 export default defineComponent({
   name: 'FileLinks',

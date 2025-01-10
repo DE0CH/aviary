@@ -1,4 +1,4 @@
-import { buildUrl, OpenIdConnectConfig } from '@ownclouders/web-pkg'
+import { buildUrl, OpenIdConnectConfig } from '@opencloud-eu/web-pkg'
 import { v4 as uuidV4 } from 'uuid'
 import { router } from '../router'
 
@@ -42,7 +42,7 @@ export async function registerClient(openIdConfig: OpenIdConnectConfig) {
   const wellKnown = await get(`${openIdConfig.authority}/.well-known/openid-configuration`)
   const resp = await post(wellKnown.registration_endpoint, {
     redirect_uris: [buildUrl(router, '/oidc-callback.html')],
-    client_name: `ownCloud Web on ${window.location.origin}`
+    client_name: `OpenCloud Web on ${window.location.origin}`
   })
   sessionStorage.setItem('dynamicClientData', JSON.stringify(resp))
   return resp

@@ -1,8 +1,8 @@
 import GdprExport from '../../../../src/components/Account/GdprExport.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { ClientService } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 
 const selectors = {
   ocSpinnerStub: 'oc-spinner-stub',
@@ -12,7 +12,7 @@ const selectors = {
 }
 
 const downloadFile = vi.fn()
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useDownloadFile: vi.fn(() => ({ downloadFile }))
 }))

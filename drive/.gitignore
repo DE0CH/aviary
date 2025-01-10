@@ -28,7 +28,7 @@ dist
 reports
 tests/e2e/cucumber/report/cucumber_report.json
 tests/e2e/cucumber/reportGenerator/cucumber_report.json
-tests/ocis
+tests/opencloud
 tests/testing-app
 playwright-report
 
@@ -46,7 +46,7 @@ playwright-report
 
 # Themes
 /packages/web-runtime/themes/*
-!/packages/web-runtime/themes/owncloud/
+!/packages/web-runtime/themes/opencloud/
 
 # Compiled tokens
 /packages/design-system/src/assets/tokens/
@@ -60,7 +60,7 @@ tests/report/cucumber_report.html
 /third-party-licenses
 
 # dev setup
-/dev/docker/ocis-ca
+/dev/docker/opencloud-ca
 /dev/docker/traefik/certificates
 docker-compose.override.yml
 /dev/docker/apps

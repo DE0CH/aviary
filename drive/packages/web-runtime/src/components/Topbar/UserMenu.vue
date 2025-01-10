@@ -119,8 +119,8 @@ import {
   useUserStore,
   routeToContextQuery,
   useAuthService
-} from '@ownclouders/web-pkg'
-import { OcDrop } from '@ownclouders/design-system/components'
+} from '@opencloud-eu/web-pkg'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 import QuotaInformation from '../Account/QuotaInformation.vue'
 
 export default defineComponent({

@@ -1,4 +1,4 @@
-import { useModals, UserAction } from '@ownclouders/web-pkg'
+import { useModals, UserAction } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import CreateGroupModal from '../../../components/Groups/CreateGroupModal.vue'

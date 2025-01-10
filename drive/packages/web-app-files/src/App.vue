@@ -6,7 +6,7 @@
 </template>
 <script lang="ts">
 import { defineComponent, onBeforeUnmount, watch, ref } from 'vue'
-import { useRoute, eventBus, useResourcesStore } from '@ownclouders/web-pkg'
+import { useRoute, eventBus, useResourcesStore } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   setup() {

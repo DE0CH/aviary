@@ -171,14 +171,14 @@ Feature: users management
     And "Admin" navigates to the users management page
     And "Admin" creates the following user
       | name | displayname | email                   | password |
-      | max  | Max Testing | maxtesting@owncloud.com | 12345678 |
+      | max  | Max Testing | maxtesting@opencloud.eu | 12345678 |
     And "Admin" logs out
     When "Max" logs in
     Then "Max" should have self info:
       | key         | value                   |
       | username    | max                     |
       | displayname | Max Testing             |
-      | email       | maxtesting@owncloud.com |
+      | email       | maxtesting@opencloud.eu |
     And "Max" logs out
 
 

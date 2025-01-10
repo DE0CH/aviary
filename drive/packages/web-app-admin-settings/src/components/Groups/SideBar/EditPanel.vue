@@ -24,9 +24,9 @@
 </template>
 <script lang="ts">
 import { defineComponent, PropType, ref } from 'vue'
-import { Group } from '@ownclouders/web-client/graph/generated'
-import { CompareSaveDialog, eventBus, useMessages } from '@ownclouders/web-pkg'
-import { MaybeRef, useClientService } from '@ownclouders/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
+import { CompareSaveDialog, eventBus, useMessages } from '@opencloud-eu/web-pkg'
+import { MaybeRef, useClientService } from '@opencloud-eu/web-pkg'
 import GroupInfoBox from './GroupInfoBox.vue'
 import { useGroupSettingsStore } from '../../../composables'
 import { useGettext } from 'vue3-gettext'

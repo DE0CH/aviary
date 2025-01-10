@@ -1,5 +1,0 @@
-Enhancement: Show min oCIS version in app details (app store)
-
-We're now showing the minimum required oCIS version of apps in the app releases of the app store.
-
-https://github.com/owncloud/web/pull/11580

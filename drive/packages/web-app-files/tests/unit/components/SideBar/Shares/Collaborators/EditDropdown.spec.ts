@@ -1,8 +1,8 @@
 import EditDropdown from '../../../../../../src/components/SideBar/Shares/Collaborators/EditDropdown.vue'
-import { defaultPlugins, PartialComponentProps, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, PartialComponentProps, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { OcButton } from '@ownclouders/design-system/components'
+import { Resource } from '@opencloud-eu/web-client'
+import { OcButton } from '@opencloud-eu/design-system/components'
 
 const selectors = {
   editBtn: '.collaborator-edit-dropdown-options-btn',

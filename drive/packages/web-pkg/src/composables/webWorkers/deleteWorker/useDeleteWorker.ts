@@ -5,7 +5,7 @@ import {
   HttpError,
   type Resource,
   type SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useConfigStore } from '../../piniaStores'
 import { useLoadingService } from '../../loadingService'
 import { useRequestHeaders } from '../../requestHeaders'

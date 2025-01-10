@@ -1,5 +1,5 @@
 import { basename, join } from 'path'
-import type { Resource, SpaceResource } from '@ownclouders/web-client'
+import type { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { ResolveStrategy, TransferType, type TransferData } from './types'
 import { ConflictDialog } from './conflictDialog'
 import { resolveFileNameDuplicate, isResourceBeeingMovedToSameLocation } from './conflictUtils'
@@ -7,7 +7,7 @@ import type { ClientService } from '../../../services'
 import { useMessages } from '../../../composables'
 import { Ref, unref } from 'vue'
 import type { Language } from 'vue3-gettext'
-import { HttpError } from '@ownclouders/web-client'
+import { HttpError } from '@opencloud-eu/web-client'
 
 export class ResourceTransfer extends ConflictDialog {
   constructor(

@@ -1,11 +1,11 @@
 import { nextTick, ref } from 'vue'
 import SpaceHeader from '../../../../src/components/Spaces/SpaceHeader.vue'
-import { DriveItem } from '@ownclouders/web-client/graph/generated'
-import { SpaceResource, Resource, buildSpaceImageResource } from '@ownclouders/web-client'
-import { defaultPlugins, mount, defaultComponentMocks } from '@ownclouders/web-test-helpers'
+import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
+import { SpaceResource, Resource, buildSpaceImageResource } from '@opencloud-eu/web-client'
+import { defaultPlugins, mount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActions: vi.fn().mockReturnValue({
     getDefaultAction: vi.fn().mockReturnValue({ handler: vi.fn() })
@@ -15,7 +15,7 @@ vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
   })
 }))
 
-vi.mock('@ownclouders/web-client', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-client', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   buildSpaceImageResource: vi.fn()
 }))

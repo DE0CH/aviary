@@ -4,10 +4,10 @@ import {
   defaultPlugins,
   mockAxiosReject,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Drive, Group, User } from '@ownclouders/web-client/graph/generated'
-import { CapabilityStore } from '@ownclouders/web-pkg'
+import { Drive, Group, User } from '@opencloud-eu/web-client/graph/generated'
+import { CapabilityStore } from '@opencloud-eu/web-pkg'
 import GroupSelect from '../../../../../src/components/Users/GroupSelect.vue'
 
 const availableGroupOptions = [
@@ -52,10 +52,10 @@ describe('EditPanel', () => {
     it('should revert changes on property editUser', () => {
       const { wrapper } = getWrapper()
       wrapper.vm.editUser.displayName = 'jana'
-      wrapper.vm.editUser.mail = 'jana@owncloud.com'
+      wrapper.vm.editUser.mail = 'jana@opencloud.eu'
       wrapper.vm.revertChanges()
       expect(wrapper.vm.editUser.displayName).toEqual('jan')
-      expect(wrapper.vm.editUser.mail).toEqual('jan@owncloud.com')
+      expect(wrapper.vm.editUser.mail).toEqual('jan@opencloud.eu')
     })
     it('should revert changes on property formData', () => {
       const { wrapper } = getWrapper()
@@ -131,7 +131,7 @@ describe('EditPanel', () => {
   describe('method "validateEmail"', () => {
     it('should return true if email is valid', () => {
       const { wrapper } = getWrapper()
-      wrapper.vm.editUser.mail = 'jan@owncloud.com'
+      wrapper.vm.editUser.mail = 'jan@opencloud.eu'
       expect(wrapper.vm.validateEmail()).toBeTruthy()
       expect(wrapper.vm.formData.email.valid).toBeTruthy()
     })
@@ -191,7 +191,7 @@ function getWrapper({
         user: {
           id: '2',
           displayName: 'jan',
-          mail: 'jan@owncloud.com',
+          mail: 'jan@opencloud.eu',
           passwordProfile: { password: '' },
           drive: { quota: {} } as Drive,
           memberOf: selectedGroups

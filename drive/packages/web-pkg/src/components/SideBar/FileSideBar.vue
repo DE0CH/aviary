@@ -72,10 +72,10 @@ import {
   isShareSpaceResource,
   isIncomingShareResource,
   isPersonalSpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 import { useTask } from 'vue-concurrency'
-import { ListPermissionsSpaceRootSelectEnum } from '@ownclouders/web-client/graph/generated'
+import { ListPermissionsSpaceRootSelectEnum } from '@opencloud-eu/web-client/graph/generated'
 
 export default defineComponent({
   name: 'FileSideBar',

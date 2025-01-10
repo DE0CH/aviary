@@ -3,7 +3,7 @@ import General from './views/General.vue'
 import Users from './views/Users.vue'
 import Groups from './views/Groups.vue'
 import Spaces from './views/Spaces.vue'
-import { Ability, urlJoin } from '@ownclouders/web-client'
+import { Ability, urlJoin } from '@opencloud-eu/web-client'
 import {
   ApplicationInformation,
   AppMenuItemExtension,
@@ -11,7 +11,7 @@ import {
   defineWebApplication,
   useAbility,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { RouteRecordRaw } from 'vue-router'
 import { computed } from 'vue'
 

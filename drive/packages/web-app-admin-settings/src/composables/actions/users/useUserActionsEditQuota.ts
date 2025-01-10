@@ -7,10 +7,10 @@ import {
   UserAction,
   UserActionOptions,
   useCapabilityStore
-} from '@ownclouders/web-pkg'
-import { SpaceResource } from '@ownclouders/web-client'
-import { isPersonalSpaceResource } from '@ownclouders/web-client'
-import { User } from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { isPersonalSpaceResource } from '@opencloud-eu/web-client'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 export const useUserActionsEditQuota = () => {
   const { dispatchModal } = useModals()

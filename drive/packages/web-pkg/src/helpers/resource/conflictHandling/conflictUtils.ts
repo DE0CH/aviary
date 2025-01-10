@@ -1,5 +1,5 @@
 import { dirname } from 'path'
-import { extractNameWithoutExtension, Resource, SpaceResource } from '@ownclouders/web-client'
+import { extractNameWithoutExtension, Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 export const resolveFileNameDuplicate = (
   name: string,

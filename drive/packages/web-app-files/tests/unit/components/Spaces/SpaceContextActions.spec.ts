@@ -1,13 +1,13 @@
 import SpaceContextActions from '../../../../src/components/Spaces/SpaceContextActions.vue'
-import { buildSpace, SpaceResource } from '@ownclouders/web-client'
+import { buildSpace, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   defaultPlugins,
   mount,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Drive } from '@ownclouders/web-client/graph/generated'
+import { Drive } from '@opencloud-eu/web-client/graph/generated'
 
 const spaceMock = mock<Drive>({
   id: '1',

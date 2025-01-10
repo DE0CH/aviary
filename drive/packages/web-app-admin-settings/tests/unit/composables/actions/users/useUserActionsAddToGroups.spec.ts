@@ -1,9 +1,9 @@
 import { useUserActionsAddToGroups } from '../../../../../src/composables/actions/users/useUserActionsAddToGroups'
 import { mock } from 'vitest-mock-extended'
 import { ref, unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { getComposableWrapper, writable } from '@ownclouders/web-test-helpers'
-import { useCapabilityStore, useModals } from '@ownclouders/web-pkg'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { getComposableWrapper, writable } from '@opencloud-eu/web-test-helpers'
+import { useCapabilityStore, useModals } from '@opencloud-eu/web-pkg'
 
 describe('useUserActionsAddToGroups', () => {
   describe('method "isVisible"', () => {

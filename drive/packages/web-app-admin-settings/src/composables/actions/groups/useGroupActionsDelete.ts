@@ -1,9 +1,9 @@
 import { computed, unref } from 'vue'
-import { queryItemAsString, useMessages, useModals, useRouteQuery } from '@ownclouders/web-pkg'
-import { useClientService } from '@ownclouders/web-pkg'
-import { GroupAction, GroupActionOptions } from '@ownclouders/web-pkg'
+import { queryItemAsString, useMessages, useModals, useRouteQuery } from '@opencloud-eu/web-pkg'
+import { useClientService } from '@opencloud-eu/web-pkg'
+import { GroupAction, GroupActionOptions } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 import { useGroupSettingsStore } from '../../stores'
 
 export const useGroupActionsDelete = () => {

@@ -1,5 +1,5 @@
 import General from '../../../src/views/General.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 describe('General view', () => {
   it('renders component', () => {

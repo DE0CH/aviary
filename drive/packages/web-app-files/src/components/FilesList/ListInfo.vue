@@ -6,7 +6,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import { useResourceContents } from '@ownclouders/web-pkg'
+import { useResourceContents } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   setup: () => {

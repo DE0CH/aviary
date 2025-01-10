@@ -1,4 +1,4 @@
-import { IncomingShareResource } from '@ownclouders/web-client'
+import { IncomingShareResource } from '@opencloud-eu/web-client'
 import { computed, Ref, unref } from 'vue'
 
 export const useGroupingSettings = ({

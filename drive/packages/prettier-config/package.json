@@ -1,14 +1,14 @@
 {
-  "name": "@ownclouders/prettier-config",
+  "name": "@opencloud-eu/prettier-config",
   "private": false,
-  "version": "0.0.1",
+  "version": "0.0.0",
   "main": "index.js",
   "license": "AGPL-3.0",
-  "author": "ownCloud GmbH <devops@owncloud.com>",
-  "homepage": "https://github.com/owncloud/web/tree/master/packages/prettier-config",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/prettier-config",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/prettier-config"
   },
   "exports": {

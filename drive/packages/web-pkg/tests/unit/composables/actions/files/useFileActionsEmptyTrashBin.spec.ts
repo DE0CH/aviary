@@ -5,9 +5,9 @@ import {
   getComposableWrapper,
   defaultComponentMocks,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { ProjectSpaceResource, TrashResource } from '@ownclouders/web-client'
+import { ProjectSpaceResource, TrashResource } from '@opencloud-eu/web-client'
 import { FileActionOptions } from '../../../../../src/composables/actions'
 
 describe('emptyTrashBin', () => {

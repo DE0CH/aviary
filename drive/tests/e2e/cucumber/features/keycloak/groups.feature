@@ -1,11 +1,11 @@
 Feature: groups management
   As a user
-  I want to manage all group-related operations using ownCloud Web
+  I want to manage all group-related operations using OpenCloud Web
   So that I can ensure all group-related operations work correctly with Keycloak integration
-  # For synchronization-related details, see https://owncloud.dev/services/proxy/#claim-updates
+  # For synchronization-related details, see https://docs.opencloud.eu/services/proxy/#claim-updates
 
 
-  Scenario: keycloak group sync with oCIS
+  Scenario: keycloak group sync with OpenCloud
     Given "Admin" creates following user using API
       | id    |
       | Alice |
@@ -54,7 +54,7 @@ Feature: groups management
     When "Admin" logs in
     And "Admin" opens the "admin-settings" app
     And "Admin" navigates to the groups management page
-    # Renaming a Keycloak group results in the creation of a new group on the oCIS server (see https://github.com/owncloud/ocis/issues/10445).
+    # Renaming a Keycloak group results in the creation of a new group on the OpenCloud server.
     # After renaming a group, it may take up to 5 minutes for the changes to sync, so avoid using the renamed group in the subsequent steps.
     And "Admin" changes displayName to "a renamed group" for group "keycloak finance" using the sidebar panel
 

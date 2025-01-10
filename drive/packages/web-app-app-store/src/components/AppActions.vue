@@ -10,7 +10,7 @@
   </oc-list>
 </template>
 <script lang="ts">
-import { ActionMenuItem } from '@ownclouders/web-pkg'
+import { ActionMenuItem } from '@opencloud-eu/web-pkg'
 import { useAppActionsDownload } from '../composables'
 import { computed, defineComponent, PropType } from 'vue'
 import { App, AppVersion } from '../types'

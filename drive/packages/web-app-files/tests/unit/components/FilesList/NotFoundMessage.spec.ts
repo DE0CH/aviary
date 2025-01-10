@@ -1,9 +1,9 @@
 import NotFoundMessage from '../../../../src/components/FilesList/NotFoundMessage.vue'
-import { PublicSpaceResource, SpaceResource, Resource } from '@ownclouders/web-client'
+import { PublicSpaceResource, SpaceResource, Resource } from '@opencloud-eu/web-client'
 import { MockProxy, mock } from 'vitest-mock-extended'
 import { join } from 'path'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { OcButton } from '@ownclouders/design-system/components'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { OcButton } from '@opencloud-eu/design-system/components'
 import { RouteLocationNamedRaw, RouteLocationNormalizedLoaded } from 'vue-router'
 
 const selectors = {

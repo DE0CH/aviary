@@ -1,4 +1,4 @@
-import { getComposableWrapper, useGetMatchingSpaceMock } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper, useGetMatchingSpaceMock } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import {
   getPermissionsForSpaceMember,
@@ -10,14 +10,14 @@ import {
   ShareSpaceResource,
   SpaceResource,
   TrashResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useCanListShares } from '../../../../src/composables/shares'
 import { useCapabilityStore } from '../../../../src/composables/piniaStores'
 import { useGetMatchingSpace } from '../../../../src/composables/spaces/useGetMatchingSpace'
-import { Identity } from '@ownclouders/web-client/graph/generated'
+import { Identity } from '@opencloud-eu/web-client/graph/generated'
 
 vi.mock('../../../../src/composables/spaces/useGetMatchingSpace')
-vi.mock('@ownclouders/web-client', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-client', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   getPermissionsForSpaceMember: vi.fn()
 }))

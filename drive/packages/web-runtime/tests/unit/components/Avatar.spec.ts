@@ -1,10 +1,10 @@
 import Avatar from '../../../src/components/Avatar.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { CapabilityStore, ClientService } from '@ownclouders/web-pkg'
+import { CapabilityStore, ClientService } from '@opencloud-eu/web-pkg'
 import { AxiosResponse } from 'axios'
 import { nextTick } from 'vue'
-import { OcAvatar } from '@ownclouders/design-system/components'
+import { OcAvatar } from '@opencloud-eu/design-system/components'
 
 const propsData = {
   userName: 'admin',

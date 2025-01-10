@@ -127,10 +127,10 @@ import {
   useSharesStore,
   useClientService
 } from '../composables'
-import { LinkShare, SpaceResource } from '@ownclouders/web-client'
-import { Resource } from '@ownclouders/web-client'
-import { OcButton } from '@ownclouders/design-system/components'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { LinkShare, SpaceResource } from '@opencloud-eu/web-client'
+import { Resource } from '@opencloud-eu/web-client'
+import { OcButton } from '@opencloud-eu/design-system/components'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import LinkRoleDropdown from './LinkRoleDropdown.vue'
 
 type RoleRef = ComponentPublicInstance<typeof OcButton>
@@ -254,7 +254,7 @@ export default defineComponent({
       const succeeded = result.filter(({ status }) => status === 'fulfilled')
       if (succeeded.length && unref(isEmbedEnabled)) {
         postMessage<string[]>(
-          'owncloud-embed:share',
+          'opencloud-embed:share',
           (succeeded as PromiseFulfilledResult<LinkShare>[]).map(({ value }) => value.webUrl)
         )
       }
@@ -363,7 +363,6 @@ export default defineComponent({
 }
 
 .oc-modal-body-actions-confirm-secondary-trigger {
-  background: var(--oc-color-swatch-primary-gradient);
   padding: var(--oc-space-xsmall);
 }
 

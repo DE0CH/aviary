@@ -4,9 +4,9 @@ import {
   defaultPlugins,
   shallowMount,
   RouteLocation
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 const selectors = {
   name: '[data-testid="files-info-name"]'

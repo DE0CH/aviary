@@ -53,7 +53,7 @@
   </div>
 </template>
 <script lang="ts">
-import { DavPermission } from '@ownclouders/web-client/webdav'
+import { DavPermission } from '@opencloud-eu/web-client/webdav'
 import {
   formatRelativeDateFromHTTP,
   formatDateFromJSDate,
@@ -61,9 +61,9 @@ import {
   useClientService,
   useDownloadFile,
   useResourcesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, inject, Ref, unref } from 'vue'
-import { isShareSpaceResource, Resource, SpaceResource } from '@ownclouders/web-client'
+import { isShareSpaceResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

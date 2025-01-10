@@ -285,7 +285,11 @@ export default defineComponent({
       }
 
       &:hover span {
-        color: var(--oc-color-swatch-brand-hover) !important;
+        color: var(--oc-color-swatch-brand-contrast) !important;
+
+        svg {
+          fill: var(--oc-color-swatch-brand-contrast) !important;
+        }
       }
 
       span {

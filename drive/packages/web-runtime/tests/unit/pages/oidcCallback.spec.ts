@@ -3,7 +3,7 @@ import {
   defaultComponentMocks,
   defaultPlugins,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import oidcCallback from '../../../src/pages/oidcCallback.vue'
 import { authService } from '../../../src/services/auth'
 import { mock } from 'vitest-mock-extended'
@@ -11,7 +11,7 @@ import { computed } from 'vue'
 
 const mockUseEmbedMode = vi.fn()
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useRoute: vi.fn().mockReturnValue({ query: {} }),
   useEmbedMode: vi.fn().mockImplementation(() => mockUseEmbedMode())
@@ -64,7 +64,7 @@ describe('oidcCallback page', () => {
 
       getWrapper()
 
-      expect(postMessageMock).toHaveBeenCalledWith('owncloud-embed:request-token')
+      expect(postMessageMock).toHaveBeenCalledWith('opencloud-embed:request-token')
     })
 
     it('when token update event is received calls signInCallback', async () => {
@@ -82,7 +82,7 @@ describe('oidcCallback page', () => {
 
       window.postMessage(
         {
-          name: 'owncloud-embed:update-token',
+          name: 'opencloud-embed:update-token',
           data: { access_token: 'access-token' }
         },
         '*'

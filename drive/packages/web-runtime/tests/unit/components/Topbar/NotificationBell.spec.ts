@@ -1,5 +1,5 @@
 import NotificationBell from '../../../../src/components/Topbar/NotificationBell.vue'
-import { defaultComponentMocks, defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 describe('NotificationBell', () => {
   it('should match snapshot', () => {

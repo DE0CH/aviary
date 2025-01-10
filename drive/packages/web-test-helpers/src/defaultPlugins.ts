@@ -1,9 +1,9 @@
-import DesignSystem from '@ownclouders/design-system'
+import DesignSystem from '@opencloud-eu/design-system'
 import { createGettext } from 'vue3-gettext'
 import { App, Plugin, h } from 'vue'
 import { abilitiesPlugin } from '@casl/vue'
 import { createMongoAbility } from '@casl/ability'
-import { AbilityRule } from '@ownclouders/web-client'
+import { AbilityRule } from '@opencloud-eu/web-client'
 import { PiniaMockOptions, createMockStore } from './mocks'
 
 export interface DefaultPluginsOptions {

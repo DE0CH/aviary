@@ -61,7 +61,7 @@ export const dummyUserStore = new Map<string, User>([
       id: 'max',
       displayName: 'Max Testing',
       password: '12345678',
-      email: 'maxtesting@owncloud.com'
+      email: 'maxtesting@opencloud.eu'
     }
   ]
 ])

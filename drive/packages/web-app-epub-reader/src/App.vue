@@ -92,14 +92,14 @@
 
 <script lang="ts">
 import { computed, defineComponent, nextTick, PropType, ref, unref, watch } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import {
   AppConfigObject,
   Key,
   useKeyboardActions,
   useLocalStorage,
   useThemeStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import ePub, { Book, NavItem, Rendition, Location } from 'epubjs'
 
 const DARK_THEME_CONFIG = {

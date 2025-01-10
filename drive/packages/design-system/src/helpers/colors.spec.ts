@@ -57,7 +57,7 @@ describe('getContrastRatio', () => {
 
 describe('generateHashedColorForString', () => {
   it('generates a hashed color', () => {
-    expect(generateHashedColorForString('owncloud')).toBe('#2F26F')
+    expect(generateHashedColorForString('opencloud')).toBe('#60162B')
     expect(generateHashedColorForString('example')).toMatch('#25116A')
   })
 })

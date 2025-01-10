@@ -2,14 +2,14 @@
 title: "Building from source"
 date: 2018-05-02T00:00:00+00:00
 weight: 20
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs
 geekdocFilePath: building.md
 ---
 
 {{< toc >}}
 
-## Building ownCloud Web
+## Building OpenCloud Web
 
 - Run `pnpm install` to install dependencies
 - Run `pnpm build` to build Web and all apps included in the `packages` folder
@@ -39,5 +39,5 @@ When making changes to the docs, run `make docs` again and the server will pick 
 
 ### Deploying the documentation
 
-The documentation is automatically deployed from the master branch to https://owncloud.dev/clients/web/
+The documentation is automatically deployed from the master branch to https://docs.opencloud.eu/clients/web/
 

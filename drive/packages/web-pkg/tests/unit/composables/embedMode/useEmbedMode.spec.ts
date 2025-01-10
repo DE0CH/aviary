@@ -1,5 +1,5 @@
 import { useEmbedMode } from '../../../../src/composables/embedMode'
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
 
 describe('useEmbedMode', () => {
@@ -131,11 +131,11 @@ describe('useEmbedMode', () => {
         () => {
           const { postMessage } = useEmbedMode()
 
-          postMessage('owncloud-embed:request-token', { hello: 'world' })
+          postMessage('opencloud-embed:request-token', { hello: 'world' })
 
           expect(window.parent.postMessage).toHaveBeenCalledWith(
             {
-              name: 'owncloud-embed:request-token',
+              name: 'opencloud-embed:request-token',
               data: { hello: 'world' }
             },
             {}
@@ -152,11 +152,11 @@ describe('useEmbedMode', () => {
         () => {
           const { postMessage } = useEmbedMode()
 
-          postMessage('owncloud-embed:request-token', { hello: 'world' })
+          postMessage('opencloud-embed:request-token', { hello: 'world' })
 
           expect(window.parent.postMessage).toHaveBeenCalledWith(
             {
-              name: 'owncloud-embed:request-token',
+              name: 'opencloud-embed:request-token',
               data: { hello: 'world' }
             },
             { targetOrigin: 'messages-origin' }

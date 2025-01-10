@@ -2,11 +2,11 @@ import {
   useOpenWithDefaultApp,
   useSpaceActionsEditReadmeContent
 } from '../../../../../src/composables/actions'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { ClientService } from '../../../../../src/services'
 import { useSpaceHelpers } from '../../../../../src/composables/spaces/useSpaceHelpers'
 

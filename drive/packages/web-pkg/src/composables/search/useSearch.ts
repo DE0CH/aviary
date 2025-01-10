@@ -1,16 +1,16 @@
 import { computed, unref } from 'vue'
 import { SearchResult } from '../../components'
-import { DavProperties } from '@ownclouders/web-client/webdav'
-import { call, urlJoin } from '@ownclouders/web-client'
+import { DavProperties } from '@opencloud-eu/web-client/webdav'
+import { call, urlJoin } from '@opencloud-eu/web-client'
 import { useClientService } from '../clientService'
-import { isProjectSpaceResource } from '@ownclouders/web-client'
+import { isProjectSpaceResource } from '@opencloud-eu/web-client'
 import {
   useCapabilityStore,
   useConfigStore,
   useResourcesStore,
   useSpacesStore
 } from '../piniaStores'
-import { SearchResource } from '@ownclouders/web-client'
+import { SearchResource } from '@opencloud-eu/web-client'
 import { useTask } from 'vue-concurrency'
 
 export const useSearch = () => {

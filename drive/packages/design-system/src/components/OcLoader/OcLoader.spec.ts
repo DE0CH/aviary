@@ -1,5 +1,5 @@
 import OcLoader from './OcLoader.vue'
-import { mount } from '@ownclouders/web-test-helpers'
+import { mount } from '@opencloud-eu/web-test-helpers'
 
 describe('OcLoader', () => {
   function getWrapper(props = {}) {

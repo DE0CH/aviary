@@ -188,8 +188,8 @@ import {
   EVENT_ITEM_DROPPED,
   EVENT_ITEM_DRAGGED,
   EVENT_SORT
-} from '@ownclouders/design-system/helpers'
-import { RemoteItem } from '@ownclouders/web-client/graph/generated'
+} from '@opencloud-eu/design-system/helpers'
+import { RemoteItem } from '@opencloud-eu/web-client/graph/generated'
 const SORT_DIRECTION_ASC = 'asc' as const
 const SORT_DIRECTION_DESC = 'desc' as const
 export type FieldType = {
@@ -691,9 +691,6 @@ export default defineComponent({
   width: 100%;
   &-hover tr {
     transition: background-color $transition-duration-short ease-in-out;
-  }
-  &-hover tr:hover td:not(:last-child) span:not(.avatarInitials):not(button span) {
-    color: var(--oc-color-swatch-brand-hover) !important;
   }
   tr {
     outline: none;

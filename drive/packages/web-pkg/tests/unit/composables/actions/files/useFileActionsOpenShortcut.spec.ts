@@ -4,10 +4,10 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useFileActionsOpenShortcut, useRoute } from '../../../../../src'
-import { Resource } from '@ownclouders/web-client'
-import { GetFileContentsResponse } from '@ownclouders/web-client/webdav'
+import { Resource } from '@opencloud-eu/web-client'
+import { GetFileContentsResponse } from '@opencloud-eu/web-client/webdav'
 
 vi.mock('../../../../../src/composables/router', async (importOriginal) => ({
   ...(await importOriginal<any>()),
@@ -17,7 +17,7 @@ vi.mock('../../../../../src/composables/router', async (importOriginal) => ({
 window = Object.create(window)
 Object.defineProperty(window, 'location', {
   value: {
-    href: 'https://demo.owncloud.com'
+    href: 'https://demo.opencloud.eu'
   },
   writable: true
 })
@@ -56,38 +56,38 @@ describe('openShortcut', () => {
     describe('method "handler"', () => {
       it('adds http(s) protocol if missing and opens the url in a new tab', () => {
         getWrapper({
-          getFileContentsValue: '[InternetShortcut]\nURL=owncloud.com',
+          getFileContentsValue: '[InternetShortcut]\nURL=opencloud.eu',
           setup: async ({ actions }) => {
             await unref(actions)[0].handler({
               resources: [mock<Resource>()],
               space: null
             })
-            expect(window.open).toHaveBeenCalledWith('https://owncloud.com')
+            expect(window.open).toHaveBeenCalledWith('https://opencloud.eu')
           }
         })
       })
       it('omits xss code and opens the url in a new tab', () => {
         getWrapper({
           getFileContentsValue:
-            '[InternetShortcut]\nURL=https://owncloud.com?default=<script>alert(document.cookie)</script>',
+            '[InternetShortcut]\nURL=https://opencloud.eu?default=<script>alert(document.cookie)</script>',
           setup: async ({ actions }) => {
             await unref(actions)[0].handler({
               resources: [mock<Resource>()],
               space: null
             })
-            expect(window.open).toHaveBeenCalledWith('https://owncloud.com?default=')
+            expect(window.open).toHaveBeenCalledWith('https://opencloud.eu?default=')
           }
         })
       })
-      it('opens the url in the same window if url links to OCIS instance', () => {
+      it('opens the url in the same window if url links to OpenCloud instance', () => {
         getWrapper({
-          getFileContentsValue: '[InternetShortcut]\nURL=https://demo.owncloud.com',
+          getFileContentsValue: '[InternetShortcut]\nURL=https://demo.opencloud.eu',
           setup: async ({ actions }) => {
             await unref(actions)[0].handler({
               resources: [mock<Resource>()],
               space: null
             })
-            expect(window.location.href).toBe('https://demo.owncloud.com')
+            expect(window.location.href).toBe('https://demo.opencloud.eu')
           }
         })
       })
@@ -97,8 +97,8 @@ describe('openShortcut', () => {
     it('extracts url correctly', () => {
       getWrapper({
         setup: ({ extractUrl }) => {
-          expect(extractUrl('[InternetShortcut]\n' + 'URL=https://owncloud.com')).toEqual(
-            'https://owncloud.com'
+          expect(extractUrl('[InternetShortcut]\n' + 'URL=https://opencloud.eu')).toEqual(
+            'https://opencloud.eu'
           )
         }
       })

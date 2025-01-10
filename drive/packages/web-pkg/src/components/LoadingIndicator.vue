@@ -56,7 +56,7 @@ export default defineComponent({
     height: 4px;
 
     &-primary div {
-      background-color: var(--oc-color-swatch-primary-gradient);
+      background-color: var(--oc-color-swatch-primary-default);
     }
 
     &-indeterminate-first {

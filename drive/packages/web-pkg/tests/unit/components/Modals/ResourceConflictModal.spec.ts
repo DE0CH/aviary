@@ -1,7 +1,7 @@
 import ResourceConflictModal from '../../../../src/components/Modals/ResourceConflictModal.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { ResolveStrategy } from '../../../../src/helpers/resource'
 import { Modal } from '../../../../src/composables/piniaStores'
 

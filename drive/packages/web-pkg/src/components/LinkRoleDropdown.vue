@@ -31,10 +31,10 @@
           :id="`files-role-${getLinkRoleByType(type).id}`"
           :class="{
             selected: isSelectedType(type),
-            'oc-background-primary-gradient': isSelectedType(type)
+            'oc-background-highlight': isSelectedType(type)
           }"
-          :appearance="isSelectedType(type) ? 'raw-inverse' : 'raw'"
-          :variation="isSelectedType(type) ? 'primary' : 'passive'"
+          appearance="raw"
+          variation="passive"
           justify-content="space-between"
           class="oc-p-s"
           @click="updateSelectedType(type)"
@@ -67,7 +67,7 @@ import { v4 as uuidV4 } from 'uuid'
 import { defineComponent, PropType } from 'vue'
 import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { SharingLinkType } from '@ownclouders/web-client/graph/generated'
+import { SharingLinkType } from '@opencloud-eu/web-client/graph/generated'
 import { useLinkTypes } from '../composables'
 
 export default defineComponent({
@@ -145,10 +145,6 @@ export default defineComponent({
       background-color: var(--oc-color-background-hover);
       text-decoration: none;
     }
-  }
-
-  .selected span {
-    color: var(--oc-color-swatch-primary-contrast);
   }
 }
 </style>

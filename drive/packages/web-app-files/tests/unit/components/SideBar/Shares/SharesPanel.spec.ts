@@ -1,5 +1,5 @@
 import SharesPanel from '../../../../../src/components/SideBar/Shares/SharesPanel.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 const ocLoaderStubSelector = 'oc-loader-stub'
 

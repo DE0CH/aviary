@@ -2,15 +2,15 @@
   "name": "web-app-app-store",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud app store",
+  "description": "OpenCloud app store",
   "license": "AGPL-3.0",
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*",
     "axios": "1.7.9",
     "fuse.js": "7.0.0",
     "lodash-es": "4.17.21",

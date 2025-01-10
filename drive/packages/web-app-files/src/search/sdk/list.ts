@@ -1,5 +1,5 @@
 import ListComponent from '../../components/Search/List.vue'
-import { SearchFunction, SearchList, SearchResult } from '@ownclouders/web-pkg'
+import { SearchFunction, SearchList, SearchResult } from '@opencloud-eu/web-pkg'
 import { Component } from 'vue'
 
 export const searchLimit = 200

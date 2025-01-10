@@ -1,13 +1,13 @@
 import { avatarUrl } from '../../../../src/helpers/user'
-import { ImageDimension } from '@ownclouders/web-pkg'
-import { ClientService } from '@ownclouders/web-pkg'
+import { ImageDimension } from '@opencloud-eu/web-pkg'
+import { ClientService } from '@opencloud-eu/web-pkg'
 import { mockDeep } from 'vitest-mock-extended'
 import { AxiosResponse } from 'axios'
 
 const getDefaultOptions = () => ({
   clientService: mockDeep<ClientService>(),
-  server: 'https://www.ocis.rules/',
-  username: 'ocis',
+  server: 'https://www.opencloud.rules/',
+  username: 'opencloud',
   token: 'rules'
 })
 

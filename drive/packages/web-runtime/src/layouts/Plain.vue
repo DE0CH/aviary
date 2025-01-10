@@ -12,7 +12,7 @@
 import { storeToRefs } from 'pinia'
 import { computed, defineComponent, unref } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { useRouteMeta, useThemeStore } from '@ownclouders/web-pkg'
+import { useRouteMeta, useThemeStore } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'PlainLayout',

@@ -4,9 +4,9 @@ import {
   defaultComponentMocks,
   defaultPlugins,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { AppMenuItemExtension } from '@ownclouders/web-pkg'
+import { AppMenuItemExtension } from '@opencloud-eu/web-pkg'
 
 describe('ApplicationsMenu component', () => {
   describe('type', () => {

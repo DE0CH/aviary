@@ -4,19 +4,19 @@ import {
   GraphSharePermission,
   ShareRole,
   ShareTypes
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import {
   defaultPlugins,
   mount,
   defaultStubs,
   defaultComponentMocks,
   nextTicks
-} from '@ownclouders/web-test-helpers'
-import { useMessages, useSharesStore } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { useMessages, useSharesStore } from '@opencloud-eu/web-pkg'
 import EditDropdown from '../../../../../../src/components/SideBar/Shares/Collaborators/EditDropdown.vue'
 import RoleDropdown from '../../../../../../src/components/SideBar/Shares/Collaborators/RoleDropdown.vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { RouteLocationNamedRaw } from 'vue-router'
 
 const selectors = {

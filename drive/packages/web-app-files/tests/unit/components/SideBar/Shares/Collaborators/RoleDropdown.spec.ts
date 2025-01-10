@@ -1,9 +1,9 @@
 import RoleDropdown from '../../../../../../src/components/SideBar/Shares/Collaborators/RoleDropdown.vue'
-import { ShareRole } from '@ownclouders/web-client'
-import { defaultPlugins, mount, shallowMount } from '@ownclouders/web-test-helpers'
+import { ShareRole } from '@opencloud-eu/web-client'
+import { defaultPlugins, mount, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { Resource } from '@opencloud-eu/web-client'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 const selectors = {
   recipientRoleBtn: '.files-recipient-role-select-btn',

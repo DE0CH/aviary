@@ -79,7 +79,7 @@
 import { storeToRefs } from 'pinia'
 import CollaboratorListItem from './Collaborators/ListItem.vue'
 import InviteCollaboratorForm from './Collaborators/InviteCollaborator/InviteCollaboratorForm.vue'
-import { GraphSharePermission } from '@ownclouders/web-client'
+import { GraphSharePermission } from '@opencloud-eu/web-client'
 import {
   createLocationSpaces,
   isLocationSpacesActive,
@@ -90,16 +90,16 @@ import {
   useSharesStore,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, inject, nextTick, ref, Ref, unref, useTemplateRef } from 'vue'
 import { shareSpaceAddMemberHelp } from '../../../helpers/contextualHelpers'
-import { ProjectSpaceResource, CollaboratorShare } from '@ownclouders/web-client'
-import { useClientService } from '@ownclouders/web-pkg'
+import { ProjectSpaceResource, CollaboratorShare } from '@opencloud-eu/web-client'
+import { useClientService } from '@opencloud-eu/web-pkg'
 import Fuse from 'fuse.js'
 import Mark from 'mark.js'
-import { defaultFuseOptions } from '@ownclouders/web-pkg'
+import { defaultFuseOptions } from '@opencloud-eu/web-pkg'
 import CopyPrivateLink from '../../Shares/CopyPrivateLink.vue'
-import { OcTextInput } from '@ownclouders/design-system/components'
+import { OcTextInput } from '@opencloud-eu/design-system/components'
 
 export default defineComponent({
   name: 'SpaceMembers',

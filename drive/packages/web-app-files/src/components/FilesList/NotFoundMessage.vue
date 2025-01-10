@@ -50,12 +50,12 @@ import {
   createLocationSpaces,
   isLocationPublicActive,
   isLocationSpacesActive
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 
-import { useRouter } from '@ownclouders/web-pkg'
+import { useRouter } from '@opencloud-eu/web-pkg'
 import { defineComponent, PropType } from 'vue'
-import { SpaceResource } from '@ownclouders/web-client'
-import { createFileRouteOptions } from '@ownclouders/web-pkg'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'NotFoundMessage',

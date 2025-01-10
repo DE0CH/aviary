@@ -1,4 +1,4 @@
-import { useBreadcrumbsFromPath } from '@ownclouders/web-pkg'
+import { useBreadcrumbsFromPath } from '@opencloud-eu/web-pkg'
 
 export const useBreadcrumbsFromPathMock = (
   options: Partial<ReturnType<typeof useBreadcrumbsFromPath>> = {}

@@ -19,9 +19,9 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType, unref } from 'vue'
-import { Quota } from '@ownclouders/web-client/graph/generated'
+import { Quota } from '@opencloud-eu/web-client/graph/generated'
 import { useGettext } from 'vue3-gettext'
-import { formatFileSize } from '@ownclouders/web-pkg'
+import { formatFileSize } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'QuotaInformation',

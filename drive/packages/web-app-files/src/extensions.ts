@@ -6,13 +6,13 @@ import {
   useRouter,
   useSearch,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 import { SDKSearch } from './search'
 import { useSideBarPanels } from './composables/extensions/useFileSideBars'
 import { useFolderViews } from './composables/extensions/useFolderViews'
 import { useFileActions } from './composables/extensions/useFileActions'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 export const extensions = (appInfo: ApplicationInformation) => {
   const capabilityStore = useCapabilityStore()
@@ -30,7 +30,7 @@ export const extensions = (appInfo: ApplicationInformation) => {
     ...folderViewExtensions,
     ...sideBarPanelExtensions,
     {
-      id: 'com.github.owncloud.web.files.search',
+      id: 'com.github.opencloud-eu.web.files.search',
       extensionPointIds: ['app.search.provider'],
       type: 'search',
       searchProvider: new SDKSearch(capabilityStore, router, searchFunction, configStore)

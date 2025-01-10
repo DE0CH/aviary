@@ -1,4 +1,4 @@
-import { RouteLocation } from '@ownclouders/web-test-helpers'
+import { RouteLocation } from '@opencloud-eu/web-test-helpers'
 import { breadcrumbsFromPath, concatBreadcrumbs } from '../../../src/helpers/breadcrumbs'
 
 describe('builds an array of breadcrumbitems', () => {

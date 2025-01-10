@@ -1,14 +1,14 @@
 import { useFileActionsSetImage } from '../../../../../src'
 import { useMessages } from '../../../../../src/composables/piniaStores'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { useSpaceHelpers } from '../../../../../src/composables/spaces/useSpaceHelpers'
 
 vi.mock('../../../../../src/composables/spaces/useSpaceHelpers', () => ({

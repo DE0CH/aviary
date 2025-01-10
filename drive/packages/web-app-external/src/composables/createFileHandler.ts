@@ -1,6 +1,6 @@
-import { Resource, SpaceResource, urlJoin } from '@ownclouders/web-client'
+import { Resource, SpaceResource, urlJoin } from '@opencloud-eu/web-client'
 import { stringify } from 'qs'
-import { useCapabilityStore, useClientService, useRequest } from '@ownclouders/web-pkg'
+import { useCapabilityStore, useClientService, useRequest } from '@opencloud-eu/web-pkg'
 
 export const useCreateFileHandler = () => {
   const capabilityStore = useCapabilityStore()

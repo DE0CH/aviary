@@ -2,15 +2,15 @@ import { mock } from 'vitest-mock-extended'
 import { ref, unref } from 'vue'
 import { useFileActionsCreateNewFile } from '../../../../../src/composables/actions'
 import { useModals } from '../../../../../src/composables/piniaStores'
-import { SpaceResource } from '@ownclouders/web-client'
-import { Resource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { FileActionOptions } from '../../../../../src/composables/actions'
 import { useFileActions } from '../../../../../src/composables/actions/files/useFileActions'
 import {
   RouteLocation,
   defaultComponentMocks,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { ApplicationFileExtension } from '../../../../../types'
 import { useResourcesStore } from '../../../../../src/composables/piniaStores'
 

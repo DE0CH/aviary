@@ -19,7 +19,7 @@
 import { computed, defineComponent, unref, PropType, ref, onMounted, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import QuotaSelect from '../QuotaSelect.vue'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   Modal,
   useClientService,
@@ -32,7 +32,7 @@ import {
 import { useRouter } from '../../composables/router'
 import { eventBus } from '../../services'
 import { storeToRefs } from 'pinia'
-import { ContextualHelperData } from '@ownclouders/design-system/helpers'
+import { ContextualHelperData } from '@opencloud-eu/design-system/helpers'
 
 export default defineComponent({
   name: 'SpaceQuotaModal',

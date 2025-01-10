@@ -1,18 +1,18 @@
 import { ref } from 'vue'
 import AppBar from '../../../../src/components/AppBar/AppBar.vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   defaultPlugins,
   shallowMount,
   RouteLocation,
   PartialComponentProps
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { ArchiverService } from '../../../../src/services'
 import { FolderView } from '../../../../src/ui/types'
 import { useExtensionRegistry, ViewOptions } from '../../../../src'
-import { OcBreadcrumb } from '@ownclouders/design-system/components'
+import { OcBreadcrumb } from '@opencloud-eu/design-system/components'
 
 const selectors = {
   ocBreadcrumbStub: 'oc-breadcrumb-stub',

@@ -433,8 +433,7 @@ export default defineComponent({
 
 .oc-modal {
   background-color: var(--oc-color-background-default);
-  border: 1px solid var(--oc-color-input-border);
-  border-radius: 15px;
+  border-radius: 5px;
   box-shadow: 5px 0 25px rgba(0, 0, 0, 0.3);
   max-height: 90vh;
   max-width: 500px;
@@ -477,13 +476,13 @@ export default defineComponent({
 
   &-title {
     align-items: center;
-    border-bottom: 1px solid var(--oc-color-input-border);
-    border-top-left-radius: 15px;
-    border-top-right-radius: 15px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
     display: flex;
     flex-flow: row wrap;
     line-height: 1.625;
-    padding: var(--oc-space-medium) var(--oc-space-medium);
+    padding: calc(var(--oc-space-small) + var(--oc-space-xsmall)) var(--oc-space-medium);
+    background-color: var(--oc-color-swatch-inverse-muted);
 
     > .oc-icon {
       margin-right: var(--oc-space-small);
@@ -540,12 +539,6 @@ export default defineComponent({
         grid-auto-flow: column;
         grid-auto-columns: 1fr;
       }
-    }
-  }
-
-  .oc-text-input-password-wrapper {
-    button {
-      background-color: var(--oc-color-background-highlight) !important;
     }
   }
 }

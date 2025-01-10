@@ -1,11 +1,11 @@
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useFileActionsCopy } from '../../../../../src/composables/actions/files'
 import { useClipboardStore } from '../../../../../src/composables/piniaStores'
 import { describe } from 'vitest'

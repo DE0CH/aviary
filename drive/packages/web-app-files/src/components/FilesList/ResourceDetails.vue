@@ -10,12 +10,12 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType, unref } from 'vue'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 import FileActions from '../SideBar/Actions/FileActions.vue'
 import FileDetails from '../SideBar/Details/FileDetails.vue'
-import { FileInfo, useOpenWithDefaultApp } from '@ownclouders/web-pkg'
-import { useRouteQuery } from '@ownclouders/web-pkg'
+import { FileInfo, useOpenWithDefaultApp } from '@opencloud-eu/web-pkg'
+import { useRouteQuery } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   components: {

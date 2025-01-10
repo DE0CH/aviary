@@ -56,21 +56,21 @@
 <script lang="ts">
 import { storeToRefs } from 'pinia'
 
-import { AppBar, ContextActions, FileSideBar, useUserStore } from '@ownclouders/web-pkg'
+import { AppBar, ContextActions, FileSideBar, useUserStore } from '@opencloud-eu/web-pkg'
 import FilesViewWrapper from '../../components/FilesViewWrapper.vue'
 import ListInfo from '../../components/FilesList/ListInfo.vue'
-import { ResourceTable } from '@ownclouders/web-pkg'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
+import { ResourceTable } from '@opencloud-eu/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
 
-import { eventBus } from '@ownclouders/web-pkg'
+import { eventBus } from '@opencloud-eu/web-pkg'
 import { useResourcesViewDefaults } from '../../composables'
 import { computed, defineComponent, PropType, onMounted, onBeforeUnmount, unref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { createLocationTrash } from '@ownclouders/web-pkg'
-import { isProjectSpaceResource, SpaceResource } from '@ownclouders/web-client'
-import { useDocumentTitle } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { createLocationTrash } from '@opencloud-eu/web-pkg'
+import { isProjectSpaceResource, SpaceResource } from '@opencloud-eu/web-client'
+import { useDocumentTitle } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

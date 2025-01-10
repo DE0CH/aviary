@@ -2,7 +2,7 @@
 title: 'Running tests'
 date: 2021-07-27T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/testing
 geekdocFilePath: testing.md
 ---
@@ -17,7 +17,7 @@ All the steps below require you to have the `web` repo cloned locally and depend
 This can be achieved by running
 
 ```shell
-$ git clone https://github.com/owncloud/web.git
+$ git clone https://github.com/opencloud-eu/web.git
 $ cd web
 $ pnpm install
 ```
@@ -61,7 +61,7 @@ Bundle the web frontend with the following command:
 $ pnpm build:w
 ```
 
-Our compose setup automatically mounts it into an oCIS backend, respectively. Web also gets recompiled on changes.
+Our compose setup automatically mounts it into an OpenCloud backend, respectively. Web also gets recompiled on changes.
 
 #### Run E2E Tests
 
@@ -77,6 +77,7 @@ To run a particular test, simply add the feature file and line number to the tes
 
 Various options are available via ENV variables, e.g.
 
+- `BASE_URL_OPEN_CLOUD` # use your OpenCloud URL. Default value: host.docker.internal:9200
 - `BASIC_AUTH=true` use basic authorization for api requests.
 - `RETRY=n` to retry failures `n` times
 - `SLOW_MO=n` to slow the execution time by `n` milliseconds
@@ -132,21 +133,21 @@ To see all available options run
 node tests/e2e/cucumber/report --help
 ```
 
-### E2E Tests on oCIS With Keycloak
-We can run some of the e2e tests on oCIS setup with Keycloak as an external idp. To run tests against locally, please follow the steps below:
+### E2E Tests on OpenCloud With Keycloak
+We can run some of the e2e tests on OpenCloud setup with Keycloak as an external idp. To run tests against locally, please follow the steps below:
 
-#### Run oCIS With Keycloak
-There's a documentation to serve [oCIS with Keycloak](https://owncloud.dev/ocis/deployment/ocis_keycloak/). Please follow each step to run **oCIS with Keycloak**.
+#### Run OpenCloud With Keycloak
+There's a documentation to serve [OpenCloud with Keycloak](https://docs.opencloud.eu/opencloud/deployment/opencloud_keycloak/). Please follow each step to run **OpenCloud with Keycloak**.
 
 #### Run E2E Tests
 ```bash
 KEYCLOAK=true \
-BASE_URL_OCIS=ocis.owncloud.test \
+BASE_URL_OPEN_CLOUD=demo.opencloud.test \
 pnpm run test:e2e:cucumber tests/e2e/cucumber/features/journeys
 ```
 
-Following environment variables come in use while running e2e tests on oCIS with Keycloak:
-- `BASE_URL_OCIS` sets oCIS url (e.g.: ocis.owncloud.test)
-- `KEYCLOAK_HOST` sets Keycloak url (e.g.: keycloak.owncloud.test)
+Following environment variables come in use while running e2e tests on OpenCloud with Keycloak:
+- `BASE_URL_OPENCLOUD` sets OpenCloud url (e.g.: demo.opencloud.test)
+- `KEYCLOAK_HOST` sets Keycloak url (e.g.: keycloak.opencloud.test)
 - `KEYCLOAK=true` runs the tests with Keycloak
-- `KEYCLOAK_REALM` sets oCIS realm name used on Keycloak
+- `KEYCLOAK_REALM` sets OpenCloud realm name used on Keycloak

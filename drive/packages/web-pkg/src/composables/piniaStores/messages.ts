@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { v4 as uuidV4 } from 'uuid'
 import { ref, unref } from 'vue'
-import { HttpError } from '@ownclouders/web-client'
+import { HttpError } from '@opencloud-eu/web-client'
 
 type MessageError = Error | HttpError
 

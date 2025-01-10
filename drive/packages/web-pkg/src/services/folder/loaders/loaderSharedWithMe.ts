@@ -1,7 +1,7 @@
 import { FolderLoader, FolderLoaderTask, TaskContext } from '../folderService'
 import { Router } from 'vue-router'
 import { useTask } from 'vue-concurrency'
-import { buildIncomingShareResource, call } from '@ownclouders/web-client'
+import { buildIncomingShareResource, call } from '@opencloud-eu/web-client'
 import { isLocationSharesActive } from '../../../router'
 import { unref } from 'vue'
 

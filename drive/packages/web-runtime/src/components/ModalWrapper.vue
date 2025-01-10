@@ -44,7 +44,7 @@
 <script lang="ts">
 import { defineComponent, ref, unref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useLoadingService, useModals, CustomModalComponentInstance } from '@ownclouders/web-pkg'
+import { useLoadingService, useModals, CustomModalComponentInstance } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   setup() {

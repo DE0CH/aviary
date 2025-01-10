@@ -1,5 +1,0 @@
-Enhancement: Update the graph SDK
-
-We've updated the graph SDK to include the "me"-endpoint.
-
-https://github.com/owncloud/web/pull/6519

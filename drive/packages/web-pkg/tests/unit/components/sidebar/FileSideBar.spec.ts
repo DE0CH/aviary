@@ -1,12 +1,12 @@
 import FileSideBar from '../../../../src/components/SideBar/FileSideBar.vue'
-import { CollaboratorShare, LinkShare, Resource, SpaceResource } from '@ownclouders/web-client'
+import { CollaboratorShare, LinkShare, Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
 import {
   defaultComponentMocks,
   defaultPlugins,
   RouteLocation,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { defineComponent, ref } from 'vue'
 import { useSelectedResources } from '../../../../src/composables/selection'
 import {

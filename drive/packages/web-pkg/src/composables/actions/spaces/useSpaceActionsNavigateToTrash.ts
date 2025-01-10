@@ -2,10 +2,10 @@ import { computed } from 'vue'
 import { SpaceAction } from '../types'
 import { useGettext } from 'vue3-gettext'
 import { useRouter } from '../../router'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { createLocationTrash } from '../../../router'
 import { createFileRouteOptions } from '../../../helpers'
-import { isProjectSpaceResource } from '@ownclouders/web-client'
+import { isProjectSpaceResource } from '@opencloud-eu/web-client'
 
 export const useSpaceActionsNavigateToTrash = () => {
   const router = useRouter()

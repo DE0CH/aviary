@@ -1,11 +1,11 @@
-import { shallowMount } from '@ownclouders/web-test-helpers'
-import { AVAILABLE_SIZES } from '@ownclouders/design-system/helpers'
+import { shallowMount } from '@opencloud-eu/web-test-helpers'
+import { AVAILABLE_SIZES } from '@opencloud-eu/design-system/helpers'
 import ResourceIcon from '../../../../src/components/FilesList/ResourceIcon.vue'
 import {
   ResourceIconMapping,
   resourceIconMappingInjectionKey
 } from '../../../../src/helpers/resource'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 const resourceIconMapping: ResourceIconMapping = {
   extension: {

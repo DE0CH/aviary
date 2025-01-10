@@ -1,7 +1,7 @@
 @ocm
 Feature: federation management
   As a user
-  I want to establish connection between multiple oCIS instance
+  I want to establish connection between multiple OpenCloud instance
   So that I share resource
 
   Scenario: user creates a federated share
@@ -56,8 +56,7 @@ Feature: federation management
       | testavatar.jpg |
     Then "Brian" is in a media-viewer
 
-    # should be work after fixing https://github.com/owncloud/web/issues/11883
-    # And "Brian" navigates to the next media resource
+    And "Brian" navigates to the next media resource
     And "Brian" closes the file viewer
     And "Brian" downloads the following resources using the sidebar panel
       | resource       | type   |

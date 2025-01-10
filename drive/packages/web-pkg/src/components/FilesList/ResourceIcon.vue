@@ -10,8 +10,8 @@
 
 <script lang="ts">
 import { computed, defineComponent, inject, PropType, unref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
-import { AVAILABLE_SIZES } from '@ownclouders/design-system/helpers'
+import { Resource } from '@opencloud-eu/web-client'
+import { AVAILABLE_SIZES } from '@opencloud-eu/design-system/helpers'
 import {
   IconType,
   createDefaultFileIconMapping,

@@ -1,4 +1,4 @@
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import AppBanner from '../../../src/components/AppBanner.vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { useLocalStorage, useSessionStorage } from '@vueuse/core'
@@ -18,7 +18,7 @@ describe('AppBanner', () => {
       fileId: '1337',
       sessionStorageReturnValue: null
     })
-    expect(wrapper.find('.app-banner-cta').attributes().href).toBe('owncloud://localhost/f/1337')
+    expect(wrapper.find('.app-banner-cta').attributes().href).toBe('opencloud://localhost/f/1337')
   })
   it('does not show when banner was closed', () => {
     const { wrapper } = getWrapper({
@@ -75,12 +75,12 @@ function getWrapper({
               themeState: {
                 currentTheme: {
                   appBanner: {
-                    title: 'ownCloud',
-                    publisher: 'ownCloud GmbH',
+                    title: 'OpenCloud',
+                    publisher: 'OpenCloud GmbH',
                     additionalInformation: '',
                     ctaText: 'OPEN',
-                    icon: 'themes/owncloud/assets/owncloud-app-icon.png',
-                    appScheme: 'owncloud'
+                    icon: 'themes/opencloud/assets/opencloud-app-icon.png',
+                    appScheme: 'opencloud'
                   }
                 }
               }

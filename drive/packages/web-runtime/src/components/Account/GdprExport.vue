@@ -50,10 +50,10 @@
 import { computed, defineComponent, onMounted, onUnmounted, ref, unref } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
-import { Resource } from '@ownclouders/web-client'
-import { useClientService, useMessages, useSpacesStore, useUserStore } from '@ownclouders/web-pkg'
-import { useDownloadFile } from '@ownclouders/web-pkg'
-import { formatDateFromJSDate } from '@ownclouders/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
+import { useClientService, useMessages, useSpacesStore, useUserStore } from '@opencloud-eu/web-pkg'
+import { useDownloadFile } from '@opencloud-eu/web-pkg'
+import { formatDateFromJSDate } from '@opencloud-eu/web-pkg'
 
 const GDPR_EXPORT_FILE_NAME = '.personal_data_export.json'
 const POLLING_INTERVAL = 30000

@@ -1,5 +1,5 @@
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 import {
   ClientService,
   PreviewService,
@@ -9,7 +9,7 @@ import {
   useSharesStore,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { mock, mockDeep } from 'vitest-mock-extended'
 import { isItemInCurrentFolder, sseEventWrapper } from '../../../../src/container/sse'
 import PQueue from 'p-queue'

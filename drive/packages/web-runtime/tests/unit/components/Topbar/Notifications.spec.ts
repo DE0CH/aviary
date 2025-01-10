@@ -1,8 +1,8 @@
 import Notifications from '../../../../src/components/Topbar/Notifications.vue'
 import { Notification } from '../../../../src/helpers/notifications'
 import { mock } from 'vitest-mock-extended'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { SpaceResource } from '@ownclouders/web-client'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { RouterLink, RouteLocationNamedRaw, RouteLocationNormalizedLoaded } from 'vue-router'
 import { AxiosResponse } from 'axios'
 import Avatar from '../../../../src/components/Avatar.vue'
@@ -19,7 +19,7 @@ const selectors = {
   notificationLink: '.oc-notifications-link'
 }
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   queryItemAsString: vi.fn(),
   useAppDefaults: vi.fn()

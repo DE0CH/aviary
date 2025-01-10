@@ -1,5 +1,5 @@
 /**
- * This is ownCloud Design System’s helper util that makes
+ * This is OpenCloud Design System’s helper util that makes
  * sure that filtering will reveal hidden links too.
  */
 

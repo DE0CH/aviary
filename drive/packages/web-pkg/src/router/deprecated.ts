@@ -13,7 +13,7 @@ import { createLocationCommon } from './common'
 import { createLocationPublic } from './public'
 import { isLocationActive as isLocationActiveNoCompat } from './utils'
 import { createLocationTrash } from './trash'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { queryItemAsString } from './../composables/appDefaults'
 
 /**

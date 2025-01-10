@@ -1,13 +1,13 @@
 import { isSameResource } from '../../../helpers/resource'
 import { isLocationTrashActive, isLocationSharesActive } from '../../../router'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { dirname, join } from 'path'
-import { WebDAV } from '@ownclouders/web-client/webdav'
+import { WebDAV } from '@opencloud-eu/web-client/webdav'
 import {
   SpaceResource,
   isShareSpaceResource,
   extractNameWithoutExtension
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { createFileRouteOptions } from '../../../helpers/router'
 import { renameResource as _renameResource } from '../../../helpers/resource'
 import { computed } from 'vue'
@@ -228,8 +228,8 @@ export const useFileActionsRename = () => {
           return false
         }
 
-        // FIXME: Remove this check as soon as renaming shares works as expected
-        // see https://github.com/owncloud/ocis/issues/4866
+        // FIXME: Remove this check as soon as renaming shares works as expected.
+        // Might be the case? Needs to be retested.
         const rootShareIncluded = configStore.options.routing.fullShareOwnerPaths
           ? resources.some((r) => r.remoteItemPath && r.path)
           : resources.some((r) => r.remoteItemId && r.path === '/')

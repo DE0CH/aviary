@@ -25,7 +25,7 @@ import {
   useResourcesStore,
   useLoadPreview
 } from '../../composables'
-import { isSpaceResource, Resource } from '@ownclouders/web-client'
+import { isSpaceResource, Resource } from '@opencloud-eu/web-client'
 import ResourceListItem from '../FilesList/ResourceListItem.vue'
 import { SearchResultValue } from './types'
 import { storeToRefs } from 'pinia'

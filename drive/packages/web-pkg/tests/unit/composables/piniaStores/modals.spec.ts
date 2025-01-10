@@ -1,4 +1,4 @@
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { useModals } from '../../../../src/composables/piniaStores'
 import { createPinia, setActivePinia } from 'pinia'
 

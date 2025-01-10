@@ -59,7 +59,7 @@
 </template>
 
 <script lang="ts">
-import { DavHttpError, SharePermissionBit } from '@ownclouders/web-client'
+import { DavHttpError, SharePermissionBit } from '@opencloud-eu/web-client'
 import { authService } from '../services/auth'
 
 import {
@@ -73,16 +73,16 @@ import {
   useRouter,
   useSpacesStore,
   useThemeStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useTask } from 'vue-concurrency'
 import { ref, unref, computed, defineComponent, onMounted } from 'vue'
 import {
   buildPublicSpaceResource,
   isPublicSpaceResource,
   PublicSpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { RouteLocationNamedRaw } from 'vue-router'
 import { dirname } from 'path'
 import { storeToRefs } from 'pinia'

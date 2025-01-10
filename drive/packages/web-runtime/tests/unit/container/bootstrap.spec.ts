@@ -1,6 +1,6 @@
 import { mock } from 'vitest-mock-extended'
 import { createApp, defineComponent, App } from 'vue'
-import { useAppsStore, useConfigStore } from '@ownclouders/web-pkg'
+import { useAppsStore, useConfigStore } from '@opencloud-eu/web-pkg'
 import {
   initializeApplications,
   announceApplicationsReady,
@@ -9,7 +9,7 @@ import {
   announceConfiguration
 } from '../../../src/container/bootstrap'
 import { buildApplication } from '../../../src/container/application'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 
 vi.mock('../../../src/container/application')
 

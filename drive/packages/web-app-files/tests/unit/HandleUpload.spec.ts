@@ -1,7 +1,7 @@
 import Uppy, { State, UnknownPlugin } from '@uppy/core'
 import { HandleUpload } from '../../src/HandleUpload'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { RouteLocationNormalizedLoaded } from 'vue-router'
 import { ref, unref } from 'vue'
 import {
@@ -15,10 +15,10 @@ import {
   OcUppyFile,
   OcUppyMeta,
   OcUppyBody
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { Language } from 'vue3-gettext'
 import { UploadResourceConflict } from '../../src/helpers/resource/actions'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
 
 vi.mock('../../src/helpers/resource/actions')
 

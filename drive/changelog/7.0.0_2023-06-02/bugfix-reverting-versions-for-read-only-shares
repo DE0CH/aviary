@@ -1,6 +1,0 @@
-Bugfix: Reverting versions for read-only shares
-
-Reverting versions for read-only shares is no longer possible.
-
-https://github.com/owncloud/web/pull/8040
-https://github.com/owncloud/web/issues/8037

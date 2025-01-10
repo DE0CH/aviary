@@ -6,11 +6,11 @@
 
 <script lang="ts">
 import { computed, defineComponent, unref } from 'vue'
-import { useRoute, useRouter, useSpacesStore } from '@ownclouders/web-pkg'
-import { AppLoadingSpinner } from '@ownclouders/web-pkg'
-import { urlJoin } from '@ownclouders/web-client'
-import { createFileRouteOptions } from '@ownclouders/web-pkg'
-import { createLocationSpaces } from '@ownclouders/web-pkg'
+import { useRoute, useRouter, useSpacesStore } from '@opencloud-eu/web-pkg'
+import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+import { urlJoin } from '@opencloud-eu/web-client'
+import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
+import { createLocationSpaces } from '@opencloud-eu/web-pkg'
 
 // 'personal/home' is used as personal drive alias from static contexts
 // (i.e. places where we can't load the actual personal space)

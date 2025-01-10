@@ -161,10 +161,10 @@ import { isUndefined } from 'lodash-es'
 // @ts-ignore
 import getSpeed from '@uppy/utils/lib/getSpeed'
 
-import { HttpError, Resource, urlJoin } from '@ownclouders/web-client'
-import { OcUppyFile, queryItemAsString, useConfigStore } from '@ownclouders/web-pkg'
-import { formatFileSize, ResourceListItem, ResourceIcon, ResourceName } from '@ownclouders/web-pkg'
-import { extractParentFolderName } from '@ownclouders/web-client'
+import { HttpError, Resource, urlJoin } from '@opencloud-eu/web-client'
+import { OcUppyFile, queryItemAsString, useConfigStore } from '@opencloud-eu/web-pkg'
+import { formatFileSize, ResourceListItem, ResourceIcon, ResourceName } from '@opencloud-eu/web-pkg'
+import { extractParentFolderName } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 import { RouteLocationNamedRaw } from 'vue-router'
 
@@ -714,7 +714,7 @@ export default defineComponent({
   }
 
   .upload-info-title {
-    background-color: var(--oc-color-swatch-brand-default);
+    background-color: var(--oc-color-swatch-inverse-muted);
   }
 
   .upload-info-title p {

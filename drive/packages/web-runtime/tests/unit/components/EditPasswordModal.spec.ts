@@ -1,6 +1,6 @@
-import { Modal } from '@ownclouders/web-pkg'
+import { Modal } from '@opencloud-eu/web-pkg'
 import EditPasswordModal from '../../../src/components/EditPasswordModal.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 
 describe('EditPasswordModal', () => {

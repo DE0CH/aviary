@@ -129,14 +129,14 @@ import {
   useKeyboardActions,
   useRoute,
   useRouter
-} from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
-import { Group } from '@ownclouders/web-client/graph/generated'
-import { ContextMenuQuickAction } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
+import { ContextMenuQuickAction } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { defaultFuseOptions } from '@ownclouders/web-pkg'
-import { useFileListHeaderPosition, usePagination } from '@ownclouders/web-pkg'
-import { Pagination } from '@ownclouders/web-pkg'
+import { defaultFuseOptions } from '@opencloud-eu/web-pkg'
+import { useFileListHeaderPosition, usePagination } from '@opencloud-eu/web-pkg'
+import { Pagination } from '@opencloud-eu/web-pkg'
 import { perPageDefault, perPageStoragePrefix } from '../../defaults'
 import {
   useKeyboardTableMouseActions,

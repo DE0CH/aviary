@@ -126,7 +126,7 @@ import { DateTime } from 'luxon'
 
 import EditDropdown from './EditDropdown.vue'
 import RoleDropdown from './RoleDropdown.vue'
-import { CollaboratorShare, ShareRole, ShareTypes } from '@ownclouders/web-client'
+import { CollaboratorShare, ShareRole, ShareTypes } from '@opencloud-eu/web-client'
 import {
   queryItemAsString,
   useMessages,
@@ -134,16 +134,16 @@ import {
   useSpacesStore,
   useUserStore,
   useSharesStore
-} from '@ownclouders/web-pkg'
-import { Resource, extractDomSelector } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-pkg'
+import { Resource, extractDomSelector } from '@opencloud-eu/web-client'
 import { computed, defineComponent, inject, PropType, Ref, unref } from 'vue'
-import { formatDateFromDateTime } from '@ownclouders/web-pkg'
-import { useClientService } from '@ownclouders/web-pkg'
+import { formatDateFromDateTime } from '@opencloud-eu/web-pkg'
+import { useClientService } from '@opencloud-eu/web-pkg'
 import { RouteLocationNamedRaw } from 'vue-router'
 import { useGettext } from 'vue3-gettext'
-import { SpaceResource } from '@ownclouders/web-client'
-import { isProjectSpaceResource } from '@ownclouders/web-client'
-import { ContextualHelperDataListItem } from '@ownclouders/design-system/helpers'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { isProjectSpaceResource } from '@opencloud-eu/web-client'
+import { ContextualHelperDataListItem } from '@opencloud-eu/design-system/helpers'
 import ExpirationDateIndicator from '../ExpirationDateIndicator.vue'
 
 export default defineComponent({
@@ -233,7 +233,7 @@ export default defineComponent({
     }
     const notifyShare = async () => {
       // FIXME: cern code
-      // const response = await clientService.owncloudSdk.shares.notifyShare(props.share.id)
+      // const response = await clientService.openCloudSdk.shares.notifyShare(props.share.id)
     }
 
     const sharedViaTooltip = computed(() =>

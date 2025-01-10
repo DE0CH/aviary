@@ -30,7 +30,7 @@ import {
   useScrollTo,
   FederatedConnection,
   useMessages
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { buildConnection } from '../functions'
 

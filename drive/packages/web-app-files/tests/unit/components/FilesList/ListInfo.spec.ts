@@ -1,7 +1,7 @@
 import ListInfo from '../../../../src/components/FilesList/ListInfo.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
 describe('ListInfo', () => {
   it('it renders content summary correctly', () => {

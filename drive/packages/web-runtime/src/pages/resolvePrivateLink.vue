@@ -47,12 +47,12 @@ import {
   createLocationSpaces,
   createLocationShares,
   useClientService
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { unref, defineComponent, computed, onMounted, ref, Ref } from 'vue'
 import { dirname } from 'path'
-import { createFileRouteOptions, useGetResourceContext } from '@ownclouders/web-pkg'
+import { createFileRouteOptions, useGetResourceContext } from '@opencloud-eu/web-pkg'
 import { useTask } from 'vue-concurrency'
-import { isShareSpaceResource, Resource, SHARE_JAIL_ID } from '@ownclouders/web-client'
+import { isShareSpaceResource, Resource, SHARE_JAIL_ID } from '@opencloud-eu/web-client'
 import { RouteLocationNamedRaw } from 'vue-router'
 import { useGettext } from 'vue3-gettext'
 

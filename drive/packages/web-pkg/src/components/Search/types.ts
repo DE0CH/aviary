@@ -1,4 +1,4 @@
-import { SearchResource } from '@ownclouders/web-client'
+import { SearchResource } from '@opencloud-eu/web-client'
 import { Component } from 'vue'
 
 export interface GenericSearchResultItem {

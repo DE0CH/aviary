@@ -1,7 +1,7 @@
 import { ClientService, PreviewService } from '../../../src/services'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { AxiosResponse } from 'axios'
 import {
   useAuthStore,
@@ -9,7 +9,7 @@ import {
   useCapabilityStore,
   useConfigStore
 } from '../../../src/composables/piniaStores'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 
 describe('PreviewService', () => {
   describe('method "isMimetypeSupported"', () => {

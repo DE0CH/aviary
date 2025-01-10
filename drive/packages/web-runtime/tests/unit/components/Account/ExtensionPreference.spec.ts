@@ -4,13 +4,13 @@ import {
   defaultPlugins,
   getOcSelectOptions,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import {
   Extension,
   ExtensionPoint,
   useExtensionPreferencesStore,
   useExtensionRegistry
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 
 const selectors = {

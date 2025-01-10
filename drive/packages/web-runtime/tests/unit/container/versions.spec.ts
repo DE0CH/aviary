@@ -1,15 +1,15 @@
-import { useCapabilityStore } from '@ownclouders/web-pkg'
+import { useCapabilityStore } from '@opencloud-eu/web-pkg'
 import { getBackendVersion, getWebVersion } from '../../../src/container/versions'
-import { createTestingPinia } from '@ownclouders/web-test-helpers'
-import { Capabilities } from '@ownclouders/web-client/ocs'
+import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
 
 describe('collect version information', () => {
   describe('web version', () => {
     beforeEach(() => {
-      process.env.PACKAGE_VERSION = '4.7.0'
+      process.env.PACKAGE_VERSION = '1.0.0'
     })
     it('provides the web version with a static string without exceptions', () => {
-      expect(getWebVersion()).toBe('ownCloud Web UI 4.7.0')
+      expect(getWebVersion()).toBe('OpenCloud Web UI 1.0.0')
     })
   })
   describe('backend version', () => {
@@ -19,34 +19,34 @@ describe('collect version information', () => {
     })
     it('returns undefined when the backend version object has no "string" field', () => {
       const capabilityStore = versionStore({
-        product: 'ownCloud',
+        product: 'OpenCloud',
         versionstring: undefined
       })
       expect(getBackendVersion({ capabilityStore })).toBeUndefined()
     })
-    it('falls back to "ownCloud" as a product when none is defined', () => {
+    it('falls back to "OpenCloud" as a product when none is defined', () => {
       const capabilityStore = versionStore({
-        versionstring: '10.8.0',
+        versionstring: '1.0.0',
         edition: 'Community'
       })
-      expect(getBackendVersion({ capabilityStore })).toBe('ownCloud 10.8.0 Community')
+      expect(getBackendVersion({ capabilityStore })).toBe('OpenCloud 1.0.0 Community')
     })
     it('provides the backend version as concatenation of product, version and edition', () => {
       const capabilityStore = versionStore({
-        product: 'oCIS',
-        versionstring: '1.16.0',
+        product: 'OpenCloud',
+        versionstring: '1.0.0',
         edition: 'Reva'
       })
-      expect(getBackendVersion({ capabilityStore })).toBe('oCIS 1.16.0 Reva')
+      expect(getBackendVersion({ capabilityStore })).toBe('OpenCloud 1.0.0 Reva')
     })
     it('prefers the productversion over versionstring field if both are provided', () => {
       const capabilityStore = versionStore({
-        product: 'oCIS',
-        versionstring: '10.8.0',
+        product: 'OpenCloud',
+        versionstring: '1.0.0',
         productversion: '2.0.0',
         edition: 'Community'
       })
-      expect(getBackendVersion({ capabilityStore })).toBe('oCIS 2.0.0 Community')
+      expect(getBackendVersion({ capabilityStore })).toBe('OpenCloud 2.0.0 Community')
     })
   })
 })

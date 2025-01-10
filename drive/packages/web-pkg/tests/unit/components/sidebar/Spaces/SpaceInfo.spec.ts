@@ -1,6 +1,6 @@
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import SpaceInfo from '../../../../../src/components/SideBar/Spaces/SpaceInfo.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 
 const spaceMock = {
   type: 'space',

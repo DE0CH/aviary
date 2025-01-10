@@ -2,7 +2,7 @@ import { unref } from 'vue'
 import { useWebWorker } from '@vueuse/core'
 import DeleteWorker from '../../../../../src/composables/webWorkers/deleteWorker/worker?worker'
 import { mock } from 'vitest-mock-extended'
-import { type WebDAV } from '@ownclouders/web-client/webdav'
+import { type WebDAV } from '@opencloud-eu/web-client/webdav'
 
 const resourceMock = {
   id: 'resourceId',
@@ -36,7 +36,7 @@ describe('delete worker', () => {
       resolveTest = resolve
     })
 
-    vi.doMock('@ownclouders/web-client', async (importOriginal) => ({
+    vi.doMock('@opencloud-eu/web-client', async (importOriginal) => ({
       ...(await importOriginal<any>()),
       webdav: () => webDavMock
     }))

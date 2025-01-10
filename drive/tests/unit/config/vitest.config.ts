@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [
     vue({ template: { compilerOptions } }),
     {
-      name: '@ownclouders/vite-plugin-docs',
+      name: '@opencloud-eu/vite-plugin-docs',
       transform(src, id) {
         if (id.includes('type=docs')) {
           return {

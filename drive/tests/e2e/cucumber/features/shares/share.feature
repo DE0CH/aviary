@@ -264,7 +264,6 @@ Feature: share
       | resource         |
       | testfile.txt     |
       | test-folder      |
-      # https://github.com/owncloud/ocis/issues/8471
       | testfile (1).txt |
       | test-folder (1)  |
     And "Brian" logs out

@@ -1,5 +1,5 @@
 import PQueue from 'p-queue'
-import { IncomingShareResource } from '@ownclouders/web-client'
+import { IncomingShareResource } from '@opencloud-eu/web-client'
 import { isLocationSharesActive, isLocationSpacesActive } from '../../../router'
 import { useClientService } from '../../clientService'
 import { useLoadingService } from '../../loadingService'

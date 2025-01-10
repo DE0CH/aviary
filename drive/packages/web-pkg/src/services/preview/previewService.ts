@@ -2,7 +2,7 @@ import isEqual from 'lodash-es/isEqual'
 import { cacheService } from '../cache'
 import { ClientService } from '../client'
 import { encodePath } from '../../utils'
-import { isPublicSpaceResource } from '@ownclouders/web-client'
+import { isPublicSpaceResource } from '@opencloud-eu/web-client'
 import { BuildQueryStringOptions, LoadPreviewOptions } from '.'
 import { AuthStore, CapabilityStore, ConfigStore, UserStore } from '../../composables'
 

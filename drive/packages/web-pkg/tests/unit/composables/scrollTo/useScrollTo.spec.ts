@@ -1,12 +1,12 @@
 import { mock } from 'vitest-mock-extended'
 import { useScrollTo } from '../../../../src/composables/scrollTo'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { eventBus } from '../../../../src/services'
 import {
   getComposableWrapper,
   RouteLocation,
   defaultComponentMocks
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 const mockResourceId = 'fakeResourceId'
 const mockFilesTopBar = {

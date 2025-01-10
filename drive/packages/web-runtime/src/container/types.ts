@@ -1,6 +1,6 @@
 import { Router, RouteRecordRaw } from 'vue-router'
 import { App, Component } from 'vue'
-import { AppNavigationItem } from '@ownclouders/web-pkg'
+import { AppNavigationItem } from '@opencloud-eu/web-pkg'
 
 /** RuntimeApi defines the publicly available runtime api */
 export interface RuntimeApi {

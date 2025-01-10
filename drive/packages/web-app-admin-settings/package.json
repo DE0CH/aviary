@@ -2,18 +2,18 @@
   "name": "web-app-admin-settings",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud admin settings",
+  "description": "OpenCloud admin settings",
   "license": "AGPL-3.0",
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "dependencies": {
     "deep-object-diff": "^1.1.9"
   },
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:^",
-    "@ownclouders/web-pkg": "workspace:^",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:^",
+    "@opencloud-eu/web-pkg": "workspace:^",
     "axios": "1.7.9",
     "email-validator": "^2.0.4",
     "fuse.js": "7.0.0",

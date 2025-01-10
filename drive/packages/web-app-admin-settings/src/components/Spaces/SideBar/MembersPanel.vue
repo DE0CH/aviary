@@ -28,11 +28,11 @@
 </template>
 <script lang="ts">
 import { computed, defineComponent, inject, ref, watch, unref } from 'vue'
-import { ShareRole, SpaceMember, SpaceResource } from '@ownclouders/web-client'
+import { ShareRole, SpaceMember, SpaceResource } from '@opencloud-eu/web-client'
 import MembersRoleSection from './MembersRoleSection.vue'
 import Fuse from 'fuse.js'
 import Mark from 'mark.js'
-import { defaultFuseOptions, useSharesStore } from '@ownclouders/web-pkg'
+import { defaultFuseOptions, useSharesStore } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'MembersPanel',

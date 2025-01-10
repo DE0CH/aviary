@@ -17,8 +17,8 @@
 
 <script lang="ts">
 import { computed, defineComponent, PropType } from 'vue'
-import { useEmbedMode, useExtensionRegistry } from '@ownclouders/web-pkg'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { useEmbedMode, useExtensionRegistry } from '@opencloud-eu/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { unref } from 'vue'
 import { quickActionsExtensionPoint } from '../../extensionPoints'
 

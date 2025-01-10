@@ -1,7 +1,7 @@
 import { supportedLogoMimeTypes } from '../../../defaults'
 import { computed, VNodeRef, unref } from 'vue'
-import { Action, useMessages } from '@ownclouders/web-pkg'
-import { useAbility, useClientService, useRouter } from '@ownclouders/web-pkg'
+import { Action, useMessages } from '@opencloud-eu/web-pkg'
+import { useAbility, useClientService, useRouter } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 export const useGeneralActionsUploadLogo = ({ imageInput }: { imageInput: VNodeRef }) => {

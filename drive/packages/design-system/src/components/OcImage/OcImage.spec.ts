@@ -1,5 +1,5 @@
 import OcImage from './OcImage.vue'
-import { mount } from '@ownclouders/web-test-helpers'
+import { mount } from '@opencloud-eu/web-test-helpers'
 
 // @vitest-environment jsdom
 describe('OcImage', () => {

@@ -5,7 +5,7 @@ import { useClientService } from '../../clientService'
 import { useAbility } from '../../ability'
 import { useRoute } from '../../router'
 import { SpaceAction, SpaceActionOptions } from '../types'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import {
   useMessages,
   useModals,

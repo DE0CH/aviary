@@ -42,16 +42,16 @@ import {
   useClientService,
   useRouteQuery,
   useSpacesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 import {
   call,
   isPersonalSpaceResource,
   isProjectSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import { useTask } from 'vue-concurrency'
-import { Activity } from '@ownclouders/web-client/graph/generated'
+import { Activity } from '@opencloud-eu/web-client/graph/generated'
 import ActivityList from './ActivityList.vue'
 
 export default defineComponent({

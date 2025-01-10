@@ -47,11 +47,11 @@
             justify-content="space-between"
             class="files-recipient-role-drop-btn oc-p-s"
             :class="{
-              'oc-background-primary-gradient': isSelectedRole(role),
+              'oc-background-highlight': isSelectedRole(role),
               selected: isSelectedRole(role)
             }"
-            :appearance="isSelectedRole(role) ? 'raw-inverse' : 'raw'"
-            :variation="isSelectedRole(role) ? 'primary' : 'passive'"
+            appearance="raw"
+            variation="passive"
             @click="selectRole(role)"
           >
             <span class="oc-flex oc-flex-middle">
@@ -84,10 +84,10 @@ import {
   Ref,
   watch
 } from 'vue'
-import { useAbility, useUserStore } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+import { useAbility, useUserStore } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 import { useGettext } from 'vue3-gettext'
-import { ShareRole } from '@ownclouders/web-client'
+import { ShareRole } from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'RoleDropdown',

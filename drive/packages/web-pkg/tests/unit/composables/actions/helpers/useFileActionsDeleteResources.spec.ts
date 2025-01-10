@@ -1,11 +1,11 @@
 import { useFileActionsDeleteResources } from '../../../../../src/composables/actions'
 import { mockDeep } from 'vitest-mock-extended'
-import { FolderResource, Resource, SpaceResource } from '@ownclouders/web-client'
+import { FolderResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   getComposableWrapper,
   useGetMatchingSpaceMock
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useDeleteWorker } from '../../../../../src/composables/webWorkers/deleteWorker'
 import { useGetMatchingSpace } from '../../../../../src/composables/spaces/useGetMatchingSpace'
 import { useResourcesStore } from '../../../../../src/composables/piniaStores'

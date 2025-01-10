@@ -1,4 +1,4 @@
-import { Modal, useModals } from '@ownclouders/web-pkg'
+import { Modal, useModals } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { PropType, defineComponent } from 'vue'
 import ModalWrapper from '../../../src/components/ModalWrapper.vue'
@@ -7,7 +7,7 @@ import {
   shallowMount,
   defaultComponentMocks,
   writable
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 
 const CustomModalComponent = defineComponent({
   name: 'CustomModalComponent',

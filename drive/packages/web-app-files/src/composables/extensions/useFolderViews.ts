@@ -1,4 +1,4 @@
-import { FolderViewExtension, ResourceTable, ResourceTiles } from '@ownclouders/web-pkg'
+import { FolderViewExtension, ResourceTable, ResourceTiles } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import {
   folderViewsFavoritesExtensionPoint,
@@ -11,7 +11,7 @@ export const useFolderViews = (): FolderViewExtension[] => {
 
   return [
     {
-      id: 'com.github.owncloud.web.files.folder-view.resource-table',
+      id: 'com.github.opencloud-eu.web.files.folder-view.resource-table',
       type: 'folderView',
       extensionPointIds: [
         folderViewsFolderExtensionPoint.id,
@@ -29,7 +29,7 @@ export const useFolderViews = (): FolderViewExtension[] => {
       }
     },
     {
-      id: 'com.github.owncloud.web.files.folder-view.resource-table-condensed',
+      id: 'com.github.opencloud-eu.web.files.folder-view.resource-table-condensed',
       type: 'folderView',
       extensionPointIds: [folderViewsFolderExtensionPoint.id],
       folderView: {
@@ -43,7 +43,7 @@ export const useFolderViews = (): FolderViewExtension[] => {
       }
     },
     {
-      id: 'com.github.owncloud.web.files.folder-view.resource-tiles',
+      id: 'com.github.opencloud-eu.web.files.folder-view.resource-tiles',
       type: 'folderView',
       extensionPointIds: [
         folderViewsFolderExtensionPoint.id,

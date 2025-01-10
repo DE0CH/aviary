@@ -5,8 +5,8 @@ import {
   useResourcesStore
 } from '../../../../../src/composables/piniaStores'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { defaultComponentMocks, getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import { unref } from 'vue'
 
 const currentFolder = {

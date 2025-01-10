@@ -1,8 +1,8 @@
 import { mock } from 'vitest-mock-extended'
 import SetLinkPasswordModal from '../../../../src/components/Modals/SetLinkPasswordModal.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
-import { Modal, useMessages, useSharesStore } from '@ownclouders/web-pkg'
-import { Resource, LinkShare, SpaceResource } from '@ownclouders/web-client'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import { Modal, useMessages, useSharesStore } from '@opencloud-eu/web-pkg'
+import { Resource, LinkShare, SpaceResource } from '@opencloud-eu/web-client'
 
 describe('SetLinkPasswordModal', () => {
   it('should render a text input field for the password', () => {

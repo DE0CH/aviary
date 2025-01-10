@@ -1,7 +1,7 @@
 import { computed, unref } from 'vue'
 import { useHead as _useHead } from '@vueuse/head'
 import { getBackendVersion, getWebVersion } from '../../container/versions'
-import { useCapabilityStore, useThemeStore } from '@ownclouders/web-pkg'
+import { useCapabilityStore, useThemeStore } from '@opencloud-eu/web-pkg'
 import { storeToRefs } from 'pinia'
 
 export const useHead = () => {

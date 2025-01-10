@@ -5,11 +5,11 @@ import {
   defaultPlugins,
   RouteLocation,
   shallowMount
-} from '@ownclouders/web-test-helpers'
-import { eventBus, SideBar, useIsTopBarSticky } from '@ownclouders/web-pkg'
-import { SideBarEventTopics } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-test-helpers'
+import { eventBus, SideBar, useIsTopBarSticky } from '@opencloud-eu/web-pkg'
+import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
-import { OcBreadcrumb } from '@ownclouders/design-system/components'
+import { OcBreadcrumb } from '@opencloud-eu/design-system/components'
 
 const stubSelectors = {
   ocBreadcrumb: 'oc-breadcrumb-stub',
@@ -22,7 +22,7 @@ const elSelectors = {
   adminSettingsWrapper: '#admin-settings-wrapper'
 }
 
-vi.mock('@ownclouders/web-pkg')
+vi.mock('@opencloud-eu/web-pkg')
 
 describe('AppTemplate', () => {
   describe('loading is true', () => {

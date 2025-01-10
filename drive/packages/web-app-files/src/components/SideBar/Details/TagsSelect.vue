@@ -81,11 +81,11 @@ import {
   useMessages,
   useResourcesStore,
   useRouter
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { useTask } from 'vue-concurrency'
 import diff from 'lodash-es/difference'
-import { call, Resource } from '@ownclouders/web-client'
+import { call, Resource } from '@opencloud-eu/web-client'
 import { storeToRefs } from 'pinia'
 
 type TagOption = {

@@ -2,7 +2,7 @@
 title: 'Left sidebar menu item extensions'
 date: 2024-01-23T00:00:00+00:00
 weight: 60
-geekdocRepo: https://github.com/owncloud/web
+geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/extension-system/extension-types
 geekdocFilePath: left-sidebar-menu-item.md
 geekdocCollapseSection: true
@@ -35,23 +35,23 @@ For `id`, `type`, and `extensionPointIds`, please see [extension base section]({
 
 The most important configuration options are:
 
-- `icon` - The icon to be displayed, can be picked from https://owncloud.design/#/Design%20Tokens/IconList
+- `icon` - The icon to be displayed, can be picked from https://opencloud.design/#/Design%20Tokens/IconList
 - `name` - The text to be displayed
 - `route` - The string/route to navigate to, if the nav item should be a `<router-link>` (Mutually exclusive with `handler`)
 - `handler` - The action to perform upon click, if the nav item should be a `<button>` (Mutually exclusive with `route`)
 
-Please check the [`AppNavigationItem` type](https://github.com/owncloud/web/blob/f069ce44919cde5d112c68a519d433e015a4a011/packages/web-pkg/src/apps/types.ts#L14) for a full list of configuration options.
+Please check the [`AppNavigationItem` type](https://github.com/opencloud-eu/web/blob/f069ce44919cde5d112c68a519d433e015a4a011/packages/web-pkg/src/apps/types.ts#L14) for a full list of configuration options.
 
 ### Example
 
-The following example shows an extension that adds a left sidebar nav item inside the files app, linking to a custom page. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/owncloud/web/tree/master/packages/web-pkg) package.
+The following example shows an extension that adds a left sidebar nav item inside the files app, linking to a custom page. Note that the extension is wrapped inside a Vue composable so it can easily be reused. All helper types and composables are being provided via the [web-pkg](https://github.com/opencloud-eu/web/tree/main/packages/web-pkg) package.
 
 ```typescript
 export const useCustomPageExtension = () => {
   const { $gettext } = useGettext()
 
   const extension = computed<SidebarNavExtension>(() => ({
-    id: 'com.github.owncloud.web.files.left-nav.custom-page',
+    id: 'com.github.opencloud-eu.web.files.left-nav.custom-page',
     scopes: ['app.files'],
     type: 'sidebarNav',
     action: {

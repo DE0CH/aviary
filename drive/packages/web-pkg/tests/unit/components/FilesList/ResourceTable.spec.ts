@@ -8,8 +8,8 @@ import {
   ResourceIndicator,
   ShareTypes,
   SpaceResource
-} from '@ownclouders/web-client'
-import { defaultPlugins, mount, PartialComponentProps } from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-client'
+import { defaultPlugins, mount, PartialComponentProps } from '@opencloud-eu/web-test-helpers'
 import { CapabilityStore } from '../../../../src/composables/piniaStores'
 import { useCanBeOpenedWithSecureView } from '../../../../src/composables/resources'
 import { displayPositionedDropdown } from '../../../../src/helpers/contextMenuDropdown'
@@ -17,7 +17,7 @@ import { eventBus } from '../../../../src/services/eventBus'
 import { SideBarEventTopics } from '../../../../src/composables/sideBar'
 import { mock } from 'vitest-mock-extended'
 import { computed } from 'vue'
-import { Identity } from '@ownclouders/web-client/graph/generated'
+import { Identity } from '@opencloud-eu/web-client/graph/generated'
 import { describe } from 'vitest'
 import { useFileActionsRename } from '../../../../src/composables/actions/files'
 import { FileAction } from '../../../../src/composables/actions/types'

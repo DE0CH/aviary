@@ -16,8 +16,8 @@
 <script lang="ts">
 import { useGettext } from 'vue3-gettext'
 import { computed, defineComponent, ref, PropType, unref, watch } from 'vue'
-import { Group } from '@ownclouders/web-client/graph/generated'
-import { MaybeRef, Modal, useClientService, useMessages } from '@ownclouders/web-pkg'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
+import { MaybeRef, Modal, useClientService, useMessages } from '@opencloud-eu/web-pkg'
 import { useGroupSettingsStore } from '../../composables'
 
 export default defineComponent({

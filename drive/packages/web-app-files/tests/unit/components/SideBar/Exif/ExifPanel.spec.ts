@@ -1,9 +1,9 @@
 import ExifPanel from '../../../../../src/components/SideBar/Exif/ExifPanel.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { Photo, Image, GeoCoordinates } from '@ownclouders/web-client/graph/generated'
-import { Resource } from '@ownclouders/web-client'
-import { formatDateFromISO } from '@ownclouders/web-pkg'
+import { Photo, Image, GeoCoordinates } from '@opencloud-eu/web-client/graph/generated'
+import { Resource } from '@opencloud-eu/web-client'
+import { formatDateFromISO } from '@opencloud-eu/web-pkg'
 
 describe('Exif SideBar Panel', () => {
   describe('photo metadata', () => {

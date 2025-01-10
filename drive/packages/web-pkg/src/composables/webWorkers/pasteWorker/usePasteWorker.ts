@@ -3,7 +3,7 @@ import { useWebWorkersStore } from '../../piniaStores/webWorkers'
 import { useConfigStore } from '../../piniaStores'
 import { useLoadingService } from '../../loadingService'
 import { useRequestHeaders } from '../../requestHeaders'
-import { createHttpError, type HttpError, type Resource } from '@ownclouders/web-client'
+import { createHttpError, type HttpError, type Resource } from '@opencloud-eu/web-client'
 import type { TransferData } from '../../../helpers/resource/conflictHandling'
 import PasteWorker from './worker?worker'
 

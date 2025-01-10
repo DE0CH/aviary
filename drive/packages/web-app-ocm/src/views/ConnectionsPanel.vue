@@ -65,9 +65,9 @@ import {
   useRouter,
   useClientService,
   FederatedConnection
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import { ShareTypes } from '@ownclouders/web-client'
+import { ShareTypes } from '@opencloud-eu/web-client'
 import { buildConnection } from '../functions'
 
 export default defineComponent({

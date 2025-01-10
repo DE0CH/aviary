@@ -1,4 +1,4 @@
-import { useSort } from '@ownclouders/web-pkg'
+import { useSort } from '@opencloud-eu/web-pkg'
 import { ref } from 'vue'
 
 export const useSortMock = (

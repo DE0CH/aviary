@@ -7,7 +7,7 @@ import { computed } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { FileAction, FileActionOptions } from '../../actions'
 import { useMessages, useConfigStore, useResourcesStore } from '../../piniaStores'
-import { IncomingShareResource } from '@ownclouders/web-client'
+import { IncomingShareResource } from '@opencloud-eu/web-client'
 
 export const useFileActionsToggleHideShare = () => {
   const { showMessage, showErrorMessage } = useMessages()

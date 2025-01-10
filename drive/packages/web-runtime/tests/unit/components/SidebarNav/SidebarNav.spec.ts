@@ -1,6 +1,6 @@
 import SidebarNav from '../../../../src/components/SidebarNav/SidebarNav.vue'
 import sidebarNavItemFixtures from '../../../__fixtures__/sidebarNavItems'
-import { defaultPlugins, mount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
 
 vi.mock('uuid', () => ({
   v4: () => {

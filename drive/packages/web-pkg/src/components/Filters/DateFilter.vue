@@ -118,7 +118,7 @@ import { formatDateFromDateTime } from '../../helpers'
 import { queryItemAsString } from '../../composables/appDefaults'
 import { DateTime } from 'luxon'
 import { useGettext } from 'vue3-gettext'
-import { OcFilterChip } from '@ownclouders/design-system/components'
+import { OcFilterChip } from '@opencloud-eu/design-system/components'
 
 type Item = Record<string, string>
 

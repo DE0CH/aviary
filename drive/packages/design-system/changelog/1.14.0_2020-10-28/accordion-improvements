@@ -1,5 +1,0 @@
-Change: Accordion improvements
-
-We improved the accordion component to allow external control for the expanded/collapsed state of accordion items.
-
-https://github.com/owncloud/owncloud-design-system/pull/916

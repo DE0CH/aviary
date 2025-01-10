@@ -1,8 +1,8 @@
-import { QueryValue, useResourcesStore, FolderViewModeConstants } from '@ownclouders/web-pkg'
-import { useScrollTo } from '@ownclouders/web-pkg'
+import { QueryValue, useResourcesStore, FolderViewModeConstants } from '@opencloud-eu/web-pkg'
+import { useScrollTo } from '@opencloud-eu/web-pkg'
 import { Ref, ref, unref, nextTick, watchEffect } from 'vue'
-import { Key, KeyboardActions, Modifier, focusCheckbox } from '@ownclouders/web-pkg'
-import { Resource } from '@ownclouders/web-client'
+import { Key, KeyboardActions, Modifier, focusCheckbox } from '@opencloud-eu/web-pkg'
+import { Resource } from '@opencloud-eu/web-client'
 import { findIndex } from 'lodash-es'
 import { storeToRefs } from 'pinia'
 

@@ -6,7 +6,7 @@
       :href="hrefOrFallback"
       target="_blank"
       appearance="raw-inverse"
-      variation="brand"
+      variation="primary"
       :aria-label="ariaLabelOrFallback"
       aria-describedby="oc-feedback-link-description"
     >
@@ -40,16 +40,16 @@ export default defineComponent({
   },
   computed: {
     hrefOrFallback() {
-      return this.href || 'https://owncloud.com/web-design-feedback'
+      return this.href || 'https://opencloud.eu'
     },
     ariaLabelOrFallback() {
-      return this.ariaLabel || this.$gettext('ownCloud feedback survey')
+      return this.ariaLabel || this.$gettext('OpenCloud feedback survey')
     },
     descriptionOrFallback() {
       return (
         this.description ||
         this.$gettext(
-          "Provide your feedback: We'd like to improve the web design and would be happy to hear your feedback. Thank you! Your ownCloud team."
+          "Provide your feedback: We'd like to improve the web design and would be happy to hear your feedback. Thank you! Your OpenCloud team."
         )
       )
     }

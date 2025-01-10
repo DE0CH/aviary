@@ -1,4 +1,4 @@
-import { SpaceResource, isShareSpaceResource } from '@ownclouders/web-client'
+import { SpaceResource, isShareSpaceResource } from '@opencloud-eu/web-client'
 import { computed, nextTick, Ref, unref } from 'vue'
 import { useClientService } from '../../clientService'
 import { useRouter } from '../../router'

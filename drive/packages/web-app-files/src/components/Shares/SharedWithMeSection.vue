@@ -106,18 +106,18 @@ import {
   useFileActionsToggleHideShare,
   useLoadPreview,
   useResourcesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, PropType, unref } from 'vue'
-import { SortDir, useGetMatchingSpace } from '@ownclouders/web-pkg'
-import { createLocationSpaces } from '@ownclouders/web-pkg'
+import { SortDir, useGetMatchingSpace } from '@opencloud-eu/web-pkg'
+import { createLocationSpaces } from '@opencloud-eu/web-pkg'
 import ListInfo from '../../components/FilesList/ListInfo.vue'
-import { IncomingShareResource, ShareTypes } from '@ownclouders/web-client'
-import { ContextActions } from '@ownclouders/web-pkg'
-import { NoContentMessage } from '@ownclouders/web-pkg'
-import { useSelectedResources } from '@ownclouders/web-pkg'
+import { IncomingShareResource, ShareTypes } from '@opencloud-eu/web-client'
+import { ContextActions } from '@opencloud-eu/web-pkg'
+import { NoContentMessage } from '@opencloud-eu/web-pkg'
+import { useSelectedResources } from '@opencloud-eu/web-pkg'
 import { RouteLocationNamedRaw } from 'vue-router'
-import { CreateTargetRouteOptions } from '@ownclouders/web-pkg'
-import { createFileRouteOptions } from '@ownclouders/web-pkg'
+import { CreateTargetRouteOptions } from '@opencloud-eu/web-pkg'
+import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   components: {

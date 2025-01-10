@@ -1,6 +1,0 @@
-Enhancement: Upload data during creation
-
-Uploading via tus now uses the `uploadDataDuringCreation` option which saves up one request.
-
-https://github.com/owncloud/web/pull/7111
-https://github.com/owncloud/web/issues/7066

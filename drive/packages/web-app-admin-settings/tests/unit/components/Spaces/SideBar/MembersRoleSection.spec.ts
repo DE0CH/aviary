@@ -1,7 +1,7 @@
 import MembersRoleSection from '../../../../../src/components/Spaces/SideBar/MembersRoleSection.vue'
-import { defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { SpaceMember } from '@ownclouders/web-client'
+import { SpaceMember } from '@opencloud-eu/web-client'
 
 describe('MembersRoleSection', () => {
   it('should render all members accordingly', () => {

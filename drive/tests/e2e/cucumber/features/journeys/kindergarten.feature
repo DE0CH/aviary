@@ -1,7 +1,7 @@
 Feature: Kindergarten can use web to organize a day
 
   As a kindergarten operator named Alice
-  I want to manage all file related operations by using ownCloud WEB
+  I want to manage all file related operations by using OpenCloud Web
   So that i'm sure all parents are informed and have the latest information in a easy and secure way
 
   Background:

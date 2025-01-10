@@ -46,6 +46,8 @@ export default defineComponent({
   dt,
   dd {
     margin-bottom: var(--oc-space-small);
+    display: flex;
+    align-items: center;
   }
   dt {
     font-weight: bold;

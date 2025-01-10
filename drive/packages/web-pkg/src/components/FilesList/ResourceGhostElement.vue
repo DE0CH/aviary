@@ -11,11 +11,11 @@
 
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import ResourceIcon from './ResourceIcon.vue'
 
 /**
- * Please head to the ownCloud web ResourceTable component (https://github.com/owncloud/web/blob/master/packages/web-app-files/src/components/FilesList/ResourceTable.vue) for a demo of the Ghost Element.
+ * Please head to the OpenCloud web ResourceTable component (https://github.com/opencloud-eu/web/blob/main/packages/web-app-files/src/components/FilesList/ResourceTable.vue) for a demo of the Ghost Element.
  */
 export default defineComponent({
   name: 'ResourceGhostElement',

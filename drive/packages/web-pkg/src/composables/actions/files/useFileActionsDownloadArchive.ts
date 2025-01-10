@@ -7,7 +7,7 @@ import {
 import { useIsFilesAppActive } from '../helpers'
 import path from 'path'
 import first from 'lodash-es/first'
-import { isProjectSpaceResource, isPublicSpaceResource, Resource } from '@ownclouders/web-client'
+import { isProjectSpaceResource, isPublicSpaceResource, Resource } from '@opencloud-eu/web-client'
 import { computed, unref } from 'vue'
 import { useLoadingService } from '../../loadingService'
 import { useRouter } from '../../router'

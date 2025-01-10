@@ -1,7 +1,7 @@
-import { CapabilityStore } from '@ownclouders/web-pkg'
+import { CapabilityStore } from '@opencloud-eu/web-pkg'
 
 export const getWebVersion = (): string => {
-  return `ownCloud Web UI ${process.env.PACKAGE_VERSION}`
+  return `OpenCloud Web UI ${process.env.PACKAGE_VERSION}`
 }
 
 export const getBackendVersion = ({
@@ -13,7 +13,7 @@ export const getBackendVersion = ({
   if (!backendStatus || !backendStatus.versionstring) {
     return undefined
   }
-  const product = backendStatus.product || 'ownCloud'
+  const product = backendStatus.product || 'OpenCloud'
   const version = backendStatus.productversion || backendStatus.versionstring
   const edition = backendStatus.edition
   return `${product} ${version} ${edition}`

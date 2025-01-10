@@ -1,5 +1,5 @@
 import PQueue from 'p-queue'
-import { type Resource, webdav as _webdav, type SpaceResource } from '@ownclouders/web-client'
+import { type Resource, webdav as _webdav, type SpaceResource } from '@opencloud-eu/web-client'
 import type { DeleteWorkerTopic, DeleteWorkerReturnData } from './useDeleteWorker'
 
 type MessageData = {

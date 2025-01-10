@@ -37,11 +37,11 @@ import {
   formatDateFromDateTime,
   useClientService,
   VisibilityObserver
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useTask } from 'vue-concurrency'
-import { call, Resource } from '@ownclouders/web-client'
+import { call, Resource } from '@opencloud-eu/web-client'
 import { DateTime } from 'luxon'
-import { Activity } from '@ownclouders/web-client/graph/generated'
+import { Activity } from '@opencloud-eu/web-client/graph/generated'
 import escape from 'lodash-es/escape'
 
 const visibilityObserver = new VisibilityObserver()

@@ -25,7 +25,7 @@ export const CreateFolderFactory = (
       await dav.mkcol(webDavPath)
 
       if (fetchFolder) {
-        // FIXME: mkcol doesn't return a fileId: https://github.com/owncloud/ocis/issues/9618
+        // FIXME: mkcol doesn't return a fileId on server side
         return getFileInfoFactory.getFileInfo(space, { path }, opts)
       }
     }

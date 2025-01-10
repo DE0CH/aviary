@@ -1,5 +1,5 @@
 /**
- * This is ownCloud Design System’s helper util that
+ * This is OpenCloud Design System’s helper util that
  * creates component status labels.
  */
 

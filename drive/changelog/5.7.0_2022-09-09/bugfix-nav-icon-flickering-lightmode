@@ -1,6 +1,0 @@
-Bugfix: SidebarNavItem icon flickering
-
-We've fixed a bug which caused the icons on the SidebarNav 
-to flicker when transitioning in lightmode
-
-https://github.com/owncloud/web/pull/7309

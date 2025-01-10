@@ -1,4 +1,4 @@
-import { getComposableWrapper } from '@ownclouders/web-test-helpers'
+import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
 import {
   useSpacesStore,
   sortSpaceMembers,
@@ -6,8 +6,8 @@ import {
 } from '../../../../src/composables/piniaStores'
 import { createPinia, setActivePinia } from 'pinia'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { CollaboratorShare, GraphSharePermission, SpaceResource } from '@ownclouders/web-client'
-import { Graph } from '@ownclouders/web-client/graph'
+import { CollaboratorShare, GraphSharePermission, SpaceResource } from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
 
 describe('spaces', () => {
   beforeEach(() => {

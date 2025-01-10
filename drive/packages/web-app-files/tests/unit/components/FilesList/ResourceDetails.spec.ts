@@ -3,14 +3,14 @@ import {
   defaultPlugins,
   RouteLocation,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import ResourceDetails from '../../../../src/components/FilesList/ResourceDetails.vue'
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { useOpenWithDefaultApp, useRouteQuery } from '@ownclouders/web-pkg'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { useOpenWithDefaultApp, useRouteQuery } from '@opencloud-eu/web-pkg'
 import { ref } from 'vue'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   getIndicators: vi.fn(() => []),
   useRouteQuery: vi.fn(),

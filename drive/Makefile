@@ -18,7 +18,7 @@ release: clean
 
 #
 # Release
-# make this app compatible with the ownCloud
+# make this app compatible with the OpenCloud
 # default build tools
 #
 .PHONY: dist
@@ -35,7 +35,7 @@ docs-copy:
 	cd $(HUGO); \
 	git init; \
 	git remote rm origin; \
-	git remote add origin https://github.com/owncloud/owncloud.github.io; \
+	git remote add origin https://github.com/opencloud-eu/opencloud-eu.github.io; \
 	git fetch; \
 	git checkout origin/main -f; \
 	make -C $(HUGO) theme; \

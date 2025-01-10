@@ -15,8 +15,8 @@
 </template>
 
 <script lang="ts">
-import { ContextActionMenu, useSpaceActionsNavigateToTrash } from '@ownclouders/web-pkg'
-import { useFileActionsShowDetails } from '@ownclouders/web-pkg'
+import { ContextActionMenu, useSpaceActionsNavigateToTrash } from '@opencloud-eu/web-pkg'
+import { useFileActionsShowDetails } from '@opencloud-eu/web-pkg'
 import { useSpaceActionsUploadImage } from '../../composables'
 import {
   useSpaceActionsDelete,
@@ -29,12 +29,12 @@ import {
   useSpaceActionsRestore,
   useSpaceActionsShowMembers,
   useSpaceActionsSetIcon
-} from '@ownclouders/web-pkg'
-import { isLocationSpacesActive } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { isLocationSpacesActive } from '@opencloud-eu/web-pkg'
 import { computed, defineComponent, PropType, Ref, ref, toRef, unref, VNodeRef } from 'vue'
-import { useRouter, usePreviewService } from '@ownclouders/web-pkg'
-import { FileActionOptions, SpaceActionOptions } from '@ownclouders/web-pkg'
-import { useFileActionsDownloadArchive } from '@ownclouders/web-pkg'
+import { useRouter, usePreviewService } from '@opencloud-eu/web-pkg'
+import { FileActionOptions, SpaceActionOptions } from '@opencloud-eu/web-pkg'
+import { useFileActionsDownloadArchive } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'SpaceContextActions',

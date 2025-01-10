@@ -4,9 +4,9 @@ import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useFileActionsCreateNewShortcut, useModals } from '../../../../../src/composables'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 
 describe('createNewShortcut', () => {
   describe('computed property "actions"', () => {

@@ -4,15 +4,19 @@ import {
   buildShareSpaceResource,
   isMountPointSpaceResource,
   SpaceResource
-} from '@ownclouders/web-client'
-import { Graph } from '@ownclouders/web-client/graph'
+} from '@opencloud-eu/web-client'
+import { Graph } from '@opencloud-eu/web-client/graph'
 import {
   buildSpace,
   extractStorageId,
   isPersonalSpaceResource,
   isProjectSpaceResource
-} from '@ownclouders/web-client'
-import type { CollaboratorShare, MountPointSpaceResource, ShareRole } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
+import type {
+  CollaboratorShare,
+  MountPointSpaceResource,
+  ShareRole
+} from '@opencloud-eu/web-client'
 import { useUserStore } from './user'
 import { ConfigStore, useConfigStore } from './config'
 import { useSharesStore } from './shares'

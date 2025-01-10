@@ -19,13 +19,9 @@ import { RequestResult, useRequest } from '../authContext'
 import { useClientService } from '../clientService'
 import { MaybeRef } from '../../utils'
 import { useDriveResolver } from '../driveResolver'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { useAppsStore, useAuthStore } from '../piniaStores'
 import { storeToRefs } from 'pinia'
-
-// TODO: this file/folder contains file/folder loading logic extracted from preview and drawio extensions
-// Discussion how to progress from here can be found in this issue:
-// https://github.com/owncloud/web/issues/3301
 
 interface AppDefaultsOptions {
   applicationId: string

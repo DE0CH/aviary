@@ -41,6 +41,6 @@ export default defineComponent({
 
 <docs>
 ```js
-<oc-logo src="examples/placeholder_brand_logo.svg" alt="ownCloud" />
+<oc-logo src="examples/placeholder_brand_logo.svg" alt="OpenCloud" />
 ```
 </docs>

@@ -17,7 +17,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, onBeforeUnmount, onMounted, ref, unref } from 'vue'
-import { useEmbedMode, useRoute, useThemeStore } from '@ownclouders/web-pkg'
+import { useEmbedMode, useRoute, useThemeStore } from '@opencloud-eu/web-pkg'
 import { authService } from '../services/auth'
 import { storeToRefs } from 'pinia'
 
@@ -42,7 +42,7 @@ export default defineComponent({
         return
       }
 
-      if (event.data?.name !== 'owncloud-embed:update-token') {
+      if (event.data?.name !== 'opencloud-embed:update-token') {
         return
       }
 
@@ -65,7 +65,7 @@ export default defineComponent({
         console.debug('[page:oidcCallback:hook:mounted] - adding update-token event listener')
         window.addEventListener('message', handleRequestedTokenEvent)
         console.debug('[page:oidcCallback:hook:mounted] - requesting delegated access_token')
-        postMessage<void>('owncloud-embed:request-token')
+        postMessage<void>('opencloud-embed:request-token')
 
         return
       }

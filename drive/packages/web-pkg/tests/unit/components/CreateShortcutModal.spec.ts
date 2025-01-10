@@ -5,11 +5,11 @@ import {
   mockAxiosReject,
   RouteLocation,
   shallowMount
-} from '@ownclouders/web-test-helpers'
-import { SpaceResource } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-test-helpers'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { mock } from 'vitest-mock-extended'
-import { FileResource } from '@ownclouders/web-client'
-import { SearchResource } from '@ownclouders/web-client'
+import { FileResource } from '@opencloud-eu/web-client'
+import { SearchResource } from '@opencloud-eu/web-client'
 import { useMessages, useResourcesStore } from '../../../src/composables/piniaStores'
 
 describe('CreateShortcutModal', () => {

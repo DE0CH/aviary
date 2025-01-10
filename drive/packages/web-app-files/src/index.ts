@@ -15,14 +15,14 @@ import {
   useEmbedMode,
   useSpacesStore,
   useUserStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { extensions } from './extensions'
-import { buildRoutes } from '@ownclouders/web-pkg'
-import { AppNavigationItem } from '@ownclouders/web-pkg'
+import { buildRoutes } from '@opencloud-eu/web-pkg'
+import { AppNavigationItem } from '@opencloud-eu/web-pkg'
 
 // dirty: importing view from other extension within project
 import SearchResults from '../../web-app-search/src/views/List.vue'
-import { isPersonalSpaceResource, isShareSpaceResource } from '@ownclouders/web-client'
+import { isPersonalSpaceResource, isShareSpaceResource } from '@opencloud-eu/web-client'
 import { ComponentCustomProperties, unref } from 'vue'
 import { extensionPoints } from './extensionPoints'
 

@@ -1,16 +1,16 @@
 {
-  "name": "@ownclouders/web-test-helpers",
-  "version": "11.0.6",
-  "description": "ownCloud web test helpers",
+  "name": "@opencloud-eu/web-test-helpers",
+  "version": "0.0.0",
+  "description": "OpenCloud web test helpers",
   "license": "AGPL-3.0",
   "private": false,
   "type": "module",
   "main": "src/index.ts",
-  "author": "ownCloud GmbH <devops@owncloud.com>",
-  "homepage": "https://github.com/owncloud/web/tree/master/packages/web-test-helpers",
+  "author": "OpenCloud GmbH <info@opencloud.eu>",
+  "homepage": "https://github.com/opencloud-eu/web/tree/main/packages/web-test-helpers",
   "repository": {
     "type": "git",
-    "url": "https://github.com/owncloud/web",
+    "url": "https://github.com/opencloud-eu/web",
     "directory": "packages/web-test-helpers"
   },
   "files": [
@@ -33,7 +33,7 @@
     "postpublish": "rm -rf ./package"
   },
   "peerDependencies": {
-    "@ownclouders/web-pkg": "workspace:^",
+    "@opencloud-eu/web-pkg": "workspace:^",
     "@vue/test-utils": "^2.4.6",
     "vue": "^3.5.10"
   },
@@ -46,8 +46,8 @@
   "dependencies": {
     "@casl/ability": "^6.7.1",
     "@casl/vue": "^2.2.2",
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:^",
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:^",
     "@pinia/testing": "^0.1.3",
     "axios": "1.7.9",
     "pinia": "2.3.0",

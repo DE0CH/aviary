@@ -1,13 +1,13 @@
 import { unref } from 'vue'
 
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import { MaybeRef } from '../../utils'
 import { ClientService } from '../../services'
 import { FileContext } from './types'
-import { FileResource, SpaceResource } from '@ownclouders/web-client'
+import { FileResource, SpaceResource } from '@opencloud-eu/web-client'
 import { useClientService } from '../clientService'
-import { ListFilesOptions } from '@ownclouders/web-client/webdav'
-import { WebDAV } from '@ownclouders/web-client/webdav'
+import { ListFilesOptions } from '@opencloud-eu/web-client/webdav'
+import { WebDAV } from '@opencloud-eu/web-client/webdav'
 import { useCapabilityStore, useUserStore } from '../piniaStores'
 
 interface AppFileHandlingOptions {

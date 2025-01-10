@@ -2,14 +2,14 @@
   "name": "web-app-webfinger",
   "version": "0.0.0",
   "private": true,
-  "description": "ownCloud webfinger resolver",
+  "description": "OpenCloud webfinger resolver",
   "license": "AGPL-3.0",
   "devDependencies": {
-    "@ownclouders/web-test-helpers": "workspace:*"
+    "@opencloud-eu/web-test-helpers": "workspace:*"
   },
   "peerDependencies": {
-    "@ownclouders/design-system": "workspace:^",
-    "@ownclouders/web-client": "workspace:*",
-    "@ownclouders/web-pkg": "workspace:*"
+    "@opencloud-eu/design-system": "workspace:^",
+    "@opencloud-eu/web-client": "workspace:*",
+    "@opencloud-eu/web-pkg": "workspace:*"
   }
 }

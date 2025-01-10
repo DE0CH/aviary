@@ -108,7 +108,7 @@ import {
   formatDateFromJSDate,
   formatRelativeDateFromJSDate,
   useConfigStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { inviteListSchema, inviteSchema } from '../schemas'
 

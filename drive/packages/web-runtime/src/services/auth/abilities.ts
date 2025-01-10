@@ -1,5 +1,5 @@
 import { SubjectRawRule } from '@casl/ability'
-import { AbilityActions, AbilitySubjects } from '@ownclouders/web-client'
+import { AbilityActions, AbilitySubjects } from '@opencloud-eu/web-client'
 
 export const getAbilities = (
   permissions: string[]

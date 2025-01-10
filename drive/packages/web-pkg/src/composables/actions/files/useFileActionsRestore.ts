@@ -7,14 +7,14 @@ import {
   extractExtensionFromFile,
   SpaceResource,
   isTrashResource
-} from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
 import {
   ResolveStrategy,
   ResolveConflict,
   resolveFileNameDuplicate,
   ConflictDialog
 } from '../../../helpers/resource'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { useClientService } from '../../clientService'
 import { useRouter } from '../../router'
 import { computed, unref } from 'vue'

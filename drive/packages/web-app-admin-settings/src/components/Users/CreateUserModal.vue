@@ -48,7 +48,7 @@
 import { useGettext } from 'vue3-gettext'
 import { computed, defineComponent, ref, unref, PropType, watch } from 'vue'
 import * as EmailValidator from 'email-validator'
-import { Modal, useClientService, useMessages } from '@ownclouders/web-pkg'
+import { Modal, useClientService, useMessages } from '@opencloud-eu/web-pkg'
 import { useUserSettingsStore } from '../../composables/stores/userSettings'
 
 export default defineComponent({

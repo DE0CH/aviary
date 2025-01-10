@@ -1,4 +1,4 @@
-import { ConfigStore } from '@ownclouders/web-pkg'
+import { ConfigStore } from '@opencloud-eu/web-pkg'
 import { v4 as uuidV4 } from 'uuid'
 import merge from 'lodash-es/merge'
 import { Translations } from 'vue3-gettext'

@@ -64,7 +64,7 @@
 </template>
 <script lang="ts">
 import { defineComponent, PropType } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 import ResourceIcon from './ResourceIcon.vue'
 import ResourceLink from './ResourceLink.vue'
 import ResourceName from './ResourceName.vue'

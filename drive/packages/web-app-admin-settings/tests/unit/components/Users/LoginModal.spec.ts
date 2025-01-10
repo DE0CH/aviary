@@ -1,9 +1,9 @@
 import LoginModal from '../../../../src/components/Users/LoginModal.vue'
-import { defaultComponentMocks, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { Modal, useMessages } from '@ownclouders/web-pkg'
-import { OcSelect } from '@ownclouders/design-system/components'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { Modal, useMessages } from '@opencloud-eu/web-pkg'
+import { OcSelect } from '@opencloud-eu/design-system/components'
 import { useUserSettingsStore } from '../../../../src/composables/stores/userSettings'
 
 describe('LoginModal', () => {

@@ -1,8 +1,8 @@
-import { useScrollTo } from '@ownclouders/web-pkg'
+import { useScrollTo } from '@opencloud-eu/web-pkg'
 import { Ref, unref } from 'vue'
-import { Key, KeyboardActions, Modifier, focusCheckbox } from '@ownclouders/web-pkg'
+import { Key, KeyboardActions, Modifier, focusCheckbox } from '@opencloud-eu/web-pkg'
 import { find, findIndex } from 'lodash-es'
-import { Item } from '@ownclouders/web-client'
+import { Item } from '@opencloud-eu/web-client'
 
 export const useKeyboardTableNavigation = (
   keyActions: KeyboardActions,

@@ -5,7 +5,7 @@ import {
   mockAxiosReject,
   mockAxiosResolve,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import {
   Extension,
@@ -14,12 +14,12 @@ import {
   useExtensionRegistry,
   useMessages,
   useResourcesStore
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { LanguageOption, SettingsBundle, SettingsValue } from '../../../src/helpers/settings'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { VueWrapper } from '@vue/test-utils'
-import { SpaceResource } from '@ownclouders/web-client'
-import { Capabilities } from '@ownclouders/web-client/ocs'
+import { SpaceResource } from '@opencloud-eu/web-client'
+import { Capabilities } from '@opencloud-eu/web-client/ocs'
 
 const $route = {
   meta: {

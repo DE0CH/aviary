@@ -23,10 +23,10 @@ Given(
     for await (const info of stepTable.hashes()) {
       const user = this.usersEnvironment.getUser({ key: info.id })
       /**
-         The oCIS API request for assigning roles allows only one role per user,
+         The OpenCloud API request for assigning roles allows only one role per user,
          whereas the Keycloak API request can assign multiple roles to a user.
          If multiple roles are assigned to a user in Keycloak,
-         oCIS map the highest priority role among Keycloak assigned roles.
+         OpenCloud map the highest priority role among Keycloak assigned roles.
          Therefore, we need to unassign the previous role before
          assigning a new one when using the Keycloak API.
       */

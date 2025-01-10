@@ -1,13 +1,13 @@
 import { useUserActionsDelete } from '../../../../../src/composables/actions/users/useUserActionsDelete'
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
-import { User } from '@ownclouders/web-client/graph/generated'
-import { useCapabilityStore } from '@ownclouders/web-pkg'
+import { User } from '@opencloud-eu/web-client/graph/generated'
+import { useCapabilityStore } from '@opencloud-eu/web-pkg'
 import {
   defaultComponentMocks,
   getComposableWrapper,
   writable
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useUserSettingsStore } from '../../../../../src/composables/stores/userSettings'
 
 describe('useUserActionsDelete', () => {

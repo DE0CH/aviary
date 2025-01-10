@@ -1,12 +1,12 @@
 import { mock } from 'vitest-mock-extended'
 import { unref } from 'vue'
 import { useFileActionsDownloadArchive } from '../../../../../src/composables/actions'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   defaultComponentMocks,
   RouteLocation,
   getComposableWrapper
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useArchiverService } from '../../../../../src/composables'
 import { ArchiverService } from '../../../../../src'
 import { ref } from 'vue'

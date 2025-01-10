@@ -26,7 +26,7 @@
 <script lang="ts">
 import { computed, defineComponent, ref, PropType, unref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { Modal, useClientService, useMessages } from '@ownclouders/web-pkg'
+import { Modal, useClientService, useMessages } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   name: 'EditPasswordModal',

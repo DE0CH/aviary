@@ -1,7 +1,7 @@
 import { mock } from 'vitest-mock-extended'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
 import { getIndicators } from '../../../src/helpers/statusIndicators'
-import { User } from '@ownclouders/web-client/graph/generated'
+import { User } from '@opencloud-eu/web-client/graph/generated'
 import { AncestorMetaDataValue } from '../../../src/types'
 
 describe('status indicators', () => {

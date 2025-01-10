@@ -3,7 +3,7 @@ Feature: Integrate with online office suites like Collabora and OnlyOffice
   I want to work on different docs, sheets, slides etc.., using online office suites like Collabora or OnlyOffice
   So that the collaboration is seamless
   # To run this feature we need to run the external app-provider service along with wopi, OnlyOffice, Collabora services
-  # This is a minimal test for the integration of ocis with different online office suites like Collabora and OnlyOffice
+  # This is a minimal test for the integration of OpenCloud with different online office suites like Collabora and OnlyOffice
 
   Background:
     Given "Admin" creates following users using API
@@ -267,5 +267,5 @@ Feature: Integrate with online office suites like Collabora and OnlyOffice
     Then following resources should not be displayed in the files list for user "Alice"
       | resource          |
       | Template (2).docx |
-    
+
     And "Alice" logs out

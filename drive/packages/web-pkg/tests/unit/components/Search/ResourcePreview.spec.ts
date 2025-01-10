@@ -1,13 +1,13 @@
 import { mock } from 'vitest-mock-extended'
 import { ResourcePreview, SearchResultValue } from '../../../../src/components'
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { useGetMatchingSpace } from '../../../../src/composables/spaces/useGetMatchingSpace'
 import {
   defaultComponentMocks,
   defaultPlugins,
   shallowMount,
   useGetMatchingSpaceMock
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { useFileActions } from '../../../../src/composables/actions'
 import { CapabilityStore } from '../../../../src/composables/piniaStores'
 

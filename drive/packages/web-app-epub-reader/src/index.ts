@@ -1,6 +1,6 @@
 import { useGettext } from 'vue3-gettext'
 import translations from '../l10n/translations.json'
-import { AppWrapperRoute, defineWebApplication } from '@ownclouders/web-pkg'
+import { AppWrapperRoute, defineWebApplication } from '@opencloud-eu/web-pkg'
 
 export default defineWebApplication({
   setup() {

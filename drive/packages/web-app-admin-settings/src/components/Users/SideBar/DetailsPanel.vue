@@ -2,7 +2,7 @@
   <div class="oc-mt-xl">
     <div v-if="noUsers" class="oc-flex user-info oc-text-center">
       <oc-icon name="user" size="xxlarge" />
-      <p v-translate>Select a user to view details</p>
+      <p>{{ $gettext('Select a user to view details') }}</p>
     </div>
     <div v-if="multipleUsers" class="oc-flex group-info">
       <oc-icon name="group" size="xxlarge" />
@@ -10,78 +10,60 @@
     </div>
     <div v-if="_user">
       <UserInfoBox :user="_user" />
-      <table
-        class="details-table"
+      <dl
+        class="details-list oc-m-rm"
         :aria-label="$gettext('Overview of the information about the selected user')"
       >
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('User name')" />
-          <td v-text="_user.onPremisesSamAccountName" />
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('First and last name')" />
-          <td v-text="_user.displayName" />
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('Email')" />
-          <td>
-            <span v-text="_user.mail" />
-          </td>
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('Role')" />
-          <td>
-            <span v-if="_user.appRoleAssignments" v-text="roleDisplayName" />
-            <span v-else>
-              <span class="oc-mr-xs">-</span>
-              <oc-contextual-helper
-                :text="
-                  $gettext(
-                    'User roles become available once the user has logged in for the first time.'
-                  )
-                "
-                :title="$gettext('User role')"
-              />
-            </span>
-          </td>
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('Login')" />
-          <td>
-            <span v-text="loginDisplayValue" />
-          </td>
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('Quota')" />
-          <td>
-            <span v-if="showUserQuota" v-text="quotaDisplayValue" />
-            <span v-else>
-              <span class="oc-mr-xs">-</span>
-              <oc-contextual-helper
-                :text="
-                  $gettext(
-                    'User quota becomes available once the user has logged in for the first time.'
-                  )
-                "
-                :title="$gettext('Quota')"
-              />
-            </span>
-          </td>
-        </tr>
-        <tr>
-          <th scope="col" class="oc-pr-s" v-text="$gettext('Groups')" />
-          <td>
-            <span v-if="_user.memberOf.length" v-text="groupsDisplayValue" />
-            <span v-else>
-              <span class="oc-mr-xs">-</span>
-              <oc-contextual-helper
-                :text="$gettext('No groups assigned.')"
-                :title="$gettext('Groups')"
-              />
-            </span>
-          </td>
-        </tr>
-      </table>
+        <dt>{{ $gettext('User name') }}</dt>
+        <dd>{{ _user.onPremisesSamAccountName }}</dd>
+        <dt>{{ $gettext('First and last name') }}</dt>
+        <dd>{{ _user.displayName }}</dd>
+        <dt>{{ $gettext('Email') }}</dt>
+        <dd>{{ _user.mail }}</dd>
+        <dt>{{ $gettext('Role') }}</dt>
+        <dd>
+          <span v-if="_user.appRoleAssignments" v-text="roleDisplayName" />
+          <span v-else>
+            <span class="oc-mr-xs">-</span>
+            <oc-contextual-helper
+              :text="
+                $gettext(
+                  'User roles become available once the user has logged in for the first time.'
+                )
+              "
+              :title="$gettext('User role')"
+            />
+          </span>
+        </dd>
+        <dt>{{ $gettext('Login') }}</dt>
+        <dd>{{ loginDisplayValue }}</dd>
+        <dt>{{ $gettext('Quota') }}</dt>
+        <dd>
+          <span v-if="showUserQuota" v-text="quotaDisplayValue" />
+          <span v-else>
+            <span class="oc-mr-xs">-</span>
+            <oc-contextual-helper
+              :text="
+                $gettext(
+                  'User quota becomes available once the user has logged in for the first time.'
+                )
+              "
+              :title="$gettext('Quota')"
+            />
+          </span>
+        </dd>
+        <dt>{{ $gettext('Groups') }}</dt>
+        <dd>
+          <span v-if="_user.memberOf.length" v-text="groupsDisplayValue" />
+          <span v-else>
+            <span class="oc-mr-xs">-</span>
+            <oc-contextual-helper
+              :text="$gettext('No groups assigned.')"
+              :title="$gettext('Groups')"
+            />
+          </span>
+        </dd>
+      </dl>
     </div>
   </div>
 </template>
@@ -89,8 +71,8 @@
 import { computed, defineComponent } from 'vue'
 import UserInfoBox from './UserInfoBox.vue'
 import { PropType } from 'vue'
-import { AppRole, User } from '@ownclouders/web-client/graph/generated'
-import { formatFileSize } from '@ownclouders/web-pkg'
+import { AppRole, User } from '@opencloud-eu/web-client/graph/generated'
+import { formatFileSize } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 
 export default defineComponent({

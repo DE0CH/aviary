@@ -3,14 +3,14 @@ import {
   defaultPlugins,
   RouteLocation,
   shallowMount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import EmbedActions from '../../../../src/components/EmbedActions/EmbedActions.vue'
-import { FileAction, useEmbedMode, useFileActionsCreateLink } from '@ownclouders/web-pkg'
+import { FileAction, useEmbedMode, useFileActionsCreateLink } from '@opencloud-eu/web-pkg'
 import { mock } from 'vitest-mock-extended'
 import { ref } from 'vue'
-import { Resource } from '@ownclouders/web-client'
+import { Resource } from '@opencloud-eu/web-client'
 
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useFileActionsCreateLink: vi.fn(),
   useEmbedMode: vi.fn()
@@ -47,7 +47,7 @@ describe('EmbedActions', () => {
 
       await wrapper.find(selectors.btnSelect).trigger('click')
 
-      expect(mocks.postMessageMock).toHaveBeenCalledWith('owncloud-embed:select', [{ id: '1' }])
+      expect(mocks.postMessageMock).toHaveBeenCalledWith('opencloud-embed:select', [{ id: '1' }])
     })
 
     it('should enable select action when embedTarget is set to location', () => {
@@ -64,7 +64,7 @@ describe('EmbedActions', () => {
 
       await wrapper.find(selectors.btnSelect).trigger('click')
 
-      expect(mocks.postMessageMock).toHaveBeenCalledWith('owncloud-embed:select', [{ id: '1' }])
+      expect(mocks.postMessageMock).toHaveBeenCalledWith('opencloud-embed:select', [{ id: '1' }])
     })
     it('should display the file name input when chooseFileName is configured', () => {
       const { wrapper } = getWrapper({
@@ -92,7 +92,7 @@ describe('EmbedActions', () => {
 
       await wrapper.find(selectors.btnSelect).trigger('click')
 
-      expect(mocks.postMessageMock).toHaveBeenCalledWith('owncloud-embed:select', {
+      expect(mocks.postMessageMock).toHaveBeenCalledWith('opencloud-embed:select', {
         fileName: 'file.txt',
         resources: [{ id: '1' }],
         locationQuery: {
@@ -109,7 +109,7 @@ describe('EmbedActions', () => {
 
       await wrapper.find(selectors.btnCancel).trigger('click')
 
-      expect(mocks.postMessageMock).toHaveBeenCalledWith('owncloud-embed:cancel', null)
+      expect(mocks.postMessageMock).toHaveBeenCalledWith('opencloud-embed:cancel', null)
     })
   })
 

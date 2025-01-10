@@ -43,12 +43,12 @@ import {
   AppConfigObject,
   resourceIconMappingInjectionKey,
   ResourceIconMapping
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { authService } from '../services/auth'
 import { init as sentryInit } from '@sentry/vue'
 import { v4 as uuidV4 } from 'uuid'
 import { merge } from 'lodash-es'
-import { MESSAGE_TYPE } from '@ownclouders/web-client/sse'
+import { MESSAGE_TYPE } from '@opencloud-eu/web-client/sse'
 import { getQueryParam } from '../helpers/url'
 import PQueue from 'p-queue'
 import { storeToRefs } from 'pinia'
@@ -76,7 +76,7 @@ import {
   SseEventWrapperOptions
 } from './sse'
 import { loadAppTranslations } from '../helpers/language'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 
 const getEmbedConfigFromQuery = (
   doesEmbedEnabledOptionExists: boolean

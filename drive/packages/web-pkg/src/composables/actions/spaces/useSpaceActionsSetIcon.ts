@@ -1,4 +1,4 @@
-import { SpaceResource } from '@ownclouders/web-client'
+import { SpaceResource } from '@opencloud-eu/web-client'
 import { computed } from 'vue'
 import { SpaceAction, SpaceActionOptions } from '../types'
 import { useClientService } from '../../clientService'

@@ -14,7 +14,7 @@ When outputting a large amount of structured data and related actions to said da
 
 #### Example: Crucial controls
 
-A semantic choice of elements is important for the most vital elements of the ownCloud UI (such as controls related to files and folders), especially for users who do not use a pointing device. Make sure that a control is focusable and conveys its state and function. In the case of the file and folder example mentioned above differentiate between changing the state of the web-app (`<button>`, triggers non-modal dialog, editor) and changing the location (`<a href="/">`, leads to a route, showing contents of a sub folder).
+A semantic choice of elements is important for the most vital elements of the OpenCloud UI (such as controls related to files and folders), especially for users who do not use a pointing device. Make sure that a control is focusable and conveys its state and function. In the case of the file and folder example mentioned above differentiate between changing the state of the web-app (`<button>`, triggers non-modal dialog, editor) and changing the location (`<a href="/">`, leads to a route, showing contents of a sub folder).
 
 ### Supply precise labels
 

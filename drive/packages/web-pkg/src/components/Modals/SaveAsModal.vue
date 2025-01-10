@@ -29,11 +29,11 @@ import {
 } from '../../composables'
 import { LocationQuery, RouteLocationRaw } from 'vue-router'
 import AppLoadingSpinner from '../AppLoadingSpinner.vue'
-import { isShareSpaceResource, Resource, SpaceResource, urlJoin } from '@ownclouders/web-client'
+import { isShareSpaceResource, Resource, SpaceResource, urlJoin } from '@opencloud-eu/web-client'
 import { unref } from 'vue'
 import { resolveFileNameDuplicate } from '../../helpers'
 import { useGettext } from 'vue3-gettext'
-import { DavProperty } from '@ownclouders/web-client/webdav'
+import { DavProperty } from '@opencloud-eu/web-client/webdav'
 
 export default defineComponent({
   name: 'SaveAsModal',
@@ -72,7 +72,7 @@ export default defineComponent({
     }
 
     const onLocationPick = async ({ data }: MessageEvent) => {
-      if (data.name !== 'owncloud-embed:select') {
+      if (data.name !== 'opencloud-embed:select') {
         return
       }
 
@@ -159,7 +159,7 @@ export default defineComponent({
     }
 
     const onCancel = ({ data }: MessageEvent) => {
-      if (data.name !== 'owncloud-embed:cancel') {
+      if (data.name !== 'opencloud-embed:cancel') {
         return
       }
 

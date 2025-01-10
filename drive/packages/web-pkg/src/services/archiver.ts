@@ -7,13 +7,13 @@ import major from 'semver/functions/major'
 import rcompare from 'semver/functions/rcompare'
 
 import { RuntimeError } from '../errors'
-import { HttpError } from '@ownclouders/web-client'
+import { HttpError } from '@opencloud-eu/web-client'
 import { ClientService } from '../services'
-import { urlJoin } from '@ownclouders/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { triggerDownloadWithFilename } from '../helpers/download'
 
 import { Ref, ref, computed, unref } from 'vue'
-import { ArchiverCapability } from '@ownclouders/web-client/ocs'
+import { ArchiverCapability } from '@opencloud-eu/web-client/ocs'
 import { UserStore } from '../composables'
 import { AxiosResponseHeaders, RawAxiosResponseHeaders } from 'axios'
 
@@ -115,8 +115,6 @@ export class ArchiverService {
         return this.url + '?' + queryParams.join('&')
       }
       case 1: {
-        // see https://github.com/owncloud/core/blob/e285879a8a79e692497937ebf340bc6b9c925b4f/apps/files/js/files.js#L315 for reference
-        // classic ui does a check whether the download started. not implemented here (yet?).
         const downloadStartSecret = Math.random().toString(36).substring(2)
         queryParams.push(
           `dir=${encodeURIComponent(options.dir)}`,

@@ -1,4 +1,4 @@
-import { PartialComponentProps, defaultPlugins, shallowMount } from '@ownclouders/web-test-helpers'
+import { PartialComponentProps, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import OcButton from './OcButton.vue'
 
 describe('OcButton', () => {

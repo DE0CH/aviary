@@ -4,7 +4,7 @@ import {
   defaultComponentMocks,
   defaultPlugins,
   mount
-} from '@ownclouders/web-test-helpers'
+} from '@opencloud-eu/web-test-helpers'
 import { queryItemAsString } from '../../../../src/composables/appDefaults'
 import { DateTime } from 'luxon'
 

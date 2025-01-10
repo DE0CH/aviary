@@ -6,7 +6,7 @@ import {
   PasswordPolicyService,
   PreviewService,
   UppyService
-} from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
 import { Router, RouteLocationNormalizedLoaded, RouteLocationRaw } from 'vue-router'
 import { ref } from 'vue'
 import { writable } from '../helpers'

@@ -1,8 +1,8 @@
 import Groups from '../../../src/views/Groups.vue'
 import { mock, mockDeep } from 'vitest-mock-extended'
-import { ClientService } from '@ownclouders/web-pkg'
-import { defaultComponentMocks, defaultPlugins, mount } from '@ownclouders/web-test-helpers'
-import { Group } from '@ownclouders/web-client/graph/generated'
+import { ClientService } from '@opencloud-eu/web-pkg'
+import { defaultComponentMocks, defaultPlugins, mount } from '@opencloud-eu/web-test-helpers'
+import { Group } from '@opencloud-eu/web-client/graph/generated'
 
 const selectors = { batchActionsStub: 'batch-actions-stub' }
 const getClientServiceMock = () => {
@@ -12,7 +12,7 @@ const getClientServiceMock = () => {
   ])
   return clientService
 }
-vi.mock('@ownclouders/web-pkg', async (importOriginal) => ({
+vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   ...(await importOriginal<any>()),
   useAppDefaults: vi.fn()
 }))

@@ -4,8 +4,8 @@ import { v4 as uuidV4 } from 'uuid'
 import { Language } from 'vue3-gettext'
 import { Ref, unref } from 'vue'
 import { RouteLocationNormalizedLoaded } from 'vue-router'
-import { Resource, SpaceResource } from '@ownclouders/web-client'
-import { urlJoin } from '@ownclouders/web-client'
+import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import { urlJoin } from '@opencloud-eu/web-client'
 import { UploadResourceConflict } from './helpers/resource'
 import {
   MessageStore,
@@ -17,10 +17,10 @@ import {
   OcUppyFile,
   OcUppyMeta,
   OcUppyBody
-} from '@ownclouders/web-pkg'
-import { locationSpacesGeneric, UppyService } from '@ownclouders/web-pkg'
-import { isPersonalSpaceResource, isShareSpaceResource } from '@ownclouders/web-client'
-import { ClientService, queryItemAsString } from '@ownclouders/web-pkg'
+} from '@opencloud-eu/web-pkg'
+import { locationSpacesGeneric, UppyService } from '@opencloud-eu/web-pkg'
+import { isPersonalSpaceResource, isShareSpaceResource } from '@opencloud-eu/web-client'
+import { ClientService, queryItemAsString } from '@opencloud-eu/web-pkg'
 import { PluginOpts } from '@uppy/core/lib/BasePlugin'
 
 export interface HandleUploadOptions {

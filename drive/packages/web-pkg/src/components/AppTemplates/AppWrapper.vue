@@ -88,9 +88,9 @@ import {
   isPersonalSpaceResource,
   isProjectSpaceResource,
   isShareSpaceResource
-} from '@ownclouders/web-client'
-import { DavPermission } from '@ownclouders/web-client/webdav'
-import { HttpError } from '@ownclouders/web-client'
+} from '@opencloud-eu/web-client'
+import { DavPermission } from '@opencloud-eu/web-client/webdav'
+import { HttpError } from '@opencloud-eu/web-client'
 import { dirname } from 'path'
 import { useFileActionsOpenWithApp } from '../../composables/actions/files/useFileActionsOpenWithApp'
 import { UnsavedChangesModal } from '../Modals'

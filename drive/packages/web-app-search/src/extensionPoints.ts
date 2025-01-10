@@ -1,4 +1,4 @@
-import { ExtensionPoint, SearchExtension } from '@ownclouders/web-pkg'
+import { ExtensionPoint, SearchExtension } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
 export const searchProviderExtensionPoint: ExtensionPoint<SearchExtension> = {
