@@ -36,8 +36,8 @@ x-opencloud-server: &opencloud-service
     IDP_LDAP_BIND_PASSWORD: '${IDP_LDAP_BIND_PASSWORD:-some-ldap-idp-password}'
 
     # STORAGE
-    STORAGE_HOME_DRIVER: '${STORAGE_HOME_DRIVER:-ocis}'
-    STORAGE_USERS_DRIVER: '${STORAGE_USERS_DRIVER:-ocis}'
+    STORAGE_HOME_DRIVER: '${STORAGE_HOME_DRIVER:-decomposed}'
+    STORAGE_USERS_DRIVER: '${STORAGE_USERS_DRIVER:-decomposed}'
     STORAGE_TRANSFER_SECRET: '${STORAGE_TRANSFER_SECRET:-some-opencloud-transfer-secret}'
 
     # LDAP
