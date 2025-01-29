@@ -19,6 +19,7 @@ const defaultOptions = {
   contextHelpersReadMore: true,
   defaultExtension: 'files',
   disabledExtensions: [] as string[],
+  disableFeedbackLink: true,
   editor: {
     autosaveEnabled: true,
     autosaveInterval: 120
