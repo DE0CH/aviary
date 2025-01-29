@@ -10,7 +10,15 @@ Given(
     const admin = this.usersEnvironment.getUser({ key: stepUser })
 
     for (const info of stepTable.hashes()) {
-      const user = this.usersEnvironment.getUser({ key: info.id })
+      const uniqueId = `${info.id}-${this.uniquePrefix}`
+      // use a unique user name
+      const user = {
+        ...this.usersEnvironment.getUser({ key: info.id }),
+        id: info.id,
+        username: uniqueId,
+        email: `${uniqueId}@example.org`
+      }
+
       await api.provision.createUser({ user, admin })
     }
   }
@@ -21,7 +29,7 @@ Given(
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
     const admin = this.usersEnvironment.getUser({ key: stepUser })
     for await (const info of stepTable.hashes()) {
-      const user = this.usersEnvironment.getUser({ key: info.id })
+      const user = this.usersEnvironment.getCreatedUser({ key: info.id })
       /**
          The OpenCloud API request for assigning roles allows only one role per user,
          whereas the Keycloak API request can assign multiple roles to a user.
@@ -42,7 +50,12 @@ Given(
     const admin = this.usersEnvironment.getUser({ key: stepUser })
 
     for (const info of stepTable.hashes()) {
-      const group = this.usersEnvironment.getGroup({ key: info.id })
+      const uniqueId = `${info.id}-${this.uniquePrefix}`
+      const group = {
+        ...this.usersEnvironment.getGroup({ key: info.id }),
+        id: info.id,
+        displayName: uniqueId
+      }
       await api.graph.createGroup({ group, admin })
     }
   }
@@ -54,9 +67,9 @@ Given(
     const admin = this.usersEnvironment.getUser({ key: stepUser })
 
     for (const info of stepTable.hashes()) {
-      const group = this.usersEnvironment.getGroup({ key: info.group })
-      const user = this.usersEnvironment.getUser({ key: info.user })
-      await api.graph.addUserToGroup({ user, group, admin })
+      const userId = this.usersEnvironment.getCreatedUser({ key: info.user }).uuid
+      const groupId = this.usersEnvironment.getCreatedGroup({ key: info.group }).uuid
+      await api.graph.addUserToGroup({ userId, groupId, admin })
     }
   }
 )
@@ -64,7 +77,7 @@ Given(
 Given(
   '{string} creates the following folder(s) in personal space using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.createFolderInsidePersonalSpace({ user, folder: info.name })
     }
@@ -74,7 +87,7 @@ Given(
 Given(
   '{string} creates {int} folder(s) in personal space using API',
   async function (this: World, stepUser: string, numberOfFolders: number): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (let i = 1; i <= numberOfFolders; i++) {
       await api.dav.createFolderInsidePersonalSpace({ user, folder: `testFolder${i}` })
     }
@@ -84,7 +97,7 @@ Given(
 Given(
   '{string} shares the following resource using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.share.createShare({
         user,
@@ -100,7 +113,7 @@ Given(
 Given(
   '{string} disables auto-accepting using API',
   async function (this: World, stepUser: string): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     await api.settings.disableAutoAcceptShare({ user })
   }
 )
@@ -108,7 +121,7 @@ Given(
 Given(
   '{string} creates the following file(s) into personal space using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.uploadFileInPersonalSpace({
         user,
@@ -122,7 +135,7 @@ Given(
 Given(
   '{string} creates the following file(s) with mtime into personal space using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.uploadFileInPersonalSpace({
         user,
@@ -137,7 +150,7 @@ Given(
 Given(
   '{string} creates {int} file(s) in personal space using API',
   async function (this: World, stepUser: string, numberOfFiles: number): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (let i = 1; i <= numberOfFiles; i++) {
       await api.dav.uploadFileInPersonalSpace({
         user,
@@ -151,7 +164,7 @@ Given(
 Given(
   '{string} uploads the following local file(s) into personal space using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       const fileInfo = this.filesEnvironment.getFile({ name: info.localFile.split('/').pop() })
       const content = fs.readFileSync(fileInfo.path)
@@ -167,7 +180,10 @@ Given(
 Given(
   '{string} creates the following project space(s) using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user =
+      stepUser === 'Admin'
+        ? this.usersEnvironment.getUser({ key: stepUser })
+        : this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const space of stepTable.hashes()) {
       const spaceId = await api.graph.createSpace({ user, space: space as unknown as Space })
       this.spacesEnvironment.createSpace({
@@ -186,7 +202,7 @@ Given(
     space: string,
     stepTable: DataTable
   ): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.uploadFileInsideSpaceBySpaceName({
         user,
@@ -206,7 +222,7 @@ Given(
     numberOfFiles: number,
     space: string
   ): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (let i = 1; i <= numberOfFiles; i++) {
       await api.dav.uploadFileInsideSpaceBySpaceName({
         user,
@@ -226,7 +242,7 @@ Given(
     space: string,
     stepTable: DataTable
   ): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.createFolderInsideSpaceBySpaceName({
         user,
@@ -245,7 +261,7 @@ Given(
     numberOfFolders: number,
     space: string
   ): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (let i = 1; i <= numberOfFolders; i++) {
       await api.dav.createFolderInsideSpaceBySpaceName({
         user,
@@ -264,7 +280,10 @@ Given(
     space: string,
     stepTable: DataTable
   ): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user =
+      stepUser === 'Admin'
+        ? this.usersEnvironment.getUser({ key: stepUser })
+        : this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.share.addMembersToTheProjectSpace({
         user,
@@ -280,7 +299,7 @@ Given(
 Given(
   '{string} adds the following tags for the following resources using API',
   async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.dav.addTagToResource({ user, resource: info.resource, tags: info.tags })
     }
@@ -290,7 +309,7 @@ Given(
 Given(
   '{string} creates a public link of following resource using API',
   async function (this: World, stepUser: string, stepTable: DataTable) {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
 
     for (const info of stepTable.hashes()) {
       await api.share.createLinkShare({
@@ -308,7 +327,7 @@ Given(
 Given(
   '{string} creates a public link of the space using API',
   async function (this: World, stepUser: string, stepTable: DataTable) {
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     for (const info of stepTable.hashes()) {
       await api.share.createSpaceLinkShare({
         user,

@@ -4,7 +4,7 @@ export const config = {
   // environment
   assets: './tests/e2e/filesForUpload',
   tempAssetsPath: './tests/e2e/filesForUpload/temp',
-  baseUrlOpenCloud: process.env.BASE_URL_OPEN_CLOUD ?? 'host.docker.internal:9200',
+  baseUrlOpenCloud: process.env.OC_BASE_URL ?? 'host.docker.internal:9200',
   basicAuth: process.env.BASIC_AUTH === 'true',
   // keycloak config
   keycloak: process.env.KEYCLOAK === 'true',
@@ -19,8 +19,7 @@ export const config = {
     return withHttp(this.keycloakHost + '/admin/master/console')
   },
   // ocm config
-  federatedbaseUrlOpenCloud:
-    process.env.FEDERATED_BASE_URL_OPEN_CLOUD ?? 'federation-open-cloud:10200',
+  federatedbaseUrlOpenCloud: process.env.OC_FEDERATED_BASE_UR ?? 'federation-open-cloud:10200',
   federatedServer: false,
   get baseUrl() {
     return withHttp(this.federatedServer ? this.federatedbaseUrlOpenCloud : this.baseUrlOpenCloud)
@@ -29,6 +28,7 @@ export const config = {
   logLevel: process.env.LOG_LEVEL || 'silent',
   // cucumber
   retry: process.env.RETRY || 0,
+  parallel: parseInt(process.env.PARALLEL) || 1,
   // playwright
   slowMo: parseInt(process.env.SLOW_MO) || 0,
   timeout: parseInt(process.env.TIMEOUT) || 60,

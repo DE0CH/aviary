@@ -5,6 +5,7 @@ export const dummyUserStore = new Map<string, User>([
     'admin',
     {
       id: 'admin',
+      username: 'admin',
       displayName: process.env.ADMIN_USERNAME || 'admin',
       password: process.env.ADMIN_PASSWORD || 'admin',
       email: 'admin@example.org'
@@ -14,6 +15,7 @@ export const dummyUserStore = new Map<string, User>([
     'alice',
     {
       id: 'alice',
+      username: 'alice',
       displayName: 'Alice Hansen',
       password: '1234',
       email: 'alice@example.org'
@@ -23,6 +25,7 @@ export const dummyUserStore = new Map<string, User>([
     'brian',
     {
       id: 'brian',
+      username: 'brian',
       displayName: 'Brian Murphy',
       password: '1234',
       email: 'brian@example.org'
@@ -32,6 +35,7 @@ export const dummyUserStore = new Map<string, User>([
     'carol',
     {
       id: 'carol',
+      username: 'carol',
       displayName: 'Carol King',
       password: '1234',
       email: 'carol@example.org'
@@ -41,7 +45,8 @@ export const dummyUserStore = new Map<string, User>([
     'david',
     {
       id: 'david',
-      displayName: 'David William Goodall',
+      username: 'david',
+      displayName: 'David Goodall',
       password: '1234',
       email: 'david@example.org'
     }
@@ -50,6 +55,7 @@ export const dummyUserStore = new Map<string, User>([
     'edith',
     {
       id: 'edith',
+      username: 'edith',
       displayName: 'Edith Anne Widder',
       password: '1234',
       email: 'edith@example.org'
@@ -59,6 +65,7 @@ export const dummyUserStore = new Map<string, User>([
     'max',
     {
       id: 'max',
+      username: 'max',
       displayName: 'Max Testing',
       password: '12345678',
       email: 'maxtesting@opencloud.eu'

@@ -430,5 +430,5 @@ export const waitForEditPanelToBeVisible = async (args: { page: Page }): Promise
 
 const getGroupId = (group: string): string => {
   const usersEnvironment = new UsersEnvironment()
-  return usersEnvironment.getCreatedGroup({ key: group }).uuid
+  return usersEnvironment.getCreatedGroupByDisplayName(group).uuid
 }

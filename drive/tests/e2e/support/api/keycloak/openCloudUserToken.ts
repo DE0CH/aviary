@@ -63,7 +63,7 @@ const getCode = async ({
   const authCodeResponse = await fetch(auhorizationUrl, {
     method: 'POST',
     body: new URLSearchParams({
-      username: user.id,
+      username: user.username,
       password: user.password
     }),
     redirect: 'manual',
@@ -113,7 +113,7 @@ export const setAccessTokenForKeycloakOpenCloudUser = async (user: User) => {
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.id,
+      userId: user.username,
       accessToken: token.access_token,
       refreshToken: token.refresh_token
     }
@@ -141,7 +141,7 @@ export const refreshAccessTokenForKeycloakOpenCloudUser = async (user: User) => 
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.id,
+      userId: user.userName,
       accessToken: token.access_token,
       refreshToken: token.refresh_token
     }

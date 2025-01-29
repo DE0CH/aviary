@@ -17,12 +17,12 @@ export function TokenEnvironmentFactory(type?: TokenProviderType) {
 class IdpTokenEnvironment {
   getToken({ user }: { user: User }): Token {
     const store = config.federatedServer ? federatedTokenStore : createdTokenStore
-    return store.get(user.id)
+    return store.get(user.username)
   }
 
   setToken({ user, token }: { user: User; token: Token }): Token {
     const store = config.federatedServer ? federatedTokenStore : createdTokenStore
-    store.set(user.id, token)
+    store.set(user.username, token)
     return token
   }
 

@@ -7,7 +7,7 @@ Given(
   async function (this: World, stepUser: any): Promise<void> {
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
     const pageObject = new objects.scienceMesh.Federation({ page })
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     await pageObject.generateInvitation(user.id)
   }
 )

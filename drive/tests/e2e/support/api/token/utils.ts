@@ -21,7 +21,7 @@ const getAuthorizedEndPoint = async (user: User): Promise<Array<string>> => {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      params: [user.id, user.password, '1'],
+      params: [user.username, user.password, '1'],
       hello: {
         scope: 'openid profile email',
         client_id: 'web',
@@ -108,7 +108,7 @@ export const setAccessAndRefreshToken = async (user: User) => {
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.id,
+      userId: user.username,
       accessToken: tokenList.access_token,
       refreshToken: tokenList.refresh_token
     }

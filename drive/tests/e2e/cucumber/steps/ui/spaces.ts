@@ -90,8 +90,8 @@ When(
     for (const { user, role, kind } of stepTable.hashes()) {
       const collaborator =
         kind === 'user'
-          ? this.usersEnvironment.getUser({ key: user })
-          : this.usersEnvironment.getGroup({ key: user })
+          ? this.usersEnvironment.getCreatedUser({ key: user })
+          : this.usersEnvironment.getCreatedGroup({ key: user })
       const collaboratorWithRole = {
         collaborator,
         role
@@ -108,7 +108,7 @@ When(
     const spacesObject = new objects.applicationFiles.Spaces({ page })
     for (const { user, role } of stepTable.hashes()) {
       const member = {
-        collaborator: this.usersEnvironment.getUser({ key: user }),
+        collaborator: this.usersEnvironment.getCreatedUser({ key: user }),
         role
       }
       await spacesObject.removeAccessToMember({ users: [member] })
@@ -148,7 +148,7 @@ When(
     const spacesObject = new objects.applicationFiles.Spaces({ page })
     for (const { user, role } of stepTable.hashes()) {
       const member = {
-        collaborator: this.usersEnvironment.getUser({ key: user }),
+        collaborator: this.usersEnvironment.getCreatedUser({ key: user }),
         role
       }
       await spacesObject.changeRoles({ users: [member] })
@@ -164,7 +164,7 @@ When(
     await spacesObject.removeAccessToMember({
       users: [
         {
-          collaborator: this.usersEnvironment.getUser({ key: stepUser })
+          collaborator: this.usersEnvironment.getCreatedUser({ key: stepUser })
         }
       ],
       removeOwnSpaceAccess: true
@@ -182,7 +182,7 @@ When(
   ): Promise<void> {
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
     const spacesObject = new objects.applicationFiles.Spaces({ page })
-    const member = { collaborator: this.usersEnvironment.getUser({ key: memberName }) }
+    const member = { collaborator: this.usersEnvironment.getCreatedUser({ key: memberName }) }
     await spacesObject.addExpirationDate({ member, expirationDate })
   }
 )
@@ -192,7 +192,7 @@ When(
   async function (this: World, stepUser: string, memberName: string): Promise<void> {
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
     const spacesObject = new objects.applicationFiles.Spaces({ page })
-    const member = { collaborator: this.usersEnvironment.getUser({ key: memberName }) }
+    const member = { collaborator: this.usersEnvironment.getCreatedUser({ key: memberName }) }
     await spacesObject.removeExpirationDate({ member })
   }
 )

@@ -60,7 +60,7 @@ When('{string} logs out', LogOutUser)
 Then('{string} fails to log in', async function (this: World, stepUser: string): Promise<void> {
   await createNewSession(this, stepUser)
   const { page } = this.actorsEnvironment.getActor({ key: stepUser })
-  const user = this.usersEnvironment.getUser({ key: stepUser })
+  const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
 
   await page.goto(config.baseUrl)
   await page.locator('#oc-login-username').fill(user.id)
@@ -74,7 +74,7 @@ When(
   async function (this: World, stepUser: string): Promise<void> {
     const sessionObject = await createNewSession(this, stepUser)
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
-    const user = this.usersEnvironment.getUser({ key: stepUser })
+    const user = this.usersEnvironment.getCreatedUser({ key: stepUser })
     await sessionObject.login(user)
     await page.locator('#web').waitFor()
   }

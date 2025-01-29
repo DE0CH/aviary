@@ -50,7 +50,7 @@ export const refreshAccessTokenForKeycloakUser = async (user: User): Promise<voi
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.id,
+      userId: user.username,
       accessToken: resBody.access_token,
       refreshToken: resBody.refresh_token
     }
@@ -78,7 +78,7 @@ export const setAccessTokenForKeycloakUser = async (user: User): Promise<void> =
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.id,
+      userId: user.username,
       accessToken: resBody.access_token,
       refreshToken: resBody.refresh_token
     }

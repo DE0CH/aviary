@@ -19,7 +19,11 @@ Then(
     const accountObject = new objects.account.Account({ page })
 
     for (const info of stepTable.hashes()) {
-      expect(await accountObject.getUserInfo(info.key)).toBe(info.value)
+      const actualText = await accountObject.getUserInfo(info.key)
+      // remove unique prefix from group names
+      const cleanedText = actualText.replace(/-\w{3,}/g, '')
+
+      expect(cleanedText).toContain(info.value)
     }
   }
 )

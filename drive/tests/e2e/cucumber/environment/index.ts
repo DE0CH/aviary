@@ -12,6 +12,7 @@ import pino from 'pino'
 import { Browser, chromium, firefox, webkit } from '@playwright/test'
 import path from 'path'
 import fs from 'fs'
+import { v4 as uuidv4 } from 'uuid'
 
 import { World } from './world'
 import { state } from './shared'
@@ -77,6 +78,7 @@ Before(async function (this: World, { pickle }: ITestCaseHookParameter) {
       }
     }
   }
+  this.uniquePrefix = uuidv4().substring(0, 3)
 })
 
 BeforeAll(async (): Promise<void> => {

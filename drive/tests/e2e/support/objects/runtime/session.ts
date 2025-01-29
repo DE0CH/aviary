@@ -29,7 +29,7 @@ export class Session {
   }
 
   async login(user: User): Promise<void> {
-    const { id, password } = user
+    const { username, password } = user
 
     await Promise.all([
       this.#page.waitForResponse(
@@ -38,7 +38,7 @@ export class Session {
           resp.status() === 200 &&
           resp.request().method() === 'POST'
       ),
-      this.signIn(id, password)
+      this.signIn(username, password)
     ])
   }
 

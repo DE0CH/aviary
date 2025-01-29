@@ -25,7 +25,7 @@ export const createUser = async ({ user, admin }: { user: User; admin: User }): 
   const body = JSON.stringify({
     displayName: user.displayName,
     mail: user.email,
-    onPremisesSamAccountName: user.id,
+    onPremisesSamAccountName: user.username,
     passwordProfile: { password: user.password }
   })
 
@@ -48,12 +48,12 @@ export const createUser = async ({ user, admin }: { user: User; admin: User }): 
 export const deleteUser = async ({ user, admin }: { user: User; admin: User }): Promise<User> => {
   await request({
     method: 'DELETE',
-    path: join('graph', 'v1.0', 'users', user.id),
+    path: join('graph', 'v1.0', 'users', user.username),
     user: admin
   })
   try {
     const usersEnvironment = new UsersEnvironment()
-    usersEnvironment.removeCreatedUser({ key: user.id })
+    usersEnvironment.removeCreatedUser({ key: user.username })
   } catch {}
   return user
 }
@@ -62,7 +62,7 @@ export const getUserId = async ({ user, admin }: { user: User; admin: User }): P
   let userId = ''
   const response = await request({
     method: 'GET',
-    path: join('graph', 'v1.0', 'users', user.id),
+    path: join('graph', 'v1.0', 'users', user.username),
     user: admin
   })
   if (response.ok) {
@@ -117,17 +117,14 @@ export const deleteGroup = async ({
 }
 
 export const addUserToGroup = async ({
-  user,
-  group,
+  userId,
+  groupId,
   admin
 }: {
-  user: User
-  group: Group
+  userId: string
+  groupId: string
   admin: User
 }): Promise<void> => {
-  const usersEnvironment = new UsersEnvironment()
-  const userId = usersEnvironment.getCreatedUser({ key: user.id }).uuid
-  const groupId = usersEnvironment.getCreatedGroup({ key: group.id }).uuid
   const body = JSON.stringify({
     '@odata.id': join(config.baseUrl, 'graph', 'v1.0', 'users', userId)
   })

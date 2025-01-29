@@ -221,8 +221,8 @@ Feature: share
       | Type | User         |
     And "Alice" sets the expiration date of share "myfolder" of group "sales" to "+3 days"
     And "Alice" checks the following access details of share "myfolder" for group "sales"
-      | Name | sales department |
-      | Type | Group            |
+      | Name | sales  |
+      | Type | Group  |
     # remove share with group
     When "Alice" removes following sharee
       | resource | recipient | type  |

@@ -103,9 +103,13 @@ export class Users {
     const currentUser = this.#usersEnvironment.getCreatedUser({ key })
 
     if (attribute !== 'role') {
+      const updatedUser =
+        attribute === 'userName' || attribute === 'id'
+          ? { ...currentUser, id: value, username: value }
+          : { ...currentUser, [attribute]: value }
       this.#usersEnvironment.updateCreatedUser({
         key: key,
-        user: { ...currentUser, [attribute === 'userName' ? 'id' : attribute]: value }
+        user: updatedUser
       })
     }
   }
@@ -162,6 +166,7 @@ export class Users {
     this.#usersEnvironment.storeCreatedUser({
       user: {
         id: response.onPremisesSamAccountName,
+        username: response.onPremisesSamAccountName,
         displayName: response.displayName,
         password: password,
         email: response.mail,
