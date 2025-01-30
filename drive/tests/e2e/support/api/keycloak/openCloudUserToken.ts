@@ -141,7 +141,7 @@ export const refreshAccessTokenForKeycloakOpenCloudUser = async (user: User) => 
   tokenEnvironment.setToken({
     user: { ...user },
     token: {
-      userId: user.userName,
+      userId: user.username,
       accessToken: token.access_token,
       refreshToken: token.refresh_token
     }
