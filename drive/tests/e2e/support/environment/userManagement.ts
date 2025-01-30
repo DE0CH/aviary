@@ -44,20 +44,19 @@ export class UsersEnvironment {
 
   getCreatedUser({ key }: { key: string }): User {
     const store = config.federatedServer ? federatedUserStore : createdUserStore
-    const userKey = key.toLowerCase()
-    if (!store.has(userKey)) {
-      throw new Error(`user with key '${userKey}' not found`)
+    if (!store.has(key)) {
+      throw new Error(`user with key '${key}' not found`)
     }
 
-    return store.get(userKey)
+    return store.get(key)
   }
 
   updateCreatedUser({ key, user }: { key: string; user: User }): User {
-    const userKey = key.toLowerCase()
-    if (!createdUserStore.has(userKey)) {
-      throw new Error(`user '${userKey}' not found`)
+    if (!createdUserStore.has(key)) {
+      throw new Error(`user '${key}' not found`)
     }
-    createdUserStore.delete(userKey)
+    this.removeCreatedUser({ key })
+    // createdUserStore.delete(key)
     createdUserStore.set(user.id, user)
 
     return user
@@ -65,13 +64,12 @@ export class UsersEnvironment {
 
   removeCreatedUser({ key }: { key: string }): boolean {
     const store = config.federatedServer ? federatedUserStore : createdUserStore
-    const userKey = key.toLowerCase()
 
-    if (!store.has(userKey)) {
-      throw new Error(`user '${userKey}' not found`)
+    if (!store.has(key)) {
+      throw new Error(`user '${key}' not found`)
     }
 
-    return store.delete(userKey)
+    return store.delete(key)
   }
 
   getGroup({ key }: { key: string }): Group {
@@ -86,8 +84,19 @@ export class UsersEnvironment {
   }
 
   getCreatedGroup({ key }: { key: string }): Group {
-    const groupKey = key.toLowerCase()
-    return createdGroupStore.get(groupKey)
+    if (!createdGroupStore.has(key)) {
+      throw new Error(`group with key '${key}' not found`)
+    }
+    return createdGroupStore.get(key)
+  }
+
+  getCreatedGroupByDisplayName(displayName: string): Group {
+    for (const group of createdGroupStore.values()) {
+      if (group.displayName === displayName) {
+        return group
+      }
+    }
+    throw new Error(`Group with displayName '${displayName}' not found`)
   }
 
   storeCreatedGroup({ group }: { group: Group }): Group {

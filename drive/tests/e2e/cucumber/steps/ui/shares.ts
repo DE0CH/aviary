@@ -22,8 +22,8 @@ const parseShareTable = function (
     acc[resource].push({
       collaborator:
         type === 'group'
-          ? usersEnvironment.getGroup({ key: recipient })
-          : usersEnvironment.getUser({ key: recipient }),
+          ? usersEnvironment.getCreatedGroup({ key: recipient })
+          : usersEnvironment.getCreatedUser({ key: recipient }),
       role,
       type: type as CollaboratorType,
       resourceType,
@@ -254,8 +254,8 @@ When(
       collaborator: {
         collaborator:
           collaboratorType === 'group'
-            ? this.usersEnvironment.getGroup({ key: collaboratorName })
-            : this.usersEnvironment.getUser({ key: collaboratorName }),
+            ? this.usersEnvironment.getCreatedGroup({ key: collaboratorName })
+            : this.usersEnvironment.getCreatedUser({ key: collaboratorName }),
         type: collaboratorType
       } as ICollaborator,
       expirationDate
@@ -281,12 +281,15 @@ When(
       collaborator: {
         collaborator:
           collaboratorType === 'group'
-            ? this.usersEnvironment.getGroup({ key: collaboratorName })
-            : this.usersEnvironment.getUser({ key: collaboratorName }),
+            ? this.usersEnvironment.getCreatedGroup({ key: collaboratorName })
+            : this.usersEnvironment.getCreatedUser({ key: collaboratorName }),
         type: collaboratorType
       } as ICollaborator
     })
 
+    if (collaboratorType === 'group') {
+      actualDetails.Name = actualDetails.Name.replace(/-\w{3,}/g, '') // Remove suffix from group like "-6d1"
+    }
     expect(actualDetails).toMatchObject(expectedDetails)
   }
 )
@@ -313,10 +316,10 @@ Then(
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
     const shareObject = new objects.applicationFiles.Share({ page })
     const changeRole = shareObject.changeRoleLocator(
-      this.usersEnvironment.getUser({ key: recipient })
+      this.usersEnvironment.getCreatedUser({ key: recipient })
     )
     const changeShare = shareObject.changeShareLocator(
-      this.usersEnvironment.getUser({ key: recipient })
+      this.usersEnvironment.getCreatedUser({ key: recipient })
     )
 
     await shareObject.openSharingPanel(resource)

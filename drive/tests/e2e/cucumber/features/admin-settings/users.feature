@@ -59,8 +59,8 @@ Feature: users management
       | Brian |
       | Carol |
     When "Admin" sets the following filter
-      | filter | values                              |
-      | groups | sales department,finance department |
+      | filter | values        |
+      | groups | sales,finance |
     Then "Admin" should see the following users
       | user  |
       | Alice |
@@ -123,8 +123,8 @@ Feature: users management
     And "Admin" logs out
     When "Alice" logs in
     Then "Alice" should have self info:
-      | key    | value                                   |
-      | groups | finance department, security department |
+      | key    | value             |
+      | groups | finance, security |
     And "Alice" logs out
 
 
@@ -171,12 +171,12 @@ Feature: users management
     And "Admin" navigates to the users management page
     And "Admin" creates the following user
       | name | displayname | email                   | password |
-      | max  | Max Testing | maxtesting@opencloud.eu | 12345678 |
+      | Max  | Max Testing | maxtesting@opencloud.eu | 12345678 |
     And "Admin" logs out
     When "Max" logs in
     Then "Max" should have self info:
       | key         | value                   |
-      | username    | max                     |
+      | username    | Max                     |
       | displayname | Max Testing             |
       | email       | maxtesting@opencloud.eu |
     And "Max" logs out

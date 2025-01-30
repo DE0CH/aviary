@@ -35,7 +35,7 @@ export const request = async ({
 
   const basicHeader = {
     'OCS-APIREQUEST': true as any,
-    ...(user.id && authHeader),
+    ...(user.username && authHeader),
     ...header
   }
 

@@ -244,7 +244,19 @@ When(
     const usersObject = new objects.applicationAdminSettings.Users({ page })
 
     for (const { filter, values } of stepTable.hashes()) {
-      await usersObject.filter({ filter, values: values.split(',') })
+      let cleanedValues: string[]
+
+      if (filter === 'groups') {
+        cleanedValues = values
+          .split(',')
+          .map(
+            (groupKey) =>
+              this.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+          )
+      } else {
+        cleanedValues = values.split(',').map((val) => val.trim())
+      }
+      await usersObject.filter({ filter, values: cleanedValues })
     }
   }
 )
@@ -267,12 +279,18 @@ When(
       await usersObject.select({ key: user })
     }
 
+    const formattedGroups = groups
+      .split(',')
+      .map(
+        (groupKey) => this.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+      )
+
     switch (action) {
       case 'adds':
-        await usersObject.addToGroupsBatchAtion({ userIds, groups: groups.split(',') })
+        await usersObject.addToGroupsBatchAtion({ userIds, groups: formattedGroups })
         break
       case 'removes':
-        await usersObject.removeFromGroupsBatchAtion({ userIds, groups: groups.split(',') })
+        await usersObject.removeFromGroupsBatchAtion({ userIds, groups: formattedGroups })
         break
       default:
         throw new Error(`'${action}' not implemented`)
@@ -312,18 +330,24 @@ When(
   ): Promise<void> {
     const { page } = this.actorsEnvironment.getActor({ key: stepUser })
     const usersObject = new objects.applicationAdminSettings.Users({ page })
+    const formattedGroups = groups
+      .split(',')
+      .map(
+        (groupKey) => this.usersEnvironment.getCreatedGroup({ key: groupKey.trim() }).displayName
+      )
+
     switch (action) {
       case 'adds':
         await usersObject.addToGroups({
           key: user,
-          groups: groups.split(','),
+          groups: formattedGroups,
           action: 'context-menu'
         })
         break
       case 'removes':
         await usersObject.removeFromGroups({
           key: user,
-          groups: groups.split(','),
+          groups: formattedGroups,
           action: 'context-menu'
         })
         break

@@ -98,9 +98,13 @@ export default class Collaborator {
     } = args
     const collaboratorInputLocator = page.locator(Collaborator.inviteInput)
     await collaboratorInputLocator.click()
+
+    // use unique email for user and unique display name for group
+    const collaboratorIdentifier =
+      'email' in collaborator ? collaborator.email : collaborator.displayName
     await Promise.all([
       page.waitForResponse((resp) => resp.url().includes('users') && resp.status() === 200),
-      collaboratorInputLocator.fill(collaborator.id)
+      collaboratorInputLocator.fill(collaboratorIdentifier)
     ])
     await collaboratorInputLocator.focus()
     await page.locator('.vs--open').waitFor()

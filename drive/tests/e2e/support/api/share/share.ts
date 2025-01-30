@@ -98,10 +98,10 @@ const getRecipientId = (shareType: string, shareWith: string): string => {
   const usersEnvironment: UsersEnvironment = new UsersEnvironment()
   let recipient: User | Group, recipientId: string
   if (shareType === 'user') {
-    recipient = usersEnvironment.getUser({ key: shareWith })
+    recipient = usersEnvironment.getCreatedUser({ key: shareWith })
     recipientId = usersEnvironment.getCreatedUser({ key: recipient.id }).uuid
   } else {
-    recipient = usersEnvironment.getGroup({ key: shareWith })
+    recipient = usersEnvironment.getCreatedGroup({ key: shareWith })
     recipientId = usersEnvironment.getCreatedGroup({ key: recipient.id }).uuid
   }
   return recipientId

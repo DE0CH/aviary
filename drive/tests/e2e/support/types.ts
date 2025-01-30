@@ -26,6 +26,7 @@ export interface User {
    * actual id, that will be exposed by the graph api
    */
   uuid?: string
+  username: string
   id: string
   displayName: string
   password: string

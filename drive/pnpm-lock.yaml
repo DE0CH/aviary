@@ -1267,6 +1267,9 @@ importers:
       luxon:
         specifier: 3.5.0
         version: 3.5.0
+      uuid:
+        specifier: ^11.0.0
+        version: 11.0.3
       xml-js:
         specifier: ^1.6.11
         version: 1.6.11
