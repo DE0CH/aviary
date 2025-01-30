@@ -9,7 +9,7 @@ import { join } from 'path'
 import { WebDAV } from '@opencloud-eu/web-client/webdav'
 import { isLocationSpacesActive } from '../../../router'
 import { getIndicators } from '../../../helpers'
-import { EDITOR_MODE_CREATE, useFileActions } from './useFileActions'
+import { useFileActions } from './useFileActions'
 import {
   useMessages,
   useModals,
@@ -89,7 +89,7 @@ export const useFileActionsCreateNewFile = ({ space }: { space?: Ref<SpaceResour
 
     resourcesStore.upsertResource(resource)
 
-    return openEditor(appFileExtension, unref(space), resource, EDITOR_MODE_CREATE)
+    return openEditor(appFileExtension, unref(space), resource)
   }
 
   const handler = (

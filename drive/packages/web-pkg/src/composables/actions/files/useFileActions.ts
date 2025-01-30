@@ -136,12 +136,10 @@ export const useFileActions = () => {
             return getEditorRoute({
               appFileExtension: fileExtension,
               space,
-              resource: resources[0],
-              mode: EDITOR_MODE_EDIT
+              resource: resources[0]
             })
           },
-          handler: (options) =>
-            openEditor(fileExtension, options.space, options.resources[0], EDITOR_MODE_EDIT),
+          handler: (options) => openEditor(fileExtension, options.space, options.resources[0]),
           isVisible: ({ resources }) => {
             if (resources.length !== 1) {
               return false
@@ -185,34 +183,28 @@ export const useFileActions = () => {
   const getEditorRoute = ({
     appFileExtension,
     space,
-    resource,
-    mode
+    resource
   }: {
     appFileExtension: ApplicationFileExtension
     space: SpaceResource
     resource: Resource
-    mode: string
   }) => {
     const remoteItemId = isShareSpaceResource(space) ? space.id : undefined
     const routeName = appFileExtension.routeName || appFileExtension.app
-    const routeOpts = getEditorRouteOpts(routeName, space, resource, mode, remoteItemId)
+    const routeOpts = getEditorRouteOpts(routeName, space, resource, remoteItemId)
     return router.resolve(routeOpts)
   }
   const getEditorRouteOpts = (
     routeName: RouteRecordName,
     space: SpaceResource,
     resource: Resource,
-    mode: string,
     remoteItemId: string,
     templateId?: string
   ) => {
     return {
       name: routeName,
       params: {
-        driveAliasAndItem: space?.getDriveAliasAndItem(resource),
-        filePath: resource.path,
-        fileId: resource.fileId,
-        mode
+        driveAliasAndItem: space?.getDriveAliasAndItem(resource)
       },
       query: {
         ...(remoteItemId && { shareId: remoteItemId }),
@@ -226,12 +218,11 @@ export const useFileActions = () => {
   const openEditor = (
     appFileExtension: ApplicationFileExtension,
     space: SpaceResource,
-    resource: Resource,
-    mode: string
+    resource: Resource
   ) => {
     const remoteItemId = isShareSpaceResource(space) ? space.id : undefined
     const routeName = appFileExtension.routeName || appFileExtension.app
-    const routeOpts = getEditorRouteOpts(routeName, space, resource, mode, remoteItemId)
+    const routeOpts = getEditorRouteOpts(routeName, space, resource, remoteItemId)
 
     if (unref(options).cernFeatures) {
       const path = router.resolve(routeOpts).href
