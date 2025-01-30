@@ -301,7 +301,7 @@ services:
       traefik.http.middlewares.https_config.headers.stsSeconds: 63072000
       traefik.http.middlewares.https_config.headers.stsIncludeSubdomains: true
       traefik.http.middlewares.cors.headers.accesscontrolallowmethods: '*'
-      traefik.http.middlewares.cors.headers.accesscontrolallowheaders: '*'
+      traefik.http.middlewares.cors.headers.accesscontrolallowheaders: '*, Authorization'
       traefik.http.middlewares.cors.headers.accesscontrolalloworiginlist: '*'
       traefik.http.middlewares.cors.headers.accesscontrolexposeheaders: '*'
       traefik.http.middlewares.cors.headers.accesscontrolmaxage: 100
