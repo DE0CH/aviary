@@ -64,6 +64,7 @@ export default defineComponent({
     resource: { type: Object as PropType<Resource>, required: true },
     isReadOnly: { type: Boolean, required: true }
   },
+  emits: ['save', 'close'], // these are inherited from the AppWrapper.vue
   setup(props) {
     const language = useGettext()
     const { $gettext } = language

@@ -265,7 +265,7 @@ export default defineComponent({
 
     const instance = getCurrentInstance()
     watch(
-      props.currentFileContext,
+      () => props.currentFileContext,
       async () => {
         if (!props.currentFileContext) {
           return

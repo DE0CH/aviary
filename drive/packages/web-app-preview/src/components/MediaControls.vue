@@ -132,7 +132,7 @@ export default defineComponent({
     },
     activeIndex: {
       type: Number,
-      required: true
+      default: 0
     },
     isFullScreenModeActivated: {
       type: Boolean,
