@@ -1,5 +1,5 @@
 <template>
-  <context-action-menu :menu-sections="menuSections" :action-options="_actionOptions" />
+  <context-action-menu :menu-sections="menuSections" :action-options="actionOptions" />
 </template>
 
 <script lang="ts">
@@ -202,8 +202,7 @@ export default defineComponent({
     })
 
     return {
-      menuSections,
-      _actionOptions: actionOptions
+      menuSections
     }
   }
 })

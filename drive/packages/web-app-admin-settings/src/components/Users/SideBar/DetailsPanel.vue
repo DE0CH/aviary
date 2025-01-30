@@ -8,21 +8,21 @@
       <oc-icon name="group" size="xxlarge" />
       <p>{{ multipleUsersSelectedText }}</p>
     </div>
-    <div v-if="_user">
-      <UserInfoBox :user="_user" />
+    <div v-if="user">
+      <UserInfoBox :user="user" />
       <dl
         class="details-list oc-m-rm"
         :aria-label="$gettext('Overview of the information about the selected user')"
       >
         <dt>{{ $gettext('User name') }}</dt>
-        <dd>{{ _user.onPremisesSamAccountName }}</dd>
+        <dd>{{ user.onPremisesSamAccountName }}</dd>
         <dt>{{ $gettext('First and last name') }}</dt>
-        <dd>{{ _user.displayName }}</dd>
+        <dd>{{ user.displayName }}</dd>
         <dt>{{ $gettext('Email') }}</dt>
-        <dd>{{ _user.mail }}</dd>
+        <dd>{{ user.mail }}</dd>
         <dt>{{ $gettext('Role') }}</dt>
         <dd>
-          <span v-if="_user.appRoleAssignments" v-text="roleDisplayName" />
+          <span v-if="user.appRoleAssignments" v-text="roleDisplayName" />
           <span v-else>
             <span class="oc-mr-xs">-</span>
             <oc-contextual-helper
@@ -54,7 +54,7 @@
         </dd>
         <dt>{{ $gettext('Groups') }}</dt>
         <dd>
-          <span v-if="_user.memberOf.length" v-text="groupsDisplayValue" />
+          <span v-if="user.memberOf.length" v-text="groupsDisplayValue" />
           <span v-else>
             <span class="oc-mr-xs">-</span>
             <oc-contextual-helper
@@ -95,18 +95,14 @@ export default defineComponent({
       required: true
     }
   },
-  setup(props) {
+  setup() {
     const language = useGettext()
-    const { $gettext } = language
     const currentLanguage = computed(() => {
       return language.current
     })
 
     return {
-      $gettext,
-      currentLanguage,
-      // HACK: make sure _user has a proper type
-      _user: computed(() => props.user as User)
+      currentLanguage
     }
   },
   computed: {
@@ -131,7 +127,7 @@ export default defineComponent({
       )
     },
     groupsDisplayValue() {
-      return this._user.memberOf
+      return this.user.memberOf
         .map((group) => group.displayName)
         .sort()
         .join(', ')

@@ -145,6 +145,7 @@ export default defineComponent({
     const { getMatchingSpace } = useGetMatchingSpace()
     const { dispatchModal } = useModals()
     const { canShare } = useCanShare()
+    const { showMessage, showErrorMessage } = useMessages()
 
     const resourcesStore = useResourcesStore()
     const { removeResources, getAncestorById } = resourcesStore
@@ -230,7 +231,8 @@ export default defineComponent({
       removeResources,
       collaborators,
       canShare,
-      ...useMessages()
+      showMessage,
+      showErrorMessage
     }
   },
   computed: {

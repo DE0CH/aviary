@@ -120,6 +120,7 @@ export default defineComponent({
     const { graphRoles } = storeToRefs(sharesStore)
     const spacesStore = useSpacesStore()
     const { upsertSpace, getSpaceMembers } = spacesStore
+    const { showMessage, showErrorMessage } = useMessages()
 
     const configStore = useConfigStore()
     const { options: configOptions } = storeToRefs(configStore)
@@ -150,7 +151,8 @@ export default defineComponent({
       filterTerm,
       isFilterOpen,
       filterInput,
-      ...useMessages()
+      showMessage,
+      showErrorMessage
     }
   },
   computed: {
