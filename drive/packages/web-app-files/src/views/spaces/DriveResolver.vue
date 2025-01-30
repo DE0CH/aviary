@@ -1,11 +1,8 @@
 <template>
   <app-loading-spinner v-if="isLoading" />
-  <template v-else>
-    <app-banner :file-id="fileId"></app-banner>
-    <drive-redirect v-if="!space" :drive-alias-and-item="driveAliasAndItem" />
-    <generic-trash v-else-if="isTrashRoute" :space="space" :item-id="itemId" />
-    <generic-space v-else :space="space" :item="item" :item-id="itemId" />
-  </template>
+  <drive-redirect v-else-if="!space" :drive-alias-and-item="driveAliasAndItem" />
+  <generic-trash v-else-if="isTrashRoute" :space="space" :item-id="itemId" />
+  <generic-space v-else :space="space" :item="item" :item-id="itemId" />
 </template>
 
 <script lang="ts">
@@ -37,11 +34,9 @@ import { locationPublicUpload } from '@opencloud-eu/web-pkg'
 import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
 import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
 import { dirname } from 'path'
-import { AppBanner } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
   components: {
-    AppBanner,
     DriveRedirect,
     GenericSpace,
     GenericTrash,

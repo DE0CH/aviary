@@ -17,8 +17,6 @@
         <oc-breadcrumb
           v-if="showBreadcrumb"
           id="files-breadcrumb"
-          data-testid="files-breadcrumbs"
-          class="oc-flex oc-flex-middle"
           context-menu-padding="small"
           :show-context-actions="showContextActions"
           :items="breadcrumbs"
