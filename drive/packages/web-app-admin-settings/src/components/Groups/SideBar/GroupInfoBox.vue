@@ -1,7 +1,7 @@
 <template>
   <div class="oc-flex group-info oc-mb-l">
-    <avatar-image class="oc-mb-m" :width="80" :userid="_group.id" :user-name="_group.displayName" />
-    <span class="oc-text-muted group-info-display-name" v-text="_group.displayName"></span>
+    <avatar-image class="oc-mb-m" :width="80" :userid="group.id" :user-name="group.displayName" />
+    <span class="oc-text-muted group-info-display-name" v-text="group.displayName"></span>
     <span class="oc-text-muted" v-text="groupMembersText"></span>
   </div>
 </template>
@@ -32,8 +32,7 @@ export default defineComponent({
     })
 
     return {
-      groupMembersText,
-      _group
+      groupMembersText
     }
   }
 })

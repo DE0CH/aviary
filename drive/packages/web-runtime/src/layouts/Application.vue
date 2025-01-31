@@ -79,6 +79,7 @@ import { useGettext } from 'vue3-gettext'
 
 import '@uppy/core/dist/style.min.css'
 import { storeToRefs } from 'pinia'
+import { markRaw } from 'vue'
 
 const MOBILE_BREAKPOINT = 640
 
@@ -192,7 +193,7 @@ export default defineComponent({
       id: progressBarExtensionId,
       type: 'customComponent',
       extensionPointIds: [progressBarExtensionPointId],
-      content: LoadingIndicator,
+      content: markRaw(LoadingIndicator),
       userPreference: {
         optionLabel: $gettext('Default progress bar')
       }

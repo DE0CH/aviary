@@ -302,9 +302,7 @@ export default defineComponent({
       formData,
       groupOptions,
       clientService,
-      onEditUser,
-      // HACK: make sure _user has a proper type
-      _user: computed(() => props.user as User)
+      onEditUser
     }
   },
   computed: {

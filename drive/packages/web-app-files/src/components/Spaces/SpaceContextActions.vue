@@ -1,6 +1,6 @@
 <template>
   <div>
-    <context-action-menu :menu-sections="menuSections" :action-options="_actionOptions" />
+    <context-action-menu :menu-sections="menuSections" :action-options="actionOptions" />
     <input
       id="space-image-upload-input"
       ref="spaceImageInput"
@@ -146,7 +146,6 @@ export default defineComponent({
     })
 
     return {
-      _actionOptions: actionOptions,
       menuSections,
       spaceImageInput,
       uploadImageActions,

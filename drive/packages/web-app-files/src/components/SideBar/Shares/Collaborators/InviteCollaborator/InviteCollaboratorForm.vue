@@ -249,7 +249,7 @@ export default defineComponent({
     const notifyEnabled = ref(false)
     const expirationDate = ref<string>()
     const selectedCollaborators = ref<CollaboratorAutoCompleteItem[]>([])
-    const announcement = ref<string>()
+    const announcement = ref<string>('')
     const selectedRole = ref<ShareRole>()
 
     const resource = inject<Resource>('resource')
@@ -509,7 +509,6 @@ export default defineComponent({
       isRunningOnEos: computed(() => configStore.options.runningOnEos),
       saving,
       savingDelayed,
-      ...useMessages(),
       searchInProgress,
       searchQuery,
       autocompleteResults,
@@ -529,6 +528,8 @@ export default defineComponent({
       noOptionsLabel,
       DateTime,
       showShareTypeFilter,
+      showMessage,
+      showErrorMessage,
 
       // CERN
       accountType,

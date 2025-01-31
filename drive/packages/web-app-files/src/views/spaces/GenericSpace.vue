@@ -1,5 +1,6 @@
 <template>
   <div class="oc-flex oc-width-1-1" :class="{ 'space-frontpage': isSpaceFrontpage }">
+    <app-banner :file-id="itemId?.toString() || ''" />
     <whitespace-context-menu ref="whitespaceContextMenu" :space="space" />
     <files-view-wrapper>
       <app-bar
@@ -129,6 +130,7 @@ import {
 } from '@opencloud-eu/web-client'
 
 import {
+  AppBanner,
   ResourceTransfer,
   TransferType,
   useConfigStore,
@@ -189,6 +191,7 @@ export default defineComponent({
   name: 'GenericSpace',
 
   components: {
+    AppBanner,
     AppBar,
     AppLoadingSpinner,
     ContextActions,

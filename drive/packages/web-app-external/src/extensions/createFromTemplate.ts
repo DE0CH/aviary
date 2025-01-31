@@ -4,7 +4,6 @@ import {
   contextRouteNameKey,
   contextRouteParamsKey,
   contextRouteQueryKey,
-  EDITOR_MODE_EDIT,
   FileAction,
   locationSpacesGeneric,
   resolveFileNameDuplicate,
@@ -98,7 +97,6 @@ export const useActionExtensionCreateFromTemplate = (
           routeName,
           spacesStore.personalSpace,
           createdFile,
-          EDITOR_MODE_EDIT,
           undefined,
           template.fileId
         )

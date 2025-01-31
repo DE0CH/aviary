@@ -13,7 +13,6 @@
             <oc-breadcrumb
               v-if="!isMobileWidth"
               id="admin-settings-breadcrumb"
-              class="oc-flex oc-flex-middle"
               :items="breadcrumbs"
             />
             <portal-target name="app.runtime.mobile.nav" />

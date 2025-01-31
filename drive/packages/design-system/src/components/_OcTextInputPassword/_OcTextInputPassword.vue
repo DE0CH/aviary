@@ -179,7 +179,6 @@ export default defineComponent({
 
     return {
       focus,
-      $gettext,
       password,
       showPassword,
       passwordInput,

@@ -2,7 +2,7 @@ import { useGettext } from 'vue3-gettext'
 import { useGetMatchingSpace } from '../spaces'
 import { useAppsStore, useResourcesStore, useSpacesStore } from '../piniaStores'
 import { useClientService } from '../clientService'
-import { EDITOR_MODE_EDIT, useFileActions } from './files'
+import { useFileActions } from './files'
 import { storeToRefs } from 'pinia'
 import { unref } from 'vue'
 import { resolveFileNameDuplicate } from '../../helpers'
@@ -45,7 +45,7 @@ export const useOpenEmptyEditor = () => {
       ({ app, extension: ext }) => app === appId && ext === extension
     )
 
-    openEditor(appFileExtension, space, emptyResource, EDITOR_MODE_EDIT)
+    openEditor(appFileExtension, space, emptyResource)
   }
 
   return {

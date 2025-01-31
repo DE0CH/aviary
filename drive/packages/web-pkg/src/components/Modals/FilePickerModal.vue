@@ -16,7 +16,6 @@
 <script lang="ts">
 import { defineComponent, onBeforeUnmount, onMounted, PropType, ref } from 'vue'
 import {
-  EDITOR_MODE_EDIT,
   Modal,
   useGetMatchingSpace,
   useModals,
@@ -80,7 +79,6 @@ export default defineComponent({
         unref(router.currentRoute).name,
         space,
         resource,
-        EDITOR_MODE_EDIT,
         remoteItemId
       )
       routeOpts.query = { ...routeOpts.query, ...locationQuery }
