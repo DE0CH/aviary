@@ -53,10 +53,10 @@ export default defineComponent({
 #oc-loading-indicator {
   .oc-progress {
     background-color: transparent;
-    height: 4px;
+    height: 2px;
 
     &-primary div {
-      background-color: var(--oc-color-swatch-primary-default);
+      background-color: var(--oc-color-swatch-brand-default);
     }
 
     &-indeterminate-first {
