@@ -121,7 +121,8 @@ describe('ViewOptions component', () => {
     })
     it('shows if the viewModes include "resource-tiles"', () => {
       const { wrapper } = getWrapper({
-        props: { viewModes: [mock<FolderView>({ name: FolderViewModeConstants.name.tiles })] }
+        props: { viewModes: [mock<FolderView>({ name: FolderViewModeConstants.name.tiles })] },
+        viewMode: FolderViewModeConstants.name.tiles
       })
       expect(wrapper.find(selectors.tileSizeSlider).exists()).toBeTruthy()
     })

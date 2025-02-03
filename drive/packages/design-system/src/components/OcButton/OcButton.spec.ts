@@ -106,9 +106,9 @@ describe('OcButton', () => {
     describe('when oc button is initialized with variation and appearance', () => {
       it.each`
         variation    | appearance   | expectedClass
-        ${'success'} | ${'raw'}     | ${'oc-button-success oc-button-success-raw'}
-        ${'success'} | ${'outline'} | ${'oc-button-success oc-button-success-outline'}
-        ${'primary'} | ${'raw'}     | ${'oc-button-primary oc-button-primary-raw'}
+        ${'success'} | ${'raw'}     | ${'oc-button-success oc-button-raw oc-button-success-raw'}
+        ${'success'} | ${'outline'} | ${'oc-button-success oc-button-outline oc-button-success-outline'}
+        ${'primary'} | ${'raw'}     | ${'oc-button-primary oc-button-raw oc-button-primary-raw'}
         ${'primary'} | ${'outline'} | ${'oc-button-primary-outline'}
       `('should have extra appearance class', ({ variation, appearance, expectedClass }) => {
         const wrapper = getWrapperWithProps({
