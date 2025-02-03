@@ -208,7 +208,7 @@ importers:
         specifier: ^4.2.2
         version: 4.3.1
       emoji-mart:
-        specifier: 5.6.0
+        specifier: ^5.6.0
         version: 5.6.0
       focus-trap:
         specifier: ^7.6.0
@@ -238,7 +238,7 @@ importers:
         specifier: ^4.2.5
         version: 4.2.5(vue@3.5.13(typescript@5.6.3))
       vue-select:
-        specifier: 4.0.0-beta.6
+        specifier: ^4.0.0-beta.6
         version: 4.0.0-beta.6(vue@3.5.13(typescript@5.6.3))
       vue3-gettext:
         specifier: ^2.4.0
@@ -963,19 +963,19 @@ importers:
         specifier: ^3.1.0
         version: 3.1.0
       '@uppy/core':
-        specifier: 4.3.1
+        specifier: ^4.3.1
         version: 4.3.1
       '@uppy/drop-target':
-        specifier: 3.0.2
+        specifier: ^3.0.2
         version: 3.0.2(@uppy/core@4.3.1)
       '@uppy/tus':
-        specifier: 4.1.5
+        specifier: ^4.1.5
         version: 4.1.5(@uppy/core@4.3.1)
       '@uppy/utils':
-        specifier: 6.0.6
+        specifier: ^6.0.6
         version: 6.0.6
       '@uppy/xhr-upload':
-        specifier: 4.2.3
+        specifier: ^4.2.3
         version: 4.2.3(@uppy/core@4.3.1)
       '@vue/shared':
         specifier: ^3.5.11
@@ -1221,22 +1221,22 @@ importers:
         specifier: ^2.4.6
         version: 2.4.6
       axios:
-        specifier: 1.7.9
+        specifier: ^1.7.9
         version: 1.7.9
       pinia:
-        specifier: 2.3.0
+        specifier: ^2.3.0
         version: 2.3.0(typescript@5.6.3)(vue@3.5.13(typescript@5.6.3))
       vitest-mock-extended:
-        specifier: 2.0.2
+        specifier: ^2.0.2
         version: 2.0.2(typescript@5.6.3)(vitest@2.1.6(@types/node@22.9.0)(happy-dom@15.11.6)(jiti@1.21.0)(jsdom@25.0.1)(sass@1.81.0)(terser@5.36.0)(yaml@2.6.0))
       vue:
         specifier: ^3.5.10
         version: 3.5.13(typescript@5.6.3)
       vue-router:
-        specifier: 4.2.5
+        specifier: ^4.2.5
         version: 4.2.5(vue@3.5.13(typescript@5.6.3))
       vue3-gettext:
-        specifier: 2.4.0
+        specifier: ^2.4.0
         version: 2.4.0(patch_hash=x32qkm4z6srz5xuveescagpdyu)(@vue/compiler-sfc@3.5.13)(vue@3.5.13(typescript@5.6.3))
     devDependencies:
       '@vitejs/plugin-vue':
