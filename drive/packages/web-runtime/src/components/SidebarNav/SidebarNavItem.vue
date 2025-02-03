@@ -1,13 +1,15 @@
 <template>
   <li class="oc-sidebar-nav-item oc-pb-xs oc-px-s" :aria-current="active ? 'page' : null">
     <oc-button
-      v-oc-tooltip="toolTip"
       :type="handler ? 'button' : 'router-link'"
       appearance="raw"
       :variation="active ? 'primary' : 'passive'"
       :class="['oc-sidebar-nav-item-link', 'oc-oc-width-1-1', { active: active }]"
       :data-nav-id="index"
       :data-nav-name="navName"
+      :aria-label="
+        collapsed ? $gettext('Navigate to %{ pageName } page', { pageName: name }) : undefined
+      "
       v-bind="attrs"
     >
       <span class="oc-flex">
@@ -18,7 +20,8 @@
   </li>
 </template>
 <script lang="ts">
-import { computed, defineComponent, PropType } from 'vue'
+import { useRouter } from '@opencloud-eu/web-pkg'
+import { computed, defineComponent, PropType, unref } from 'vue'
 import { RouteLocationRaw } from 'vue-router'
 
 export default defineComponent({
@@ -62,6 +65,8 @@ export default defineComponent({
     }
   },
   setup(props) {
+    const router = useRouter()
+
     const attrs = computed(() => {
       return {
         ...(props.handler && { onClick: props.handler }),
@@ -69,27 +74,14 @@ export default defineComponent({
       }
     })
 
-    return { attrs }
-  },
-  computed: {
-    navName() {
-      if (this.target) {
-        return this.$router?.resolve(this.target, this.$route)?.name || 'route.name'
+    const navName = computed(() => {
+      if (props.target) {
+        return router?.resolve(props.target, unref(router.currentRoute))?.name || 'route.name'
       }
-      return this.name
-    },
-    toolTip() {
-      const value = this.collapsed
-        ? this.$gettext('Navigate to %{ pageName } page', {
-            pageName: this.name
-          })
-        : ''
-      return {
-        content: value,
-        placement: 'right',
-        arrow: false
-      }
-    }
+      return props.name
+    })
+
+    return { attrs, navName }
   }
 })
 </script>
