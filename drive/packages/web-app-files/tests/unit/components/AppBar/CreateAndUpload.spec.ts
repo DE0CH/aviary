@@ -37,6 +37,9 @@ const elSelector = {
   clearClipboardBtn: '.clear-clipboard-btn'
 }
 
+// necessary to test the drop target because it checks for this element in the DOM
+document.body.innerHTML = '<div id="files-view"></div>'
+
 describe('CreateAndUpload component', () => {
   describe('action buttons', () => {
     it('should show and be enabled if file creation is possible', () => {

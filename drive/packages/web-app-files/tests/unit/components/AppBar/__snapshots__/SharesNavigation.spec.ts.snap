@@ -19,20 +19,20 @@ exports[`SharesNavigation component > renders a shares navigation for both mobil
       </oc-button-stub>
     </li>
   </oc-list-stub>
-  <div data-v-2b99774a="" class="oc-hidden@s">
+  <div data-v-2b99774a="" id="shares-navigation-mobile" class="oc-hidden@s">
     <oc-button-stub data-v-2b99774a="" type="button" disabled="false" size="medium" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" id="shares_navigation_mobile"><span data-v-2b99774a="">Shared with me</span>
       <oc-icon-stub data-v-2b99774a="" name="arrow-down-s" filltype="line" accessiblelabel="" type="span" size="small" variation="passive" color=""></oc-icon-stub>
     </oc-button-stub>
     <oc-drop-stub data-v-2b99774a="" dropid="oc-drop-1" popperoptions="[object Object]" toggle="#shares_navigation_mobile" position="bottom-start" mode="click" closeonclick="true" isnested="false" paddingsize="small">
       <oc-list-stub data-v-2b99774a="" raw="false">
         <li data-v-2b99774a="">
-          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/with-me/" submit="button" variation="primary" appearance="raw-inverse" justifycontent="center" gapsize="medium" showspinner="false" class="oc-my-xs shares-nav-mobile oc-background-primary-gradient"><span data-v-2b99774a="" class="icon-box icon-box-active"><oc-icon-stub data-v-2b99774a="" name="share-forward" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared with me</span></oc-button-stub>
+          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/with-me/" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" class="shares-nav-mobile oc-background-highlight"><span data-v-2b99774a="" class="icon-box icon-box-active"><oc-icon-stub data-v-2b99774a="" name="share-forward" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared with me</span></oc-button-stub>
         </li>
         <li data-v-2b99774a="">
-          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/with-others/" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" class="oc-my-xs shares-nav-mobile"><span data-v-2b99774a="" class="icon-box"><oc-icon-stub data-v-2b99774a="" name="reply" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared with others</span></oc-button-stub>
+          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/with-others/" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" class="shares-nav-mobile"><span data-v-2b99774a="" class="icon-box"><oc-icon-stub data-v-2b99774a="" name="reply" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared with others</span></oc-button-stub>
         </li>
         <li data-v-2b99774a="">
-          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/via-link/" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" class="oc-my-xs shares-nav-mobile"><span data-v-2b99774a="" class="icon-box"><oc-icon-stub data-v-2b99774a="" name="link" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared via link</span></oc-button-stub>
+          <oc-button-stub data-v-2b99774a="" type="router-link" disabled="false" size="medium" to="/files/shares/via-link/" submit="button" variation="passive" appearance="raw" justifycontent="center" gapsize="medium" showspinner="false" class="shares-nav-mobile"><span data-v-2b99774a="" class="icon-box"><oc-icon-stub data-v-2b99774a="" name="link" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub></span> <span data-v-2b99774a="">Shared via link</span></oc-button-stub>
         </li>
       </oc-list-stub>
     </oc-drop-stub>
