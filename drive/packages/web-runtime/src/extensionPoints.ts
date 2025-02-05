@@ -12,6 +12,12 @@ export const appMenuExtensionPoint: ExtensionPoint<AppMenuItemExtension> = {
   multiple: true
 }
 
+export const preferencesPanelExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.preferences.panels',
+  extensionType: 'customComponent',
+  multiple: true
+}
+
 export const topBarCenterExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
   id: 'app.runtime.header.center',
   extensionType: 'customComponent',
@@ -20,6 +26,6 @@ export const topBarCenterExtensionPoint: ExtensionPoint<CustomComponentExtension
 
 export const extensionPoints = () => {
   return computed<ExtensionPoint<Extension>[]>(() => {
-    return [appMenuExtensionPoint, topBarCenterExtensionPoint]
+    return [appMenuExtensionPoint, preferencesPanelExtensionPoint, topBarCenterExtensionPoint]
   })
 }

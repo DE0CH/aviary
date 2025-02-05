@@ -255,6 +255,11 @@
           </oc-td>
         </oc-tr>
       </account-table>
+      <component
+        :is="extension.content"
+        v-for="extension in preferencesPanelExtensions"
+        :key="`preferences-panel-${extension.id}`"
+      />
       <account-table
         v-if="showGdprExport"
         :title="$gettext('GDPR')"
@@ -313,6 +318,7 @@ import QuotaInformation from '../components/Account/QuotaInformation.vue'
 import AccountTable from '../components/Account/AccountTable.vue'
 import { useNotificationsSettings } from '../composables/notificationsSettings'
 import { captureException } from '@sentry/vue'
+import { preferencesPanelExtensionPoint } from '../extensionPoints'
 
 const MOBILE_BREAKPOINT = 800
 export default defineComponent({
@@ -334,6 +340,7 @@ export default defineComponent({
     const clientService = useClientService()
     const resourcesStore = useResourcesStore()
     const appsStore = useAppsStore()
+    const extensionRegistry = useExtensionRegistry()
 
     const valuesList = ref<SettingsValue[]>()
     const graphUser = ref<User>()
@@ -356,6 +363,10 @@ export default defineComponent({
     const onResize = () => {
       isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
     }
+
+    const preferencesPanelExtensions = computed(() => {
+      return extensionRegistry.requestExtensions(preferencesPanelExtensionPoint)
+    })
 
     // FIXME: Use settings service capability when we have it
     const isSettingsServiceSupported = computed(() => !configStore.options.runningOnEos)
@@ -603,7 +614,6 @@ export default defineComponent({
       }
     }
 
-    const extensionRegistry = useExtensionRegistry()
     const extensionPointsWithUserPreferences = computed(() => {
       return extensionRegistry.getExtensionPoints().filter((extensionPoint) => {
         if (
@@ -778,7 +788,8 @@ export default defineComponent({
       updateMultiChoiceSettingsValue,
       emailNotificationsValues,
       updateSingleChoiceValue,
-      canConfigureSpecificNotifications
+      canConfigureSpecificNotifications,
+      preferencesPanelExtensions
     }
   }
 })
