@@ -59,11 +59,7 @@
         ref="markdownContainerRef"
         class="markdown-container oc-flex oc-flex-middle"
       >
-        <text-editor
-          :resource="markdownResource"
-          :current-content="markdownContent"
-          :is-read-only="true"
-        />
+        <text-editor is-read-only :current-content="markdownContent" />
         <div class="markdown-container-edit oc-ml-s">
           <router-link
             v-oc-tooltip="$gettext('Edit description')"
