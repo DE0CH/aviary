@@ -29,8 +29,8 @@
 
 <script lang="ts">
 import { defineComponent, PropType, ref } from 'vue'
-import { Modal } from '@opencloud-eu/web-pkg'
 import { DateTime } from 'luxon'
+import { Modal } from '../../composables/piniaStores'
 
 export default defineComponent({
   name: 'DatePickerModal',

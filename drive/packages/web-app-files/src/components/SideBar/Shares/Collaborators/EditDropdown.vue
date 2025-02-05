@@ -57,9 +57,8 @@ import { ContextualHelperDataListItem, uniqueId } from '@opencloud-eu/design-sys
 import { OcDrop, OcInfoDrop } from '@opencloud-eu/design-system/components'
 import { Resource } from '@opencloud-eu/web-client'
 import { isProjectSpaceResource } from '@opencloud-eu/web-client'
-import { useConfigStore, useModals } from '@opencloud-eu/web-pkg'
+import { useConfigStore, useModals, DatePickerModal } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
-import DatePickerModal from '../../../Modals/DatePickerModal.vue'
 import { RouteLocationNamedRaw } from 'vue-router'
 import ContextMenuItem from './ContextMenuItem.vue'
 

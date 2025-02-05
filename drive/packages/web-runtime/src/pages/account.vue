@@ -290,6 +290,8 @@ import EditPasswordModal from '../components/EditPasswordModal.vue'
 import { SettingsBundle, LanguageOption, SettingsValue } from '../helpers/settings'
 import { computed, defineComponent, onMounted, onBeforeUnmount, unref, ref } from 'vue'
 import {
+  CustomComponentExtension,
+  Extension,
   useAppsStore,
   useAuthStore,
   useCapabilityStore,
@@ -319,6 +321,7 @@ import AccountTable from '../components/Account/AccountTable.vue'
 import { useNotificationsSettings } from '../composables/notificationsSettings'
 import { captureException } from '@sentry/vue'
 import { preferencesPanelExtensionPoint } from '../extensionPoints'
+import AppTokens from '../components/Account/AppTokens.vue'
 
 const MOBILE_BREAKPOINT = 800
 export default defineComponent({
@@ -363,6 +366,17 @@ export default defineComponent({
     const onResize = () => {
       isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
     }
+
+    const extensions: Extension[] = [
+      {
+        id: 'com.github.opencloud-eu.web.runtime.preferences-panels.app-tokens',
+        type: 'customComponent',
+        extensionPointIds: [preferencesPanelExtensionPoint.id],
+        content: AppTokens
+      } as CustomComponentExtension
+    ]
+
+    extensionRegistry.registerExtensions(computed(() => extensions))
 
     const preferencesPanelExtensions = computed(() => {
       return extensionRegistry.requestExtensions(preferencesPanelExtensionPoint)
@@ -744,6 +758,7 @@ export default defineComponent({
 
     onBeforeUnmount(() => {
       window.removeEventListener('resize', onResize)
+      extensionRegistry.unregisterExtensions(extensions.map(({ id }) => id))
     })
 
     const showEditPasswordModal = () => {
