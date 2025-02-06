@@ -7,20 +7,4 @@ repository:
   homepage: https://opencloud.eu
   has_wiki: false
 
-labels:
-  - name: Topic:Accessibility
-    oldname: Accessibility
-    color: "#ccf4ff"
-  - name: Topic:Extensions-framework
-    oldname: extensions framework
-    color: "#ccf4ff"
-  - name: feature:files
-    color: "#d4c5f9"
-  - name: feature:text-editor
-    color: "#d4c5f9"
-  - name: feature:pdf-viewer
-    color: "#d4c5f9"
-  - name: feature:preview
-    color: "#d4c5f9"
-
 ...
