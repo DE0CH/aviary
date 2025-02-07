@@ -2,7 +2,7 @@
   <app-loading-spinner v-if="isLoading" />
   <main v-else id="account" class="oc-mt-m oc-mb-l oc-flex oc-flex-center">
     <div class="account-page">
-      <h1 id="account-page-title" v-text="$gettext('My Account')" />
+      <h1 id="account-page-title" class="oc-mb-rm" v-text="$gettext('My Account')" />
       <account-table
         v-if="showAccountSection"
         :title="$gettext('Account Information')"
@@ -255,11 +255,6 @@
           </oc-td>
         </oc-tr>
       </account-table>
-      <component
-        :is="extension.content"
-        v-for="extension in preferencesPanelExtensions"
-        :key="`preferences-panel-${extension.id}`"
-      />
       <account-table
         v-if="showGdprExport"
         :title="$gettext('GDPR')"
@@ -280,6 +275,12 @@
           </oc-td>
         </oc-tr>
       </account-table>
+      <component
+        :is="extension.content"
+        v-for="extension in preferencesPanelExtensions"
+        :key="`preferences-panel-${extension.id}`"
+        class="preferences-panel"
+      />
     </div>
   </main>
 </template>
@@ -815,6 +816,11 @@ export default defineComponent({
 
   #account-page-title {
     border-bottom: 1px solid var(--oc-color-border);
+  }
+
+  .preferences-panel,
+  .account-table {
+    margin-top: var(--oc-space-large);
   }
 
   .account-page {

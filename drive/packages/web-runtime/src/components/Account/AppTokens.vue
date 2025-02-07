@@ -1,7 +1,7 @@
 <template>
   <div id="preferences-panel-app-tokens">
-    <div class="oc-flex oc-flex-middle oc-flex-space-between">
-      <h2 v-text="$gettext('App tokens')" />
+    <div class="oc-flex oc-flex-middle oc-flex-space-between oc-mb-m">
+      <h2 class="oc-m-rm" v-text="$gettext('App tokens')" />
       <oc-button
         v-if="!authAppServiceDisabled"
         size="small"
@@ -12,17 +12,19 @@
         <span v-text="$gettext('New')" />
       </oc-button>
     </div>
-    <span
+    <p
       v-if="authAppServiceDisabled"
+      class="oc-ml-s"
       data-testid="auth-service-unavailable"
       v-text="
         $gettext(
-          'App tokens are not available because the auth app service is not running. Please contact an administrator of your instance.'
+          'App tokens are not available because the »auth-app« service is not running. Please contact an administrator.'
         )
       "
     />
-    <span
+    <p
       v-else-if="!appTokens.length"
+      class="oc-ml-s"
       data-testid="no-app-tokens-available"
       v-text="$gettext('No app tokens available.')"
     />
