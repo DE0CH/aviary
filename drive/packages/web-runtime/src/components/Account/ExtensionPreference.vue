@@ -10,10 +10,10 @@
     option-label="displayName"
   >
     <template #selected-option="{ userPreference }">
-      <span>{{ userPreference?.optionLabel }}</span>
+      <span>{{ $gettext(userPreference?.optionLabel || '') }}</span>
     </template>
     <template #option="{ userPreference }">
-      <span>{{ userPreference?.optionLabel }}</span>
+      <span>{{ $gettext(userPreference?.optionLabel || '') }}</span>
     </template>
   </oc-select>
 </template>

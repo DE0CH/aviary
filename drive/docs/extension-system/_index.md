@@ -157,6 +157,7 @@ your extension will be used automatically.
    8. Upload menu. ExtensionPointId `app.files.upload-menu`. Mounts extensions of type `action`.
    9. Quick actions. ExtensionPointId `app.files.quick-actions`. Mounts extensions of type `action`.
 4. Global search providers. ExtensionPointId `app.search.providers`. Utilizes extensions of type `search` as search engines for the search input in the global top bar.
+5. User preference panels. ExtensionPointId `app.runtime.preferences.panels`. Mounts extensions of type `customComponent`.
 
 #### User Preferences for Extensions
 

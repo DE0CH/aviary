@@ -2,7 +2,7 @@
   <app-loading-spinner v-if="isLoading" />
   <main v-else id="account" class="oc-mt-m oc-mb-l oc-flex oc-flex-center">
     <div class="account-page">
-      <h1 id="account-page-title" v-text="$gettext('My Account')" />
+      <h1 id="account-page-title" class="oc-mb-rm" v-text="$gettext('My Account')" />
       <account-table
         v-if="showAccountSection"
         :title="$gettext('Account Information')"
@@ -248,7 +248,7 @@
         >
           <oc-td>{{ extensionPoint.userPreference.label }}</oc-td>
           <oc-td v-if="extensionPoint.userPreference.description">
-            <span v-text="extensionPoint.userPreference.description" />
+            <span v-text="$gettext(extensionPoint.userPreference.description || '')" />
           </oc-td>
           <oc-td>
             <extension-preference :extension-point="extensionPoint" />
@@ -275,6 +275,12 @@
           </oc-td>
         </oc-tr>
       </account-table>
+      <component
+        :is="extension.content"
+        v-for="extension in preferencesPanelExtensions"
+        :key="`preferences-panel-${extension.id}`"
+        class="preferences-panel"
+      />
     </div>
   </main>
 </template>
@@ -313,6 +319,7 @@ import QuotaInformation from '../components/Account/QuotaInformation.vue'
 import AccountTable from '../components/Account/AccountTable.vue'
 import { useNotificationsSettings } from '../composables/notificationsSettings'
 import { captureException } from '@sentry/vue'
+import { preferencesPanelExtensionPoint } from '../extensionPoints'
 
 const MOBILE_BREAKPOINT = 800
 export default defineComponent({
@@ -334,6 +341,7 @@ export default defineComponent({
     const clientService = useClientService()
     const resourcesStore = useResourcesStore()
     const appsStore = useAppsStore()
+    const extensionRegistry = useExtensionRegistry()
 
     const valuesList = ref<SettingsValue[]>()
     const graphUser = ref<User>()
@@ -356,6 +364,10 @@ export default defineComponent({
     const onResize = () => {
       isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
     }
+
+    const preferencesPanelExtensions = computed(() => {
+      return extensionRegistry.requestExtensions(preferencesPanelExtensionPoint)
+    })
 
     // FIXME: Use settings service capability when we have it
     const isSettingsServiceSupported = computed(() => !configStore.options.runningOnEos)
@@ -603,7 +615,6 @@ export default defineComponent({
       }
     }
 
-    const extensionRegistry = useExtensionRegistry()
     const extensionPointsWithUserPreferences = computed(() => {
       return extensionRegistry.getExtensionPoints().filter((extensionPoint) => {
         if (
@@ -778,7 +789,8 @@ export default defineComponent({
       updateMultiChoiceSettingsValue,
       emailNotificationsValues,
       updateSingleChoiceValue,
-      canConfigureSpecificNotifications
+      canConfigureSpecificNotifications,
+      preferencesPanelExtensions
     }
   }
 })
@@ -788,6 +800,15 @@ export default defineComponent({
   overflow-y: auto;
 
   #account-page-title {
+    border-bottom: 1px solid var(--oc-color-border);
+  }
+
+  .preferences-panel,
+  .account-table {
+    margin-top: var(--oc-space-large);
+  }
+
+  .preferences-panel {
     border-bottom: 1px solid var(--oc-color-border);
   }
 
