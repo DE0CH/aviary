@@ -6,6 +6,8 @@ import {
 } from '@opencloud-eu/web-pkg'
 import { computed } from 'vue'
 
+const $gettext = (str: string) => str
+
 export const appMenuExtensionPoint: ExtensionPoint<AppMenuItemExtension> = {
   id: 'app.runtime.header.app-menu',
   extensionType: 'appMenuItem',
@@ -18,6 +20,17 @@ export const preferencesPanelExtensionPoint: ExtensionPoint<CustomComponentExten
   multiple: true
 }
 
+export const progressBarExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
+  id: 'app.runtime.global-progress-bar',
+  extensionType: 'customComponent',
+  multiple: false,
+  defaultExtensionId: 'com.github.opencloud-eu.web.runtime.default-progress-bar',
+  userPreference: {
+    label: $gettext('Global progress bar'),
+    description: $gettext('Customize your progress bar')
+  }
+}
+
 export const topBarCenterExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
   id: 'app.runtime.header.center',
   extensionType: 'customComponent',
@@ -26,6 +39,11 @@ export const topBarCenterExtensionPoint: ExtensionPoint<CustomComponentExtension
 
 export const extensionPoints = () => {
   return computed<ExtensionPoint<Extension>[]>(() => {
-    return [appMenuExtensionPoint, preferencesPanelExtensionPoint, topBarCenterExtensionPoint]
+    return [
+      appMenuExtensionPoint,
+      preferencesPanelExtensionPoint,
+      progressBarExtensionPoint,
+      topBarCenterExtensionPoint
+    ]
   })
 }

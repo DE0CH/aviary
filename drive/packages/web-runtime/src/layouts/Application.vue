@@ -45,10 +45,7 @@
 import orderBy from 'lodash-es/orderBy'
 import {
   AppLoadingSpinner,
-  CustomComponentExtension,
   CustomComponentTarget,
-  Extension,
-  ExtensionPoint,
   useAppsStore,
   useAuthStore,
   useExtensionRegistry,
@@ -60,7 +57,7 @@ import SidebarNav from '../components/SidebarNav/SidebarNav.vue'
 import UploadInfo from '../components/UploadInfo.vue'
 import MobileNav from '../components/MobileNav.vue'
 import { NavItem, getExtensionNavItems } from '../helpers/navItems'
-import { LoadingIndicator } from '@opencloud-eu/web-pkg'
+
 import { useActiveApp, useRoute, useRouteMeta, useSpacesLoading } from '@opencloud-eu/web-pkg'
 import {
   computed,
@@ -70,7 +67,6 @@ import {
   onMounted,
   provide,
   ref,
-  toRef,
   unref,
   watch
 } from 'vue'
@@ -79,7 +75,7 @@ import { useGettext } from 'vue3-gettext'
 
 import '@uppy/core/dist/style.min.css'
 import { storeToRefs } from 'pinia'
-import { markRaw } from 'vue'
+import { progressBarExtensionPoint } from '../extensionPoints'
 
 const MOBILE_BREAKPOINT = 640
 
@@ -187,31 +183,6 @@ export default defineComponent({
       navBarClosed.value = value
     }
 
-    const progressBarExtensionId = 'com.github.opencloud-eu.web.runtime.default-progress-bar'
-    const progressBarExtensionPointId = 'app.runtime.global-progress-bar'
-    const defaultProgressBarExtension: CustomComponentExtension = {
-      id: progressBarExtensionId,
-      type: 'customComponent',
-      extensionPointIds: [progressBarExtensionPointId],
-      content: markRaw(LoadingIndicator),
-      userPreference: {
-        optionLabel: $gettext('Default progress bar')
-      }
-    }
-    extensionRegistry.registerExtensions(toRef([defaultProgressBarExtension] satisfies Extension[]))
-    const progressBarExtensionPoint: ExtensionPoint<CustomComponentExtension> = {
-      id: progressBarExtensionPointId,
-      extensionType: 'customComponent',
-      multiple: false,
-      defaultExtensionId: defaultProgressBarExtension.id,
-      userPreference: {
-        label: $gettext('Global progress bar'),
-        description: $gettext('Customize your progress bar')
-      }
-    }
-    const extensionPoints = computed<ExtensionPoint<Extension>[]>(() => [progressBarExtensionPoint])
-    extensionRegistry.registerExtensionPoints(extensionPoints)
-
     onMounted(async () => {
       await nextTick()
       window.addEventListener('resize', onResize)
@@ -220,9 +191,6 @@ export default defineComponent({
 
     onBeforeUnmount(() => {
       window.removeEventListener('resize', onResize)
-
-      extensionRegistry.unregisterExtensions([progressBarExtensionId])
-      extensionRegistry.unregisterExtensionPoints(unref(extensionPoints).flatMap((e) => e.id))
     })
 
     return {

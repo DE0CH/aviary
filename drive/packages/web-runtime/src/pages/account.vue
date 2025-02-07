@@ -248,7 +248,7 @@
         >
           <oc-td>{{ extensionPoint.userPreference.label }}</oc-td>
           <oc-td v-if="extensionPoint.userPreference.description">
-            <span v-text="extensionPoint.userPreference.description" />
+            <span v-text="$gettext(extensionPoint.userPreference.description || '')" />
           </oc-td>
           <oc-td>
             <extension-preference :extension-point="extensionPoint" />

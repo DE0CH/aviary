@@ -28,8 +28,7 @@ import {
   setViewOptions,
   announceGettext,
   announceArchiverService,
-  announceAppProviderService,
-  registerRuntimeExtensions
+  announceAppProviderService
 } from './container/bootstrap'
 import { applicationStore } from './container/store'
 import {
@@ -46,6 +45,7 @@ import Avatar from './components/Avatar.vue'
 import focusMixin from './mixins/focusMixin'
 import { extensionPoints } from './extensionPoints'
 import { isSilentRedirectRoute } from './helpers/silentRedirect'
+import { extensions } from './extensions'
 
 export const bootstrapApp = async (configurationPath: string, appsReadyCallback: () => void) => {
   const isSilentRedirect = isSilentRedirectRoute()
@@ -154,7 +154,7 @@ export const bootstrapApp = async (configurationPath: string, appsReadyCallback:
     announceCustomScripts({ configStore })
     announceDefaults({ appsStore, router, extensionRegistry, configStore })
 
-    registerRuntimeExtensions(extensionRegistry)
+    extensionRegistry.registerExtensions(extensions())
   }
 
   app.use(router)
