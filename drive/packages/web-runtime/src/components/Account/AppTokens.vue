@@ -51,7 +51,7 @@
             <span v-text="formatDateFromISO(item.created_date, currentLanguage)" />
           </div>
         </template>
-        <template #exprationDate="{ item }">
+        <template #expirationDate="{ item }">
           <div class="oc-width-1-1 oc-text-truncate">
             <span v-text="formatDateFromISO(item.expiration_date, currentLanguage)" />
           </div>
@@ -214,7 +214,7 @@ const tableFields = computed(() => {
       title: $gettext('Created at')
     },
     {
-      name: 'exprationDate',
+      name: 'expirationDate',
       type: 'slot',
       wrap: 'truncate',
       title: $gettext('Expires at')
