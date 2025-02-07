@@ -808,6 +808,10 @@ export default defineComponent({
     margin-top: var(--oc-space-large);
   }
 
+  .preferences-panel {
+    border-bottom: 1px solid var(--oc-color-border);
+  }
+
   .account-page {
     width: 80rem;
 
