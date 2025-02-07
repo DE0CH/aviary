@@ -28,7 +28,8 @@ import {
   setViewOptions,
   announceGettext,
   announceArchiverService,
-  announceAppProviderService
+  announceAppProviderService,
+  registerRuntimeExtensions
 } from './container/bootstrap'
 import { applicationStore } from './container/store'
 import {
@@ -152,6 +153,8 @@ export const bootstrapApp = async (configurationPath: string, appsReadyCallback:
     announceCustomStyles({ configStore })
     announceCustomScripts({ configStore })
     announceDefaults({ appsStore, router, extensionRegistry, configStore })
+
+    registerRuntimeExtensions(extensionRegistry)
   }
 
   app.use(router)

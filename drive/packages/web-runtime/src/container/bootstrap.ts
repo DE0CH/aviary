@@ -42,7 +42,9 @@ import {
   UppyService,
   AppConfigObject,
   resourceIconMappingInjectionKey,
-  ResourceIconMapping
+  ResourceIconMapping,
+  Extension,
+  CustomComponentExtension
 } from '@opencloud-eu/web-pkg'
 import { authService } from '../services/auth'
 import { init as sentryInit } from '@sentry/vue'
@@ -77,6 +79,8 @@ import {
 } from './sse'
 import { loadAppTranslations } from '../helpers/language'
 import { urlJoin } from '@opencloud-eu/web-client'
+import { preferencesPanelExtensionPoint } from '../extensionPoints'
+import AppTokens from '../components/Account/AppTokens.vue'
 
 const getEmbedConfigFromQuery = (
   doesEmbedEnabledOptionExists: boolean
@@ -958,4 +962,17 @@ export const setViewOptions = ({ resourcesStore }: { resourcesStore: ResourcesSt
   if (areWebDavDetailsShownBoolean !== resourcesStore.areWebDavDetailsShown) {
     resourcesStore.setAreWebDavDetailsShown(areWebDavDetailsShownBoolean)
   }
+}
+
+export const registerRuntimeExtensions = (extensionRegistry: ExtensionRegistry) => {
+  const extensions: Extension[] = [
+    {
+      id: 'com.github.opencloud-eu.web.runtime.preferences-panels.app-tokens',
+      type: 'customComponent',
+      extensionPointIds: [preferencesPanelExtensionPoint.id],
+      content: AppTokens
+    } as CustomComponentExtension
+  ]
+
+  extensionRegistry.registerExtensions(computed(() => extensions))
 }
