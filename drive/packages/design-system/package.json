@@ -117,7 +117,7 @@
     "@codemirror/view": "^6.23.0",
     "@lezer/highlight": "^1.2.0",
     "@opencloud-eu/web-test-helpers": "workspace:*",
-    "@vitejs/plugin-vue": "5.2.0",
+    "@vitejs/plugin-vue": "5.2.1",
     "autoprefixer": "10.4.20",
     "babel-core": "7.0.0-bridge.0",
     "babel-loader": "^9.0.0",

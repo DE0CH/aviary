@@ -48,7 +48,7 @@
     "@types/mark.js": "8.11.12",
     "@types/semver": "7.5.8",
     "@types/uuid": "10.0.0",
-    "@vitejs/plugin-vue": "5.2.0",
+    "@vitejs/plugin-vue": "5.2.1",
     "@vitest/coverage-v8": "2.1.5",
     "@vitest/web-worker": "2.1.5",
     "@vue/compiler-dom": "3.5.13",
