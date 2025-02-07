@@ -241,7 +241,8 @@ describe('account page', () => {
     it('should be hidden if an extension point only has 1 or less extensions', async () => {
       const extensionPointMock = mock<ExtensionPoint<Extension>>({
         userPreference: {
-          label: 'example-extension-point'
+          label: 'example-extension-point',
+          description: 'example-extension-point'
         }
       })
       const { wrapper } = getWrapper({
@@ -258,7 +259,8 @@ describe('account page', () => {
         multiple: false,
         defaultExtensionId: 'foo-2',
         userPreference: {
-          label: 'Foo container'
+          label: 'Foo container',
+          description: 'Foo container'
         }
       })
       const extensions = [
