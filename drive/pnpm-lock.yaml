@@ -10837,7 +10837,7 @@ snapshots:
 
   '@types/dompurify@3.2.0':
     dependencies:
-      dompurify: 3.2.3
+      dompurify: 3.2.4
 
   '@types/eslint-scope@3.7.7':
     dependencies:
