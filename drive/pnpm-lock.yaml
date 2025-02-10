@@ -685,8 +685,8 @@ importers:
         specifier: workspace:*
         version: link:../web-pkg
       '@uppy/core':
-        specifier: 4.3.1
-        version: 4.3.1
+        specifier: 4.4.2
+        version: 4.4.2
       '@vueuse/core':
         specifier: ^11.0.0 || ^12.0.0
         version: 12.0.0(typescript@5.6.3)
@@ -961,19 +961,19 @@ importers:
         version: 3.1.0
       '@uppy/core':
         specifier: ^4.3.1
-        version: 4.3.1
+        version: 4.4.2
       '@uppy/drop-target':
         specifier: ^3.0.2
-        version: 3.0.2(@uppy/core@4.3.1)
+        version: 3.1.1(@uppy/core@4.4.2)
       '@uppy/tus':
         specifier: ^4.1.5
-        version: 4.1.5(@uppy/core@4.3.1)
+        version: 4.2.2(@uppy/core@4.4.2)
       '@uppy/utils':
         specifier: ^6.0.6
-        version: 6.0.6
+        version: 6.1.2
       '@uppy/xhr-upload':
         specifier: ^4.2.3
-        version: 4.2.3(@uppy/core@4.3.1)
+        version: 4.3.2(@uppy/core@4.4.2)
       '@vue/shared':
         specifier: ^3.5.11
         version: 3.5.13
@@ -1094,20 +1094,20 @@ importers:
         specifier: 8.42.0
         version: 8.42.0(pinia@2.3.0(typescript@5.6.3)(vue@3.5.13(typescript@5.6.3)))(vue@3.5.13(typescript@5.6.3))
       '@uppy/core':
-        specifier: 4.3.1
-        version: 4.3.1
+        specifier: 4.4.2
+        version: 4.4.2
       '@uppy/drop-target':
-        specifier: 3.0.2
-        version: 3.0.2(@uppy/core@4.3.1)
+        specifier: 3.1.1
+        version: 3.1.1(@uppy/core@4.4.2)
       '@uppy/tus':
-        specifier: 4.1.5
-        version: 4.1.5(@uppy/core@4.3.1)
+        specifier: 4.2.2
+        version: 4.2.2(@uppy/core@4.4.2)
       '@uppy/utils':
-        specifier: 6.0.6
-        version: 6.0.6
+        specifier: 6.1.2
+        version: 6.1.2
       '@uppy/xhr-upload':
-        specifier: 4.2.3
-        version: 4.2.3(@uppy/core@4.3.1)
+        specifier: 4.3.2
+        version: 4.3.2(@uppy/core@4.4.2)
       '@vueuse/core':
         specifier: 12.0.0
         version: 12.0.0(typescript@5.6.3)
@@ -2773,34 +2773,34 @@ packages:
     peerDependencies:
       vue: '>=2.7 || >=3'
 
-  '@uppy/companion-client@4.3.0':
-    resolution: {integrity: sha512-S8Fs7KgLE8CEf225S/j28yZTMqVaqvmesX5mrd/I1H0dHzIoruLYC/3q3QnihGbQRxyobUpnBmo67o24+mAc7g==}
+  '@uppy/companion-client@4.4.1':
+    resolution: {integrity: sha512-ardMacShsfzaIbqHEH48YlpzWZkBj1qhAj0Dvn3r31p9d0HA5xFUvAdLYrZ6ezKvZ0RcDbf0SB5qCrQMkjscXQ==}
     peerDependencies:
-      '@uppy/core': ^4.3.1
+      '@uppy/core': ^4.4.1
 
-  '@uppy/core@4.3.1':
-    resolution: {integrity: sha512-vov6agqmZrbmkG6E5LpSGNOeVXP4u0pe3UXCqVBZvU+WPInA264d4+X7NUnD6cF/BHPfckbfKh+60Tm1A40VEg==}
+  '@uppy/core@4.4.2':
+    resolution: {integrity: sha512-df0fQtPEd5W/e5M/CWIXQb/O0rBb+LCz4HTN5Bkqm0UDzW2JFR9mrxnL0dfh3ikVlUq+9vNjAeBr9P0aluIiFg==}
 
-  '@uppy/drop-target@3.0.2':
-    resolution: {integrity: sha512-NXUsl7Ohf4iaYwyY5Goic0TPTl1V7qVZ0EQDrbNHRgFR6Lda54Gqh7sFoMeaP9sUutEOwXXvPSLE/VWa2mv1Mg==}
+  '@uppy/drop-target@3.1.1':
+    resolution: {integrity: sha512-/2jnQ3DqfcWGjgoasLBLvwJ3fozavwSXFVULenDmPUI8YPjuxmEtOu61XnZ/OLhRnZo6Qm+kltSd+YUS0P/LNA==}
     peerDependencies:
-      '@uppy/core': ^4.3.0
+      '@uppy/core': ^4.4.1
 
-  '@uppy/store-default@4.1.2':
-    resolution: {integrity: sha512-1Zi4S9rZiiEzDw/7TDNtwCWP8Y/6aBtWzKwP6EWH7NHBKX8yGFlQMRDwAXCKaxDxb46L0RNK8nWjOzHM+0Farg==}
+  '@uppy/store-default@4.2.0':
+    resolution: {integrity: sha512-PieFVa8yTvRHIqsNKfpO/yaJw5Ae/hT7uT58ryw7gvCBY5bHrNWxH5N0XFe8PFHMpLpLn8v3UXGx9ib9QkB6+Q==}
 
-  '@uppy/tus@4.1.5':
-    resolution: {integrity: sha512-vVfFuDkBbCSFpB5M2oh0yDkY8aR5UXCsNa0v71CtyBKZfCiSHzJ/jL5AVMKr9gaEpYitIDhTKS+YItwZpV6Dng==}
+  '@uppy/tus@4.2.2':
+    resolution: {integrity: sha512-fauUHqoLDtyRXwoaIyWM8ctuJ+SAXdjuM2eyoPYcGtpVaEGa+AS7IQkJkWz2RrWSdLCHL9O+fk6jKr+0PIDEpQ==}
     peerDependencies:
-      '@uppy/core': ^4.3.0
+      '@uppy/core': ^4.4.1
 
-  '@uppy/utils@6.0.6':
-    resolution: {integrity: sha512-7/4jrJTSEth7DKCOZiOEY3JWGTUlwV9Gnrtlp25yJvJ7HbOVQ0ToJUuDz9wCZJ3V2++zfj30JbvBynbOH40WxA==}
+  '@uppy/utils@6.1.2':
+    resolution: {integrity: sha512-PCrw6v51M6p3hlrlB2INmcocen4Dyjun1SobjVZRBkg4wutQE8ihZfSrH5ZE8UXFelufhtO16wlaZMi0EHk84w==}
 
-  '@uppy/xhr-upload@4.2.3':
-    resolution: {integrity: sha512-XoqrfNCSADvPXcKHeilyEVNOtoWCI6OFaJA2tRp0EL+L9iF4FRr++SvkgJb7xFv04TCTT1h5CDKxGLmnf0e4yg==}
+  '@uppy/xhr-upload@4.3.2':
+    resolution: {integrity: sha512-dgj7MCZ50fM1mx446PWV/u3X4qgcRw26tIepoHfVI1UNby4p+GS7G7VxcE6IK9zM0epRXmhe609UdMtKWH7NaQ==}
     peerDependencies:
-      '@uppy/core': ^4.3.0
+      '@uppy/core': ^4.4.1
 
   '@vitejs/plugin-vue@5.2.1':
     resolution: {integrity: sha512-cxh314tzaWwOLqVes2gnnCtvBDcM1UMdn+iFR+UjAn411dPT3tOmqrJjbMd7koZpMAmBM/GqeV4n9ge7JSiJJQ==}
@@ -5454,8 +5454,8 @@ packages:
     resolution: {integrity: sha512-uQPm8kcs47jx38atAcWTVxyltQYoPT68y9aWYdV6yWXSyW8mzSat0TL6CiWdZeCdF3KrAvpVtnHbTv4RN+rqdQ==}
     engines: {node: '>=0.10.0'}
 
-  is-stream@2.0.0:
-    resolution: {integrity: sha512-XCoy+WlUr7d1+Z8GgSuXmpuUFC9fOhRXglJMx+dwLKTkL44Cjd4W1Z5P+BQZpr+cR93aGP4S/s7Ftw6Nd/kiEw==}
+  is-stream@2.0.1:
+    resolution: {integrity: sha512-hFoiJiTl63nn+kstHGBtewWSKnQLpyb155KHheA1l39uvtO9nWIop1p3udqPcUd/xbF1VLMO4n7OI6p7RbngDg==}
     engines: {node: '>=8'}
 
   is-typed-array@1.1.12:
@@ -5552,8 +5552,8 @@ packages:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
 
-  js-base64@3.7.2:
-    resolution: {integrity: sha512-NnRs6dsyqUXejqk/yv2aiXlAvOs56sLkX6nUdeaNezI5LFFLlsZjOThmwnrcwh5ZZRwZlCMnVAY3CvhIhoVEKQ==}
+  js-base64@3.7.7:
+    resolution: {integrity: sha512-7rCnleh0z2CkXhH67J8K1Ytz0b2Y+yxTPL+/KOJoa20hfnVQ/3/T6W/KflYI4bRHRagNeXeU2bkNGI3v1oS/lw==}
 
   js-beautify@1.14.11:
     resolution: {integrity: sha512-rPogWqAfoYh1Ryqqh2agUpVfbxAhbjuN1SmU86dskQUKouRiggUTCO4+2ym9UPXllc2WAp0J+T5qxn7Um3lCdw==}
@@ -7072,8 +7072,8 @@ packages:
     resolution: {integrity: sha512-6oz2beyjc5VMn/KV1pPw8fliQkhBXrVn1Z3TVyqZxU8kZpzEKhBdmCFqI6ZbmGtamQvQGuU1sgPTk8ZrXDD7jQ==}
     engines: {node: ^10 || ^12 || >=14}
 
-  preact@10.7.1:
-    resolution: {integrity: sha512-MufnRFz39aIhs9AMFisonjzTud1PK1bY+jcJLo6m2T9Uh8AqjD77w11eAAawmjUogoGOnipECq7e/1RClIKsxg==}
+  preact@10.25.4:
+    resolution: {integrity: sha512-jLdZDb+Q+odkHJ+MpW/9U5cODzqnB+fy2EiHSZES7ldV5LK7yjlVzTp7R8Xy6W6y75kfK8iWYtFVH7lvjwrCMA==}
 
   prelude-ls@1.1.2:
     resolution: {integrity: sha512-ESF23V4SKG6lVSGZgYNpbsiaAkdab6ZgOxe52p7+Kid3W3u3bxR4Vfd/o21dmN7jSt0IwgZ4v5MUd26FEtXE9w==}
@@ -8421,8 +8421,8 @@ packages:
   tty-browserify@0.0.1:
     resolution: {integrity: sha512-C3TaO7K81YvjCgQH9Q1S3R3P3BtN3RIM8n+OvX4il1K1zgE8ZhI0op7kClgkxtutIE8hQrcrHBXvIheqKUUCxw==}
 
-  tus-js-client@4.2.3:
-    resolution: {integrity: sha512-UkQUCeDWKh5AwArcasIJWcL5EP66XPypKQtsdPu82wNnTea8eAUHdpDx3DcfZgDERAiCII895zMYkXri4M1wzw==}
+  tus-js-client@4.3.1:
+    resolution: {integrity: sha512-ZLeYmjrkaU1fUsKbIi8JML52uAocjEZtBx4DKjRrqzrZa0O4MYwT6db+oqePlspV+FxXJAyFBc/L5gwUi2OFsg==}
     engines: {node: '>=18'}
 
   type-check@0.3.2:
@@ -10123,7 +10123,7 @@ snapshots:
       has-ansi: 4.0.1
       indent-string: 4.0.0
       is-installed-globally: 0.4.0
-      is-stream: 2.0.0
+      is-stream: 2.0.1
       knuth-shuffle-seeded: 1.0.6
       lodash.merge: 4.6.2
       lodash.mergewith: 4.6.2
@@ -10990,48 +10990,48 @@ snapshots:
       unhead: 1.8.4
       vue: 3.5.13(typescript@5.6.3)
 
-  '@uppy/companion-client@4.3.0(@uppy/core@4.3.1)':
+  '@uppy/companion-client@4.4.1(@uppy/core@4.4.2)':
     dependencies:
-      '@uppy/core': 4.3.1
-      '@uppy/utils': 6.0.6
+      '@uppy/core': 4.4.2
+      '@uppy/utils': 6.1.2
       namespace-emitter: 2.0.1
       p-retry: 6.2.1
 
-  '@uppy/core@4.3.1':
+  '@uppy/core@4.4.2':
     dependencies:
       '@transloadit/prettier-bytes': 0.3.5
-      '@uppy/store-default': 4.1.2
-      '@uppy/utils': 6.0.6
+      '@uppy/store-default': 4.2.0
+      '@uppy/utils': 6.1.2
       lodash: 4.17.21
       mime-match: 1.0.2
       namespace-emitter: 2.0.1
       nanoid: 5.0.9
-      preact: 10.7.1
+      preact: 10.25.4
 
-  '@uppy/drop-target@3.0.2(@uppy/core@4.3.1)':
+  '@uppy/drop-target@3.1.1(@uppy/core@4.4.2)':
     dependencies:
-      '@uppy/core': 4.3.1
-      '@uppy/utils': 6.0.6
+      '@uppy/core': 4.4.2
+      '@uppy/utils': 6.1.2
 
-  '@uppy/store-default@4.1.2': {}
+  '@uppy/store-default@4.2.0': {}
 
-  '@uppy/tus@4.1.5(@uppy/core@4.3.1)':
+  '@uppy/tus@4.2.2(@uppy/core@4.4.2)':
     dependencies:
-      '@uppy/companion-client': 4.3.0(@uppy/core@4.3.1)
-      '@uppy/core': 4.3.1
-      '@uppy/utils': 6.0.6
-      tus-js-client: 4.2.3
+      '@uppy/companion-client': 4.4.1(@uppy/core@4.4.2)
+      '@uppy/core': 4.4.2
+      '@uppy/utils': 6.1.2
+      tus-js-client: 4.3.1
 
-  '@uppy/utils@6.0.6':
+  '@uppy/utils@6.1.2':
     dependencies:
       lodash: 4.17.21
-      preact: 10.7.1
+      preact: 10.25.4
 
-  '@uppy/xhr-upload@4.2.3(@uppy/core@4.3.1)':
+  '@uppy/xhr-upload@4.3.2(@uppy/core@4.4.2)':
     dependencies:
-      '@uppy/companion-client': 4.3.0(@uppy/core@4.3.1)
-      '@uppy/core': 4.3.1
-      '@uppy/utils': 6.0.6
+      '@uppy/companion-client': 4.4.1(@uppy/core@4.4.2)
+      '@uppy/core': 4.4.2
+      '@uppy/utils': 6.1.2
 
   '@vitejs/plugin-vue@5.2.1(vite@6.1.0(@types/node@22.9.0)(jiti@1.21.0)(sass@1.81.0)(terser@5.36.0)(yaml@2.6.0))(vue@3.5.13(typescript@5.6.3))':
     dependencies:
@@ -14069,7 +14069,7 @@ snapshots:
 
   is-stream@1.1.0: {}
 
-  is-stream@2.0.0: {}
+  is-stream@2.0.1: {}
 
   is-typed-array@1.1.12:
     dependencies:
@@ -14165,7 +14165,7 @@ snapshots:
 
   joycon@3.1.1: {}
 
-  js-base64@3.7.2: {}
+  js-base64@3.7.7: {}
 
   js-beautify@1.14.11:
     dependencies:
@@ -15641,7 +15641,7 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  preact@10.7.1: {}
+  preact@10.25.4: {}
 
   prelude-ls@1.1.2: {}
 
@@ -17267,12 +17267,12 @@ snapshots:
 
   tty-browserify@0.0.1: {}
 
-  tus-js-client@4.2.3:
+  tus-js-client@4.3.1:
     dependencies:
       buffer-from: 1.1.2
       combine-errors: 3.0.3
-      is-stream: 2.0.0
-      js-base64: 3.7.2
+      is-stream: 2.0.1
+      js-base64: 3.7.7
       lodash.throttle: 4.1.1
       proper-lockfile: 4.1.2
       url-parse: 1.5.10
