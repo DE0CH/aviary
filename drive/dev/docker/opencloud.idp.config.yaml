@@ -23,11 +23,10 @@ clients:
       - https://oc.opencloud.test:10200
       - https://oc.opencloud.test:10201
 
-  - id: "xdXOt13JKxym1B1QcEncf2XDkLAexMBFwiT9j6EfhhHFJhs2KM9jbjTmf8JBXE69"
+  - id: OpenCloudDesktop
     name: OpenCloud desktop client
     application_type: "native"
     trusted: true
-    secret: "UBntmLjC2yYCeHwsyj73Uwo9TAaecAetRwMw0xYcvNL9yRdLSUi0hUAHfvCHFeFh"
     redirect_uris:
       - http://localhost
       - http://127.0.0.1
