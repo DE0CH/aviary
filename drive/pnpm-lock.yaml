@@ -37,11 +37,11 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       '@cucumber/messages':
-        specifier: 27.0.2
-        version: 27.0.2
+        specifier: 27.2.0
+        version: 27.2.0
       '@cucumber/pretty-formatter':
         specifier: 1.0.1
-        version: 1.0.1(@cucumber/cucumber@11.1.0)(@cucumber/messages@27.0.2)
+        version: 1.0.1(@cucumber/cucumber@11.1.0)(@cucumber/messages@27.2.0)
       '@noble/hashes':
         specifier: 1.5.0
         version: 1.5.0
@@ -1933,8 +1933,8 @@ packages:
   '@cucumber/messages@24.1.0':
     resolution: {integrity: sha512-hxVHiBurORcobhVk80I9+JkaKaNXkW6YwGOEFIh/2aO+apAN+5XJgUUWjng9NwqaQrW1sCFuawLB1AuzmBaNdQ==}
 
-  '@cucumber/messages@27.0.2':
-    resolution: {integrity: sha512-jo2B+vYXmpuLOKh6Gc8loHl2E8svCkLvEXLVgFwVHqKWZJWBTa9yTRCPmZIxrz4fnO7Pr3N3vKQCPu73/gjlVQ==}
+  '@cucumber/messages@27.2.0':
+    resolution: {integrity: sha512-f2o/HqKHgsqzFLdq6fAhfG1FNOQPdBdyMGpKwhb7hZqg0yZtx9BVqkTyuoNk83Fcvk3wjMVfouFXXHNEk4nddA==}
 
   '@cucumber/pretty-formatter@1.0.1':
     resolution: {integrity: sha512-A1lU4VVP0aUWdOTmpdzvXOyEYuPtBDI0xYwYJnmoMDplzxMdhcHk86lyyvYDoMoPzzq6OkOE3isuosvUU4X7IQ==}
@@ -8659,10 +8659,6 @@ packages:
     resolution: {integrity: sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==}
     engines: {node: '>= 0.4.0'}
 
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
-    hasBin: true
-
   uuid@11.0.5:
     resolution: {integrity: sha512-508e6IcKLrhxKdBbcA2b4KQZlLVp2+J5UwQ6F7Drckkc5N9ZJwFa4TgWtsww9UG8fGHbm6gbV19TdM5pQ4GaIA==}
     hasBin: true
@@ -10108,7 +10104,7 @@ snapshots:
       '@cucumber/gherkin-utils': 9.0.0
       '@cucumber/html-formatter': 21.6.0(@cucumber/messages@24.1.0)
       '@cucumber/junit-xml-formatter': 0.6.0(@cucumber/messages@24.1.0)
-      '@cucumber/message-streams': 4.0.1(@cucumber/messages@27.0.2)
+      '@cucumber/message-streams': 4.0.1(@cucumber/messages@27.2.0)
       '@cucumber/messages': 24.1.0
       '@cucumber/tag-expressions': 6.1.0
       assertion-error-formatter: 3.0.0
@@ -10146,7 +10142,7 @@ snapshots:
   '@cucumber/gherkin-streams@5.0.1(@cucumber/gherkin@28.0.0)(@cucumber/message-streams@4.0.1(@cucumber/messages@24.1.0))(@cucumber/messages@24.1.0)':
     dependencies:
       '@cucumber/gherkin': 28.0.0
-      '@cucumber/message-streams': 4.0.1(@cucumber/messages@27.0.2)
+      '@cucumber/message-streams': 4.0.1(@cucumber/messages@27.2.0)
       '@cucumber/messages': 24.1.0
       commander: 9.1.0
       source-map-support: 0.5.21
@@ -10174,9 +10170,9 @@ snapshots:
       '@teppeis/multimaps': 3.0.0
       xmlbuilder: 15.1.1
 
-  '@cucumber/message-streams@4.0.1(@cucumber/messages@27.0.2)':
+  '@cucumber/message-streams@4.0.1(@cucumber/messages@27.2.0)':
     dependencies:
-      '@cucumber/messages': 27.0.2
+      '@cucumber/messages': 27.2.0
 
   '@cucumber/messages@24.1.0':
     dependencies:
@@ -10185,17 +10181,17 @@ snapshots:
       reflect-metadata: 0.2.1
       uuid: 9.0.1
 
-  '@cucumber/messages@27.0.2':
+  '@cucumber/messages@27.2.0':
     dependencies:
       '@types/uuid': 10.0.0
       class-transformer: 0.5.1
       reflect-metadata: 0.2.2
-      uuid: 10.0.0
+      uuid: 11.0.5
 
-  '@cucumber/pretty-formatter@1.0.1(@cucumber/cucumber@11.1.0)(@cucumber/messages@27.0.2)':
+  '@cucumber/pretty-formatter@1.0.1(@cucumber/cucumber@11.1.0)(@cucumber/messages@27.2.0)':
     dependencies:
       '@cucumber/cucumber': 11.1.0
-      '@cucumber/messages': 27.0.2
+      '@cucumber/messages': 27.2.0
       ansi-styles: 5.2.0
       cli-table3: 0.6.3
       figures: 3.2.0
@@ -17484,8 +17480,6 @@ snapshots:
       which-typed-array: 1.1.13
 
   utils-merge@1.0.1: {}
-
-  uuid@10.0.0: {}
 
   uuid@11.0.5: {}
 
