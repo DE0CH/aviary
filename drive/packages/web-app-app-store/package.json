@@ -12,7 +12,7 @@
     "@opencloud-eu/web-client": "workspace:*",
     "@opencloud-eu/web-pkg": "workspace:*",
     "axios": "1.7.9",
-    "fuse.js": "7.0.0",
+    "fuse.js": "7.1.0",
     "lodash-es": "4.17.21",
     "mark.js": "^8.11.1",
     "pinia": "2.3.0",
