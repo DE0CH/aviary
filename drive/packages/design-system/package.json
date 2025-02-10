@@ -144,7 +144,7 @@
     "sass-loader": "16.0.4",
     "sass-resources-loader": "^2.2.5",
     "sass": "1.84.0",
-    "semver": "7.6.3",
+    "semver": "7.7.1",
     "shelljs": "^0.8.3",
     "style-dictionary": "^3.9.1",
     "style-loader": "^4.0.0",
