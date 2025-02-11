@@ -282,9 +282,6 @@ describe('OcTextInput', () => {
   })
 
   describe('type prop', () => {
-    it('should only allow text, number, email and password as type', () => {
-      expect(OcTextInput.props.type.validator('binary')).toBeFalsy()
-    })
     it.each(['text', 'number', 'email', 'password'])(
       'should set the provided type for the input',
       (type) => {

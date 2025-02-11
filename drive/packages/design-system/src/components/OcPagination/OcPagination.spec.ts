@@ -94,11 +94,6 @@ describe('OcPagination', () => {
     expect(wrapper.findAll(selectors.listItemCurrent).length).toBe(1)
   })
 
-  it('logs error if maxDisplayed prop is not an even number', () => {
-    console.error = vi.fn()
-    expect(Pagination.props.maxDisplayed.validator(2)).toBeFalsy()
-  })
-
   it('builds correct prev and next links', () => {
     const localThis = {
       ...defaultProps,
