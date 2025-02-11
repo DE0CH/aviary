@@ -49,7 +49,7 @@ describe('OcCheckbox', () => {
       { size: 'medium', class: 'oc-checkbox-m' },
       { size: 'large', class: 'oc-checkbox-l' }
     ])('valid size options', (item) => {
-      const wrapper = getWrapperWithProps({ size: item.size })
+      const wrapper = getWrapperWithProps({ size: item.size as 'small' | 'medium' | 'large' })
       const checkboxElement = wrapper.find<HTMLInputElement>(checkboxSelector)
       expect(checkboxElement.exists()).toBeTruthy()
       expect(checkboxElement.attributes('class')).toContain(item.class)

@@ -8,7 +8,7 @@ export default [
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
   eslintConfigPrettier,
-  { ignores: ['**/node_modules/', '.git/', '**/dist/'] },
+  { ignores: ['**/node_modules/', '.git/', '**/dist/', '**/.vitepress/'] },
   {
     languageOptions: {
       ecmaVersion: 5,

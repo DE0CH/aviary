@@ -8,35 +8,17 @@
   </dl>
 </template>
 
-<script lang="ts">
-import { PropType, defineComponent } from 'vue'
-
-/**
- * Definition lists are used to visually communicate key-value pairs.
- * They are useful for displaying metadata, definitions, and other data that is best represented in a key-value format.
- * @items - An array of objects with `term` and `definition` properties.
- *
- */
-
+<script setup lang="ts">
 interface DefinitionItem {
   term: string
   definition: string
 }
 
-export default defineComponent({
-  name: 'OcDefinitionList',
-  status: 'ready',
-  release: '16.0.0',
-  props: {
-    /**
-     * The items to display in the list.
-     */
-    items: {
-      type: Array as PropType<DefinitionItem[]>,
-      required: true
-    }
-  }
-})
+export interface Props {
+  items: DefinitionItem[]
+}
+
+const { items } = defineProps<Props>()
 </script>
 
 <style lang="scss">

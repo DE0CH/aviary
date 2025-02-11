@@ -19,118 +19,55 @@
   </div>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
+import { computed } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 
-export default defineComponent({
-  name: 'OcAvatarItem',
-  status: 'ready',
-  release: '10.0.0',
-  components: {
-    OcIcon
-  },
-  props: {
-    /**
-     * Name of the public link used as an accessible label
-     */
-    name: {
-      type: String,
-      required: true
-    },
-    /**
-     * Icon that should be used for the avatar
-     */
-    icon: {
-      type: String,
-      required: false,
-      default: null
-    },
-    /**
-     * Color that should be used for the icon
-     */
-    iconColor: {
-      type: String,
-      required: false,
-      default: 'var(--oc-color-text-inverse)'
-    },
-    /**
-     * Fill-type that should be used for the icon
-     */
-    iconFillType: {
-      type: String,
-      required: false,
-      default: 'fill'
-    },
-    /**
-     * Describes the size of the avatar icon e.g.(small)
-     */
-    iconSize: {
-      type: String,
-      required: false,
-      default: 'small'
-    },
-    /**
-     * Background color that should be used for the avatar. If empty
-     * a random color will be picked
-     */
-    background: {
-      type: String,
-      required: false,
-      default: 'var(--oc-color-swatch-passive-default)'
-    },
-    /**
-     * Accessibility label used as alt. Use only in case the avatar is used alone.
-     * In case the avatar is used next to username or display name leave empty.
-     * If not specified, avatar will get `aria-hidden="true"`.
-     **/
-    accessibleLabel: {
-      type: String,
-      required: false,
-      default: ''
-    },
+export interface Props {
+  name: string
+  accessibleLabel?: string
+  background?: string
+  icon?: string
+  iconColor?: string
+  iconFillType?: string
+  iconSize?: string
+  width?: number
+}
 
-    /**
-     * Describes the width of the avatar
-     */
-    width: {
-      type: Number,
-      required: false,
-      default: 30
-    }
-  },
+const {
+  name,
+  accessibleLabel = '',
+  background = 'var(--oc-color-swatch-passive-default)',
+  icon,
+  iconColor = 'var(--oc-color-text-inverse)',
+  iconFillType = 'fill',
+  iconSize = 'small',
+  width = 30
+} = defineProps<Props>()
 
-  computed: {
-    avatarWidth() {
-      return this.width + 'px'
-    },
-    hasIcon() {
-      return this.icon !== null
-    },
-    backgroundColor() {
-      return this.background || this.pickBackgroundColor
-    },
-    pickBackgroundColor() {
-      const backgroundColors = [
-        '#b82015',
-        '#c21c53',
-        '#9C27B0',
-        '#673AB7',
-        '#3F51B5',
-        '#106892',
-        '#055c68',
-        '#208377',
-        '#1a761d',
-        '#476e1a',
-        '#636d0b',
-        '#8e5c11',
-        '#795548',
-        '#465a64'
-      ]
-      return backgroundColors[Math.floor(Math.random() * backgroundColors.length)]
-    }
-  }
-})
+const avatarWidth = computed(() => width + 'px')
+const hasIcon = computed(() => icon !== null)
+const backgroundColor = computed(() => background || pickBackgroundColor())
+
+const pickBackgroundColor = () => {
+  const backgroundColors = [
+    '#b82015',
+    '#c21c53',
+    '#9C27B0',
+    '#673AB7',
+    '#3F51B5',
+    '#106892',
+    '#055c68',
+    '#208377',
+    '#1a761d',
+    '#476e1a',
+    '#636d0b',
+    '#8e5c11',
+    '#795548',
+    '#465a64'
+  ]
+  return backgroundColors[Math.floor(Math.random() * backgroundColors.length)]
+}
 </script>
 
 <style lang="scss">
@@ -150,16 +87,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-<h3>Empty OcAvatarItem</h3>
-<oc-avatar-item name="Public link" accessible-label="Public link" />
-<h3>OcAvatarItem with icon and default background</h3>
-<oc-avatar-item name="Public link" icon="close" accessible-label="Public link" />
-<h3>OcAvatarItem with icon and custom background</h3>
-<oc-avatar-item name="Public link" icon="close" background="#465a64" accessible-label="Public link" />
-<h3>OcAvatarItem with icon and custom background and custom width and iconsize</h3>
-<oc-avatar-item :width="100" iconSize="large" name="Public link" icon="close" background="#465a64" accessible-label="Public link" />
-```
-</docs>

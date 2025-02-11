@@ -84,7 +84,7 @@ export default defineComponent({
      * @values click, hover, manual
      **/
     mode: {
-      type: String,
+      type: String as PropType<'click' | 'hover' | 'manual'>,
       required: false,
       default: 'click',
       validator: (value: string) => {

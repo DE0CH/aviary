@@ -97,11 +97,11 @@
   </table>
 </template>
 <script lang="ts">
-import OcThead from '../_OcTableHeader/_OcTableHeader.vue'
-import OcTbody from '../_OcTableBody/_OcTableBody.vue'
-import OcTr from '../_OcTableRow/_OcTableRow.vue'
-import OcTh from '../_OcTableCellHead/_OcTableCellHead.vue'
-import OcTd from '../_OcTableCellData/_OcTableCellData.vue'
+import OcThead from '../OcTableHead/OcTableHead.vue'
+import OcTbody from '../OcTableBody/OcTableBody.vue'
+import OcTr from '../OcTableTr/OcTableTr.vue'
+import OcTh from '../OcTableTh/OcTableTh.vue'
+import OcTd from '../OcTableTd/OcTableTd.vue'
 import OcButton from '../OcButton/OcButton.vue'
 import { getSizeClass, Item, FieldType } from '../../helpers'
 import { defineComponent, PropType } from 'vue'
