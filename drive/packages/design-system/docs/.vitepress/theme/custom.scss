@@ -1,0 +1,25 @@
+:root {
+	--vp-font-family-base: 'OpenCloud', sans-serif;
+	--vp-c-brand-1: var(--oc-color-swatch-inverse-contrast);
+}
+
+// TODO: remove as soon as we load our oc theme colors on theme switch
+.dark {
+    body, h1, h2, h3, h4, h5, h6, p {
+        color: var(--oc-color-swatch-inverse-default);
+        --vp-c-brand-1: var(--oc-color-swatch-brand-default);
+    }
+}
+
+@font-face {
+    font-family: OpenCloud;
+    src: url('./../../../src/assets/fonts/OpenCloud500-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+}
+@font-face {
+    font-family: OpenCloud;
+    src: url('./../../../src/assets/fonts/OpenCloud750-Bold.woff2') format('woff2');
+    font-weight: bold;
+    font-style: normal;
+}

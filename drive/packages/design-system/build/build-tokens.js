@@ -1,10 +1,18 @@
-const StyleDictionary = require('style-dictionary')
-const path = require('path')
-const yaml = require('yaml')
+import StyleDictionary from 'style-dictionary'
+import path, { dirname } from 'path'
+import yaml from 'yaml'
+import { fileURLToPath } from 'url'
 
-StyleDictionary.registerFormat(require('./build-tokens/format-writer-json'))
-StyleDictionary.registerFormat(require('./build-tokens/format-writer-scss'))
-StyleDictionary.registerTransform(require('./build-tokens/transform-namespace'))
+import jsonFormat from './build-tokens/format-writer-json.js'
+import scssFormat from './build-tokens/format-writer-scss.js'
+import namespaceTransform from './build-tokens/transform-namespace.js'
+
+StyleDictionary.registerFormat(jsonFormat)
+StyleDictionary.registerFormat(scssFormat)
+StyleDictionary.registerTransform(namespaceTransform)
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 StyleDictionary.extend({
   parsers: [

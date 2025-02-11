@@ -39,6 +39,10 @@ playwright-report
 
 /.pnpm-store/
 
+# VitePress
+packages/design-system/docs/.vitepress/cache
+packages/design-system/docs/.vitepress/dist
+
 # drone CI is in .drone.star, do not let someone accidentally commit a local .drone.yml
 .drone.yml
 
