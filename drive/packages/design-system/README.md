@@ -1,8 +1,10 @@
 # OpenCloud Design System
 
-**OpenCloud Design System** is used to design OpenCloud UI components. It was built with [VitePress](https://vitepress.dev/).
+The **OpenCloud Design System** provides components and utilities for application and extension development within the
+OpenCloud Web ecosystem. It can be developed standalone via the design system documentation. The documentation is
+built with [VitePress](https://vitepress.dev/).
 
-Head over to the [generated docs](https://opencloud.design/) for more information!
+Head over to the [hosted docs](https://design.opencloud.eu/) for more information!
 
 ## Local setup
 
