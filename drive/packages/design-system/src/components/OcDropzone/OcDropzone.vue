@@ -5,16 +5,6 @@
   </div>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
-
-export default defineComponent({
-  name: 'OcDropzone',
-  status: 'ready',
-  release: '0.0.1'
-})
-</script>
-
 <style lang="scss">
 .oc-dropzone {
   align-items: center;
@@ -34,11 +24,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-  <oc-dropzone>
-    Drag and drop to upload content into current folder
-  </oc-dropzone>
-```
-</docs>

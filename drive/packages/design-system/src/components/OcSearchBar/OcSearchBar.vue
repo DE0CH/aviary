@@ -59,7 +59,7 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref, useSlots, watch } from 'vue'
+import { computed, defineComponent, PropType, ref, useSlots, watch } from 'vue'
 
 import OcButton from '../OcButton/OcButton.vue'
 import OcGrid from '../OcGrid/OcGrid.vue'
@@ -198,7 +198,7 @@ export default defineComponent({
      * Variation of the cancel button
      */
     cancelButtonVariation: {
-      type: String,
+      type: String as PropType<'passive' | 'primary' | 'danger' | 'success' | 'warning' | 'brand'>,
       required: false,
       default: 'primary',
       validator: (value: string) => {
@@ -209,7 +209,7 @@ export default defineComponent({
      * Appearance of the cancel button
      */
     cancelButtonAppearance: {
-      type: String,
+      type: String as PropType<'filled' | 'outline' | 'raw' | 'raw-inverse'>,
       required: false,
       default: 'raw',
       validator: (value: string) => {

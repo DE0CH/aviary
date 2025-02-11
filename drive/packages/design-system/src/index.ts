@@ -22,7 +22,8 @@ export default {
     initializeCustomProps(themeOptions?.spacing, 'space-')
     applyCustomProp('font-family', themeOptions?.fontFamily)
 
-    Object.values(components).forEach((c) => app.component(c.name, c))
+    // TODO: remove `|| c.name` when all components follow the script setup syntax
+    Object.values(components).forEach((c) => app.component(c.__name || c.name, c))
     Object.values(directives).forEach((d) => app.directive(d.name, d))
   }
 }

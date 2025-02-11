@@ -77,121 +77,94 @@
   </portal>
 </template>
 
-<script lang="ts">
-import { computed, defineComponent, PropType, ref, unref, watch } from 'vue'
+<script setup lang="ts">
+import { computed, ref, unref, watch } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcButton from '../OcButton/OcButton.vue'
 import { useGettext } from 'vue3-gettext'
 import { PasswordPolicy, PasswordPolicyRule } from '../../helpers'
 
-export default defineComponent({
-  name: 'OCTextInputPassword',
-  components: { OcButton, OcIcon },
-  status: 'ready',
-  release: '1.0.0',
-  inheritAttrs: true,
-  props: {
-    value: {
-      type: String,
-      required: false,
-      default: ''
-    },
-    passwordPolicy: {
-      type: Object as PropType<PasswordPolicy>,
-      default: () => ({})
-    },
-    generatePasswordMethod: {
-      type: Function as PropType<(...args: unknown[]) => string>,
-      required: false,
-      default: null
-    },
-    hasWarning: {
-      type: Boolean,
-      required: false,
-      default: false
-    },
-    hasError: {
-      type: Boolean,
-      required: false,
-      default: false
-    },
-    disabled: {
-      type: Boolean,
-      required: false,
-      default: false
-    }
-  },
-  emits: ['passwordChallengeCompleted', 'passwordChallengeFailed', 'passwordGenerated'],
-  setup(props, { emit }) {
-    const passwordInput = ref(null)
-    const { $gettext } = useGettext()
-    const password = ref(props.value)
-    const showPassword = ref(false)
-    const copyPasswordIconInitial = 'file-copy'
-    const copyPasswordIcon = ref(copyPasswordIconInitial)
+export interface Props {
+  disabled?: boolean
+  generatePasswordMethod?: (...args: unknown[]) => string
+  hasError?: boolean
+  hasWarning?: boolean
+  passwordPolicy?: PasswordPolicy
+  value?: string
+}
 
-    const showPasswordPolicyInformation = computed(() => {
-      return !!Object.keys(props.passwordPolicy?.rules || {}).length
-    })
+const {
+  disabled = false,
+  generatePasswordMethod,
+  hasError = false,
+  hasWarning = false,
+  passwordPolicy,
+  value = ''
+} = defineProps<Props>()
 
-    const testedPasswordPolicy = computed(() => {
-      return props.passwordPolicy.missing(unref(password))
-    })
+const emit = defineEmits([
+  'passwordChallengeCompleted',
+  'passwordChallengeFailed',
+  'passwordGenerated'
+])
 
-    const getPasswordPolicyRuleMessage = (rule: PasswordPolicyRule) => {
-      const paramObj: Record<string, string> = {}
+const passwordInput = ref(null)
+const { $gettext } = useGettext()
+const password = ref(value)
+const showPassword = ref(false)
+const copyPasswordIconInitial = 'file-copy'
+const copyPasswordIcon = ref(copyPasswordIconInitial)
 
-      for (let formatKey = 0; formatKey < rule.format.length; formatKey++) {
-        paramObj[`param${formatKey + 1}`] = rule.format[formatKey]?.toString()
-      }
+const showPasswordPolicyInformation = computed(() => {
+  return !!Object.keys(passwordPolicy?.rules || {}).length
+})
 
-      return $gettext(rule.message, paramObj, true)
-    }
+const testedPasswordPolicy = computed(() => {
+  return passwordPolicy?.missing(unref(password))
+})
 
-    const copyPasswordToClipboard = () => {
-      navigator.clipboard.writeText(unref(password))
-      copyPasswordIcon.value = 'check'
-      setTimeout(() => (copyPasswordIcon.value = copyPasswordIconInitial), 500)
-    }
+const getPasswordPolicyRuleMessage = (rule: PasswordPolicyRule) => {
+  const paramObj: Record<string, string> = {}
 
-    const generatePassword = () => {
-      const generatedPassword = props.generatePasswordMethod()
-      password.value = generatedPassword
-      showPassword.value = true
-      emit('passwordGenerated', password.value)
-    }
-
-    const focus = () => {
-      unref(passwordInput).focus()
-    }
-
-    watch(password, (value) => {
-      if (!Object.keys(props.passwordPolicy).length) {
-        return
-      }
-
-      if (!props.passwordPolicy.check(value)) {
-        return emit('passwordChallengeFailed')
-      }
-
-      emit('passwordChallengeCompleted')
-    })
-
-    return {
-      focus,
-      password,
-      showPassword,
-      passwordInput,
-      copyPasswordIcon,
-      showPasswordPolicyInformation,
-      testedPasswordPolicy,
-      generatePassword,
-      getPasswordPolicyRuleMessage,
-      copyPasswordToClipboard
-    }
+  for (let formatKey = 0; formatKey < rule.format.length; formatKey++) {
+    paramObj[`param${formatKey + 1}`] = rule.format[formatKey]?.toString()
   }
+
+  return $gettext(rule.message, paramObj, true)
+}
+
+const copyPasswordToClipboard = () => {
+  navigator.clipboard.writeText(unref(password))
+  copyPasswordIcon.value = 'check'
+  setTimeout(() => (copyPasswordIcon.value = copyPasswordIconInitial), 500)
+}
+
+const generatePassword = () => {
+  const generatedPassword = generatePasswordMethod()
+  password.value = generatedPassword
+  showPassword.value = true
+  emit('passwordGenerated', password.value)
+}
+
+const focus = () => {
+  unref(passwordInput).focus()
+}
+
+defineExpose({ focus })
+
+watch(password, (value) => {
+  if (!Object.keys(passwordPolicy).length) {
+    return
+  }
+
+  if (!passwordPolicy.check(value)) {
+    return emit('passwordChallengeFailed')
+  }
+
+  emit('passwordChallengeCompleted')
 })
 </script>
+
 <style lang="scss">
 .oc-text-input-password {
   &-wrapper {

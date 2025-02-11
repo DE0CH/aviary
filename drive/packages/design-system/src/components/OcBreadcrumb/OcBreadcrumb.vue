@@ -104,238 +104,162 @@
   </div>
 </template>
 
-<script lang="ts">
-import { computed, defineComponent, nextTick, PropType, ref, unref, watch } from 'vue'
+<script setup lang="ts">
+import { computed, nextTick, ref, unref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import {
-  AVAILABLE_SIZES,
-  EVENT_ITEM_DROPPED_BREADCRUMB,
-  uniqueId,
-  BreadcrumbItem
-} from '../../helpers'
+import { EVENT_ITEM_DROPPED_BREADCRUMB, uniqueId, BreadcrumbItem } from '../../helpers'
 import OcButton from '../OcButton/OcButton.vue'
 import OcDrop from '../OcDrop/OcDrop.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import { RouteLocationPathRaw } from 'vue-router'
 
-/**
- * Displays a breadcrumb. Each item in the items property has the following elements:
- *
- *  - text: mandatory element, holds the text which is to be displayed in the breadcrumb
- *  - to: optional element, the vue router link
- */
-export default defineComponent({
-  name: 'OcBreadcrumb',
-  status: 'ready',
-  release: '1.0.0',
+export interface Props {
+  items: BreadcrumbItem[]
+  contextMenuPadding?:
+    | 'xsmall'
+    | 'small'
+    | 'medium'
+    | 'large'
+    | 'xlarge'
+    | 'xxlarge'
+    | 'xxxlarge'
+    | 'remove'
+  id?: string
+  maxWidth?: number
+  showContextActions?: boolean
+  truncationOffset?: number
+  variation?: 'default' | 'lead'
+}
 
-  components: {
-    OcDrop,
-    OcIcon,
-    OcButton
-  },
-  props: {
-    /**
-     * Id for the breadcrumbs. If it's empty, a generated one will be used.
-     */
-    id: {
-      type: String,
-      required: false,
-      default: () => uniqueId('oc-breadcrumbs-')
-    },
-    /**
-     * Array of breadcrumb items
-     */
-    items: {
-      type: Array as PropType<BreadcrumbItem[]>,
-      required: true
-    },
-    /**
-     * Variation of breadcrumbs
-     * Can be `default` or `lead`
-     */
-    variation: {
-      type: String,
-      required: false,
-      default: 'default',
-      validator: (value) => value === 'lead' || value === 'default'
-    },
-    /**
-     * Defines the padding size around the drop content. Defaults to `medium`.
-     *
-     * @values xsmall, small, medium, large, xlarge, xxlarge, xxxlarge, remove
-     */
-    contextMenuPadding: {
-      type: String,
-      required: false,
-      default: 'medium',
-      validator: (value) => {
-        return [...AVAILABLE_SIZES, 'remove'].some((e) => e === value)
-      }
-    },
+const {
+  items,
+  contextMenuPadding = 'medium',
+  id = uniqueId('oc-breadcrumbs-'),
+  maxWidth = -1,
+  showContextActions = false,
+  truncationOffset = 2,
+  variation = 'default'
+} = defineProps<Props>()
 
-    /**
-     * Defines the maximum width of the breadcrumb. If the breadcrumb is wider than the given value, the breadcrumb
-     * will be reduced from the left side.
-     * If the value is -1, the breadcrumb will not be reduced.
-     */
-    maxWidth: {
-      type: Number,
-      required: false,
-      default: -1
-    },
-    /**
-     * Defines the number of items that should be always displayed at the beginning of the breadcrumb.
-     * The default value is 2. e.g. Personal > ... > XYZ
-     */
-    truncationOffset: {
-      type: Number,
-      required: false,
-      default: 2
-    },
-    /**
-     * Determines if the last breadcrumb item should have context menu actions.
-     */
-    showContextActions: {
-      type: Boolean,
-      default: false
-    }
-  },
-  emits: [EVENT_ITEM_DROPPED_BREADCRUMB],
-  setup(props, { emit }) {
-    const { $gettext } = useGettext()
-    const visibleItems = ref<BreadcrumbItem[]>([])
-    const hiddenItems = ref<BreadcrumbItem[]>([])
-    const displayItems = ref<BreadcrumbItem[]>(props.items.slice())
+const emit = defineEmits([EVENT_ITEM_DROPPED_BREADCRUMB])
 
-    const getBreadcrumbElement = (id: string): HTMLElement => {
-      return document.querySelector(`.oc-breadcrumb-list [data-item-id="${id}"]`)
-    }
+const { $gettext } = useGettext()
+const visibleItems = ref<BreadcrumbItem[]>([])
+const hiddenItems = ref<BreadcrumbItem[]>([])
+const displayItems = ref<BreadcrumbItem[]>(items.slice())
 
-    const isDropAllowed = (item: BreadcrumbItem, index: number): boolean => {
-      return !(
-        !item.id ||
-        index === unref(displayItems).length - 1 ||
-        item.isTruncationPlaceholder ||
-        item.isStaticNav
-      )
-    }
-    const dropItemEvent = (item: BreadcrumbItem, index: number) => {
-      if (!isDropAllowed(item, index)) {
-        return
-      }
+const getBreadcrumbElement = (id: string): HTMLElement => {
+  return document.querySelector(`.oc-breadcrumb-list [data-item-id="${id}"]`)
+}
 
-      if (typeof item.to === 'object') {
-        const itemTo = item.to as RouteLocationPathRaw
-        itemTo.path = itemTo.path || '/'
-        emit(EVENT_ITEM_DROPPED_BREADCRUMB, itemTo)
-      }
-    }
-
-    const calculateTotalBreadcrumbWidth = () => {
-      let totalBreadcrumbWidth = 100 // 100px margin to the right to avoid breadcrumb from getting too close to the controls
-      visibleItems.value.forEach((item) => {
-        const breadcrumbElement = getBreadcrumbElement(item.id)
-        const itemClientWidth = breadcrumbElement?.getBoundingClientRect()?.width || 0
-        totalBreadcrumbWidth += itemClientWidth
-      })
-      return totalBreadcrumbWidth
-    }
-
-    const reduceBreadcrumb = (offsetIndex: number) => {
-      const breadcrumbMaxWidth = props.maxWidth
-      if (!breadcrumbMaxWidth) {
-        return
-      }
-      const totalBreadcrumbWidth = calculateTotalBreadcrumbWidth()
-
-      const isOverflowing = breadcrumbMaxWidth < totalBreadcrumbWidth
-      if (!isOverflowing || visibleItems.value.length <= props.truncationOffset + 1) {
-        return
-      }
-      // Remove from the left side
-      const removed = visibleItems.value.splice(offsetIndex, 1)
-
-      hiddenItems.value.push(removed[0])
-      reduceBreadcrumb(offsetIndex)
-    }
-
-    const lastHiddenItem = computed(() =>
-      hiddenItems.value.length >= 1 ? unref(hiddenItems)[unref(hiddenItems).length - 1] : { to: {} }
-    )
-
-    const renderBreadcrumb = () => {
-      displayItems.value = [...props.items]
-      if (displayItems.value.length > props.truncationOffset - 1) {
-        displayItems.value.splice(props.truncationOffset - 1, 0, {
-          text: '...',
-          allowContextActions: false,
-          to: {} as BreadcrumbItem['to'],
-          isTruncationPlaceholder: true
-        })
-      }
-      visibleItems.value = [...displayItems.value]
-      hiddenItems.value = []
-      nextTick(() => {
-        reduceBreadcrumb(props.truncationOffset)
-      })
-    }
-
-    watch([() => props.maxWidth, () => props.items], renderBreadcrumb, { immediate: true })
-
-    const currentFolder = computed<BreadcrumbItem>(() => {
-      if (props.items.length === 0 || !props.items) {
-        return undefined
-      }
-      return [...props.items].reverse()[0]
-    })
-    const parentFolderTo = computed(() => {
-      return [...props.items].reverse()[1]?.to
-    })
-
-    const contextMenuLabel = computed(() => {
-      return $gettext('Show actions for current folder')
-    })
-
-    const getAriaCurrent = (index: number): 'page' | null => {
-      return props.items.length - 1 === index ? 'page' : null
-    }
-
-    const dropItemStyling = (
-      item: BreadcrumbItem,
-      index: number,
-      leaving: boolean,
-      event: DragEvent
-    ) => {
-      if (!isDropAllowed(item, index)) {
-        return
-      }
-      const hasFilePayload = (event.dataTransfer?.types || []).some((e) => e === 'Files')
-      if (hasFilePayload) return
-      if ((event.currentTarget as HTMLElement)?.contains(event.relatedTarget as HTMLElement)) {
-        return
-      }
-
-      const classList = getBreadcrumbElement(item.id).children[0].classList
-      const className = 'oc-breadcrumb-item-dragover'
-      leaving ? classList.remove(className) : classList.add(className)
-    }
-
-    return {
-      currentFolder,
-      parentFolderTo,
-      contextMenuLabel,
-      getAriaCurrent,
-      visibleItems,
-      hiddenItems,
-      renderBreadcrumb,
-      displayItems,
-      lastHiddenItem,
-      dropItemEvent,
-      dropItemStyling
-    }
+const isDropAllowed = (item: BreadcrumbItem, index: number): boolean => {
+  return !(
+    !item.id ||
+    index === unref(displayItems).length - 1 ||
+    item.isTruncationPlaceholder ||
+    item.isStaticNav
+  )
+}
+const dropItemEvent = (item: BreadcrumbItem, index: number) => {
+  if (!isDropAllowed(item, index)) {
+    return
   }
+
+  if (typeof item.to === 'object') {
+    const itemTo = item.to as RouteLocationPathRaw
+    itemTo.path = itemTo.path || '/'
+    emit(EVENT_ITEM_DROPPED_BREADCRUMB, itemTo)
+  }
+}
+
+const calculateTotalBreadcrumbWidth = () => {
+  let totalBreadcrumbWidth = 100 // 100px margin to the right to avoid breadcrumb from getting too close to the controls
+  visibleItems.value.forEach((item) => {
+    const breadcrumbElement = getBreadcrumbElement(item.id)
+    const itemClientWidth = breadcrumbElement?.getBoundingClientRect()?.width || 0
+    totalBreadcrumbWidth += itemClientWidth
+  })
+  return totalBreadcrumbWidth
+}
+
+const reduceBreadcrumb = (offsetIndex: number) => {
+  const breadcrumbMaxWidth = maxWidth
+  if (!breadcrumbMaxWidth) {
+    return
+  }
+  const totalBreadcrumbWidth = calculateTotalBreadcrumbWidth()
+
+  const isOverflowing = breadcrumbMaxWidth < totalBreadcrumbWidth
+  if (!isOverflowing || visibleItems.value.length <= truncationOffset + 1) {
+    return
+  }
+  // Remove from the left side
+  const removed = visibleItems.value.splice(offsetIndex, 1)
+
+  hiddenItems.value.push(removed[0])
+  reduceBreadcrumb(offsetIndex)
+}
+
+const lastHiddenItem = computed(() =>
+  hiddenItems.value.length >= 1 ? unref(hiddenItems)[unref(hiddenItems).length - 1] : { to: {} }
+)
+
+const renderBreadcrumb = () => {
+  displayItems.value = [...items]
+  if (displayItems.value.length > truncationOffset - 1) {
+    displayItems.value.splice(truncationOffset - 1, 0, {
+      text: '...',
+      allowContextActions: false,
+      to: {} as BreadcrumbItem['to'],
+      isTruncationPlaceholder: true
+    })
+  }
+  visibleItems.value = [...displayItems.value]
+  hiddenItems.value = []
+  nextTick(() => {
+    reduceBreadcrumb(truncationOffset)
+  })
+}
+
+watch([() => maxWidth, () => items], renderBreadcrumb, { immediate: true })
+
+const currentFolder = computed<BreadcrumbItem>(() => {
+  if (items.length === 0 || !items) {
+    return undefined
+  }
+  return [...items].reverse()[0]
 })
+const parentFolderTo = computed(() => {
+  return [...items].reverse()[1]?.to
+})
+
+const contextMenuLabel = computed(() => {
+  return $gettext('Show actions for current folder')
+})
+
+const getAriaCurrent = (index: number): 'page' | null => {
+  return items.length - 1 === index ? 'page' : null
+}
+
+const dropItemStyling = (
+  item: BreadcrumbItem,
+  index: number,
+  leaving: boolean,
+  event: DragEvent
+) => {
+  if (!isDropAllowed(item, index)) {
+    return
+  }
+  const hasFilePayload = (event.dataTransfer?.types || []).some((e) => e === 'Files')
+  if (hasFilePayload) return
+  if ((event.currentTarget as HTMLElement)?.contains(event.relatedTarget as HTMLElement)) {
+    return
+  }
+
+  const classList = getBreadcrumbElement(item.id).children[0].classList
+  const className = 'oc-breadcrumb-item-dragover'
+  leaving ? classList.remove(className) : classList.add(className)
+}
 </script>
 
 <style lang="scss">
@@ -427,37 +351,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-<template>
-<section>
-  <div>
-    <oc-breadcrumb :items="items" />
-  </div>
-  <div>
-    <oc-breadcrumb :items="items" variation="lead" />
-    <oc-breadcrumb :items="items" >
-      <template v-slot:contextMenu>
-        <p class="oc-my-rm">I'm an example item</p>
-      </template>
-    </oc-breadcrumb>
-  </div>
-</section>
-</template>
-<script>
-  export default {
-    data: () => {
-      return {
-        items: [
-          {text:'First folder',to:{path:'folder'}},
-          {text:'Subfolder', to: {path: 'subfolder'}},
-          {text:'Deep',to:{path:'deep'}},
-          {text:'Deeper ellipsize in responsive mode'},
-        ]
-      }
-    }
-  }
-</script>
-```
-</docs>

@@ -6,39 +6,18 @@
   />
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
+import { computed } from 'vue'
 
-/**
- * Count of avatars which weren't displayed.
- */
-export default defineComponent({
-  name: 'OcAvatarCount',
-  status: 'ready',
-  release: '2.1.0',
-  props: {
-    /**
-     * Count of avatars
-     */
-    count: {
-      type: Number,
-      required: true
-    },
-    /**
-     * Width and height of the element in pixels
-     */
-    size: {
-      type: Number,
-      required: false,
-      default: 30
-    }
-  },
+export interface Props {
+  count: number
+  size?: number
+}
 
-  computed: {
-    fontSize() {
-      return Math.floor(this.size / 2.5) + 'px'
-    }
-  }
+const { count, size = 30 } = defineProps<Props>()
+
+const fontSize = computed(() => {
+  return Math.floor(size / 2.5) + 'px'
 })
 </script>
 
@@ -52,9 +31,3 @@ export default defineComponent({
   justify-content: center;
 }
 </style>
-
-<docs>
-```js
-<oc-avatar-count :count="21" />
-```
-</docs>

@@ -82,7 +82,7 @@
 
 <script lang="ts">
 import { defineComponent, PropType, ref, watch, computed } from 'vue'
-import OcButton from '../OcButton/OcButton.vue'
+import OcButton, { Props as ButtonProps } from '../OcButton/OcButton.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcTextInput from '../OcTextInput/OcTextInput.vue'
 import { FocusTrap } from 'focus-trap-vue'
@@ -305,7 +305,7 @@ export default defineComponent({
   emits: ['cancel', 'confirm', 'input'],
   setup(props) {
     const showSpinner = ref(false)
-    const buttonConfirmAppearance = ref('filled')
+    const buttonConfirmAppearance = ref<ButtonProps['appearance']>('filled')
     const ocModal = ref<HTMLElement>()
     const ocModalInput = ref<typeof OcTextInput>()
 

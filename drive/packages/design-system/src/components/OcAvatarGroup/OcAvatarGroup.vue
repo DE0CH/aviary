@@ -8,57 +8,15 @@
   />
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
 import OcAvatarItem from '../OcAvatarItem/OcAvatarItem.vue'
 
-export default defineComponent({
-  name: 'OcAvatarGroup',
-  status: 'ready',
-  release: '10.0.0',
-  components: { OcAvatarItem },
+export interface Props {
+  name: string
+  accessibleLabel?: string
+  iconSize?: string
+  width?: number
+}
 
-  props: {
-    /**
-     * Name of the group used as an accessible label
-     */
-    name: {
-      type: String,
-      required: true
-    },
-    /**
-     * Accessibility label used as alt. Use only in case the avatar is used alone.
-     * In case the avatar is used next to username or display name leave empty.
-     * If not specified, avatar will get `aria-hidden="true"`.
-     **/
-    accessibleLabel: {
-      type: String,
-      required: false,
-      default: ''
-    },
-    /**
-     * Describes the width of the avatar
-     */
-    width: {
-      type: Number,
-      required: false,
-      default: 30
-    },
-
-    /**
-     * Describes the size of the avatar icon e.g.(small)
-     */
-    iconSize: {
-      type: String,
-      required: false,
-      default: 'small'
-    }
-  }
-})
+const { name, accessibleLabel = '', iconSize = 'small', width = 30 } = defineProps<Props>()
 </script>
-
-<docs>
-```js
-<oc-avatar-group name="Group" accessible-label="Group" />
-```
-</docs>
