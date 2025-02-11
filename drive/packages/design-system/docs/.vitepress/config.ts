@@ -86,6 +86,14 @@ export default defineConfig({
             {
               text: 'OcButton',
               link: '/components/OcButton'
+            },
+            {
+              text: 'OcTextarea',
+              link: '/components/OcTextarea'
+            },
+            {
+              text: 'OcTextInput',
+              link: '/components/OcTextInput'
             }
           ]
         }

@@ -181,7 +181,7 @@ export default defineComponent({
     const isSearchLocation = useActiveLocation(isLocationCommonActive, 'files-common-search')
 
     const hasSharesNavigation = computed(
-      () => useSlots().hasOwnProperty('navigation') && can('create-all', 'Share')
+      () => Object.hasOwn(useSlots(), 'navigation') && can('create-all', 'Share')
     )
 
     const batchActions = computed(() => {

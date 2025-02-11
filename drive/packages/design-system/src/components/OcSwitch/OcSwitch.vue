@@ -12,59 +12,22 @@
   </span>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
-
+<script setup lang="ts">
 import { uniqueId } from '../../helpers'
 
-/**
- * The switch has two states between users can choose.
- */
-export default defineComponent({
-  name: 'OcSwitch',
-  status: 'ready',
-  release: '1.0.0',
-  props: {
-    /**
-     * Value of the switch
-     *
-     * @model
-     **/
-    checked: {
-      type: Boolean,
-      required: false,
-      default: false
-    },
-    /**
-     * Accessible name of the switch
-     **/
-    label: {
-      type: String,
-      required: true,
-      default: null
-    },
-    /**
-     * ID of the label element
-     * If not set, unique ID is used instead with format `oc-switch-label-{number}`
-     */
-    labelId: {
-      type: String,
-      required: false,
-      default: () => uniqueId('oc-switch-label-')
-    }
-  },
-  emits: ['update:checked'],
-  methods: {
-    toggle() {
-      /**
-       * Change event
-       * @event update:checked
-       * @type {boolean}
-       */
-      this.$emit('update:checked', !this.checked)
-    }
-  }
-})
+export interface Props {
+  checked?: boolean
+  label: string
+  labelId?: string
+}
+
+const { checked = false, label, labelId = uniqueId('oc-switch-label-') } = defineProps<Props>()
+
+const emit = defineEmits(['update:checked'])
+
+const toggle = () => {
+  emit('update:checked', !checked)
+}
 </script>
 
 <style lang="scss">
@@ -118,26 +81,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-<template>
-  <section>
-    <h3>Switcher behavior</h3>
-    <oc-switch label="Darkmode" v-model="state" />
-    <p>
-      The switch is turned <strong v-if="state">on</strong><strong v-else="state">off</strong>.
-    </p>
-  </section>
-</template>
-<script>
-  export default {
-    data: () => {
-      return {
-        state: true
-      }
-    }
-  }
-</script>
-```
-</docs>

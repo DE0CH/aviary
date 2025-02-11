@@ -1,90 +1,42 @@
 <template>
-  <component :is="type" :class="$_ocTag_class" :to="to" @click="$_ocTag_click">
+  <component :is="type" :class="tagClasses" :to="to" @click="$_ocTag_click">
     <!-- @slot Content of the tag -->
     <slot />
   </component>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
-
+<script setup lang="ts">
+import { computed } from 'vue'
 import { getSizeClass } from '../../helpers'
+import { RouteLocationRaw } from 'vue-router'
 
-export default defineComponent({
-  name: 'OcTag',
-  status: 'ready',
-  release: '2.0.0',
+export interface Props {
+  type?: 'span' | 'button' | 'router-link' | 'a'
+  to?: string | RouteLocationRaw
+  size?: 'small' | 'medium' | 'large'
+  rounded?: boolean
+}
+const { type = 'span', to = '', size = 'medium', rounded = false } = defineProps<Props>()
 
-  props: {
-    /**
-     * Specify which component should be used for the tag.
-     * Can be `span`, `button`, `router-link` or `a`.
-     */
-    type: {
-      type: String,
-      required: false,
-      default: 'span',
-      validator: (type: string) => ['span', 'button', 'router-link', 'a'].includes(type)
-    },
+const emit = defineEmits(['click'])
 
-    /**
-     * Target of the router link
-     */
-    to: {
-      type: [String, Object],
-      required: false,
-      default: null
-    },
+const tagClasses = computed(() => {
+  const classes = ['oc-tag', `oc-tag-${getSizeClass(size)}`]
 
-    /**
-     * The size of the tag. Defaults to medium.
-     * `small, medium, large`
-     */
-    size: {
-      type: String,
-      default: 'medium',
-      validator: (value: string) => {
-        return ['small', 'medium', 'large'].includes(value)
-      }
-    },
+  type === 'router-link' || type === 'a'
+    ? classes.push('oc-tag-link')
+    : classes.push(`oc-tag-${type}`)
 
-    /**
-     * Enables fully rounded borders
-     */
-    rounded: {
-      type: Boolean,
-      default: false,
-      required: false
-    }
-  },
-
-  emits: ['click'],
-
-  computed: {
-    $_ocTag_class() {
-      const classes = ['oc-tag', `oc-tag-${getSizeClass(this.size)}`]
-
-      this.type === 'router-link' || this.type === 'a'
-        ? classes.push('oc-tag-link')
-        : classes.push(`oc-tag-${this.type}`)
-
-      if (this.rounded) {
-        classes.push('oc-tag-rounded')
-      }
-
-      return classes
-    }
-  },
-  methods: {
-    $_ocTag_click(event: MouseEvent) {
-      /**
-       * Emitted as soon as the user clicks on the tag
-       * @type {event}
-       */
-      this.$emit('click', event)
-    }
+  if (rounded) {
+    classes.push('oc-tag-rounded')
   }
+
+  return classes
 })
+
+function $_ocTag_click(event: MouseEvent) {
+  emit('click', event)
+}
 </script>
 
 <style lang="scss">
@@ -147,47 +99,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-Component to display various information.
-```js
-<oc-tag>
-  <oc-icon name="links" />
-  Shared via link
-</oc-tag>
-```
-## Different sizes of the tag component
-
-```js
-<div>
-<oc-tag size="small">
-  <oc-icon name="links" size="small" />
-  Small tag
-</oc-tag>
-<oc-tag size="medium">
-  <oc-icon name="links" size="medium" />
-  Medium tag
-</oc-tag>
-<oc-tag size="large">
-  <oc-icon name="links" size="large" />
-  Large tag
-</oc-tag>
-</div>
-```
-## Different types of the tag component
-The tag component can be rendered as a different element if desired. You can specify such element via property `type`.
-
-```js
-<oc-grid gutter="small" flex="true">
-    <oc-tag class="oc-mr-s">
-      <oc-icon name="group" />
-      Shared with other people
-    </oc-tag>
-    <oc-tag class="oc-mr-s" type="a">
-      <oc-icon name="links" />
-      Shared via link
-    </oc-tag>
-    <oc-tag class="oc-mr-s" type="button">Expires in 2 days</oc-tag>
-</oc-grid>
-```
-</docs>
