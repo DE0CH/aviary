@@ -5,6 +5,8 @@ next: false
 
 # OpenCloud Design System
 
-OpenCloud Design System is an open source tool for building UI Design Systems with Vue.js. It provides you and your team a set of organized tools, patterns & practices that work as the foundation for your application development.
+The **OpenCloud Design System** provides you and your team with a set of components and utilities for 
+application and extension development within the OpenCloud Web ecosystem.
 
-You’re looking at OpenCloud Design System’s demo documentation and component library. It serves as a resource that helps to define a common visual language for our applications.
+The design system is bundled with OpenCloud Web, so you can and should just use the components and utilities
+you find in this documentation. This helps us in building a common visual language for the whole ecosystem.
