@@ -1,11 +1,19 @@
-import { defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
+import {
+  defaultPlugins,
+  PartialComponentProps,
+  RouteLocation,
+  shallowMount
+} from '@opencloud-eu/web-test-helpers'
 
 import Pagination from './OcPagination.vue'
+import OcPagination from './OcPagination.vue'
+import { mock } from 'vitest-mock-extended'
+import { RouteLocationPathRaw, RouterLink } from 'vue-router'
 
 const defaultProps = {
   pages: 5,
   currentPage: 3,
-  currentRoute: { name: 'files' }
+  currentRoute: mock<RouteLocation>({ name: 'files' })
 }
 
 const selectors = {
@@ -95,24 +103,19 @@ describe('OcPagination', () => {
   })
 
   it('builds correct prev and next links', () => {
-    const localThis = {
-      ...defaultProps,
-      bindPageLink: Pagination.methods.bindPageLink,
-      $_currentPage: 3
-    }
+    const wrapper = getWrapper({ pages: 5, currentPage: 3 })
 
-    expect(Pagination.computed.previousPageLink.call(localThis)).toMatchObject({
-      name: 'files',
-      query: { page: 2 }
-    })
-    expect(Pagination.computed.nextPageLink.call(localThis)).toMatchObject({
-      name: 'files',
-      query: { page: 4 }
-    })
+    const prevItem = wrapper
+      .findComponent<typeof RouterLink>(selectors.listItemPrevious)
+      .props('to')
+    const nextItem = wrapper.findComponent<typeof RouterLink>(selectors.listItemNext).props('to')
+
+    expect((prevItem as RouteLocationPathRaw).query?.page).toBe(2)
+    expect((nextItem as RouteLocationPathRaw).query?.page).toBe(4)
   })
 })
 
-function getWrapper(props = {}) {
+function getWrapper(props: PartialComponentProps<typeof OcPagination> = {}) {
   return shallowMount(Pagination, {
     props: { ...defaultProps, ...props },
     global: { plugins: [...defaultPlugins()] }

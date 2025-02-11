@@ -1,60 +1,34 @@
 <template>
-  <div class="oc-progress-pie" :data-fill="_fill">
+  <div class="oc-progress-pie" :data-fill="fill">
     <div class="oc-progress-pie-container" />
-    <label v-if="showLabel" class="oc-progress-pie-label oc-text-muted" v-text="_label" />
+    <label v-if="showLabel" class="oc-progress-pie-label oc-text-muted" v-text="label" />
   </div>
 </template>
-<script lang="ts">
-import { defineComponent } from 'vue'
 
-/**
- * Show progress to the users in a pie shape.
- */
-export default defineComponent({
-  name: 'OcProgressPie',
-  status: 'ready',
-  release: '1.0.0',
-  props: {
-    /**
-     * Current value of the progress
-     */
-    progress: {
-      type: Number,
-      default: 0,
-      required: true,
-      validator: (value: number) => {
-        return value >= 0 && value <= 100
-      }
-    },
-    /**
-     * Maximum value.
-     */
-    max: {
-      type: Number,
-      default: 100
-    },
-    /**
-     * Defines if the label shall be shown.
-     */
-    showLabel: {
-      type: Boolean,
-      default: false
-    }
-  },
-  computed: {
-    _fill() {
-      return Math.round((100 / this.max) * this.progress)
-    },
-    _label() {
-      if (this.max === 100) {
-        return this.progress + '%'
-      } else {
-        return `${this.progress}/${this.max}`
-      }
-    }
+<script setup lang="ts">
+import { computed } from 'vue'
+
+export interface Props {
+  max?: number
+  progress?: number
+  showLabel?: boolean
+}
+
+const { max = 100, progress = 0, showLabel = false } = defineProps<Props>()
+
+const fill = computed(() => {
+  return Math.round((100 / max) * progress)
+})
+
+const label = computed(() => {
+  if (max === 100) {
+    return progress + '%'
+  } else {
+    return `${progress}/${max}`
   }
 })
 </script>
+
 <style lang="scss">
 $default-size: 64px;
 
@@ -137,16 +111,3 @@ $default-size: 64px;
   }
 }
 </style>
-<docs>
-```js
-<section>
-  <h3 class="oc-heading-divider">
-    Pie shape progress
-  </h3>
-  <oc-progress-pie :progress="33" />
-  <oc-progress-pie :progress="33" show-label/>
-  <oc-progress-pie :progress="2" :max="4" />
-  <oc-progress-pie :progress="4" :max="6" show-label />
-</section>
-```
-</docs>

@@ -22,70 +22,24 @@
   </div>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
 import { uniqueId } from '../../helpers'
 import OcSelect from '../OcSelect/OcSelect.vue'
 
-/**
- * Select how many items will be displayed per page
- */
-export default defineComponent({
-  name: 'OcPageSize',
-  status: 'ready',
-  release: '8.0.0',
+export interface Props {
+  label: string
+  options: unknown[]
+  selected: string | number
+  selectId?: string
+}
 
-  components: { OcSelect },
-  props: {
-    /**
-     * All possible sizes that the user can pick from
-     */
-    options: {
-      type: Array,
-      required: true
-    },
+const { label, options, selected, selectId = uniqueId('oc-page-size-') } = defineProps<Props>()
 
-    /**
-     * Label of the select
-     */
-    label: {
-      type: String,
-      required: true
-    },
+const emit = defineEmits(['change'])
 
-    /**
-     * Selected size
-     * @model
-     */
-    selected: {
-      type: [String, Number],
-      required: true
-    },
-
-    /**
-     * An ID of the select component.
-     * Default value is a unique ID with prefix `oc-page-size`
-     */
-    selectId: {
-      type: String,
-      required: false,
-      default: () => uniqueId('oc-page-size-')
-    }
-  },
-  emits: ['change'],
-
-  methods: {
-    emitChange(value: boolean) {
-      /**
-       * Triggers when a value is selected
-       *
-       * @event change
-       * @property {number|string} value selected value
-       */
-      this.$emit('change', value)
-    }
-  }
-})
+const emitChange = (value: boolean) => {
+  emit('change', value)
+}
 </script>
 
 <style lang="scss">
@@ -100,21 +54,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-<template>
-  <div>
-    <oc-page-size v-model="selected" label="Items per page" :options="[100, 500, 1000, 'All']" />
-    Selected: {{ selected }}
-  </div>
-</template>
-<script>
-  export default {
-    data: () => ({
-      selected: 100,
-    })
-  }
-</script>
-```
-</docs>

@@ -61,7 +61,7 @@ type Indicator = {
   accessibleDescription?: string
   visible?: boolean
   type?: string
-  fillType?: string
+  fillType?: 'fill' | 'line' | 'none'
 }
 
 /**

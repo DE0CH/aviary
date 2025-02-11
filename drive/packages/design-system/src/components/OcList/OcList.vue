@@ -4,21 +4,12 @@
   </ul>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
+export interface Props {
+  raw?: boolean
+}
 
-export default defineComponent({
-  name: 'OcList',
-  status: 'ready',
-  release: '12.0.0',
-  props: {
-    raw: {
-      type: Boolean,
-      default: false,
-      required: false
-    }
-  }
-})
+const { raw = false } = defineProps<Props>()
 </script>
 
 <style lang="scss">
@@ -43,29 +34,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-```js
-<h3>Example list</h3>
-<oc-list>
-  <li>
-      <oc-icon name="user" fill-type="line" />
-      <a href="https://google.de">
-        Profile
-      </a>
-  </li>
-  <li>
-      <oc-icon name="link" fill-type="line" />
-      <a href="https://google.de">
-        Links
-      </a>
-  </li>
-  <li>
-      <oc-icon name="file" fill-type="line" />
-      <a href="https://google.de">
-        Dateien
-      </a>
-  </li>
-</oc-list>
-```
-</docs>

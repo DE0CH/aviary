@@ -48,110 +48,50 @@
   </oc-drop>
 </template>
 
-<script lang="ts">
-import { computed, defineComponent, PropType, ref } from 'vue'
+<script setup lang="ts">
+import { computed, ref } from 'vue'
 import OcButton from '../OcButton/OcButton.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcDrop from '../OcDrop/OcDrop.vue'
 import { uniqueId } from '../../helpers'
-import { FocusTrap } from 'focus-trap-vue'
 import { ContextualHelperDataListItem } from '../../helpers'
 
-export default defineComponent({
-  name: 'OcInfoDrop',
-  status: 'unreleased',
-  components: { OcButton, OcIcon, OcDrop, FocusTrap },
-  props: {
-    /**
-     * Id of the element
-     */
-    dropId: {
-      type: String,
-      required: false,
-      default: () => uniqueId('oc-info-drop-')
-    },
-    /**
-     * CSS selector for the element to be used as toggle. By default, the preceding element is used
-     **/
-    toggle: {
-      type: String,
-      required: false,
-      default: ''
-    },
-    /**
-     * Events that cause the drop to show. Multiple event names are separated by spaces
-     *
-     * @values click, hover, manual
-     **/
-    mode: {
-      type: String as PropType<'click' | 'hover' | 'manual'>,
-      required: false,
-      default: 'click',
-      validator: (value: string) => {
-        return ['click', 'hover', 'manual'].includes(value)
-      }
-    },
-    /**
-     * Element selector used as a target of the element
-     */
-    target: {
-      type: String,
-      required: false,
-      default: null
-    },
-    /**
-     * Title
-     */
-    title: {
-      type: String,
-      required: true
-    },
-    /**
-     * Text at the beginning
-     */
-    text: {
-      type: String,
-      required: false,
-      default: ''
-    },
-    /**
-     * List element
-     */
-    list: {
-      type: Array as PropType<ContextualHelperDataListItem[]>,
-      required: false,
-      default: (): ContextualHelperDataListItem[] => []
-    },
-    /**
-     * Text at the end
-     */
-    endText: {
-      type: String,
-      required: false,
-      default: ''
-    },
-    /**
-     * Read more link at the end
-     */
-    readMoreLink: {
-      type: String,
-      required: false,
-      default: ''
-    }
-  },
-  setup(props) {
-    const dropOpen = ref(false)
+export interface Props {
+  title: string
+  dropId?: string
+  endText?: string
+  list?: ContextualHelperDataListItem[]
+  mode?: 'click' | 'hover' | 'manual'
+  readMoreLink?: string
+  text?: string
+  toggle?: string
+}
 
-    const listItems = computed(() => {
-      return (props.list || []).filter((item) => !!item.text)
-    })
+const {
+  title,
+  dropId = uniqueId('oc-info-drop-'),
+  endText = '',
+  list = [],
+  mode = 'click',
+  readMoreLink = '',
+  text = '',
+  toggle = ''
+} = defineProps<Props>()
 
-    return {
-      dropOpen,
-      listItems
-    }
-  }
+const dropOpen = ref(false)
+
+const listItems = computed(() => {
+  return (list || []).filter((item) => !!item.text)
 })
+</script>
+
+<script lang="ts">
+// this needs to be non-script-setup so we can use FocusTrap is unit tests
+import { FocusTrap } from 'focus-trap-vue'
+
+export default {
+  components: { FocusTrap }
+}
 </script>
 
 <style lang="scss">
@@ -198,55 +138,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-## Examples
-A simple example, using only text.
-```js
-<template>
-  <div>
-    <oc-info-drop v-bind="helperContent"/>
-  </div>
-</template>
-<script>
-export default {
-  computed: {
-    helperContent() {
-      return {
-        text: "Invite persons or groups to access this file or folder.",
-      }
-    }
-  },
-}
-</script>
-```
-
-An example using Title, Text, List, End-Text and Read-More-Link properties.
-```js
-<template>
-  <div>
-    <oc-info-drop v-bind="helperContent"/>
-  </div>
-</template>
-<script>
-export default {
-  computed: {
-    helperContent() {
-      return {
-        title: 'Choose how access is granted ',
-        text: "Share a file or folder by link",
-        list: [
-          {text: "Only invited people can access", headline: true},
-          {text: "Only people from the list \"Invited people\" can access. If there is no list, no people are invited yet."},
-          {text: "Everyone with the link", headline: true },
-          {text: "Everyone with the link can access. Note: If you share this link with people from the list \"Invited people\", they need to login-in so that their individual assigned permissions can take effect. If they are not logged-in, the permissions of the link take effect." }
-        ],
-        endText: "Invited persons can not see who else has access",
-        readMoreLink: "https://opencloud.design"
-      }
-    }
-  },
-}
-</script>
-```
-</docs>
