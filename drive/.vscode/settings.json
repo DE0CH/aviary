@@ -22,5 +22,6 @@
     "tests/e2e/cucumber/steps/**/*.ts"
   ],
   "cucumberautocomplete.strictGherkinCompletion": true,
-  "typescript.tsdk": "node_modules/typescript/lib"
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "vue.server.includeLanguages": ["vue", "markdown"]
 }
