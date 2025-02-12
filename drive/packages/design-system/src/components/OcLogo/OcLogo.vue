@@ -1,8 +1,10 @@
 <template>
-  <oc-img class="oc-logo" :src="src" :alt="alt" />
+  <oc-image class="oc-logo" :src="src" :alt="alt" />
 </template>
 
 <script setup lang="ts">
+import OcImage from '../OcImage/OcImage.vue'
+
 export interface Props {
   alt: string
   src: string

@@ -14,17 +14,17 @@ describe('OcLogo', () => {
         ...props
       },
       global: {
-        stubs: { 'oc-img': true }
+        stubs: { 'oc-image': true }
       }
     })
   }
   const wrapper = getWrapper()
   it('should set the provided src to image element', () => {
-    const imageElement = wrapper.find('oc-img-stub')
+    const imageElement = wrapper.find('oc-image-stub')
     expect(imageElement.attributes('src')).toBe('http://some-image-link.jpg')
   })
   it('should set the provided alt to image element', () => {
-    const imageElement = wrapper.find('oc-img-stub')
+    const imageElement = wrapper.find('oc-image-stub')
     expect(imageElement.attributes('alt')).toBe('test alt')
   })
   it('should add provided class to the image element', () => {
@@ -33,7 +33,7 @@ describe('OcLogo', () => {
       components: { OcLogo },
       name: 'TestOcLogo'
     }
-    const wrapper = mount(component, { global: { stubs: { 'oc-img': OcImage } } })
+    const wrapper = mount(component, { global: { stubs: { 'oc-image': OcImage } } })
     expect(wrapper.attributes('class')).toContain('test-class')
   })
 })

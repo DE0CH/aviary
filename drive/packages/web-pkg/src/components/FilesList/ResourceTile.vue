@@ -37,7 +37,7 @@
         >
           <div class="oc-tile-card-hover"></div>
           <slot name="imageField" :item="resource">
-            <oc-img
+            <oc-image
               v-if="shouldDisplayThumbnails(resource)"
               class="tile-preview"
               :src="resource.thumbnail"
