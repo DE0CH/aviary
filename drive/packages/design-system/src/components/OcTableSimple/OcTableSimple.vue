@@ -3,36 +3,24 @@
     <slot />
   </table>
 </template>
-<script lang="ts">
-import { defineComponent } from 'vue'
 
-/**
- * A table component with manually built layout.
- */
-export default defineComponent({
-  name: 'OcTableSimple',
-  status: 'ready',
-  release: '2.1.0',
-  props: {
-    /**
-     * Whether or not table rows should be highlighted when hovered.
-     */
-    hover: {
-      type: Boolean,
-      default: false
-    }
-  },
-  computed: {
-    tableClasses() {
-      const result = ['oc-table-simple']
-      if (this.hover) {
-        result.push('oc-table-simple-hover')
-      }
-      return result
-    }
+<script setup lang="ts">
+import { computed } from 'vue'
+
+export interface Props {
+  hover?: boolean
+}
+const { hover = false } = defineProps<Props>()
+
+const tableClasses = computed(() => {
+  const result = ['oc-table-simple']
+  if (hover) {
+    result.push('oc-table-simple-hover')
   }
+  return result
 })
 </script>
+
 <style lang="scss">
 .oc-table-simple {
   border-collapse: collapse;
