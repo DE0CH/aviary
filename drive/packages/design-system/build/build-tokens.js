@@ -51,11 +51,6 @@ StyleDictionary.extend({
           destination: 'ods.json',
           format: 'format/ods/json',
           filter: ({ filePath }) => filePath.includes('/ods/')
-        },
-        {
-          destination: 'docs.scss',
-          format: 'format/ods/scss',
-          filter: ({ filePath }) => filePath.includes('/docs/')
         }
       ]
     }
