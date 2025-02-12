@@ -48,19 +48,5 @@ export default defineConfig({
       ]
     }
   },
-  plugins: [
-    vue(),
-    dts({ exclude: ['**/tests', '**/*.spec.ts'] }),
-    {
-      name: '@opencloud-eu/vite-plugin-docs',
-      transform(src, id) {
-        if (id.includes('type=docs')) {
-          return {
-            code: 'export default {}',
-            map: null
-          }
-        }
-      }
-    }
-  ]
+  plugins: [vue(), dts({ exclude: ['**/tests', '**/*.spec.ts'] })]
 })

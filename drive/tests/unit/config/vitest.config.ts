@@ -6,20 +6,7 @@ import { compilerOptions } from '../../../vite.config.common'
 const root = path.resolve(__dirname, '../../../')
 
 export default defineConfig({
-  plugins: [
-    vue({ template: { compilerOptions } }),
-    {
-      name: '@opencloud-eu/vite-plugin-docs',
-      transform(src, id) {
-        if (id.includes('type=docs')) {
-          return {
-            code: 'export default {}',
-            map: null
-          }
-        }
-      }
-    }
-  ],
+  plugins: [vue({ template: { compilerOptions } })],
   css: {
     preprocessorOptions: {
       scss: {

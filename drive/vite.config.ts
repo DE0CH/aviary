@@ -262,17 +262,6 @@ export default defineConfig(({ mode, command }) => {
           }
         },
         {
-          name: '@opencloud-eu/vite-plugin-docs',
-          transform(src, id) {
-            if (id.includes('type=docs')) {
-              return {
-                code: 'export default {}',
-                map: null
-              }
-            }
-          }
-        },
-        {
           name: 'ejs',
           transformIndexHtml: {
             order: 'pre',
