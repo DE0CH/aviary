@@ -241,7 +241,7 @@ const inputOnInput = (value: string) => {
 </script>
 
 <script lang="ts">
-// this needs to be non-script-setup so we can use FocusTrap is unit tests
+// this needs to be non-script-setup so we can use FocusTrap in unit tests
 import { FocusTrap } from 'focus-trap-vue'
 
 export default {
