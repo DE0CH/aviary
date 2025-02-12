@@ -23,7 +23,6 @@ export interface Props {
   disabled?: boolean
   hideLabel?: boolean
   id?: string
-  modelValue?: unknown
   option?: unknown
   size?: 'small' | 'medium' | 'large'
 }
@@ -33,17 +32,11 @@ const {
   disabled = false,
   hideLabel = false,
   id = uniqueId('oc-radio-'),
-  modelValue = false,
   option,
   size = 'medium'
 } = defineProps<Props>()
 
-const emit = defineEmits(['update:modelValue'])
-
-const model = computed({
-  get: () => modelValue,
-  set: (value: unknown) => emit('update:modelValue', value)
-})
+const model = defineModel<boolean | unknown>()
 
 const classes = computed(() => ['oc-radio', 'oc-radio-' + getSizeClass(size)])
 
