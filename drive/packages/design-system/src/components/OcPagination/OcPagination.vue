@@ -28,174 +28,117 @@
   </nav>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
+import { computed, unref } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
+import { useGettext } from 'vue3-gettext'
+import { RouteLocation } from 'vue-router'
 
 type Page = string | number
 
-/**
- * A list of links used for switching to different pages
- */
-export default defineComponent({
-  name: 'OcPagination',
-  status: 'ready',
-  release: '7.2.0',
+export interface Props {
+  currentPage: number
+  currentRoute: RouteLocation
+  pages: number
+  maxDisplayed?: number
+}
 
-  components: { OcIcon },
+const { currentPage, currentRoute, pages, maxDisplayed } = defineProps<Props>()
 
-  props: {
-    /**
-     * Number of pages to be displayed
-     */
-    pages: {
-      type: Number,
-      required: true
-    },
-    /**
-     * Currently active page
-     */
-    currentPage: {
-      type: Number,
-      required: true
-    },
-    /**
-     * Number of pages to be displayed. It is required to use an odd number.
-     * Pages will be equally split into two parts around the current page and remaining pages will be displayed as ellipsis
-     */
-    maxDisplayed: {
-      type: Number,
-      required: false,
-      default: null,
-      validator: (value: number) => {
-        if (value % 2 === 0) {
-          // Since Vue doesn't support custom validator error message, log the error manually
-          console.error('maxDisplayed needs to be an odd number')
+const { $gettext } = useGettext()
 
-          return false
-        }
+const displayedPages = computed(() => {
+  let pagesCollection: Array<Page> = []
 
-        return true
-      }
-    },
-    /**
-     * Current route which is used to render pages
-     */
-    currentRoute: {
-      type: Object,
-      required: true
+  for (let i = 0; i < pages; i++) {
+    pagesCollection.push(i + 1)
+  }
+
+  if (maxDisplayed && maxDisplayed + 1 < pages) {
+    const currentPageIndex = unref($_currentPage) - 1
+    const indentation = Math.floor(maxDisplayed / 2)
+
+    pagesCollection = pagesCollection.slice(
+      Math.max(0, currentPageIndex - indentation),
+      currentPageIndex + indentation + 1
+    )
+
+    if (unref($_currentPage) > 2) {
+      Number(pagesCollection[0]) > 2
+        ? pagesCollection.unshift(1, '...')
+        : pagesCollection.unshift(1)
     }
-  },
 
-  computed: {
-    displayedPages() {
-      let pages: Array<Page> = []
-
-      for (let i = 0; i < this.pages; i++) {
-        pages.push(i + 1)
-      }
-
-      if (this.maxDisplayed && this.maxDisplayed + 1 < this.pages) {
-        const currentPageIndex = this.$_currentPage - 1
-        const indentation = Math.floor(this.maxDisplayed / 2)
-
-        pages = pages.slice(
-          Math.max(0, currentPageIndex - indentation),
-          currentPageIndex + indentation + 1
-        )
-
-        if (this.$_currentPage > 2) {
-          Number(pages[0]) > 2 ? pages.unshift(1, '...') : pages.unshift(1)
-        }
-
-        if (this.$_currentPage < this.pages - 1) {
-          Number(pages[pages.length - 1]) < this.pages - 1
-            ? pages.push('...', this.pages)
-            : pages.push(this.pages)
-        }
-
-        return pages
-      }
-
-      return pages
-    },
-
-    isPrevPageAvailable() {
-      return this.$_currentPage > 1
-    },
-
-    isNextPageAvailable() {
-      return this.$_currentPage < this.pages
-    },
-
-    previousPageLink() {
-      return this.bindPageLink(this.$_currentPage - 1)
-    },
-
-    nextPageLink() {
-      return this.bindPageLink(this.$_currentPage + 1)
-    },
-
-    $_currentPage() {
-      return Math.max(1, Math.min(this.currentPage, this.pages))
+    if (unref($_currentPage) < pages - 1) {
+      Number(pagesCollection[pagesCollection.length - 1]) < pages - 1
+        ? pagesCollection.push('...', pages)
+        : pagesCollection.push(pages)
     }
-  },
 
-  methods: {
-    pageLabel(page: Page) {
-      return this.$gettext('Go to page %{ page }', { page: page.toString() })
-    },
+    return pagesCollection
+  }
 
-    isCurrentPage(page: Page) {
-      return this.$_currentPage === page
-    },
+  return pagesCollection
+})
 
-    pageComponent(page: Page) {
-      return page === '...' || this.isCurrentPage(page) ? 'span' : 'router-link'
-    },
+const isPrevPageAvailable = computed(() => unref($_currentPage) > 1)
+const isNextPageAvailable = computed(() => unref($_currentPage) < pages)
+const previousPageLink = computed(() => bindPageLink(unref($_currentPage) - 1))
+const nextPageLink = computed(() => bindPageLink(unref($_currentPage) + 1))
+const $_currentPage = computed(() => Math.max(1, Math.min(currentPage, pages)))
 
-    bindPageProps(page: Page) {
-      if (page === '...') {
-        return
-      }
+const pageLabel = (page: Page) => {
+  return $gettext('Go to page %{ page }', { page: page.toString() })
+}
 
-      if (this.isCurrentPage(page)) {
-        return {
-          'aria-current': 'page'
-        }
-      }
+const isCurrentPage = (page: Page) => {
+  return unref($_currentPage) === page
+}
 
-      const link = this.bindPageLink(page)
+const pageComponent = (page: Page) => {
+  return page === '...' || isCurrentPage(page) ? 'span' : 'router-link'
+}
 
-      return {
-        'aria-label': this.pageLabel(page),
-        to: link
-      }
-    },
+const bindPageProps = (page: Page) => {
+  if (page === '...') {
+    return
+  }
 
-    pageClass(page: Page) {
-      const classes = ['oc-pagination-list-item-page']
-
-      if (this.isCurrentPage(page)) {
-        classes.push('oc-pagination-list-item-current')
-      } else if (page === '...') {
-        classes.push('oc-pagination-list-item-ellipsis')
-      } else {
-        classes.push('oc-pagination-list-item-link')
-      }
-
-      return classes
-    },
-
-    bindPageLink(page: Page) {
-      return {
-        name: this.currentRoute.name,
-        query: { ...this.currentRoute.query, page },
-        params: this.currentRoute.params
-      }
+  if (isCurrentPage(page)) {
+    return {
+      'aria-current': 'page'
     }
   }
-})
+
+  const link = bindPageLink(page)
+
+  return {
+    'aria-label': pageLabel(page),
+    to: link
+  }
+}
+
+const pageClass = (page: Page) => {
+  const classes = ['oc-pagination-list-item-page']
+
+  if (isCurrentPage(page)) {
+    classes.push('oc-pagination-list-item-current')
+  } else if (page === '...') {
+    classes.push('oc-pagination-list-item-ellipsis')
+  } else {
+    classes.push('oc-pagination-list-item-link')
+  }
+
+  return classes
+}
+
+const bindPageLink = (page: Page) => {
+  return {
+    name: currentRoute.name,
+    query: { ...currentRoute.query, page },
+    params: currentRoute.params
+  }
+}
 </script>
 
 <style lang="scss">
@@ -249,26 +192,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-## Examples
-```js
-<div class="oc-flex oc-flex-column" style="gap: 20px;">
-    <oc-pagination :pages="3" :currentPage="3" :currentRoute="{ name: 'files' }" />
-    <oc-pagination :pages="4" :currentPage="1" :currentRoute="{ name: 'files' }" />
-    <oc-pagination :pages="5" :currentPage="3" :currentRoute="{ name: 'files' }" />
-</div>
-```
-
-### Truncate visible pages with ellipsis
-If the current page is close enough to the first or/and last page and ellipsis would hide only 1 page, ellipsis will be omitted and the actual page will be still displayed instead.
-
-```js
-<div class="oc-flex oc-flex-column" style="gap: 20px;">
-    <oc-pagination :pages="5" :currentPage="3" :maxDisplayed="3" :currentRoute="{ name: 'files' }" />
-    <oc-pagination :pages="10" :currentPage="3" :maxDisplayed="3" :currentRoute="{ name: 'files' }" />
-    <oc-pagination :pages="54" :currentPage="28" :maxDisplayed="3" :currentRoute="{ name: 'files' }" />
-    <oc-pagination :pages="54" :currentPage="51" :maxDisplayed="5" :currentRoute="{ name: 'files' }" />
-</div>
-```
-</docs>

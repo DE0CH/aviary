@@ -29,8 +29,8 @@ export interface Props {
   background?: string
   icon?: string
   iconColor?: string
-  iconFillType?: string
-  iconSize?: string
+  iconFillType?: 'fill' | 'line' | 'none'
+  iconSize?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
   width?: number
 }
 

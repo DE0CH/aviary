@@ -11,7 +11,7 @@
       class="oc-resource-icon-link"
       @click="emitClick"
     >
-      <oc-img
+      <oc-image
         v-if="hasThumbnail"
         :key="thumbnail"
         v-oc-tooltip="tooltipLabelIcon"

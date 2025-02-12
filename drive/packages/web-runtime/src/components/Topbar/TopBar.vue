@@ -10,7 +10,7 @@
         :menu-items="appMenuExtensions"
       />
       <router-link v-if="!hideLogo" :to="homeLink" class="oc-width-1-1 oc-logo-href">
-        <oc-img :src="currentTheme.logo" :alt="sidebarLogoAlt" class="oc-logo-image" />
+        <oc-image :src="currentTheme.logo" :alt="sidebarLogoAlt" class="oc-logo-image" />
       </router-link>
     </div>
     <div v-if="!contentOnLeftPortal" class="oc-topbar-center">

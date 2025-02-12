@@ -77,7 +77,7 @@ exports[`OcModal > matches snapshot 1`] = `
   <focus-trap-stub tabbableoptions="[object Object]" active="true" escapedeactivates="true" returnfocusondeactivate="true" allowoutsideclick="true" clickoutsidedeactivates="false" initialfocus="[Function]" delayinitialfocus="true" preventscroll="false" setreturnfocus="false">
     <div class="oc-modal oc-modal-passive" tabindex="0" role="dialog" aria-modal="true" aria-labelledby="oc-modal-title">
       <div class="oc-modal-title">
-        <oc-icon-stub name="info" filltype="fill" accessiblelabel="" type="span" size="medium" variation="passive" color=""></oc-icon-stub>
+        <oc-icon-stub accessiblelabel="" color="" filltype="fill" name="info" size="medium" type="span" variation="passive"></oc-icon-stub>
         <h2 id="oc-modal-title" class="oc-text-truncate">Example title</h2>
       </div>
       <div class="oc-modal-body">

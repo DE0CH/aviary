@@ -9,14 +9,14 @@
     :role="accessibleLabel === '' ? null : 'img'"
     :data-test-user-name="userName"
   >
-    <oc-img v-if="isImage" loading-type="lazy" class="avatarImg" :src="src" @error="onImgError" />
+    <oc-image v-if="isImage" loading-type="lazy" class="avatarImg" :src="src" @error="onImgError" />
     <span v-else class="avatarInitials">{{ userInitial }}</span>
   </span>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import OcImg from '../OcImage/OcImage.vue'
+import OcImage from '../OcImage/OcImage.vue'
 import { extractInitials } from './extractInitials'
 
 export interface Props {

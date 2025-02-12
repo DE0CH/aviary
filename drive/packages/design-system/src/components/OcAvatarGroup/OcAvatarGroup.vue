@@ -14,7 +14,7 @@ import OcAvatarItem from '../OcAvatarItem/OcAvatarItem.vue'
 export interface Props {
   name: string
   accessibleLabel?: string
-  iconSize?: string
+  iconSize?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
   width?: number
 }
 

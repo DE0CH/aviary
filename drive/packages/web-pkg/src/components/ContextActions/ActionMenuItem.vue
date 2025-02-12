@@ -11,14 +11,14 @@
       justify-content="left"
       v-on="componentListeners"
     >
-      <oc-img
+      <oc-image
         v-if="action.img"
         data-testid="action-img"
         :src="action.img"
         alt=""
         class="oc-icon oc-icon-m"
       />
-      <oc-img
+      <oc-image
         v-else-if="hasExternalImageIcon"
         data-testid="action-img"
         :src="action.icon"

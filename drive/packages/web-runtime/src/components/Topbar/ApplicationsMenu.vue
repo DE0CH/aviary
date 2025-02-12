@@ -51,15 +51,12 @@
 
 <script lang="ts">
 import { defineComponent, PropType, ref, computed, unref, useTemplateRef } from 'vue'
-import { OcDrop, OcApplicationIcon } from '@opencloud-eu/design-system/components'
+import { OcDrop } from '@opencloud-eu/design-system/components'
 import { useGettext } from 'vue3-gettext'
 import { v4 as uuidV4 } from 'uuid'
 import { AppMenuItemExtension, useRouter } from '@opencloud-eu/web-pkg'
 
 export default defineComponent({
-  components: {
-    OcApplicationIcon
-  },
   props: {
     menuItems: {
       type: Array as PropType<AppMenuItemExtension[]>,

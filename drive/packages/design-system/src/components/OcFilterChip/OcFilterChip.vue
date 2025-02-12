@@ -8,7 +8,7 @@
       class="oc-filter-chip-button oc-pill"
       :class="{ 'oc-filter-chip-button-selected': filterActive }"
       appearance="raw"
-      @click="isToggle ? $emit('toggleFilter') : false"
+      @click="isToggle ? emit('toggleFilter') : false"
     >
       <oc-icon
         :class="filterActive ? 'oc-filter-check-icon-active' : 'oc-filter-check-icon-inactive'"
@@ -31,8 +31,8 @@
       mode="click"
       padding-size="small"
       :close-on-click="closeOnClick"
-      @hide-drop="$emit('hideDrop')"
-      @show-drop="$emit('showDrop')"
+      @hide-drop="emit('hideDrop')"
+      @show-drop="emit('showDrop')"
     >
       <slot />
     </oc-drop>
@@ -42,92 +42,54 @@
       class="oc-filter-chip-clear oc-px-xs"
       appearance="raw"
       :aria-label="$gettext('Clear filter')"
-      @click="$emit('clearFilter')"
+      @click="emit('clearFilter')"
     >
       <oc-icon name="close" size="small" color="var(--oc-color-text-inverse)" />
     </oc-button>
   </div>
 </template>
 
-<script lang="ts">
-import { computed, defineComponent, PropType, ref, unref } from 'vue'
+<script setup lang="ts">
+import { computed, unref, useTemplateRef } from 'vue'
 import { uniqueId } from '../../helpers'
 import OcDrop from '../OcDrop/OcDrop.vue'
 
-export default defineComponent({
-  name: 'OcFilterChip',
-  status: 'ready',
-  release: '15.0.0',
-  props: {
-    id: {
-      type: String,
-      required: false,
-      default: () => uniqueId('oc-filter-chip-')
-    },
-    /**
-     * Label which is displayed when no items are selected.
-     */
-    filterLabel: {
-      type: String,
-      required: true
-    },
-    /**
-     * An array of selected item names. It is being ignored when `isToggle` is set to `true`.
-     */
-    selectedItemNames: {
-      type: Array as PropType<string[]>,
-      required: false,
-      default: (): string[] => []
-    },
-    /**
-     * Display the filter chip as a on/off toggle.
-     */
-    isToggle: {
-      type: Boolean,
-      default: false
-    },
-    /**
-     * Whether the toggle filter is active. It only has an effect if `isToggle` is set to `true`.
-     */
-    isToggleActive: {
-      type: Boolean,
-      default: false
-    },
-    /**
-     * Whether the filter chip should be displayed as a raw button.
-     */
-    raw: {
-      type: Boolean,
-      default: false
-    },
-    /**
-     * Whether the drop should be closed when clicking on an item.
-     */
-    closeOnClick: {
-      type: Boolean,
-      default: false
-    }
-  },
-  emits: ['clearFilter', 'hideDrop', 'showDrop', 'toggleFilter'],
-  setup(props, { expose }) {
-    const dropRef = ref<typeof OcDrop>()
+export interface Props {
+  filterLabel: string
+  closeOnClick?: boolean
+  id?: string
+  isToggle?: boolean
+  isToggleActive?: boolean
+  raw?: boolean
+  selectedItemNames?: string[]
+}
 
-    const filterActive = computed(() => {
-      if (props.isToggle) {
-        return props.isToggleActive
-      }
-      return !!props.selectedItemNames.length
-    })
+const {
+  filterLabel,
+  closeOnClick = false,
+  id = uniqueId('oc-filter-chip-'),
+  isToggle = false,
+  isToggleActive = false,
+  raw = false,
+  selectedItemNames = []
+} = defineProps<Props>()
 
-    const hideDrop = () => {
-      unref(dropRef)?.hide()
-    }
+const emit = defineEmits(['clearFilter', 'hideDrop', 'showDrop', 'toggleFilter'])
 
-    expose({ hideDrop })
+const dropRef = useTemplateRef<typeof OcDrop>('dropRef')
 
-    return { filterActive, dropRef }
+const filterActive = computed(() => {
+  if (isToggle) {
+    return isToggleActive
   }
+  return !!selectedItemNames.length
 })
+
+const hideDrop = () => {
+  unref(dropRef)?.hide()
+}
+
+defineExpose({ hideDrop })
 </script>
 
 <style lang="scss">

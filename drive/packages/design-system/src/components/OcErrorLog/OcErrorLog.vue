@@ -26,48 +26,30 @@
   </div>
 </template>
 
-<script lang="ts">
-import { computed, defineComponent, ref } from 'vue'
-
+<script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 
-export default defineComponent({
-  name: 'OcErrorLog',
-  status: 'ready',
-  release: '2.0.0',
+export interface Props {
+  content: string
+}
 
-  props: {
-    /**
-     * Content to be displayed
-     */
-    content: {
-      type: String,
-      required: true
-    }
-  },
-  setup(props) {
-    const { $gettext } = useGettext()
-    const showCopied = ref(false)
+const { content } = defineProps<Props>()
 
-    const contentLabel = computed(() => {
-      return $gettext(
-        'Copy the following information and pass them to technical support to troubleshoot the problem:'
-      )
-    })
+const { $gettext } = useGettext()
+const showCopied = ref(false)
 
-    const copyContentToClipboard = () => {
-      navigator.clipboard.writeText(props.content)
-      showCopied.value = true
-      setTimeout(() => (showCopied.value = false), 500)
-    }
-
-    return {
-      contentLabel,
-      showCopied,
-      copyContentToClipboard
-    }
-  }
+const contentLabel = computed(() => {
+  return $gettext(
+    'Copy the following information and pass them to technical support to troubleshoot the problem:'
+  )
 })
+
+const copyContentToClipboard = () => {
+  navigator.clipboard.writeText(content)
+  showCopied.value = true
+  setTimeout(() => (showCopied.value = false), 500)
+}
 </script>
 
 <style lang="scss">
@@ -85,12 +67,3 @@ export default defineComponent({
   }
 }
 </style>
-
-<docs>
-Component to display error log.
-```js
-<oc-error-log>
-  <oc-error-log content="X-REQUEST-ID: 123456789" />
-</oc-error-log>
-```
-</docs>

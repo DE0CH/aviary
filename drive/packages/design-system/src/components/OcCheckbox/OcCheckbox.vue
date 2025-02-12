@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, unref } from 'vue'
 import { isEqual } from 'lodash-es'
 import { getSizeClass, uniqueId } from '../../helpers'
 
@@ -25,7 +25,6 @@ export interface Props {
   disabled?: boolean
   id?: string
   labelHidden?: boolean
-  modelValue?: boolean | unknown[]
   option?: unknown
   outline?: boolean
   size?: 'small' | 'medium' | 'large'
@@ -35,18 +34,14 @@ const {
   label,
   disabled = false,
   id = uniqueId('oc-checkbox-'),
-  modelValue = false,
   option,
   labelHidden = false,
   size = 'medium'
 } = defineProps<Props>()
 
-const emit = defineEmits(['click', 'update:modelValue'])
+const emit = defineEmits(['click'])
 
-const model = computed({
-  get: () => modelValue,
-  set: (value: boolean) => emit('update:modelValue', value)
-})
+const model = defineModel<boolean | unknown[]>()
 
 const classes = computed(() => [
   'oc-checkbox',
@@ -60,10 +55,11 @@ const labelClasses = computed(() => ({
 }))
 
 const isChecked = computed(() => {
-  if (typeof model.value === 'boolean') {
-    return model.value
+  const val = unref(model)
+  if (Array.isArray(val)) {
+    return val.some((m) => isEqual(m, option))
   }
-  return model.value.some((m) => isEqual(m, option))
+  return val
 })
 
 const keydownEnter = (event: KeyboardEvent) => {
