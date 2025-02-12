@@ -87,6 +87,7 @@ import OcIcon from '../OcIcon/OcIcon.vue'
 import OcTextInput from '../OcTextInput/OcTextInput.vue'
 import { FocusTargetOrFalse, FocusTrapTabbableOptions } from 'focus-trap'
 import { ContextualHelperData } from '../../helpers'
+import { useGettext } from 'vue3-gettext'
 
 export interface Props {
   title: string
@@ -106,7 +107,7 @@ export interface Props {
   inputError?: string
   inputLabel?: string
   inputSelectionRange?: [number, number]
-  inputType?: string
+  inputType?: 'text' | 'number' | 'email' | 'password'
   inputValue?: string
   isLoading?: boolean
   message?: string
@@ -147,6 +148,8 @@ const {
 } = defineProps<Props>()
 
 const emit = defineEmits(['cancel', 'confirm', 'input'])
+
+const { $gettext } = useGettext()
 
 const showSpinner = ref(false)
 const userInputValue = ref<string>()

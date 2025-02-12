@@ -8,9 +8,9 @@
   >
     <oc-search-bar
       id="files-global-search-bar"
+      :model-value="term"
       :label="searchLabel"
       :type-ahead="true"
-      :value="term"
       :placeholder="searchLabel"
       :button-hidden="true"
       :show-cancel-button="showCancelButton"
@@ -19,7 +19,7 @@
       cancel-button-appearance="raw-inverse"
       :cancel-handler="cancelSearch"
       @advanced-search="onKeyUpEnter"
-      @input="updateTerm"
+      @update:model-value="updateTerm"
       @clear="onClear"
       @click="showPreview"
       @keyup.esc="hideOptionsDrop"

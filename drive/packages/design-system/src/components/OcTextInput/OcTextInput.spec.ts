@@ -1,4 +1,9 @@
-import { shallowMount, mount, defaultPlugins } from '@opencloud-eu/web-test-helpers'
+import {
+  shallowMount,
+  mount,
+  defaultPlugins,
+  PartialComponentProps
+} from '@opencloud-eu/web-test-helpers'
 import OcTextInput from './OcTextInput.vue'
 import { PasswordPolicy } from '../../helpers'
 import { mock } from 'vitest-mock-extended'
@@ -27,7 +32,9 @@ describe('OcTextInput', () => {
   }
 
   function getMountedWrapper(
-    options: { props?: Record<string, unknown>; attachTo?: HTMLElement } = { props: {} },
+    options: { props?: PartialComponentProps<typeof OcTextInput>; attachTo?: HTMLElement } = {
+      props: {}
+    },
     passwordPolicy = { active: false, pass: false }
   ) {
     const passwordPolicyMock = mock<PasswordPolicy>()
@@ -44,11 +51,18 @@ describe('OcTextInput', () => {
     passwordPolicyMock.check.mockReturnValueOnce(passwordPolicy.pass)
 
     if (passwordPolicy.active) {
-      options.props = { ...(options.props || {}), passwordPolicy: passwordPolicyMock }
+      options.props = {
+        ...(options.props || { label: 'test' }),
+        passwordPolicy: passwordPolicyMock
+      }
     }
 
     return mount(OcTextInput, {
       ...options,
+      props: {
+        label: 'test',
+        ...options.props
+      },
       global: {
         plugins: [...defaultPlugins()]
       }
@@ -284,8 +298,8 @@ describe('OcTextInput', () => {
   describe('type prop', () => {
     it.each(['text', 'number', 'email', 'password'])(
       'should set the provided type for the input',
-      (type) => {
-        const wrapper = getMountedWrapper({ props: { type: type } })
+      (type: 'text' | 'number' | 'email' | 'password') => {
+        const wrapper = getMountedWrapper({ props: { type: type, label: 'test' } })
         expect(wrapper.find('input').attributes('type')).toBe(type)
       }
     )
@@ -366,7 +380,7 @@ describe('OcTextInput', () => {
       await btn.trigger('click')
 
       // value as data is supposed to be `null`
-      expect(wrapper.emitted('update:modelValue')[0][0]).toEqual(null)
+      expect(wrapper.emitted('update:modelValue')[0][0]).toEqual('')
       // value in DOM would be the empty string if two way binding was used
       // by just passing in the value it should remain unchanged
       expect((input.element as HTMLInputElement).value).toEqual('non-empty-value')

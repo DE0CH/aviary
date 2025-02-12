@@ -47,13 +47,14 @@
   </div>
 </template>
 
-<script lang="ts">
-import { defineComponent, PropType, ref, unref } from 'vue'
+<script setup lang="ts">
+import { ref, unref } from 'vue'
+import { uniqueId } from '../../helpers'
+import { useGettext } from 'vue3-gettext'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcButton from '../OcButton/OcButton.vue'
-import { uniqueId } from '../../helpers'
 
-type Indicator = {
+export interface Indicator {
   id: string
   icon: string
   label: string
@@ -64,113 +65,31 @@ type Indicator = {
   fillType?: 'fill' | 'line' | 'none'
 }
 
-/**
- * Status indicators which can be attatched to a resource
- */
-export default defineComponent({
-  name: 'OcStatusIndicators',
-  status: 'ready',
-  release: '2.0.1',
-
-  components: { OcIcon, OcButton },
-
-  props: {
-    /**
-     * A resource to which the indicators are attatched to
-     */
-    resource: {
-      type: Object,
-      required: true
-    },
-    /**
-     * An array of indicators to be displayed. Indicator object has following properties:
-     *
-     * Required:
-     * id: Id of the indicator
-     * icon: Icon of the indicator
-     * label: String to be used as a accessible label and tooltip for the indicator
-     *
-     * Optional:
-     * handler: An action to be triggered when the indicator is clicked. Receives the resource.
-     * accessibleDescription: A string to be used as a accessible description for the indicator. It renders an element only visible for screenreaders to provide additional context
-     */
-    indicators: {
-      type: Array as PropType<Indicator[]>,
-      required: true
-    },
-    /**
-     * Disables the handler for all indicators. This is useful e.g. for disabled resources.
-     */
-    disableHandler: {
-      type: Boolean,
-      default: false
-    }
-  },
-
-  setup() {
-    const accessibleDescriptionIds = ref({} as Record<string, string>)
-
-    const hasHandler = (indicator: Indicator): boolean => {
-      return Object.prototype.hasOwnProperty.call(indicator, 'handler')
-    }
-
-    const getIndicatorDescriptionId = (indicator: Indicator): string | null => {
-      if (!indicator.accessibleDescription) {
-        return null
-      }
-
-      if (!unref(accessibleDescriptionIds)[indicator.id]) {
-        unref(accessibleDescriptionIds)[indicator.id] = uniqueId('oc-indicator-description-')
-      }
-
-      return unref(accessibleDescriptionIds)[indicator.id]
-    }
-
-    return {
-      accessibleDescriptionIds,
-      hasHandler,
-      getIndicatorDescriptionId
-    }
-  }
-})
-</script>
-
-<style lang="scss">
-.oc-status-indicators {
-  align-items: center;
-  display: flex;
-  justify-content: flex-end;
+export interface Props {
+  resource: Record<string, unknown>
+  indicators: Indicator[]
+  disableHandler?: boolean
 }
-</style>
 
-<docs>
-```js
-<template>
-  <oc-status-indicators :resource="resource" :indicators="indicators" />
-</template>
-<script>
-  export default {
-    data: () => ({
-      resource: {
-        name: "Documents",
-        path: "/"
-      },
-      indicators: [
-        {
-          id: 'files-sharing',
-          label: "Shared with other people",
-          icon: 'group',
-          handler: (resource, indicatorId) => alert(`Resource: ${resource.name}, indicator: ${indicatorId}`)
-        },
-        {
-          id: 'file-link',
-          label: "Shared via link",
-          icon: 'links',
-          handler: (resource, indicatorId) => alert(`Resource: ${resource.name}, indicator: ${indicatorId}`)
-        }
-      ]
-    }),
+const { resource, indicators, disableHandler = false } = defineProps<Props>()
+
+const { $gettext } = useGettext()
+
+const accessibleDescriptionIds = ref({} as Record<string, string>)
+
+const hasHandler = (indicator: Indicator): boolean => {
+  return Object.hasOwn(indicator, 'handler')
+}
+
+const getIndicatorDescriptionId = (indicator: Indicator): string | null => {
+  if (!indicator.accessibleDescription) {
+    return null
   }
+
+  if (!unref(accessibleDescriptionIds)[indicator.id]) {
+    unref(accessibleDescriptionIds)[indicator.id] = uniqueId('oc-indicator-description-')
+  }
+
+  return unref(accessibleDescriptionIds)[indicator.id]
+}
 </script>
-```
-</docs>
