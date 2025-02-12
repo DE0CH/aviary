@@ -25,41 +25,41 @@
             </oc-button>
           </div>
         </template>
-        <oc-tr class="account-page-info-username">
-          <oc-td>{{ $gettext('Username') }}</oc-td>
-          <oc-td>{{ user.onPremisesSamAccountName }}</oc-td>
-        </oc-tr>
-        <oc-tr class="account-page-info-displayname">
-          <oc-td>{{ $gettext('First and last name') }}</oc-td>
-          <oc-td>{{ user.displayName }}</oc-td>
-        </oc-tr>
-        <oc-tr class="account-page-info-email">
-          <oc-td>{{ $gettext('Email') }}</oc-td>
-          <oc-td>
+        <oc-table-tr class="account-page-info-username">
+          <oc-table-td>{{ $gettext('Username') }}</oc-table-td>
+          <oc-table-td>{{ user.onPremisesSamAccountName }}</oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr class="account-page-info-displayname">
+          <oc-table-td>{{ $gettext('First and last name') }}</oc-table-td>
+          <oc-table-td>{{ user.displayName }}</oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr class="account-page-info-email">
+          <oc-table-td>{{ $gettext('Email') }}</oc-table-td>
+          <oc-table-td>
             <template v-if="user.mail">{{ user.mail }}</template>
             <span v-else v-text="$gettext('No email has been set up')" />
-          </oc-td>
-        </oc-tr>
-        <oc-tr v-if="!!quota" class="account-page-info-quota">
-          <oc-td>{{ $gettext('Personal storage') }}</oc-td>
-          <oc-td data-testid="quota">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr v-if="!!quota" class="account-page-info-quota">
+          <oc-table-td>{{ $gettext('Personal storage') }}</oc-table-td>
+          <oc-table-td data-testid="quota">
             <quota-information :quota="quota" class="oc-mt-xs" />
-          </oc-td>
-        </oc-tr>
-        <oc-tr class="account-page-info-groups">
-          <oc-td>{{ $gettext('Group memberships') }}</oc-td>
-          <oc-td data-testid="group-names">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr class="account-page-info-groups">
+          <oc-table-td>{{ $gettext('Group memberships') }}</oc-table-td>
+          <oc-table-td data-testid="group-names">
             <span v-if="groupNames">{{ groupNames }}</span>
             <span
               v-else
               data-testid="group-names-empty"
               v-text="$gettext('You are not part of any group')"
             />
-          </oc-td>
-        </oc-tr>
-        <oc-tr v-if="showLogout" class="account-page-logout-all-devices">
-          <oc-td>{{ $gettext('Logout from active devices') }}</oc-td>
-          <oc-td data-testid="logout">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr v-if="showLogout" class="account-page-logout-all-devices">
+          <oc-table-td>{{ $gettext('Logout from active devices') }}</oc-table-td>
+          <oc-table-td data-testid="logout">
             <oc-button
               appearance="raw"
               type="a"
@@ -69,8 +69,8 @@
             >
               <span v-text="$gettext('Show devices')" />
             </oc-button>
-          </oc-td>
-        </oc-tr>
+          </oc-table-td>
+        </oc-table-tr>
       </account-table>
       <account-table
         :title="$gettext('Preferences')"
@@ -81,9 +81,9 @@
         ]"
         class="account-page-preferences"
       >
-        <oc-tr class="account-page-info-language">
-          <oc-td>{{ $gettext('Language') }}</oc-td>
-          <oc-td>
+        <oc-table-tr class="account-page-info-language">
+          <oc-table-td>{{ $gettext('Language') }}</oc-table-td>
+          <oc-table-td>
             <div class="oc-flex">
               <span v-text="$gettext('Select your language.')" />
               <a href="https://explore.transifex.com/opencloud-eu/opencloud-eu/" target="_blank">
@@ -93,8 +93,8 @@
                 </div>
               </a>
             </div>
-          </oc-td>
-          <oc-td data-testid="language">
+          </oc-table-td>
+          <oc-table-td data-testid="language">
             <oc-select
               v-if="languageOptions"
               :model-value="selectedLanguageValue"
@@ -105,12 +105,12 @@
               :options="languageOptions"
               @update:model-value="updateSelectedLanguage"
             />
-          </oc-td>
-        </oc-tr>
-        <oc-tr v-if="showChangePassword" class="account-page-password">
-          <oc-td>{{ $gettext('Password') }}</oc-td>
-          <oc-td><span v-text="'**********'" /></oc-td>
-          <oc-td data-testid="password">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr v-if="showChangePassword" class="account-page-password">
+          <oc-table-td>{{ $gettext('Password') }}</oc-table-td>
+          <oc-table-td><span v-text="'**********'" /></oc-table-td>
+          <oc-table-td data-testid="password">
             <oc-button
               appearance="raw"
               variation="primary"
@@ -119,24 +119,24 @@
             >
               <span v-text="$gettext('Change password')" />
             </oc-button>
-          </oc-td>
-        </oc-tr>
-        <oc-tr class="account-page-info-theme">
-          <oc-td>{{ $gettext('Theme') }}</oc-td>
-          <oc-td><span v-text="$gettext('Select your favorite theme')" /></oc-td>
-          <oc-td data-testid="theme">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr class="account-page-info-theme">
+          <oc-table-td>{{ $gettext('Theme') }}</oc-table-td>
+          <oc-table-td><span v-text="$gettext('Select your favorite theme')" /></oc-table-td>
+          <oc-table-td data-testid="theme">
             <theme-switcher />
-          </oc-td>
-        </oc-tr>
-        <oc-tr
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr
           v-if="showNotifications && !canConfigureSpecificNotifications"
           class="account-page-notification"
         >
-          <oc-td>{{ $gettext('Notifications') }}</oc-td>
-          <oc-td v-if="!isMobileWidth">
+          <oc-table-td>{{ $gettext('Notifications') }}</oc-table-td>
+          <oc-table-td v-if="!isMobileWidth">
             <span v-text="$gettext('Receive notification mails')" />
-          </oc-td>
-          <oc-td data-testid="notification-mails">
+          </oc-table-td>
+          <oc-table-td data-testid="notification-mails">
             <oc-checkbox
               :model-value="disableEmailNotificationsValue"
               size="large"
@@ -145,14 +145,14 @@
               data-testid="account-page-notification-mails-checkbox"
               @update:model-value="updateDisableEmailNotifications"
             />
-          </oc-td>
-        </oc-tr>
-        <oc-tr v-if="showWebDavDetails" class="account-page-view-options">
-          <oc-td>{{ $gettext('View options') }}</oc-td>
-          <oc-td v-if="!isMobileWidth">
+          </oc-table-td>
+        </oc-table-tr>
+        <oc-table-tr v-if="showWebDavDetails" class="account-page-view-options">
+          <oc-table-td>{{ $gettext('View options') }}</oc-table-td>
+          <oc-table-td v-if="!isMobileWidth">
             <span v-text="$gettext('Show WebDAV information in details view')" />
-          </oc-td>
-          <oc-td data-testid="view-options">
+          </oc-table-td>
+          <oc-table-td data-testid="view-options">
             <oc-checkbox
               :model-value="viewOptionWebDavDetailsValue"
               size="large"
@@ -161,8 +161,8 @@
               data-testid="account-page-webdav-details-checkbox"
               @update:model-value="updateViewOptionsWebDavDetails"
             />
-          </oc-td>
-        </oc-tr>
+          </oc-table-td>
+        </oc-table-tr>
       </account-table>
 
       <template v-if="showNotifications && canConfigureSpecificNotifications">
@@ -182,12 +182,15 @@
             </p>
           </template>
 
-          <oc-tr v-for="option in notificationsOptions" :key="option.id">
-            <oc-td>{{ option.displayName }}</oc-td>
-            <oc-td>{{ option.description }}</oc-td>
+          <oc-table-tr v-for="option in notificationsOptions" :key="option.id">
+            <oc-table-td>{{ option.displayName }}</oc-table-td>
+            <oc-table-td>{{ option.description }}</oc-table-td>
 
             <template v-if="option.multiChoiceCollectionValue">
-              <oc-td v-for="choice in option.multiChoiceCollectionValue.options" :key="choice.key">
+              <oc-table-td
+                v-for="choice in option.multiChoiceCollectionValue.options"
+                :key="choice.key"
+              >
                 <span class="checkbox-cell-wrapper">
                   <oc-checkbox
                     :model-value="notificationsValues[option.id][choice.key]"
@@ -200,9 +203,9 @@
                     "
                   />
                 </span>
-              </oc-td>
+              </oc-table-td>
             </template>
-          </oc-tr>
+          </oc-table-tr>
         </account-table>
         <account-table
           :title="$gettext('Mail notification options')"
@@ -214,11 +217,11 @@
             <h2 class="oc-invisible-sr">{{ title }}</h2>
           </template>
 
-          <oc-tr v-for="option in emailNotificationsOptions" :key="option.id">
-            <oc-td>{{ option.displayName }}</oc-td>
-            <oc-td>{{ option.description }}</oc-td>
+          <oc-table-tr v-for="option in emailNotificationsOptions" :key="option.id">
+            <oc-table-td>{{ option.displayName }}</oc-table-td>
+            <oc-table-td>{{ option.description }}</oc-table-td>
 
-            <oc-td v-if="option.singleChoiceValue">
+            <oc-table-td v-if="option.singleChoiceValue">
               <oc-select
                 :model-value="emailNotificationsValues[option.id]"
                 :options="option.singleChoiceValue.options"
@@ -226,8 +229,8 @@
                 option-label="displayValue"
                 @update:model-value="(value) => updateSingleChoiceValue(option.name, value)"
               />
-            </oc-td>
-          </oc-tr>
+            </oc-table-td>
+          </oc-table-tr>
         </account-table>
       </template>
 
@@ -241,19 +244,19 @@
         ]"
         class="account-page-extensions"
       >
-        <oc-tr
+        <oc-table-tr
           v-for="extensionPoint in extensionPointsWithUserPreferences"
           :key="`extension-point-preference-${extensionPoint.id}`"
           class="oc-mb"
         >
-          <oc-td>{{ extensionPoint.userPreference.label }}</oc-td>
-          <oc-td v-if="extensionPoint.userPreference.description">
+          <oc-table-td>{{ extensionPoint.userPreference.label }}</oc-table-td>
+          <oc-table-td v-if="extensionPoint.userPreference.description">
             <span v-text="$gettext(extensionPoint.userPreference.description || '')" />
-          </oc-td>
-          <oc-td>
+          </oc-table-td>
+          <oc-table-td>
             <extension-preference :extension-point="extensionPoint" />
-          </oc-td>
-        </oc-tr>
+          </oc-table-td>
+        </oc-table-tr>
       </account-table>
       <account-table
         v-if="showGdprExport"
@@ -265,15 +268,15 @@
         ]"
         class="account-page-gdpr-export"
       >
-        <oc-tr class="account-page-gdpr-export">
-          <oc-td>{{ $gettext('GDPR export') }}</oc-td>
-          <oc-td>
+        <oc-table-tr class="account-page-gdpr-export">
+          <oc-table-td>{{ $gettext('GDPR export') }}</oc-table-td>
+          <oc-table-td>
             <span v-text="$gettext('Request a personal data export according to §20 GDPR.')" />
-          </oc-td>
-          <oc-td data-testid="gdpr-export">
+          </oc-table-td>
+          <oc-table-td data-testid="gdpr-export">
             <gdpr-export />
-          </oc-td>
-        </oc-tr>
+          </oc-table-td>
+        </oc-table-tr>
       </account-table>
       <component
         :is="extension.content"
