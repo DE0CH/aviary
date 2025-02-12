@@ -1,6 +1,5 @@
 {
   "ignores": [
-    "autoprefixer",
     "style-loader",
     "stylelint-config-sass-guidelines",
     "stylelint-config-standard",
