@@ -4,23 +4,23 @@
       <h2 class="account-table-title" v-text="title" />
     </slot>
     <oc-table-simple>
-      <oc-thead :class="{ 'oc-invisible-sr': !showHead }">
-        <oc-tr>
+      <oc-table-head :class="{ 'oc-invisible-sr': !showHead }">
+        <oc-table-tr>
           <template v-for="field in fields" :key="typeof field === 'string' ? field : field.label">
-            <oc-th v-if="typeof field === 'string'">{{ field }}</oc-th>
-            <oc-th
+            <oc-table-th v-if="typeof field === 'string'">{{ field }}</oc-table-th>
+            <oc-table-th
               v-else
               :align-h="field.alignH || 'left'"
               :class="{ 'oc-invisible-sr': field.hidden }"
             >
               {{ field.label }}
-            </oc-th>
+            </oc-table-th>
           </template>
-        </oc-tr>
-      </oc-thead>
-      <oc-tbody>
+        </oc-table-tr>
+      </oc-table-head>
+      <oc-table-body>
         <slot />
-      </oc-tbody>
+      </oc-table-body>
     </oc-table-simple>
   </div>
 </template>
