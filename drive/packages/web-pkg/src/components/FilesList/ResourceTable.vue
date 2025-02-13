@@ -348,7 +348,7 @@ export default defineComponent({
      * Closure function to mutate the resource id into a valid DOM selector.
      */
     resourceDomSelector: {
-      type: Function,
+      type: Function as PropType<(resource: Resource) => string>,
       required: false,
       default: (resource: Resource) => extractDomSelector(resource.id)
     },
@@ -488,7 +488,7 @@ export default defineComponent({
      * Show that the table is sorted ascendingly/descendingly (no actual sorting takes place)
      */
     sortDir: {
-      type: String,
+      type: String as PropType<SortDir>,
       required: false,
       default: undefined,
       validator: (value: string) => {

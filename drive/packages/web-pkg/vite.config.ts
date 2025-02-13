@@ -44,17 +44,6 @@ export default defineConfig({
     nodePolyfills({
       exclude: ['crypto']
     }),
-    dts({ exclude: ['**/tests'] }),
-    {
-      name: '@opencloud-eu/vite-plugin-docs',
-      transform(src, id) {
-        if (id.includes('type=docs')) {
-          return {
-            code: 'export default {}',
-            map: null
-          }
-        }
-      }
-    }
+    dts({ exclude: ['**/tests'] })
   ]
 })

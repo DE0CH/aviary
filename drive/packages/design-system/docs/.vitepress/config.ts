@@ -21,18 +21,6 @@ export default defineConfig({
       }
     },
     plugins: [
-      // TODO: remove when doc blocks have been removed
-      {
-        name: '@opencloud-eu/vite-plugin-docs',
-        transform(src, id) {
-          if (id.includes('type=docs')) {
-            return {
-              code: 'export default {}',
-              map: null
-            }
-          }
-        }
-      },
       {
         name: '@opencloud-eu/vite-plugin-strip-css',
         transform(src, id) {

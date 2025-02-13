@@ -111,7 +111,7 @@ describe('OcTable.sort', () => {
       async (name, { sortBy, sortDir, ariaSort }) => {
         await wrapper.setProps({
           sortBy,
-          sortDir
+          sortDir: sortDir as 'asc' | 'desc'
         })
         expect(headers.at(1).attributes()['aria-sort']).toBe(ariaSort)
       }
@@ -124,7 +124,7 @@ describe('OcTable.sort', () => {
         props: {
           fields: tableFields,
           sortBy: tableFieldId.name,
-          sortDir: tableFieldId.sortDir,
+          sortDir: tableFieldId.sortDir as 'asc' | 'desc',
           data
         },
         global: {
@@ -171,7 +171,7 @@ describe('OcTable.sort', () => {
             fields: tableFields,
             data,
             sortBy: sortByOld,
-            sortDir: sortDirOld
+            sortDir: sortDirOld as 'asc' | 'desc'
           },
           global: {
             plugins: [...defaultPlugins()],

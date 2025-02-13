@@ -108,13 +108,6 @@ import { useGettext } from 'vue3-gettext'
 import 'vue-select/dist/vue-select.css'
 import { ContextualHelper } from '../../helpers'
 
-// the keycode property is deprecated in the JS event API, vue-select still works with it though
-enum KeyCode {
-  Enter = 13,
-  ArrowDown = 40,
-  ArrowUp = 38
-}
-
 export interface Props {
   id?: string
   filter?: (items: unknown[], search: string, { label }: { label?: string }) => unknown[]
@@ -133,6 +126,13 @@ export interface Props {
   multiple?: boolean
   readOnly?: boolean
   positionFixed?: boolean
+}
+
+// the keycode property is deprecated in the JS event API, vue-select still works with it though
+enum KeyCode {
+  Enter = 13,
+  ArrowDown = 40,
+  ArrowUp = 38
 }
 
 const {
