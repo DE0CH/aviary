@@ -906,9 +906,6 @@ importers:
       portal-vue:
         specifier: ^3.0.0
         version: 3.0.0(patch_hash=bogvb64kjdufpa4744k4xkam7u)(vue@3.5.13(typescript@5.7.3))
-      prettier:
-        specifier: ^3.0.0
-        version: 3.5.0
       prismjs:
         specifier: ^1.29.0
         version: 1.29.0

@@ -4,10 +4,11 @@
       v-if="isReadOnly"
       id="text-editor-preview-component"
       :model-value="currentContent"
-      no-mermaid
       no-katex
+      no-mermaid
+      no-prettier
+      no-upload-img
       no-highlight
-      no-img-zoom-in
       :language="languages[language.current] || 'en-US'"
       :theme="theme"
       read-only
@@ -17,14 +18,26 @@
       v-else
       id="text-editor-component"
       :model-value="currentContent"
-      no-mermaid
       no-katex
+      no-mermaid
+      no-prettier
+      no-upload-img
       no-highlight
-      no-img-zoom-in
       :language="languages[language.current] || 'en-US'"
       :theme="theme"
       :preview="isMarkdown"
       :toolbars="isMarkdown ? undefined : []"
+      :toolbars-exclude="[
+        'save',
+        'katex',
+        'github',
+        'catalog',
+        'mermaid',
+        'prettier',
+        'fullscreen',
+        'htmlPreview',
+        'pageFullscreen'
+      ]"
       :read-only="isReadOnly"
       @on-change="(value) => $emit('update:currentContent', value)"
     />
@@ -49,9 +62,6 @@ import screenfull from 'screenfull'
 import Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
 
-import * as prettier from 'prettier'
-import parserMarkdown from 'prettier/plugins/markdown'
-
 export default defineComponent({
   name: 'TextEditor',
   components: { MdEditor, MdPreview },
@@ -70,7 +80,6 @@ export default defineComponent({
     const language = useGettext()
     const { currentTheme } = useThemeStore()
 
-    // Should not be a ref, otherwise functions like setMarkdown won't work
     const editorConfig = computed(() => {
       // TODO: Remove typecasting once vue-tsc has figured it out
       const { showPreviewOnlyMd = true } = props.applicationConfig as AppConfigObject
@@ -92,10 +101,6 @@ export default defineComponent({
         languageUserDefined
       },
       editorExtensions: {
-        prettier: {
-          prettierInstance: prettier,
-          parserMarkdownInstance: parserMarkdown
-        },
         screenfull: {
           instance: screenfull
         },

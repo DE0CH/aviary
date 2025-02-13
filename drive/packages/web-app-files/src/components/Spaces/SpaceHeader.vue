@@ -158,7 +158,6 @@ export default defineComponent({
       unref(markdownContainerRef).classList.toggle(markdownContainerCollapsedClass)
     }
     const onMarkdownResize = () => {
-      console.log('RESIZE')
       if (!unref(markdownContainerRef)) {
         return
       }
@@ -177,8 +176,6 @@ export default defineComponent({
     }
     const markdownResizeObserver = new ResizeObserver(onMarkdownResize)
     const observeMarkdownContainerResize = () => {
-      console.log(markdownResizeObserver)
-      console.log(unref(markdownContainerRef))
       if (!markdownResizeObserver || !unref(markdownContainerRef)) {
         return
       }
