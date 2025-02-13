@@ -11,7 +11,7 @@
     "@opencloud-eu/design-system": "workspace:^",
     "@opencloud-eu/web-client": "workspace:*",
     "@opencloud-eu/web-pkg": "workspace:*",
-    "pinia": "^2.2.2",
+    "pinia": "^2.2.2 || ^3.0.0",
     "luxon": "^3.5.0",
     "vue-concurrency": "^5.0.1",
     "vue-router": "^4.2.5",
