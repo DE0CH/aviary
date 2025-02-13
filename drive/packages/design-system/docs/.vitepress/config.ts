@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitepress'
 import { searchForWorkspaceRoot } from 'vite'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 const projectRootDir = searchForWorkspaceRoot(process.cwd())
 const stripScssMarker = '/* STYLES STRIP IMPORTS MARKER */'
@@ -40,7 +41,17 @@ export default defineConfig({
             }
           }
         }
-      }
+      },
+      viteStaticCopy({
+        targets: (() => {
+          return [
+            {
+              src: `${projectRootDir}/packages/design-system/src/assets/icons/*`,
+              dest: `./components/icons`
+            }
+          ]
+        })()
+      }) as any // FIXME: remove type cast once vitepress uses vite 6
     ]
   },
 
