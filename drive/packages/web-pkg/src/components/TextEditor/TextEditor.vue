@@ -4,6 +4,10 @@
       v-if="isReadOnly"
       id="text-editor-preview-component"
       :model-value="currentContent"
+      no-mermaid
+      no-katex
+      no-highlight
+      no-img-zoom-in
       :language="languages[language.current] || 'en-US'"
       :theme="theme"
       read-only
@@ -13,6 +17,10 @@
       v-else
       id="text-editor-component"
       :model-value="currentContent"
+      no-mermaid
+      no-katex
+      no-highlight
+      no-img-zoom-in
       :language="languages[language.current] || 'en-US'"
       :theme="theme"
       :preview="isMarkdown"
@@ -35,6 +43,14 @@ import { languageUserDefined, languages } from './l18n'
 import { useGettext } from 'vue3-gettext'
 import { useThemeStore } from '../../composables'
 import { AppConfigObject } from '../../apps'
+
+import screenfull from 'screenfull'
+
+import Cropper from 'cropperjs'
+import 'cropperjs/dist/cropper.css'
+
+import * as prettier from 'prettier'
+import parserMarkdown from 'prettier/plugins/markdown'
 
 export default defineComponent({
   name: 'TextEditor',
@@ -74,6 +90,18 @@ export default defineComponent({
     config({
       editorConfig: {
         languageUserDefined
+      },
+      editorExtensions: {
+        prettier: {
+          prettierInstance: prettier,
+          parserMarkdownInstance: parserMarkdown
+        },
+        screenfull: {
+          instance: screenfull
+        },
+        cropper: {
+          instance: Cropper
+        }
       }
     })
 

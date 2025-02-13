@@ -861,6 +861,9 @@ importers:
       axios:
         specifier: ^1.7.7
         version: 1.7.9
+      cropperjs:
+        specifier: ^1.6.2
+        version: 1.6.2
       deepmerge:
         specifier: ^4.2.2
         version: 4.3.1
@@ -903,12 +906,18 @@ importers:
       portal-vue:
         specifier: ^3.0.0
         version: 3.0.0(patch_hash=bogvb64kjdufpa4744k4xkam7u)(vue@3.5.13(typescript@5.7.3))
+      prettier:
+        specifier: ^3.0.0
+        version: 3.5.0
       prismjs:
         specifier: ^1.29.0
         version: 1.29.0
       qs:
         specifier: ^6.13.0
         version: 6.14.0
+      screenfull:
+        specifier: ^6.0.2
+        version: 6.0.2
       semver:
         specifier: ^7.6.3
         version: 7.7.1
@@ -3767,6 +3776,9 @@ packages:
   crelt@1.0.6:
     resolution: {integrity: sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g==}
 
+  cropperjs@1.6.2:
+    resolution: {integrity: sha512-nhymn9GdnV3CqiEHJVai54TULFAE3VshJTXSqSJKa8yXAKyBKDWdhHarnlIPrshJ0WMFTGuFvG02YjLXfPiuOA==}
+
   cross-fetch@4.1.0:
     resolution: {integrity: sha512-uKm5PU+MHTootlWEY+mZ4vvXoCn4fLQxT9dSc1sXVMSFkINTJVN8cAQROpwcKm8bJ/c7rgZVIBWzH5T78sNZZw==}
 
@@ -5922,6 +5934,10 @@ packages:
   saxes@6.0.0:
     resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
     engines: {node: '>=v12.22.7'}
+
+  screenfull@6.0.2:
+    resolution: {integrity: sha512-AQdy8s4WhNvUZ6P8F6PB21tSPIYKniic+Ogx0AacBMjKP1GUHN2E9URxQHtCusiwxudnCKkdy4GrHXPPJSkCCw==}
+    engines: {node: ^14.13.1 || >=16.0.0}
 
   search-insights@2.17.3:
     resolution: {integrity: sha512-RQPdCYTa8A68uM2jwxoY842xDhvx3E5LFL1LxvxCNMev4o5mLuokczhzjAgGwUZBAmOKZknArSxLKmXtIi2AxQ==}
@@ -9999,6 +10015,8 @@ snapshots:
 
   crelt@1.0.6: {}
 
+  cropperjs@1.6.2: {}
+
   cross-fetch@4.1.0:
     dependencies:
       node-fetch: 2.7.0
@@ -12265,6 +12283,8 @@ snapshots:
   saxes@6.0.0:
     dependencies:
       xmlchars: 2.2.0
+
+  screenfull@6.0.2: {}
 
   search-insights@2.17.3: {}
 
