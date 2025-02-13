@@ -10,7 +10,7 @@ import { readFileSync } from 'fs'
 import vue from '@vitejs/plugin-vue'
 import serve from 'rollup-plugin-serve'
 
-const distDir = 'dist'
+const distDir = process.env.OPENCLOUD_EXTENSION_DIST_DIR || 'dist'
 
 const certsDir = process.env.OPENCLOUD_CERTS_DIR
 const defaultHttps = () =>
