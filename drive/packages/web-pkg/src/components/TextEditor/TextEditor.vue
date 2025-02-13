@@ -2,7 +2,7 @@
   <div id="text-editor-container" class="oc-height-1-1">
     <md-preview
       v-if="isReadOnly"
-      id="space-description-preview"
+      id="text-editor-preview-component"
       :model-value="currentContent"
       :language="languages[language.current] || 'en-US'"
       :theme="theme"
@@ -87,30 +87,15 @@ export default defineComponent({
 })
 </script>
 <style lang="scss">
-#text-editor-component {
+.md-editor {
   height: 100%;
-}
 
-.toastui-editor-tabs {
-  // Fix tab with for long i18n text
-  .tab-item {
-    width: auto;
-    padding-left: var(--oc-space-small);
-    padding-right: var(--oc-space-small);
-  }
-}
-
-#space-description-preview {
-  background-color: transparent;
-  width: max-content;
-
-  .md-editor-preview-wrapper {
-    padding: 0;
+  &-code-head {
+    justify-content: end !important;
   }
 
-  .md-editor-preview {
-    color: var(--oc-color-text-default);
-    font-size: var(--oc-text-default);
+  &-code-flag {
+    display: none;
   }
 }
 </style>

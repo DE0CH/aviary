@@ -59,7 +59,11 @@
         ref="markdownContainerRef"
         class="markdown-container oc-flex oc-flex-middle"
       >
-        <text-editor is-read-only :current-content="markdownContent" />
+        <text-editor
+          class="markdown-container-content"
+          is-read-only
+          :current-content="markdownContent"
+        />
         <div class="markdown-container-edit oc-ml-s">
           <router-link
             v-oc-tooltip="$gettext('Edit description')"
@@ -89,6 +93,7 @@ import {
   computed,
   defineComponent,
   inject,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   PropType,
@@ -153,6 +158,7 @@ export default defineComponent({
       unref(markdownContainerRef).classList.toggle(markdownContainerCollapsedClass)
     }
     const onMarkdownResize = () => {
+      console.log('RESIZE')
       if (!unref(markdownContainerRef)) {
         return
       }
@@ -171,6 +177,8 @@ export default defineComponent({
     }
     const markdownResizeObserver = new ResizeObserver(onMarkdownResize)
     const observeMarkdownContainerResize = () => {
+      console.log(markdownResizeObserver)
+      console.log(unref(markdownContainerRef))
       if (!markdownResizeObserver || !unref(markdownContainerRef)) {
         return
       }
@@ -206,6 +214,7 @@ export default defineComponent({
         markdownContent.value = fileContentsResponse.body
         markdownResource.value = fileInfoResponse
 
+        await nextTick()
         if (unref(markdownContent)) {
           observeMarkdownContainerResize()
         }
@@ -338,6 +347,14 @@ export default defineComponent({
 
   &-people-count {
     white-space: nowrap;
+  }
+
+  .markdown-container {
+    &-content {
+      .md-editor-preview-wrapper {
+        padding: 0;
+      }
+    }
   }
 
   .markdown-container.collapsed {
