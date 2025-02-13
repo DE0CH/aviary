@@ -7,39 +7,38 @@ import jsonFormat from './build-tokens/format-writer-json.js'
 import scssFormat from './build-tokens/format-writer-scss.js'
 import namespaceTransform from './build-tokens/transform-namespace.js'
 
-StyleDictionary.registerFormat(jsonFormat)
-StyleDictionary.registerFormat(scssFormat)
-StyleDictionary.registerTransform(namespaceTransform)
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-StyleDictionary.extend({
-  parsers: [
-    {
-      pattern: /\.yaml$/,
-      parse: ({ contents, filePath }) => {
-        // This is a bit of a hack to prevent name collisions which would drop the tokens then
-        if (filePath.split('/').some((n) => n === 'docs')) {
-          const parsed = yaml.parse(contents)
+const sd = new StyleDictionary({
+  hooks: {
+    parsers: {
+      'yaml-parser': {
+        pattern: /\.yaml$/,
+        parser: ({ contents, filePath }) => {
+          // This is a bit of a hack to prevent name collisions which would drop the tokens then
+          if (filePath.split('/').some((n) => n === 'docs')) {
+            const parsed = yaml.parse(contents)
 
-          Object.keys(parsed).forEach((k) => {
-            parsed['docs-' + k] = parsed[k]
+            Object.keys(parsed).forEach((k) => {
+              parsed['docs-' + k] = parsed[k]
 
-            delete parsed[k]
-          })
+              delete parsed[k]
+            })
 
-          return parsed
+            return parsed
+          }
+
+          return yaml.parse(contents)
         }
-
-        return yaml.parse(contents)
       }
     }
-  ],
+  },
+  parsers: ['yaml-parser'],
   source: [path.join(__dirname, '../src/tokens/**/*.yaml')],
   platforms: {
     ods: {
-      transforms: ['name/cti/kebab', 'transform/ods/namespace'],
+      transforms: ['name/kebab', 'transform/ods/namespace'],
       buildPath: 'src/assets/tokens/',
       files: [
         {
@@ -55,4 +54,11 @@ StyleDictionary.extend({
       ]
     }
   }
-}).buildAllPlatforms()
+})
+
+await sd.hasInitialized
+sd.registerFormat(jsonFormat)
+sd.registerFormat(scssFormat)
+sd.registerTransform(namespaceTransform)
+await sd.cleanAllPlatforms()
+await sd.buildAllPlatforms()

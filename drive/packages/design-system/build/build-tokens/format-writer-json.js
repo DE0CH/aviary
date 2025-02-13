@@ -3,8 +3,8 @@ import { getPropType, sortProps, getPropCategory } from './utils.js'
 
 export default {
   name: 'format/ods/json',
-  formatter: (dictionary) => {
-    const attributes = sortProps(dictionary.allProperties).reduce((acc, cur) => {
+  format: (dictionary) => {
+    const attributes = sortProps(dictionary.allTokens).reduce((acc, cur) => {
       const prop = {
         value: cur.value,
         name: cur.name,
