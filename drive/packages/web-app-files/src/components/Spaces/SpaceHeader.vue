@@ -57,12 +57,12 @@
       <div
         v-if="markdownResource && markdownContent"
         ref="markdownContainerRef"
-        class="markdown-container oc-flex oc-flex-middle"
+        class="markdown-container oc-flex"
       >
         <text-editor
-          :resource="markdownResource"
+          class="markdown-container-content"
+          is-read-only
           :current-content="markdownContent"
-          :is-read-only="true"
         />
         <div class="markdown-container-edit oc-ml-s">
           <router-link
@@ -93,6 +93,7 @@ import {
   computed,
   defineComponent,
   inject,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   PropType,
@@ -210,6 +211,7 @@ export default defineComponent({
         markdownContent.value = fileContentsResponse.body
         markdownResource.value = fileInfoResponse
 
+        await nextTick()
         if (unref(markdownContent)) {
           observeMarkdownContainerResize()
         }
@@ -342,6 +344,14 @@ export default defineComponent({
 
   &-people-count {
     white-space: nowrap;
+  }
+
+  .markdown-container {
+    &-content {
+      .md-editor-preview-wrapper {
+        padding: 0;
+      }
+    }
   }
 
   .markdown-container.collapsed {

@@ -52,7 +52,7 @@ exports[`SpaceHeader > space description > should show the description 1`] = `
       </button>
     </div>
     <!--v-if-->
-    <div class="markdown-container oc-flex oc-flex-middle">
+    <div class="markdown-container oc-flex">
       <!---->
       <div class="markdown-container-edit oc-ml-s"><a attrs="[object Object]" size="small" appearance="raw"></a></div>
     </div>
