@@ -57,7 +57,7 @@
       <div
         v-if="markdownResource && markdownContent"
         ref="markdownContainerRef"
-        class="markdown-container oc-flex oc-flex-middle"
+        class="markdown-container oc-flex"
       >
         <text-editor
           class="markdown-container-content"
