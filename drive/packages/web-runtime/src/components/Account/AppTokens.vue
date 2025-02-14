@@ -30,22 +30,6 @@
     />
     <div v-else>
       <oc-table :data="visibleAppTokens" :fields="tableFields">
-        <template #token="{ item }">
-          <div class="oc-flex oc-flex-middle">
-            <div class="oc-width-1-1 oc-text-truncate">
-              <span v-text="item.token" />
-            </div>
-            <oc-button
-              v-oc-tooltip="$gettext('Copy app token')"
-              appearance="raw"
-              class="copy-app-token-btn oc-p-xs oc-ml-m"
-              :aria-label="$gettext('Copy app token')"
-              @click="copyAppToken(item.token)"
-            >
-              <oc-icon name="file-copy" fill-type="line" />
-            </oc-button>
-          </div>
-        </template>
         <template #creationDate="{ item }">
           <div class="oc-width-1-1 oc-text-truncate">
             <span v-text="formatDateFromISO(item.created_date, currentLanguage)" />
@@ -83,36 +67,17 @@
 
 <script setup lang="ts">
 import { call } from '@opencloud-eu/web-client'
-import {
-  DatePickerModal,
-  formatDateFromISO,
-  useClientService,
-  useMessages,
-  useModals
-} from '@opencloud-eu/web-pkg'
+import { formatDateFromISO, useClientService, useMessages, useModals } from '@opencloud-eu/web-pkg'
 import { computed, onMounted, onUnmounted, Ref, ref, unref } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
-import { useClipboard } from '@vueuse/core'
-import { z } from 'zod'
-import { DateTime } from 'luxon'
-
-const AppTokenSchema = z.object({
-  token: z.string(),
-  expiration_date: z.string(),
-  created_date: z.string(),
-  label: z.string().optional()
-})
-
-const RawAppTokenSchema = z.array(AppTokenSchema)
-
-export type AppToken = z.infer<typeof AppTokenSchema>
+import AppTokenModal from '../Modals/AppTokenModal.vue'
+import { AppToken, AppTokenListSchema } from '../../helpers/appTokens'
 
 const { $gettext, current: currentLanguage } = useGettext()
 const { dispatchModal } = useModals()
 const { showMessage, showErrorMessage } = useMessages()
 const { httpAuthenticated: client } = useClientService()
-const { copy } = useClipboard({ legacy: true, copiedDuring: 550 })
 
 const appTokens: Ref<AppToken[]> = ref([])
 const authAppServiceDisabled = ref<boolean | undefined>()
@@ -123,7 +88,7 @@ const TOKENS_TO_DISPLAY = 5
 const loadTokensTask = useTask(function* (signal) {
   try {
     const { data } = yield* call(client.get<AppToken[]>('/auth-app/tokens', { signal }))
-    const tokens = RawAppTokenSchema.parse(data)
+    const tokens = AppTokenListSchema.parse(data)
     appTokens.value = tokens.sort((a, b) => b.created_date.localeCompare(a.created_date))
     authAppServiceDisabled.value = false
   } catch (error) {
@@ -132,20 +97,6 @@ const loadTokensTask = useTask(function* (signal) {
     authAppServiceDisabled.value = true
   }
 }).restartable()
-
-const createAppToken = async (expiry: string) => {
-  try {
-    const { data } = await client.post('/auth-app/tokens', null, { params: { expiry } })
-    unref(appTokens).unshift(data)
-    showMessage({ title: $gettext('The app token has been created.') })
-  } catch (error) {
-    console.error(error)
-    showErrorMessage({
-      title: $gettext('An error occurred while creating the app token.'),
-      errors: [error]
-    })
-  }
-}
 
 const deleteAppToken = async ({ token }: AppToken) => {
   try {
@@ -165,14 +116,11 @@ const openCreateAppTokenModal = () => {
   dispatchModal({
     title: $gettext('Create a new app token'),
     confirmText: $gettext('Create'),
-    customComponent: DatePickerModal,
+    customComponent: AppTokenModal,
     hideActions: true,
-    customComponentAttrs: () => ({
-      minDate: DateTime.now()
-    }),
-    onConfirm: (expiryDate: DateTime) => {
-      const diffInHours = expiryDate.diff(DateTime.now(), 'hours').hours
-      createAppToken(`${diffInHours}h`)
+    onConfirm: () => {
+      // reload tokens after creating a new one
+      loadTokensTask.perform()
     }
   })
 }
@@ -186,11 +134,6 @@ const openDeleteAppTokenModal = (appToken: AppToken) => {
   })
 }
 
-const copyAppToken = (token: string) => {
-  copy(token)
-  showMessage({ title: $gettext('The app token has been copied to your clipboard.') })
-}
-
 const visibleAppTokens = computed(() => {
   if (unref(listExpanded)) {
     return unref(appTokens)
@@ -200,13 +143,6 @@ const visibleAppTokens = computed(() => {
 
 const tableFields = computed(() => {
   return [
-    {
-      name: 'token',
-      type: 'slot',
-      width: 'expand',
-      wrap: 'truncate',
-      title: $gettext('App Token')
-    },
     {
       name: 'creationDate',
       type: 'slot',
