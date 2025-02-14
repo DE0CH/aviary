@@ -8,7 +8,8 @@ import {
 import { ClientService, useModals } from '@opencloud-eu/web-pkg'
 import { flushPromises } from '@vue/test-utils'
 import { OcTable } from '@opencloud-eu/design-system/components'
-import AppTokens, { AppToken } from '../../../../src/components/Account/AppTokens.vue'
+import AppTokens from '../../../../src/components/Account/AppTokens.vue'
+import { AppToken } from '../../../../src/helpers/appTokens'
 
 const selectors = {
   createAppTokenBtn: '.create-app-token-btn',
