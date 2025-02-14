@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitepress'
 import { searchForWorkspaceRoot } from 'vite'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
+import Container from 'markdown-it-container'
+import path from 'path'
 
 const projectRootDir = searchForWorkspaceRoot(process.cwd())
 const stripScssMarker = '/* STYLES STRIP IMPORTS MARKER */'
@@ -10,6 +12,16 @@ export default defineConfig({
   description: 'Design System for OpenCloud',
   base: '/',
   vite: {
+    resolve: {
+      alias: {
+        // necessary to allow compiling our live code blocks
+        'vue/server-renderer': path.resolve(
+          projectRootDir,
+          'node_modules/vue/server-renderer/index.js'
+        ),
+        vue: path.resolve(projectRootDir, 'node_modules/vue/dist/vue.esm-bundler.js')
+      }
+    },
     css: {
       preprocessorOptions: {
         scss: {
@@ -83,6 +95,10 @@ export default defineConfig({
           text: 'Components',
           items: [
             {
+              text: 'OcApplicationIcon',
+              link: '/components/OcApplicationIcon'
+            },
+            {
               text: 'OcButton',
               link: '/components/OcButton'
             },
@@ -108,5 +124,18 @@ export default defineConfig({
         link: 'https://app.element.io/#/room/#opencloud:matrix.org'
       }
     ]
+  },
+  markdown: {
+    config: (md) => {
+      md.use(Container, 'livecode', {
+        render: (tokens: Array<Record<string, any>>, idx: number) => {
+          if (tokens[idx].info.includes('livecode')) {
+            const path = tokens[idx].attrs?.[0]?.[1]
+            return `<live-code-block path="${path || ''}">`
+          }
+          return '</live-code-block>'
+        }
+      })
+    }
   }
 })
