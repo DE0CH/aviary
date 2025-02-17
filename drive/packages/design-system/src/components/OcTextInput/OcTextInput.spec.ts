@@ -306,12 +306,12 @@ describe('OcTextInput', () => {
   })
 
   describe('input events', () => {
-    it('should emit an input event on typing', async () => {
+    it('should emit an input and a update:modelValue event on typing', async () => {
       const wrapper = getShallowWrapper()
-      expect(wrapper.emitted().input).toBeFalsy()
-      await wrapper.find('input').setValue('a')
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      await wrapper.find('input').setValue('asdf')
       expect(wrapper.emitted('update:modelValue')).toBeTruthy()
-      expect(wrapper.emitted('update:modelValue')[0][0]).toBe('a')
+      expect(wrapper.emitted('update:modelValue')[0][0]).toBe('asdf')
     })
   })
 

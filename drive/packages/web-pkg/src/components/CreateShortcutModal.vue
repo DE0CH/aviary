@@ -8,7 +8,7 @@
     @keydown.down="onKeyDownDrop"
     @keydown.esc="onKeyEscDrop"
     @keydown.enter="onKeyEnterDrop"
-    @input="onInputUrlInput"
+    @update:model-value="onInputUrlInput"
     @click="onClickUrlInput"
   >
     <template #label>

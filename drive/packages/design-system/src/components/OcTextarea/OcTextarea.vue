@@ -12,7 +12,6 @@
         'oc-textarea-danger': !!errorMessage
       }"
       :aria-invalid="ariaInvalid"
-      @keydown="onKeyDown($event)"
     />
     <div v-if="showMessageLine" class="oc-textarea-message">
       <span
@@ -39,7 +38,6 @@ export interface Props {
   errorMessage?: string
   descriptionMessage?: string
   fixMessageLine?: boolean
-  submitOnEnter?: boolean
 }
 
 const {
@@ -48,12 +46,8 @@ const {
   warningMessage,
   errorMessage,
   descriptionMessage,
-  fixMessageLine = false,
-  submitOnEnter = false
+  fixMessageLine = false
 } = defineProps<Props>()
-
-const emit = defineEmits(['change', 'keydown'])
-
 const model = defineModel<string>({ default: '' })
 
 const showMessageLine = computed(() => {
@@ -90,14 +84,6 @@ const focus = () => {
   unref(textareaRef).focus()
 }
 defineExpose({ focus })
-
-const onKeyDown = (e: KeyboardEvent) => {
-  const enterKey = e.key?.toLowerCase() === 'enter'
-  if (submitOnEnter && enterKey && !e.ctrlKey && !e.shiftKey) {
-    emit('change', (e.target as HTMLInputElement).value)
-  }
-  emit('keydown', e)
-}
 </script>
 
 <style lang="scss">
