@@ -29,7 +29,7 @@
         <input class="vs__search" v-bind="attributes" @input="userInput" v-on="events" />
       </template>
       <template v-for="(index, name) in $slots" #[name]="data">
-        <slot v-if="name !== 'search'" :name="name" v-bind="data" />
+        <slot v-if="name.toString() !== 'search'" :name="name" v-bind="data" />
       </template>
       <template #no-options>
         <div v-text="$gettext('No options available.')" />
