@@ -93,22 +93,23 @@ export default defineConfig({
         },
         {
           text: 'Components',
+          base: '/components/',
           items: [
             {
               text: 'OcApplicationIcon',
-              link: '/components/OcApplicationIcon'
+              link: '/OcApplicationIcon'
             },
             {
               text: 'OcButton',
-              link: '/components/OcButton'
+              link: '/OcButton'
             },
             {
               text: 'OcTextarea',
-              link: '/components/OcTextarea'
+              link: '/OcTextarea'
             },
             {
               text: 'OcTextInput',
-              link: '/components/OcTextInput'
+              link: '/OcTextInput'
             }
           ]
         }
@@ -137,5 +138,8 @@ export default defineConfig({
         }
       })
     }
+  },
+  rewrites: {
+    'components/:name/:slug*': 'components/:slug*'
   }
 })
