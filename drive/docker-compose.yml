@@ -13,6 +13,7 @@ x-opencloud-server: &opencloud-service
     OC_PASSWORD_POLICY_MIN_DIGITS: '0'
     OC_PASSWORD_POLICY_MIN_SPECIAL_CHARACTERS: '0'
     OC_PASSWORD_POLICY_BANNED_PASSWORDS_LIST: '/etc/opencloud/password-policy-banned-passwords.txt'
+    OC_SHOW_USER_EMAIL_IN_RESULTS: 'true'
 
     # WEB
     WEB_ASSET_CORE_PATH: ${WEB_ASSET_CORE_PATH:-/web/dist}

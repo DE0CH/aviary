@@ -15,13 +15,9 @@ Feature: web can be navigated through urls
     And "Alice" creates the following files into personal space using API
       | pathToFile                    | content      |
       | FOLDER/file_inside_folder.txt | example text |
-    And "Alice" creates the following files into personal space using API
-      | pathToFile | content      |
-      | lorem.txt  | some content |
-      | test.odt   | some content |
-    And "Alice" creates the following files into personal space using API
-      | pathToFile | content     |
-      | lorem.txt  | new content |
+      | lorem.txt                     | some content |
+      | test.odt                      | some content |
+      | lorem.txt                     | new content  |
     And "Alice" creates the following project space using API
       | name        | id     |
       | Development | team.1 |
