@@ -5,6 +5,10 @@
   </div>
 </template>
 
+<script setup lang="ts">
+defineOptions({ name: 'OcDropzone' })
+</script>
+
 <style lang="scss">
 .oc-dropzone {
   align-items: center;
