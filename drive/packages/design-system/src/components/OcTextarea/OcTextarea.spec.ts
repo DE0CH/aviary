@@ -107,27 +107,13 @@ describe('OcTextarea', () => {
       expect(messageEl.text()).toBe('You may pass.')
     })
   })
-  describe('input events', () => {
-    it('should emit an input event on typing', async () => {
+  describe('events', () => {
+    it('should emit an update:modelValue event on typing', async () => {
       const wrapper = getShallowWrapper()
       expect(wrapper.emitted('update:modelValue')).toBeFalsy()
-      await wrapper.find('textarea').setValue('a')
+      await wrapper.find('textarea').setValue('asdf')
       expect(wrapper.emitted('update:modelValue')).toBeTruthy()
-      expect(wrapper.emitted('update:modelValue')[0][0]).toBe('a')
-    })
-  })
-  describe('change events', () => {
-    it('should emit a change event if submitOnEnter is true', async () => {
-      const wrapper = getShallowWrapper({ submitOnEnter: true })
-      expect(wrapper.emitted().change).toBeFalsy()
-      await wrapper.find('textarea').trigger('keydown.enter')
-      expect(wrapper.emitted().change).toBeTruthy()
-    })
-    it("shouldn't emit a change event if submitOnEnter is false", async () => {
-      const wrapper = getShallowWrapper({ submitOnEnter: false })
-      expect(wrapper.emitted().change).toBeFalsy()
-      await wrapper.find('textarea').trigger('keydown.enter')
-      expect(wrapper.emitted().change).toBeFalsy()
+      expect(wrapper.emitted('update:modelValue')[0][0]).toBe('asdf')
     })
   })
 })

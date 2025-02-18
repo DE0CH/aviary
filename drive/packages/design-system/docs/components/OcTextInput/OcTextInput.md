@@ -21,17 +21,15 @@ or warning is fixed.
 
 The default and most simple use case involves a `v-model` and a `label`.
 
-::: livecode
-```vue
-<oc-text-input v-model="name" label="Your name" />
-```
+::: livecode {path=/components/OcTextInput/default.vue}
+<<< @/components/OcTextInput/default.vue
 :::
 
 ### Disabled
 
 ::: livecode
 ```vue
-<oc-text-input disabled label="Disabled" value="I am disabled" />
+<oc-text-input disabled label="Disabled" model-value="I am disabled" />
 ```
 :::
 
@@ -47,14 +45,6 @@ The following input types ares supported.
 <oc-text-input class="oc-mb-s" type="email" label="Email" />
 <oc-text-input class="oc-mb-s" type="password" label="Password" />
 ```
-:::
-
-### Model
-
-Two way binding a model via `v-model` is fully supported.
-
-::: livecode {path=/components/OcTextInput/model.vue}
-<<< @/components/OcTextInput/model.vue
 :::
 
 ### Interactions

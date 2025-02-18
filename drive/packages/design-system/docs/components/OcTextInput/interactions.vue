@@ -5,7 +5,7 @@
   <oc-text-input
     ref="inputForFocusSelectRef"
     label="Select field"
-    value="Will you select this existing text?"
+    model-value="Text to be selected"
   />
   <oc-text-input v-model="inputValueForClearing" label="Clear input" :clear-button-enabled="true" />
   <oc-text-input
