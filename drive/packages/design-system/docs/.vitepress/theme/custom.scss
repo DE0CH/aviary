@@ -11,8 +11,16 @@
     }
 }
 
+// some vitepress styles need to be overwritten to properly display our components
 button.oc-button-passive-outline:focus:not(:focus-visible) {
     outline: 1px solid var(--oc-color-swatch-passive-default) !important;
+}
+.oc-modal-title > h2 {
+    padding: 0 !important;
+    border: 0 !important;
+}
+ol.oc-pagination-list {
+    list-style: none !important;
 }
 
 @font-face {

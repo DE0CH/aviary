@@ -124,6 +124,66 @@ export default defineConfig({
               link: '/OcButton'
             },
             {
+              text: 'OcGrid',
+              link: '/OcGrid'
+            },
+            {
+              text: 'OcHiddenAnnouncer',
+              link: '/OcHiddenAnnouncer'
+            },
+            {
+              text: 'OcIcon',
+              link: '/OcIcon'
+            },
+            {
+              text: 'OcImage',
+              link: '/OcImage'
+            },
+            {
+              text: 'OcInfoDrop',
+              link: '/OcInfoDrop'
+            },
+            {
+              text: 'OcList',
+              link: '/OcList'
+            },
+            {
+              text: 'OcLoader',
+              link: '/OcLoader'
+            },
+            {
+              text: 'OcLogo',
+              link: '/OcLogo'
+            },
+            {
+              text: 'OcModal',
+              link: '/OcModal'
+            },
+            {
+              text: 'OcNotificationMessage',
+              link: '/OcNotificationMessage'
+            },
+            {
+              text: 'OcNotifications',
+              link: '/OcNotifications'
+            },
+            {
+              text: 'OcPageSize',
+              link: '/OcPageSize'
+            },
+            {
+              text: 'OcPagination',
+              link: '/OcPagination'
+            },
+            {
+              text: 'OcProgress',
+              link: '/OcProgress'
+            },
+            {
+              text: 'OcProgressPie',
+              link: '/OcProgressPie'
+            },
+            {
               text: 'OcTextarea',
               link: '/OcTextarea'
             },
