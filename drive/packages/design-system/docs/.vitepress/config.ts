@@ -100,6 +100,26 @@ export default defineConfig({
               link: '/OcApplicationIcon'
             },
             {
+              text: 'OcAvatar',
+              link: '/OcAvatar'
+            },
+            {
+              text: 'OcAvatarCount',
+              link: '/OcAvatarCount'
+            },
+            {
+              text: 'OcAvatarItem',
+              link: '/OcAvatarItem'
+            },
+            {
+              text: 'OcAvatars',
+              link: '/OcAvatars'
+            },
+            {
+              text: 'OcBreadcrumb',
+              link: '/OcBreadcrumb'
+            },
+            {
               text: 'OcButton',
               link: '/OcButton'
             },
