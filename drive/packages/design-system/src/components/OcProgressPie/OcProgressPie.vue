@@ -33,7 +33,6 @@ const label = computed(() => {
 $default-size: 64px;
 
 .oc-progress-pie {
-  float: left;
   height: $default-size;
   margin: 15px;
   position: relative;
@@ -47,7 +46,7 @@ $default-size: 64px;
 
   // Shadow
   &::after {
-    border: calc($default-size / 10) solid var(--oc-color-swatch-passive-hover);
+    border: calc($default-size / 10) solid var(--oc-color-background-highlight);
     border-radius: 50%;
     box-sizing: border-box;
     content: '';
@@ -66,8 +65,8 @@ $default-size: 64px;
 
     &::before,
     &::after {
-      border: calc($default-size / 10) solid var(--oc-color-swatch-brand-default);
-      border-color: var(--oc-color-swatch-brand-default);
+      border: calc($default-size / 10) solid var(--oc-color-swatch-passive-default);
+      border-color: var(--oc-color-swatch-passive-default);
       border-radius: 50%;
       clip: rect(0, calc($default-size / 2), $default-size, 0);
       content: '';
