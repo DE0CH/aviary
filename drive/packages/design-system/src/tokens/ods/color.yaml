@@ -54,6 +54,8 @@ color:
         value: '#19353f'
       hover:
         value: '#19353f'
+      hover-outline:
+        value: '#ffffff'
       muted:
         value: '#19353f'
       contrast:

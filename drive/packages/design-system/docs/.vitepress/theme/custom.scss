@@ -11,6 +11,10 @@
     }
 }
 
+button.oc-button-passive-outline:focus:not(:focus-visible) {
+    outline: 1px solid var(--oc-color-swatch-passive-default) !important;
+}
+
 @font-face {
     font-family: OpenCloud;
     src: url('./../../../src/assets/fonts/OpenCloud500-Regular.woff2') format('woff2');
