@@ -11,6 +11,8 @@ export default defineConfig({
   title: 'OpenCloud Design System',
   description: 'Design System for OpenCloud',
   base: '/',
+  appearance: false,
+  head: [['link', { rel: 'icon', href: '/logo.svg' }]],
   vite: {
     resolve: {
       alias: {
@@ -60,15 +62,18 @@ export default defineConfig({
             {
               src: `${projectRootDir}/packages/design-system/src/assets/icons/*`,
               dest: `./components/icons`
+            },
+            {
+              src: `${projectRootDir}/packages/design-system/docs/.vitepress/logo.svg`,
+              dest: `./`
             }
           ]
         })()
       }) as any // FIXME: remove type cast once vitepress uses vite 6
     ]
   },
-
   themeConfig: {
-    logo: '', // TODO: add logo
+    logo: '/logo.svg',
     search: {
       provider: 'local'
     },
