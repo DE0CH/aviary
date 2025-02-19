@@ -1,6 +1,6 @@
 <template>
   <oc-grid
-    flex
+    direction="column"
     :role="isFilter ? undefined : 'search'"
     class="oc-search oc-flex-middle"
     :class="{ 'oc-search-small': small }"

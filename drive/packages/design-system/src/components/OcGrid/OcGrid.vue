@@ -8,18 +8,18 @@
 import { computed } from 'vue'
 
 export interface Props {
-  flex?: boolean
+  direction?: 'row' | 'column'
   gutter?: 'small' | 'medium' | 'large' | 'collapse'
 }
 
-const { flex = false, gutter = 'collapse' } = defineProps<Props>()
+const { direction = 'row', gutter = 'collapse' } = defineProps<Props>()
 
 const classes = computed(() => {
   const c: string[] = []
 
   c.push('oc-grid-' + gutter)
 
-  if (flex) {
+  if (direction === 'column') {
     c.push('oc-flex')
     c.push('oc-flex-middle')
   }

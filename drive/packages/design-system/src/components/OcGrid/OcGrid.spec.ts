@@ -18,9 +18,9 @@ describe('OcGrid', () => {
       }
     )
   })
-  describe('when flex prop is true', () => {
+  describe('when direction is set to "column"', () => {
     it('should set grid flex class', () => {
-      const wrapper = getWrapper({ flex: true })
+      const wrapper = getWrapper({ direction: 'column' })
       expect(wrapper.attributes('class')).toContain('oc-flex')
       expect(wrapper.attributes('class')).toContain('oc-flex-middle')
     })
