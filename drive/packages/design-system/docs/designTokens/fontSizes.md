@@ -1,42 +1,30 @@
 # Font Sizes
 
-<script setup lang="ts">
-import { computed } from 'vue'
-import designTokens from '../../src/assets/tokens/ods.json'
+The design system uses predefined font sizes to achieve visual harmony in the interface. It’s purposefully designed to keep the number of separate font sizes to a minimum.
 
-const tokens = computed(() => {
-	return Object.values(designTokens).filter((token) => token.name.startsWith('oc-font-size-'))
-})
-</script>
+## Available tokens
 
-This typographic scale makes it easier to achieve visual harmony in the interface. It’s purposefully designed to keep the number of separate font sizes to a minimum.
+The following tokens are available:
 
-<div class="font-sizes">
-	<div
-		v-for="(prop, index) in tokens"
-		:key="index"
-		class="font"
-		:style="{ fontSize: prop.value }"
-	>
-		{{ prop.name }}, var(--{{ prop.name }})
-		<span>({{ prop.value }})</span>
-	</div>
-</div>
+* `oc-font-size-xsmall` (0.72rem)
+* `oc-font-size-small` (0.86rem)
+* `oc-font-size-default` (0.875rem)
+* `oc-font-size-medium` (1rem)
+* `oc-font-size-large` (1.14rem)
+* `oc-font-size-xlarge` (1.29rem)
 
-<style lang="scss">
-.font-sizes {
-  margin-top: 16px;
-  overflow: hidden;
-  width: 100%;
+## Usage
+
+You can use these variables in your SCSS files or style blocks:
+
+```scss
+.element {
+  font-size: var(--oc-font-size-large);
 }
-.font {
-  margin-bottom: 4px;
-  font-style: normal;
-  span {
-    letter-spacing: -0.02em;
-    margin-left: 10px;
-    user-select: none;
-    font-style: normal;
-  }
-}
-</style>
+```
+
+## Examples
+
+::: livecode {path=/designTokens/sizeExamples.vue}
+<<< @/designTokens/sizeExamples.vue
+:::
