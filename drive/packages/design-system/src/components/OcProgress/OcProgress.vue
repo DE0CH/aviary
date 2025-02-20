@@ -51,7 +51,7 @@ $progress-height: 15px !default;
 $progress-height-small: 5px !default;
 
 .oc-progress {
-  background-color: var(--oc-color-input-border);
+  background-color: var(--oc-color-background-highlight);
   display: block;
   height: $progress-height;
   // Add the correct vertical alignment in Chrome, Firefox, and Opera.
@@ -108,6 +108,10 @@ $progress-height-small: 5px !default;
   &-primary &-current,
   &-primary &-indeterminate div {
     background-color: var(--oc-color-swatch-primary-default);
+  }
+  &-passive &-current,
+  &-passive &-indeterminate div {
+    background-color: var(--oc-color-swatch-passive-default);
   }
   &-success &-current,
   &-success &-indeterminate div {
