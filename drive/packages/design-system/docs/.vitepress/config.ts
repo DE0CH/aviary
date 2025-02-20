@@ -3,6 +3,7 @@ import { searchForWorkspaceRoot } from 'vite'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
 import Container from 'markdown-it-container'
 import path from 'path'
+import { generateJsonMetaData } from './generateJsonMetaData'
 
 const projectRootDir = searchForWorkspaceRoot(process.cwd())
 const stripScssMarker = '/* STYLES STRIP IMPORTS MARKER */'
@@ -36,6 +37,7 @@ export default defineConfig({
       }
     },
     plugins: [
+      generateJsonMetaData(),
       {
         name: '@opencloud-eu/vite-plugin-strip-css',
         transform(src, id) {
@@ -62,10 +64,6 @@ export default defineConfig({
             {
               src: `${projectRootDir}/packages/design-system/src/assets/icons/*`,
               dest: `./components/icons`
-            },
-            {
-              src: `${projectRootDir}/packages/design-system/docs/.vitepress/logo.svg`,
-              dest: `./`
             }
           ]
         })()
@@ -220,6 +218,30 @@ export default defineConfig({
             return `<live-code-block path="${path || ''}">`
           }
           return '</live-code-block>'
+        }
+      })
+      md.use(Container, 'emits', {
+        render: (tokens: Array<Record<string, any>>, idx: number) => {
+          if (tokens[idx].info.includes('emits')) {
+            return '<component-emits />'
+          }
+          return ''
+        }
+      })
+      md.use(Container, 'props', {
+        render: (tokens: Array<Record<string, any>>, idx: number) => {
+          if (tokens[idx].info.includes('props')) {
+            return '<component-props />'
+          }
+          return ''
+        }
+      })
+      md.use(Container, 'slots', {
+        render: (tokens: Array<Record<string, any>>, idx: number) => {
+          if (tokens[idx].info.includes('slots')) {
+            return '<component-slots />'
+          }
+          return ''
         }
       })
     }

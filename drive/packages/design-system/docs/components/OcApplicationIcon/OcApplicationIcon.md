@@ -29,3 +29,7 @@ A primary and a secondary color can be passed to the component. Both colors will
 <oc-application-icon icon="home" color-primary="#e2baff" color-secondary="#20434f" />
 ```
 :::
+
+## Properties
+
+::: props

@@ -88,3 +88,15 @@ A click handler can be registered via the `@click` property.
 ::: livecode {path=/components/OcButton/handler.vue}
 <<< @/components/OcButton/handler.vue
 :::
+
+## Properties
+
+::: props
+
+## Emits
+
+::: emits
+
+## Slots
+
+::: slots
