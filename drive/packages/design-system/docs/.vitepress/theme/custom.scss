@@ -18,6 +18,10 @@ button.oc-button-passive-outline:focus:not(:focus-visible) {
 ol.oc-pagination-list {
     list-style: none !important;
 }
+p.oc-recipient-name {
+    line-height: unset !important;
+    margin: 0 !important;
+}
 
 @font-face {
     font-family: OpenCloud;

@@ -189,6 +189,46 @@ export default defineConfig({
               link: '/OcProgressPie'
             },
             {
+              text: 'OcRadio',
+              link: '/OcRadio'
+            },
+            {
+              text: 'OcRecipient',
+              link: '/OcRecipient'
+            },
+            {
+              text: 'OcSearchBar',
+              link: '/OcSearchBar'
+            },
+            {
+              text: 'OcSelect',
+              link: '/OcSelect'
+            },
+            {
+              text: 'OcSpinner',
+              link: '/OcSpinner'
+            },
+            {
+              text: 'OcStatusIndicators',
+              link: '/OcStatusIndicators'
+            },
+            {
+              text: 'OcSwitch',
+              link: '/OcSwitch'
+            },
+            {
+              text: 'OcTable',
+              link: '/OcTable'
+            },
+            {
+              text: 'OcTableSimple',
+              link: '/OcTableSimple'
+            },
+            {
+              text: 'OcTag',
+              link: '/OcTag'
+            },
+            {
               text: 'OcTextarea',
               link: '/OcTextarea'
             },

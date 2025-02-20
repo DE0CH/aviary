@@ -34,7 +34,7 @@
     </div>
     <div class="oc-search-button-wrapper" :class="{ 'oc-invisible-sr': buttonHidden }">
       <oc-button
-        class="oc-search-button"
+        class="oc-search-button oc-ml-m"
         variation="primary"
         appearance="filled"
         :size="small ? 'small' : 'medium'"
@@ -107,7 +107,7 @@ watch(model, () => {
   }
 })
 
-const emit = defineEmits(['advancedSearch', 'clear', 'keyup', 'search'])
+const emit = defineEmits(['advancedSearch', 'keyup', 'search'])
 
 const { $gettext } = useGettext()
 const slots = useSlots()
@@ -173,6 +173,7 @@ const onCancel = () => {
     border-radius: 25px !important;
     border: none;
     padding: var(--oc-space-medium) !important;
+    height: 2.3rem;
 
     &:focus {
       background-color: var(--oc-color-input-bg);
@@ -195,10 +196,6 @@ const onCancel = () => {
   &-input-button {
     border-bottom-right-radius: 0;
     border-top-right-radius: 0;
-  }
-
-  &-clear {
-    right: var(--oc-space-large) !important;
   }
 
   &-small {
