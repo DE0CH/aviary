@@ -30,6 +30,4 @@ A primary and a secondary color can be passed to the component. Both colors will
 ```
 :::
 
-## Properties
-
-::: props
+::: component-api

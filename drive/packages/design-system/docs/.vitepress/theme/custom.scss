@@ -31,20 +31,3 @@ ol.oc-pagination-list {
     font-weight: bold;
     font-style: normal;
 }
-
-// emit, prop and slot tables
-.emits-table,
-.props-table,
-.slots-table {
-    display: table !important;
-    width: 100%;
-    th,
-    td {
-        background-color: #fff;
-        border: 0;
-        border-bottom: 1px solid var(--vp-c-divider);
-    }
-    tr {
-        border: 0;
-    }
-}

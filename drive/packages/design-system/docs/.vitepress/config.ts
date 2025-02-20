@@ -220,26 +220,10 @@ export default defineConfig({
           return '</live-code-block>'
         }
       })
-      md.use(Container, 'emits', {
+      md.use(Container, 'component-api', {
         render: (tokens: Array<Record<string, any>>, idx: number) => {
-          if (tokens[idx].info.includes('emits')) {
-            return '<component-emits />'
-          }
-          return ''
-        }
-      })
-      md.use(Container, 'props', {
-        render: (tokens: Array<Record<string, any>>, idx: number) => {
-          if (tokens[idx].info.includes('props')) {
-            return '<component-props />'
-          }
-          return ''
-        }
-      })
-      md.use(Container, 'slots', {
-        render: (tokens: Array<Record<string, any>>, idx: number) => {
-          if (tokens[idx].info.includes('slots')) {
-            return '<component-slots />'
+          if (tokens[idx].info.includes('component-api')) {
+            return '<component-api />'
           }
           return ''
         }
