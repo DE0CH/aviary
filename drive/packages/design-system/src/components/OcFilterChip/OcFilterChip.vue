@@ -55,13 +55,64 @@ import { uniqueId } from '../../helpers'
 import OcDrop from '../OcDrop/OcDrop.vue'
 
 export interface Props {
+  /**
+   * @docs The label of the filter.
+   */
   filterLabel: string
+  /**
+   * @docs Determines if the drop should close when an item is clicked.
+   * @default false
+   */
   closeOnClick?: boolean
+  /**
+   * @docs The element ID of the filter.
+   */
   id?: string
+  /**
+   * @docs Determines if the filter is a binary toggle.
+   * @default false
+   */
   isToggle?: boolean
+  /**
+   * @docs Determines if the toggle is active.
+   * @default false
+   */
   isToggleActive?: boolean
+  /**
+   * @docs Determines if the filter has a raw appearance.
+   * @default false
+   */
   raw?: boolean
+  /**
+   * @docs The names of the selected items.
+   */
   selectedItemNames?: string[]
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the filter has been cleared.
+   */
+  (e: 'clearFilter'): void
+  /**
+   * @docs Emitted when the drop has been hidden.
+   */
+  (e: 'hideDrop'): void
+  /**
+   * @docs Emitted when the drop has been displayed.
+   */
+  (e: 'showDrop'): void
+  /**
+   * @docs Emitted when the filter has been toggled.
+   */
+  (e: 'toggleFilter'): void
+}
+
+export interface Slot {
+  /**
+   * @docs The content of the filter chip.
+   */
+  default: () => unknown
 }
 
 const {
@@ -74,7 +125,8 @@ const {
   selectedItemNames = []
 } = defineProps<Props>()
 
-const emit = defineEmits(['clearFilter', 'hideDrop', 'showDrop', 'toggleFilter'])
+const emit = defineEmits<Emits>()
+defineSlots<Slot>()
 
 const dropRef = useTemplateRef<typeof OcDrop>('dropRef')
 

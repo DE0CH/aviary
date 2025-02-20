@@ -1,3 +1,9 @@
+---
+title: OcDefinitionList component
+next: false
+prev: false
+---
+
 # OcDefinitionList component
 
 ## Description
@@ -21,3 +27,5 @@ The default use case needs a list of items to display. Each item should have a `
 />
 ```
 :::
+
+::: component-api

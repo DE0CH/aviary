@@ -6,9 +6,22 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The image source URL.
+   */
   src: string
+  /**
+   * @docs The image alt text. Should be provided for screen readers.
+   */
   alt?: string
+  /**
+   * @docs The loading type of the image.
+   * @default eager
+   */
   loadingType?: 'lazy' | 'eager'
+  /**
+   * @docs The image title attribute.
+   */
   title?: string
 }
 

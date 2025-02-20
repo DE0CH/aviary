@@ -1,3 +1,9 @@
+---
+title: OcList component
+next: false
+prev: false
+---
+
 # OcList component
 
 ## Description
@@ -28,3 +34,5 @@ The components provides a default slot to display the list items.
 </div>
 ```
 :::
+
+::: component-api

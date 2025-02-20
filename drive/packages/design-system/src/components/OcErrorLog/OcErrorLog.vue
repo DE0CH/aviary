@@ -31,6 +31,9 @@ import { computed, ref } from 'vue'
 import { useGettext } from 'vue3-gettext'
 
 export interface Props {
+  /**
+   * @docs The content to be displayed in the error log.
+   */
   content: string
 }
 

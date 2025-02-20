@@ -1,3 +1,9 @@
+---
+title: OcRadio component
+next: false
+prev: false
+---
+
 # OcRadio component
 
 ## Description
@@ -25,3 +31,5 @@ Multiple radio elements can be grouped to allow choosing one option.
 ::: livecode {path=/components/OcRadio/group.vue}
 <<< @/components/OcRadio/group.vue
 :::
+
+::: component-api

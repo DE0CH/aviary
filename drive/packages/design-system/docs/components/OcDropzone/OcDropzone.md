@@ -1,3 +1,9 @@
+---
+title: OcDropzone component
+next: false
+prev: false
+---
+
 # OcDropzone component
 
 ## Description
@@ -13,3 +19,5 @@ The `OcDropzone` component can be used into indicate a dropzone area. This is us
 <oc-dropzone>Drag and drop to upload content into current folder</oc-dropzone>
 ```
 :::
+
+::: component-api

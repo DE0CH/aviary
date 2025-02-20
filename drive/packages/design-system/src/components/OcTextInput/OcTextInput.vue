@@ -88,22 +88,105 @@ defineOptions({
 })
 
 export interface Props {
+  /**
+   * @docs The element ID of the input.
+   */
   id?: string
+  /**
+   * @docs The type of the input.
+   * @default text
+   */
   type?: 'text' | 'number' | 'email' | 'password'
+  /**
+   * @docs The value of the input.
+   */
   modelValue?: string
+  /**
+   * @docs The selection range of the input.
+   */
   selectionRange?: [number, number]
+  /**
+   * @docs Determines if the input should have a clear button.
+   * @default false
+   */
   clearButtonEnabled?: boolean
+  /**
+   * @docs The accessible label of the clear button.
+   */
   clearButtonAccessibleLabel?: string
+  /**
+   * @docs The default value of the input.
+   */
   defaultValue?: string
+  /**
+   * @docs Determines if the input is disabled.
+   * @default false
+   */
   disabled?: boolean
+  /**
+   * @docs The label of the input element.
+   */
   label: string
+  /**
+   * @docs The warning message to be displayed below the input.
+   */
   warningMessage?: string
+  /**
+   * @docs The error message to be displayed below the input.
+   */
   errorMessage?: string
+  /**
+   * @docs Determines if the message line should be fixed.
+   * @default false
+   */
   fixMessageLine?: boolean
+  /**
+   * @docs The description message to be displayed below the input.
+   */
   descriptionMessage?: string
+  /**
+   * @docs Determines if the input is read-only.
+   * @default false
+   */
   readOnly?: boolean
+  /**
+   * @docs The password policy if the `type` is set to `password`. Please refer to the component source for the `PasswordPolicy` type definition.
+   */
   passwordPolicy?: PasswordPolicy
+  /**
+   * @docs The method to generate a password if the `type` is set to `password`.
+   */
   generatePasswordMethod?: (...args: unknown[]) => string
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the value of the input has changed after the user confirms or leaves the focus.
+   */
+  (e: 'change', value: string): void
+  /**
+   * @docs Emitted when the value of the input has updated.
+   */
+  (e: 'update:modelValue', value: string): void
+  /**
+   * @docs Emitted when the input has been focused.
+   */
+  (e: 'focus', value: string): void
+  /**
+   * @docs Emitted when the password challenge has been completed successfully.
+   */
+  (e: 'passwordChallengeCompleted'): void
+  /**
+   * @docs Emitted when the password challenge has failed.
+   */
+  (e: 'passwordChallengeFailed'): void
+}
+
+export interface Slots {
+  /**
+   * @docs Can be used to overwrite the default rendering of the label.
+   */
+  label?: () => unknown
 }
 
 const {
@@ -125,13 +208,8 @@ const {
   generatePasswordMethod
 } = defineProps<Props>()
 
-const emit = defineEmits([
-  'change',
-  'update:modelValue',
-  'focus',
-  'passwordChallengeCompleted',
-  'passwordChallengeFailed'
-])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const showMessageLine = computed(() => {
   return fixMessageLine || !!warningMessage || !!errorMessage || !!descriptionMessage

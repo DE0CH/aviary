@@ -1,3 +1,9 @@
+---
+title: OcProgressPie component
+next: false
+prev: false
+---
+
 # OcProgressPie component
 
 ## Description
@@ -25,3 +31,5 @@ A `label` can be displayed in the center of the pie.
 <oc-progress-pie :progress="4" :max="10" :show-label="true" />
 ```
 :::
+
+::: component-api

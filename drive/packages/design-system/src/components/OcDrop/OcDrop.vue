@@ -18,11 +18,33 @@ import { getSizeClass, uniqueId } from '../../helpers'
 import { ref, onBeforeUnmount, onMounted, computed, watch, unref } from 'vue'
 
 export interface Props {
+  /**
+   * @docs Determines if the drop should close when clicked.
+   * @default false
+   */
   closeOnClick?: boolean
+  /**
+   * @docs The element ID of the drop.
+   */
   dropId?: string
+  /**
+   * @docs Determines if the drop is nested.
+   * @default false
+   */
   isNested?: boolean
+  /**
+   * @docs Determines the event that triggers the drop.
+   * @default 'click'
+   */
   mode?: 'click' | 'hover' | 'manual'
+  /**
+   * @docs The visual offset of the drop.
+   */
   offset?: string
+  /**
+   * @docs The padding size of the drop.
+   * @default 'medium'
+   */
   paddingSize?:
     | 'xsmall'
     | 'small'
@@ -32,7 +54,14 @@ export interface Props {
     | 'xxlarge'
     | 'xxxlarge'
     | 'remove'
+  /**
+   * @docs The popper options of the drop. Please refer to the component source for more information.
+   */
   popperOptions?: TippyProps['popperOptions']
+  /**
+   * @docs The position of the drop.
+   * @default 'bottom-start'
+   */
   position?:
     | 'top-start'
     | 'right-start'
@@ -44,8 +73,36 @@ export interface Props {
     | 'bottom-end'
     | 'left-end'
     | 'auto-end'
+  /**
+   * @docs Element selector that can used as a target of the drop. This takes precedence over the `toggle` property.
+   */
   target?: string
+  /**
+   * @docs CSS selector for the element to be used as toggle. By default, the preceding element is used.
+   */
   toggle?: string
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the drop has been hidden.
+   */
+  (e: 'hideDrop'): void
+  /**
+   * @docs Emitted when the drop has been displayed.
+   */
+  (e: 'showDrop'): void
+}
+
+export interface Slots {
+  /**
+   * @docs Content of the drop that is displayed in a card-style.
+   */
+  default?: () => unknown
+  /**
+   * @docs This slot can be used if you don't want the drop to be displayed in a card-style.
+   */
+  special?: () => unknown
 }
 
 const {
@@ -61,7 +118,8 @@ const {
   toggle = ''
 } = defineProps<Props>()
 
-const emit = defineEmits(['hideDrop', 'showDrop'])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const drop = ref<HTMLElement | null>(null)
 const tippyInstance = ref(null)

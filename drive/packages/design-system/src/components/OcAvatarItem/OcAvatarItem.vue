@@ -24,13 +24,40 @@ import { computed } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 
 export interface Props {
+  /**
+   * @docs The name of the avatar item. This will not be displayed on the screen however.
+   */
   name: string
+  /**
+   * @docs The accessible label for the avatar item. Only needed in case the item is used alone. If not specified, the item will get `aria-hidden="true"`.
+   */
   accessibleLabel?: string
+  /**
+   * @docs The background color of the avatar item.
+   */
   background?: string
+  /**
+   * @docs The icon to be displayed in the avatar item. Please refer to the `OcIcon` component to see how to use icon names.
+   */
   icon?: string
+  /**
+   * @docs The color of the icon.
+   */
   iconColor?: string
+  /**
+   * @docs The fill type of the icon.
+   * @default 'fill'
+   */
   iconFillType?: 'fill' | 'line' | 'none'
+  /**
+   * @docs The size of the icon.
+   * @default 'small'
+   */
   iconSize?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  /**
+   * @docs The width of the avatar item.
+   * @default 30
+   */
   width?: number
 }
 

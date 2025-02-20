@@ -1,3 +1,9 @@
+---
+title: OcLoader component
+next: false
+prev: false
+---
+
 # OcLoader component
 
 ## Description
@@ -29,3 +35,5 @@ The loader also comes in a flat version.
 <oc-loader aria-label="Loading content" :flat="true" />
 ```
 :::
+
+::: component-api

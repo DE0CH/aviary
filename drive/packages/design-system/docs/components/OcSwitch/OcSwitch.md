@@ -1,3 +1,9 @@
+---
+title: OcSwitch component
+next: false
+prev: false
+---
+
 # OcSwitch component
 
 ## Description
@@ -17,3 +23,5 @@ The most basic use case needs a `label` and usually has a `v-model:checked` prop
 ::: livecode {path=/components/OcSwitch/default.vue}
 <<< @/components/OcSwitch/default.vue
 :::
+
+::: component-api

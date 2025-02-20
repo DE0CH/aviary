@@ -21,13 +21,40 @@ import { isEqual } from 'lodash-es'
 import { getSizeClass, uniqueId } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The label of the checkbox element.
+   */
   label: string
+  /**
+   * @docs Determines if the checkbox is disabled.
+   *
+   */
   disabled?: boolean
+  /**
+   * @docs The element ID of the checkbox.
+   */
   id?: string
+  /**
+   * @docs Determines if the label is hidden visually. Note that the label will still be read by screen readers.
+   * @default false
+   */
   labelHidden?: boolean
+  /**
+   * @docs The option value of the checkbox.
+   */
   option?: unknown
-  outline?: boolean
+  /**
+   * @docs The size of the checkbox.
+   * @default medium
+   */
   size?: 'small' | 'medium' | 'large'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the checkbox has been clicked.
+   */
+  (e: 'click', event: MouseEvent | KeyboardEvent): void
 }
 
 const {
@@ -39,7 +66,7 @@ const {
   size = 'medium'
 } = defineProps<Props>()
 
-const emit = defineEmits(['click'])
+const emit = defineEmits<Emits>()
 
 const model = defineModel<boolean | unknown[]>()
 

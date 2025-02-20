@@ -39,10 +39,21 @@ import OcSpinner from '../OcSpinner/OcSpinner.vue'
 import { Recipient } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The recipient object. Please refer to the component source for the `Recipient` type definition.
+   */
   recipient: Recipient
 }
 
+export interface Slots {
+  /**
+   * @docs Append content for additional info.
+   */
+  append?: () => unknown
+}
+
 const { recipient } = defineProps<Props>()
+defineSlots<Slots>()
 </script>
 
 <style lang="scss">

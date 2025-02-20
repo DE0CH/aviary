@@ -109,23 +109,102 @@ import 'vue-select/dist/vue-select.css'
 import { ContextualHelper } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The element ID of the select.
+   */
   id?: string
+  /**
+   * @docs The filter function for the select. Defaults to searching by label.
+   */
   filter?: (items: unknown[], search: string, { label }: { label?: string }) => unknown[]
+  /**
+   * @docs Determines if the select is disabled.
+   * @default false
+   */
   disabled?: boolean
+  /**
+   * @docs The label of the select input.
+   */
   label: string
+  /**
+   * @docs Determines if the label is visually hidden. Note that it will still be read by screen readers.
+   * @default false
+   */
   labelHidden?: boolean
+  /**
+   * @docs The contextual helper for the select. Please refer to the component source for the `ContextualHelper` type definition.
+   */
   contextualHelper?: ContextualHelper
+  /**
+   * @docs The label key of the options object.
+   * @default label
+   */
   optionLabel?: string
+  /**
+   * @docs Determines if the options of the select are searchable.
+   * @default true
+   */
   searchable?: boolean
+  /**
+   * @docs Determines if the select is clearable.
+   * @default false
+   */
   clearable?: boolean
+  /**
+   * @docs Determines if the select is in a loading state.
+   * @default false
+   */
   loading?: boolean
+  /**
+   * @docs The warning message to be displayed below the select.
+   */
   warningMessage?: string
+  /**
+   * @docs The error message to be displayed below the select.
+   */
   errorMessage?: string
+  /**
+   * @docs Determines if the message line should be fixed.
+   * @default false
+   */
   fixMessageLine?: boolean
+  /**
+   * @docs The description message to be displayed below the select.
+   */
   descriptionMessage?: string
+  /**
+   * @docs Determines if the select allows multiple selections.
+   * @default false
+   */
   multiple?: boolean
+  /**
+   * @docs Determines if the select is read-only.
+   * @default false
+   */
   readOnly?: boolean
+  /**
+   * @docs Determines if the dropdown menu should be fixed to the viewport.
+   * @default false
+   */
   positionFixed?: boolean
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the user has typed.
+   */
+  (e: 'search:input', search: string): void
+  /**
+   * @docs Emitted when the user has selected an option.
+   */
+  (e: 'update:modelValue', value: unknown): void
+}
+
+export interface Slots {
+  /**
+   * @docs Slot for when an option is selected.
+   */
+  selectedOption?: () => unknown
 }
 
 // the keycode property is deprecated in the JS event API, vue-select still works with it though
@@ -170,7 +249,8 @@ const {
   positionFixed = false
 } = defineProps<Props>()
 
-const emit = defineEmits(['search:input', 'update:modelValue'])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const { $gettext } = useGettext()
 const selectRef = useTemplateRef<typeof VueSelect>('selectRef')

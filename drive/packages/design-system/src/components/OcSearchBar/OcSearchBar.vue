@@ -65,21 +65,98 @@ import OcIcon from '../OcIcon/OcIcon.vue'
 import OcSpinner from '../OcSpinner/OcSpinner.vue'
 
 export interface Props {
+  /**
+   * @docs The name of the icon to be displayed in the search bar. Please refer to the `OcIcon` component to see how to use icon names.
+   */
   icon?: string
+  /**
+   * @docs The placeholder text of the search bar input.
+   */
   placeholder?: string
+  /**
+   * @docs The label of the search bar input.
+   */
   label: string
+  /**
+   * @docs Determines if the search bar is small.
+   * @default false
+   */
   small?: boolean
+  /**
+   * @docs The label of the search button.
+   * @default Search
+   */
   buttonLabel?: string
+  /**
+   * @docs Determines if the search button is hidden.
+   * @default false
+   */
   buttonHidden?: boolean
+  /**
+   * @docs Determines if the search bar should perform a search on each keyup event.
+   * @default false
+   */
   typeAhead?: boolean
+  /**
+   * @docs Determines if the search query should be trimmed.
+   * @default true
+   */
   trimQuery?: boolean
+  /**
+   * @docs Determines if the search bar is in a loading state.
+   * @default false
+   */
   loading?: boolean
+  /**
+   * @docs Determines if the search bar acts as a local filter. If set to `true`, the `role` attribute will not be set.
+   * @default false
+   */
   isFilter?: boolean
+  /**
+   * @docs The accessible label for the loading spinner.
+   */
   loadingAccessibleLabel?: string
+  /**
+   * @docs Determines if the cancel button should be shown. This is mostly used in mobile views.
+   * @default false
+   */
   showCancelButton?: boolean
+  /**
+   * @docs The variation of the cancel button.
+   * @default primary
+   */
   cancelButtonVariation?: 'passive' | 'primary' | 'danger' | 'success' | 'warning' | 'brand'
+  /**
+   * @docs The appearance of the cancel button.
+   * @default raw
+   */
   cancelButtonAppearance?: 'filled' | 'outline' | 'raw' | 'raw-inverse'
+  /**
+   * @docs The handler for the cancel button.
+   */
   cancelHandler?: () => void
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the search button has been clicked.
+   */
+  (e: 'advancedSearch', event: MouseEvent): void
+  /**
+   * @docs Emitted when the user has typed.
+   */
+  (e: 'keyup', event: KeyboardEvent): void
+  /**
+   * @docs Emitted when the user has performed a search.
+   */
+  (e: 'search', query: string): void
+}
+
+export interface Slots {
+  /**
+   * @docs Can be used to add additional filter options inside the search input.
+   */
+  locationFilter?: () => unknown
 }
 
 const {
@@ -107,7 +184,8 @@ watch(model, () => {
   }
 })
 
-const emit = defineEmits(['advancedSearch', 'keyup', 'search'])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const { $gettext } = useGettext()
 const slots = useSlots()

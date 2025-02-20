@@ -4,7 +4,14 @@
 
 <script setup lang="ts">
 export interface Props {
+  /**
+   * @docs Arial label to desribe the loader's purpose for screen readers.
+   */
   ariaLabel?: string
+  /**
+   * @docs Determines if the loader is visually flat.
+   * @default false
+   */
   flat?: boolean
 }
 

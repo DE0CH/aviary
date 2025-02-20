@@ -1,3 +1,9 @@
+---
+title: OcDrop component
+next: false
+prev: false
+---
+
 # OcDrop component
 
 ## Description
@@ -47,3 +53,5 @@ The following example shows how to use the component to display action items.
 </oc-drop>
 ```
 :::
+
+::: component-api

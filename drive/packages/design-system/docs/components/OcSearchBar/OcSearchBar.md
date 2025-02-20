@@ -1,3 +1,9 @@
+---
+title: OcSearchBar component
+next: false
+prev: false
+---
+
 # OcSearchBar component
 
 ## Description
@@ -43,3 +49,5 @@ When the advanced search icon is displayed (which is the default behavior), clic
 ::: livecode {path=/components/OcSearchBar/advancedSearch.vue}
 <<< @/components/OcSearchBar/advancedSearch.vue{7,23-26}
 :::
+
+::: component-api

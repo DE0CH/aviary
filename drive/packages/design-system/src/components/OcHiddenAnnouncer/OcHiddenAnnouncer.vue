@@ -12,7 +12,14 @@
 import { HTMLAttributes, computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The announcement to be read by screen readers.
+   */
   announcement: string
+  /**
+   * @docs Describes the politeness level for the announcement.
+   * @default polite
+   */
   level?: HTMLAttributes['aria-live']
 }
 

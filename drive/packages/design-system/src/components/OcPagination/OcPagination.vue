@@ -37,9 +37,21 @@ import { RouteLocation } from 'vue-router'
 type Page = string | number
 
 export interface Props {
+  /**
+   * @docs The current page number.
+   */
   currentPage: number
+  /**
+   * @docs The current route object.
+   */
   currentRoute: RouteLocation
+  /**
+   * @docs The total number of pages.
+   */
   pages: number
+  /**
+   * @docs The maximum number of displayed pages.
+   */
   maxDisplayed?: number
 }
 

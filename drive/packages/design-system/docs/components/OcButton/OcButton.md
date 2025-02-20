@@ -1,3 +1,9 @@
+---
+title: OcButton component
+next: false
+prev: false
+---
+
 # OcButton component
 
 ## Description

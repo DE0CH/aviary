@@ -66,8 +66,18 @@ export interface Indicator {
 }
 
 export interface Props {
+  /**
+   * @docs The resource that the indicators are related to.
+   */
   resource: Record<string, unknown>
+  /**
+   * @docs The indicators to be displayed. Please refer to the component source code for the `Indicator` type definition.
+   */
   indicators: Indicator[]
+  /**
+   * @docs Determines if the click handler on the indicators should be disabled.
+   * @default false
+   */
   disableHandler?: boolean
 }
 

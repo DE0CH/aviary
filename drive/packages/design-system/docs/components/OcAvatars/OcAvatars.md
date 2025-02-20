@@ -1,3 +1,9 @@
+---
+title: OcAvatars component
+next: false
+prev: false
+---
+
 # OcAvatars component
 
 ## Description
@@ -60,3 +66,5 @@ The maximum amount of avatars can be limited.
 />
 ```
 :::
+
+::: component-api

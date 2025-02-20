@@ -48,10 +48,27 @@ type Item = {
 }
 
 export interface Props {
+  /**
+   * @docs List of items to display. Please refer to the component source for the `Item` type definition.
+   */
   items: Item[]
+  /**
+   * @docs Accessible description for the component.
+   */
   accessibleDescription?: string
+  /**
+   * @docs Determines if the tooltip is displayed when hovering over the component.
+   * @default false
+   */
   isTooltipDisplayed?: boolean
+  /**
+   * @docs Maximum number of items to display. If the number of items is greater than this value, a `+X` counter will be displayed.
+   */
   maxDisplayed?: number
+  /**
+   * @docs Determines if the avatars are displayed in a stacked layout.
+   * @default false
+   */
   stacked?: boolean
 }
 

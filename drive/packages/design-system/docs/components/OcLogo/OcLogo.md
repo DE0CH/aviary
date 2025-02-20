@@ -1,3 +1,9 @@
+---
+title: OcLogo component
+next: false
+prev: false
+---
+
 # OcLogo component
 
 ## Description
@@ -19,3 +25,5 @@ The basic usage of the component needs the image `src` and an `alt` property.
 <oc-logo  src="https://opencloud.eu/themes/cloudy/src/assets/favicon/favicon.svg"  alt="OpenCloud logo" />
 ```
 :::
+
+::: component-api

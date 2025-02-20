@@ -11,14 +11,45 @@ import { getSizeClass } from '../../helpers'
 import { RouteLocationRaw } from 'vue-router'
 
 export interface Props {
+  /**
+   * @docs The type of the tag element.
+   * @default span
+   */
   type?: 'span' | 'button' | 'router-link' | 'a'
+  /**
+   * @docs The route to navigate to if the `type` is set to `router-link`.
+   */
   to?: string | RouteLocationRaw
+  /**
+   * @docs The size of the tag.
+   * @default medium
+   */
   size?: 'small' | 'medium' | 'large'
+  /**
+   * @docs Determines if the tag should be rounded.
+   * @default false
+   */
   rounded?: boolean
 }
+
+export interface Emits {
+  /**
+   * @docs Emitted when the tag has been clicked.
+   */
+  (e: 'click', event: MouseEvent): void
+}
+
+export interface Slots {
+  /**
+   * @docs Content of the tag.
+   */
+  default?: () => unknown
+}
+
 const { type = 'span', to = '', size = 'medium', rounded = false } = defineProps<Props>()
 
-const emit = defineEmits(['click'])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const tagClasses = computed(() => {
   const classes = ['oc-tag', `oc-tag-${getSizeClass(size)}`]

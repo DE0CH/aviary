@@ -6,10 +6,23 @@
 
 <script setup lang="ts">
 export interface Props {
+  /**
+   * @docs Render the list without any list style type.
+   * @default false
+   */
   raw?: boolean
 }
 
+export interface Slots {
+  /**
+   * @docs Content of the list, usually a bunch of HTML `li` elements.
+   */
+  default?: () => unknown
+}
+
 const { raw = false } = defineProps<Props>()
+
+defineSlots<Slots>()
 </script>
 
 <style lang="scss">

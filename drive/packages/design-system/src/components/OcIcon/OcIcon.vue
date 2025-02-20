@@ -28,12 +28,37 @@ import { getSizeClass, uniqueId } from '../../helpers'
 InlineSvg.name = 'inline-svg'
 
 export interface Props {
+  /**
+   * @docs Accessible label for the icon. Should be set if the icon fulfills a purpose and is not purely decorative.
+   */
   accessibleLabel?: string
+  /**
+   * @docs Color of the icon.
+   */
   color?: string
+  /**
+   * @docs Fill type of the icon.
+   * @default fill
+   */
   fillType?: 'fill' | 'line' | 'none'
+  /**
+   * @docs Name of the icon. Please refer to `Remixicon` for a list of available icons.
+   */
   name?: string
+  /**
+   * @docs Size of the icon.
+   * @default medium
+   */
   size?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  /**
+   * @docs HTML type of the icon.
+   * @default span
+   */
   type?: string
+  /**
+   * @docs Variation of the icon.
+   * @default passive
+   */
   variation?:
     | 'passive'
     | 'primary'
@@ -43,6 +68,13 @@ export interface Props {
     | 'brand'
     | 'inherit'
     | 'info'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the SVG has been loaded.
+   */
+  (e: 'loaded'): void
 }
 
 const {
@@ -55,7 +87,7 @@ const {
   variation = 'passive'
 } = defineProps<Props>()
 
-const emit = defineEmits(['loaded'])
+const emit = defineEmits<Emits>()
 
 const svgTitleId = computed(() => uniqueId('oc-icon-title-'))
 

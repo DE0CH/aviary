@@ -8,11 +8,28 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The direction of the grid.
+   * @default row
+   */
   direction?: 'row' | 'column'
+  /**
+   * @docs The size of the gutter.
+   * @default collapse
+   */
   gutter?: 'small' | 'medium' | 'large' | 'collapse'
 }
 
+export interface Slots {
+  /**
+   * @docs The content of the grid.
+   */
+  default?: () => unknown
+}
+
 const { direction = 'row', gutter = 'collapse' } = defineProps<Props>()
+
+defineSlots<Slots>()
 
 const classes = computed(() => {
   const c: string[] = []

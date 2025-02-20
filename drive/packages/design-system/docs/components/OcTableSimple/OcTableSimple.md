@@ -1,3 +1,9 @@
+---
+title: OcTableSimple component
+next: false
+prev: false
+---
+
 # OcTableSimple component
 
 ## Description
@@ -35,3 +41,5 @@ The component provides a default slot that can be filled with standard HTML tabl
 </oc-table-simple>
 ```
 :::
+
+::: component-api

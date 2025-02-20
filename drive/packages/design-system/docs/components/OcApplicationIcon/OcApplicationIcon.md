@@ -1,3 +1,9 @@
+---
+title: OcApplicationIcon component
+next: false
+prev: false
+---
+
 # OcApplicationIcon component
 
 ## Description

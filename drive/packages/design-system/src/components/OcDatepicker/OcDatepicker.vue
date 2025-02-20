@@ -19,15 +19,34 @@ import { useGettext } from 'vue3-gettext'
 import { DateTime } from 'luxon'
 
 export interface Props {
+  /**
+   * @docs Label of the date picker.
+   */
   label: string
+  /**
+   * @docs Current date which acts as the pre-filled date.
+   */
   currentDate?: DateTime
+  /**
+   * @docs Determines if the date picker is clearable.
+   */
   isClearable?: boolean
+  /**
+   * @docs Minimum date that can be selected. Dates before this date will be disabled.
+   */
   minDate?: DateTime
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the date has been changed.
+   */
+  (e: 'dateChanged', data: { date: DateTime | null; error: boolean }): void
 }
 
 const { label, currentDate, isClearable = true, minDate } = defineProps<Props>()
 
-const emit = defineEmits(['dateChanged'])
+const emit = defineEmits<Emits>()
 
 const { $gettext, current } = useGettext()
 const dateInputString = ref<string>('')

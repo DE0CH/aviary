@@ -6,7 +6,13 @@
 import OcImage from '../OcImage/OcImage.vue'
 
 export interface Props {
+  /**
+   * @docs The alt text for the logo image.
+   */
   alt: string
+  /**
+   * @docs The logo image source.
+   */
   src: string
 }
 

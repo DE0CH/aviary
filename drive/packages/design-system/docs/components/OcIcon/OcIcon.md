@@ -1,3 +1,9 @@
+---
+title: OcIcon component
+next: false
+prev: false
+---
+
 # OcIcon component
 
 ## Description
@@ -68,3 +74,5 @@ The available sizes are: `xsmall`, `small`, `medium`, `large`, `xlarge`, `xxlarg
 <oc-icon name="check" size="xxxlarge" /> 
 ```
 :::
+
+::: component-api

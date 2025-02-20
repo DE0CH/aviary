@@ -7,7 +7,14 @@ import { computed } from 'vue'
 import { getSizeClass } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The aria label of the spinner. It should describe the purpose of the spinner.
+   */
   ariaLabel?: string
+  /**
+   * @docs The size of the spinner.
+   * @default medium
+   */
   size?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
 }
 

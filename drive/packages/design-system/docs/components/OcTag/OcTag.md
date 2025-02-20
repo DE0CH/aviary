@@ -1,3 +1,9 @@
+---
+title: OcTag component
+next: false
+prev: false
+---
+
 # OcTag component
 
 ## Description
@@ -40,3 +46,4 @@ If the `type` property is set to `button`, the tag has a handler that will emit 
 <<< @/components/OcTag/linksHandlers.vue
 :::
 
+::: component-api

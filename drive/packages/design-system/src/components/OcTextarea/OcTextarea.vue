@@ -32,11 +32,30 @@ import { computed, HTMLAttributes, unref, useAttrs, useTemplateRef } from 'vue'
 import { uniqueId } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The ID attribute of the textarea.
+   */
   id?: string
+  /**
+   * @docs The label of the textarea.
+   */
   label: string
+  /**
+   * @docs The warning message to be displayed below the textarea.
+   */
   warningMessage?: string
+  /**
+   * @docs The error message to be displayed below the textarea.
+   */
   errorMessage?: string
+  /**
+   * @docs The description message to be displayed below the textarea.
+   */
   descriptionMessage?: string
+  /**
+   * @docs Determines if the message line should be fixed.
+   * @default false
+   */
   fixMessageLine?: boolean
 }
 

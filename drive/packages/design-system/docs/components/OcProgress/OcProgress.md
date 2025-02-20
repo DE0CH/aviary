@@ -1,3 +1,9 @@
+---
+title: OcProgress component
+next: false
+prev: false
+---
+
 # OcProgress component
 
 ## Description
@@ -39,3 +45,5 @@ Different variations can be applied to the progress bar by setting the `variatio
 <oc-progress variation="warning" :value="4" :max="10" />
 ```
 :::
+
+::: component-api

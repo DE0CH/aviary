@@ -1,3 +1,9 @@
+---
+title: OcTable component
+next: false
+prev: false
+---
+
 # OcTable component
 
 ## Description
@@ -31,3 +37,5 @@ Specific rows can be `disabled` or `highlighted` by referencing the rows by thei
 ::: livecode {path=/components/OcTable/disablingHighlighting.vue}
 <<< @/components/OcTable/disablingHighlighting.vue{5,6}
 :::
+
+::: component-api

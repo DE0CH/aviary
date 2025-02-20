@@ -1,3 +1,9 @@
+---
+title: OcDatepicker component
+next: false
+prev: false
+---
+
 # OcDatepicker component
 
 ## Description
@@ -27,3 +33,5 @@ In the example below, `min-date` is set to the current day. That means entering 
 ::: livecode {path=/components/OcDatepicker/handler.vue}
 <<< @/components/OcDatepicker/handler.vue
 :::
+
+::: component-api

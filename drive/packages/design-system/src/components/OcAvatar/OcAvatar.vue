@@ -20,9 +20,22 @@ import OcImage from '../OcImage/OcImage.vue'
 import { extractInitials } from './extractInitials'
 
 export interface Props {
+  /**
+   * @docs The accessible label for the avatar. Only needed in case the avatar is used alone. If not specified, the avatar will get `aria-hidden="true"`.
+   */
   accessibleLabel?: string
+  /**
+   * @docs The source of the image to be displayed.
+   */
   src?: string
+  /**
+   * @docs The user name to extract the initials from.
+   */
   userName?: string
+  /**
+   * @docs The width of the avatar.
+   * @default 50
+   */
   width?: number
 }
 

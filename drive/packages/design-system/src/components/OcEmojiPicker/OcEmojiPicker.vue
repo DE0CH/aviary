@@ -10,12 +10,27 @@ import { nextTick, ref, unref, useTemplateRef, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
 
 export interface Props {
+  /**
+   * @docs Theme of the emoji picker.
+   * @default light
+   */
   theme?: 'light' | 'dark'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when an emoji has been selected.
+   */
+  (e: 'emojiSelect', emoji: string): void
+  /**
+   * @docs Emitted when the user has clicked outside of the emoji picker.
+   */
+  (e: 'clickOutside'): void
 }
 
 const { theme = 'light' } = defineProps<Props>()
 
-const emit = defineEmits(['emojiSelect', 'clickOutside'])
+const emit = defineEmits<Emits>()
 
 const language = useGettext()
 const { $gettext } = language

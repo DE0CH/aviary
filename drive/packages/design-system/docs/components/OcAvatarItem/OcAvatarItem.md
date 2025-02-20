@@ -1,3 +1,9 @@
+---
+title: OcAvatarItem component
+next: false
+prev: false
+---
+
 # OcAvatarItem component
 
 ## Description
@@ -19,3 +25,5 @@ The component can be provided with an `accessible-label` in case the avatar item
 <oc-avatar-item name="Settings" icon="settings" />
 ```
 :::
+
+::: component-api

@@ -1,3 +1,9 @@
+---
+title: OcNotificationMessage component
+next: false
+prev: false
+---
+
 # OcNotificationMessage component
 
 ## Description
@@ -31,3 +37,5 @@ There are different statuses available for the notification message: `passive`, 
 <oc-notification-message title="Folder could not be created." status="danger" />
 ```
 :::
+
+::: component-api

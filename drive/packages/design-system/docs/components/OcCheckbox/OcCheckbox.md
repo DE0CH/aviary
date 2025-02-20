@@ -1,3 +1,9 @@
+---
+title: OcCheckbox component
+next: false
+prev: false
+---
+
 # OcCheckbox component
 
 ## Description
@@ -35,3 +41,5 @@ The checkbox can be displayed in three different sizes: `small`, `medium`, and `
 </div>
 ```
 :::
+
+::: component-api
