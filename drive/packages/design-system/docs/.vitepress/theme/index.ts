@@ -4,6 +4,7 @@ import * as components from './../../../src/components'
 import * as directives from './../../../src/directives'
 import './custom.scss'
 import LiveCodeBlock from '../LiveCodeBlock.vue'
+import ComponentApi from '../components/ComponentApi.vue'
 
 export default {
   extends: DefaultTheme,
@@ -12,6 +13,7 @@ export default {
     app.use(gettext)
 
     app.component('LiveCodeBlock', LiveCodeBlock)
+    app.component('ComponentApi', ComponentApi)
     Object.values(components).forEach((c) => app.component(c.__name, c))
     Object.values(directives).forEach((d) => app.directive(d.name, d))
   }

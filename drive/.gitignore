@@ -42,6 +42,9 @@ playwright-report
 # VitePress
 packages/design-system/docs/.vitepress/cache
 packages/design-system/docs/.vitepress/dist
+packages/design-system/docs/public/emits
+packages/design-system/docs/public/props
+packages/design-system/docs/public/slots
 
 # drone CI is in .drone.star, do not let someone accidentally commit a local .drone.yml
 .drone.yml

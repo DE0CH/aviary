@@ -17,8 +17,17 @@ import { computed, unref } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 
 export interface Props {
+  /**
+   * @docs Name of the icon to display. Please refer to the `OcIcon` component to see how to use icon names.
+   */
   icon: string
+  /**
+   * @docs Hex-code of the primary color to display. This color is being used for the left side of the gradient.
+   */
   colorPrimary?: string
+  /**
+   * @docs Hex-code of the secondary color to display. This color is being used for the right side of the gradient.
+   */
   colorSecondary?: string
 }
 const { icon, colorPrimary, colorSecondary } = defineProps<Props>()

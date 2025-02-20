@@ -49,7 +49,23 @@ const {
   variation = 'passive'
 } = defineProps<Props>()
 
-const emit = defineEmits(['click'])
+export interface Emits {
+  /**
+   * @docs Fires when the button is clicked.
+   */
+  (e: 'click', event: MouseEvent): void
+}
+
+const emit = defineEmits<Emits>()
+
+export interface Slots {
+  /**
+   * @docs Button content.
+   */
+  default: () => unknown
+}
+
+defineSlots<Slots>()
 
 const buttonClass = computed(() => {
   return [
