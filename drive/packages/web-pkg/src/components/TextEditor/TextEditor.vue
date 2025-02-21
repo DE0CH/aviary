@@ -48,7 +48,7 @@
 import { computed, defineComponent, unref, PropType } from 'vue'
 import { Resource } from '@opencloud-eu/web-client'
 
-import { config, MdEditor, MdPreview } from 'md-editor-v3'
+import { config, MdEditor, MdPreview, XSSPlugin } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 
 import { languageUserDefined, languages } from './l18n'
@@ -107,6 +107,16 @@ export default defineComponent({
         cropper: {
           instance: Cropper
         }
+      },
+      markdownItPlugins(plugins) {
+        return [
+          ...plugins,
+          {
+            type: 'xss',
+            plugin: XSSPlugin,
+            options: {}
+          }
+        ]
       }
     })
 
