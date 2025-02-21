@@ -13,7 +13,6 @@
       :theme="theme"
       read-only
       :toolbars="[]"
-      :sanitize="sanitize"
     />
     <md-editor
       v-else
@@ -40,7 +39,6 @@
         'pageFullscreen'
       ]"
       :read-only="isReadOnly"
-      :sanitize="sanitize"
       @on-change="(value) => $emit('update:currentContent', value)"
     />
   </div>
@@ -58,8 +56,6 @@ import { languageUserDefined, languages } from './l18n'
 import { useGettext } from 'vue3-gettext'
 import { useThemeStore } from '../../composables'
 import { AppConfigObject } from '../../apps'
-
-import dompurify from 'dompurify'
 
 import screenfull from 'screenfull'
 
@@ -124,14 +120,11 @@ export default defineComponent({
       }
     })
 
-    const sanitize = (html: string) => dompurify.sanitize(html)
-
     return {
       isMarkdown,
       theme,
       language,
-      languages,
-      sanitize
+      languages
     }
   }
 })
