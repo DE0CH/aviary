@@ -893,7 +893,7 @@ importers:
         version: 8.11.1
       md-editor-v3:
         specifier: ^5.2.1
-        version: 5.3.0(vue@3.5.13(typescript@5.7.3))
+        version: 5.3.2(vue@3.5.13(typescript@5.7.3))
       oidc-client-ts:
         specifier: ^2.4.0 || ^3.0.0
         version: 3.1.0
@@ -5059,8 +5059,8 @@ packages:
   mathml-tag-names@2.1.3:
     resolution: {integrity: sha512-APMBEanjybaPzUrfqU0IMU5I0AswKMH7k8OTLs0vvV4KZpExkTkY87nR/zpbuTPj+gARop7aGUbl11pnDfW6xg==}
 
-  md-editor-v3@5.3.0:
-    resolution: {integrity: sha512-c/BKDmIUez+LzDxlUf6FMnFVUUaYTQdqXVTFmuwSyIzx0nGInFtpdLGiWlWWS+EAsgee+fUydlPfKmIBSXuxdQ==}
+  md-editor-v3@5.3.2:
+    resolution: {integrity: sha512-O3gV4X3+x8QZava2pzJfVb06dqO1Y1UrmUpHS0E7htblqq0MQ67yrLLkTkVYIxF04Tj8Ub67pc8fypR3uT8FUA==}
     peerDependencies:
       vue: ^3.5.3
 
@@ -11394,7 +11394,7 @@ snapshots:
 
   mathml-tag-names@2.1.3: {}
 
-  md-editor-v3@5.3.0(vue@3.5.13(typescript@5.7.3)):
+  md-editor-v3@5.3.2(vue@3.5.13(typescript@5.7.3)):
     dependencies:
       '@codemirror/lang-markdown': 6.3.2
       '@codemirror/language-data': 6.5.1
