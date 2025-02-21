@@ -127,6 +127,42 @@ export default defineConfig({
               link: '/OcButton'
             },
             {
+              text: 'OcCheckbox',
+              link: '/OcCheckbox'
+            },
+            {
+              text: 'OcContextualHelper',
+              link: '/OcContextualHelper'
+            },
+            {
+              text: 'OcDatepicker',
+              link: '/OcDatepicker'
+            },
+            {
+              text: 'OcDefinitionList',
+              link: '/OcDefinitionList'
+            },
+            {
+              text: 'OcDrop',
+              link: '/OcDrop'
+            },
+            {
+              text: 'OcDropzone',
+              link: '/OcDropzone'
+            },
+            {
+              text: 'OcEmojiPicker',
+              link: '/OcEmojiPicker'
+            },
+            {
+              text: 'OcErrorLog',
+              link: '/OcErrorLog'
+            },
+            {
+              text: 'OcFilterChip',
+              link: '/OcFilterChip'
+            },
+            {
               text: 'OcGrid',
               link: '/OcGrid'
             },

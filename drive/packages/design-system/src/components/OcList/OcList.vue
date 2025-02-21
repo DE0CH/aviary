@@ -13,7 +13,7 @@ const { raw = false } = defineProps<Props>()
 </script>
 
 <style lang="scss">
-.oc-list {
+ul.oc-list {
   list-style: none;
   margin: 0;
   padding: 0;
