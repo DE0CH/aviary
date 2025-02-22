@@ -2488,8 +2488,8 @@ packages:
   '@microsoft/api-extractor-model@7.30.3':
     resolution: {integrity: sha512-yEAvq0F78MmStXdqz9TTT4PZ05Xu5R8nqgwI5xmUmQjWBQ9E6R2n8HB/iZMRciG4rf9iwI2mtuQwIzDXBvHn1w==}
 
-  '@microsoft/api-extractor@7.50.0':
-    resolution: {integrity: sha512-Ds/PHTiVzuENQsmXrJKkSdfgNkr/SDG/2rDef0AWl3BchAnXdO7gXaYsAkNx4gWiC4OngNA3fQfd3+BcQxP1DQ==}
+  '@microsoft/api-extractor@7.50.1':
+    resolution: {integrity: sha512-L18vz0ARLNaBLKwWe0DdEf7eijDsb7ERZspgZK7PxclLoQrc+9hJZo8y4OVfCHxNVyxlwVywY2WdE/3pOFViLQ==}
     hasBin: true
 
   '@microsoft/fetch-event-source@2.0.1':
@@ -6425,11 +6425,6 @@ packages:
       eslint: ^8.57.0 || ^9.0.0
       typescript: '>=4.8.4 <5.8.0'
 
-  typescript@5.7.2:
-    resolution: {integrity: sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg==}
-    engines: {node: '>=14.17'}
-    hasBin: true
-
   typescript@5.7.3:
     resolution: {integrity: sha512-84MVSjMEHP+FQRPy3pX9sTVV/INIex71s9TL2Gm5FG/WG1SqXeKyZ0k7/blY/4FdOzI12CBy1vGc4og/eus0fw==}
     engines: {node: '>=14.17'}
@@ -8616,7 +8611,7 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  '@microsoft/api-extractor@7.50.0(@types/node@22.13.2)':
+  '@microsoft/api-extractor@7.50.1(@types/node@22.13.2)':
     dependencies:
       '@microsoft/api-extractor-model': 7.30.3(@types/node@22.13.2)
       '@microsoft/tsdoc': 0.15.1
@@ -8630,7 +8625,7 @@ snapshots:
       resolve: 1.22.10
       semver: 7.5.4
       source-map: 0.6.1
-      typescript: 5.7.2
+      typescript: 5.7.3
     transitivePeerDependencies:
       - '@types/node'
 
@@ -12834,8 +12829,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  typescript@5.7.2: {}
-
   typescript@5.7.3: {}
 
   typical@4.0.0: {}
@@ -12989,7 +12982,7 @@ snapshots:
 
   vite-plugin-dts@4.3.0(@types/node@22.13.2)(rollup@3.29.5)(typescript@5.7.3)(vite@6.1.1(@types/node@22.13.2)(sass@1.85.0)(yaml@2.7.0)):
     dependencies:
-      '@microsoft/api-extractor': 7.50.0(@types/node@22.13.2)
+      '@microsoft/api-extractor': 7.50.1(@types/node@22.13.2)
       '@rollup/pluginutils': 5.1.4(rollup@3.29.5)
       '@volar/typescript': 2.4.11
       '@vue/language-core': 2.1.6(typescript@5.7.3)
@@ -13008,7 +13001,7 @@ snapshots:
 
   vite-plugin-dts@4.3.0(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.7.3)(vite@6.1.1(@types/node@22.13.2)(sass@1.85.0)(yaml@2.7.0)):
     dependencies:
-      '@microsoft/api-extractor': 7.50.0(@types/node@22.13.2)
+      '@microsoft/api-extractor': 7.50.1(@types/node@22.13.2)
       '@rollup/pluginutils': 5.1.4(rollup@4.34.8)
       '@volar/typescript': 2.4.11
       '@vue/language-core': 2.1.6(typescript@5.7.3)
