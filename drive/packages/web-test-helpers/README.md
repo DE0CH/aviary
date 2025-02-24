@@ -1,5 +1,7 @@
 # web-test-helpers
 
+[![Matrix](https://img.shields.io/matrix/opencloud%3Amatrix.org?logo=matrix)](https://app.element.io/#/room/#opencloud:matrix.org)
+
 This packages provides utilities for unit testing within the OpenCloud app ecosystem.
 
 ## Installation
