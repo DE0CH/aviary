@@ -80,7 +80,7 @@
     "vite-plugin-static-copy": "^2.0.0",
     "vite-plugin-treat-umd-as-commonjs": "0.1.4",
     "vite": "^6.1.0",
-    "vitest-mock-extended": "2.0.2",
+    "vitest-mock-extended": "3.0.1",
     "vitest": "^3.0.5",
     "vue-demi": "0.14.10",
     "vue-tsc": "2.2.2",
