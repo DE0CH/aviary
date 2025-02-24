@@ -134,7 +134,7 @@ export default defineComponent({
       )
 
       const markdownImages = uploadedImages.map((b64) => `![image](${b64})`)
-      const updatedContent = `${unref(props.currentContent)}\n${markdownImages.join('\n')}`
+      const updatedContent = `${unref(props.currentContent)}\n${markdownImages.join('\n\n')}\n`
 
       emit('update:currentContent', updatedContent)
     }
@@ -159,6 +159,12 @@ export default defineComponent({
 
   &-code-flag {
     display: none;
+  }
+
+  .cm-line:has(.ͼ1h) {
+    max-height: 60px;
+    overflow: auto;
+    margin-right: var(--oc-space-medium);
   }
 }
 </style>
