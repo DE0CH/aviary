@@ -1,5 +1,5 @@
 x-opencloud-server: &opencloud-service
-  image: ${OC_IMAGE:-opencloud-eu/opencloud-rolling:master}
+  image: ${OC_IMAGE:-opencloudeu/opencloud-rolling:latest}
   entrypoint: /bin/sh
   command: ['-c', 'opencloud init || true && opencloud server']
   environment: &opencloud-environment
@@ -91,7 +91,6 @@ services:
       MICRO_REGISTRY: 'nats-js-kv'
       MICRO_REGISTRY_ADDRESS: 0.0.0.0:9233
       PROXY_CSP_CONFIG_FILE_LOCATION: /etc/opencloud/csp.yaml
-      ONLYOFFICE_DOMAIN: host.docker.internal:9981
       COLLABORA_DOMAIN: host.docker.internal:9980
       FRONTEND_APP_HANDLER_SECURE_VIEW_APP_ADDR: eu.opencloud.api.collaboration.Collabora
       # Needed for enabling all roles
@@ -141,7 +140,7 @@ services:
       - ${OC_WEB_CONFIG:-./dev/docker/opencloud.web-federated.config.json}:/web/config.json:ro
 
   collaboration:
-    image: ${OC_IMAGE:-opencloud-eu/opencloud-rolling:master}
+    image: ${OC_IMAGE:-opencloudeu/opencloud-rolling:latest}
     depends_on:
       opencloud:
         condition: service_started
@@ -178,7 +177,7 @@ services:
     restart: always
 
   collabora:
-    image: collabora/code:24.04.12.4.1
+    image: collabora/code:24.04.12.2.1
     command: ['bash', '-c', 'coolconfig generate-proof-key ; /start-collabora-online.sh']
     environment:
       DONT_GEN_SSL_CERT: YES

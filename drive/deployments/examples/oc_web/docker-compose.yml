@@ -45,7 +45,7 @@ services:
     restart: always
 
   opencloud:
-    image: ${OC_DOCKER_IMAGE:-opencloud-eu/opencloud-rolling}:${OC_DOCKER_TAG:-master}
+    image: ${OC_DOCKER_IMAGE:-opencloudeu/opencloud-rolling}:${OC_DOCKER_TAG:-latest}
     networks:
       oc-net:
     entrypoint:
@@ -119,7 +119,7 @@ services:
     restart: always
 
   collaboration:
-    image: ${OC_DOCKER_IMAGE:-opencloud-eu/opencloud-rolling}:${OC_DOCKER_TAG:-master}
+    image: ${OC_DOCKER_IMAGE:-opencloudeu/opencloud-rolling}:${OC_DOCKER_TAG:-latest}
     networks:
       oc-net:
     depends_on:
