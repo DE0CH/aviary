@@ -191,10 +191,6 @@ export default defineConfig({
               link: '/OcLoader'
             },
             {
-              text: 'OcLogo',
-              link: '/OcLogo'
-            },
-            {
               text: 'OcModal',
               link: '/OcModal'
             },
