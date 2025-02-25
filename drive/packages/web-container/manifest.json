@@ -2,9 +2,9 @@
 	"name": "OpenCloud",
 	"short_name": "OpenCloud",
 	"icons": [{
-		"src": "img/opencloud-app-icon.png",
-		"sizes": "512x512",
-		"type": "image/png"
+		"src": "img/opencloud-icon-lilac.svg",
+		"sizes": "230x300",
+		"type": "image/svg+xml"
 	}],
 
 	"start_url": "/",
