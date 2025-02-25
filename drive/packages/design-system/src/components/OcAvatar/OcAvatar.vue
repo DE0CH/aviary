@@ -29,7 +29,7 @@ export interface Props {
    */
   src?: string
   /**
-   * @docs The user name to extract the initials from.
+   * @docs The user name to extract the initials from if `src` is empty.
    */
   userName?: string
   /**
