@@ -15,3 +15,13 @@ $ pnpm add -D @opencloud-eu/ts-config
 
 $ yarn add @opencloud-eu/ts-config --dev
 ```
+
+## Usage
+
+To extend your TypeScript config with the OpenCloud TypeScript config, add the following to your `tsconfig.json` file:
+
+```json
+{
+  "extends": "@opencloud-eu/tsconfig"
+}
+```

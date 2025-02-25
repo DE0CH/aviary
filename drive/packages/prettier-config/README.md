@@ -15,3 +15,11 @@ $ pnpm add -D @opencloud-eu/prettier-config
 
 $ yarn add @opencloud-eu/prettier-config --dev
 ```
+
+## Usage
+
+To extend your prettier config with the OpenCloud prettier config, add the following to your `.prettierrc.json` file:
+
+```json
+"@opencloud-eu/prettier-config"
+```

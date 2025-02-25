@@ -15,3 +15,13 @@ $ pnpm add -D @opencloud-eu/eslint-config
 
 $ yarn add @opencloud-eu/eslint-config --dev
 ```
+
+## Usage
+
+To extend your eslint config with the OpenCloud eslint config, add the following to your `.eslint.config.js` file:
+
+```js
+import openCloudConfig from '@opencloud-eu/eslint-config'
+
+export default [...openCloudConfig]
+```
