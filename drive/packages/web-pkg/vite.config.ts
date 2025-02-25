@@ -3,7 +3,7 @@ import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import dts from 'vite-plugin-dts'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import vue from '@vitejs/plugin-vue'
-import pkg from './package.json' assert { type: 'json' }
+import pkg from './package.json'
 
 const projectRootDir = searchForWorkspaceRoot(process.cwd())
 const external = [...Object.keys(pkg.dependencies)]

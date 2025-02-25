@@ -64,7 +64,8 @@ import 'cropperjs/dist/cropper.css'
 
 export default defineComponent({
   name: 'TextEditor',
-  components: { MdEditor, MdPreview },
+  // type casts are needed to ensure type inference works correctly when building web-pkg
+  components: { MdEditor: MdEditor as any, MdPreview: MdPreview as any },
   props: {
     applicationConfig: { type: Object as PropType<AppConfigObject>, required: false },
     currentContent: {

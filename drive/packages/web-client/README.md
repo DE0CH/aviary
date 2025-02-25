@@ -1,5 +1,7 @@
 # web-client
 
+[![Matrix](https://img.shields.io/matrix/opencloud%3Amatrix.org?logo=matrix)](https://app.element.io/#/room/#opencloud:matrix.org)
+
 The `web-client` is a standalone package that allows you to interact with the [OpenCloud](https://github.com/opencloud-eu/opencloud/) APIs via TypeScript. It provides an abstraction layer between the server and a (web-) application that converts API data into objects with helpful types and utilities. This abstraction ensures that users of the APIs don't need in-depth knowledge about them, such as required methods or returned status codes.
 
 The supported APIs are:

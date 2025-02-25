@@ -1,5 +1,7 @@
 # web-pkg
 
+[![Matrix](https://img.shields.io/matrix/opencloud%3Amatrix.org?logo=matrix)](https://app.element.io/#/room/#opencloud:matrix.org)
+
 `web-pkg` is a package that provides utilities, most importantly a variety of components and composables, that can be useful when developing apps and extensions for OpenCloud Web.
 
 ## Installation
