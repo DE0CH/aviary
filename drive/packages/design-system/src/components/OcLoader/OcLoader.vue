@@ -5,7 +5,7 @@
 <script setup lang="ts">
 export interface Props {
   /**
-   * @docs Arial label to desribe the loader's purpose for screen readers.
+   * @docs Aria label to describe the loader's purpose for screen readers.
    */
   ariaLabel?: string
   /**

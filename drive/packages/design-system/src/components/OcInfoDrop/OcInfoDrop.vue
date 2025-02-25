@@ -74,7 +74,7 @@ export interface Props {
    */
   list?: ContextualHelperDataListItem[]
   /**
-   * @docs Asserts the event that triggers the info drop.
+   * @docs Event that triggers the info drop.
    * @default 'click'
    */
   mode?: 'click' | 'hover' | 'manual'

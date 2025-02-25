@@ -29,7 +29,7 @@ export interface Props {
    */
   list?: ContextualHelperDataListItem[]
   /**
-   * @docs Link to be displayed at the end.
+   * @docs Link for external references. Gets labeled with `Read more`.
    */
   readMoreLink?: string
   /**

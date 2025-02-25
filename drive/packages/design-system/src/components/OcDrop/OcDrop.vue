@@ -74,7 +74,7 @@ export interface Props {
     | 'left-end'
     | 'auto-end'
   /**
-   * @docs Element selector that can used as a target of the drop. This takes precedence over the `toggle` property.
+   * @docs Element selector that can be used as a target of the drop. This takes precedence over the `toggle` property.
    */
   target?: string
   /**

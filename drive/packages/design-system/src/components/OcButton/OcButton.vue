@@ -24,7 +24,7 @@ export interface Props {
    */
   appearance?: 'filled' | 'outline' | 'raw' | 'raw-inverse'
   /**
-   * @docs The aria label of the button. Needs to be present if the icon doesn't have a visible label.
+   * @docs The aria label of the button. Needs to be present if the button doesn't have a visible label.
    */
   ariaLabel?: string
   /**
@@ -33,7 +33,7 @@ export interface Props {
    */
   disabled?: boolean
   /**
-   * @docs The gap size between the button and its content elements.
+   * @docs The gap size between content elements of the button.
    * @default medium
    */
   gapSize?: 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge'
@@ -62,7 +62,7 @@ export interface Props {
    */
   submit?: 'null' | 'button' | 'submit' | 'reset'
   /**
-   * @docs The target of the button if the `type` is set to `a'.
+   * @docs The target of the button if the `type` is set to `a`.
    */
   target?: '_blank' | '_self' | '_parent' | '_top'
   /**

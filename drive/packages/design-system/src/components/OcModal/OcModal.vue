@@ -118,7 +118,7 @@ export interface Props {
    */
   contextualHelperLabel?: string
   /**
-   * @docs Additional class to be added to the modal.
+   * @docs Additional class(es) to be added to the modal.
    */
   elementClass?: string
   /**
@@ -161,7 +161,7 @@ export interface Props {
    */
   inputLabel?: string
   /**
-   * @docs Selection range of the input field.
+   * @docs Selection range of the input field in case parts of the input content should be selected on first render.
    */
   inputSelectionRange?: [number, number]
   /**

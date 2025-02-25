@@ -51,7 +51,7 @@ export interface Props {
    */
   size?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
   /**
-   * @docs HTML type of the icon.
+   * @docs HTML element to be used for the icon.
    * @default span
    */
   type?: string
