@@ -15,7 +15,9 @@
       :clearable="clearable"
       :multiple="multiple"
       class="oc-select"
-      :class="{ 'oc-select-position-fixed': positionFixed }"
+      :class="{
+        'oc-select-position-fixed': positionFixed
+      }"
       style="background: transparent"
       :dropdown-should-open="selectDropdownShouldOpen"
       :map-keydown="selectMapKeydown"
@@ -58,6 +60,9 @@
             </oc-button>
           </span>
         </span>
+      </template>
+      <template #open-indicator>
+        <oc-icon name="arrow-down-s" size="small" />
       </template>
     </vue-select>
 
@@ -460,8 +465,10 @@ export default { components: { VueSelect } }
 
     &__actions {
       flex-flow: row wrap;
+      justify-content: center;
       gap: var(--oc-space-xsmall);
       cursor: pointer;
+      padding: 0 var(--oc-space-xsmall) 0 var(--oc-space-xsmall);
 
       svg {
         overflow: visible;
