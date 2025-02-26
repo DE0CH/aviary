@@ -851,7 +851,7 @@ importers:
         version: 6.1.2
       '@uppy/xhr-upload':
         specifier: ^4.2.3
-        version: 4.3.2(@uppy/core@4.4.2)
+        version: 4.3.3(@uppy/core@4.4.2)
       '@vavt/cm-extension':
         specifier: ^1.6.0
         version: 1.8.0
@@ -996,8 +996,8 @@ importers:
         specifier: 6.1.2
         version: 6.1.2
       '@uppy/xhr-upload':
-        specifier: 4.3.2
-        version: 4.3.2(@uppy/core@4.4.2)
+        specifier: 4.3.3
+        version: 4.3.3(@uppy/core@4.4.2)
       '@vueuse/core':
         specifier: 12.7.0
         version: 12.7.0(typescript@5.7.3)
@@ -3046,10 +3046,10 @@ packages:
   '@uppy/utils@6.1.2':
     resolution: {integrity: sha512-PCrw6v51M6p3hlrlB2INmcocen4Dyjun1SobjVZRBkg4wutQE8ihZfSrH5ZE8UXFelufhtO16wlaZMi0EHk84w==}
 
-  '@uppy/xhr-upload@4.3.2':
-    resolution: {integrity: sha512-dgj7MCZ50fM1mx446PWV/u3X4qgcRw26tIepoHfVI1UNby4p+GS7G7VxcE6IK9zM0epRXmhe609UdMtKWH7NaQ==}
+  '@uppy/xhr-upload@4.3.3':
+    resolution: {integrity: sha512-I7RVppwTvLRlVfoW5piMxcZKzWF42E6CwYFQ42d2LzizrkG4tVLQkQrTZlw85za3nhcSrX3o/d1eNx3pzLmsdw==}
     peerDependencies:
-      '@uppy/core': ^4.4.1
+      '@uppy/core': ^4.4.2
 
   '@vavt/cm-extension@1.8.0':
     resolution: {integrity: sha512-lqz5mfyeiWb3iqasvEfgFZsxil8wd5iuRqWeX6eKcGhGN0+Wh+Sbi1qmlNzqyaXngC5EFgZ12hR6NI4XKuY65g==}
@@ -9204,7 +9204,7 @@ snapshots:
       lodash: 4.17.21
       preact: 10.25.4
 
-  '@uppy/xhr-upload@4.3.2(@uppy/core@4.4.2)':
+  '@uppy/xhr-upload@4.3.3(@uppy/core@4.4.2)':
     dependencies:
       '@uppy/companion-client': 4.4.1(@uppy/core@4.4.2)
       '@uppy/core': 4.4.2
