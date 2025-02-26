@@ -3,7 +3,7 @@ Feature: Secure view
   I want to share different docs using secure view role
   So that the recipient can only open documents in Collabora with watermarks applied
   Any actions for the recipient, such as editing, downloading, copying the document, are prohibited
-  # To run this feature we need to run the external app-provider service along OnlyOffice, Collabora services
+  # To run this feature we need to run the external app-provider service along Collabora service
 
   Background:
     Given "Admin" creates following users using API
