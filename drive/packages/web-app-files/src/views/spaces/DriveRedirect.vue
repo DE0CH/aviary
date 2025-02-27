@@ -11,6 +11,7 @@ import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
 import { urlJoin } from '@opencloud-eu/web-client'
 import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
 import { createLocationSpaces } from '@opencloud-eu/web-pkg'
+import omit from 'lodash-es/omit'
 
 // 'personal/home' is used as personal drive alias from static contexts
 // (i.e. places where we can't load the actual personal space)
@@ -52,7 +53,8 @@ export default defineComponent({
 
       router
         .replace({
-          ...unref(route),
+          ...omit(unref(route), 'fullPath'),
+          path: unref(route).fullPath,
           params: {
             ...unref(route).params,
             ...params

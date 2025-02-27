@@ -105,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, unref, watch } from 'vue'
+import { computed, nextTick, Ref, ref, unref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
 import { EVENT_ITEM_DROPPED_BREADCRUMB, uniqueId, BreadcrumbItem } from '../../helpers'
 import OcButton from '../OcButton/OcButton.vue'
@@ -146,7 +146,10 @@ const emit = defineEmits([EVENT_ITEM_DROPPED_BREADCRUMB])
 const { $gettext } = useGettext()
 const visibleItems = ref<BreadcrumbItem[]>([])
 const hiddenItems = ref<BreadcrumbItem[]>([])
-const displayItems = ref<BreadcrumbItem[]>(items.slice())
+
+// FIXME: setting this initially will cause vue-router type errors
+const displayItems: Ref<BreadcrumbItem[]> = ref([])
+displayItems.value = items
 
 const getBreadcrumbElement = (id: string): HTMLElement => {
   return document.querySelector(`.oc-breadcrumb-list [data-item-id="${id}"]`)
@@ -266,11 +269,7 @@ const dropItemStyling = (
 .oc-breadcrumb {
   overflow: visible;
   &-item-dragover {
-    transition:
-      background 0.06s,
-      border 0s 0.08s,
-      border-color 0s,
-      border-width 0.06s;
+    transition: background 0.06s, border 0s 0.08s, border-color 0s, border-width 0.06s;
     background-color: var(--oc-color-background-highlight);
     box-shadow: 0 0 0 5px var(--oc-color-background-highlight);
     border-radius: 5px;
