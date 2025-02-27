@@ -11,7 +11,10 @@
       ],
       "vue/jsx-runtime": [
         "./node_modules/vue/jsx-runtime"
-      ]
+      ],
+      "@popperjs/core": [
+        "./../design-system/node_modules/@popperjs/core"
+      ],
     },
   }
 }
