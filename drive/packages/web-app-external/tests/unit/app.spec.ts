@@ -1,7 +1,7 @@
 import { mock } from 'vitest-mock-extended'
 import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
 import { AppProviderService, useRequest, useRoute } from '@opencloud-eu/web-pkg'
-import { ref } from 'vue'
+import { computed } from 'vue'
 
 import { Resource } from '@opencloud-eu/web-client'
 import App from '../../src/App.vue'
@@ -77,7 +77,7 @@ function createShallowMountWrapper(makeRequest = vi.fn().mockResolvedValue({ sta
     makeRequest
   }))
   vi.mocked(useRoute).mockImplementation(() =>
-    ref(mock<RouteLocation>({ name: 'external-example-app-apps' }))
+    computed(() => mock<RouteLocation>({ name: 'external-example-app-apps' }))
   )
   const mocks = {
     ...defaultComponentMocks(),

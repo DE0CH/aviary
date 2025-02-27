@@ -80,6 +80,7 @@ import {
   watch,
   Ref
 } from 'vue'
+import omit from 'lodash-es/omit'
 import { IncomingShareResource, Resource } from '@opencloud-eu/web-client'
 import {
   AppFileHandlingResult,
@@ -257,7 +258,8 @@ export default defineComponent({
 
       const { params, query } = createFileRouteOptions(unref(space), unref(activeFilteredFile))
       router.replace({
-        ...unref(route),
+        ...omit(unref(route), 'fullPath'),
+        path: unref(route).fullPath,
         params: { ...unref(route).params, ...params },
         query: { ...unref(route).query, ...query }
       })
