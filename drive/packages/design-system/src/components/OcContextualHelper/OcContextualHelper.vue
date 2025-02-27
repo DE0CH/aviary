@@ -16,10 +16,25 @@ import OcInfoDrop from '../OcInfoDrop/OcInfoDrop.vue'
 import { ContextualHelperDataListItem } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs Title of the contextual helper.
+   */
   title: string
+  /**
+   * @docs Text to be displayed at the end.
+   */
   endText?: string
+  /**
+   * @docs List of items to be displayed. Please refer to the component source for the `ContextualHelperDataListItem` type definition.
+   */
   list?: ContextualHelperDataListItem[]
+  /**
+   * @docs Link for external references. Gets labeled with `Read more`.
+   */
   readMoreLink?: string
+  /**
+   * @docs Text to be displayed.
+   */
   text?: string
 }
 

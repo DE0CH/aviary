@@ -1,3 +1,9 @@
+---
+title: OcAvatar component
+next: false
+prev: false
+---
+
 # OcAvatar component
 
 ## Description
@@ -31,3 +37,5 @@ The component can be provided with an `accessible-label` in case the avatar is u
 <oc-avatar-link name="Link" accessible-label="Link" />
 ```
 :::
+
+::: component-api

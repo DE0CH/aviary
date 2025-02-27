@@ -1,3 +1,9 @@
+---
+title: OcSpinner component
+next: false
+prev: false
+---
+
 # OcSpinner component
 
 ## Description
@@ -37,3 +43,5 @@ These sizes are available: `xsmall`, `small`, `medium`, `large`, `xlarge`, `xxla
 <oc-spinner aria-label="Loading content" size="xxxlarge" />
 ```
 :::
+
+::: component-api

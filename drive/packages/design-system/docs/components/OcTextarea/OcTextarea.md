@@ -1,3 +1,9 @@
+---
+title: OcTextarea component
+next: false
+prev: false
+---
+
 # OcTextarea component
 
 ## Description
@@ -37,3 +43,5 @@ The default and most simple use case involves a `v-model` and a `label`.
 ::: livecode {path=/components/OcTextarea/messages.vue}
 <<< @/components/OcTextarea/messages.vue
 :::
+
+::: component-api

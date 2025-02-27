@@ -9,8 +9,20 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The maximum value of the progress.
+   * @default 100
+   */
   max?: number
+  /**
+   * @docs The current progress value.
+   * @default 0
+   */
   progress?: number
+  /**
+   * @docs Determines if the label should be shown.
+   * @default false
+   */
   showLabel?: boolean
 }
 

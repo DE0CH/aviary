@@ -1,3 +1,9 @@
+---
+title: OcInfoDrop component
+next: false
+prev: false
+---
+
 # OcInfoDrop component
 
 ## Description
@@ -30,3 +36,5 @@ The following example incorporates a list of items to allow for better structuri
 ::: livecode {path=/components/OcInfoDrop/list.vue}
 <<< @/components/OcInfoDrop/list.vue
 :::
+
+::: component-api

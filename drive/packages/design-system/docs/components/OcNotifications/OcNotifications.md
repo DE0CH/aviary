@@ -1,3 +1,9 @@
+---
+title: OcNotifications component
+next: false
+prev: false
+---
+
 # OcNotifications component
 
 ## Description
@@ -17,3 +23,5 @@ The basic position defaults to `default`, meaning the notification gets displaye
 </oc-notifications>
 ```
 :::
+
+::: component-api

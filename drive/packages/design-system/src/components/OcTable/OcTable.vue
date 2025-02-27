@@ -112,8 +112,7 @@ import {
   EVENT_TROW_MOUNTED,
   EVENT_TROW_CONTEXTMENU,
   EVENT_ITEM_DROPPED,
-  EVENT_ITEM_DRAGGED,
-  EVENT_SORT
+  EVENT_ITEM_DRAGGED
 } from '../../helpers/constants'
 import { useGettext } from 'vue3-gettext'
 
@@ -123,21 +122,120 @@ const SORT_DIRECTION_DESC = 'desc' as const
 type Item = BaseItem & any
 
 export interface Props {
+  /**
+   * @docs The data to be displayed in the table.
+   */
   data: Item[]
+  /**
+   * @docs The fields to be displayed as table headers.
+   */
   fields: FieldType[]
+  /**
+   * @docs The IDs of the rows that should be disabled.
+   */
   disabled?: Array<string | number>
+  /**
+   * @docs Determines if the table supports dragging and dropping items onto rows.
+   * @default false
+   */
   dragDrop?: boolean
+  /**
+   * @docs Determines if the table has a header row.
+   * @default true
+   */
   hasHeader?: boolean
+  /**
+   * @docs The position of the sticky header.
+   * @default 0
+   */
   headerPosition?: number
+  /**
+   * @docs The IDs of the rows that should be highlighted.
+   */
   highlighted?: string | string[]
+  /**
+   * @docs Determines if the table rows should have a hover effect.
+   * @default false
+   */
   hover?: boolean
+  /**
+   * @docs The key to be used as the unique identifier for each row.
+   * @default 'id'
+   */
   idKey?: string
+  /**
+   * @docs A function to get the dom selector for each item.
+   */
   itemDomSelector?: (item: Item) => string
+  /**
+   * @docs Determines if the table should be lazy loaded.
+   * @default false
+   */
   lazy?: boolean
+  /**
+   * @docs The horizontal padding size of the table.
+   * @default small
+   */
   paddingX?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge'
+  /**
+   * @docs The default field to sort by.
+   */
   sortBy?: string
+  /**
+   * @docs The default sort direction.
+   */
   sortDir?: 'asc' | 'desc'
+  /**
+   * @docs Determines if the table header should be sticky. This is helpful when it should still be visible when scrolling.
+   * @default false
+   */
   sticky?: boolean
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when an item has been dropped onto a row.
+   */
+  (e: 'itemDropped', selector: string, event: DragEvent): void
+  /**
+   * @docs Emitted when an item has been dragged onto a row.
+   */
+  (e: 'itemDragged', item: Item, event: DragEvent): void
+  /**
+   * @docs Emitted when a table header has been clicked.
+   */
+  (e: 'theadClicked', event: MouseEvent): void
+  /**
+   * @docs Emitted when a table row has been clicked.
+   */
+  (e: 'highlight', args: [Item, MouseEvent]): void
+  /**
+   * @docs Emitted when a table row has been mounted.
+   */
+  (e: 'rowMounted', item: Item, element: HTMLElement): void
+  /**
+   * @docs Emitted when a table row has been right-clicked.
+   */
+  (e: 'contextmenuClicked', element: HTMLElement, event: MouseEvent, item: Item): void
+  /**
+   * @docs Emitted when a column has been sorted.
+   */
+  (e: 'sort', sort: { sortBy: string; sortDir: 'asc' | 'desc' }): void
+  /**
+   * @docs Emitted when an element has entered a drop zone inside the table.
+   */
+  (e: 'dropRowStyling', selector: string, leaving: boolean, event: DragEvent): void
+  /**
+   * @docs Emitted when an item has been scrolled into the view.
+   */
+  (e: 'itemVisible', item: Item): void
+}
+
+export interface Slots {
+  /**
+   * @slot The footer of the table.
+   */
+  footer?: () => unknown
 }
 
 const {
@@ -158,17 +256,8 @@ const {
   sticky = false
 } = defineProps<Props>()
 
-const emit = defineEmits([
-  EVENT_ITEM_DROPPED,
-  EVENT_ITEM_DRAGGED,
-  EVENT_THEAD_CLICKED,
-  EVENT_TROW_CLICKED,
-  EVENT_TROW_MOUNTED,
-  EVENT_TROW_CONTEXTMENU,
-  EVENT_SORT,
-  'dropRowStyling',
-  'itemVisible'
-])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const constants = {
   EVENT_THEAD_CLICKED,

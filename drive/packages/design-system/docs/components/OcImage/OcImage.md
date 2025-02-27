@@ -1,3 +1,9 @@
+---
+title: OcImage component
+next: false
+prev: false
+---
+
 # OcImage component
 
 ## Description
@@ -19,3 +25,5 @@ The basic usage of the component needs the image `src` and should be accompanied
 <oc-image src="https://picsum.photos/200/300?image=871" alt="Some useful description" />
 ```
 :::
+
+::: component-api

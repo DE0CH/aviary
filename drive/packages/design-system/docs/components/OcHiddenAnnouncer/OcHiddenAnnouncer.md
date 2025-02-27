@@ -1,3 +1,9 @@
+---
+title: OcHiddenAnnouncer component
+next: false
+prev: false
+---
+
 # OcHiddenAnnouncer component
 
 ## Description
@@ -17,3 +23,5 @@ The default use case of the component needs an `announcement` property to be pas
 ::: livecode {path=/components/OcHiddenAnnouncer/default.vue}
 <<< @/components/OcHiddenAnnouncer/default.vue
 :::
+
+::: component-api

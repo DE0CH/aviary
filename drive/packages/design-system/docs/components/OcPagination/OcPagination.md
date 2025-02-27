@@ -1,3 +1,9 @@
+---
+title: OcPagination component
+next: false
+prev: false
+---
+
 # OcPagination component
 
 ## Description
@@ -32,3 +38,5 @@ The amount of displayed pages can be limited via the `max-displayed` property.
 />
 ```
 :::
+
+::: component-api

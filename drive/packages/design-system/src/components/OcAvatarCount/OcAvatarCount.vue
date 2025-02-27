@@ -10,7 +10,14 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The number to display inside the avatar.
+   */
   count: number
+  /**
+   * @docs The size in px of the avatar.
+   * @default 30
+   */
   size?: number
 }
 

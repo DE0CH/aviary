@@ -18,10 +18,29 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs Determines if the progress bar is indeterminate.
+   * @default false
+   */
   indeterminate?: boolean
+  /**
+   * @docs The maximum value of the progress bar.
+   */
   max?: number
+  /**
+   * @docs The size of the progress bar.
+   * @default default
+   */
   size?: 'default' | 'small'
+  /**
+   * @docs The current value of the progress bar.
+   * @default 0
+   */
   value?: number
+  /**
+   * @docs The variation of the progress bar.
+   * @default primary
+   */
   variation?: 'primary' | 'passive' | 'danger' | 'success' | 'warning'
 }
 

@@ -1,3 +1,9 @@
+---
+title: OcTextInput component
+next: false
+prev: false
+---
+
 # OcTextInput component
 
 ## Description
@@ -58,3 +64,5 @@ The following input types ares supported.
 ::: livecode {path=/components/OcTextInput/messages.vue}
 <<< @/components/OcTextInput/messages.vue
 :::
+
+::: component-api

@@ -16,14 +16,30 @@
 import { uniqueId } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs Determines if the switch is checked.
+   */
   checked?: boolean
+  /**
+   * @docs The label of the switch.
+   */
   label: string
+  /**
+   * @docs The element ID of the label.
+   */
   labelId?: string
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the switch has been toggled.
+   */
+  (e: 'update:checked', value: boolean): void
 }
 
 const { checked = false, label, labelId = uniqueId('oc-switch-label-') } = defineProps<Props>()
 
-const emit = defineEmits(['update:checked'])
+const emit = defineEmits<Emits>()
 
 const toggle = () => {
   emit('update:checked', !checked)

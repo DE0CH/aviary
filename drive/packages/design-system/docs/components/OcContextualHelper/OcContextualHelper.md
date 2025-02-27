@@ -1,3 +1,9 @@
+---
+title: OcContextualHelper component
+next: false
+prev: false
+---
+
 # OcContextualHelper component
 
 ## Description
@@ -33,3 +39,5 @@ The component can also display a list of items. This is useful when you want to 
 ::: livecode {path=/components/OcContextualHelper/list.vue}
 <<< @/components/OcContextualHelper/list.vue
 :::
+
+::: component-api

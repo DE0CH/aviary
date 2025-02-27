@@ -90,27 +90,102 @@ import { ContextualHelperData } from '../../helpers'
 import { useGettext } from 'vue3-gettext'
 
 export interface Props {
+  /**
+   * @docs Title of the modal.
+   */
   title: string
+  /**
+   * @docs Text for the cancel button.
+   * @default Cancel
+   */
   buttonCancelText?: string
+  /**
+   * @docs Disables the confirm button.
+   * @default false
+   */
   buttonConfirmDisabled?: boolean
+  /**
+   * @docs Text for the confirm button.
+   * @default Confirm
+   */
   buttonConfirmText?: string
+  /**
+   * @docs Contextual helper data. Please refer to the component source for the `ContextualHelperData` type definition.
+   */
   contextualHelperData?: ContextualHelperData
+  /**
+   * @docs Label of the contextual helper.
+   */
   contextualHelperLabel?: string
+  /**
+   * @docs Additional class(es) to be added to the modal.
+   */
   elementClass?: string
+  /**
+   * @docs Element ID of the modal.
+   */
   elementId?: string
+  /**
+   * @docs Selector of the element that is supposed to receive the initial focus inside the modal.
+   */
   focusTrapInitial?: string | boolean
+  /**
+   * @docs Determines if the modal has an input field.
+   * @default false
+   */
   hasInput?: boolean
+  /**
+   * @docs Hide the action buttons.
+   * @default false
+   */
   hideActions?: boolean
+  /**
+   * @docs Hide the confirm button.
+   * @default false
+   */
   hideConfirmButton?: boolean
+  /**
+   * @docs Icon that gets displayed before the title.
+   */
   icon?: string
+  /**
+   * @docs Description to be displayed below the input field.
+   */
   inputDescription?: string
+  /**
+   * @docs Error message to be displayed below the input field.
+   */
   inputError?: string
+  /**
+   * @docs Label of the input field.
+   */
   inputLabel?: string
+  /**
+   * @docs Selection range of the input field in case parts of the input content should be selected on first render.
+   */
   inputSelectionRange?: [number, number]
+  /**
+   * @docs Type of the input field.
+   * @default text
+   */
   inputType?: 'text' | 'number' | 'email' | 'password'
+  /**
+   * @docs Value of the input field.
+   */
   inputValue?: string
+  /**
+   * @docs Determines if the modal is in a loading state.
+   * @default false
+   */
   isLoading?: boolean
+  /**
+   * @docs Message of the modal.
+   */
   message?: string
+  /**
+   * @docs Variation of the modal.
+   * @default passive
+   */
   variation?:
     | 'passive'
     | 'primary'
@@ -120,6 +195,28 @@ export interface Props {
     | 'info'
     | 'brand'
     | 'inherit'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the cancel button has been clicked.
+   */
+  (e: 'cancel'): void
+  /**
+   * @docs Emitted when the confirm button has been clicked.
+   */
+  (e: 'confirm', value: string): void
+  /**
+   * @docs Emitted when the user has typed something in the input field.
+   */
+  (e: 'input', value: string): void
+}
+
+export interface Slots {
+  /**
+   * @docs Custom content of the modal.
+   */
+  content?: () => unknown
 }
 
 const {
@@ -147,7 +244,7 @@ const {
   variation = 'passive'
 } = defineProps<Props>()
 
-const emit = defineEmits(['cancel', 'confirm', 'input'])
+const emit = defineEmits<Emits>()
 
 const { $gettext } = useGettext()
 

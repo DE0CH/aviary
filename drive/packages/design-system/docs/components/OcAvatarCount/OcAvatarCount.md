@@ -1,3 +1,9 @@
+---
+title: OcAvatarCount component
+next: false
+prev: false
+---
+
 # OcAvatarCount component
 
 ## Description
@@ -11,3 +17,5 @@ The `OcAvatarCount` component represents a count of multiple avatars. It's usefu
 <oc-avatar-count :count="20" />
 ```
 :::
+
+::: component-api

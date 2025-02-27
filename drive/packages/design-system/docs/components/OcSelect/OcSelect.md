@@ -1,3 +1,9 @@
+---
+title: OcSelect component
+next: false
+prev: false
+---
+
 # OcSelect component
 
 ## Description
@@ -68,3 +74,5 @@ There are three different types of messages that can be displayed: `description-
 />
 ```
 :::
+
+::: component-api

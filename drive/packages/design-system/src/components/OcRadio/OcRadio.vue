@@ -19,11 +19,32 @@ import { computed } from 'vue'
 import { getSizeClass, uniqueId } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The label of the radio button.
+   */
   label: string
+  /**
+   * @docs Determines if the radio button is disabled.
+   * @default false
+   */
   disabled?: boolean
+  /**
+   * @docs Determines if the label should be visually hidden. Note that it will still be accessible to screen readers.
+   * @default false
+   */
   hideLabel?: boolean
+  /**
+   * @docs The element ID of the radio button.
+   */
   id?: string
+  /**
+   * @docs The value of the radio button.
+   */
   option?: unknown
+  /**
+   * @docs The size of the radio button.
+   * @default medium
+   */
   size?: 'small' | 'medium' | 'large'
 }
 

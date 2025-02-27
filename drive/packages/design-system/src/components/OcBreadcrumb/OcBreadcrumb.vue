@@ -114,7 +114,14 @@ import OcIcon from '../OcIcon/OcIcon.vue'
 import { RouteLocationPathRaw } from 'vue-router'
 
 export interface Props {
+  /**
+   * @docs The items to display in the breadcrumb. Please refer to the component source for the `BreadcrumbItem` type definition.
+   */
   items: BreadcrumbItem[]
+  /**
+   * @docs The padding size of the context menu dropdown.
+   * @default medium
+   */
   contextMenuPadding?:
     | 'xsmall'
     | 'small'
@@ -124,11 +131,44 @@ export interface Props {
     | 'xxlarge'
     | 'xxxlarge'
     | 'remove'
+  /**
+   * @docs The element ID of the breadcrumb.
+   */
   id?: string
+  /**
+   * @docs The maximum width of the breadcrumb. If the breadcrumb exceeds this width, items will be truncated. Set to `-1` to disable truncation.
+   * @default -1
+   */
   maxWidth?: number
+  /**
+   * @docs Determines if the context actions are shown for the last breadcrumb item.
+   * @default false
+   */
   showContextActions?: boolean
+  /**
+   * @docs The number of items to show before truncating the breadcrumb.
+   * @default 2
+   */
   truncationOffset?: number
+  /**
+   * @docs The variation of the breadcrumb.
+   * @default default
+   */
   variation?: 'default' | 'lead'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when an item has been droped onto a breadcrumb element.
+   */
+  (e: 'itemDroppedBreadcrumb', to: RouteLocationPathRaw): void
+}
+
+export interface Slots {
+  /**
+   * @docs Context menu for the last breadcrumb item. Needs `showContextActions` to be `true`.
+   */
+  contextMenu?: () => unknown
 }
 
 const {
@@ -141,7 +181,8 @@ const {
   variation = 'default'
 } = defineProps<Props>()
 
-const emit = defineEmits([EVENT_ITEM_DROPPED_BREADCRUMB])
+const emit = defineEmits<Emits>()
+defineSlots<Slots>()
 
 const { $gettext } = useGettext()
 const visibleItems = ref<BreadcrumbItem[]>([])

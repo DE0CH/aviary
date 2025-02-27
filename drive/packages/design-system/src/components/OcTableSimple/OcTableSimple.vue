@@ -8,9 +8,22 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs Determines if the table rows should have a hover effect.
+   * @default false
+   */
   hover?: boolean
 }
+
+export interface Slots {
+  /**
+   * @docs Table content.
+   */
+  default?: () => unknown
+}
+
 const { hover = false } = defineProps<Props>()
+defineSlots<Slots>()
 
 const tableClasses = computed(() => {
   const result = ['oc-table-simple']

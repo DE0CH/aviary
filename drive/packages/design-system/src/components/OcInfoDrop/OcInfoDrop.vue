@@ -57,13 +57,38 @@ import { uniqueId } from '../../helpers'
 import { ContextualHelperDataListItem } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs Title of the info drop.
+   */
   title: string
+  /**
+   * @docs Element ID of the info drop.
+   */
   dropId?: string
+  /**
+   * @docs Text at the end of the info drop.
+   */
   endText?: string
+  /**
+   * @docs List of items to display in the info drop. Please refer to the component source for the `ContextualHelperDataListItem` type definition.
+   */
   list?: ContextualHelperDataListItem[]
+  /**
+   * @docs Event that triggers the info drop.
+   * @default 'click'
+   */
   mode?: 'click' | 'hover' | 'manual'
+  /**
+   * @docs Link at the end of the info drop.
+   */
   readMoreLink?: string
+  /**
+   * @docs Text to display in the info drop.
+   */
   text?: string
+  /**
+   * @docs CSS selector for the element to be used as toggle. By default, the preceding element is used.
+   */
   toggle?: string
 }
 

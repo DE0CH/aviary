@@ -27,15 +27,34 @@ import { uniqueId } from '../../helpers'
 import OcSelect from '../OcSelect/OcSelect.vue'
 
 export interface Props {
+  /**
+   * @docs The label of the select.
+   */
   label: string
+  /**
+   * @docs The available options of the select.
+   */
   options: unknown[]
+  /**
+   * @docs The selected value.
+   */
   selected: string | number
+  /**
+   * @docs The element ID of the select.
+   */
   selectId?: string
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the value of the select has changed.
+   */
+  (event: 'change', value: boolean): void
 }
 
 const { label, options, selected, selectId = uniqueId('oc-page-size-') } = defineProps<Props>()
 
-const emit = defineEmits(['change'])
+const emit = defineEmits<Emits>()
 
 const emitChange = (value: boolean) => {
   emit('change', value)

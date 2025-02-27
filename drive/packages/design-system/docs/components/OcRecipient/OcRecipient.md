@@ -1,3 +1,9 @@
+---
+title: OcRecipient component
+next: false
+prev: false
+---
+
 # OcRecipient component
 
 ## Description
@@ -52,3 +58,5 @@ The component provides an `append` slot to add additional content.
 </div>
 ```
 :::
+
+::: component-api

@@ -8,10 +8,22 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The position of the notification.
+   * @default default
+   */
   position?: 'default' | 'top-left' | 'top-center' | 'top-right'
 }
 
+export interface Slots {
+  /**
+   * @docs The content of the notification. This is usually the `OcNotificationMessage` component.
+   */
+  default?: () => unknown
+}
+
 const { position = 'default' } = defineProps<Props>()
+defineSlots<Slots>()
 
 const classes = computed(() => `oc-notification-${position}`)
 </script>

@@ -1,3 +1,9 @@
+---
+title: OcGrid component
+next: false
+prev: false
+---
+
 # OcGrid component
 
 ## Description
@@ -25,3 +31,5 @@ The component provides a default slot for any content that should be displayed i
 </oc-grid>
 ```
 :::
+
+::: component-api

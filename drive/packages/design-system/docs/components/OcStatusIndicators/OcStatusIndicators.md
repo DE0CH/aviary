@@ -1,3 +1,9 @@
+---
+title: OcStatusIndicators component
+next: false
+prev: false
+---
+
 # OcStatusIndicators component
 
 ## Description
@@ -38,3 +44,5 @@ The handler can be disabled by setting `disable-handler` to `true`.
 />
 ```
 :::
+
+::: component-api

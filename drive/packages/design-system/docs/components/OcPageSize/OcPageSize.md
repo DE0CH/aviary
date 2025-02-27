@@ -1,3 +1,9 @@
+---
+title: OcPageSize component
+next: false
+prev: false
+---
+
 # OcPageSize component
 
 ## Description
@@ -13,3 +19,5 @@ The component needs to be provided with a `label`, a list of `options` and the c
 ::: livecode {path=/components/OcPageSize/default.vue}
 <<< @/components/OcPageSize/default.vue
 :::
+
+::: component-api

@@ -18,19 +18,81 @@ import { RouteLocationRaw } from 'vue-router'
 import { getSizeClass } from '../../helpers'
 
 export interface Props {
+  /**
+   * @docs The appearance of the button.
+   * @default outline
+   */
   appearance?: 'filled' | 'outline' | 'raw' | 'raw-inverse'
+  /**
+   * @docs The aria label of the button. Needs to be present if the button doesn't have a visible label.
+   */
   ariaLabel?: string
+  /**
+   * @docs Determines if the button is disabled.
+   * @default false
+   */
   disabled?: boolean
+  /**
+   * @docs The gap size between content elements of the button.
+   * @default medium
+   */
   gapSize?: 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge'
+  /**
+   * @docs The href if the `type` is set to `a'.
+   */
   href?: string
+  /**
+   * @docs The alignment of the button content.
+   * @default center
+   */
   justifyContent?: 'left' | 'center' | 'right' | 'space-around' | 'space-between' | 'space-evenly'
+  /**
+   * @docs Determines if a spinner should be shown inside the button.
+   * @default false
+   */
   showSpinner?: boolean
+  /**
+   * @docs The size of the button.
+   * @default medium
+   */
   size?: 'small' | 'medium' | 'large'
+  /**
+   * @docs The type of the button element. Only takes effect if the `type` is set to `button`.
+   * @default button
+   */
   submit?: 'null' | 'button' | 'submit' | 'reset'
+  /**
+   * @docs The target of the button if the `type` is set to `a`.
+   */
   target?: '_blank' | '_self' | '_parent' | '_top'
+  /**
+   * @docs The route location if the `type` is set to `router-link`.
+   */
   to?: RouteLocationRaw
+  /**
+   * @docs The type of the button element.
+   * @default button
+   */
   type?: 'button' | 'a' | 'router-link'
+  /**
+   * @docs The variation of the button.
+   * @default passive
+   */
   variation?: 'passive' | 'primary' | 'danger' | 'success' | 'warning' | 'brand'
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the button has been clicked.
+   */
+  (e: 'click', event: MouseEvent): void
+}
+
+export interface Slots {
+  /**
+   * @docs Button content.
+   */
+  default?: () => unknown
 }
 
 const {
@@ -49,22 +111,7 @@ const {
   variation = 'passive'
 } = defineProps<Props>()
 
-export interface Emits {
-  /**
-   * @docs Fires when the button is clicked.
-   */
-  (e: 'click', event: MouseEvent): void
-}
-
 const emit = defineEmits<Emits>()
-
-export interface Slots {
-  /**
-   * @docs Button content.
-   */
-  default: () => unknown
-}
-
 defineSlots<Slots>()
 
 const buttonClass = computed(() => {

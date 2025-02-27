@@ -1,3 +1,9 @@
+---
+title: OcBreadcrumb component
+next: false
+prev: false
+---
+
 # OcBreadcrumb component
 
 ## Description
@@ -51,3 +57,5 @@ The last item of the breadcrumbs can have a context menu. This is useful when it
 </oc-breadcrumb>
 ```
 :::
+
+::: component-api

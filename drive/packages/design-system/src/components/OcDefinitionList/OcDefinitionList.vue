@@ -15,6 +15,9 @@ interface DefinitionItem {
 }
 
 export interface Props {
+  /**
+   * @docs List of items to be displayed. Please refer to the component source for the `DefinitionItem` type definition.
+   */
   items: DefinitionItem[]
 }
 

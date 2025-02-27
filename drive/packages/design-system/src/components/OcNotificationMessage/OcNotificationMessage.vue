@@ -44,16 +44,40 @@ import OcButton from '../OcButton/OcButton.vue'
 import OcErrorLog from '../OcErrorLog/OcErrorLog.vue'
 
 export interface Props {
+  /**
+   * @docs The title of the notification message.
+   */
   title: string
+  /**
+   * @docs The content of the error log that can be copied.
+   */
   errorLogContent?: string
+  /**
+   * @docs The message of the notification.
+   */
   message?: string
+  /**
+   * @docs The status of the notification message.
+   * @default passive
+   */
   status?: 'passive' | 'primary' | 'success' | 'warning' | 'danger'
+  /**
+   * @docs The timeout in seconds after which the notification message will be closed.
+   * @default 5
+   */
   timeout?: number
+}
+
+export interface Emits {
+  /**
+   * @docs Emitted when the notification message has been closed.
+   */
+  (e: 'close'): void
 }
 
 const { title, errorLogContent, message, status = 'passive', timeout = 5 } = defineProps<Props>()
 
-const emit = defineEmits(['close'])
+const emit = defineEmits<Emits>()
 
 const showErrorLog = ref(false)
 

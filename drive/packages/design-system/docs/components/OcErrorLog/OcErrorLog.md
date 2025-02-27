@@ -1,3 +1,9 @@
+---
+title: OcErrorLog component
+next: false
+prev: false
+---
+
 # OcErrorLog component
 
 ## Description
@@ -15,3 +21,5 @@ The default use case needs a `content` prop that represents the error message.
 <oc-error-log content="Some error message that can be copied." />
 ```
 :::
+
+::: component-api

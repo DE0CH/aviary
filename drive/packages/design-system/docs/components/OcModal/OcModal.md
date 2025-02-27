@@ -1,3 +1,9 @@
+---
+title: OcModal component
+next: false
+prev: false
+---
+
 # OcModal component
 
 ## Description
@@ -33,3 +39,5 @@ It can also be used for displaying custom modal actions. In this case, the actio
 ::: livecode {path=/components/OcModal/slot.vue}
 <<< @/components/OcModal/slot.vue{4-32}
 :::
+
+::: component-api
