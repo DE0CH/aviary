@@ -1,14 +1,22 @@
 import unusedImports from 'eslint-plugin-unused-imports'
-import eslintConfigPrettier from 'eslint-plugin-prettier/recommended'
 import tseslint from 'typescript-eslint'
 import globals from 'globals'
 import pluginVue from 'eslint-plugin-vue'
+import eslintConfigPrettier from 'eslint-config-prettier'
 
 export default [
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
   eslintConfigPrettier,
-  { ignores: ['**/node_modules/', '.git/', '**/dist/', '**/.vitepress/'] },
+  {
+    ignores: [
+      '**/node_modules/',
+      '.git/',
+      '**/dist/',
+      '**/.vitepress/',
+      'packages/web-client/src/graph/generated/'
+    ]
+  },
   {
     languageOptions: {
       ecmaVersion: 5,
