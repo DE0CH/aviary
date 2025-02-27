@@ -1,67 +1,74 @@
 <template>
   <main class="oc-flex oc-height-1-1 app-content oc-width-1-1">
-    <app-loading-spinner v-if="loading" />
-    <template v-else>
-      <div id="admin-settings-wrapper" class="oc-width-expand oc-height-1-1 oc-position-relative">
+    <div
+      class="admin-settings-wrapper oc-flex oc-width-1-1 oc-width-expand oc-height-1-1 oc-flex-wrap"
+    >
+      <app-loading-spinner v-if="loading" />
+      <template v-else>
         <div
-          id="admin-settings-app-bar"
-          ref="appBarRef"
-          class="oc-app-bar oc-py-s"
-          :class="{ 'admin-settings-app-bar-sticky': isSticky }"
+          id="admin-settings-view-wrapper"
+          class="oc-width-expand oc-width-1-1 oc-height-1-1 oc-flex-wrap"
         >
-          <div class="admin-settings-app-bar-controls oc-flex oc-flex-between oc-flex-middle">
-            <oc-breadcrumb
-              v-if="!isMobileWidth"
-              id="admin-settings-breadcrumb"
-              :items="breadcrumbs"
-            />
-            <portal-target name="app.runtime.mobile.nav" />
-            <div class="oc-flex">
-              <view-options
-                v-if="showViewOptions"
-                :has-hidden-files="false"
-                :has-file-extensions="false"
-                :has-pagination="true"
-                :pagination-options="paginationOptions"
-                :per-page-default="perPageDefault"
-                per-page-storage-prefix="admin-settings"
+          <div
+            id="admin-settings-app-bar"
+            ref="appBarRef"
+            class="oc-app-bar oc-py-s"
+            :class="{ 'admin-settings-app-bar-sticky': isSticky }"
+          >
+            <div class="admin-settings-app-bar-controls oc-flex oc-flex-between oc-flex-middle">
+              <oc-breadcrumb
+                v-if="!isMobileWidth"
+                id="admin-settings-breadcrumb"
+                :items="breadcrumbs"
+              />
+              <portal-target name="app.runtime.mobile.nav" />
+              <div class="oc-flex">
+                <view-options
+                  v-if="showViewOptions"
+                  :has-hidden-files="false"
+                  :has-file-extensions="false"
+                  :has-pagination="true"
+                  :pagination-options="paginationOptions"
+                  :per-page-default="perPageDefault"
+                  per-page-storage-prefix="admin-settings"
+                />
+              </div>
+            </div>
+            <div
+              v-if="showAppBar"
+              class="admin-settings-app-bar-actions oc-flex oc-flex-middle oc-mt-xs"
+            >
+              <slot
+                name="topbarActions"
+                :limited-screen-space="limitedScreenSpace"
+                class="oc-flex-1 oc-flex oc-flex-start"
+              />
+              <batch-actions
+                v-if="showBatchActions"
+                :actions="batchActions"
+                :action-options="{ resources: batchActionItems }"
+                :limited-screen-space="limitedScreenSpace"
               />
             </div>
           </div>
-          <div
-            v-if="showAppBar"
-            class="admin-settings-app-bar-actions oc-flex oc-flex-middle oc-mt-xs"
-          >
-            <slot
-              name="topbarActions"
-              :limited-screen-space="limitedScreenSpace"
-              class="oc-flex-1 oc-flex oc-flex-start"
-            />
-            <batch-actions
-              v-if="showBatchActions"
-              :actions="batchActions"
-              :action-options="{ resources: batchActionItems }"
-              :limited-screen-space="limitedScreenSpace"
-            />
-          </div>
+          <slot name="mainContent" />
         </div>
-        <slot name="mainContent" />
-      </div>
-      <side-bar
-        v-if="isSideBarOpen"
-        :active-panel="sideBarActivePanel"
-        :available-panels="sideBarAvailablePanels"
-        :panel-context="sideBarPanelContext"
-        :loading="sideBarLoading"
-        :is-open="isSideBarOpen"
-        @select-panel="selectPanel"
-        @close="closeSideBar"
-      >
-        <template #header>
-          <slot name="sideBarHeader" />
-        </template>
-      </side-bar>
-    </template>
+        <side-bar
+          v-if="isSideBarOpen"
+          :active-panel="sideBarActivePanel"
+          :available-panels="sideBarAvailablePanels"
+          :panel-context="sideBarPanelContext"
+          :loading="sideBarLoading"
+          :is-open="isSideBarOpen"
+          @select-panel="selectPanel"
+          @close="closeSideBar"
+        >
+          <template #header>
+            <slot name="sideBarHeader" />
+          </template>
+        </side-bar>
+      </template>
+    </div>
   </main>
 </template>
 
@@ -214,7 +221,7 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
-#admin-settings-wrapper {
+#admin-settings-view-wrapper {
   overflow-y: auto;
 }
 
@@ -246,7 +253,9 @@ export default defineComponent({
   min-height: 3rem;
 }
 
-#admin-settings-wrapper {
-  overflow-y: auto;
+@media only screen and (max-width: $oc-breakpoint-small-default) {
+  .admin-settings-wrapper {
+    flex-wrap: nowrap !important;
+  }
 }
 </style>

@@ -206,7 +206,7 @@ export default defineComponent({
 
     const windowWidth = ref(window.innerWidth)
 
-    const fullWidthSideBar = computed(() => unref(windowWidth) <= 960)
+    const fullWidthSideBar = computed(() => unref(windowWidth) <= 580)
     const backgroundContentEl = computed(() => {
       return unref(appSideBar)?.parentElement?.querySelector('div') as HTMLElement
     })
@@ -308,7 +308,7 @@ export default defineComponent({
   width: 100% !important;
 }
 
-@media only screen and (max-width: $oc-breakpoint-medium-default) {
+@media only screen and (max-width: $oc-breakpoint-small-default) {
   .files-wrapper {
     flex-wrap: nowrap !important;
   }
@@ -327,9 +327,7 @@ export default defineComponent({
   top: 0;
   position: absolute;
   transform: translateX(100%);
-  transition:
-    transform 0.4s ease,
-    visibility 0.4s 0s;
+  transition: transform 0.4s ease, visibility 0.4s 0s;
   // visibility is here to prevent focusing panel child elements,
   // the transition delay keeps care that it will only apply if the element is visible or not.
   // hidden: if element is off screen

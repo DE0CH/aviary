@@ -19,7 +19,7 @@ const stubSelectors = {
 }
 
 const elSelectors = {
-  adminSettingsWrapper: '#admin-settings-wrapper'
+  adminSettingsWrapper: '#admin-settings-view-wrapper'
 }
 
 vi.mock('@opencloud-eu/web-pkg')

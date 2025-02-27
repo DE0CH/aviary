@@ -49,7 +49,8 @@ import {
   useAppsStore,
   useAuthStore,
   useExtensionRegistry,
-  useLocalStorage
+  useLocalStorage,
+  useSideBar
 } from '@opencloud-eu/web-pkg'
 import TopBar from '../components/Topbar/TopBar.vue'
 import MessageBar from '../components/MessageBar.vue'
@@ -57,7 +58,6 @@ import SidebarNav from '../components/SidebarNav/SidebarNav.vue'
 import UploadInfo from '../components/UploadInfo.vue'
 import MobileNav from '../components/MobileNav.vue'
 import { NavItem, getExtensionNavItems } from '../helpers/navItems'
-
 import { useActiveApp, useRoute, useRouteMeta, useSpacesLoading } from '@opencloud-eu/web-pkg'
 import {
   computed,
@@ -97,6 +97,7 @@ export default defineComponent({
     const authStore = useAuthStore()
     const activeApp = useActiveApp()
     const extensionRegistry = useExtensionRegistry()
+    const { isSideBarOpen } = useSideBar()
 
     const appsStore = useAppsStore()
     const { apps } = storeToRefs(appsStore)
@@ -136,9 +137,22 @@ export default defineComponent({
 
     const isMobileWidth = ref<boolean>(window.innerWidth < MOBILE_BREAKPOINT)
     provide('isMobileWidth', isMobileWidth)
+
+    const handleLeftSideBarOnResize = () => {
+      const breakpoint = unref(isSideBarOpen) ? 1200 : 960
+      if (window.innerWidth < breakpoint) {
+        setNavBarClosed(true)
+        return
+      }
+      setNavBarClosed(false)
+    }
+
     const onResize = () => {
       isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
+      handleLeftSideBarOnResize()
     }
+
+    watch(isSideBarOpen, handleLeftSideBarOnResize)
 
     const navItems = computed<NavItem[]>(() => {
       if (!authStore.userContextReady) {
