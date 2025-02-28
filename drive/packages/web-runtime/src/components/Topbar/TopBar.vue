@@ -258,14 +258,9 @@ export default {
   }
 
   .oc-topbar-right {
-    gap: 10px;
+    gap: 20px;
     grid-area: right;
-    justify-content: space-between;
-
-    @media (min-width: $oc-breakpoint-small-default) {
-      gap: 20px;
-      justify-content: flex-end;
-    }
+    justify-content: flex-end;
   }
 }
 </style>

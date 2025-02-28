@@ -15,7 +15,7 @@
       :button-hidden="true"
       :show-cancel-button="showCancelButton"
       :show-advanced-search-button="listProviderAvailable"
-      cancel-button-variation="brand"
+      cancel-button-variation="primary"
       cancel-button-appearance="raw-inverse"
       :cancel-handler="cancelSearch"
       @advanced-search="onKeyUpEnter"
@@ -545,12 +545,12 @@ export default defineComponent({
   #files-global-search-bar {
     width: 452px;
     @media (max-width: 959px) {
-      width: 300px;
+      width: 240px;
     }
 
     @media (max-width: 639px) {
       visibility: hidden;
-      background-color: var(--oc-color-swatch-brand-default);
+      background-color: var(--oc-color-background-chrome);
       position: absolute;
       height: 48px;
       left: 0;
