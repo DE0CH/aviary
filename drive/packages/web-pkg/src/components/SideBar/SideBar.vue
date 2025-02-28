@@ -201,12 +201,24 @@ const backgroundContentEl = computed(() => {
   return unref(appSideBar)?.parentElement?.querySelector('div') as HTMLElement
 })
 
+const handleBackgroundContentVisibility = () => {
+  // handles the visibility of the content behind the sidebar. It needs to be hidden if
+  // the sidebar is open and has full width to avoid focusable elements.
+  if (!unref(backgroundContentEl)) {
+    return
+  }
+
+  const visibility = unref(fullWidthSideBar) ? 'hidden' : 'visible'
+  unref(backgroundContentEl).style.visibility = visibility
+}
+
 const onResize = () => {
   if (!isOpen) {
     return
   }
 
   windowWidth.value = window.innerWidth
+  handleBackgroundContentVisibility()
 }
 
 watch(
@@ -216,10 +228,7 @@ watch(
       return
     }
     await nextTick()
-    if (unref(fullWidthSideBar) && unref(backgroundContentEl)) {
-      // hide content behind sidebar when it has full width to avoid focusable elements
-      unref(backgroundContentEl).style.visibility = 'hidden'
-    }
+    handleBackgroundContentVisibility()
   },
   { immediate: true }
 )
