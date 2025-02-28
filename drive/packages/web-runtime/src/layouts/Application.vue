@@ -41,7 +41,7 @@
   </div>
 </template>
 
-<script lang="ts">
+<script setup lang="ts">
 import orderBy from 'lodash-es/orderBy'
 import {
   AppLoadingSpinner,
@@ -59,17 +59,7 @@ import UploadInfo from '../components/UploadInfo.vue'
 import MobileNav from '../components/MobileNav.vue'
 import { NavItem, getExtensionNavItems } from '../helpers/navItems'
 import { useActiveApp, useRoute, useRouteMeta, useSpacesLoading } from '@opencloud-eu/web-pkg'
-import {
-  computed,
-  defineComponent,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  provide,
-  ref,
-  unref,
-  watch
-} from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, unref, watch } from 'vue'
 import { RouteLocationAsRelativeTyped, useRouter } from 'vue-router'
 import { useGettext } from 'vue3-gettext'
 
@@ -79,157 +69,128 @@ import { progressBarExtensionPoint } from '../extensionPoints'
 
 const MOBILE_BREAKPOINT = 640
 
-export default defineComponent({
-  name: 'ApplicationLayout',
-  components: {
-    AppLoadingSpinner,
-    CustomComponentTarget,
-    MessageBar,
-    MobileNav,
-    TopBar,
-    SidebarNav,
-    UploadInfo
-  },
-  setup() {
-    const router = useRouter()
-    const route = useRoute()
-    const { $gettext } = useGettext()
-    const authStore = useAuthStore()
-    const activeApp = useActiveApp()
-    const extensionRegistry = useExtensionRegistry()
-    const { isSideBarOpen } = useSideBar()
+const router = useRouter()
+const route = useRoute()
+const { $gettext } = useGettext()
+const authStore = useAuthStore()
+const activeApp = useActiveApp()
+const extensionRegistry = useExtensionRegistry()
+const { isSideBarOpen } = useSideBar()
 
-    const appsStore = useAppsStore()
-    const { apps } = storeToRefs(appsStore)
+const appsStore = useAppsStore()
+const { apps } = storeToRefs(appsStore)
 
-    const extensionNavItems = computed(() =>
-      getExtensionNavItems({ extensionRegistry, appId: unref(activeApp) })
-    )
+const extensionNavItems = computed(() =>
+  getExtensionNavItems({ extensionRegistry, appId: unref(activeApp) })
+)
 
-    // FIXME: we can convert to a single router-view without name (thus without the loop) and without this watcher when we release v6.0.0
-    watch(
-      useRoute(),
-      (route) => {
-        if (unref(route).matched.length) {
-          unref(route).matched.forEach((match) => {
-            const keys = Object.keys(match.components).filter((key) => key !== 'default')
-            if (keys.length) {
-              console.warn(
-                `named components are deprecated, use "default" instead of "${keys.join(
-                  ', '
-                )}" on route ${String(route.name)}`
-              )
-            }
-          })
+// FIXME: we can convert to a single router-view without name (thus without the loop) and without this watcher when we release v6.0.0
+watch(
+  useRoute(),
+  (route) => {
+    if (unref(route).matched.length) {
+      unref(route).matched.forEach((match) => {
+        const keys = Object.keys(match.components).filter((key) => key !== 'default')
+        if (keys.length) {
+          console.warn(
+            `named components are deprecated, use "default" instead of "${keys.join(
+              ', '
+            )}" on route ${String(route.name)}`
+          )
         }
-      },
-      { immediate: true }
-    )
-
-    const requiredAuthContext = useRouteMeta('authContext')
-    const { areSpacesLoading } = useSpacesLoading()
-    const isLoading = computed(() => {
-      if (['anonymous', 'idp'].includes(unref(requiredAuthContext))) {
-        return false
-      }
-      return unref(areSpacesLoading)
-    })
-
-    const isMobileWidth = ref<boolean>(window.innerWidth < MOBILE_BREAKPOINT)
-    provide('isMobileWidth', isMobileWidth)
-
-    const handleLeftSideBarOnResize = () => {
-      const breakpoint = unref(isSideBarOpen) ? 1200 : 960
-      if (window.innerWidth < breakpoint) {
-        setNavBarClosed(true)
-        return
-      }
-      setNavBarClosed(false)
-    }
-
-    const onResize = () => {
-      isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
-      handleLeftSideBarOnResize()
-    }
-
-    watch(isSideBarOpen, handleLeftSideBarOnResize)
-
-    const navItems = computed<NavItem[]>(() => {
-      if (!authStore.userContextReady) {
-        return []
-      }
-
-      const { href: currentHref } = router.resolve(unref(route))
-      return orderBy(
-        unref(extensionNavItems).map((item) => {
-          let active = typeof item.isActive !== 'function' || item.isActive()
-
-          if (active) {
-            active = [item.route, ...(item.activeFor || [])].filter(Boolean).some((currentItem) => {
-              try {
-                const comparativeHref = router.resolve(
-                  currentItem as RouteLocationAsRelativeTyped
-                ).href
-                return currentHref.startsWith(comparativeHref)
-              } catch (e) {
-                console.error(e)
-                return false
-              }
-            })
-          }
-
-          const name = typeof item.name === 'function' ? item.name() : item.name
-
-          return {
-            ...item,
-            name: $gettext(name),
-            active
-          }
-        }),
-        ['priority', 'name']
-      )
-    })
-
-    const isSidebarVisible = computed(() => {
-      return unref(navItems).length && !unref(isMobileWidth)
-    })
-
-    const navBarClosed = useLocalStorage(`oc_navBarClosed`, false)
-    const setNavBarClosed = (value: boolean) => {
-      navBarClosed.value = value
-    }
-
-    onMounted(async () => {
-      await nextTick()
-      window.addEventListener('resize', onResize)
-      onResize()
-    })
-
-    onBeforeUnmount(() => {
-      window.removeEventListener('resize', onResize)
-    })
-
-    return {
-      apps,
-      progressBarExtensionPoint,
-      isSidebarVisible,
-      isLoading,
-      navItems,
-      isMobileWidth,
-      navBarClosed,
-      setNavBarClosed
+      })
     }
   },
-  computed: {
-    isIE11() {
-      return !!(window as any).MSInputMethodContext && !!(document as any).documentMode
-    },
-    ieDeprecationWarning() {
-      return this.$gettext(
-        'Internet Explorer (your current browser) is not officially supported. For security reasons, please switch to another browser.'
-      )
-    }
+  { immediate: true }
+)
+
+const requiredAuthContext = useRouteMeta('authContext')
+const { areSpacesLoading } = useSpacesLoading()
+const isLoading = computed(() => {
+  if (['anonymous', 'idp'].includes(unref(requiredAuthContext))) {
+    return false
   }
+  return unref(areSpacesLoading)
+})
+
+const isMobileWidth = ref<boolean>(window.innerWidth < MOBILE_BREAKPOINT)
+provide('isMobileWidth', isMobileWidth)
+
+const handleLeftSideBarOnResize = () => {
+  const breakpoint = unref(isSideBarOpen) ? 1200 : 960
+  if (window.innerWidth < breakpoint) {
+    setNavBarClosed(true)
+    return
+  }
+  setNavBarClosed(false)
+}
+
+const onResize = () => {
+  isMobileWidth.value = window.innerWidth < MOBILE_BREAKPOINT
+  handleLeftSideBarOnResize()
+}
+
+watch(isSideBarOpen, handleLeftSideBarOnResize)
+
+const navItems = computed<NavItem[]>(() => {
+  if (!authStore.userContextReady) {
+    return []
+  }
+
+  const { href: currentHref } = router.resolve(unref(route))
+  return orderBy(
+    unref(extensionNavItems).map((item) => {
+      let active = typeof item.isActive !== 'function' || item.isActive()
+
+      if (active) {
+        active = [item.route, ...(item.activeFor || [])].filter(Boolean).some((currentItem) => {
+          try {
+            const comparativeHref = router.resolve(currentItem as RouteLocationAsRelativeTyped).href
+            return currentHref.startsWith(comparativeHref)
+          } catch (e) {
+            console.error(e)
+            return false
+          }
+        })
+      }
+
+      const name = typeof item.name === 'function' ? item.name() : item.name
+
+      return {
+        ...item,
+        name: $gettext(name),
+        active
+      }
+    }),
+    ['priority', 'name']
+  )
+})
+
+const isSidebarVisible = computed(() => {
+  return unref(navItems).length && !unref(isMobileWidth)
+})
+
+const navBarClosed = useLocalStorage(`oc_navBarClosed`, false)
+const setNavBarClosed = (value: boolean) => {
+  navBarClosed.value = value
+}
+
+const isIE11 = !!(window as any).MSInputMethodContext && !!(document as any).documentMode
+
+const ieDeprecationWarning = computed(() =>
+  $gettext(
+    'Internet Explorer (your current browser) is not officially supported. For security reasons, please switch to another browser.'
+  )
+)
+
+onMounted(async () => {
+  await nextTick()
+  window.addEventListener('resize', onResize)
+  onResize()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
 })
 </script>
 <style lang="scss">
