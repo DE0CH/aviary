@@ -29,6 +29,7 @@ The most basic use case involves a `resource` and a given list of `indicators`. 
 The handler can be disabled by setting `disable-handler` to `true`.
 
 ::: livecode
+
 ```html{11}
 <oc-status-indicators
 	:resource="{ id: '1' }"
@@ -43,6 +44,7 @@ The handler can be disabled by setting `disable-handler` to `true`.
 	:disable-handler="true"
 />
 ```
+
 :::
 
 ::: component-api

@@ -23,10 +23,16 @@ The component will automatically trap the focus within the dropdown when it's be
 The basic usage of the component needs a `title`, and usually involves a `text`. Just like the regular `OcDrop`, it's mostly being used in combination with a button. It's important that the button `id` matches the `toggle` attribute of the dropdown.
 
 ::: livecode
+
 ```html
 <oc-button id="drop-btn">Open drop</oc-button>
-<oc-info-drop toggle="#drop-btn" title="Some title" text="Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam." />
+<oc-info-drop
+  toggle="#drop-btn"
+  title="Some title"
+  text="Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam."
+/>
 ```
+
 :::
 
 ### List

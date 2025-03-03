@@ -32,11 +32,11 @@ By default, the `postMessage` method does not specify the `targetOrigin` paramet
 
 To maintain uniformity and ease of handling, each event encapsulates the same structure within its payload: `{ name: string, data: any }`.
 
-| Name | Data | Description |
-| --- | --- | --- |
-| **opencloud-embed:select** | Resource[] | Gets emitted when user selects resources or location via the select action |
-| **opencloud-embed:share** | string[] | Gets emitted when user selects resources and shares them via the "Share links" action |
-| **opencloud-embed:cancel** | null | Gets emitted when user attempts to close the embedded instance via "Cancel" action |
+| Name                       | Data       | Description                                                                           |
+| -------------------------- | ---------- | ------------------------------------------------------------------------------------- |
+| **opencloud-embed:select** | Resource[] | Gets emitted when user selects resources or location via the select action            |
+| **opencloud-embed:share**  | string[]   | Gets emitted when user selects resources and shares them via the "Share links" action |
+| **opencloud-embed:cancel** | null       | Gets emitted when user attempts to close the embedded instance via "Cancel" action    |
 
 ### Example
 
@@ -62,7 +62,6 @@ To maintain uniformity and ease of handling, each event encapsulates the same st
 
 By default, the Embed mode allows users to select resources. In certain cases (e.g. uploading a file), this needs to be changed to allow selecting a location. This can be achieved by running the embed mode with additional parameter `embed-target=location`. With this parameter, resource selection is disabled and the selected resources array always includes the current folder as the only item.
 In special scenarios you also want the user to set a file name, this can be achieved by adding the `embed-choose-file-name=true` parameter, or if you also want to set a default file name, you can use `embed-choose-file-name-suggestion=my file.text`.
-
 
 ### Example
 
@@ -95,21 +94,22 @@ combination of both. If the embed-file-types parameter is not provided, all file
 ### Example
 
 ```html
-
-<iframe src="https://my-opencloud-web-instance?embed=true&embed-target=file&embed-file-types=txt,image/png"></iframe>
+<iframe
+  src="https://my-opencloud-web-instance?embed=true&embed-target=file&embed-file-types=txt,image/png"
+></iframe>
 
 <script>
-    function selectEventHandler(event) {
-        if (event.data?.name !== 'opencloud-embed:file-pick') {
-            return
-        }
-
-        const file = event.data.data
-
-        doSomethingWithPickedFile(file)
+  function selectEventHandler(event) {
+    if (event.data?.name !== 'opencloud-embed:file-pick') {
+      return
     }
 
-    window.addEventListener('message', selectEventHandler)
+    const file = event.data.data
+
+    doSomethingWithPickedFile(file)
+  }
+
+  window.addEventListener('message', selectEventHandler)
 </script>
 ```
 

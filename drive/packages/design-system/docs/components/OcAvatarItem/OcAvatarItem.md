@@ -19,11 +19,13 @@ The component can be provided with an `accessible-label` in case the avatar item
 ### Default
 
 ::: livecode
+
 ```vue
 <oc-avatar-item name="Cloud" icon="cloud" />
 <oc-avatar-item name="Home" icon="home" />
 <oc-avatar-item name="Settings" icon="settings" />
 ```
+
 :::
 
 ::: component-api

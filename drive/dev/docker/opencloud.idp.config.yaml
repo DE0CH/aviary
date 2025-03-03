@@ -25,7 +25,7 @@ clients:
 
   - id: OpenCloudDesktop
     name: OpenCloud desktop client
-    application_type: "native"
+    application_type: 'native'
     trusted: true
     redirect_uris:
       - http://localhost

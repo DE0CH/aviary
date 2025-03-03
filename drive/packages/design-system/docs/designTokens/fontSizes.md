@@ -6,12 +6,12 @@ The design system uses predefined font sizes to achieve visual harmony in the in
 
 The following tokens are available:
 
-* `oc-font-size-xsmall` (0.72rem)
-* `oc-font-size-small` (0.86rem)
-* `oc-font-size-default` (0.875rem)
-* `oc-font-size-medium` (1rem)
-* `oc-font-size-large` (1.14rem)
-* `oc-font-size-xlarge` (1.29rem)
+- `oc-font-size-xsmall` (0.72rem)
+- `oc-font-size-small` (0.86rem)
+- `oc-font-size-default` (0.875rem)
+- `oc-font-size-medium` (1rem)
+- `oc-font-size-large` (1.14rem)
+- `oc-font-size-xlarge` (1.29rem)
 
 ## Usage
 

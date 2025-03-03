@@ -1,5 +1,5 @@
 ---
-title: "Building from source"
+title: 'Building from source'
 date: 2018-05-02T00:00:00+00:00
 weight: 20
 geekdocRepo: https://github.com/opencloud-eu/web
@@ -28,6 +28,7 @@ geekdocFilePath: building.md
 ### Viewing the documentation
 
 To view the rendered docs in the browser run:
+
 ```bash
 cd hugo
 hugo -D server
@@ -40,4 +41,3 @@ When making changes to the docs, run `make docs` again and the server will pick 
 ### Deploying the documentation
 
 The documentation is automatically deployed from the master branch to https://docs.opencloud.eu/clients/web/
-

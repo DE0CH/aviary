@@ -21,9 +21,11 @@ An `aria-label` attribute should be provided to describe the loader's purpose fo
 The most basic use case involves an `aria-label` property to describe the loader's purpose.
 
 ::: livecode
+
 ```html
 <oc-loader aria-label="Loading content" />
 ```
+
 :::
 
 ### Flat
@@ -31,9 +33,11 @@ The most basic use case involves an `aria-label` property to describe the loader
 The loader also comes in a flat version.
 
 ::: livecode
+
 ```html
 <oc-loader aria-label="Loading content" :flat="true" />
 ```
+
 :::
 
 ::: component-api

@@ -21,13 +21,15 @@ An `accessible-label` can be provided if the element has a purpose. If the icon 
 The basic usage of the component needs the icon `name` property.
 
 ::: livecode
+
 ```html
-<oc-icon name="check" /> 
-<oc-icon name="home" /> 
-<oc-icon name="user" /> 
-<oc-icon name="settings" /> 
-<oc-icon name="github" /> 
+<oc-icon name="check" />
+<oc-icon name="home" />
+<oc-icon name="user" />
+<oc-icon name="settings" />
+<oc-icon name="github" />
 ```
+
 :::
 
 ### Variations
@@ -35,16 +37,18 @@ The basic usage of the component needs the icon `name` property.
 The available variations are: `passive`, `primary`, `danger`, `success`, `warning`, `brand`, `inherit` and `info`.
 
 ::: livecode
+
 ```html
-<oc-icon name="check" variation="passive" /> 
-<oc-icon name="check" variation="primary" /> 
-<oc-icon name="check" variation="danger" /> 
-<oc-icon name="check" variation="success" /> 
-<oc-icon name="check" variation="warning" /> 
-<oc-icon name="check" variation="brand" /> 
-<oc-icon name="check" variation="inherit" /> 
-<oc-icon name="check" variation="info" /> 
+<oc-icon name="check" variation="passive" />
+<oc-icon name="check" variation="primary" />
+<oc-icon name="check" variation="danger" />
+<oc-icon name="check" variation="success" />
+<oc-icon name="check" variation="warning" />
+<oc-icon name="check" variation="brand" />
+<oc-icon name="check" variation="inherit" />
+<oc-icon name="check" variation="info" />
 ```
+
 :::
 
 ### Fill types
@@ -52,11 +56,13 @@ The available variations are: `passive`, `primary`, `danger`, `success`, `warnin
 The available fill types are: `fill`, `line` and `none`.
 
 ::: livecode
+
 ```html
-<oc-icon name="user" fill-type="fill" /> 
-<oc-icon name="user" fill-type="line" /> 
-<oc-icon name="user" fill-type="none" /> 
+<oc-icon name="user" fill-type="fill" />
+<oc-icon name="user" fill-type="line" />
+<oc-icon name="user" fill-type="none" />
 ```
+
 :::
 
 ### Sizes
@@ -64,15 +70,17 @@ The available fill types are: `fill`, `line` and `none`.
 The available sizes are: `xsmall`, `small`, `medium`, `large`, `xlarge`, `xxlarge` and `xxxlarge`.
 
 ::: livecode
+
 ```html
-<oc-icon name="check" size="xsmall" /> 
-<oc-icon name="check" size="small" /> 
-<oc-icon name="check" size="medium" /> 
-<oc-icon name="check" size="large" /> 
-<oc-icon name="check" size="xlarge" /> 
-<oc-icon name="check" size="xxlarge" /> 
-<oc-icon name="check" size="xxxlarge" /> 
+<oc-icon name="check" size="xsmall" />
+<oc-icon name="check" size="small" />
+<oc-icon name="check" size="medium" />
+<oc-icon name="check" size="large" />
+<oc-icon name="check" size="xlarge" />
+<oc-icon name="check" size="xxlarge" />
+<oc-icon name="check" size="xxxlarge" />
 ```
+
 :::
 
 ::: component-api

@@ -17,11 +17,13 @@ The `OcNotifications` component serves as a container for the [OcNotificationMes
 The basic position defaults to `default`, meaning the notification gets displayed in place. Other possible positions are: `top-right`, `top-left` and `top-center`.
 
 ::: livecode
+
 ```html
 <oc-notifications>
-	<oc-notification-message title="Folder has been created successfully." />
+  <oc-notification-message title="Folder has been created successfully." />
 </oc-notifications>
 ```
+
 :::
 
 ::: component-api

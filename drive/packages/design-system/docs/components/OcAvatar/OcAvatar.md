@@ -21,21 +21,25 @@ The component can be provided with an `accessible-label` in case the avatar is u
 ### Default
 
 ::: livecode
+
 ```vue
 <oc-avatar src="https://picsum.photos/50/50?image=550" accessible-label="Some avatar" />
 <oc-avatar user-name="Alan Turing" accessible-label="Alan Turing" />
 ```
+
 :::
 
 ### Variants
 
 ::: livecode
+
 ```vue
 <oc-avatar-federated name="Federated User" accessible-label="Federated User" />
 <oc-avatar-group name="Some group" accessible-label="Some group" />
 <oc-avatar-guest name="Guest user" accessible-label="Guest user" />
 <oc-avatar-link name="Link" accessible-label="Link" />
 ```
+
 :::
 
 ::: component-api

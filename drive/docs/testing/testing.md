@@ -135,12 +135,15 @@ node tests/e2e/cucumber/report --help
 ```
 
 ### E2E Tests on OpenCloud With Keycloak
+
 We can run some of the e2e tests on OpenCloud setup with Keycloak as an external idp. To run tests against locally, please follow the steps below:
 
 #### Run OpenCloud With Keycloak
+
 There's a documentation to serve [OpenCloud with Keycloak](https://docs.opencloud.eu/opencloud/deployment/opencloud_keycloak/). Please follow each step to run **OpenCloud with Keycloak**.
 
 #### Run E2E Tests
+
 ```bash
 KEYCLOAK=true \
 BASE_URL_OPEN_CLOUD=demo.opencloud.test \
@@ -148,6 +151,7 @@ pnpm run test:e2e:cucumber tests/e2e/cucumber/features/journeys
 ```
 
 Following environment variables come in use while running e2e tests on OpenCloud with Keycloak:
+
 - `BASE_URL_OPENCLOUD` sets OpenCloud url (e.g.: demo.opencloud.test)
 - `KEYCLOAK_HOST` sets Keycloak url (e.g.: keycloak.opencloud.test)
 - `KEYCLOAK=true` runs the tests with Keycloak

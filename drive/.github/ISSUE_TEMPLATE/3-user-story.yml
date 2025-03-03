@@ -7,12 +7,10 @@ body:
     attributes:
       label: Initial Checklist
       options:
-        - label:
-            I understand this is a user story and questions should be posted in
+        - label: I understand this is a user story and questions should be posted in
             the [Community Discussions](https://github.com/orgs/opencloud-eu/discussions/)
           required: true
-        - label:
-            I searched
+        - label: I searched
             [issues](https://github.com/opencloud-eu/web/issues?q=is%3Aissue)
             and couldn’t find anything (or linked relevant results below)
           required: true

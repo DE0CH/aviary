@@ -57,6 +57,10 @@ export default [
       'require-await': 'warn',
       // 'sort-imports': 'warn', TODO: fix project import issues and then enable it
       'unused-imports/no-unused-imports': 'error',
+      'no-multiple-empty-lines': ['error', { max: 1 }],
+      'no-trailing-spaces': 'error',
+      semi: ['error', 'never'],
+      'padded-blocks': ['error', 'never'],
 
       'vue/multi-word-component-names': 'warn',
       'vue/no-multiple-template-root': 'off',

@@ -10,13 +10,16 @@ geekdocFilePath: e2e-testing-standards.md
 {{< toc >}}
 
 ## Introduction
+
 ---
+
 title: 'End-to-End (E2E) Test Standards'
 date: 2024-09-11T00:00:00+00:00
 weight: 60
 geekdocRepo: https://github.com/opencloud-eu/web
 geekdocEditPath: edit/master/docs/testing
 geekdocFilePath: e2e-testing-standards.md
+
 ---
 
 {{< toc >}}
@@ -34,54 +37,55 @@ In OpenCloud, we use Playwright for webUI test automation. We benefit from lower
 Here are the test standards and guidelines we adhere to when creating Playwright tests at OpenCloud.
 
 ## Folder Structure:
+
 - `tests/:`
 
-    - `e2e/`: Main folder containing all (end-to-end) E2E test-related files.
+  - `e2e/`: Main folder containing all (end-to-end) E2E test-related files.
 
-        - `cucumber/`: Main folder containing all Cucumber(BDD) test-related files.
+    - `cucumber/`: Main folder containing all Cucumber(BDD) test-related files.
 
-            - `features/`: Contains Gherkin feature files.
+      - `features/`: Contains Gherkin feature files.
 
-                - `<test-suite-folder>/`: Collection house for "**related"** feature files.
+        - `<test-suite-folder>/`: Collection house for "**related"** feature files.
 
-                    - `<aFeatureFile>.feature`: A feature file.
+          - `<aFeatureFile>.feature`: A feature file.
 
-            - `steps/`: Holds the step definition files for mapping Gherkin steps to code.
+      - `steps/`: Holds the step definition files for mapping Gherkin steps to code.
 
-                - `<stepDefinition>.ts`: Step definitions for each feature.
+        - `<stepDefinition>.ts`: Step definitions for each feature.
 
-            - `hooks/`: Cucumber hooks for setting up and tearing down test environments.
-                - `hooks.ts`: Contains `Before`, `After`, and other lifecycle hooks.
+      - `hooks/`: Cucumber hooks for setting up and tearing down test environments.
+        - `hooks.ts`: Contains `Before`, `After`, and other lifecycle hooks.
 
-        - `support/`: Playwright (Test implementation)
+    - `support/`: Playwright (Test implementation)
 
-            - `api/`: Contains API-related test files and configurations.
+      - `api/`: Contains API-related test files and configurations.
 
-                - `<api-folder>/ `: Specific API tests for a particular service.
+        - `<api-folder>/ `: Specific API tests for a particular service.
 
-            - `objects/`: Contains the Page Object classes.
+      - `objects/`: Contains the Page Object classes.
 
-                - `<specific-page-object-folder>/`: Collection house for related page objects for each webpage or component.
+        - `<specific-page-object-folder>/`: Collection house for related page objects for each webpage or component.
 
-                    - `<individualPageObject>.ts`: Page Object for each webpage or component.
+          - `<individualPageObject>.ts`: Page Object for each webpage or component.
 
-            - `utils/`: Utility functions and common helpers.
+      - `utils/`: Utility functions and common helpers.
 
-                - `helpers.ts`: Common utility functions (e.g., date formatting, data generation).
+        - `helpers.ts`: Common utility functions (e.g., date formatting, data generation).
 
-            - `test-data/`: Static test data files or folders for upload.
+      - `test-data/`: Static test data files or folders for upload.
 
-                - `filesForUpload/`: Static test data files for upload.
+        - `filesForUpload/`: Static test data files for upload.
 
-        - `config/`: Configuration files for Playwright and other tools.
+    - `config/`: Configuration files for Playwright and other tools.
 
-            - `playwright.config.ts`: Playwright configuration.
+      - `playwright.config.ts`: Playwright configuration.
 
-        - `reports/`: Generated test reports (e.g., HTML, JSON).
+    - `reports/`: Generated test reports (e.g., HTML, JSON).
 
-            - `screenshots/`: Captured screenshots during test execution.
+      - `screenshots/`: Captured screenshots during test execution.
 
-            - `videos/`: Recorded videos of test runs.
+      - `videos/`: Recorded videos of test runs.
 
 ## Test Structure - Arrange, Act, Assert:
 
@@ -93,12 +97,12 @@ Consider including comments defining each section to ease readability.
 // create a property
 await createProperty()
 
-// act, perform the action that you want to test 
+// act, perform the action that you want to test
 // raise a charge
 // this could involve calling methods or functions defined in your page objects
 await raiseCharge()
 
-// assert, verify that the action had the expected outcome 
+// assert, verify that the action had the expected outcome
 // confirm charge has been raised
 expect(charge).toBe('raised')
 ```
@@ -115,46 +119,41 @@ DO 👍
 
 ```typescript
 // POM file './pageOobjects/foo/'
-// add all locators and functions related to the page. 
-// allowing all tests to reuse 
+// add all locators and functions related to the page.
+// allowing all tests to reuse
 
-import {expect, Locator, Page} from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test'
 
 export class FooPage {
-    readonly errorMessage: Locator;
+  readonly errorMessage: Locator
 
-    constructor(page: Page) {
-        this.page = page;
-        this.errorMessage = page.locator('.error-message');
-    }
+  constructor(page: Page) {
+    this.page = page
+    this.errorMessage = page.locator('.error-message')
+  }
 }
 
 // test file './steps/foo.ts'
-import {FooPage} from './pageObjects/foo';
+import { FooPage } from './pageObjects/foo'
 
-let fooPage: FooPage;
+let fooPage: FooPage
 
-Then(
-    'error message should be visible',
-    async function ({page}) {
-        const fooPage = new FooPage({page});
-        await expect(fooPage.errorMessage).toBeVisible();
-    }
-)
+Then('error message should be visible', async function ({ page }) {
+  const fooPage = new FooPage({ page })
+  await expect(fooPage.errorMessage).toBeVisible()
+})
 ```
 
 DO NOT ⚔️
+
 ```typescript
 // test file './steps/foo.ts'
 // include locators directly in test
-import { Locator, Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test'
 
-Then(
-    'error message should be visible',
-    async function ({page}) {
-        await expect(page.locator('.error-message')).toBeVisible();
-    }
-)
+Then('error message should be visible', async function ({ page }) {
+  await expect(page.locator('.error-message')).toBeVisible()
+})
 ```
 
 ## Waiting:
@@ -173,22 +172,22 @@ DO 👍
 
 ```typescript
 await page.goto(fooBarURL, {
-    waitUntil: 'domcontentloaded'
-});
+  waitUntil: 'domcontentloaded'
+})
 ```
 
 DO 👍
 
 ```typescript
-const element = page.locator("some-locator-path");
-element.waitFor({ visible: true });
+const element = page.locator('some-locator-path')
+element.waitFor({ visible: true })
 ```
 
 DO 👍
 
 ```typescript
-await fooPage.buttonFoo.click();
-await expect(fooPage.titlePage).toBeVisible();
+await fooPage.buttonFoo.click()
+await expect(fooPage.titlePage).toBeVisible()
 ```
 
 ## Selectors
@@ -212,13 +211,14 @@ page.locator('.opt-u > div > .summary > div:nth-child(4) > div')
 DO 👍
 
 ```javascript
-page.locator('#foo-button');
-page.getByText('OK');
+page.locator('#foo-button')
+page.getByText('OK')
 ```
 
 ## Naming Conventions
 
 ### Files and folders
+
 - **Files**: Declare in **_camelCase_**
 - **Folders**: Declare in **_kebab-case_**
 
@@ -228,11 +228,12 @@ Declare in **_camelCase_**.
 
 ### Booleans
 
-Start with ‘is’, ‘has’, ‘are’, ‘have’. This helps spot that this is a boolean while skimming the code. Still declared in ***camelCase***.
+Start with ‘is’, ‘has’, ‘are’, ‘have’. This helps spot that this is a boolean while skimming the code. Still declared in **_camelCase_**.
 
 ```typescript
 let isTurnedOn = false
 ```
+
 ### Page Objects / Classes
 
 Declare in **_PascalCase_**.
@@ -255,29 +256,29 @@ export class AddWorksOrderModal
 
 Use descriptive naming, which can help the reader quickly identify what element the locator is targeting.
 
-As an example, you can use a naming structure that contains ***“action / name of element” + “type of element”***.
+As an example, you can use a naming structure that contains **_“action / name of element” + “type of element”_**.
 
-***Defining type of element*** - These are your basic HTML element types, they’ll be defined and named in the design system, or as a team you can align on a consistent naming of the elements. Example: checkbox, tickbox, button, tooltip
+**_Defining type of element_** - These are your basic HTML element types, they’ll be defined and named in the design system, or as a team you can align on a consistent naming of the elements. Example: checkbox, tickbox, button, tooltip
 
-***Defining action / name -*** Think about what action this element will perform when interacted with. Or any existing name/text of the element
+**_Defining action / name -_** Think about what action this element will perform when interacted with. Or any existing name/text of the element
 
 DO 👍
 
 ```typescript
 // This element is a submit button for the user registration form
-const submitButton = await page.locator("<locator-path>");
+const submitButton = await page.locator('<locator-path>')
 ```
 
 DO 👍
 
 ```typescript
 // This element is a button for uploading a profile picture
-const uploadProfilePictureButton = await page.locator("<locator-path>");
+const uploadProfilePictureButton = await page.locator('<locator-path>')
 ```
 
 ### Function names
 
-Always start function names with a ***“verb”***, followed by the ***“component context”*** that the function is interacting with i.e. what entity it is having an effect on.
+Always start function names with a **_“verb”_**, followed by the **_“component context”_** that the function is interacting with i.e. what entity it is having an effect on.
 
 DO 👍
 
@@ -288,18 +289,23 @@ deleteProperty()
 ```
 
 ## Gherkin Best Practices: Do's and Don'ts for Effective Features & Scenarios
+
 ### Writing Features
+
 DO 👍
+
 - **Be Descriptive:** Use clear and descriptive language that accurately reflects the functionality.
 - **Keep It Concise:** Avoid overly long titles or descriptions. Aim for brevity while maintaining clarity.
 - **Use Active Voice:** Write in an active voice to make it clear who is performing the action.
 - **Contextual Information:** If applicable, provide context about the user role or the scenario to clarify who benefits from the feature.
 
 DO NOT ⚔️
+
 - **Avoid Vague Titles:** Titles like "Test Feature" or "Feature 1" do not provide meaningful information.
 - **Neglect User Perspective:** Failing to mention the user role can make it unclear who the feature is intended for.
 
 Example of a well-written feature:
+
 ```gherkin
 Feature: Password Management for Registered Users
   As a registered user
@@ -308,17 +314,23 @@ Feature: Password Management for Registered Users
 ```
 
 ### Writing Scenarios
+
 - **Use Clear and Descriptive Scenario Titles:** Ensure that each scenario title clearly conveys the action being tested and the expected outcome.
+
 ```gherkin
 Scenario: User successfully registers with valid details
 ```
+
 - **Use Clear Given/When/Then Steps:** Clearly define the context, action, and expected outcome(success or error messages if any).
+
 ```gherkin
 Given the user is on the registration page
 When the user enters valid details
 Then the user should see a confirmation message "Registration successful! Welcome to our platform."
 ```
+
 - **Use "tries to" for Negation:** This syntax is effective for scenarios where an action is expected to fail.
+
 ```gherkin
 Scenario: User tries to log in with incorrect credentials
 Given the user is on the registration page
@@ -330,6 +342,7 @@ Then the user should see an error message
 ```
 
 ## Broad Gherkin Guidelines
+
 This [OpenCloud developer manual](https://docs.opencloud.eu/server/next/developer_manual/testing/acceptance-tests.html#how-to-write-acceptance-tests) provides comprehensive guidelines and best practices for writing acceptance tests using the Gherkin syntax, a widely adopted language for defining test scenarios in a human-readable format. The manual outlines the specific syntax and structure required when crafting feature files and scenarios to ensure consistency and maintainability within the OpenCloud testing framework.
 
 In OpenCloud, we use Playwright for webUI test automation. We benefit from lower barriers to entry, readability, and usability when test standards are consistent across repositories. For example:
@@ -343,54 +356,55 @@ In OpenCloud, we use Playwright for webUI test automation. We benefit from lower
 Here are the test standards and guidelines we adhere to when creating Playwright tests at OpenCloud.
 
 ## Folder Structure:
+
 - `tests/:`
 
-    - `e2e/`: Main folder containing all (end-to-end) E2E test-related files.
-    
-      - `cucumber/`: Main folder containing all Cucumber(BDD) test-related files.
+  - `e2e/`: Main folder containing all (end-to-end) E2E test-related files.
 
-        - `features/`: Contains Gherkin feature files.
+    - `cucumber/`: Main folder containing all Cucumber(BDD) test-related files.
 
-            - `<test-suite-folder>/`: Collection house for "**related"** feature files.
+      - `features/`: Contains Gherkin feature files.
 
-                - `<aFeatureFile>.feature`: A feature file.
+        - `<test-suite-folder>/`: Collection house for "**related"** feature files.
 
-        - `steps/`: Holds the step definition files for mapping Gherkin steps to code.
+          - `<aFeatureFile>.feature`: A feature file.
 
-            - `<stepDefinition>.ts`: Step definitions for each feature.
+      - `steps/`: Holds the step definition files for mapping Gherkin steps to code.
 
-        - `hooks/`: Cucumber hooks for setting up and tearing down test environments.
-            - `hooks.ts`: Contains `Before`, `After`, and other lifecycle hooks.
+        - `<stepDefinition>.ts`: Step definitions for each feature.
 
-      - `support/`: Playwright (Test implementation)
+      - `hooks/`: Cucumber hooks for setting up and tearing down test environments.
+        - `hooks.ts`: Contains `Before`, `After`, and other lifecycle hooks.
 
-        - `api/`: Contains API-related test files and configurations.
-          
-          - `<api-folder>/ `: Specific API tests for a particular service.
+    - `support/`: Playwright (Test implementation)
 
-        - `objects/`: Contains the Page Object classes.
+      - `api/`: Contains API-related test files and configurations.
 
-            - `<specific-page-object-folder>/`: Collection house for related page objects for each webpage or component.
+        - `<api-folder>/ `: Specific API tests for a particular service.
 
-                - `<individualPageObject>.ts`: Page Object for each webpage or component.
+      - `objects/`: Contains the Page Object classes.
 
-        - `utils/`: Utility functions and common helpers.
+        - `<specific-page-object-folder>/`: Collection house for related page objects for each webpage or component.
 
-            - `helpers.ts`: Common utility functions (e.g., date formatting, data generation).
+          - `<individualPageObject>.ts`: Page Object for each webpage or component.
 
-        - `test-data/`: Static test data files or folders for upload.
+      - `utils/`: Utility functions and common helpers.
 
-            - `filesForUpload/`: Static test data files for upload.
+        - `helpers.ts`: Common utility functions (e.g., date formatting, data generation).
 
-      - `config/`: Configuration files for Playwright and other tools.
+      - `test-data/`: Static test data files or folders for upload.
 
-          - `playwright.config.ts`: Playwright configuration.
+        - `filesForUpload/`: Static test data files for upload.
 
-      - `reports/`: Generated test reports (e.g., HTML, JSON).
+    - `config/`: Configuration files for Playwright and other tools.
 
-          - `screenshots/`: Captured screenshots during test execution.
+      - `playwright.config.ts`: Playwright configuration.
 
-          - `videos/`: Recorded videos of test runs.
+    - `reports/`: Generated test reports (e.g., HTML, JSON).
+
+      - `screenshots/`: Captured screenshots during test execution.
+
+      - `videos/`: Recorded videos of test runs.
 
 ## Test Structure - Arrange, Act, Assert:
 
@@ -402,12 +416,12 @@ Consider including comments defining each section to ease readability.
 // create a property
 await createProperty()
 
-// act, perform the action that you want to test 
+// act, perform the action that you want to test
 // raise a charge
 // this could involve calling methods or functions defined in your page objects
 await raiseCharge()
 
-// assert, verify that the action had the expected outcome 
+// assert, verify that the action had the expected outcome
 // confirm charge has been raised
 expect(charge).toBe('raised')
 ```
@@ -424,46 +438,41 @@ DO 👍
 
 ```typescript
 // POM file './pageOobjects/foo/'
-// add all locators and functions related to the page. 
-// allowing all tests to reuse 
+// add all locators and functions related to the page.
+// allowing all tests to reuse
 
-import {expect, Locator, Page} from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test'
 
 export class FooPage {
-    readonly errorMessage: Locator;
+  readonly errorMessage: Locator
 
-    constructor(page: Page) {
-        this.page = page;
-        this.errorMessage = page.locator('.error-message');
-    }
+  constructor(page: Page) {
+    this.page = page
+    this.errorMessage = page.locator('.error-message')
+  }
 }
 
 // test file './steps/foo.ts'
-import {FooPage} from './pageObjects/foo';
+import { FooPage } from './pageObjects/foo'
 
-let fooPage: FooPage;
+let fooPage: FooPage
 
-Then(
-    'error message should be visible',
-    async function ({page}) {
-        const fooPage = new FooPage({page});
-        await expect(fooPage.errorMessage).toBeVisible();
-    }
-)
+Then('error message should be visible', async function ({ page }) {
+  const fooPage = new FooPage({ page })
+  await expect(fooPage.errorMessage).toBeVisible()
+})
 ```
 
 DO NOT ⚔️
+
 ```typescript
 // test file './steps/foo.ts'
 // include locators directly in test
-import { Locator, Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test'
 
-Then(
-    'error message should be visible',
-    async function ({page}) {
-        await expect(page.locator('.error-message')).toBeVisible();
-    }
-)
+Then('error message should be visible', async function ({ page }) {
+  await expect(page.locator('.error-message')).toBeVisible()
+})
 ```
 
 ## Waiting:
@@ -482,22 +491,22 @@ DO 👍
 
 ```typescript
 await page.goto(fooBarURL, {
-    waitUntil: 'domcontentloaded'
-});
+  waitUntil: 'domcontentloaded'
+})
 ```
 
 DO 👍
 
 ```typescript
-const element = page.locator("some-locator-path");
-element.waitFor({ visible: true });
+const element = page.locator('some-locator-path')
+element.waitFor({ visible: true })
 ```
 
 DO 👍
 
 ```typescript
-await fooPage.buttonFoo.click();
-await expect(fooPage.titlePage).toBeVisible();
+await fooPage.buttonFoo.click()
+await expect(fooPage.titlePage).toBeVisible()
 ```
 
 ## Selectors
@@ -521,13 +530,14 @@ page.locator('.opt-u > div > .summary > div:nth-child(4) > div')
 DO 👍
 
 ```javascript
-page.locator('#foo-button');
-page.getByText('OK');
+page.locator('#foo-button')
+page.getByText('OK')
 ```
 
 ## Naming Conventions
 
 ### Files and folders
+
 - **Files**: Declare in **_camelCase_**
 - **Folders**: Declare in **_kebab-case_**
 
@@ -537,11 +547,12 @@ Declare in **_camelCase_**.
 
 ### Booleans
 
-Start with ‘is’, ‘has’, ‘are’, ‘have’. This helps spot that this is a boolean while skimming the code. Still declared in ***camelCase***.
+Start with ‘is’, ‘has’, ‘are’, ‘have’. This helps spot that this is a boolean while skimming the code. Still declared in **_camelCase_**.
 
 ```typescript
 let isTurnedOn = false
 ```
+
 ### Page Objects / Classes
 
 Declare in **_PascalCase_**.
@@ -564,29 +575,29 @@ export class AddWorksOrderModal
 
 Use descriptive naming, which can help the reader quickly identify what element the locator is targeting.
 
-As an example, you can use a naming structure that contains ***“action / name of element” + “type of element”***.
+As an example, you can use a naming structure that contains **_“action / name of element” + “type of element”_**.
 
-***Defining type of element*** - These are your basic HTML element types, they’ll be defined and named in the design system, or as a team you can align on a consistent naming of the elements. Example: checkbox, tickbox, button, tooltip
+**_Defining type of element_** - These are your basic HTML element types, they’ll be defined and named in the design system, or as a team you can align on a consistent naming of the elements. Example: checkbox, tickbox, button, tooltip
 
-***Defining action / name -*** Think about what action this element will perform when interacted with. Or any existing name/text of the element
+**_Defining action / name -_** Think about what action this element will perform when interacted with. Or any existing name/text of the element
 
 DO 👍
 
 ```typescript
 // This element is a submit button for the user registration form
-const submitButton = await page.locator("<locator-path>");
+const submitButton = await page.locator('<locator-path>')
 ```
 
 DO 👍
 
 ```typescript
 // This element is a button for uploading a profile picture
-const uploadProfilePictureButton = await page.locator("<locator-path>");
+const uploadProfilePictureButton = await page.locator('<locator-path>')
 ```
 
 ### Function names
 
-Always start function names with a ***“verb”***, followed by the ***“component context”*** that the function is interacting with i.e. what entity it is having an effect on.
+Always start function names with a **_“verb”_**, followed by the **_“component context”_** that the function is interacting with i.e. what entity it is having an effect on.
 
 DO 👍
 
@@ -597,18 +608,23 @@ deleteProperty()
 ```
 
 ## Gherkin Best Practices: Do's and Don'ts for Effective Features & Scenarios
+
 ### Writing Features
+
 DO 👍
+
 - **Be Descriptive:** Use clear and descriptive language that accurately reflects the functionality.
 - **Keep It Concise:** Avoid overly long titles or descriptions. Aim for brevity while maintaining clarity.
 - **Use Active Voice:** Write in an active voice to make it clear who is performing the action.
 - **Contextual Information:** If applicable, provide context about the user role or the scenario to clarify who benefits from the feature.
 
 DO NOT ⚔️
+
 - **Avoid Vague Titles:** Titles like "Test Feature" or "Feature 1" do not provide meaningful information.
 - **Neglect User Perspective:** Failing to mention the user role can make it unclear who the feature is intended for.
 
 Example of a well-written feature:
+
 ```gherkin
 Feature: Password Management for Registered Users
   As a registered user
@@ -617,17 +633,23 @@ Feature: Password Management for Registered Users
 ```
 
 ### Writing Scenarios
+
 - **Use Clear and Descriptive Scenario Titles:** Ensure that each scenario title clearly conveys the action being tested and the expected outcome.
+
 ```gherkin
 Scenario: User successfully registers with valid details
 ```
+
 - **Use Clear Given/When/Then Steps:** Clearly define the context, action, and expected outcome(success or error messages if any).
+
 ```gherkin
 Given the user is on the registration page
 When the user enters valid details
 Then the user should see a confirmation message "Registration successful! Welcome to our platform."
 ```
+
 - **Use "tries to" for Negation:** This syntax is effective for scenarios where an action is expected to fail.
+
 ```gherkin
 Scenario: User tries to log in with incorrect credentials
 Given the user is on the registration page
@@ -639,4 +661,5 @@ Then the user should see an error message
 ```
 
 ## Broad Gherkin Guidelines
+
 This [OpenCloud developer manual](https://docs.opencloud.eu/server/next/developer_manual/testing/acceptance-tests.html#how-to-write-acceptance-tests) provides comprehensive guidelines and best practices for writing acceptance tests using the Gherkin syntax, a widely adopted language for defining test scenarios in a human-readable format. The manual outlines the specific syntax and structure required when crafting feature files and scenarios to ensure consistency and maintainability within the OpenCloud testing framework.

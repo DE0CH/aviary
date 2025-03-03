@@ -17,11 +17,13 @@ The `OcPagination` component displays a list of links used for switching to diff
 The component needs to be provided with the `currentPage`, the `currentRoute` and the total number of `pages`.
 
 ::: livecode
+
 ```html
 <oc-pagination :pages="3" :currentPage="1" :currentRoute="{ name: 'folderA' }" />
 <oc-pagination :pages="3" :currentPage="2" :currentRoute="{ name: 'folderB' }" />
 <oc-pagination :pages="3" :currentPage="3" :currentRoute="{ name: 'folderC' }" />
 ```
+
 :::
 
 ### Limit max displayed
@@ -29,6 +31,7 @@ The component needs to be provided with the `currentPage`, the `currentRoute` an
 The amount of displayed pages can be limited via the `max-displayed` property.
 
 ::: livecode
+
 ```html{5}
 <oc-pagination
 	:pages="10"
@@ -37,6 +40,7 @@ The amount of displayed pages can be limited via the `max-displayed` property.
 	:max-displayed="3"
 />
 ```
+
 :::
 
 ::: component-api

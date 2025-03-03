@@ -18,10 +18,11 @@ OpenCloud Web can be extended through various entry points with custom **apps** 
 
 An Application in the context of OpenCloud Web is an artifact which can be installed in an OpenCloud instance.
 It serves two main purposes:
+
 1. It makes the full app viewport (everything below the top bar) available to the application developer for any custom
    application code. This includes the ability to define views with routes, navigation items for the left sidebar, and more.
-2. Through the `extensions` key in the application interface you can register extensions of any extension type. Those extensions 
-   are then available in standardized extension points. Additionally, they can be queried from the extension registry for 
+2. Through the `extensions` key in the application interface you can register extensions of any extension type. Those extensions
+   are then available in standardized extension points. Additionally, they can be queried from the extension registry for
    your own purposes.
 
 Both parts are optional. This means that an application can be a file editor without any custom extensions, or even contain
@@ -37,7 +38,7 @@ Feel free to contribute or just be inspired for your own apps or extensions.
 To get started, define a `src/index.ts`. Below is the most basic example of its content:
 
 ```typescript
-// Install '@opencloud-eu/web-pkg' as a devDependency first (only relevant for types and autocompletion, dependency is already provided by OpenCloud Web at runtime). 
+// Install '@opencloud-eu/web-pkg' as a devDependency first (only relevant for types and autocompletion, dependency is already provided by OpenCloud Web at runtime).
 import {
   AppWrapperRoute,
   ApplicationFileExtension,
@@ -51,7 +52,7 @@ export default defineWebApplication({
 
     // Needs to be unique within all installed applications in any OpenCloud web instance
     // Should be short, unique and expressive as it is used as prefix on all routes within your application
-    const appId = 'your-extension' 
+    const appId = 'your-extension'
 
     // See extensions section below
     const extensions = [
@@ -83,9 +84,10 @@ export default defineWebApplication({
 ```
 
 By defining an application via `defineWebApplication` you can provide the following:
+
 - `appInfo` - the application metadata, which is used to make the application available via the app switcher and the app registry.
-- `navItems` - the statically defined navigation items for the left sidebar. Only gets rendered when more than 1 navigation item exists at runtime. 
-Additional dynamic navigation items can be registered via the extension registry.
+- `navItems` - the statically defined navigation items for the left sidebar. Only gets rendered when more than 1 navigation item exists at runtime.
+  Additional dynamic navigation items can be registered via the extension registry.
 - `routes` - the routes to the different views of your application. May be referenced within the `navItems`. Authentication requirements can be defined per item.
 - `extensions` - the extensions to be registered in the extension registry. For more details see the `Extensions` section below.
 
@@ -102,23 +104,23 @@ In contrast to applications, extensions usually have a rather small scope and de
 The globally available extension registry provided by the OpenCloud Web runtime can be used to both register and query extensions. All extensions
 which are being made available via an `app` get registered in the extension registry automatically. In your custom application code you can
 then query any of the available extensions by providing an `extensionPoint` entity. Throughout the OpenCloud Web platform
-and most prominently also in the `files` app we have defined some extension points which automatically use certain extensions, see the 
+and most prominently also in the `files` app we have defined some extension points which automatically use certain extensions, see the
 `Extension Points` section below.
 
 #### Extension Types
 
 For building an extension you can choose from the types predefined by the OpenCloud Web extension system. See the full list of available extension types below.
 
-1. `ActionExtension` (type `action`) - An extension that can register `Action` items which then get shown in various places (e.g. context menus, batch actions), depending on the 
-extension points referenced in the extension respectively. Most commonly used for file and folder actions (e.g. copy, rename, delete, etc.). For details, please refer to the [action docs]({{< ref "extension-types/actions.md" >}}).
+1. `ActionExtension` (type `action`) - An extension that can register `Action` items which then get shown in various places (e.g. context menus, batch actions), depending on the
+   extension points referenced in the extension respectively. Most commonly used for file and folder actions (e.g. copy, rename, delete, etc.). For details, please refer to the [action docs]({{< ref "extension-types/actions.md" >}}).
 2. `SearchExtension` (type `search`) - An extension that can register additional search providers. For details, please refer to the [search docs]({{< ref "extension-types/search.md" >}}).
 3. `SidebarNavExtension` (type `sidebarNav`) - An extension that can register additional navigation items for the left sidebar. These can be scoped to specific apps, and programmatically enabled/disabled.
-For details, please refer to the [sidebar nav docs]({{< ref "extension-types/left-sidebar-menu-item.md" >}}).
+   For details, please refer to the [sidebar nav docs]({{< ref "extension-types/left-sidebar-menu-item.md" >}}).
 4. `SidebarPanelExtension`, (type `sidebarPanel`) - An extension that can register panels for the right sidebar. For details, please refer to the [sidebar panel docs]({{< ref "extension-types/right-sidebar-panels.md" >}}).
 5. `FolderViewExtension` (type `folderView`) - An extension that can register additional ways of displaying the content of a folder (resources like spaces, folders or files) to the user.
-For details, please refer to the [folder view docs]({{< ref "extension-types/folder-view.md" >}}).
+   For details, please refer to the [folder view docs]({{< ref "extension-types/folder-view.md" >}}).
 6. `CustomComponentExtension` (type `customComponent`) - An extension that can register a custom component for a render target. For details, please refer to the
-[custom component docs]({{< ref "extension-types/custom-components.md" >}})
+   [custom component docs]({{< ref "extension-types/custom-components.md" >}})
 
 You're free to introduce your own extension types within your application code and use the extension registry to query the available ones. However, if you have the impression
 that an important extension type is missing and would be beneficial for the platform, please reach out to us by opening a [GitHub issue](https://github.com/opencloud-eu/web/issues/new/choose).
@@ -127,7 +129,7 @@ that an important extension type is missing and would be beneficial for the plat
 
 Any extension is required to define at least an `id` and a `type` in order to fulfill the generic `Extension` interface.
 
-The `id` is supposed to be unique throughout the OpenCloud Web ecosystem. In order to keep `id`s readable for humans we didn't want to enforce uniqueness through e.g. uuids. 
+The `id` is supposed to be unique throughout the OpenCloud Web ecosystem. In order to keep `id`s readable for humans we didn't want to enforce uniqueness through e.g. uuids.
 Instead, we chose to use dot-formatted namespaces like e.g. `com.github.opencloud-eu.web.files.search`. We'd like to encourage you to follow the same format for your own extensions.
 
 For the `type` you can choose from the ones listed above or define a custom one.
@@ -138,8 +140,8 @@ You can find predefined extension point ids in the extension points section belo
 
 #### Extension Points
 
-There are standardized components and places where extensions are being used automatically. The following ones are currently provided by the OpenCloud Web runtime or 
-the `files` app. If you decide to develop an extension which fulfills the type and registers itself for the extensionPointId of the respective extension point, 
+There are standardized components and places where extensions are being used automatically. The following ones are currently provided by the OpenCloud Web runtime or
+the `files` app. If you decide to develop an extension which fulfills the type and registers itself for the extensionPointId of the respective extension point,
 your extension will be used automatically.
 
 1. Left Sidebar for Navigation. ExtensionPointId `app.${appName}.navItems` (dynamically created for each app). Mounts extensions of type `sidebarNav`.
@@ -163,7 +165,7 @@ your extension will be used automatically.
 
 To allow users to configure extensions, extension points can define user preferences. User preferences are defined as an object on the extension point configuration.
 Whenever an extension point declares to accept user preferences, it will get listed with a dropdown on the Preferences page (reachable via top right user menu).
-The user can then select one out of all the extensions which have been registered for this extension point. 
+The user can then select one out of all the extensions which have been registered for this extension point.
 
 ### Helpful packages
 

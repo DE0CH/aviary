@@ -1,6 +1,6 @@
 {
   "extends": "@opencloud-eu/tsconfig",
   "vueCompilerOptions": {
-    "vitePressExtensions": [".md"],
+    "vitePressExtensions": [".md"]
   }
 }

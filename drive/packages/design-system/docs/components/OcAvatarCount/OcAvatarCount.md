@@ -13,9 +13,11 @@ The `OcAvatarCount` component represents a count of multiple avatars. It's usefu
 ## Examples
 
 ::: livecode
+
 ```vue
 <oc-avatar-count :count="20" />
 ```
+
 :::
 
 ::: component-api

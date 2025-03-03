@@ -1,5 +1,5 @@
 ---
-title: "Setup with OpenCloud"
+title: 'Setup with OpenCloud'
 date: 2020-04-15T00:00:00+00:00
 weight: 50
 geekdocRepo: https://github.com/opencloud-eu/web
@@ -33,4 +33,3 @@ geekdocFilePath: backend-opencloud.md
 ## Running tests
 
 For testing, please refer to the [testing docs]({{< ref "testing/_index.md" >}})
-
