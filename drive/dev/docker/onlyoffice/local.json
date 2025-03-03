@@ -41,31 +41,30 @@
     "url": "amqp://guest:guest@localhost"
   },
   "FileConverter": {
-		"converter": {
-			"inputLimits": [
-				{
-				"type": "docx;dotx;docm;dotm",
-				"zip": {
-					"uncompressed": "1GB",
-					"template": "*.xml"
-				}
-				},
-				{
-				"type": "xlsx;xltx;xlsm;xltm",
-				"zip": {
-					"uncompressed": "1GB",
-					"template": "*.xml"
-				}
-				},
-				{
-				"type": "pptx;ppsx;potx;pptm;ppsm;potm",
-				"zip": {
-					"uncompressed": "1GB",
-					"template": "*.xml"
-				}
-				}
-			]
-		}
-	}
-
+    "converter": {
+      "inputLimits": [
+        {
+          "type": "docx;dotx;docm;dotm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        },
+        {
+          "type": "xlsx;xltx;xlsm;xltm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        },
+        {
+          "type": "pptx;ppsx;potx;pptm;ppsm;potm",
+          "zip": {
+            "uncompressed": "1GB",
+            "template": "*.xml"
+          }
+        }
+      ]
+    }
+  }
 }

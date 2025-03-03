@@ -17,11 +17,13 @@ The `OcTag` component can display various information in form of a tag.
 The component provides a default slot that can be filled with the content that should be displayed inside the tag.
 
 ::: livecode
+
 ```html
 <oc-tag>Folder</oc-tag>
 <oc-tag>File</oc-tag>
 <oc-tag>Space</oc-tag>
 ```
+
 :::
 
 ### Sizes
@@ -29,11 +31,13 @@ The component provides a default slot that can be filled with the content that s
 These sizes are available: `small`, `medium`, `large`.
 
 ::: livecode
+
 ```html
 <oc-tag size="small">Folder</oc-tag>
 <oc-tag size="medium">File</oc-tag>
 <oc-tag size="large">Space</oc-tag>
 ```
+
 :::
 
 ### Links and handlers

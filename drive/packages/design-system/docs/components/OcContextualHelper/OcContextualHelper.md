@@ -21,15 +21,14 @@ The component will automatically trap the focus within the menu when it is opene
 The most basic use case needs a `title` and usually has a `text` that is being displayed.
 
 ::: livecode
+
 ```html
 <p>
-	I have some additional context.
-	<oc-contextual-helper
-		title="Some helper"
-		text="Some text giving context."
-	/>
+  I have some additional context.
+  <oc-contextual-helper title="Some helper" text="Some text giving context." />
 </p>
 ```
+
 :::
 
 ### List of items

@@ -29,17 +29,19 @@ The default use case needs a `label` and a `v-model` to bind the value of the ch
 The checkbox can be displayed in three different sizes: `small`, `medium`, and `large`.
 
 ::: livecode
+
 ```html
 <div class="oc-mb-s">
-	<oc-checkbox label="Small checkbox" size="small" />
+  <oc-checkbox label="Small checkbox" size="small" />
 </div>
 <div class="oc-mb-s">
-	<oc-checkbox label="Medium checkbox" size="medium" />
+  <oc-checkbox label="Medium checkbox" size="medium" />
 </div>
 <div class="oc-mb-s">
-	<oc-checkbox label="Large checkbox" size="large" />
+  <oc-checkbox label="Large checkbox" size="large" />
 </div>
 ```
+
 :::
 
 ::: component-api

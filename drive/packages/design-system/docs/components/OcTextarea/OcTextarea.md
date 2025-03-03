@@ -33,9 +33,11 @@ The default and most simple use case involves a `v-model` and a `label`.
 ### Disabled
 
 ::: livecode
+
 ```vue
 <oc-textarea disabled label="Disabled" model-value="I am disabled" />
 ```
+
 :::
 
 ### Messages

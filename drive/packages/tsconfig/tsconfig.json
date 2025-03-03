@@ -18,18 +18,11 @@
     "module": "preserve",
     "sourceMap": true,
 
-    "lib": [
-      "ESNext",
-      "es2022",
-      "dom",
-      "dom.iterable"
-    ],
-    
+    "lib": ["ESNext", "es2022", "dom", "dom.iterable"],
+
     "types": ["vitest/globals"]
   },
-  "exclude": [
-    "node_modules"
-  ],
+  "exclude": ["node_modules"],
   "vueCompilerOptions": {
     "target": 3
   }

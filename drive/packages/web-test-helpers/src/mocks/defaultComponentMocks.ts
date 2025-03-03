@@ -26,7 +26,7 @@ export const defaultComponentMocks = ({ currentRoute = undefined }: ComponentMoc
   }
 
   $router.resolve.mockImplementation(
-    (to: RouteLocationRaw) => ({ href: (to as any).name, location: { path: '' } } as any)
+    (to: RouteLocationRaw) => ({ href: (to as any).name, location: { path: '' } }) as any
   )
   const $route = $router.currentRoute.value
   $route.path = $route.path || '/'

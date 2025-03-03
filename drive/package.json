@@ -10,6 +10,8 @@
     "build:w": "pnpm build --watch",
     "build:tokens": "pnpm --filter @opencloud-eu/design-system tokens",
     "lint": "eslint vite.config.ts '{packages,tests}/**/*.{js,ts,vue}' --color",
+    "format:check": "prettier . --config packages/prettier-config/index.js --check",
+    "format:write": "prettier . --config packages/prettier-config/index.js --write",
     "serve": "SERVER=true pnpm build:w",
     "test:e2e:cucumber": "NODE_TLS_REJECT_UNAUTHORIZED=0 TS_NODE_PROJECT=./tests/e2e/cucumber/tsconfig.json cucumber-js --profile=e2e --parallel ${PARALLEL:-1}",
     "test:unit": "NODE_OPTIONS=--unhandled-rejections=throw vitest",
@@ -18,7 +20,7 @@
     "licenses:save": "license-checker-rseidelsohn --relativeLicensePath --out /dev/null --files ./third-party-licenses/third-party-licenses",
     "vite": "vue-demi-fix && vite",
     "check:types": "pnpm build:tokens && vue-tsc --noEmit",
-    "check:all": "pnpm check:types && pnpm lint --fix && pnpm test:unit"
+    "check:all": "pnpm check:types && pnpm lint && pnpm format && --fix && pnpm test:unit"
   },
   "browserslist": [
     "last 1 year",

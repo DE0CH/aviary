@@ -1,6 +1,6 @@
 # Color Palette
 
-The design system uses a predefined color palette to ensure a consistent look and feel across the interface. The color palette is designed to be accessible and to provide a wide range of colors for different use cases. 
+The design system uses a predefined color palette to ensure a consistent look and feel across the interface. The color palette is designed to be accessible and to provide a wide range of colors for different use cases.
 
 ## Available colors
 
@@ -31,7 +31,6 @@ const fields = [
 ]
 </script>
 
-
 <oc-table :fields="fields" :data="tokens">
   <template #color="{ item }">
     <div :style="{ backgroundColor: item.value, width: '150px', height: '50px' }" />
@@ -43,7 +42,6 @@ const fields = [
     {{ item.value }}
   </template>
 </oc-table>
-
 
 <style lang="scss">
 .oc-tbody-tr {

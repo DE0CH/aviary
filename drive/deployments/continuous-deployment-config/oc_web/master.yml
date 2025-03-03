@@ -14,7 +14,7 @@
       - /var/lib/docker/volumes/web_certs
 
   domains:
-    - "*.oc-web.master.opencloud.eu"
+    - '*.oc-web.master.opencloud.eu'
 
   vars:
     ssh_authorized_keys:
@@ -27,7 +27,7 @@
         ref: master
         docker_compose_path: deployments/examples/oc_web
         env:
-          INSECURE: "false"
+          INSECURE: 'false'
           TRAEFIK_ACME_MAIL: b.kulmann@opencloud.eu
           OC_DOCKER_TAG: latest
           WEB_DOCKER_TAG: latest

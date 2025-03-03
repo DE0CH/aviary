@@ -18,10 +18,12 @@ You usually want to wrap it inside the [OcNotifications](./OcNotifications) comp
 The basic usage of the component needs a `title` property. An optional `message` can be provided to give more context to the user.
 
 ::: livecode
+
 ```html
 <oc-notification-message title="Folder has been created successfully." />
 <oc-notification-message title="Success" message="Folder has been created successfully." />
 ```
+
 :::
 
 ### Statuses
@@ -29,13 +31,18 @@ The basic usage of the component needs a `title` property. An optional `message`
 There are different statuses available for the notification message: `passive`, `primary`, `success`, `warning` and `danger`.
 
 ::: livecode
+
 ```html
 <oc-notification-message title="Folder has been created successfully." status="passive" />
 <oc-notification-message title="Folder has been created successfully." status="primary" />
 <oc-notification-message title="Folder has been created successfully." status="success" />
-<oc-notification-message title="Folder has been created under a different location." status="warning" />
+<oc-notification-message
+  title="Folder has been created under a different location."
+  status="warning"
+/>
 <oc-notification-message title="Folder could not be created." status="danger" />
 ```
+
 :::
 
 ::: component-api

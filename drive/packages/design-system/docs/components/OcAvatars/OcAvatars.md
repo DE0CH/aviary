@@ -19,16 +19,18 @@ The component can be provided with an `accessible-description` since the avatars
 ### Default
 
 ::: livecode
+
 ```vue
 <oc-avatars
-	:items="[
-		{ displayName: 'Alan', shareType: 0 },
-		{ displayName: 'Mary', shareType: 0 },
-		{ displayName: 'Brian', shareType: 0 },
-		{ displayName: 'Engineers', shareType: 1 }
-	]"
+  :items="[
+    { displayName: 'Alan', shareType: 0 },
+    { displayName: 'Mary', shareType: 0 },
+    { displayName: 'Brian', shareType: 0 },
+    { displayName: 'Engineers', shareType: 1 }
+  ]"
 />
 ```
+
 :::
 
 ### Stacked avatars
@@ -36,17 +38,19 @@ The component can be provided with an `accessible-description` since the avatars
 Avatars can be stacked when there is limited screen space.
 
 ::: livecode
+
 ```vue
 <oc-avatars
-	:items="[
-		{ displayName: 'Alan', shareType: 0 },
-		{ displayName: 'Mary', shareType: 0 },
-		{ displayName: 'Brian', shareType: 0 }
-	]"
-	accessible-description="This resource is shared with many users."
-	:stacked="true"
+  :items="[
+    { displayName: 'Alan', shareType: 0 },
+    { displayName: 'Mary', shareType: 0 },
+    { displayName: 'Brian', shareType: 0 }
+  ]"
+  accessible-description="This resource is shared with many users."
+  :stacked="true"
 />
 ```
+
 :::
 
 ### Limited max amount
@@ -54,17 +58,19 @@ Avatars can be stacked when there is limited screen space.
 The maximum amount of avatars can be limited.
 
 ::: livecode
+
 ```vue
 <oc-avatars
-	:items="[
-		{ displayName: 'Alan', shareType: 0 },
-		{ displayName: 'Mary', shareType: 0 },
-		{ displayName: 'Brian', shareType: 0 }
-	]"
-	accessible-description="This resource is shared with many users."
-	max-displayed="2"
+  :items="[
+    { displayName: 'Alan', shareType: 0 },
+    { displayName: 'Mary', shareType: 0 },
+    { displayName: 'Brian', shareType: 0 }
+  ]"
+  accessible-description="This resource is shared with many users."
+  max-displayed="2"
 />
 ```
+
 :::
 
 ::: component-api

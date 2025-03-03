@@ -12,7 +12,7 @@ geekdocCollapseSection: true
 
 ## Extension Type CustomComponent
 
-CustomComponent extensions need to define one or multiple `extensionPointId`s as render target. A `CustomComponentTarget` component for this very 
+CustomComponent extensions need to define one or multiple `extensionPointId`s as render target. A `CustomComponentTarget` component for this very
 extension point needs to be mounted in the current view.
 
 ### Configuration
@@ -40,13 +40,13 @@ targeted at the `global-progress-bar` extension point as render target.
 
 ```typescript
 const extension = {
-    id: 'com.github.opencloud-eu.web.app.progress-bars.nyan-cat',
-    type: 'customComponent',
-    extensionPointIds: ['app.runtime.global-progress-bar'],
-    content: (slots) => [h(NyanCat, slots)],
-    userPreference: {
-      optionLabel: $gettext('Nyan Cat progress bar')
-    }
+  id: 'com.github.opencloud-eu.web.app.progress-bars.nyan-cat',
+  type: 'customComponent',
+  extensionPointIds: ['app.runtime.global-progress-bar'],
+  content: (slots) => [h(NyanCat, slots)],
+  userPreference: {
+    optionLabel: $gettext('Nyan Cat progress bar')
+  }
 }
 ```
 

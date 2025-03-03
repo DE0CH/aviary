@@ -15,9 +15,11 @@ The `OcDropzone` component can be used into indicate a dropzone area. This is us
 ### Default
 
 ::: livecode
+
 ```html
 <oc-dropzone>Drag and drop to upload content into current folder</oc-dropzone>
 ```
+
 :::
 
 ::: component-api

@@ -23,9 +23,11 @@ As soon as the spinner appears, it should programmatically receive focus so that
 The most basic use case should involve an `aria-label`.
 
 ::: livecode
+
 ```html
 <oc-spinner aria-label="Loading content" />
 ```
+
 :::
 
 ### Sizes
@@ -33,6 +35,7 @@ The most basic use case should involve an `aria-label`.
 These sizes are available: `xsmall`, `small`, `medium`, `large`, `xlarge`, `xxlarge`, `xxxlarge`.
 
 ::: livecode
+
 ```html
 <oc-spinner aria-label="Loading content" size="xsmall" />
 <oc-spinner aria-label="Loading content" size="small" />
@@ -42,6 +45,7 @@ These sizes are available: `xsmall`, `small`, `medium`, `large`, `xlarge`, `xxla
 <oc-spinner aria-label="Loading content" size="xxlarge" />
 <oc-spinner aria-label="Loading content" size="xxxlarge" />
 ```
+
 :::
 
 ::: component-api

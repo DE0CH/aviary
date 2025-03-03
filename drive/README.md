@@ -1,9 +1,10 @@
 <div align=center>
 
- [![Matrix](https://img.shields.io/matrix/opencloud%3Amatrix.org?logo=matrix)](https://app.element.io/#/room/#opencloud:matrix.org)
- [![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Matrix](https://img.shields.io/matrix/opencloud%3Amatrix.org?logo=matrix)](https://app.element.io/#/room/#opencloud:matrix.org)
+[![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 # OpenCloud Web
+
 With OpenCloud Web you can manage your OpenCloud in your browser.
 
 </div>
@@ -13,13 +14,15 @@ With OpenCloud Web you can manage your OpenCloud in your browser.
 OpenCloud Web is a single page, standalone frontend, based on modern web technologies. It brings new features as well as improved user flows and can be deployed independent of the backend server.
 
 ## Examples
+
 Here are some examples of what you can do with OpenCloud Web:
+
 - 🗂 **Files**: Upload, download, search and manage files (as you may know it for example from Dropbox, OneDrive, Google Drive etc.).
 - 👥 **Share:** Allow fine-grained access to files and whole folders directly with other users on your OpenCloud.
 - 🔗 **Links**: Create links and share them with anyone in the world - optional password-protection available.
 - 📝 **Write**: Edit your documents with the editor of your choice like ONLYOFFICE, Collabora or Microsoft Word and more.
 - 🤝 **Collaborate** in real-time on documents.
-- 🚀 **Spaces**: You have to manage important projects? Let Spaces, the new special folders, keep order. 
+- 🚀 **Spaces**: You have to manage important projects? Let Spaces, the new special folders, keep order.
 - ◀️ **Versioning** Saved the wrong version? We have the time machine you were looking for! Easily go back in time and restore older versions of your files.
 - 📥 **Drop-folders:** Collect files from other people in one folder via a simple link, ex. homework from pupils or photos from your family - optional password-protection available.
 - 🔒 **Privacy first:** OpenCloud Web is GDPR compliant and can both be used completely internally or together with external people. It also will never "phone home".
@@ -35,6 +38,7 @@ While the `web` frontend provides a performant, elegant, accessible and themeabl
 ## Repository structure
 
 The backbone of this project is built by the following parts of the `packages`:
+
 - **client:** Generated TypeScript client for communications with the OpenCloud APIs
 - **container:** Static assets and rarely changing base files
 - **extension-sdk:** Provides utilities for developing and integrating custom extensions
@@ -42,6 +46,7 @@ The backbone of this project is built by the following parts of the `packages`:
 - **runtime:** Central place of (user) authentication, provisioning of the user interface layout, client side storage, routing, theming, dependencies and (sub)application handling
 
 The repository's `packages` also contains the following apps, which can be en-/disabled via the `config.json`:
+
 - **activities:** An extension that provides a detailed activity stream, showing recent updates
 - **admin-settings:** An extension that allows administrators to manage users, groups, spaces and generic settings for their OpenCloud efficiently
 - **app-store:** An extension that allows users to browse and download additional apps and extensions directly from the web interface
@@ -58,20 +63,26 @@ The repository's `packages` also contains the following apps, which can be en-/d
 The full documentation on all available packages and the general repository structure [can be found in the docs](https://docs.opencloud.eu/clients/web/development/repo-structure/).
 
 ## Releases
+
 We currently publish a new release every couple of weeks, strictly following [semver](https://semver.org/). Releases and their corresponding changelogs can be found on [the release page](https://github.com/opencloud-eu/web/releases) on GitHub.
 
 ## Documentation
+
 The documentation is an important part of this project and can be found on [opencloud.dev](https://docs.opencloud.eu/clients/web).
 If you want to contribute to the documentation you can find the source files in the [docs](https://github.com/opencloud-eu/web/tree/main/docs) folder of this repository.
 
 ## Contribution
+
 Contribution in the form of bug reports, user feedback or actual code is always welcome! We do have a [contribution guide](https://github.com/opencloud-eu/web/blob/main/.github/CONTRIBUTING.md), actively use the [good-first-issue](https://github.com/opencloud-eu/web/issues?q=is%3Aopen+is%3Aissue+label%3A%22good%20first%20issue%22) label and try to feedback on issues and pull requests in a timely manner. There is also a [setup guide](https://docs.opencloud.eu/clients/web/getting-started/) for building and running `web` locally.
 
 ## Tests
+
 We assert the quality of this project by running an automated CI, while a guide on running the tests locally can be found in the [testing documentation](https://docs.opencloud.eu/clients/web/testing/testing/).
 
 ## Jobs
-At OpenCloud, we are always looking for new additions to our team. You are welcome to take a look at [our open positions](https://www.heinlein-support.de/jobs). 
+
+At OpenCloud, we are always looking for new additions to our team. You are welcome to take a look at [our open positions](https://www.heinlein-support.de/jobs).
 
 ## License
+
 GNU Affero General Public License - [Details](https://github.com/opencloud-eu/web/blob/main/LICENSE)

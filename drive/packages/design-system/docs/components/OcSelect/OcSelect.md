@@ -37,6 +37,7 @@ Multiple options can be selected by setting `multiple` to `true`.
 The component can be in a `disabled` or a `loading` state.
 
 ::: livecode
+
 ```html{3,8}
 <oc-select
 	label="Please select an option"
@@ -49,6 +50,7 @@ The component can be in a `disabled` or a `loading` state.
 	class="oc-mb-m"
 />
 ```
+
 :::
 
 ### Messages
@@ -56,6 +58,7 @@ The component can be in a `disabled` or a `loading` state.
 There are three different types of messages that can be displayed: `description-message`, `warning-message`, and `error-message`.
 
 ::: livecode
+
 ```html{3,8,13}
 <oc-select
 	label="Please select an option"
@@ -73,6 +76,7 @@ There are three different types of messages that can be displayed: `description-
 	class="oc-mb-m"
 />
 ```
+
 :::
 
 ::: component-api

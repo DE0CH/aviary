@@ -34,9 +34,11 @@ The default and most simple use case involves a `v-model` and a `label`.
 ### Disabled
 
 ::: livecode
+
 ```vue
 <oc-text-input disabled label="Disabled" model-value="I am disabled" />
 ```
+
 :::
 
 ### Input Types
@@ -44,6 +46,7 @@ The default and most simple use case involves a `v-model` and a `label`.
 The following input types ares supported.
 
 ::: livecode
+
 ```vue
 <oc-text-input class="oc-mb-s" label="Text" />
 <oc-text-input class="oc-mb-s" read-only="true" label="Read only" value="I am read only" />
@@ -51,6 +54,7 @@ The following input types ares supported.
 <oc-text-input class="oc-mb-s" type="email" label="Email" />
 <oc-text-input class="oc-mb-s" type="password" label="Password" />
 ```
+
 :::
 
 ### Interactions

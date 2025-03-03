@@ -6,12 +6,12 @@ The design system uses predefined spacings to create a predictable and harmoniou
 
 The following tokens are available:
 
-* `oc-space-xsmall` (4px)
-* `oc-space-small` (8px)
-* `oc-space-medium` (16px)
-* `oc-space-large` (24px)
-* `oc-space-xlarge` (48px)
-* `oc-space-xxlarge` (96px)
+- `oc-space-xsmall` (4px)
+- `oc-space-small` (8px)
+- `oc-space-medium` (16px)
+- `oc-space-large` (24px)
+- `oc-space-xlarge` (48px)
+- `oc-space-xxlarge` (96px)
 
 ## Usage
 
