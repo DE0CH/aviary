@@ -107,7 +107,7 @@
 <script setup lang="ts">
 import { computed, nextTick, Ref, ref, unref, watch } from 'vue'
 import { useGettext } from 'vue3-gettext'
-import { EVENT_ITEM_DROPPED_BREADCRUMB, uniqueId, BreadcrumbItem } from '../../helpers'
+import { EVENT_ITEM_DROPPED_BREADCRUMB, uniqueId, BreadcrumbItem, SizeType } from '../../helpers'
 import OcButton from '../OcButton/OcButton.vue'
 import OcDrop from '../OcDrop/OcDrop.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
@@ -122,15 +122,7 @@ export interface Props {
    * @docs The padding size of the context menu dropdown.
    * @default medium
    */
-  contextMenuPadding?:
-    | 'xsmall'
-    | 'small'
-    | 'medium'
-    | 'large'
-    | 'xlarge'
-    | 'xxlarge'
-    | 'xxxlarge'
-    | 'remove'
+  contextMenuPadding?: SizeType | 'remove'
   /**
    * @docs The element ID of the breadcrumb.
    */

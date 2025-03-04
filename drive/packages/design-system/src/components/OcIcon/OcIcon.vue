@@ -23,7 +23,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import InlineSvg from 'vue-inline-svg'
-import { getSizeClass, uniqueId } from '../../helpers'
+import { FillType, getSizeClass, SizeType, uniqueId } from '../../helpers'
 
 InlineSvg.name = 'inline-svg'
 
@@ -40,7 +40,7 @@ export interface Props {
    * @docs Fill type of the icon.
    * @default fill
    */
-  fillType?: 'fill' | 'line' | 'none'
+  fillType?: FillType
   /**
    * @docs Name of the icon. Please refer to `Remixicon` for a list of available icons.
    */
@@ -49,7 +49,7 @@ export interface Props {
    * @docs Size of the icon.
    * @default medium
    */
-  size?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  size?: SizeType
   /**
    * @docs HTML element to be used for the icon.
    * @default span

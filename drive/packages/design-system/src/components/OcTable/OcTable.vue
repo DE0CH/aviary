@@ -105,7 +105,7 @@ import OcTr from '../OcTableTr/OcTableTr.vue'
 import OcTh from '../OcTableTh/OcTableTh.vue'
 import OcTd from '../OcTableTd/OcTableTd.vue'
 import OcButton from '../OcButton/OcButton.vue'
-import { getSizeClass, Item as BaseItem, FieldType } from '../../helpers'
+import { getSizeClass, Item as BaseItem, FieldType, SizeType } from '../../helpers'
 import {
   EVENT_THEAD_CLICKED,
   EVENT_TROW_CLICKED,
@@ -176,7 +176,7 @@ export interface Props {
    * @docs The horizontal padding size of the table.
    * @default small
    */
-  paddingX?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge'
+  paddingX?: SizeType
   /**
    * @docs The default field to sort by.
    */

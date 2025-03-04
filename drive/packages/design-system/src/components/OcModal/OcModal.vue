@@ -86,7 +86,7 @@ import OcButton, { Props as ButtonProps } from '../OcButton/OcButton.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcTextInput from '../OcTextInput/OcTextInput.vue'
 import { FocusTargetOrFalse, FocusTrapTabbableOptions } from 'focus-trap'
-import { ContextualHelperData } from '../../helpers'
+import { ContextualHelperData, VariationType } from '../../helpers'
 import { useGettext } from 'vue3-gettext'
 
 export interface Props {
@@ -186,15 +186,7 @@ export interface Props {
    * @docs Variation of the modal.
    * @default passive
    */
-  variation?:
-    | 'passive'
-    | 'primary'
-    | 'danger'
-    | 'success'
-    | 'warning'
-    | 'info'
-    | 'brand'
-    | 'inherit'
+  variation?: VariationType
 }
 
 export interface Emits {

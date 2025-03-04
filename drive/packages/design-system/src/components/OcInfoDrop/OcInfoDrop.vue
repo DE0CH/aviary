@@ -52,7 +52,7 @@
 import { computed, ref } from 'vue'
 import OcButton from '../OcButton/OcButton.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
-import OcDrop from '../OcDrop/OcDrop.vue'
+import OcDrop, { Props as OcDropProps } from '../OcDrop/OcDrop.vue'
 import { uniqueId } from '../../helpers'
 import { ContextualHelperDataListItem } from '../../helpers'
 
@@ -77,7 +77,7 @@ export interface Props {
    * @docs Event that triggers the info drop.
    * @default 'click'
    */
-  mode?: 'click' | 'hover' | 'manual'
+  mode?: OcDropProps['mode']
   /**
    * @docs Link at the end of the info drop.
    */

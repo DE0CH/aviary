@@ -15,14 +15,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouteLocationRaw } from 'vue-router'
-import { getSizeClass } from '../../helpers'
+import { AppearanceType, getSizeClass, SizeType, VariationType } from '../../helpers'
 
 export interface Props {
   /**
    * @docs The appearance of the button.
    * @default outline
    */
-  appearance?: 'filled' | 'outline' | 'raw' | 'raw-inverse'
+  appearance?: AppearanceType
   /**
    * @docs The aria label of the button. Needs to be present if the button doesn't have a visible label.
    */
@@ -36,7 +36,7 @@ export interface Props {
    * @docs The gap size between content elements of the button.
    * @default medium
    */
-  gapSize?: 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge'
+  gapSize?: SizeType | 'none'
   /**
    * @docs The href if the `type` is set to `a'.
    */
@@ -78,7 +78,7 @@ export interface Props {
    * @docs The variation of the button.
    * @default passive
    */
-  variation?: 'passive' | 'primary' | 'danger' | 'success' | 'warning' | 'brand'
+  variation?: VariationType
 }
 
 export interface Emits {
