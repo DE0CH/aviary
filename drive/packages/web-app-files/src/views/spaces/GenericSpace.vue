@@ -284,7 +284,12 @@ export default defineComponent({
     )
 
     const titleSegments = computed(() => {
-      const segments = [unref(space).name]
+      let title = unref(space).name
+      if (isPublicSpaceResource(unref(space))) {
+        title = unref(space).publicLinkType === 'ocm' ? $gettext('OCM share') : $gettext('Public files')
+      }
+
+      const segments = [title]
       if (props.item !== '/') {
         segments.unshift(basename(props.item))
       }

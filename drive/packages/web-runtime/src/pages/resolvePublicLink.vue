@@ -115,11 +115,16 @@ export default defineComponent({
       return unref(isOcmLink) ? 'ocm' : 'public-link'
     })
 
+    const publicLinkName = computed(() => {
+      return unref(isOcmLink) ? $gettext('OCM share') : $gettext('Public files')
+    })
+
     const publicLinkSpace = computed(() =>
       buildPublicSpaceResource({
         id: unref(token),
         driveType: 'public',
         publicLinkType: unref(publicLinkType),
+        name: unref(publicLinkName),
         ...(unref(password) && { publicLinkPassword: unref(password) })
       })
     )
