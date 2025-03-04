@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getSizeClass } from '../../helpers'
+import { getSizeClass, SizeType } from '../../helpers'
 
 export interface Props {
   /**
@@ -15,7 +15,7 @@ export interface Props {
    * @docs The size of the spinner.
    * @default medium
    */
-  size?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  size?: SizeType
 }
 
 const { ariaLabel = '', size = 'medium' } = defineProps<Props>()

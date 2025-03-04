@@ -1,4 +1,6 @@
-export type IconFillType = 'fill' | 'line' | 'none'
+import { FillType } from '@opencloud-eu/design-system/helpers'
+
+export type IconFillType = FillType
 export type IconType = {
   name: string
   color?: string

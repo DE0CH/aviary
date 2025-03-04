@@ -11,12 +11,13 @@
 </template>
 
 <script setup lang="ts">
+import { SizeType } from '../../helpers'
 import OcAvatarItem from '../OcAvatarItem/OcAvatarItem.vue'
 
 export interface Props {
   name: string
   accessibleLabel?: string
-  iconSize?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  iconSize?: SizeType
   width?: number
 }
 

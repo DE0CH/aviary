@@ -49,7 +49,7 @@
 
 <script setup lang="ts">
 import { ref, unref } from 'vue'
-import { uniqueId } from '../../helpers'
+import { FillType, uniqueId } from '../../helpers'
 import { useGettext } from 'vue3-gettext'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcButton from '../OcButton/OcButton.vue'
@@ -62,7 +62,7 @@ export interface Indicator {
   accessibleDescription?: string
   visible?: boolean
   type?: string
-  fillType?: 'fill' | 'line' | 'none'
+  fillType?: FillType
 }
 
 export interface Props {

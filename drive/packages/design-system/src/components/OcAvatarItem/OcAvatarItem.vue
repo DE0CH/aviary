@@ -22,6 +22,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
+import { FillType, SizeType } from '../../helpers'
 
 export interface Props {
   /**
@@ -48,12 +49,12 @@ export interface Props {
    * @docs The fill type of the icon.
    * @default 'fill'
    */
-  iconFillType?: 'fill' | 'line' | 'none'
+  iconFillType?: FillType
   /**
    * @docs The size of the icon.
    * @default 'small'
    */
-  iconSize?: 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge' | 'xxlarge' | 'xxxlarge'
+  iconSize?: SizeType
   /**
    * @docs The width of the avatar item.
    * @default 30

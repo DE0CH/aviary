@@ -63,6 +63,7 @@ import OcButton from '../OcButton/OcButton.vue'
 import OcGrid from '../OcGrid/OcGrid.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
 import OcSpinner from '../OcSpinner/OcSpinner.vue'
+import { AppearanceType, VariationType } from '../../helpers'
 
 export interface Props {
   /**
@@ -125,12 +126,12 @@ export interface Props {
    * @docs The variation of the cancel button.
    * @default primary
    */
-  cancelButtonVariation?: 'passive' | 'primary' | 'danger' | 'success' | 'warning' | 'brand'
+  cancelButtonVariation?: VariationType
   /**
    * @docs The appearance of the cancel button.
    * @default raw
    */
-  cancelButtonAppearance?: 'filled' | 'outline' | 'raw' | 'raw-inverse'
+  cancelButtonAppearance?: AppearanceType
   /**
    * @docs The handler for the cancel button.
    */

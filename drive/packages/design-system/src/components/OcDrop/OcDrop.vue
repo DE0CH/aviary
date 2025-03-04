@@ -14,7 +14,7 @@
 import tippy, { ReferenceElement, hideAll, Props as TippyProps } from 'tippy.js'
 import { Modifier, detectOverflow } from '@popperjs/core'
 import { destroy, hideOnEsc } from '../../directives/OcTooltip'
-import { getSizeClass, uniqueId } from '../../helpers'
+import { getSizeClass, SizeType, uniqueId } from '../../helpers'
 import { ref, onBeforeUnmount, onMounted, computed, watch, unref } from 'vue'
 
 export interface Props {
@@ -45,15 +45,7 @@ export interface Props {
    * @docs The padding size of the drop.
    * @default 'medium'
    */
-  paddingSize?:
-    | 'xsmall'
-    | 'small'
-    | 'medium'
-    | 'large'
-    | 'xlarge'
-    | 'xxlarge'
-    | 'xxxlarge'
-    | 'remove'
+  paddingSize?: SizeType | 'remove'
   /**
    * @docs The popper options of the drop. Please refer to the component source for more information.
    */
