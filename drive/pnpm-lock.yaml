@@ -304,7 +304,7 @@ importers:
         version: 6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)
       vite-plugin-dts:
         specifier: ^4.2.3
-        version: 4.5.1(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
+        version: 4.5.3(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
       vite-plugin-node-polyfills:
         specifier: ^0.23.0
         version: 0.23.0(rollup@4.34.8)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
@@ -332,7 +332,7 @@ importers:
         version: 10.0.2(eslint@9.21.0)
       eslint-plugin-n:
         specifier: ^17.0.0
-        version: 17.16.1(eslint@9.21.0)(typescript@5.7.3)
+        version: 17.16.1(eslint@9.21.0)(typescript@5.8.2)
       eslint-plugin-promise:
         specifier: ^7.0.0
         version: 7.2.1(eslint@9.21.0)
@@ -810,8 +810,8 @@ importers:
         specifier: ^6.1.0
         version: 6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)
       vite-plugin-dts:
-        specifier: 4.5.1
-        version: 4.5.1(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
+        specifier: 4.5.3
+        version: 4.5.3(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
       vite-plugin-node-polyfills:
         specifier: 0.23.0
         version: 0.23.0(rollup@4.34.8)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
@@ -953,8 +953,8 @@ importers:
         specifier: 5.1.0
         version: 5.1.0
       vite-plugin-dts:
-        specifier: 4.5.1
-        version: 4.5.1(@types/node@22.13.2)(rollup@3.29.5)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
+        specifier: 4.5.3
+        version: 4.5.3(@types/node@22.13.2)(rollup@3.29.5)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
       vite-plugin-node-polyfills:
         specifier: 0.23.0
         version: 0.23.0(rollup@3.29.5)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
@@ -1137,7 +1137,7 @@ importers:
         version: 6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)
       vite-plugin-dts:
         specifier: ^4.2.3
-        version: 4.5.1(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
+        version: 4.5.3(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0))
     publishDirectory: package
 
   tests/e2e:
@@ -3139,6 +3139,14 @@ packages:
   '@vue/devtools-shared@7.7.2':
     resolution: {integrity: sha512-uBFxnp8gwW2vD6FrJB8JZLUzVb6PNRG0B0jBnHsOH8uKyva2qINY8PTF5Te4QlTbMDqU5K6qtJDr6cNsKWhbOA==}
 
+  '@vue/language-core@2.2.0':
+    resolution: {integrity: sha512-O1ZZFaaBGkKbsRfnVH1ifOK1/1BUkyK+3SQsfnh6PmMmD4qJcTU8godCeA96jjDRTL6zgnK7YzCHfaUlH2r0Mw==}
+    peerDependencies:
+      typescript: '*'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   '@vue/language-core@2.2.4':
     resolution: {integrity: sha512-eGGdw7eWUwdIn9Fy/irJ7uavCGfgemuHQABgJ/hU1UgZFnbTg9VWeXvHQdhY+2SPQZWJqWXvRWIg67t4iWEa+Q==}
     peerDependencies:
@@ -3300,6 +3308,9 @@ packages:
   algoliasearch@5.20.2:
     resolution: {integrity: sha512-8evxG++iWyWnhng3g5RP+kwn6j+2vKLfew8pVoekn87FcfsDm92zJXKwSrU6pl+m5eAbGFhFF/gCYEQiRdbPlA==}
     engines: {node: '>= 14.0.0'}
+
+  alien-signals@0.4.14:
+    resolution: {integrity: sha512-itUAVzhczTmP2U5yX67xVpsbbOiquusbWVyA9N+sy6+r6YVbFkahXvNCeEPWEOMhwDYwbVbGHFkVL03N9I5g+Q==}
 
   alien-signals@1.0.3:
     resolution: {integrity: sha512-zQOh3wAYK5ujENxvBBR3CFGF/b6afaSzZ/c9yNhJ1ENrGHETvpUuKQsa93Qrclp0+PzTF93MaZ7scVp1uUozhA==}
@@ -6535,8 +6546,8 @@ packages:
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
 
-  vite-plugin-dts@4.5.1:
-    resolution: {integrity: sha512-Yo1dHT05B2nD47AVB7b0+wK1FPFpJJnUf/muRF7+tP+sbPFRhLs70TTRGwJw7NDBwAUAmSwhrD+ZPTe4P6Wv9w==}
+  vite-plugin-dts@4.5.3:
+    resolution: {integrity: sha512-P64VnD00dR+e8S26ESoFELqc17+w7pKkwlBpgXteOljFyT0zDwD8hH4zXp49M/kciy//7ZbVXIwQCekBJjfWzA==}
     peerDependencies:
       typescript: '*'
       vite: '*'
@@ -9326,6 +9337,19 @@ snapshots:
     dependencies:
       rfdc: 1.4.1
 
+  '@vue/language-core@2.2.0(typescript@5.8.2)':
+    dependencies:
+      '@volar/language-core': 2.4.11
+      '@vue/compiler-dom': 3.5.13
+      '@vue/compiler-vue2': 2.7.16
+      '@vue/shared': 3.5.13
+      alien-signals: 0.4.14
+      minimatch: 9.0.5
+      muggle-string: 0.4.1
+      path-browserify: 1.0.1
+    optionalDependencies:
+      typescript: 5.8.2
+
   '@vue/language-core@2.2.4(typescript@5.8.2)':
     dependencies:
       '@volar/language-core': 2.4.11
@@ -9497,6 +9521,8 @@ snapshots:
       '@algolia/requester-browser-xhr': 5.20.2
       '@algolia/requester-fetch': 5.20.2
       '@algolia/requester-node-http': 5.20.2
+
+  alien-signals@0.4.14: {}
 
   alien-signals@1.0.3: {}
 
@@ -10316,10 +10342,10 @@ snapshots:
       eslint: 9.21.0
       eslint-compat-utils: 0.5.1(eslint@9.21.0)
 
-  eslint-plugin-n@17.16.1(eslint@9.21.0)(typescript@5.7.3):
+  eslint-plugin-n@17.16.1(eslint@9.21.0)(typescript@5.8.2):
     dependencies:
       '@eslint-community/eslint-utils': 4.4.1(eslint@9.21.0)
-      '@typescript-eslint/utils': 8.26.0(eslint@9.21.0)(typescript@5.7.3)
+      '@typescript-eslint/utils': 8.26.0(eslint@9.21.0)(typescript@5.8.2)
       enhanced-resolve: 5.18.1
       eslint: 9.21.0
       eslint-plugin-es-x: 7.8.0(eslint@9.21.0)
@@ -10328,7 +10354,7 @@ snapshots:
       ignore: 5.3.2
       minimatch: 9.0.5
       semver: 7.7.1
-      ts-declaration-location: 1.0.5(typescript@5.7.3)
+      ts-declaration-location: 1.0.5(typescript@5.8.2)
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -12702,10 +12728,10 @@ snapshots:
     dependencies:
       typescript: 5.8.2
 
-  ts-declaration-location@1.0.5(typescript@5.7.3):
+  ts-declaration-location@1.0.5(typescript@5.8.2):
     dependencies:
       minimatch: 10.0.1
-      typescript: 5.7.3
+      typescript: 5.8.2
 
   ts-dedent@2.2.0: {}
 
@@ -12922,12 +12948,12 @@ snapshots:
       - tsx
       - yaml
 
-  vite-plugin-dts@4.5.1(@types/node@22.13.2)(rollup@3.29.5)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)):
+  vite-plugin-dts@4.5.3(@types/node@22.13.2)(rollup@3.29.5)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)):
     dependencies:
       '@microsoft/api-extractor': 7.50.1(@types/node@22.13.2)
       '@rollup/pluginutils': 5.1.4(rollup@3.29.5)
       '@volar/typescript': 2.4.11
-      '@vue/language-core': 2.2.4(typescript@5.8.2)
+      '@vue/language-core': 2.2.0(typescript@5.8.2)
       compare-versions: 6.1.1
       debug: 4.4.0(supports-color@8.1.1)
       kolorist: 1.8.0
@@ -12941,12 +12967,12 @@ snapshots:
       - rollup
       - supports-color
 
-  vite-plugin-dts@4.5.1(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)):
+  vite-plugin-dts@4.5.3(@types/node@22.13.2)(rollup@4.34.8)(typescript@5.8.2)(vite@6.2.0(@types/node@22.13.2)(sass@1.85.1)(yaml@2.7.0)):
     dependencies:
       '@microsoft/api-extractor': 7.50.1(@types/node@22.13.2)
       '@rollup/pluginutils': 5.1.4(rollup@4.34.8)
       '@volar/typescript': 2.4.11
-      '@vue/language-core': 2.2.4(typescript@5.8.2)
+      '@vue/language-core': 2.2.0(typescript@5.8.2)
       compare-versions: 6.1.1
       debug: 4.4.0(supports-color@8.1.1)
       kolorist: 1.8.0
