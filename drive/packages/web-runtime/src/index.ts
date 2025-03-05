@@ -254,7 +254,10 @@ export const bootstrapApp = async (configurationPath: string, appsReadyCallback:
       const publicLinkToken = authStore.publicLinkToken
       const publicLinkPassword = authStore.publicLinkPassword
       const publicLinkType = authStore.publicLinkType
-      const publicLinkName = publicLinkType === 'ocm' ? app.config.globalProperties.$gettext('OCM share') : app.config.globalProperties.$gettext('Public files')
+      const publicLinkName =
+        publicLinkType === 'ocm'
+          ? app.config.globalProperties.$gettext('OCM share')
+          : app.config.globalProperties.$gettext('Public files')
 
       const space = buildPublicSpaceResource({
         id: publicLinkToken,

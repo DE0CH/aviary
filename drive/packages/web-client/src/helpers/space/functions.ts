@@ -68,10 +68,11 @@ export function buildPublicSpaceResource(
   const publicLinkExpiration = data.props?.[DavProperty.PublicLinkExpiration]
   const publicLinkShareDate = data.props?.[DavProperty.PublicLinkShareDate]
   const publicLinkShareOwner = data.props?.[DavProperty.PublicLinkShareOwner]
+  const publicLinkType = data.publicLinkType
 
   let driveAlias
   let webDavPath
-  if (data.publicLinkType === 'ocm') {
+  if (publicLinkType === 'ocm') {
     driveAlias = `ocm/${data.id}`
     webDavPath = buildWebDavOcmPath(data.id)
   } else {
@@ -96,7 +97,8 @@ export function buildPublicSpaceResource(
       ...(publicLinkPermission && { publicLinkPermission: parseInt(publicLinkPermission) }),
       ...(publicLinkExpiration && { publicLinkExpiration }),
       ...(publicLinkShareDate && { publicLinkShareDate }),
-      ...(publicLinkShareOwner && { publicLinkShareOwner })
+      ...(publicLinkShareOwner && { publicLinkShareOwner }),
+      publicLinkType
     }
   )
 }
