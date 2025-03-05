@@ -13,6 +13,7 @@ import {
   User
 } from '@opencloud-eu/web-client/graph/generated'
 import { Ability, Resource } from '../resource'
+import { PublicLinkType } from './functions'
 
 export const SHARE_JAIL_ID = 'a0ca6a90-a365-4782-871e-d44447bbc668'
 export const OCM_PROVIDER_ID = '89f37a33-858b-45fa-8890-a1f2b27d90e1'
@@ -94,6 +95,7 @@ export interface PublicSpaceResource extends SpaceResource {
   publicLinkExpiration?: string
   publicLinkShareDate?: string
   publicLinkShareOwner?: string
+  publicLinkType?: PublicLinkType
 }
 export const isPublicSpaceResource = (resource: Resource): resource is PublicSpaceResource => {
   return (resource as SpaceResource)?.driveType === 'public'

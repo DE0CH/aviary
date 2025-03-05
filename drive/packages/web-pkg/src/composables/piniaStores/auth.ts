@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { PublicLinkType } from '@opencloud-eu/web-client'
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string>()
@@ -7,7 +8,7 @@ export const useAuthStore = defineStore('auth', () => {
   const userContextReady = ref(false)
   const publicLinkToken = ref<string>()
   const publicLinkPassword = ref<string>()
-  const publicLinkType = ref<string>()
+  const publicLinkType = ref<PublicLinkType>()
   const publicLinkContextReady = ref(false)
 
   const setAccessToken = (value: string) => {
@@ -22,7 +23,7 @@ export const useAuthStore = defineStore('auth', () => {
   const setPublicLinkContext = (context: {
     publicLinkToken: string
     publicLinkPassword: string
-    publicLinkType: string
+    publicLinkType: PublicLinkType
     publicLinkContextReady: boolean
   }) => {
     publicLinkToken.value = context.publicLinkToken

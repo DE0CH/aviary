@@ -60,7 +60,7 @@
 </template>
 
 <script lang="ts">
-import { DavHttpError, SharePermissionBit } from '@opencloud-eu/web-client'
+import { DavHttpError, PublicLinkType, SharePermissionBit } from '@opencloud-eu/web-client'
 import { authService } from '../services/auth'
 
 import {
@@ -111,7 +111,7 @@ export default defineComponent({
       return split === 'o'
     })
 
-    const publicLinkType = computed(() => {
+    const publicLinkType = computed<PublicLinkType>(() => {
       return unref(isOcmLink) ? 'ocm' : 'public-link'
     })
 

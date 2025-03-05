@@ -63,10 +63,11 @@ export const ListFilesFactory = (
           resource.filename = resource.filename.split('/').slice(2).join('/')
         })
 
+        const publicLinkType = space.driveAlias.startsWith('ocm/') ? 'ocm' : 'public-link'
         if (
           (!path || path === '/') &&
           depth > 0 &&
-          space.driveAlias.startsWith('ocm/') &&
+          publicLinkType === 'ocm' &&
           webDavResources[0].props[DavProperty.PublicLinkItemType] === 'file'
         ) {
           // ocm public single file shares are missing the current folder in the webdav response from the server.
@@ -89,7 +90,8 @@ export const ListFilesFactory = (
               ...rootFolder,
               id: space.id,
               driveAlias: space.driveAlias,
-              webDavPath: space.webDavPath
+              webDavPath: space.webDavPath,
+              publicLinkType: publicLinkType
             }),
             children: children.map((c) => buildResource(c, dav.extraProps))
           } as ListFilesResult
