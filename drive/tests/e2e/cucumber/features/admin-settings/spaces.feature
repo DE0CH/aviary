@@ -125,8 +125,8 @@ Feature: spaces management
       | Alice | Space Admin |
     And "Admin" creates the following project spaces using API
       | name   | id     |
-      | team A | team.a |
-    And "Admin" adds the following members to the space "team A" using API
+      | team B | team.b |
+    And "Admin" adds the following members to the space "team B" using API
       | user  | role     | shareType |
       | Brian | Can edit | user      |
       | Carol | Can view | user      |
@@ -135,7 +135,7 @@ Feature: spaces management
     When "Alice" logs in
     And "Alice" opens the "admin-settings" app
     And "Alice" navigates to the project spaces management page
-    When "Alice" lists the members of project space "team.a" using a sidebar panel
+    When "Alice" lists the members of project space "team.b" using a sidebar panel
     Then "Alice" should see the following users in the sidebar panel of spaces admin settings
       | user  | role       |
       | Admin | Can manage |
