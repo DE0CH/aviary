@@ -204,3 +204,7 @@ td.oc-text-break {
     font-weight: $weightValue;
   }
 }
+
+.oc-tooltip .tippy-content {
+  font-size: var(--oc-font-size-small);
+}
