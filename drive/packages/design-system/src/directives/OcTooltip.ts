@@ -23,13 +23,14 @@ export const hideOnEsc = {
   }
 }
 
-export const ariaHidden = {
-  name: 'ariaHidden',
+export const customProps = {
+  name: 'customProps',
   defaultValue: true,
   fn(instance: Instance) {
     return {
       onCreate() {
         instance.popper.setAttribute('aria-hidden', 'true')
+        instance.popper.classList.add('oc-tooltip')
       }
     }
   }
@@ -61,7 +62,7 @@ const initOrUpdate = (el: HTMLElement & { tooltip: any }, { value = {} }: any) =
   const props = merge.all([
     {
       ignoreAttributes: true,
-      interactive: true,
+      interactive: false,
       aria: {
         content: null,
         expanded: false
@@ -73,7 +74,7 @@ const initOrUpdate = (el: HTMLElement & { tooltip: any }, { value = {} }: any) =
   if (!el.tooltip) {
     el.tooltip = tippy(el, {
       ...props,
-      plugins: [hideOnEsc, ariaHidden]
+      plugins: [hideOnEsc, customProps]
     })
     return
   }
