@@ -63,6 +63,7 @@ const selectors = {
 vi.mock('lodash-es', () => ({ debounce: (fn: unknown) => fn }))
 vi.mock('../../../src/composables/useAvailableProviders')
 
+// @vitest-environment jsdom
 beforeEach(() => {
   providerFiles.previewSearch.search.mockImplementation(() => {
     return {

@@ -23,6 +23,7 @@ const selectors = {
   clearBtn: '.oc-filter-chip-clear'
 }
 
+// @vitest-environment jsdom
 describe('ItemFilter', () => {
   it('renders all items', () => {
     const { wrapper } = getWrapper()
