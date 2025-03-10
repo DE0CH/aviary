@@ -560,7 +560,7 @@ importers:
         specifier: 4.4.2
         version: 4.4.2
       '@vueuse/core':
-        specifier: ^11.0.0 || ^12.0.0 || ^13.0.0
+        specifier: ^13.0.0
         version: 13.0.0(vue@3.5.13(typescript@5.8.2))
       axios:
         specifier: 1.8.2
@@ -670,7 +670,7 @@ importers:
         specifier: ^4.5.1
         version: 4.6.0
       '@vueuse/core':
-        specifier: ^11.0.0 || ^12.0.0 || ^13.0.0
+        specifier: ^13.0.0
         version: 13.0.0(vue@3.5.13(typescript@5.8.2))
       lodash-es:
         specifier: ^4.17.21
