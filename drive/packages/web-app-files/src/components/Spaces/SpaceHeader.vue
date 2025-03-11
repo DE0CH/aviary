@@ -64,7 +64,7 @@
           is-read-only
           :current-content="markdownContent"
         />
-        <div class="markdown-container-edit oc-ml-s">
+        <div class="markdown-container-edit oc-flex oc-flex-middle oc-ml-s">
           <router-link
             v-oc-tooltip="$gettext('Edit description')"
             size="small"
