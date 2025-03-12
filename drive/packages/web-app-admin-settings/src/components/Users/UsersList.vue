@@ -144,7 +144,7 @@ import {
 } from '../../composables/keyboardActions'
 import { findIndex } from 'lodash-es'
 import Mark from 'mark.js'
-import OcTable from '../../../../design-system/src/components/OcTable/OcTable.vue'
+import { OcTable } from '@opencloud-eu/design-system/components'
 
 export default defineComponent({
   name: 'UsersList',
