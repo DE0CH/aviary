@@ -33,7 +33,7 @@
     "not OperaMobile > 0"
   ],
   "devDependencies": {
-    "@babel/core": "7.26.9",
+    "@babel/core": "7.26.10",
     "@babel/polyfill": "7.12.1",
     "@babel/preset-env": "7.26.9",
     "@babel/register": "7.25.9",
