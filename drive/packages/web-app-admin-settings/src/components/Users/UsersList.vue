@@ -404,8 +404,7 @@ export default defineComponent({
         {
           name: 'onPremisesSamAccountName',
           title: this.$gettext('User name'),
-          sortable: true,
-          tdClass: 'mark-element'
+          sortable: true
         },
         {
           name: 'displayName',
@@ -416,8 +415,7 @@ export default defineComponent({
         {
           name: 'mail',
           title: this.$gettext('Email'),
-          sortable: true,
-          tdClass: 'mark-element'
+          sortable: true
         },
         {
           name: 'role',
