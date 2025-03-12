@@ -8,6 +8,7 @@
       <slot v-if="!users.length" name="noResults" />
       <oc-table
         v-else
+        ref="tableRef"
         class="users-table"
         :sort-by="sortBy"
         :sort-dir="sortDir"
@@ -115,6 +116,7 @@ import {
   onMounted,
   ref,
   unref,
+  useTemplateRef,
   watch
 } from 'vue'
 import {
@@ -142,6 +144,7 @@ import {
 } from '../../composables/keyboardActions'
 import { findIndex } from 'lodash-es'
 import Mark from 'mark.js'
+import OcTable from '../../../../design-system/src/components/OcTable/OcTable.vue'
 
 export default defineComponent({
   name: 'UsersList',
@@ -160,6 +163,8 @@ export default defineComponent({
     const { $gettext } = useGettext()
     const { isSticky } = useIsTopBarSticky()
 
+
+    const tableRef = useTemplateRef<typeof OcTable>('tableRef')
     const contextMenuButtonRef = ref(undefined)
     const sortBy = ref('onPremisesSamAccountName')
     const sortDir = ref<SortDir>(SortDir.Asc)
@@ -335,7 +340,7 @@ export default defineComponent({
       markInstance.value = new Mark('.mark-element')
     })
     const displayNameQuery = useRouteQuery('q_displayName')
-    watch([displayNameQuery, paginatedItems], () => {
+    watch([displayNameQuery, paginatedItems, tableRef], async() => {
       unref(markInstance)?.unmark()
       const filterTerm = queryItemAsString(unref(displayNameQuery))
       if (filterTerm) {
@@ -369,7 +374,8 @@ export default defineComponent({
       selectUsers,
       unselectAllUsers,
       users,
-      isSticky
+      isSticky,
+      tableRef
     }
   },
   computed: {
@@ -399,7 +405,8 @@ export default defineComponent({
         {
           name: 'onPremisesSamAccountName',
           title: this.$gettext('User name'),
-          sortable: true
+          sortable: true,
+          tdClass: 'mark-element'
         },
         {
           name: 'displayName',
@@ -410,7 +417,8 @@ export default defineComponent({
         {
           name: 'mail',
           title: this.$gettext('Email'),
-          sortable: true
+          sortable: true,
+          tdClass: 'mark-element'
         },
         {
           name: 'role',
