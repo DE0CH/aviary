@@ -163,7 +163,6 @@ export default defineComponent({
     const { $gettext } = useGettext()
     const { isSticky } = useIsTopBarSticky()
 
-
     const tableRef = useTemplateRef<typeof OcTable>('tableRef')
     const contextMenuButtonRef = ref(undefined)
     const sortBy = ref('onPremisesSamAccountName')
@@ -340,7 +339,7 @@ export default defineComponent({
       markInstance.value = new Mark('.mark-element')
     })
     const displayNameQuery = useRouteQuery('q_displayName')
-    watch([displayNameQuery, paginatedItems, tableRef], async() => {
+    watch([displayNameQuery, paginatedItems, tableRef], () => {
       unref(markInstance)?.unmark()
       const filterTerm = queryItemAsString(unref(displayNameQuery))
       if (filterTerm) {
