@@ -705,7 +705,7 @@ export default defineComponent({
 })
 </script>
 <style lang="scss">
-@media (max-width: $oc-breakpoint-medium-default) {
+@media (max-width: 580px) {
   .app-sidebar-open > *:not(:last-child) {
     display: none;
   }
