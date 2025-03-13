@@ -69,9 +69,11 @@ Feature: Users can see all activities of the resources and spaces
     And "Brian" navigates to the project space "team.1"
     Then "Brian" should see activity of the space
       | activity                               |
-      |Alice Hansen shared team via link|
-      |Alice Hansen added brian as member of team|
+      | Alice Hansen shared team via link      |
       | Alice Hansen added readme.md to .space |
+    And "Brian" should see activities of the space mathing the following regex
+      | activity                                          |
+      | Alice Hansen added Brian-\w{3,} as member of team |
 
     # see activity in the shared resources
     When "Brian" navigates to the shared with me page
