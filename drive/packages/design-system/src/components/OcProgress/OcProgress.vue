@@ -7,10 +7,14 @@
     aria-valuemin="0"
     role="progressbar"
   >
-    <div v-if="!indeterminate" class="oc-progress-current" :style="{ width: progressValue }"></div>
+    <div
+      v-if="!indeterminate"
+      class="oc-progress-current"
+      :style="{ width: progressValue, backgroundColor: color }"
+    ></div>
     <div v-else class="oc-progress-indeterminate">
-      <div class="oc-progress-indeterminate-first"></div>
-      <div class="oc-progress-indeterminate-second"></div>
+      <div class="oc-progress-indeterminate-first" :style="{ backgroundColor: color }" />
+      <div class="oc-progress-indeterminate-second" :style="{ backgroundColor: color }" />
     </div>
   </div>
 </template>
@@ -18,6 +22,11 @@
 import { computed } from 'vue'
 
 export interface Props {
+  /**
+   * @docs The color of the progress bar. It can be any valid CSS color or registered color role.
+   * @default var(--oc-role-secondary)
+   */
+  color?: string
   /**
    * @docs Determines if the progress bar is indeterminate.
    * @default false
@@ -37,23 +46,18 @@ export interface Props {
    * @default 0
    */
   value?: number
-  /**
-   * @docs The variation of the progress bar.
-   * @default primary
-   */
-  variation?: 'primary' | 'passive' | 'danger' | 'success' | 'warning'
 }
 
 const {
+  color = 'var(--oc-role-secondary)',
   indeterminate = false,
   max,
   size = 'default',
-  value = 0,
-  variation = 'primary'
+  value = 0
 } = defineProps<Props>()
 
 const classes = computed(() => {
-  return `oc-progress oc-progress-${size} oc-progress-${variation}`
+  return `oc-progress oc-progress-${size}`
 })
 
 const progressValue = computed(() => {
@@ -70,7 +74,7 @@ $progress-height: 15px !default;
 $progress-height-small: 5px !default;
 
 .oc-progress {
-  background-color: var(--oc-color-background-highlight);
+  background-color: var(--oc-role-surface-container);
   display: block;
   height: $progress-height;
   // Add the correct vertical alignment in Chrome, Firefox, and Opera.
@@ -122,27 +126,6 @@ $progress-height-small: 5px !default;
       left: 110%;
       width: 10%;
     }
-  }
-
-  &-primary &-current,
-  &-primary &-indeterminate div {
-    background-color: var(--oc-color-swatch-primary-default);
-  }
-  &-passive &-current,
-  &-passive &-indeterminate div {
-    background-color: var(--oc-color-swatch-passive-default);
-  }
-  &-success &-current,
-  &-success &-indeterminate div {
-    background-color: var(--oc-color-swatch-success-default);
-  }
-  &-warning &-current,
-  &-warning &-indeterminate div {
-    background-color: var(--oc-color-swatch-warning-default);
-  }
-  &-danger &-current,
-  &-danger &-indeterminate div {
-    background-color: var(--oc-color-swatch-danger-default);
   }
 }
 </style>

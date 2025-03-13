@@ -12,9 +12,15 @@
       class="toggle-sidebar-button oc-pb-s oc-pt-m"
       :aria-label="$gettext('Toggle sidebar')"
       :aria-expanded="!closed"
+      no-hover
       @click="$emit('update:nav-bar-closed', !closed)"
     >
-      <oc-icon size="large" fill-type="line" :name="toggleSidebarButtonIcon" />
+      <oc-icon
+        size="large"
+        fill-type="line"
+        class="raw-hover-surface oc-rounded"
+        :name="toggleSidebarButtonIcon"
+      />
     </oc-button>
     <nav
       class="oc-sidebar-nav oc-mb-m oc-mt-s oc-px-xs"
@@ -169,16 +175,16 @@ export default defineComponent({
 #nav-highlighter {
   position: absolute;
   border-radius: 5px;
+  background: var(--oc-role-surface);
   transition: transform 0.2s cubic-bezier(0.51, 0.06, 0.56, 1.37);
-  background: var(--oc-color-swatch-inverse-default);
-  color: var(--oc-color-swatch-inverse-contrast);
+  color: var(--oc-role-on-surface);
   svg {
-    fill: var(--oc-color-swatch-inverse-contrast);
+    fill: var(--oc-role-on-surface);
   }
 }
 
 #web-nav-sidebar {
-  background-color: var(--oc-color-background-sidebar);
+  background-color: var(--oc-role-surface-container);
   border-radius: 15px 0 0 15px;
   display: flex;
   flex-direction: column;

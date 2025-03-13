@@ -1,6 +1,6 @@
 <template>
   <app-loading-spinner v-if="isLoading" />
-  <main v-else id="account" class="oc-mt-m oc-mb-l oc-flex oc-flex-center">
+  <main v-else id="account" class="oc-pt-m oc-pb-l oc-flex oc-flex-center">
     <div class="account-page">
       <h1 id="account-page-title" class="oc-mb-rm" v-text="$gettext('My Account')" />
       <account-table
@@ -14,7 +14,6 @@
             <h2 v-text="title" />
             <oc-button
               v-if="accountEditLink"
-              variation="primary"
               type="a"
               :href="accountEditLink.href"
               target="_blank"
@@ -66,6 +65,7 @@
               :href="logoutUrl"
               target="_blank"
               data-testid="account-page-logout-url-btn"
+              no-hover
             >
               <span v-text="$gettext('Show devices')" />
             </oc-button>
@@ -113,8 +113,8 @@
           <oc-table-td data-testid="password">
             <oc-button
               appearance="raw"
-              variation="primary"
               data-testid="account-page-edit-password-btn"
+              no-hover
               @click="showEditPasswordModal"
             >
               <span v-text="$gettext('Change password')" />
@@ -803,7 +803,7 @@ export default defineComponent({
   overflow-y: auto;
 
   #account-page-title {
-    border-bottom: 1px solid var(--oc-color-border);
+    border-bottom: 0.5px solid var(--oc-role-outline-variant);
   }
 
   .preferences-panel,
@@ -812,7 +812,7 @@ export default defineComponent({
   }
 
   .preferences-panel {
-    border-bottom: 1px solid var(--oc-color-border);
+    border-bottom: 0.5px solid var(--oc-role-outline-variant);
   }
 
   .account-page {

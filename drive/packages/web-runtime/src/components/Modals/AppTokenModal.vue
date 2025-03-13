@@ -10,17 +10,17 @@
       <oc-button
         class="oc-modal-body-actions-cancel oc-ml-s"
         appearance="outline"
-        variation="passive"
         @click="$emit('cancel')"
-        >{{ $gettext('Cancel') }}
+      >
+        {{ $gettext('Cancel') }}
       </oc-button>
       <oc-button
         :disabled="confirmDisabled"
         class="oc-modal-body-actions-confirm oc-ml-s"
         appearance="filled"
-        variation="primary"
         @click="createAppToken"
-        >{{ $gettext('Confirm') }}
+      >
+        {{ $gettext('Confirm') }}
       </oc-button>
     </div>
   </div>
@@ -43,24 +43,20 @@
       <oc-button
         v-oc-tooltip="$gettext('Copy app token to clipboard')"
         appearance="raw"
-        class="copy-app-token-btn oc-pl-s"
+        class="copy-app-token-btn oc-ml-s oc-p-xs"
         :aria-label="$gettext('Copy app token to clipboard')"
         @click="copy(createdToken)"
       >
-        <oc-icon
-          :name="copied ? 'check' : 'file-copy'"
-          :variation="copied ? 'success' : 'passive'"
-          fill-type="line"
-        />
+        <oc-icon :name="copied ? 'check' : 'file-copy'" fill-type="line" />
       </oc-button>
     </div>
     <div class="link-modal-actions oc-flex oc-flex-right oc-flex-middle oc-mt-s">
       <oc-button
         class="oc-modal-body-actions-confirm oc-ml-s"
         appearance="filled"
-        variation="secondary"
         @click="$emit('confirm')"
-        >{{ $gettext('Close') }}
+      >
+        {{ $gettext('Close') }}
       </oc-button>
     </div>
   </div>
@@ -107,7 +103,7 @@ const createAppToken = async () => {
 .created-token {
   font-weight: bold;
   &-container {
-    border-right: 1px solid var(--oc-color-border);
+    border-right: 0.5px solid var(--oc-role-outline-variant);
   }
 }
 </style>

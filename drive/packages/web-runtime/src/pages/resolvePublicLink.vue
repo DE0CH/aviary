@@ -31,7 +31,6 @@
               class="oc-mb-s"
             />
             <oc-button
-              variation="primary"
               appearance="filled"
               class="oc-login-authorize-button"
               :disabled="!password"
@@ -328,7 +327,7 @@ export default defineComponent({
 <style lang="scss">
 .oc-link-resolve {
   .oc-card {
-    background: var(--oc-color-background-highlight);
+    background: var(--oc-role-surface-container);
     border-radius: 15px;
   }
 

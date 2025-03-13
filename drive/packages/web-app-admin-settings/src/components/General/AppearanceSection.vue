@@ -10,7 +10,7 @@
           v-oc-tooltip="$gettext('Show context menu')"
           :aria-label="$gettext('Show context menu')"
           appearance="raw"
-          class="oc-ml-s"
+          class="oc-ml-s oc-p-xs"
         >
           <oc-icon name="more-2" />
         </oc-button>
@@ -113,7 +113,8 @@ export default defineComponent({
     width: 100%;
     max-height: 100%;
     object-fit: cover;
-    background: var(--oc-color-background-muted);
+    padding: var(--oc-space-small);
+    background: var(--oc-role-surface-container);
   }
 }
 </style>

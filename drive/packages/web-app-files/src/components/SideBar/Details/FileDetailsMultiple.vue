@@ -1,8 +1,8 @@
 <template>
   <div id="oc-file-details-multiple-sidebar">
-    <div class="files-preview oc-mb">
+    <div class="files-preview oc-mb-l">
       <div class="files-preview-body">
-        <oc-icon class="preview-icon" size="xxlarge" variation="passive" name="file-copy" />
+        <oc-icon class="preview-icon" size="xxlarge" name="file-copy" />
         <p class="preview-text" data-testid="selectedFilesText" v-text="selectedFilesString" />
       </div>
     </div>
@@ -79,29 +79,18 @@ export default defineComponent({
 })
 </script>
 <style lang="scss" scoped>
+#oc-file-details-multiple-sidebar {
+  background-color: var(--oc-role-surface-container);
+  border-radius: 5px;
+  padding: var(--oc-space-medium);
+}
+
+.details-list {
+  margin: 0;
+}
+
 .files-preview {
-  position: relative;
-  background-color: var(--oc-color-background-muted);
-  border: 10px solid var(--oc-color-background-muted);
-  height: 230px;
   text-align: center;
-  color: var(--oc-color-swatch-passive-muted);
-
-  &-body {
-    margin: 0;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    -ms-transform: translate(-50%, -50%);
-    transform: translate(-50%, -50%);
-
-    .preview-icon {
-      display: inline-block;
-    }
-
-    .preview-text {
-      display: block;
-    }
-  }
+  border-radius: 5px;
 }
 </style>

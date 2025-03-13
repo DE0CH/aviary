@@ -27,7 +27,6 @@
     <oc-button
       v-if="isUnacceptedShareError"
       type="router-link"
-      variation="primary"
       appearance="filled"
       target="_blank"
       class="oc-mt-m oc-text-center oc-width-medium"
@@ -195,7 +194,7 @@ export default defineComponent({
 <style lang="scss">
 .oc-link-resolve {
   .oc-card {
-    background: var(--oc-color-background-highlight);
+    background: var(--oc-role-surface-container);
     border-radius: 15px;
   }
 

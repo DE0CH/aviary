@@ -5,6 +5,7 @@ import { useLocalStorage, usePreferredDark } from '@vueuse/core'
 import { z } from 'zod'
 import { applyCustomProp } from '@opencloud-eu/design-system/helpers'
 import { ShareRole } from '@opencloud-eu/web-client'
+import kebabCase from 'lodash-es/kebabCase'
 
 const CommonSection = z.object({
   name: z.string().optional(),
@@ -29,6 +30,7 @@ const CommonSection = z.object({
 
 const DesignTokens = z.object({
   breakpoints: z.record(z.string()).optional(),
+  roles: z.record(z.string()).optional(),
   colorPalette: z.record(z.string()).optional(),
   fontFamily: z.string().optional(),
   fontSizes: z.record(z.string()).optional(),
@@ -85,7 +87,7 @@ export const useThemeStore = defineStore('theme', () => {
     const firstLightTheme = unref(availableThemes).find((theme) => !theme.isDark)
     const firstDarkTheme = unref(availableThemes).find((theme) => theme.isDark)
     setAndApplyTheme(
-      unref(availableThemes).find((t) => t.name === unref(currentLocalStorageThemeName)) ||
+      unref(availableThemes).find((t) => t.label === unref(currentLocalStorageThemeName)) ||
         (unref(isDark) ? firstDarkTheme : firstLightTheme) ||
         unref(availableThemes)[0],
       false
@@ -104,11 +106,12 @@ export const useThemeStore = defineStore('theme', () => {
   const setAndApplyTheme = (theme: WebThemeType, updateStorage = true) => {
     currentTheme.value = theme
     if (updateStorage) {
-      currentLocalStorageThemeName.value = unref(currentTheme).name
+      currentLocalStorageThemeName.value = unref(currentTheme).label
     }
 
     const customizableDesignTokens = [
       { name: 'breakpoints', prefix: 'breakpoint' },
+      { name: 'roles', prefix: 'role' },
       { name: 'colorPalette', prefix: 'color' },
       { name: 'fontSizes', prefix: 'font-size' },
       { name: 'sizes', prefix: 'size' },
@@ -120,11 +123,17 @@ export const useThemeStore = defineStore('theme', () => {
     customizableDesignTokens.forEach((token) => {
       for (const param in unref(currentTheme).designTokens[token.name]) {
         applyCustomProp(
-          `${token.prefix}-${param}`,
+          `${token.prefix}-${kebabCase(param)}`,
           unref(currentTheme).designTokens[token.name][param]
         )
       }
     })
+
+    if (!unref(currentTheme).designTokens?.roles?.chrome) {
+      // fallback to surfaceContainer if chrome is not defined since it may not be set
+      applyCustomProp('role-chrome', unref(currentTheme).designTokens?.roles?.surfaceContainer)
+      applyCustomProp('role-on-chrome', unref(currentTheme).designTokens?.roles?.onSurface)
+    }
   }
 
   const getRoleIcon = (role: ShareRole) => {

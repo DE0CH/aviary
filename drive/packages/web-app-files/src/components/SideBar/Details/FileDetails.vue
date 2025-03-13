@@ -43,6 +43,7 @@
               v-oc-tooltip="seeVersionsLabel"
               appearance="raw"
               :aria-label="seeVersionsLabel"
+              no-hover
               @click="expandVersionsPanel"
             >
               {{ capitalizedTimestamp }}
@@ -90,6 +91,7 @@
               v-oc-tooltip="seeVersionsLabel"
               appearance="raw"
               :aria-label="seeVersionsLabel"
+              no-hover
               @click="expandVersionsPanel"
             >
               {{ versions.length }}
@@ -392,15 +394,23 @@ export default defineComponent({
 })
 </script>
 <style lang="scss" scoped>
+#oc-file-details-sidebar {
+  background-color: var(--oc-role-surface-container);
+  border-radius: 5px;
+  padding: var(--oc-space-medium);
+}
+
 .details-preview,
 .details-icon-wrapper {
-  background-color: var(--oc-color-background-muted);
-  border: 10px solid var(--oc-color-background-muted);
-  height: 230px;
+  padding: 10px;
 
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
+}
+
+.details-preview {
+  height: 230px;
 }
 
 .details-icon > svg {
@@ -408,5 +418,12 @@ export default defineComponent({
   max-height: 192px !important;
   max-width: 192px !important;
   width: 192px !important;
+}
+
+.details-list {
+  dd:last-of-type,
+  dt:last-of-type {
+    margin-bottom: 0 !important;
+  }
 }
 </style>

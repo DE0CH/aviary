@@ -7,10 +7,9 @@
       <oc-button
         v-if="!filesInProgressCount"
         id="close-upload-info-btn"
-        v-oc-tooltip="$gettext('Close')"
         :aria-label="$gettext('Close')"
-        appearance="raw-inverse"
-        variation="brand"
+        appearance="raw"
+        class="oc-p-xs raw-hover-surface"
         @click="closeInfo"
       >
         <oc-icon name="close" />
@@ -23,8 +22,8 @@
       }"
     >
       <div v-if="runningUploads" class="oc-flex oc-flex-middle">
-        <oc-icon v-if="uploadsPaused" name="pause" size="small" class="oc-mr-s" />
-        <oc-spinner v-else size="small" class="oc-mr-s" />
+        <oc-icon v-if="uploadsPaused" name="pause" size="small" class="oc-mr-xs" />
+        <oc-spinner v-else size="small" class="oc-mr-xs" />
         <span class="oc-text-small oc-text-muted" v-text="remainingTime" />
       </div>
       <div
@@ -41,6 +40,7 @@
         <oc-button
           appearance="raw"
           class="oc-text-muted oc-text-small upload-info-toggle-details-btn"
+          no-hover
           @click="toggleInfo"
         >
           {{ infoExpanded ? $gettext('Hide details') : $gettext('Show details') }}
@@ -48,7 +48,7 @@
         <oc-button
           v-if="!runningUploads && Object.keys(errors).length && !disableActions"
           v-oc-tooltip="$gettext('Retry all failed uploads')"
-          class="oc-ml-s"
+          class="oc-ml-xs oc-p-xs"
           appearance="raw"
           :aria-label="$gettext('Retry all failed uploads')"
           @click="retryUploads"
@@ -66,7 +66,7 @@
           "
           id="pause-upload-info-btn"
           v-oc-tooltip="uploadsPaused ? $gettext('Resume upload') : $gettext('Pause upload')"
-          class="oc-ml-s"
+          class="oc-ml-xs oc-p-xs"
           appearance="raw"
           :aria-label="uploadsPaused ? $gettext('Resume upload') : $gettext('Pause upload')"
           @click="togglePauseUploads"
@@ -77,7 +77,7 @@
           v-if="runningUploads && !inPreparation && !inFinalization && !disableActions"
           id="cancel-upload-info-btn"
           v-oc-tooltip="$gettext('Cancel upload')"
-          class="oc-ml-s"
+          class="oc-ml-xs oc-p-xs"
           appearance="raw"
           :aria-label="$gettext('Cancel upload')"
           @click="cancelAllUploads"
@@ -102,13 +102,13 @@
       <ul class="oc-list">
         <li v-for="(item, idx) in uploads" :key="idx">
           <span class="oc-flex oc-flex-middle">
-            <oc-icon v-if="item.status === 'error'" name="close" variation="danger" size="small" />
             <oc-icon
-              v-else-if="item.status === 'success'"
-              name="check"
-              variation="success"
+              v-if="item.status === 'error'"
+              name="close"
               size="small"
+              color="var(--oc-role-error)"
             />
+            <oc-icon v-else-if="item.status === 'success'" name="check" size="small" />
             <oc-icon v-else-if="item.status === 'cancelled'" name="close" size="small" />
             <oc-icon v-else-if="uploadsPaused" name="pause" size="small" />
             <div v-else class="oc-flex"><oc-spinner size="small" /></div>
@@ -700,7 +700,7 @@ export default defineComponent({
 
 <style lang="scss">
 #upload-info {
-  background-color: var(--oc-color-background-secondary);
+  background-color: var(--oc-role-surface);
   width: 400px;
 
   @media (max-width: 640px) {
@@ -714,15 +714,11 @@ export default defineComponent({
   }
 
   .upload-info-title {
-    background-color: var(--oc-color-swatch-inverse-muted);
-  }
-
-  .upload-info-title p {
-    color: var(--oc-color-swatch-brand-contrast);
+    background-color: var(--oc-role-surface-container);
   }
 
   .oc-resource-indicators .parent-folder .text {
-    color: var(--oc-color-text-default);
+    color: var(--oc-role-on-surface);
   }
 
   .upload-info-items {
@@ -735,11 +731,11 @@ export default defineComponent({
   }
 
   .upload-info-danger {
-    color: var(--oc-color-swatch-danger-default);
+    color: var(--oc-role-error);
   }
 
   .upload-info-success {
-    color: var(--oc-color-swatch-success-default);
+    color: var(--oc-role-on-surface);
   }
 }
 </style>

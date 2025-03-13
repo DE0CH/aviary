@@ -20,7 +20,7 @@
       class="link-modal-advanced-mode-button"
       gap-size="xsmall"
       appearance="raw"
-      variation="primary"
+      no-hover
       @click="setAdvancedMode()"
     >
       <oc-icon name="settings-3" size="small" fill-type="fill" />
@@ -55,10 +55,9 @@
   <div class="link-modal-actions oc-flex oc-flex-right oc-flex-middle oc-mt-s">
     <oc-button
       class="link-modal-cancel oc-modal-body-actions-cancel oc-ml-s"
-      appearance="outline"
-      variation="passive"
       @click="$emit('cancel')"
-      >{{ $gettext('Cancel') }}
+    >
+      {{ $gettext('Cancel') }}
     </oc-button>
     <div
       class="link-modal-confirm-button-group oc-ml-s"
@@ -67,16 +66,15 @@
       <oc-button
         class="link-modal-confirm oc-modal-body-actions-confirm"
         appearance="filled"
-        variation="primary"
         :disabled="confirmButtonDisabled"
         @click="$emit('confirm')"
-        >{{ confirmButtonText }}
+      >
+        {{ confirmButtonText }}
       </oc-button>
       <oc-button
         v-if="password.value"
         class="link-modal-confirm oc-modal-body-actions-confirm-secondary-trigger"
         appearance="filled"
-        variation="primary"
         :disabled="confirmButtonDisabled"
       >
         <oc-icon size="small" name="arrow-down-s" />
@@ -95,7 +93,8 @@
               class="oc-modal-body-actions-confirm-password action-menu-item"
               appearance="raw"
               @click="$emit('confirm', { copyPassword: true })"
-              >{{ $gettext('Copy link and password') }}
+            >
+              {{ $gettext('Copy link and password') }}
             </oc-button>
           </li>
         </oc-list>
@@ -363,6 +362,7 @@ export default defineComponent({
 }
 
 .oc-modal-body-actions-confirm-secondary-trigger {
+  background: var(--oc-role-secondary);
   padding: var(--oc-space-xsmall);
 }
 
@@ -385,16 +385,6 @@ export default defineComponent({
     text-align: left;
     width: 100%;
     gap: var(--oc-space-medium);
-
-    &:hover,
-    &:focus {
-      background-color: var(--oc-color-background-hover);
-      text-decoration: none;
-    }
-  }
-
-  .selected span {
-    color: var(--oc-color-swatch-primary-contrast);
   }
 }
 </style>

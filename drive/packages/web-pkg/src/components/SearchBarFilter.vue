@@ -18,7 +18,7 @@
             size="medium"
             justify-content="space-between"
             class="search-bar-filter-item oc-flex oc-flex-middle oc-width-1-1 oc-py-xs oc-px-s"
-            :class="{ 'oc-background-highlight': option.id === currentSelection.id }"
+            :class="{ 'oc-secondary-container': option.id === currentSelection.id }"
             :disabled="!option.enabled"
             :data-test-id="option.id"
             @click="onOptionSelected(option)"
@@ -134,17 +134,6 @@ export default defineComponent({
   float: right;
   .oc-drop {
     width: 180px;
-  }
-}
-.search-bar-filter-item {
-  margin-top: var(--oc-space-xsmall);
-
-  &:first-child {
-    margin-top: 0;
-  }
-
-  &:hover:not(.oc-background-highlight):not(:disabled) {
-    background-color: var(--oc-color-background-hover) !important;
   }
 }
 </style>

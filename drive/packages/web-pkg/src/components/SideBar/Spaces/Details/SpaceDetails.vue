@@ -3,7 +3,7 @@
     <div class="oc-space-details-sidebar-image oc-text-center">
       <oc-spinner v-if="previewsLoading" />
       <div v-else-if="spaceImage" class="oc-position-relative">
-        <img :src="spaceImage" alt="" class="oc-mb-s" />
+        <img :src="spaceImage" alt="" />
       </div>
       <oc-icon
         v-else
@@ -15,29 +15,31 @@
     <div
       v-if="showShareIndicators && hasShares && !resource.disabled"
       class="oc-flex oc-flex-middle oc-space-details-sidebar-members oc-mb-s oc-text-small"
-      style="gap: 15px"
     >
       <oc-button
         v-if="hasMemberShares"
         appearance="raw"
         :aria-label="openSharesPanelMembersHint"
+        no-hover
         @click="expandSharesPanel"
       >
-        <oc-icon name="group" />
+        <oc-icon name="group" size="small" fill-type="line" />
       </oc-button>
       <oc-button
         v-if="hasLinkShares"
         appearance="raw"
         :aria-label="openSharesPanelLinkHint"
+        no-hover
         @click="expandSharesPanel"
       >
-        <oc-icon name="link" />
+        <oc-icon name="link" size="small" fill-type="line" />
       </oc-button>
       <p v-text="shareLabel" />
       <oc-button
         appearance="raw"
         :aria-label="openSharesPanelHint"
         size="small"
+        no-hover
         @click="expandSharesPanel"
       >
         <span class="oc-text-small" v-text="$gettext('Show')" />
@@ -264,7 +266,16 @@ export default defineComponent({
 })
 </script>
 <style lang="scss" scoped>
+#oc-space-details-sidebar {
+  background-color: var(--oc-role-surface-container);
+  border-radius: 5px;
+  padding: var(--oc-space-medium);
+}
+
 .oc-space-details-sidebar {
+  &-members {
+    gap: var(--oc-space-small);
+  }
   &-image img {
     max-height: 150px;
     object-fit: cover;

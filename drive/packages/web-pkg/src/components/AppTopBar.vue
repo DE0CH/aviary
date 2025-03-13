@@ -1,7 +1,7 @@
 <template>
   <portal to="app.runtime.header.left">
     <div class="oc-app-top-bar oc-flex">
-      <span class="oc-app-top-bar-inner oc-px-m oc-flex oc-flex-middle oc-flex-between">
+      <span class="oc-app-top-bar-inner oc-pl-m oc-pr-xs oc-flex oc-flex-middle oc-flex-between">
         <div class="open-file-bar oc-flex">
           <resource-list-item
             v-if="resource"
@@ -15,6 +15,7 @@
               getParentFolderLinkIconAdditionalAttributes(resource)
             "
             :is-path-displayed="isPathDisplayed"
+            :is-resource-clickable="false"
           />
         </div>
         <div class="oc-flex main-actions">
@@ -24,8 +25,8 @@
               v-oc-tooltip="contextMenuLabel"
               :aria-label="contextMenuLabel"
               appearance="raw-inverse"
+              color-role="chrome"
               class="oc-p-xs"
-              variation="primary"
             >
               <oc-icon name="more-2" />
             </oc-button>
@@ -49,6 +50,7 @@
               :accessible-label="autoSaveTooltipText"
               name="refresh"
               color="white"
+              class="ox-p-xs oc-mx-xs"
             />
           </span>
           <template v-if="mainActions.length && resource">
@@ -59,7 +61,11 @@
                   items: mainActions
                     .filter((action) => action.isVisible())
                     .map((action) => {
-                      return { ...action, class: 'oc-p-xs', hideLabel: true }
+                      return {
+                        ...action,
+                        class: 'oc-p-xs app-topbar-action',
+                        hideLabel: true
+                      }
                     })
                 }
               ]"
@@ -67,18 +73,18 @@
                 resources: [resource]
               }"
               appearance="raw-inverse"
-              variation="primary"
+              color-role="chrome"
             />
           </template>
           <oc-button
             id="app-top-bar-close"
-            v-oc-tooltip="closeButtonLabel"
             appearance="raw-inverse"
-            variation="primary"
-            :aria-label="closeButtonLabel"
+            color-role="chrome"
+            class="oc-p-xs"
+            :aria-label="$gettext('Close')"
             @click="$emit('close')"
           >
-            <oc-icon name="close" size="small" />
+            <oc-icon name="close" />
           </oc-button>
         </div>
       </span>
@@ -146,7 +152,6 @@ export default defineComponent({
 
     const areFileExtensionsShown = computed(() => resourcesStore.areFileExtensionsShown)
     const contextMenuLabel = computed(() => $gettext('Show context menu'))
-    const closeButtonLabel = computed(() => $gettext('Close'))
     const hasAutosave = computed(
       () => props.isEditor && props.hasAutoSave && configStore.options.editor.autosaveEnabled
     )
@@ -166,7 +171,6 @@ export default defineComponent({
 
     return {
       contextMenuLabel,
-      closeButtonLabel,
       areFileExtensionsShown,
       hasAutosave,
       autoSaveTooltipText,
@@ -191,9 +195,9 @@ export default defineComponent({
 
 .oc-app-top-bar-inner {
   align-self: center;
-  background-color: var(--oc-color-components-apptopbar-background);
+  background-color: var(--oc-role-chrome);
   border-radius: 10px;
-  border: 1px solid var(--oc-color-components-apptopbar-border);
+  border: 1px solid var(--oc-role-on-chrome);
   display: inline-flex;
   gap: 25px;
   height: 40px;
@@ -207,8 +211,15 @@ export default defineComponent({
 
   .oc-resource-indicators {
     .text {
-      color: var(--oc-color-swatch-inverse-default);
+      color: var(--oc-role-on-chrome);
     }
+  }
+}
+
+.app-topbar-action {
+  color: var(--oc-role-on-chrome) !important;
+  svg {
+    fill: var(--oc-role-on-chrome) !important;
   }
 }
 
@@ -226,8 +237,8 @@ export default defineComponent({
 
     svg,
     .oc-resource-name span {
-      fill: var(--oc-color-swatch-inverse-default) !important;
-      color: var(--oc-color-swatch-inverse-default) !important;
+      fill: var(--oc-role-on-chrome) !important;
+      color: var(--oc-role-on-chrome) !important;
     }
   }
 

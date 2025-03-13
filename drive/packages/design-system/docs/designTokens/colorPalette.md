@@ -1,6 +1,6 @@
-# Color Palette
+# Color palette
 
-The design system uses a predefined color palette to ensure a consistent look and feel across the interface. The color palette is designed to be accessible and to provide a wide range of colors for different use cases.
+The design system provides some colors that can be used globally. Currently they are primarily suited for icons.
 
 ## Available colors
 
@@ -45,7 +45,7 @@ const fields = [
 
 <style lang="scss">
 .oc-tbody-tr {
-  background-color: var(--oc-color-background) !important;
+  background-color: var(--oc-role-surface) !important;
 }
 </style>
 
@@ -55,7 +55,6 @@ You can use these variables in your SCSS files or style blocks:
 
 ```scss
 .element {
-  color: var(--oc-color-swatch-primary-default);
-  background-color: var(--oc-color-background-highlight);
+  color: var(--oc-role-icon-folder);
 }
 ```

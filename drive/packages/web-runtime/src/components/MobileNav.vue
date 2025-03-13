@@ -1,6 +1,6 @@
 <template>
   <nav id="mobile-nav">
-    <oc-button id="mobile-nav-button" appearance="raw" aria-current="page">
+    <oc-button id="mobile-nav-button" class="oc-p-xs" appearance="raw" aria-current="page">
       {{ activeNavItem.name }}
       <oc-icon name="arrow-drop-down" />
     </oc-button>
@@ -21,13 +21,12 @@
           <oc-button
             type="router-link"
             appearance="raw"
-            variation="passive"
             :to="item.route"
             class="oc-display-block oc-p-s"
-            :class="{ 'oc-background-highlight router-link-active': item.active }"
+            :class="{ 'oc-secondary-container router-link-active': item.active }"
           >
             <span class="oc-flex">
-              <oc-icon :name="item.icon" variation="inherit" />
+              <oc-icon :name="item.icon" />
               <span class="oc-ml-m text" v-text="item.name" />
             </span>
           </oc-button>
@@ -75,7 +74,6 @@ export default defineComponent({
     a {
       &:focus,
       &:hover {
-        background-color: var(--oc-color-background-hover);
         text-decoration: none;
       }
     }

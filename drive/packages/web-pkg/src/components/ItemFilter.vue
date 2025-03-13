@@ -261,13 +261,6 @@ export default defineComponent({
     &-item {
       line-height: 1.5;
       gap: 8px;
-
-      &:hover:not(&-active) {
-        background-color: var(--oc-color-background-hover) !important;
-      }
-      &-active {
-        background-color: var(--oc-color-background-highlight) !important;
-      }
     }
   }
 }

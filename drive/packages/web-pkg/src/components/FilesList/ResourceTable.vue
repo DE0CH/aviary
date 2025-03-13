@@ -94,7 +94,7 @@
         />
         <oc-button
           v-if="hasRenameAction(item)"
-          class="resource-table-edit-name"
+          class="resource-table-edit-name raw-hover-surface oc-p-xs"
           appearance="raw"
           @click="openRenameDialog(item)"
         >
@@ -193,7 +193,6 @@
     <template #sharedBy="{ item }">
       <oc-button
         appearance="raw-inverse"
-        variation="passive"
         class="resource-table-shared-by"
         @click="openSharingSidebar(item)"
       >
@@ -208,7 +207,6 @@
     <template #sharedWith="{ item }">
       <oc-button
         appearance="raw-inverse"
-        variation="passive"
         class="resource-table-shared-with"
         @click="openSharingSidebar(item)"
       >
@@ -1253,7 +1251,7 @@ export default defineComponent({
 
     &:hover > .resource-table-edit-name {
       svg {
-        fill: var(--oc-color-text-default);
+        fill: var(--oc-role-on-surface);
       }
     }
   }
@@ -1272,10 +1270,6 @@ export default defineComponent({
   &-activity-indicator {
     display: inline-flex;
     margin-left: var(--oc-space-xsmall);
-
-    svg {
-      fill: var(--oc-color-text-muted);
-    }
   }
 
   &-people {
@@ -1286,7 +1280,6 @@ export default defineComponent({
     align-items: center;
     display: flex;
     flex-flow: row nowrap;
-    gap: var(--oc-space-xsmall);
     justify-content: flex-end;
   }
 

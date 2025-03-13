@@ -35,7 +35,6 @@
           class="oc-tile-card-preview oc-flex oc-flex-middle oc-flex-center"
           :aria-label="tooltipLabelIcon"
         >
-          <div class="oc-tile-card-hover"></div>
           <slot name="imageField" :item="resource">
             <oc-image
               v-if="shouldDisplayThumbnails(resource)"
@@ -229,16 +228,15 @@ export default defineComponent({
 
 <style lang="scss">
 .oc-tile-card {
-  background-color: var(--oc-color-background-highlight) !important;
+  background-color: var(--oc-role-surface-container);
   box-shadow: none;
   height: 100%;
   display: flex;
   flex-flow: column;
-  outline: 1px solid var(--oc-color-border);
+  outline: 0.5px solid var(--oc-role-outline-variant);
 
   &-disabled {
     pointer-events: none;
-    background-color: var(--oc-color-background-muted) !important;
     opacity: 0.7;
     filter: grayscale(0.6);
 
@@ -267,7 +265,7 @@ export default defineComponent({
     width: 100%;
 
     .oc-tag {
-      color: var(--oc-color-text-default);
+      color: var(--oc-role-on-surface);
 
       &.resource-disabled-indicator {
         z-index: 1;
@@ -282,30 +280,25 @@ export default defineComponent({
       border-top-left-radius: 5px;
       border-top-right-radius: 5px;
     }
-
-    &:hover {
-      .oc-tile-card-hover {
-        opacity: 15%;
-      }
-    }
   }
 
-  &-selected {
-    outline: 2px solid var(--oc-color-swatch-primary-hover);
-
+  &-selected,
+  &:hover {
     .oc-tile-card-preview {
       width: calc(100% - var(--oc-space-medium));
       height: calc(100% - var(--oc-space-medium));
 
-      .tile-preview,
-      .oc-tile-card-hover {
+      .tile-preview {
         border-radius: 5px !important;
       }
-
-      .oc-tile-card-hover {
-        opacity: 10%;
-      }
     }
+  }
+  &:hover {
+    background-color: var(--oc-role-secondary-container);
+  }
+  &-selected {
+    background-color: var(--oc-role-surface-container-high) !important;
+    outline: 2px solid var(--oc-role-outline);
   }
 
   &-selection {
@@ -315,11 +308,7 @@ export default defineComponent({
     left: 0;
 
     input {
-      background-color: var(--oc-color-background-muted);
-    }
-
-    input.oc-checkbox-checked {
-      background-color: var(--oc-color-swatch-inverse-default);
+      background-color: var(--oc-role-surface-container);
     }
   }
 
@@ -330,18 +319,8 @@ export default defineComponent({
     text-align: center;
   }
 
-  &-hover {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    background: #000;
-    opacity: 0;
-    border-top-left-radius: 5px;
-    border-top-right-radius: 5px;
-  }
-
   .resource-name-wrapper {
-    color: var(--oc-color-text-default);
+    color: var(--oc-role-on-surface);
     max-width: 70%;
     overflow: hidden;
   }
