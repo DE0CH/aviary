@@ -85,7 +85,6 @@ const copyPasteWarningPopup = '#copy_paste_warning-box'
 const tagTableCell =
   '//*[@data-test-resource-name="%s"]/ancestor::tr//td[contains(@class, "oc-table-data-cell-tags")]'
 const tagInFilesTable = '//*[contains(@class, "oc-tag")]//span[text()="%s"]//ancestor::a'
-const tagInDetailsPanel = '//*[@data-testid="tags"]/td//span[text()="%s"]'
 const tagInInputForm =
   '//span[contains(@class, "tags-select-tag")]//span[text()="%s"]//ancestor::span//button[contains(@class, "vs__deselect")]'
 const tagFormInput = '//*[@data-testid="tags"]//input'
@@ -1486,10 +1485,9 @@ export const getTagsForResourceVisibilityInDetailsPanel = async (
   await sidebar.open({ page: page, resource: resourceName })
 
   for (const tag of tags) {
-    const tagSelector = util.format(tagInDetailsPanel, tag)
-    await page.locator(tagSelector).waitFor()
-    const tagSpan = page.locator(tagSelector)
-    const isVisible = await tagSpan.isVisible()
+    const tagSelector = page.getByRole('link', { name: tag })
+    await tagSelector.waitFor()
+    const isVisible = await tagSelector.isVisible()
     if (!isVisible) {
       return false
     }
