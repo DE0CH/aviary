@@ -54,7 +54,7 @@ Feature: Users can see all activities of the resources and spaces
       | sharedFolder | Alice Hansen renamed textfile.txt to new.txt     |
       | sharedFolder | Public updated textfile.txt in sharedFolder      |
       | sharedFolder | Alice Hansen shared sharedFolder via link        |
-      | sharedFolder | Alice Hansen shared sharedFolder with brian      |
+      | sharedFolder | Alice Hansen shared sharedFolder with Brian      |
       | sharedFolder | Alice Hansen added textfile.txt to sharedFolder  |
       | sharedFolder | Alice Hansen added subFolder to sharedFolder     |
       | sharedFolder | Alice Hansen added sharedFolder to Alice Hansen  |
