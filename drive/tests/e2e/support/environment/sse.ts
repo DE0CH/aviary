@@ -31,6 +31,9 @@ export const listenSSE = (baseUrl: string, user: User): Promise<void> => {
       }
       // push event to the array
       // TODO: also store message.data if necessary
+      if (!sseEventStore[user.id.toLowerCase()]) {
+        sseEventStore[user.id.toLowerCase()] = []
+      }
       sseEventStore[user.id.toLowerCase()].push(message.event)
     },
     onclose() {
