@@ -218,3 +218,15 @@ Then(
     }
   }
 )
+
+Then(
+  '{string} should see activities of the space mathing the following regex',
+  async function (this: World, stepUser: string, stepTable: DataTable): Promise<void> {
+    const { page } = this.actorsEnvironment.getActor({ key: stepUser })
+    const spacesObject = new objects.applicationFiles.Spaces({ page })
+
+    for (const info of stepTable.hashes()) {
+      await spacesObject.checkSpaceActivity({ activity: new RegExp(info.activity) })
+    }
+  }
+)
