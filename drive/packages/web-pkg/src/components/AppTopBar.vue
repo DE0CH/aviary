@@ -221,6 +221,13 @@ export default defineComponent({
   svg {
     fill: var(--oc-role-on-chrome) !important;
   }
+
+  &:hover:not(:disabled) {
+    color: var(--oc-role-on-surface) !important;
+    svg {
+      fill: var(--oc-role-on-surface) !important;
+    }
+  }
 }
 
 .open-file-bar {

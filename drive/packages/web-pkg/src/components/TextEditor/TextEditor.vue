@@ -164,6 +164,7 @@ export default defineComponent({
     display: none;
   }
 
+  .cm-line:has(.ͼy),
   .cm-line:has(.ͼ1h) {
     max-height: 60px;
     overflow: auto;
