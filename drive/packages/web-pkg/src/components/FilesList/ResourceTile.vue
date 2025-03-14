@@ -1,7 +1,7 @@
 <template>
   <div
     ref="observerTarget"
-    class="oc-tile-card oc-card oc-card-default oc-rounded"
+    class="oc-tile-card oc-card oc-card-default"
     :data-item-id="resource.id"
     :class="{
       'oc-tile-card-selected': isResourceSelected,
@@ -228,7 +228,7 @@ export default defineComponent({
 
 <style lang="scss">
 .oc-tile-card {
-  background-color: var(--oc-role-surface-container);
+  background-color: var(--oc-role-surface-container) !important;
   box-shadow: none;
   height: 100%;
   display: flex;
@@ -294,7 +294,7 @@ export default defineComponent({
     }
   }
   &:hover {
-    background-color: var(--oc-role-secondary-container);
+    background-color: var(--oc-role-secondary-container) !important;
   }
   &-selected {
     background-color: var(--oc-role-surface-container-high) !important;
