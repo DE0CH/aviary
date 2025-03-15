@@ -60,8 +60,7 @@ export type CollaboratorType = 'user' | 'group'
 export default class Collaborator {
   private static readonly invitePanel = '//*[@id="oc-files-sharing-sidebar"]'
   private static readonly inviteInput = '#files-share-invite-input'
-  private static readonly newCollaboratorRoleDropdown =
-    '//*[@id="files-collaborators-role-button-new"]'
+  private static readonly newCollaboratorRoleDropdown = '#files-collaborators-role-button-new'
   private static readonly sendInvitationButton = '#new-collaborators-form-create-button'
   public static readonly collaboratorRoleDropdownButton =
     '%s//button[contains(@class,"files-recipient-role-select-btn")]'
@@ -155,8 +154,9 @@ export default class Collaborator {
       dropdownSelector = Collaborator.newCollaboratorRoleDropdown
       itemSelector = util.format(Collaborator.collaboratorRoleItemSelector, '')
     }
-    await page.click(dropdownSelector)
-
+    // added an additional click to remove flaky
+    await page.locator('#new-collaborators-form').click()
+    await page.locator(dropdownSelector).click()
     return await page.click(util.format(itemSelector, role))
   }
 
