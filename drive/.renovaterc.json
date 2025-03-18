@@ -4,5 +4,13 @@
   "prConcurrentLimit": 15,
   "ignoreDeps": ["@adobe/leonardo-contrast-colors"],
   "postUpdateOptions": ["pnpmDedupe"],
-  "labels": ["Type:Dependencies"]
+  "labels": ["Type:Dependencies"],
+  "packageRules": [
+    {
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "devDependencies (non-major)",
+      "groupSlug": "dev-dependencies"
+    }
+  ]
 }
