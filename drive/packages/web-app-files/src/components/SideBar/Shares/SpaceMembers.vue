@@ -40,7 +40,7 @@
         <oc-text-input
           ref="filterInput"
           v-model="filterTerm"
-          class="oc-text-truncate space-members-filter oc-mr-s oc-width-1-1"
+          class="space-members-filter oc-mr-s oc-width-1-1"
           :label="$gettext('Filter members')"
           :clear-button-enabled="true"
         />
@@ -279,8 +279,17 @@ export default defineComponent({
 }
 
 .space-members-filter {
+  overflow: hidden;
+
   label {
     font-size: var(--oc-font-size-small);
+  }
+
+  input:focus {
+    // use inner focus border because an outline would be cut off by the hidden overflow
+    outline: 0px !important;
+    border: 1px solid var(--oc-role-outline) !important;
+    box-shadow: inset 0px 0px 0px 1px var(--oc-role-outline);
   }
 
   &-container {
