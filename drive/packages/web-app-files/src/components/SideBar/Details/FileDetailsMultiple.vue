@@ -52,12 +52,12 @@ export default defineComponent({
       return formatFileSize(size, currentLanguage)
     })
 
-    const details = [
+    const details = computed(() => [
       { term: $gettext('Files'), definition: unref(filesCount) },
       { term: $gettext('Folders'), definition: unref(foldersCount) },
       { term: $gettext('Spaces'), definition: unref(spacesCount) },
       { term: $gettext('Size'), definition: unref(sizeValue) }
-    ]
+    ])
 
     return { hasSize, selectedResources, details }
   },

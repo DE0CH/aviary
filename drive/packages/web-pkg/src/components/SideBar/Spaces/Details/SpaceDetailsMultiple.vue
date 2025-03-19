@@ -73,13 +73,13 @@ export default defineComponent({
       )
     })
 
-    const items = [
+    const items = computed(() => [
       { term: $gettext('Total quota:'), definition: unref(totalSelectedSpaceQuotaTotal) },
       { term: $gettext('Remaining quota:'), definition: unref(totalSelectedSpaceQuotaRemaining) },
       { term: $gettext('Used quota:'), definition: unref(totalSelectedSpaceQuotaUsed) },
       { term: $gettext('Enabled:'), definition: unref(totalEnabledSpaces) },
       { term: $gettext('Disabled:'), definition: unref(totalDisabledSpaces) }
-    ]
+    ])
 
     return {
       detailsTableLabel,
