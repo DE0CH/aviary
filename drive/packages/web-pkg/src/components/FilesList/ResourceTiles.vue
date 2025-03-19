@@ -55,7 +55,7 @@
           :resource-route="getRoute(resource)"
           :is-resource-selected="isResourceSelected(resource)"
           :is-resource-clickable="isResourceClickable(resource)"
-          :is-resource-disabled="isResourceDisabled(resource)"
+          :is-resource-disabled="isResourceDisabled(resource) || isSpaceResourceDisabled(resource)"
           :is-extension-displayed="areFileExtensionsShown"
           :resource-icon-size="resourceIconSize"
           :draggable="dragDrop"
@@ -79,7 +79,7 @@
               :label-hidden="true"
               size="large"
               class="oc-flex-inline oc-p-s"
-              :disabled="!isSpaceResource(resource) && isResourceDisabled(resource)"
+              :disabled="isResourceDisabled(resource)"
               :model-value="isResourceSelected(resource)"
               @click.stop.prevent="toggleTile([resource, $event])"
             />
@@ -92,7 +92,7 @@
               v-if="getIndicators(resource).length"
               :resource="resource"
               :indicators="getIndicators(resource)"
-              :disable-handler="!isSpaceResource(resource) && isResourceDisabled(resource)"
+              :disable-handler="isResourceDisabled(resource)"
             />
           </template>
           <template #actions>
@@ -350,7 +350,7 @@ export default defineComponent({
     })
 
     const isResourceClickable = (resource: Resource) => {
-      if (isResourceDisabled(resource)) {
+      if (isResourceDisabled(resource) || isSpaceResourceDisabled(resource)) {
         return false
       }
 
@@ -378,11 +378,17 @@ export default defineComponent({
         )
       }
 
-      if (isSpaceResource(resource) && resource.disabled) {
+      return resource.processing === true
+    }
+
+    const isSpaceResourceDisabled = (resource: Resource) => {
+      // a disabled space behaves a bit different than a disabled resource because
+      // it still allows certain actions, hence we need to handle them separately.
+      if (unref(isResourceDisabled)(resource)) {
         return true
       }
 
-      return resource.processing === true
+      return isSpaceResource(resource) && resource.disabled
     }
 
     const disabledResourceIds = computed(() => {
@@ -629,6 +635,7 @@ export default defineComponent({
       selectSorting,
       isSortFieldSelected,
       isResourceClickable,
+      isSpaceResourceDisabled,
       currentSortField,
       resourceIconSize,
       ghostElementRef,
