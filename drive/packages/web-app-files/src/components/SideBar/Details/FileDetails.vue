@@ -144,11 +144,7 @@ import {
 } from '@opencloud-eu/web-client'
 import { useGetMatchingSpace } from '@opencloud-eu/web-pkg'
 import { getIndicators } from '@opencloud-eu/web-pkg'
-import {
-  formatDateFromHTTP,
-  formatFileSize,
-  formatRelativeDateFromJSDate
-} from '@opencloud-eu/web-pkg'
+import { formatFileSize, formatRelativeDateFromJSDate } from '@opencloud-eu/web-pkg'
 import { eventBus } from '@opencloud-eu/web-pkg'
 import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { Resource, SpaceResource } from '@opencloud-eu/web-client'
@@ -239,15 +235,6 @@ export default defineComponent({
       return isTrashResource(unref(resource))
     })
 
-    const capitalizedDeletionDate = computed(() => {
-      const item = unref(resource)
-      if (!isTrashResource(item)) {
-        return ''
-      }
-      const displayDate = formatDateFromJSDate(new Date(item.ddate), language.current)
-      return upperFirst(displayDate)
-    })
-
     const shareIndicators = computed(() => {
       return getIndicators({
         space: unref(space),
@@ -333,7 +320,9 @@ export default defineComponent({
       return $gettext('See all versions')
     })
     const capitalizedTimestamp = computed(() => {
-      const displayDate = formatDateFromHTTP(unref(resource).mdate, currentLanguage)
+      const item = unref(resource)
+      const date = isTrashResource(item) ? item.ddate : item.mdate
+      const displayDate = formatDateFromJSDate(new Date(date), currentLanguage)
       return upperFirst(displayDate)
     })
 
@@ -364,7 +353,6 @@ export default defineComponent({
       resource,
       hasTags,
       hasDeletionDate,
-      capitalizedDeletionDate,
       isPreviewLoading,
       sharedAncestor,
       sharedAncestorRoute,
