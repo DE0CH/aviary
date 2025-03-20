@@ -1,7 +1,13 @@
 <template>
   <div class="space-quota">
     <p class="oc-mb-s oc-mt-rm" v-text="spaceStorageDetailsLabel" />
-    <oc-progress :value="quotaUsagePercent" :max="100" size="small" :color="quotaProgressColor" />
+    <oc-progress
+      :value="quotaUsagePercent"
+      :max="100"
+      size="small"
+      :color="quotaProgressColor"
+      background-color="var(--oc-role-surface)"
+    />
   </div>
 </template>
 
