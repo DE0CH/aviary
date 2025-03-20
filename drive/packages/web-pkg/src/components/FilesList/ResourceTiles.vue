@@ -60,6 +60,7 @@
           :resource-icon-size="resourceIconSize"
           :draggable="dragDrop"
           :lazy="lazy"
+          :is-loading="isResourceInDeleteQueue(resource.id)"
           @vue:mounted="
             $emit('rowMounted', resource, tileRefs.tiles[resource.id], ImageDimension.Tile)
           "
@@ -347,6 +348,10 @@ const isResourceDisabled = (resource: Resource) => {
     )
   }
 
+  if (isResourceInDeleteQueue(resource.id)) {
+    return true
+  }
+
   return resource.processing === true
 }
 
@@ -563,6 +568,10 @@ const areAllResourcesSelected = computed(() => {
 
   return !allResourcesDisabled && allSelected
 })
+
+const isResourceInDeleteQueue = (id: string): boolean => {
+  return resourcesStore.deleteQueue.includes(id)
+}
 
 watch(
   tileSizePixels,
