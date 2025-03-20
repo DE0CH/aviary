@@ -368,7 +368,7 @@ const onUploadComplete = async (result: UploadResult) => {
   }
 }
 
-const isPastingIntoSameFolder = computed(() => {
+const isMovingIntoSameFolder = computed(() => {
   if (unref(clipboardAction) === ClipboardActions.Copy) {
     return false
   }
@@ -383,7 +383,7 @@ const isPastingIntoSameFolder = computed(() => {
 })
 
 const isPasteHereButtonDisabled = computed(() => {
-  return !unref(canUpload) || unref(isPastingIntoSameFolder)
+  return !unref(canUpload) || unref(isMovingIntoSameFolder)
 })
 
 const pasteHereButtonTooltip = computed(() => {
@@ -391,8 +391,8 @@ const pasteHereButtonTooltip = computed(() => {
     return $gettext('You have no permission to paste files here.')
   }
 
-  if (unref(isPastingIntoSameFolder)) {
-    return $gettext('You cannot paste resources into the same folder.')
+  if (unref(isMovingIntoSameFolder)) {
+    return $gettext('You cannot cut and paste resources into the same folder.')
   }
 
   return ''
