@@ -39,11 +39,7 @@
           :aria-label="tooltipLabelIcon"
         >
           <slot name="imageField" :item="resource">
-            <oc-image
-              v-if="shouldDisplayThumbnails(resource)"
-              class="tile-preview"
-              :src="resource.thumbnail"
-            />
+            <oc-image v-if="resource.thumbnail" class="tile-preview" :src="resource.thumbnail" />
             <resource-icon
               v-else
               :resource="resource"
@@ -184,10 +180,6 @@ const resourceDescription = computed(() => {
   }
   return ''
 })
-
-const shouldDisplayThumbnails = (resource: Resource) => {
-  return resource.thumbnail
-}
 
 const { isVisible } = lazy
   ? useIsVisible({
