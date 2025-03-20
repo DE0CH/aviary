@@ -176,6 +176,7 @@ import {
   routeToContextQuery,
   useRouter
 } from '../../composables'
+import { SizeType } from '@opencloud-eu/design-system/helpers'
 
 type ResourceTileRef = ComponentPublicInstance<typeof ResourceTile>
 type ContextMenuQuickActionRef = ComponentPublicInstance<typeof ContextMenuQuickAction>
@@ -450,7 +451,7 @@ const selectSorting = (field: SortField) => {
   emit('sort', { sortBy: field.name, sortDir: field.sortDir })
 }
 
-const resourceIconSize = computed(() => {
+const resourceIconSize = computed<SizeType>(() => {
   const sizeMap: Record<number, string> = {
     1: 'xlarge',
     2: 'xlarge',
@@ -460,7 +461,7 @@ const resourceIconSize = computed(() => {
     6: 'xxxlarge'
   }
   const size = unref(viewSizeCurrent)
-  return sizeMap[size] ?? 'xxlarge'
+  return (sizeMap[size] ?? 'xxlarge') as SizeType
 })
 onBeforeUpdate(() => {
   tileRefs.value = {
