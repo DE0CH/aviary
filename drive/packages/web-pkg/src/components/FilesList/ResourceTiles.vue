@@ -353,7 +353,7 @@ const isResourceDisabled = (resource: Resource) => {
 const isSpaceResourceDisabled = (resource: Resource) => {
   // a disabled space behaves a bit different than a disabled resource because
   // it still allows certain actions, hence we need to handle them separately.
-  if (unref(isResourceDisabled)(resource)) {
+  if (isResourceDisabled(resource)) {
     return true
   }
 
