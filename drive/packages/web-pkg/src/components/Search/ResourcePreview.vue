@@ -166,7 +166,8 @@ export default defineComponent({
         space: this.space,
         resource: this.resource,
         dimensions: ImageDimension.Thumbnail,
-        cancelRunning: true
+        cancelRunning: true,
+        updateStore: false
       })
 
       preview && (this.previewData = preview)
