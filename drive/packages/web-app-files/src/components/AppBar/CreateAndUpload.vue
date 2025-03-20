@@ -180,6 +180,7 @@
 
 <script lang="ts">
 import {
+  ClipboardActions,
   FileAction,
   isLocationPublicActive,
   isLocationSpacesActive,
@@ -269,7 +270,7 @@ export default defineComponent({
 
     const clipboardStore = useClipboardStore()
     const { clearClipboard } = clipboardStore
-    const { resources: clipboardResources } = storeToRefs(clipboardStore)
+    const { resources: clipboardResources, action: clipboardAction } = storeToRefs(clipboardStore)
 
     const resourcesStore = useResourcesStore()
     const { currentFolder } = storeToRefs(resourcesStore)
@@ -402,6 +403,10 @@ export default defineComponent({
     })
 
     const isPastingIntoSameFolder = computed(() => {
+      if (unref(clipboardAction) === ClipboardActions.Copy) {
+        return false
+      }
+
       if (!unref(clipboardResources) || unref(clipboardResources).length < 1) {
         return false
       }

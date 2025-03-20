@@ -10,7 +10,8 @@ import {
   useClipboardStore,
   useFileActionsPaste,
   useExtensionRegistry,
-  OcUppyFile
+  OcUppyFile,
+  ClipboardActions
 } from '@opencloud-eu/web-pkg'
 import { eventBus } from '@opencloud-eu/web-pkg'
 import { defaultPlugins, shallowMount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
@@ -108,7 +109,7 @@ describe('CreateAndUpload component', () => {
       const clipboardStore = useClipboardStore()
       expect(clipboardStore.clearClipboard).toHaveBeenCalled()
     })
-    it('should disable the "paste files"-action when clipboardResources are from same folder', () => {
+    it('should disable the "paste files"-action when clipboardResources are from same folder for cut action', () => {
       const { wrapper } = getWrapper({
         clipboardResources: [mock<Resource>({ parentFolderId: 'current-folder' })],
         currentFolder: mock<Resource>({
@@ -116,9 +117,20 @@ describe('CreateAndUpload component', () => {
           canUpload: vi.fn().mockReturnValue(true)
         })
       })
-      expect(
-        wrapper.findComponent<typeof OcButton>(elSelector.pasteFilesBtn).vm.disabled
-      ).toStrictEqual(true)
+      const pasteBtn = wrapper.findComponent<typeof OcButton>(elSelector.pasteFilesBtn)
+      expect(pasteBtn.props('disabled')).toStrictEqual(true)
+    })
+    it('should not disable the "paste files"-action when clipboardResources are from same folder for copy action', () => {
+      const { wrapper } = getWrapper({
+        clipboardResources: [mock<Resource>({ parentFolderId: 'current-folder' })],
+        clipboardAction: ClipboardActions.Copy,
+        currentFolder: mock<Resource>({
+          id: 'current-folder',
+          canUpload: vi.fn().mockReturnValue(true)
+        })
+      })
+      const pasteBtn = wrapper.findComponent<typeof OcButton>(elSelector.pasteFilesBtn)
+      expect(pasteBtn.props('disabled')).toStrictEqual(false)
     })
 
     it('should not disable the "paste files"-action when at least one clipboardResources is not from same folder', () => {
@@ -196,7 +208,8 @@ function getWrapper({
     mock<FileAction>({ label: () => 'Plain text file', ext: 'txt' }),
     mock<FileAction>({ label: () => 'Mark-down file', ext: 'md' }),
     mock<FileAction>({ label: () => 'Draw.io document', ext: 'drawio' })
-  ]
+  ],
+  clipboardAction = ClipboardActions.Cut
 }: {
   clipboardResources?: Resource[]
   files?: Resource[]
@@ -208,6 +221,7 @@ function getWrapper({
   newFileAction?: boolean
   areFileExtensionsShown?: boolean
   createActions?: FileAction[]
+  clipboardAction?: ClipboardActions
 } = {}) {
   const capabilities = {
     spaces: { enabled: true },
@@ -218,7 +232,7 @@ function getWrapper({
     piniaOptions: {
       spacesState: { spaces },
       capabilityState: { capabilities },
-      clipboardState: { resources: clipboardResources },
+      clipboardState: { resources: clipboardResources, action: clipboardAction },
       resourcesStore: { areFileExtensionsShown, currentFolder, resources: files }
     }
   })
