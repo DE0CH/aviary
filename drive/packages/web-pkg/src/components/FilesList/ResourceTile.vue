@@ -21,7 +21,10 @@
         @click="$emit('click')"
       >
         <div class="oc-tile-card-selection">
-          <slot name="selection" :item="resource" />
+          <div v-if="isLoading" class="oc-tile-card-loading-spinner oc-m-s">
+            <oc-spinner :aria-label="$gettext('File is being processed')" />
+          </div>
+          <slot v-else name="selection" :item="resource" />
         </div>
         <oc-tag
           v-if="isResourceDisabled && isProjectSpaceResource(resource)"
@@ -140,6 +143,10 @@ export default defineComponent({
     lazy: {
       type: Boolean,
       default: false
+    },
+    isLoading: {
+      type: Boolean,
+      default: false
     }
   },
   emits: ['click', 'contextmenu', 'itemVisible'],
@@ -244,6 +251,10 @@ export default defineComponent({
     span.oc-status-indicators-indicator {
       pointer-events: all;
     }
+  }
+
+  &-loading-spinner {
+    z-index: 99;
   }
 
   &.state-trashed {
