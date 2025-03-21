@@ -1,7 +1,10 @@
 <template>
   <div id="oc-space-details-sidebar">
     <div class="oc-space-details-sidebar-image oc-text-center">
-      <oc-spinner v-if="previewsLoading" />
+      <oc-spinner
+        v-if="imagesLoading.includes(resource.id)"
+        :aria-label="$gettext('Space image is loading')"
+      />
       <div v-else-if="spaceImage" class="oc-position-relative">
         <img :src="spaceImage" alt="" />
       </div>
@@ -84,7 +87,8 @@ import {
   useResourcesStore,
   useResourceContents,
   useRouter,
-  useLoadPreview
+  useLoadPreview,
+  useSpacesStore
 } from '../../../../composables'
 import SpaceQuota from '../../../SpaceQuota.vue'
 import WebDavDetails from '../../WebDavDetails.vue'
@@ -117,7 +121,9 @@ export default defineComponent({
     const { resourceContentsText } = useResourceContents({ showSizeInformation: false })
     const router = useRouter()
     const { $gettext, current: currentLanguage } = useGettext()
-    const { loadPreview, previewsLoading } = useLoadPreview()
+    const { loadPreview } = useLoadPreview()
+    const spacesStore = useSpacesStore()
+    const { imagesLoading } = storeToRefs(spacesStore)
 
     const sharesStore = useSharesStore()
 
@@ -183,7 +189,7 @@ export default defineComponent({
       resourceContentsText,
       showSize,
       size,
-      previewsLoading,
+      imagesLoading,
       lastModifiedDate,
       ownerUsernames
     }

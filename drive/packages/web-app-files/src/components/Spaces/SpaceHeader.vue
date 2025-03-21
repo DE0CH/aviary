@@ -7,8 +7,14 @@
       class="space-header-image"
       :class="{ 'space-header-image-expanded': imageExpanded || isMobileWidth }"
     >
+      <div
+        v-if="imagesLoading.includes(space.id)"
+        class="oc-height-1-1 oc-flex oc-flex-middle oc-flex-center"
+      >
+        <oc-spinner :aria-label="$gettext('Space image is loading')" />
+      </div>
       <img
-        v-if="imageContent"
+        v-else-if="imageContent"
         class="oc-cursor-pointer"
         alt=""
         :src="imageContent"
@@ -111,7 +117,8 @@ import {
   useResourcesStore,
   TextEditor,
   useFileActions,
-  useLoadPreview
+  useLoadPreview,
+  useSpacesStore
 } from '@opencloud-eu/web-pkg'
 import { ImageDimension } from '@opencloud-eu/web-pkg'
 import SpaceContextActions from './SpaceContextActions.vue'
@@ -119,6 +126,7 @@ import { eventBus } from '@opencloud-eu/web-pkg'
 import { SideBarEventTopics } from '@opencloud-eu/web-pkg'
 import { useGettext } from 'vue3-gettext'
 import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
+import { storeToRefs } from 'pinia'
 
 const markdownContainerCollapsedClass = 'collapsed'
 
@@ -143,6 +151,8 @@ export default defineComponent({
     const resourcesStore = useResourcesStore()
     const { getDefaultAction } = useFileActions()
     const { loadPreview } = useLoadPreview()
+    const spacesStore = useSpacesStore()
+    const { imagesLoading } = storeToRefs(spacesStore)
 
     const markdownContainerRef = ref(null)
     const markdownContent = ref('')
@@ -282,7 +292,8 @@ export default defineComponent({
       memberCount,
       memberCountString,
       openSideBarSharePanel,
-      editReadMeContentLink
+      editReadMeContentLink,
+      imagesLoading
     }
   }
 })

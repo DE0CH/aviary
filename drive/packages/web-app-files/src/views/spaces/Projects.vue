@@ -65,16 +65,25 @@
           >
             <template #image="{ resource }">
               <template v-if="viewMode === FolderViewModeConstants.name.tiles">
+                <oc-spinner
+                  v-if="imagesLoading.includes(resource.id)"
+                  :aria-label="$gettext('Space image is loading')"
+                />
                 <img
-                  v-if="resource.thumbnail"
+                  v-else-if="resource.thumbnail"
                   class="tile-preview"
                   :src="resource.thumbnail"
                   alt=""
                 />
               </template>
               <template v-else>
+                <oc-spinner
+                  v-if="imagesLoading.includes(resource.id)"
+                  :aria-label="$gettext('Space image is loading')"
+                  class="oc-mr-s"
+                />
                 <img
-                  v-if="resource.thumbnail"
+                  v-else-if="resource.thumbnail"
                   class="table-preview oc-mr-s"
                   :class="{ 'table-preview-disabled': resource.disabled }"
                   :src="resource.thumbnail"
@@ -236,6 +245,7 @@ export default defineComponent({
     const filterTerm = ref('')
     const markInstance = ref(undefined)
     const resourcesStore = useResourcesStore()
+    const { imagesLoading } = storeToRefs(spacesStore)
 
     const { setSelection, initResourceList, clearResourceList, setAncestorMetaData } =
       useResourcesStore()
@@ -506,7 +516,8 @@ export default defineComponent({
       setSelection,
       viewSize,
       fileListHeaderY,
-      spacesHelpList
+      spacesHelpList,
+      imagesLoading
     }
   },
   computed: {
