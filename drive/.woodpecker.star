@@ -7,7 +7,7 @@ COLLABORA_CODE = "collabora/code:24.04.10.2.1"
 CS3ORG_WOPI_SERVER = "cs3org/wopiserver:v10.3.0"
 KEYCLOAK = "quay.io/keycloak/keycloak:25.0.0"
 MINIO_MC = "minio/mc:RELEASE.2021-10-07T04-19-58Z"
-OC_CI_ALPINE = "opencloud-eu/alpine:latest"
+OC_CI_ALPINE = "owncloudci/alpine:latest"
 OC_CI_BAZEL_BUILDIFIER = "owncloudci/bazel-buildifier"
 OC_CI_DRONE_ANSIBLE = "owncloudci/drone-ansible:latest"
 OC_CI_DRONE_SKIP_PIPELINE = "owncloudci/drone-skip-pipeline"
@@ -34,15 +34,15 @@ WEB_PUBLISH_NPM_ORGANIZATION = "@opencloud-eu"
 dir = {
     "base": "/woodpecker/src/github.com/opencloud-eu/web",
     "web": "/woodpecker/src/github.com/opencloud-eu/web/web",
-    "opencloud": "/var/www/opencloud/opencloud",
-    "commentsFile": "/var/www/opencloud/web/comments.file",
+    "opencloud": "/woodpecker/src/github.com/opencloud/opencloud",
+    "commentsFile": "/woodpecker/src/github.com/opencloud/web/comments.file",
     "app": "/srv/app",
-    "openCloudConfig": "/var/www/opencloud/web/tests/woodpecker/config-opencloud.json",
-    "openCloudIdentifierRegistrationConfig": "/var/www/opencloud/web/tests/woodpecker/identifier-registration.yml",
+    "openCloudConfig": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/config-opencloud.json",
+    "openCloudIdentifierRegistrationConfig": "/woodpecker/src/github.com/opencloud/web/tests/woodpecker/identifier-registration.yml",
     "openCloudRevaDataRoot": "/srv/app/tmp/opencloud/opencloud/data/",
-    "federatedOpenCloudConfig": "/var/www/opencloud/web/tests/woodpecker/config-opencloud-federated.json",
-    "ocmProviders": "/var/www/opencloud/web/tests/woodpecker/providers.json",
-    "playwrightBrowsersArchive": "/var/www/opencloud/web/playwright-browsers.tar.gz",
+    "federatedOpenCloudConfig": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/config-opencloud-federated.json",
+    "ocmProviders": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/providers.json",
+    "playwrightBrowsersArchive": "/woodpecker/src/github.com/opencloud-eu/web/web/playwright-browsers.tar.gz",
 }
 
 config = {
@@ -60,7 +60,7 @@ config = {
     "e2e": {
         "1": {
             "earlyFail": True,
-            "skip": True,
+            "skip": False,
             "suites": [
                 "journeys",
                 "smoke",
@@ -68,7 +68,7 @@ config = {
         },
         "2": {
             "earlyFail": True,
-            "skip": True,
+            "skip": False,
             "suites": [
                 "admin-settings",
                 "spaces",
@@ -76,7 +76,7 @@ config = {
         },
         "3": {
             "earlyFail": True,
-            "skip": True,
+            "skip": False,
             "tikaNeeded": True,
             "suites": [
                 "search",
@@ -91,7 +91,7 @@ config = {
         },
         "4": {
             "earlyFail": True,
-            "skip": True,
+            "skip": False,
             "suites": [
                 "navigation",
                 "user-settings",
@@ -117,7 +117,7 @@ config = {
             },
         },
         "oidc-refresh-token": {
-            "skip": True,
+            "skip": False,
             "features": [
                 "cucumber/features/oidc/refreshToken.feature",
             ],
@@ -127,7 +127,7 @@ config = {
             },
         },
         "oidc-iframe": {
-            "skip": True,
+            "skip": False,
             "features": [
                 "cucumber/features/oidc/iframeTokenRenewal.feature",
             ],
@@ -230,9 +230,10 @@ def stagePipelines(ctx):
     if (determineReleasePackage(ctx) != None):
         return unit_test_pipelines
 
-    # e2e_pipelines = e2eTests(ctx)
+    e2e_pipelines = e2eTests(ctx)
+
     # keycloak_pipelines = e2eTestsOnKeycloak(ctx)
-    return unit_test_pipelines
+    return unit_test_pipelines + e2e_pipelines
 
 def afterPipelines(ctx):
     return build(ctx)
@@ -470,20 +471,6 @@ def e2eTests(ctx):
         "path": config["app"],
     }
 
-    e2e_volumes = [{
-        "name": "uploads",
-        "temp": {},
-    }, {
-        "name": "configs",
-        "temp": {},
-    }, {
-        "name": "gopath",
-        "temp": {},
-    }, {
-        "name": "opencloud-config",
-        "temp": {},
-    }]
-
     default = {
         "skip": False,
         "logLevel": "2",
@@ -500,13 +487,10 @@ def e2eTests(ctx):
     e2e_trigger = [
         {
             "event": ["push", "manual"],
-            "branch": ["main", "stable-*"],
+            "branch": config["branches"],
         },
         {
             "event": "pull_request",
-            "path": {
-                "exclude": skipIfUnchanged(ctx, "e2e-tests"),
-            },
         },
         {
             "event": "tag",
@@ -537,7 +521,7 @@ def e2eTests(ctx):
             "HEADLESS": True,
             "RETRY": "1",
             "REPORT_TRACING": params["reportTracing"],
-            "BASE_URL_OC": "opencloud:9200",
+            "OC_BASE_URL": "opencloud:9200",
             "FAIL_ON_UNCAUGHT_CONSOLE_ERR": True,
             "PLAYWRIGHT_BROWSERS_PATH": ".playwright",
             "BROWSER": "chromium",
@@ -599,7 +583,6 @@ def e2eTests(ctx):
             "steps": steps,
             "depends_on": ["cache-opencloud"],
             "when": e2e_trigger,
-            "volumes": e2e_volumes,
         })
     return pipelines
 
@@ -871,6 +854,7 @@ def openCloudService(extra_env_config = {}, deploy_type = "opencloud"):
         "FRONTEND_SEARCH_MIN_LENGTH": "2",
         "OC_PASSWORD_POLICY_BANNED_PASSWORDS_LIST": "%s/tests/woodpecker/banned-passwords.txt" % dir["web"],
         "PROXY_CSP_CONFIG_FILE_LOCATION": "%s/tests/woodpecker/csp.yaml" % dir["web"],
+        "OC_SHOW_USER_EMAIL_IN_RESULTS": True,
         # Needed for enabling all roles
         "GRAPH_AVAILABLE_ROLES": "b1e2218d-eef8-4d4c-b82d-0f1a1b48f3b5,a8d5fe5e-96e3-418d-825b-534dbdf22b99,fb6c3e19-e378-47e5-b277-9732f9de6e21,58c63c02-1d89-4572-916a-870abc5a1b7d,2d00ce52-1fc2-4dbc-8b95-a73b73395f5a,1c996275-f1c9-4e71-abdf-a42f6495e960,312c0871-5ef7-4b3a-85b6-0e4074c64049,aa97fe03-7980-45ac-9e50-b325749fd7e6,63e64e19-8d43-42ec-a738-2b6af2610efa",
     }
@@ -921,10 +905,6 @@ def openCloudService(extra_env_config = {}, deploy_type = "opencloud"):
                 "cp %s/tests/woodpecker/app-registry.yaml /root/.opencloud/config/app-registry.yaml" % dir["web"],
                 "./opencloud server",
             ],
-            "volumes": [{
-                "name": "gopath",
-                "path": dir["app"],
-            }],
         },
     ] + wait_for_service
 
