@@ -1,26 +1,26 @@
 directives:
   child-src:
-    - "'self'"
+    - '''self'''
   connect-src:
-    - "'self'"
+    - '''self'''
     - 'https://raw.githubusercontent.com/opencloud-eu/awesome-apps/'
     # In contrast to bash and docker the default is given after the | character
     - 'https://${KEYCLOAK_DOMAIN|keycloak:8443}/'
   default-src:
-    - "'none'"
+    - '''none'''
   font-src:
-    - "'self'"
+    - '''self'''
   frame-ancestors:
-    - "'self'"
+    - '''self'''
   frame-src:
-    - "'self'"
+    - '''self'''
     - 'blob:'
     - 'https://embed.diagrams.net/'
     # In contrast to bash and docker the default is given after the | character
     - 'https://${ONLYOFFICE_DOMAIN|onlyoffice:443}/'
     - 'https://${COLLABORA_DOMAIN|collabora:9980}/'
   img-src:
-    - "'self'"
+    - '''self'''
     - 'data:'
     - 'blob:'
     - 'https://raw.githubusercontent.com/opencloud-eu/awesome-apps/'
@@ -28,15 +28,15 @@ directives:
     - 'https://${ONLYOFFICE_DOMAIN|onlyoffice:443}/'
     - 'https://${COLLABORA_DOMAIN|collabora:9980}/'
   manifest-src:
-    - "'self'"
+    - '''self'''
   media-src:
-    - "'self'"
+    - '''self'''
   object-src:
-    - "'self'"
+    - '''self'''
     - 'blob:'
   script-src:
-    - "'self'"
-    - "'unsafe-inline'"
+    - '''self'''
+    - '''unsafe-inline'''
   style-src:
-    - "'self'"
-    - "'unsafe-inline'"
+    - '''self'''
+    - '''unsafe-inline'''
