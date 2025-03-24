@@ -1,8 +1,13 @@
-import { nextTick, ref } from 'vue'
+import { ref } from 'vue'
 import SpaceHeader from '../../../../src/components/Spaces/SpaceHeader.vue'
 import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
 import { SpaceResource, Resource, buildSpaceImageResource } from '@opencloud-eu/web-client'
-import { defaultPlugins, mount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
+import {
+  defaultPlugins,
+  mount,
+  defaultComponentMocks,
+  nextTicks
+} from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { GetFileContentsResponse } from '@opencloud-eu/web-client/webdav'
 
@@ -65,8 +70,7 @@ describe('SpaceHeader', () => {
       const space = getSpaceMock()
       space.spaceReadmeData = {}
       const wrapper = getWrapper({ space })
-      await nextTick()
-      await nextTick()
+      await nextTicks(2)
       expect(wrapper.find('.markdown-container').exists()).toBeTruthy()
       expect(wrapper.html()).toMatchSnapshot()
     })
