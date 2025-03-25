@@ -1,5 +1,5 @@
-repo_slug = "opencloud-eu/opencloud"
-docker_repo_slug = "opencloudeu/opencloud"
+repo_slug = "opencloud-eu/web"
+docker_repo_slug = "opencloudeu/web"
 
 ALPINE_GIT = "alpine/git:latest"
 APACHE_TIKA = "apache/tika:2.8.0.0"
@@ -186,26 +186,18 @@ web_workspace = {
 }
 
 def main(ctx):
-    pipelines = ready_release_go() + unitTests(ctx)
-
     before = beforePipelines(ctx)
 
-    # pipelines = pipelines + before
+    stages = pipelinesDependsOn(stagePipelines(ctx), before)
 
-    #
-    # stages = pipelinesDependsOn(stagePipelines(ctx), before)
-    #
-    # if (stages == False):
-    #     print("Errors detected. Review messages above.")
-    #     return []
-    #
-    # after = pipelinesDependsOn(afterPipelines(ctx), stages)
-    #
-    after = afterPipelines(ctx)
-    pipelines = pipelines + before + after
+    if (stages == False):
+        print("Errors detected. Review messages above.")
+        return []
 
-    # pipelines = before + stages + after
-    #
+    after = pipelinesDependsOn(afterPipelines(ctx), stages)
+
+    pipelines = before + stages + after
+
     # deploys = example_deploys(ctx)
     # if ctx.build.event != "cron":
     #     # run example deploys on cron even if some prior pipelines fail
@@ -238,9 +230,9 @@ def stagePipelines(ctx):
     if (determineReleasePackage(ctx) != None):
         return unit_test_pipelines
 
-    e2e_pipelines = e2eTests(ctx)
-    keycloak_pipelines = e2eTestsOnKeycloak(ctx)
-    return unit_test_pipelines + buildAndTestDesignSystem(ctx) + pipelinesDependsOn(e2e_pipelines + keycloak_pipelines, unit_test_pipelines)
+    # e2e_pipelines = e2eTests(ctx)
+    # keycloak_pipelines = e2eTestsOnKeycloak(ctx)
+    return unit_test_pipelines
 
 def afterPipelines(ctx):
     return build(ctx)
@@ -332,7 +324,7 @@ def build(ctx):
     steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + buildRelease(ctx)
 
     build_pipeline = {
-        "name": "build",
+        "name": "build-release",
         "workspace": {
             "base": dir["base"],
             "path": config["app"],
