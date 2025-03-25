@@ -1,6 +1,9 @@
 <template>
+  <div v-if="isLoading" class="oc-height-1-1 oc-width-1-1 oc-flex oc-flex-center oc-flex-middle">
+    <oc-spinner size="large" />
+  </div>
   <iframe
-    v-if="appUrl && method === 'GET'"
+    v-else-if="appUrl && method === 'GET'"
     :src="appUrl"
     class="oc-width-1-1 oc-height-1-1"
     :title="iFrameTitle"
@@ -37,8 +40,16 @@ import {
 } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
-
-import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+import isEmpty from 'lodash-es/isEmpty'
+import {
+  getPermissionsForSpaceMember,
+  GraphSharePermission,
+  Resource,
+  SpaceResource,
+  isProjectSpaceResource,
+  isPublicSpaceResource,
+  isShareSpaceResource
+} from '@opencloud-eu/web-client'
 import { urlJoin } from '@opencloud-eu/web-client'
 import {
   isSameResource,
@@ -49,13 +60,14 @@ import {
   useAppProviderService,
   useRoute,
   queryItemAsString,
-  useRouteQuery
+  useRouteQuery,
+  useUserStore,
+  getSharedDriveItem,
+  setCurrentUserShareSpacePermissions,
+  useSpacesStore,
+  useClientService,
+  useSharesStore
 } from '@opencloud-eu/web-pkg'
-import {
-  isProjectSpaceResource,
-  isPublicSpaceResource,
-  isShareSpaceResource
-} from '@opencloud-eu/web-client'
 
 export default defineComponent({
   name: 'ExternalApp',
@@ -74,6 +86,10 @@ export default defineComponent({
     const route = useRoute()
     const appProviderService = useAppProviderService()
     const { makeRequest } = useRequest()
+    const userStore = useUserStore()
+    const spacesStore = useSpacesStore()
+    const sharesStore = useSharesStore()
+    const { graphAuthenticated: graphClient } = useClientService()
 
     const viewModeQuery = useRouteQuery('view_mode')
     const viewModeQueryValue = computed(() => {
@@ -95,10 +111,11 @@ export default defineComponent({
       )
     })
 
-    const appUrl = ref()
+    const appUrl = ref<string>()
     const formParameters = ref({})
-    const method = ref()
+    const method = ref<string>()
     const subm: VNodeRef = ref()
+    const isLoading = computed(() => loadAppUrl.isRunning || getSharedDriveItemTask.isRunning)
 
     const iFrameTitle = computed(() => {
       return $gettext('"%{appName}" app content area', {
@@ -179,6 +196,19 @@ export default defineComponent({
       }
     }).restartable()
 
+    const getSharedDriveItemTask = useTask(function* (signal) {
+      try {
+        return getSharedDriveItem({
+          graphClient,
+          spacesStore,
+          space: props.space,
+          signal
+        })
+      } catch (e) {
+        console.error(e)
+      }
+    })
+
     const determineOpenAsPreview = (appName: string) => {
       const openAsPreview = configStore.options.editor.openAsPreview
       return (
@@ -204,12 +234,32 @@ export default defineComponent({
 
     watch(
       [props.resource],
-      ([newResource], [oldResource]) => {
+      async ([newResource], [oldResource]) => {
         if (isSameResource(newResource, oldResource)) {
           return
         }
 
-        let viewMode = 'view'
+        let viewMode = 'read'
+
+        if (isShareSpaceResource(props.space)) {
+          // add current user as space member if not already loaded by the space loader
+          if (isEmpty(props.space.members)) {
+            const sharedDriveItem = await getSharedDriveItemTask.perform()
+            setCurrentUserShareSpacePermissions({
+              sharesStore,
+              spacesStore,
+              userStore,
+              space: props.space,
+              sharedDriveItem
+            })
+          }
+
+          const permissions = getPermissionsForSpaceMember(props.space, userStore.user)
+          if (!permissions.includes(GraphSharePermission.readContent)) {
+            // secure view
+            viewMode = 'view'
+          }
+        }
 
         if (!props.isReadOnly) {
           viewMode = unref(viewModeQueryValue) || 'write'
@@ -233,7 +283,8 @@ export default defineComponent({
       formParameters,
       iFrameTitle,
       method,
-      subm
+      subm,
+      isLoading
     }
   }
 })
