@@ -1144,7 +1144,16 @@ def checkStarlark():
             },
         ],
         "when": [
-            {"event": "pull_request"},
+            {
+                "event": ["push", "manual"],
+                "branch": ["main", "stable-*"],
+            },
+            {
+                "event": "pull_request",
+            },
+            {
+                "event": "tag",
+            },
         ],
     }]
 
