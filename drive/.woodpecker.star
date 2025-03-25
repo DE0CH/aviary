@@ -3,7 +3,7 @@ docker_repo_slug = "opencloudeu/web"
 
 ALPINE_GIT = "alpine/git:latest"
 APACHE_TIKA = "apache/tika:2.8.0.0"
-COLLABORA_CODE = "collabora/code:24.04.10.2.1"
+COLLABORA_CODE = "collabora/code:24.04.13.2.1"
 CS3ORG_WOPI_SERVER = "cs3org/wopiserver:v10.3.0"
 KEYCLOAK = "quay.io/keycloak/keycloak:25.0.0"
 MINIO_MC = "minio/mc:RELEASE.2021-10-07T04-19-58Z"
@@ -100,9 +100,10 @@ config = {
             ],
         },
         "app-provider": {
-            "skip": True,
+            "skip": False,
             "suites": [
                 "app-provider",
+                "app-provider-onlyOffice",
             ],
             "extraServerEnvironment": {
                 "GATEWAY_GRPC_ADDR": "0.0.0.0:9142",
@@ -1523,6 +1524,7 @@ def wopiCollaborationService(name):
 
     if name == "collabora":
         environment["COLLABORATION_APP_NAME"] = "Collabora"
+        environment["COLLABORATION_APP_PRODUCT"] = "Collabora"
         environment["COLLABORATION_APP_ADDR"] = "https://collabora:9980"
         environment["COLLABORATION_APP_ICON"] = "https://collabora:9980/favicon.ico"
     elif name == "onlyoffice":
