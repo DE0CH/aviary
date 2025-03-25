@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import { stringify } from 'qs'
-import { computed, unref, nextTick, ref, watch, VNodeRef, onMounted } from 'vue'
+import { computed, unref, nextTick, ref, watch, onMounted, useTemplateRef } from 'vue'
 import { useTask } from 'vue-concurrency'
 import { useGettext } from 'vue3-gettext'
 import isEmpty from 'lodash-es/isEmpty'
@@ -101,7 +101,7 @@ const appName = computed(() => {
 const appUrl = ref<string>()
 const formParameters = ref({})
 const method = ref<string>()
-const subm: VNodeRef = ref()
+const subm = useTemplateRef<HTMLInputElement>('subm')
 const isLoading = computed(() => loadAppUrl.isRunning || getSharedDriveItemTask.isRunning)
 
 const iFrameTitle = computed(() => {
