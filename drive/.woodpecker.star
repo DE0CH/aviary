@@ -230,7 +230,6 @@ def beforePipelines(ctx):
            pipelinesDependsOn(pnpmlint(ctx, "lint"), pnpmCache(ctx)) + \
            pipelinesDependsOn(pnpmlint(ctx, "format"), pnpmCache(ctx))
     # documentation(ctx) + \ # ToDo used to be before pnpmCache
-    # changelog(ctx) + \ # ToDo used to be before pnpmCache
 
 def stagePipelines(ctx):
     unit_test_pipelines = unitTests(ctx)
