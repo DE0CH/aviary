@@ -10,16 +10,16 @@ import { initializeUser } from '../../utils/tokenHelper'
 import { setAccessTokenForKeycloakOpenCloudUser } from './openCloudUserToken'
 
 const openCloudKeycloakUserRoles: Record<string, string> = {
-  Admin: 'openCloudAdmin',
-  'Space Admin': 'openCloudSpaceAdmin',
-  User: 'openCloudUser',
-  'User Light': 'openCloudGuest'
+  Admin: 'opencloudAdmin',
+  'Space Admin': 'opencloudSpaceAdmin',
+  User: 'opencloudUser',
+  'User Light': 'opencloudGuest'
 }
 
 export const createUser = async ({ user, admin }: { user: User; admin: User }): Promise<User> => {
   const fullName = user.displayName.split(' ')
   const body = JSON.stringify({
-    username: user.id,
+    username: user.username,
     credentials: [{ value: user.password, type: 'password' }],
     firstName: fullName[0],
     lastName: fullName[1] ?? '',

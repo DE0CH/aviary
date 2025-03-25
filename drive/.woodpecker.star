@@ -235,8 +235,8 @@ def stagePipelines(ctx):
 
     e2e_pipelines = e2eTests(ctx)
 
-    # keycloak_pipelines = e2eTestsOnKeycloak(ctx)
-    return unit_test_pipelines + e2e_pipelines
+    keycloak_pipelines = e2eTestsOnKeycloak(ctx)
+    return unit_test_pipelines + e2e_pipelines + keycloak_pipelines
 
 def afterPipelines(ctx):
     return publishRelease(ctx)
@@ -1602,12 +1602,6 @@ def keycloakService():
                    "openssl req -x509 -newkey rsa:2048 -keyout keycloak-certs/keycloakkey.pem -out keycloak-certs/keycloakcrt.pem -nodes -days 365 -subj '/CN=keycloak'",
                    "chmod -R 777 keycloak-certs",
                ],
-               # "volumes": [
-               #     {
-               #         "name": "certs",
-               #         "path": "/keycloak-certs",
-               #     },
-               # ],
            }] + waitForServices("postgres", ["postgres:5432"]) + \
            [{
                "name": "keycloak",
@@ -1632,12 +1626,6 @@ def keycloakService():
                    "cp tests/woodpecker/opencloud_keycloak/opencloud-ci-realm.dist.json /opt/keycloak/data/import/opencloud-realm.json",
                    "/opt/keycloak/bin/kc.sh start-dev --proxy-headers xforwarded --spi-connections-http-client-default-disable-trust-manager=true --import-realm --health-enabled=true",
                ],
-               # "volumes": [
-               #     {
-               #         "name": "certs",
-               #         "path": "/keycloak-certs",
-               #     },
-               # ],
            }] + waitForServices("keycloack", ["keycloak:8443"])
 
 def e2eTestsOnKeycloak(ctx):
@@ -1650,35 +1638,8 @@ def e2eTestsOnKeycloak(ctx):
         "admin-settings/users.feature:185",
         "admin-settings/spaces.feature",
         "admin-settings/groups.feature",
-        "admin-settings/general.feature",
         "keycloak",
     ]
-
-    e2e_volumes = [
-        {
-            "name": "uploads",
-            "temp": {},
-        },
-        {
-            "name": "configs",
-            "temp": {},
-        },
-        {
-            "name": "gopath",
-            "temp": {},
-        },
-        {
-            "name": "opencloud-config",
-            "temp": {},
-        },
-        {
-            "name": "certs",
-            "temp": {},
-        },
-    ]
-
-    if not "full-ci" in ctx.build.title.lower() and ctx.build.event != "cron":
-        return []
 
     steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + \
             installPnpm() + \
@@ -1694,7 +1655,7 @@ def e2eTestsOnKeycloak(ctx):
     environment = {
         "PROXY_AUTOPROVISION_ACCOUNTS": True,
         "PROXY_ROLE_ASSIGNMENT_DRIVER": "oidc",
-        "OC_OIDC_ISSUER": "https://keycloak:8443/realms/OpenCloud",
+        "OC_OIDC_ISSUER": "https://keycloak:8443/realms/openCloud",
         "PROXY_OIDC_REWRITE_WELLKNOWN": True,
         "WEB_OIDC_CLIENT_ID": "web",
         "PROXY_USER_OIDC_CLAIM": "preferred_username",
@@ -1712,10 +1673,10 @@ def e2eTestsOnKeycloak(ctx):
                      "name": "e2e-tests",
                      "image": OC_CI_NODEJS,
                      "environment": {
-                         "BASE_URL_OC": "opencloud:9200",
+                         "OC_BASE_URL": "opencloud:9200",
                          "HEADLESS": True,
                          "RETRY": "1",
-                         "REPORT_TRACING": "with-tracing" in ctx.build.title.lower(),
+                         "REPORT_TRACING": True,
                          "KEYCLOAK": True,
                          "KEYCLOAK_HOST": "keycloak:8443",
                          "PLAYWRIGHT_BROWSERS_PATH": ".playwright",
@@ -1735,7 +1696,6 @@ def e2eTestsOnKeycloak(ctx):
         "workspace": web_workspace,
         "steps": steps,
         "services": postgresService(),
-        "volumes": e2e_volumes,
         "when": [
             {
                 "event": ["push", "manual"],
