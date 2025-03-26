@@ -118,21 +118,18 @@ export class UsersEnvironment {
   }
 
   getCreatedKeycloakUser({ key }: { key: string }): User {
-    const userKey = key.toLowerCase()
-    if (!keycloakCreatedUser.has(userKey)) {
-      throw new Error(`Keycloak user with key '${userKey}' not found`)
+    if (!keycloakCreatedUser.has(key)) {
+      throw new Error(`Keycloak user with key '${key}' not found`)
     }
 
-    return keycloakCreatedUser.get(userKey)
+    return keycloakCreatedUser.get(key)
   }
 
   removeCreatedKeycloakUser({ key }: { key: string }): boolean {
-    const userKey = key.toLowerCase()
-
-    if (!keycloakCreatedUser.has(userKey)) {
-      throw new Error(`Keycloak user with key '${userKey}' not found`)
+    if (!keycloakCreatedUser.has(key)) {
+      throw new Error(`Keycloak user with key '${key}' not found`)
     }
 
-    return keycloakCreatedUser.delete(userKey)
+    return keycloakCreatedUser.delete(key)
   }
 }

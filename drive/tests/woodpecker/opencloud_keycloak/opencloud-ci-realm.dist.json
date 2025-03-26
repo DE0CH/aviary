@@ -49,7 +49,7 @@
     "realm": [
       {
         "id": "0bb40fa2-4490-4687-9159-b1d27ec7423a",
-        "name": "openCloudAdmin",
+        "name": "opencloudAdmin",
         "description": "",
         "composite": false,
         "clientRole": false,
@@ -67,7 +67,7 @@
       },
       {
         "id": "8c79ff81-c256-48fd-b0b9-795c7941eedf",
-        "name": "openCloudUser",
+        "name": "opencloudUser",
         "description": "",
         "composite": false,
         "clientRole": false,
@@ -76,7 +76,7 @@
       },
       {
         "id": "bd5f5012-48bb-4ea4-bfe6-0623e3ca0552",
-        "name": "openCloudSpaceAdmin",
+        "name": "opencloudSpaceAdmin",
         "description": "",
         "composite": false,
         "clientRole": false,
@@ -109,7 +109,7 @@
       },
       {
         "id": "7eedfa6d-a2d9-4296-b6db-e75e4e9c0963",
-        "name": "openCloudGuest",
+        "name": "opencloudGuest",
         "description": "",
         "composite": false,
         "clientRole": false,
@@ -512,7 +512,7 @@
       ],
       "disableableCredentialTypes": [],
       "requiredActions": [],
-      "realmRoles": ["uma_authorization", "openCloudAdmin", "offline_access"],
+      "realmRoles": ["uma_authorization", "opencloudAdmin", "offline_access"],
       "clientRoles": {
         "account": ["manage-account", "view-profile"]
       },
@@ -527,7 +527,7 @@
     },
     {
       "clientScope": "roles",
-      "roles": ["openCloudSpaceAdmin", "openCloudGuest", "openCloudUser", "openCloudAdmin"]
+      "roles": ["opencloudSpaceAdmin", "opencloudGuest", "opencloudUser", "opencloudAdmin"]
     }
   ],
   "clientScopeMappings": {
