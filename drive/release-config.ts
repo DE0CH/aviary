@@ -45,5 +45,5 @@ export default {
       weight: -1
     }
   ],
-  useVersionPrefixV: true,
+  useVersionPrefixV: true
 }
