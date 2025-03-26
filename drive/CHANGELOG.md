@@ -1,5 +1,74 @@
 # Changelog
 
+## [2.1.0](https://github.com/opencloud-eu/web/releases/tag/v2.1.0) - 2025-03-26
+
+### ❤️ Thanks to all contributors! ❤️
+
+@AlexAndBear, @JammingBen, @PrajwolAmatya, @ScharfViktor, @aduffeck, @individual-it, @kulmann, @micbar, @prashant-gurung899
+
+### 📈 Enhancement
+
+- feat(admin-settings): remove appearance section from General page [[#432](https://github.com/opencloud-eu/web/pull/432)]
+- feat: space readme loading indicator [[#408](https://github.com/opencloud-eu/web/pull/408)]
+- feat: space image loading indicator [[#398](https://github.com/opencloud-eu/web/pull/398)]
+- feat: Make app token "label" field available to users [[#393](https://github.com/opencloud-eu/web/pull/393)]
+- feat(runtime): enhance app token modal copy view styling [[#386](https://github.com/opencloud-eu/web/pull/386)]
+- feat: Use oc-timeline for activities and versions panel [[#366](https://github.com/opencloud-eu/web/pull/366)]
+- feat: show 'Personal' instead of username in right side bar [[#346](https://github.com/opencloud-eu/web/pull/346)]
+
+### 📚 Documentation
+
+- fix: remove invalid doc links [[#430](https://github.com/opencloud-eu/web/pull/430)]
+
+### 🐛 Bug Fixes
+
+- fix(design-system): align disabled select appearance with other inputs [[#425](https://github.com/opencloud-eu/web/pull/425)]
+- fix(files): hide 'Paste here' label with limited screen space [[#421](https://github.com/opencloud-eu/web/pull/421)]
+- fix(external): shared files opening with secure view [[#418](https://github.com/opencloud-eu/web/pull/418)]
+- fix: various hovers and small visual glitches [[#395](https://github.com/opencloud-eu/web/pull/395)]
+- fix(pkg): space quota background color [[#390](https://github.com/opencloud-eu/web/pull/390)]
+- fix(pkg): add missing delete queue to tiles view [[#389](https://github.com/opencloud-eu/web/pull/389)]
+- fix(files): copy pasting items into current folder [[#381](https://github.com/opencloud-eu/web/pull/381)]
+- fix: select all checkbox in spaces tiles view [[#363](https://github.com/opencloud-eu/web/pull/363)]
+- fix: table header overflows content [[#384](https://github.com/opencloud-eu/web/pull/384)]
+- fix(admin-settings): outline on space member filter input [[#383](https://github.com/opencloud-eu/web/pull/383)]
+- fix(pkg): pixelated previews after searching [[#379](https://github.com/opencloud-eu/web/pull/379)]
+- fix(design-system): jumpyness when focusing password input [[#377](https://github.com/opencloud-eu/web/pull/377)]
+- fix(files): outline on space member filter input [[#368](https://github.com/opencloud-eu/web/pull/368)]
+- fix: Show disabled spaces switch in wrong order [[#367](https://github.com/opencloud-eu/web/pull/367)]
+- fix: prevent app tokens from showing in public link settings [[#365](https://github.com/opencloud-eu/web/pull/365)]
+- fix: file, folder and space count in right sidebar [[#360](https://github.com/opencloud-eu/web/pull/360)]
+- fix(files): deletion date in file details [[#358](https://github.com/opencloud-eu/web/pull/358)]
+
+### ✅ Tests
+
+- test: delete unused uuids [[#378](https://github.com/opencloud-eu/web/pull/378)]
+- test: Be less strict when waiting for the "change quota" responses [[#364](https://github.com/opencloud-eu/web/pull/364)]
+
+### 📦️ Dependencies
+
+- fix(deps): update dependency luxon to v3.6.0 [[#427](https://github.com/opencloud-eu/web/pull/427)]
+- fix(deps): update dependency eslint-plugin-n to v17.17.0 [[#428](https://github.com/opencloud-eu/web/pull/428)]
+- chore(deps): update collabora/code docker tag to v24.04.13.2.1 [[#267](https://github.com/opencloud-eu/web/pull/267)]
+- fix(deps): update dependency @sentry/vue to v9.9.0 [[#410](https://github.com/opencloud-eu/web/pull/410)]
+- fix(deps): update dependency md-editor-v3 to v5.4.5 [[#417](https://github.com/opencloud-eu/web/pull/417)]
+- fix(deps): update dependency @babel/eslint-parser to v7.27.0 [[#409](https://github.com/opencloud-eu/web/pull/409)]
+- fix(deps): update typescript-eslint monorepo to v8.28.0 [[#411](https://github.com/opencloud-eu/web/pull/411)]
+- fix(deps): update dependency md-editor-v3 to v5.4.4 [[#394](https://github.com/opencloud-eu/web/pull/394)]
+- chore(deps): update dependency vite to v6.2.3 [[#405](https://github.com/opencloud-eu/web/pull/405)]
+- fix(deps): update dependency @sentry/vue to v9.8.0 [[#391](https://github.com/opencloud-eu/web/pull/391)]
+- chore(deps): update dependency eslint to v9.23.0 [[#401](https://github.com/opencloud-eu/web/pull/401)]
+- fix(deps): update dependency oidc-client-ts to v3.2.0 [[#316](https://github.com/opencloud-eu/web/pull/316)]
+- fix(deps): update dependency @sentry/vue to v9.6.1 [[#362](https://github.com/opencloud-eu/web/pull/362)]
+- fix(deps): update dependency axios to v1.8.4 [[#373](https://github.com/opencloud-eu/web/pull/373)]
+- fix(deps): update typescript-eslint monorepo to v8.27.0 [[#375](https://github.com/opencloud-eu/web/pull/375)]
+- chore(deps): update pnpm to v10.6.5 [[#369](https://github.com/opencloud-eu/web/pull/369)]
+- fix(deps): update dependency @uppy/core to v4.4.3 [[#320](https://github.com/opencloud-eu/web/pull/320)]
+- fix(deps): update dependency md-editor-v3 to v5.4.2 [[#325](https://github.com/opencloud-eu/web/pull/325)]
+- chore(deps): update devdependencies (non-major) [[#342](https://github.com/opencloud-eu/web/pull/342)]
+- fix(deps): update dependency @sentry/vue to v9.6.0 - autoclosed [[#338](https://github.com/opencloud-eu/web/pull/338)]
+- chore(deps): update pnpm to v10.6.4 [[#323](https://github.com/opencloud-eu/web/pull/323)]
+
 ## [2.0.0](https://github.com/opencloud-eu/web/releases/tag/v2.0.0) - 2025-03-18
 
 ### ❤️ Thanks to all contributors! ❤️
