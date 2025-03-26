@@ -34,7 +34,7 @@ WEB_PUBLISH_NPM_ORGANIZATION = "@opencloud-eu"
 dir = {
     "base": "/woodpecker/src/github.com/opencloud-eu/web",
     "web": "/woodpecker/src/github.com/opencloud-eu/web/web",
-    "opencloud": "/woodpecker/src/github.com/opencloud/opencloud",
+    "opencloud": "/woodpecker/src/github.com/opencloud-eu/opencloud",
     "commentsFile": "/woodpecker/src/github.com/opencloud/web/comments.file",
     "app": "/srv/app",
     "openCloudConfig": "/woodpecker/src/github.com/opencloud-eu/web/web/tests/woodpecker/config-opencloud.json",
@@ -138,7 +138,7 @@ config = {
         },
         "ocm": {
             "earlyFail": True,
-            "skip": True,
+            "skip": False,
             "federationServer": True,
             "suites": [
                 "ocm",
@@ -524,6 +524,7 @@ def e2eTests(ctx):
             "RETRY": "1",
             "REPORT_TRACING": params["reportTracing"],
             "OC_BASE_URL": "opencloud:9200",
+            "OC_SHOW_USER_EMAIL_IN_RESULTS": True,
             "FAIL_ON_UNCAUGHT_CONSOLE_ERR": True,
             "PLAYWRIGHT_BROWSERS_PATH": ".playwright",
             "BROWSER": "chromium",
