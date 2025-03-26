@@ -218,7 +218,7 @@ def beforePipelines(ctx):
     return checkStarlark() + \
            licenseCheck(ctx) + \
            pnpmCache(ctx) + \
-           readyReleaseGo(ctx) + \
+           readyReleaseGo() + \
            cacheOpenCloudPipeline(ctx) + \
            pipelinesDependsOn(buildCacheWeb(ctx), pnpmCache(ctx)) + \
            pipelinesDependsOn(pnpmlint(ctx, "lint"), pnpmCache(ctx)) + \
