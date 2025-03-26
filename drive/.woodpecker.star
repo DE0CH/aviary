@@ -218,6 +218,7 @@ def beforePipelines(ctx):
     return checkStarlark() + \
            licenseCheck(ctx) + \
            pnpmCache(ctx) + \
+           readyReleaseGo(ctx) + \
            cacheOpenCloudPipeline(ctx) + \
            pipelinesDependsOn(buildCacheWeb(ctx), pnpmCache(ctx)) + \
            pipelinesDependsOn(pnpmlint(ctx, "lint"), pnpmCache(ctx)) + \
@@ -350,7 +351,7 @@ def build(ctx):
 
     return pipelines
 
-def ready_release_go():
+def readyReleaseGo():
     return [
         {
             "name": "release",
