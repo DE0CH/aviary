@@ -187,6 +187,8 @@ web_workspace = {
 }
 
 def main(ctx):
+    release = readyReleaseGo()
+
     before = beforePipelines(ctx)
 
     stages = pipelinesDependsOn(stagePipelines(ctx), before)
@@ -195,9 +197,9 @@ def main(ctx):
         print("Errors detected. Review messages above.")
         return []
 
-    after = pipelinesDependsOn(afterPipelines(ctx), stages)
+    after = pipelinesDependsOn(afterPipelines(ctx), pnpmCache(ctx))
 
-    pipelines = before + stages + after
+    pipelines = release + before + stages + after
 
     # deploys = example_deploys(ctx)
     # if ctx.build.event != "cron":
@@ -218,7 +220,6 @@ def beforePipelines(ctx):
     return checkStarlark() + \
            licenseCheck(ctx) + \
            pnpmCache(ctx) + \
-           readyReleaseGo() + \
            cacheOpenCloudPipeline(ctx) + \
            pipelinesDependsOn(buildCacheWeb(ctx), pnpmCache(ctx)) + \
            pipelinesDependsOn(pnpmlint(ctx, "lint"), pnpmCache(ctx)) + \
@@ -238,7 +239,7 @@ def stagePipelines(ctx):
     return unit_test_pipelines + e2e_pipelines
 
 def afterPipelines(ctx):
-    return build(ctx)
+    return publishRelease(ctx)
     # pipelinesDependsOn(notify(), build(ctx))  # ToDo build should depend on notify, but that does not work yet
 
 def pnpmCache(ctx):
@@ -314,7 +315,7 @@ def pnpmlint(ctx, lintType):
 
     return pipelines
 
-def build(ctx):
+def publishRelease(ctx):
     pipelines = []
 
     if "build" not in config:
@@ -324,23 +325,16 @@ def build(ctx):
         if not config["build"]:
             return pipelines
 
-    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + buildRelease(ctx)
+    steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + installPnpm() + buildAndPublishRelease(ctx)
 
     build_pipeline = {
-        "name": "build-release",
+        "name": "publish-release",
         "workspace": {
             "base": dir["base"],
             "path": config["app"],
         },
         "steps": steps,
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
-            {
-                "event": "pull_request",
-            },
             {
                 "event": "tag",
             },
@@ -701,7 +695,7 @@ def determineReleaseVersion(ctx):
 
     return ctx.build.ref.replace("refs/tags/" + package + "-v", "")
 
-def buildRelease(ctx):
+def buildAndPublishRelease(ctx):
     steps = []
     package = determineReleasePackage(ctx)
     version = determineReleaseVersion(ctx)
@@ -709,7 +703,7 @@ def buildRelease(ctx):
     if package == None:
         steps += [
             {
-                "name": "make",
+                "name": "build-web",
                 "image": OC_CI_NODEJS,
                 "environment": {
                     "NO_INSTALL": True,
@@ -720,7 +714,7 @@ def buildRelease(ctx):
                 ],
             },
             {
-                "name": "release",
+                "name": "publish-github-release",
                 "image": PLUGINS_GITHUB_RELEASE,
                 "settings": {
                     "api_key": {
