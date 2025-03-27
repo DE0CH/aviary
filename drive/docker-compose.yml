@@ -1,5 +1,5 @@
 x-opencloud-server: &opencloud-service
-  image: ${OC_IMAGE:-opencloudeu/opencloud-rolling:latest}
+  image: ${OC_IMAGE:-opencloudeu/opencloud-rolling:daily}
   entrypoint: /bin/sh
   command: ['-c', 'opencloud init || true && opencloud server']
   environment: &opencloud-environment
