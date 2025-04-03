@@ -281,9 +281,6 @@ importers:
       tinycolor2:
         specifier: ^1.6.0
         version: 1.6.0
-      typescript:
-        specifier: 5.8.2
-        version: 5.8.2
       url:
         specifier: ^0.11.3
         version: 0.11.4
