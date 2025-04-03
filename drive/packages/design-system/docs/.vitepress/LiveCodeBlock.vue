@@ -39,6 +39,8 @@ const slot = useTemplateRef<HTMLElement>('slot')
 const preview = ref()
 const previewActive = ref(true)
 
+const components = import.meta.glob('./../components/**/*.vue')
+
 const computedPath = computed(() => {
   if (!path) {
     return ''
@@ -65,8 +67,8 @@ const lang = computed(() => {
 })
 
 onMounted(async () => {
-  if (path) {
-    const previewComponent = await import(/* @vite-ignore */ unref(computedPath))
+  if (path && components[unref(computedPath)]) {
+    const previewComponent = await components[unref(computedPath)]()
     preview.value = previewComponent.default
     return
   }
