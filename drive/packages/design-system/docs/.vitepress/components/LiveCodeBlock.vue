@@ -39,7 +39,7 @@ const slot = useTemplateRef<HTMLElement>('slot')
 const preview = ref()
 const previewActive = ref(true)
 
-const components = import.meta.glob('./../components/**/*.vue')
+const components = import.meta.glob('./../../components/**/*.vue')
 
 const computedPath = computed(() => {
   if (!path) {
@@ -49,7 +49,7 @@ const computedPath = computed(() => {
   const previewPath = path.startsWith('/') ? path.slice(1) : path
   const fileExtension = previewPath.split('.').pop()
   const previewPathWithoutExtension = previewPath.slice(0, -(fileExtension?.length || 1) - 1)
-  return `../${previewPathWithoutExtension}.${fileExtension}`
+  return `../../${previewPathWithoutExtension}.${fileExtension}`
 })
 
 const lang = computed(() => {
