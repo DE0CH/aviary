@@ -5,12 +5,6 @@
 APPS=("design-system" "eslint-config" "extension-sdk" "prettier-config" "tsconfig" "web-pkg" "web-client" "web-test-helpers")
 
 cd "$(dirname "$0")/../.."
-VERSION=$(node -p "require('./package.json').version")
-TAG="v${VERSION}"
-
-git tag -s -a "$TAG" -m "$TAG"
-git push origin "$TAG"
-echo "v$VERSION has been created and pushed"
 
 for app in "${APPS[@]}"; do
 	cd "./packages/$app"
