@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.2.0](https://github.com/opencloud-eu/web/releases/tag/v2.2.0) - 2025-04-04
+
+### ❤️ Thanks to all contributors! ❤️
+
+@AlexAndBear, @JammingBen, @ScharfViktor, @amrita-shrestha, @individual-it, @kulmann
+
+### 🐛 Bug Fixes
+
+- fix(design-system): design system live doc blocks [[#493](https://github.com/opencloud-eu/web/pull/493)]
+- fix(files): truncation on long link names [[#481](https://github.com/opencloud-eu/web/pull/481)]
+- fix: remove zoom indicator to avoid confusion [[#482](https://github.com/opencloud-eu/web/pull/482)]
+- fix: spaces overview item count [[#480](https://github.com/opencloud-eu/web/pull/480)]
+- fix: hide request-id when it's undefined [[#469](https://github.com/opencloud-eu/web/pull/469)]
+- fix: web doesn't return to correct page (pagination) after closing app [[#466](https://github.com/opencloud-eu/web/pull/466)]
+- fix: archive download with archives >2GB [[#465](https://github.com/opencloud-eu/web/pull/465)]
+- fix: post-processing indicator not updating [[#444](https://github.com/opencloud-eu/web/pull/444)]
+- fix: Don't show backend edition when not set [[#442](https://github.com/opencloud-eu/web/pull/442)]
+
+### ✅ Tests
+
+- [full-ci]use Playwright api instead of node fetch [[#486](https://github.com/opencloud-eu/web/pull/486)]
+
+### 📈 Enhancement
+
+- feat: add hint for tag searching [[#475](https://github.com/opencloud-eu/web/pull/475)]
+- feat: make meta data panels more appealing [[#472](https://github.com/opencloud-eu/web/pull/472)]
+- feat: replace reset icon in preview app [[#468](https://github.com/opencloud-eu/web/pull/468)]
+- feat: change plain view button color [[#455](https://github.com/opencloud-eu/web/pull/455)]
+
+### 📦️ Dependencies
+
+- fix(deps): update dependency @sentry/vue to v9.11.0 [[#496](https://github.com/opencloud-eu/web/pull/496)]
+- chore(deps): update devdependencies (non-major) [[#498](https://github.com/opencloud-eu/web/pull/498)]
+- chore(deps): update devdependencies (non-major) [[#495](https://github.com/opencloud-eu/web/pull/495)]
+- chore(deps): update devdependencies (non-major) [[#491](https://github.com/opencloud-eu/web/pull/491)]
+- chore(deps): bump @babel/runtime to v7.27.0 [[#477](https://github.com/opencloud-eu/web/pull/477)]
+- chore(deps): update pnpm to v10.7.1 [[#476](https://github.com/opencloud-eu/web/pull/476)]
+- chore(deps): update devdependencies (non-major) [[#474](https://github.com/opencloud-eu/web/pull/474)]
+- chore(deps): update devdependencies (non-major) [[#451](https://github.com/opencloud-eu/web/pull/451)]
+- fix(deps): update dependency @sentry/vue to v9.10.1 [[#450](https://github.com/opencloud-eu/web/pull/450)]
+- fix(deps): update dependency @vavt/cm-extension to v1.9.0 [[#447](https://github.com/opencloud-eu/web/pull/447)]
+- fix(deps): update dependency luxon to v3.6.1 [[#463](https://github.com/opencloud-eu/web/pull/463)]
+- chore(deps): update dependency vite to v6.2.4 [security] [[#461](https://github.com/opencloud-eu/web/pull/461)]
+- chore(deps): update traefik docker tag to v3.3.5 [[#462](https://github.com/opencloud-eu/web/pull/462)]
+- fix(deps): update typescript-eslint monorepo to v8.29.0 [[#464](https://github.com/opencloud-eu/web/pull/464)]
+- fix(deps): update dependency @sentry/vue to v9.10.0 [[#446](https://github.com/opencloud-eu/web/pull/446)]
+- chore(deps): update dependency @types/semver to v7.7.0 [[#439](https://github.com/opencloud-eu/web/pull/439)]
+
 ## [2.1.0](https://github.com/opencloud-eu/web/releases/tag/v2.1.0) - 2025-03-26
 
 ### ❤️ Thanks to all contributors! ❤️
