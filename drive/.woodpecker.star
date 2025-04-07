@@ -193,7 +193,7 @@ def main(ctx):
 
     stages = pipelinesDependsOn(stagePipelines(ctx), before)
 
-    if (stages == False):
+    if not stages:
         print("Errors detected. Review messages above.")
         return []
 
@@ -223,7 +223,7 @@ def stagePipelines(ctx):
     unit_test_pipelines = unitTests(ctx)
 
     # run only unit tests when publishing a standalone package
-    if (determineReleasePackage(ctx) != None):
+    if determineReleasePackage(ctx) != None:
         return unit_test_pipelines
 
     e2e_pipelines = e2eTests(ctx)
@@ -504,7 +504,7 @@ def e2eTests(ctx):
         if params["skip"]:
             continue
 
-        if ("with-tracing" in ctx.build.title.lower()):
+        if "with-tracing" in ctx.build.title.lower():
             params["reportTracing"] = True
 
         environment = {
@@ -1039,7 +1039,7 @@ def example_deploys(ctx):
 
 def deploy(config, rebuild):
     return {
-        "name": "deploy_%s" % (config),
+        "name": "deploy_%s" % config,
         "steps": [
             {
                 "name": "clone continuous deployment playbook",
@@ -1054,8 +1054,8 @@ def deploy(config, rebuild):
                 "image": OC_CI_DRONE_ANSIBLE,
                 "failure": "ignore",
                 "environment": {
-                    "CONTINUOUS_DEPLOY_SERVERS_CONFIG": "../%s" % (config),
-                    "REBUILD": "%s" % (rebuild),
+                    "CONTINUOUS_DEPLOY_SERVERS_CONFIG": "../%s" % config,
+                    "REBUILD": "%s" % rebuild,
                     "HCLOUD_API_TOKEN": {
                         "from_secret": "hcloud_api_token",
                     },
@@ -1246,7 +1246,7 @@ def genericCache(name, action, mounts, cache_path):
             "secret_key": {
                 "from_secret": "cache_s3_secret_key",
             },
-            "filename": "%s.tar" % (name),
+            "filename": "%s.tar" % name,
             "path": cache_path,
             "fallback_path": cache_path,
         },
@@ -1292,7 +1292,7 @@ def genericCachePurge(flush_path):
 def genericBuildArtifactCache(ctx, name, action, path):
     if action == "rebuild" or action == "restore":
         cache_path = "%s/%s/%s" % ("cache", repo_slug, ctx.build.commit + "-${CI_PIPELINE_NUMBER}")
-        name = "%s_build_artifact_cache" % (name)
+        name = "%s_build_artifact_cache" % name
         return genericCache(name, action, [path], cache_path)
 
     if action == "purge":
@@ -1327,7 +1327,7 @@ def pipelineSanityChecks(pipelines):
     for pipeline in pipelines:
         pipeline_name = pipeline["name"]
         if len(pipeline_name) > max_name_length:
-            print("Error: pipeline name %s is longer than 50 characters" % (pipeline_name))
+            print("Error: pipeline name %s is longer than 50 characters" % pipeline_name)
 
         for step in pipeline["steps"]:
             step_name = step["name"]
@@ -1377,7 +1377,7 @@ def pipelineSanityChecks(pipelines):
 
 def uploadTracingResult(ctx):
     status = ["failure"]
-    if ("with-tracing" in ctx.build.title.lower()):
+    if "with-tracing" in ctx.build.title.lower():
         status = ["failure", "success"]
 
     return [{
@@ -1412,7 +1412,7 @@ def uploadTracingResult(ctx):
 def logTracingResult(ctx):
     status = ["failure"]
 
-    if ("with-tracing" in ctx.build.title.lower()):
+    if "with-tracing" in ctx.build.title.lower():
         status = ["failure", "success"]
 
     return [{
