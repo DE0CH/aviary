@@ -165,14 +165,6 @@ minio_mc_environment = {
     },
 }
 
-go_step_volumes = [{
-    "name": "server",
-    "path": dir["app"],
-}, {
-    "name": "gopath",
-    "path": "/go",
-}]
-
 web_workspace = {
     "base": dir["base"],
     "path": config["app"],
@@ -231,10 +223,7 @@ def afterPipelines(ctx):
 def pnpmCache(ctx):
     return [{
         "name": "cache-pnpm",
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": installPnpm() +
                  rebuildBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
                  checkBrowsersCache() +
@@ -275,10 +264,7 @@ def pnpmlint(ctx, lintType):
         steps += lint()
     result = {
         "name": name,
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": steps,
         "when": [
             {
@@ -315,10 +301,7 @@ def publishRelease(ctx):
 
     build_pipeline = {
         "name": "publish-release",
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": steps,
         "when": [
             {
@@ -360,10 +343,7 @@ def readyReleaseGo():
 def buildCacheWeb(ctx):
     return [{
         "name": "cache-web",
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
                  installPnpm() +
                  [{
@@ -409,10 +389,7 @@ def unitTests(ctx):
 
     return [{
         "name": "unit-tests",
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") +
                  installPnpm() +
                  [
@@ -448,11 +425,6 @@ def unitTests(ctx):
     }]
 
 def e2eTests(ctx):
-    e2e_workspace = {
-        "base": dir["base"],
-        "path": config["app"],
-    }
-
     default = {
         "skip": False,
         "logLevel": "2",
@@ -562,7 +534,7 @@ def e2eTests(ctx):
 
         pipelines.append({
             "name": "e2e-tests-%s" % suite,
-            "workspace": e2e_workspace,
+            "workspace": web_workspace,
             "steps": steps,
             "depends_on": ["cache-opencloud"],
             "when": e2e_trigger,
@@ -1543,10 +1515,7 @@ def buildAndTestDesignSystem(ctx):
 
     return [{
         "name": "build-design-system-docs",
-        "workspace": {
-            "base": dir["base"],
-            "path": config["app"],
-        },
+        "workspace": web_workspace,
         "steps": steps,
         "when": design_system_trigger,
     }]
