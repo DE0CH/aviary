@@ -170,6 +170,23 @@ web_workspace = {
     "path": config["app"],
 }
 
+event = {
+    "base": {
+        "event": ["push", "manual"],
+        "branch": ["main", "stable-*"],
+    },
+    "main_branch": {
+        "event": ["push", "manual"],
+        "branch": "main",
+    },
+    "pull_request": {
+        "event": "pull_request",
+    },
+    "tag": {
+        "event": "tag",
+    },
+}
+
 def main(ctx):
     release = readyReleaseGo()
 
@@ -230,18 +247,13 @@ def pnpmCache(ctx):
                  installBrowsers() +
                  cacheBrowsers(),
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
+            event["base"],
+            event["tag"],
             {
                 "event": "pull_request",
                 "path": {
                     "exclude": skipIfUnchanged(ctx, "cache"),
                 },
-            },
-            {
-                "event": "tag",
             },
         ],
     }]
@@ -267,6 +279,7 @@ def pnpmlint(ctx, lintType):
         "workspace": web_workspace,
         "steps": steps,
         "when": [
+            event["tag"],
             {
                 "event": ["push", "manual"],
                 "branch": config["branches"],
@@ -276,9 +289,6 @@ def pnpmlint(ctx, lintType):
                 "path": {
                     "exclude": skipIfUnchanged(ctx, "lint"),
                 },
-            },
-            {
-                "event": "tag",
             },
         ],
     }
@@ -303,11 +313,7 @@ def publishRelease(ctx):
         "name": "publish-release",
         "workspace": web_workspace,
         "steps": steps,
-        "when": [
-            {
-                "event": "tag",
-            },
-        ],
+        "when": [event["tag"]],
     }
 
     pipelines.append(build_pipeline)
@@ -358,18 +364,13 @@ def buildCacheWeb(ctx):
                  }] +
                  rebuildBuildArtifactCache(ctx, "web-dist", "dist"),
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
+            event["base"],
+            event["tag"],
             {
                 "event": "pull_request",
                 "path": {
                     "exclude": skipIfUnchanged(ctx, "cache"),
                 },
-            },
-            {
-                "event": "tag",
             },
         ],
     }]
@@ -408,18 +409,13 @@ def unitTests(ctx):
                      # },
                  ],
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
+            event["base"],
+            event["tag"],
             {
                 "event": "pull_request",
                 "path": {
                     "exclude": skipIfUnchanged(ctx, "unit-tests"),
                 },
-            },
-            {
-                "event": "tag",
             },
         ],
     }]
@@ -443,12 +439,8 @@ def e2eTests(ctx):
             "event": ["push", "manual"],
             "branch": config["branches"],
         },
-        {
-            "event": "pull_request",
-        },
-        {
-            "event": "tag",
-        },
+        event["pull_request"],
+        event["tag"],
     ]
 
     pipelines = []
@@ -560,15 +552,11 @@ def notify():
             },
         ],
         "when": [
+            event["pull_request"],
+            event["tag"],
             {
                 "event": ["push", "manual"],
                 "branch": config["branches"],
-            },
-            {
-                "event": "pull_request",
-            },
-            {
-                "event": "tag",
             },
         ],
     }
@@ -688,11 +676,7 @@ def buildAndPublishRelease(ctx):
                     "title": ctx.build.ref.replace("refs/tags/v", ""),
                     "prerelease": len(ctx.build.ref.split("-")) > 1,
                 },
-                "when": [
-                    {
-                        "event": "tag",
-                    },
-                ],
+                "when": [event["tag"]],
             },
         ]
     else:
@@ -722,11 +706,7 @@ def buildAndPublishRelease(ctx):
                     "env \"npm_config_//registry.npmjs.org/:_authToken=$${NPM_TOKEN}\" pnpm whoami",
                     "env \"npm_config_//registry.npmjs.org/:_authToken=$${NPM_TOKEN}\" pnpm publish --no-git-checks --filter %s --access public --tag latest" % full_package_name,
                 ],
-                "when": [
-                    {
-                        "event": "tag",
-                    },
-                ],
+                "when": [event["tag"]],
             },
         )
 
@@ -784,13 +764,8 @@ def documentation():
                 },
             ],
             "when": [
-                {
-                    "event": ["push", "manual"],
-                    "branch": ["main"],
-                },
-                {
-                    "event": "pull_request",
-                },
+                event["pull_request"],
+                event["main_branch"],
             ],
         },
     ]
@@ -891,16 +866,9 @@ def cacheOpenCloudPipeline(ctx):
         "skip_clone": True,
         "steps": steps,
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
-            {
-                "event": "pull_request",
-            },
-            {
-                "event": "tag",
-            },
+            event["base"],
+            event["pull_request"],
+            event["tag"],
         ],
     }]
 
@@ -1072,16 +1040,9 @@ def checkStarlark():
             },
         ],
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
-            {
-                "event": "pull_request",
-            },
-            {
-                "event": "tag",
-            },
+            event["base"],
+            event["pull_request"],
+            event["tag"],
         ],
     }]
 
@@ -1107,16 +1068,9 @@ def licenseCheck():
             },
         ],
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": "main",
-            },
-            {
-                "event": "pull_request",
-            },
-            {
-                "event": "tag",
-            },
+            event["pull_request"],
+            event["tag"],
+            event["main_branch"],
         ],
         "workspace": web_workspace,
     }]
@@ -1242,13 +1196,8 @@ def genericCachePurge(flush_path):
             },
         ],
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": "main",
-            },
-            {
-                "event": "pull_request",
-            },
+            event["pull_request"],
+            event["main_branch"],
         ],
         "runs_on": ["success", "failure"],
     }
@@ -1497,16 +1446,9 @@ def buildDesignSystemDocs():
 
 def buildAndTestDesignSystem(ctx):
     design_system_trigger = [
-        {
-            "event": ["push", "manual"],
-            "branch": ["main", "stable-*"],
-        },
-        {
-            "event": "pull_request",
-        },
-        {
-            "event": "tag",
-        },
+        event["base"],
+        event["pull_request"],
+        event["tag"],
     ]
 
     steps = restoreBuildArtifactCache(ctx, "pnpm", ".pnpm-store") + \
@@ -1637,16 +1579,9 @@ def e2eTestsOnKeycloak(ctx):
         "steps": steps,
         "services": postgresService(),
         "when": [
-            {
-                "event": ["push", "manual"],
-                "branch": ["main", "stable-*"],
-            },
-            {
-                "event": "pull_request",
-            },
-            {
-                "event": "tag",
-            },
+            event["base"],
+            event["pull_request"],
+            event["tag"],
         ],
     }]
 
