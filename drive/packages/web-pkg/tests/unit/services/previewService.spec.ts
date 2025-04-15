@@ -35,7 +35,7 @@ describe('PreviewService', () => {
       expect(previewService.getSupportedMimeTypes()).toEqual(supportedMimeTypes)
     })
     it('filters the supported mime types from the capabilities', () => {
-      const supportedMimeTypes = ['image/png', 'text/plain']
+      const supportedMimeTypes = ['image/png', 'image/jpeg']
       const { previewService } = getWrapper({ supportedMimeTypes })
       expect(previewService.getSupportedMimeTypes('image')).toEqual([supportedMimeTypes[0]])
     })
