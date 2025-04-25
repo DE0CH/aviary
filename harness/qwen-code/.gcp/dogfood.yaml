@@ -1,11 +1,11 @@
 steps:
   # Install dependencies
-  - name: 'node'
+  - name: 'node:bookworm'
     entrypoint: 'npm'
     args: ['install']
 
   # Run prerelease versioning script across workspaces with dynamic version
-  - name: 'node'
+  - name: 'node:bookworm'
     entrypoint: 'npm'
     args:
       [
@@ -17,19 +17,25 @@ steps:
       ]
 
   # Run prerelease dependency script across workspaces
-  - name: 'node'
+  - name: 'node:bookworm'
     entrypoint: 'npm'
     args: ['run', 'prerelease:deps', '--workspaces']
 
   # Authenticate with our registry
-  - name: 'node'
+  - name: 'node:bookworm'
     entrypoint: 'npm'
     args: ['run', 'auth']
 
   # Publish packages from workspaces with 'dogfood' tag
-  - name: 'node'
-    entrypoint: 'npm'
-    args: ['publish', '--tag=head', '--workspaces']
+  # we awkwardly need to install rsync beforehand. TODO: use a dedicated dev container
+  - name: 'node:bookworm'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        apt-get update -y
+        apt-get install -y rsync
+        npm publish --tag=head --workspaces
 
 options:
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
