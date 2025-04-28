@@ -1,5 +1,73 @@
 # Changelog
 
+## [2.3.0](https://github.com/opencloud-eu/web/releases/tag/v2.3.0) - 2025-04-28
+
+### ❤️ Thanks to all contributors! ❤️
+
+@AlexAndBear, @JammingBen, @ScharfViktor, @amrita-shrestha, @individual-it, @tammi-23
+
+### ✨ Features
+
+- feat: adjust sidebar preview in the spaces view, so they look equal as the tiles [[#512](https://github.com/opencloud-eu/web/pull/512)]
+
+### 🐛 Bug Fixes
+
+- fix: remove outline on markdown editor and make input and preview are… [[#586](https://github.com/opencloud-eu/web/pull/586)]
+- fix: added oc-text-truncate to avoid line overflows in search preview [[#553](https://github.com/opencloud-eu/web/pull/553)]
+- fix: removed unnecessary oc-text-truncate to avoid a cut off [[#551](https://github.com/opencloud-eu/web/pull/551)]
+- fix: added avatar styling and truncated user name to avoid compressed… [[#550](https://github.com/opencloud-eu/web/pull/550)]
+- fix: added padding to readonly-text-editor [[#549](https://github.com/opencloud-eu/web/pull/549)]
+- fix: introduce web applications link [[#543](https://github.com/opencloud-eu/web/pull/543)]
+- fix: reintroduce ct helper read more links [[#536](https://github.com/opencloud-eu/web/pull/536)]
+- fix: use native fetch for downloading archives [[#520](https://github.com/opencloud-eu/web/pull/520)]
+- fix: copy permanent link available in trash [[#509](https://github.com/opencloud-eu/web/pull/509)]
+
+### 📈 Enhancement
+
+- feat: disabled preview for txt files [[#555](https://github.com/opencloud-eu/web/pull/555)]
+
+### 📚 Documentation
+
+- docs: fix 404 links in readme [[#538](https://github.com/opencloud-eu/web/pull/538)]
+- chore: remove dev docs, since added to opencloud-eu/opencloud repo [[#523](https://github.com/opencloud-eu/web/pull/523)]
+
+### ✅ Tests
+
+- download big archive [[#532](https://github.com/opencloud-eu/web/pull/532)]
+- test for #453 [[#505](https://github.com/opencloud-eu/web/pull/505)]
+
+### 📦️ Dependencies
+
+- chore(deps): update pnpm to v10.10.0 [[#597](https://github.com/opencloud-eu/web/pull/597)]
+- fix(deps): update dependency vue-router to v4.5.1 [[#595](https://github.com/opencloud-eu/web/pull/595)]
+- fix(deps): update dependency axios to v1.9.0 [[#589](https://github.com/opencloud-eu/web/pull/589)]
+- chore(deps): update node.js to v22.15.0 [[#583](https://github.com/opencloud-eu/web/pull/583)]
+- chore(deps): update dependency vue-tsc to v2.2.10 [[#581](https://github.com/opencloud-eu/web/pull/581)]
+- chore(deps): update dependency yaml to v2.7.1 [[#579](https://github.com/opencloud-eu/web/pull/579)]
+- fix(deps): update dependency @vavt/cm-extension to v1.9.1 [[#571](https://github.com/opencloud-eu/web/pull/571)]
+- fix(deps): update dependency dompurify to v3.2.5 [[#572](https://github.com/opencloud-eu/web/pull/572)]
+- chore(deps): update pnpm to v10.9.0 [[#577](https://github.com/opencloud-eu/web/pull/577)]
+- fix(deps): update dependency @pinia/testing to v1.0.1 [[#570](https://github.com/opencloud-eu/web/pull/570)]
+- chore(deps): update devdependencies (non-major) [[#567](https://github.com/opencloud-eu/web/pull/567)]
+- chore(deps): update traefik docker tag to v3.3.6 [[#569](https://github.com/opencloud-eu/web/pull/569)]
+- fix(deps): update dependency eslint-config-prettier to v10.1.2 [[#573](https://github.com/opencloud-eu/web/pull/573)]
+- fix(deps): update typescript-eslint monorepo to v8.31.0 [[#575](https://github.com/opencloud-eu/web/pull/575)]
+- chore(deps): update devdependencies (non-major) [[#563](https://github.com/opencloud-eu/web/pull/563)]
+- fix(deps): update dependency @sentry/vue to v9.13.0 [[#560](https://github.com/opencloud-eu/web/pull/560)]
+- fix(deps): update dependency zod to v3.24.3 [[#562](https://github.com/opencloud-eu/web/pull/562)]
+- chore(deps): update devdependencies (non-major) [[#557](https://github.com/opencloud-eu/web/pull/557)]
+- fix(deps): update uppy monorepo [[#521](https://github.com/opencloud-eu/web/pull/521)]
+- chore(deps): update devdependencies (non-major) [[#552](https://github.com/opencloud-eu/web/pull/552)]
+- chore(deps): update collabora/code docker tag to v24.04.13.3.1 [[#542](https://github.com/opencloud-eu/web/pull/542)]
+- chore(deps): update pnpm to v10.8.1 [[#547](https://github.com/opencloud-eu/web/pull/547)]
+- chore(deps): update devdependencies (non-major) [[#544](https://github.com/opencloud-eu/web/pull/544)]
+- chore(deps): update devdependencies (non-major) [[#529](https://github.com/opencloud-eu/web/pull/529)]
+- fix(deps): update dependency @sentry/vue to v9.12.0 [[#522](https://github.com/opencloud-eu/web/pull/522)]
+- fix(deps): update dependency pinia to v3.0.2 [[#531](https://github.com/opencloud-eu/web/pull/531)]
+- fix(deps): update dependency @vueuse/core to v13.1.0 [[#519](https://github.com/opencloud-eu/web/pull/519)]
+- chore(deps): update pnpm to v10.8.0 [[#517](https://github.com/opencloud-eu/web/pull/517)]
+- chore(deps): update devdependencies (non-major) [[#506](https://github.com/opencloud-eu/web/pull/506)]
+
 ## [2.2.0](https://github.com/opencloud-eu/web/releases/tag/v2.2.0) - 2025-04-04
 
 ### ❤️ Thanks to all contributors! ❤️
