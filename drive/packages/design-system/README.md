@@ -6,7 +6,7 @@ The **OpenCloud Design System** provides components and utilities for applicatio
 OpenCloud Web ecosystem. It can be developed standalone via the design system documentation. The documentation is
 built with [VitePress](https://vitepress.dev/).
 
-Head over to the [hosted docs](https://design.opencloud.eu/) for more information!
+Head over to the [hosted docs](https://docs.opencloud.eu/design-system/) for more information!
 
 ## Running the docs locally
 
@@ -24,14 +24,34 @@ pnpm docs:dev
 
 ## Usage as a package
 
-To use the components and utilities of the design-system in your application, you first need to install the package. Depending on your package manager, run one of the following commands:
+### Installation
+
+To use the design-system in your application, you first need to install the package. Depending on your package manager, run one of the following commands:
 
 ```
-$ npm install @opencloud-eu/design-system --save-dev
+$ npm install @opencloud-eu/design-system
 
 $ pnpm add -D @opencloud-eu/design-system
 
-$ yarn add @opencloud-eu/design-system --dev
+$ yarn add @opencloud-eu/design-system
 ```
 
-It's recommended to install this package as a dev dependency because it's only really needed for providing autocompletion in your IDE and unit tests. In a runtime context, the OpenCloud Web runtime provides the actual implementation.
+### Styles
+
+In order to use the provided CSS classes and to ensure the components are styled correctly, you need to import the styles like so:
+
+```
+import '@opencloud-eu/design-system/dist/design-system.css'
+```
+
+### Components
+
+To use the components, you need to import the component you want to use. For example, to use the `OcButton` component:
+
+```
+import { OcButton } from '@opencloud-eu/design-system/components'
+
+<oc-button>
+  Click me!
+</oc-button>
+```
