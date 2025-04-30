@@ -50,7 +50,7 @@ Again, this is not needed if you're using the design-system in an OpenCloud Web 
 
 ### Components
 
-To use the components, you need to import the component you want to use. For example, to use the `OcButton` component:
+To use a component, you need to import it. For example, to use the `OcButton` component:
 
 ```
 import { OcButton } from '@opencloud-eu/design-system/components'
