@@ -45,5 +45,5 @@ export default defineConfig({
       }
     }
   },
-  plugins: [vue(), dts({ exclude: ['**/tests', '**/*.spec.ts'] })]
+  plugins: [vue(), dts({ copyDtsFiles: true, exclude: ['**/tests', '**/*.spec.ts'] })]
 })
