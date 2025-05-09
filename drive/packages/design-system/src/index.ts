@@ -1,5 +1,5 @@
 import { App } from 'vue'
-import { applyCustomProp } from './helpers'
+import { applyCustomProp, setIconUrlPrefix } from './helpers'
 
 import * as components from './components'
 import * as directives from './directives'
@@ -16,6 +16,8 @@ const initializeCustomProps = (tokens: string[] = [], prefix: string) => {
 export default {
   // TODO: properly type the options
   install(app: App, options: any = {}) {
+    setIconUrlPrefix(options.iconUrlPrefix || '')
+
     const themeOptions = options.tokens
     initializeCustomProps(themeOptions?.breakpoints, 'breakpoint-')
     initializeCustomProps(themeOptions?.colorPalette, 'color-')
