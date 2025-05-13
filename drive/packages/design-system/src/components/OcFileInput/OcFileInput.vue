@@ -53,14 +53,14 @@
     </div>
     <div
       v-if="showMessageLine"
-      class="oc-file-input-message oc-mt-s oc-flex oc-flex-middle"
+      class="oc-file-input-message oc-text-small oc-flex oc-flex-middle"
       :class="{
         'oc-file-input-description': !!descriptionMessage,
         'oc-file-input-danger': !!errorMessage
       }"
     >
       <oc-icon
-        v-if="messageText !== null && !!descriptionMessage"
+        v-if="!!errorMessage"
         name="information"
         size="small"
         class="oc-mr-xs"
@@ -258,6 +258,17 @@ const onFocus = async () => {
   &-danger,
   &-danger:focus {
     color: var(--oc-role-error) !important;
+  }
+
+  &-description {
+    color: var(--oc-role-on-surface-variant);
+  }
+
+  &-message {
+    display: flex;
+    align-items: center;
+    margin-top: var(--oc-space-xsmall);
+    min-height: $oc-font-size-default * 1.5;
   }
 }
 </style>

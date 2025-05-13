@@ -69,17 +69,18 @@
 
     <div
       v-if="showMessageLine"
-      class="oc-text-input-message"
+      class="oc-text-input-message oc-text-small"
       :class="{
         'oc-text-input-description': !!descriptionMessage,
         'oc-text-input-danger': !!errorMessage
       }"
     >
       <oc-icon
-        v-if="messageText !== null && !!descriptionMessage"
+        v-if="!!errorMessage"
         name="information"
         size="small"
         fill-type="line"
+        class="oc-mr-xs"
       />
 
       <span
