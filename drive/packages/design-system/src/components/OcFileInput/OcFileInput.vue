@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div :class="$attrs.class">
     <slot name="label">
       <label class="oc-label" :for="id">
         {{ label }}
@@ -189,7 +189,9 @@ const additionalAttributes = computed(() => {
     additionalAttrs['aria-describedby'] = messageId.value
   }
 
-  return { ...tmpAttrs, ...additionalAttrs }
+  // note: we spread out the attrs we don't want to be present in the resulting object
+  const { change, input, focus, class: classes, ...attrs } = tmpAttrs
+  return { ...attrs, ...additionalAttrs }
 })
 
 const ariaInvalid = computed(() => {
