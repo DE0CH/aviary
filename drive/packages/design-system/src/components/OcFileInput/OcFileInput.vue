@@ -14,10 +14,9 @@
         :aria-invalid="ariaInvalid"
         class="oc-invisible oc-file-input"
         type="file"
-        :value="inputValue"
         :multiple="multiple"
         :accept="fileTypes"
-        @change="onChange(($event.target as HTMLInputElement).value)"
+        @change="onChange"
         @focus="onFocus"
       />
       <oc-button
@@ -34,13 +33,10 @@
         {{ $ngettext('Select file', 'Select files', multiple ? 2 : 1) }}
       </oc-button>
       <div class="oc-file-input-files oc-rounded oc-ml-s">
-        <div
-          v-if="inputRef?.files?.length"
-          class="oc-py-xs oc-px-s oc-text-small oc-flex oc-flex-middle"
-        >
+        <div v-if="fileNames" class="oc-py-xs oc-px-s oc-text-small oc-flex oc-flex-middle">
           {{ fileNames }}
           <oc-button
-            v-if="clearButtonEnabled && inputValue"
+            v-if="clearButtonEnabled && fileNames"
             appearance="raw"
             class="oc-file-input-clear raw-hover-surface oc-p-xs oc-ml-xs"
             :aria-label="$gettext('Clear input')"
@@ -82,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, useAttrs, useTemplateRef, unref, ref } from 'vue'
+import { computed, nextTick, useAttrs, useTemplateRef, unref } from 'vue'
 import { uniqueId } from '../../helpers'
 import OcButton from '../OcButton/OcButton.vue'
 import OcIcon from '../OcIcon/OcIcon.vue'
@@ -110,6 +106,10 @@ export interface Props {
    * @default false
    */
   multiple?: boolean
+  /**
+   * @docs Value of the input element.
+   */
+  modelValue?: FileList
   /**
    * @docs Determines if the input should have a clear button. Only gets displayed if the input has a value.
    * @default true
@@ -163,6 +163,7 @@ const {
   id = uniqueId('oc-fileinput-'),
   fileTypes = '',
   multiple = false,
+  modelValue = null,
   clearButtonEnabled = true,
   disabled = false,
   errorMessage = '',
@@ -173,8 +174,6 @@ const {
 
 const emit = defineEmits<Emits>()
 defineSlots<Slots>()
-
-const inputValue = ref('')
 
 const showMessageLine = computed(() => {
   return fixMessageLine || !!errorMessage || !!descriptionMessage
@@ -208,15 +207,13 @@ const messageText = computed(() => {
 const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
 const inputBtnRef = useTemplateRef<HTMLElement>('inputBtnRef')
 
-const fileNames = ref('')
-const setFileNames = () => {
-  if (unref(inputRef)?.files) {
+const fileNames = computed(() => {
+  if (unref(modelValue)) {
     const files = Array.from(unref(inputRef).files)
-    fileNames.value = files.map((file) => file.name).join(', ')
-    return
+    return files.map((file) => file.name).join(', ')
   }
-  fileNames.value = ''
-}
+  return ''
+})
 
 const addFiles = () => {
   if (unref(inputRef)) {
@@ -227,14 +224,10 @@ const addFiles = () => {
 const onClear = () => {
   emit('update:modelValue', null)
   unref(inputRef).value = null
-  inputValue.value = ''
-  setFileNames()
 }
 
-const onChange = (value: string) => {
+const onChange = () => {
   emit('update:modelValue', unref(inputRef).files)
-  inputValue.value = value
-  setFileNames()
 }
 
 const onFocus = async () => {
