@@ -208,11 +208,6 @@ const messageText = computed(() => {
 const inputRef = useTemplateRef<HTMLInputElement>('inputRef')
 const inputBtnRef = useTemplateRef<HTMLElement>('inputBtnRef')
 
-const focus = () => {
-  unref(inputRef).focus()
-}
-defineExpose({ focus })
-
 const fileNames = ref('')
 const setFileNames = () => {
   if (unref(inputRef)?.files) {
