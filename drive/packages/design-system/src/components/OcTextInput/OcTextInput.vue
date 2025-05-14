@@ -56,10 +56,9 @@
     >
       <oc-icon
         v-if="!!errorMessage"
-        name="information"
+        name="error-warning"
         size="small"
         fill-type="line"
-        accessible-label="info"
         aria-hidden="true"
         class="oc-mr-xs"
       />

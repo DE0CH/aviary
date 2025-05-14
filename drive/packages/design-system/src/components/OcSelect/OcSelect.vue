@@ -77,9 +77,10 @@
     >
       <oc-icon
         v-if="!!errorMessage"
-        name="information"
+        name="error-warning"
         size="small"
         fill-type="line"
+        aria-hidden="true"
         class="oc-mr-xs"
       />
 

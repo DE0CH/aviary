@@ -57,11 +57,10 @@
     >
       <oc-icon
         v-if="!!errorMessage"
-        name="information"
+        name="error-warning"
         size="small"
         class="oc-mr-xs"
         fill-type="line"
-        accessible-label="info"
         aria-hidden="true"
       />
 
