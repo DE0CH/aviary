@@ -6,7 +6,7 @@
       class="oc-flex oc-flex-middle oc-mb-s"
       data-testid="space-members-list"
     >
-      <oc-avatar
+      <user-avatar
         v-if="m.grantedToV2.user"
         :user-id="m.grantedToV2.user.id"
         :user-name="getDisplayName(m)"
