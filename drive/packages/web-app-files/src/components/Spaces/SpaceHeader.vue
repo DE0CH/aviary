@@ -109,7 +109,6 @@
 
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, Ref, ref, unref, watch } from 'vue'
-import { isEmpty } from 'lodash-es'
 import { buildSpaceImageResource, Resource, SpaceResource } from '@opencloud-eu/web-client'
 import {
   useClientService,
@@ -195,22 +194,19 @@ const unobserveMarkdownContainerResize = () => {
 
 const memberCount = ref<number>()
 watch(
-  () => sharesStore.collaboratorShares,
-  async (shares) => {
+  () => sharesStore.collaboratorShares.length,
+  async () => {
     // set space member count
-    if (!isEmpty(shares)) {
-      memberCount.value = shares.length
-      return
-    }
-
-    if (!unref(memberCount)) {
-      try {
-        // FIXME: get member count without fetching the whole drive?
-        const { root } = await clientService.graphAuthenticated.drives.getDrive(space.id)
-        memberCount.value = root?.permissions?.length || 1
-      } catch (e) {
-        console.error(e)
-      }
+    try {
+      const { count } = await clientService.graphAuthenticated.permissions.listPermissions(
+        space.id,
+        space.id,
+        sharesStore.graphRoles,
+        { count: true }
+      )
+      memberCount.value = count || 1
+    } catch (e) {
+      console.error(e)
     }
   },
   { immediate: true }

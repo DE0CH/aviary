@@ -15,6 +15,7 @@ type ListPermissionsResponse = {
   shares: Share[]
   allowedActions: string[]
   allowedRoles: UnifiedRoleDefinition[]
+  count?: number
 }
 
 export interface GraphPermissions {
@@ -32,6 +33,8 @@ export interface GraphPermissions {
     options?: {
       filter?: string
       select?: Array<ListPermissionsSpaceRootSelectEnum>
+      count?: boolean
+      top?: number
     },
     requestOptions?: GraphRequestOptions
   ): Promise<ListPermissionsResponse>

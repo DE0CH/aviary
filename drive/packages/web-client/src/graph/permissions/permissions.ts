@@ -62,6 +62,8 @@ export const PermissionsFactory = ({
           driveId,
           options?.filter,
           options?.select ? new Set([...options.select]) : null,
+          options?.count,
+          options?.top || 0,
           requestOptions
         )
         responseData = data
@@ -71,6 +73,8 @@ export const PermissionsFactory = ({
           itemId,
           options?.filter,
           options?.select ? new Set([...options.select]) : null,
+          options?.count,
+          options?.top || 0,
           requestOptions
         )
         responseData = data
@@ -79,6 +83,7 @@ export const PermissionsFactory = ({
       const permissions = responseData.value || []
       const allowedActions = responseData['@libre.graph.permissions.actions.allowedValues']
       const allowedRoles = responseData['@libre.graph.permissions.roles.allowedValues']
+      const count = responseData['@odata.count']
 
       const shares = permissions.map((permission) => {
         if (permission.link) {
@@ -92,7 +97,7 @@ export const PermissionsFactory = ({
         })
       })
 
-      return { shares, allowedActions, allowedRoles }
+      return { shares, allowedActions, allowedRoles, count }
     },
 
     async updatePermission<T extends CollaboratorShare | LinkShare>(

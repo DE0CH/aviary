@@ -2,12 +2,7 @@ import { ref } from 'vue'
 import SpaceHeader from '../../../../src/components/Spaces/SpaceHeader.vue'
 import { DriveItem } from '@opencloud-eu/web-client/graph/generated'
 import { SpaceResource, Resource, buildSpaceImageResource } from '@opencloud-eu/web-client'
-import {
-  defaultPlugins,
-  mount,
-  defaultComponentMocks,
-  nextTicks
-} from '@opencloud-eu/web-test-helpers'
+import { defaultPlugins, mount, defaultComponentMocks } from '@opencloud-eu/web-test-helpers'
 import { mock } from 'vitest-mock-extended'
 import { GetFileContentsResponse } from '@opencloud-eu/web-client/webdav'
 import { flushPromises } from '@vue/test-utils'
@@ -33,8 +28,7 @@ const getSpaceMock = (spaceImageData: DriveItem = undefined) =>
     name: '',
     description: '',
     spaceReadmeData: undefined,
-    spaceImageData,
-    root: { permissions: [{}] }
+    spaceImageData
   })
 
 describe('SpaceHeader', () => {
@@ -53,7 +47,7 @@ describe('SpaceHeader', () => {
     })
     it('should show the set image', async () => {
       const wrapper = getWrapper({ space: getSpaceMock({ webDavUrl: '/' }) })
-      await wrapper.vm.$nextTick()
+      await flushPromises()
       expect(wrapper.find('.space-header-image-default').exists()).toBeFalsy()
       expect(wrapper.find('.space-header-image img').exists()).toBeTruthy()
       expect(wrapper.html()).toMatchSnapshot()
@@ -79,7 +73,7 @@ describe('SpaceHeader', () => {
       const space = getSpaceMock()
       space.spaceReadmeData = {}
       const wrapper = getWrapper({ space })
-      await nextTicks(2)
+      await flushPromises()
       expect(wrapper.find('.markdown-container').exists()).toBeTruthy()
       expect(wrapper.html()).toMatchSnapshot()
     })
@@ -90,6 +84,15 @@ describe('SpaceHeader', () => {
       expect(wrapper.find('.space-header-readme-loading').exists()).toBeTruthy()
     })
   })
+  describe('space member count', () => {
+    it('should show the correct amount of space members', async () => {
+      const space = getSpaceMock()
+      space.spaceReadmeData = {}
+      const wrapper = getWrapper({ space, memberCount: 5 })
+      await flushPromises()
+      expect(wrapper.find('.space-header-people-count').text()).toContain('5')
+    })
+  })
 })
 
 function getWrapper({
@@ -97,7 +100,8 @@ function getWrapper({
   isSideBarOpen = false,
   isMobileWidth = false,
   imagesLoading = [],
-  readmesLoading = []
+  readmesLoading = [],
+  memberCount = 0
 }) {
   const mocks = defaultComponentMocks()
   mocks.$previewService.loadPreview.mockResolvedValue('blob:image')
@@ -107,7 +111,12 @@ function getWrapper({
     mock<GetFileContentsResponse>({ body: 'body' })
   )
   mocks.$clientService.webdav.getFileInfo.mockResolvedValue(mock<Resource>())
-  mocks.$clientService.graphAuthenticated.drives.getDrive.mockResolvedValue(getSpaceMock())
+  mocks.$clientService.graphAuthenticated.permissions.listPermissions.mockResolvedValue({
+    shares: [],
+    allowedActions: [],
+    allowedRoles: [],
+    count: memberCount
+  })
 
   return mount(SpaceHeader, {
     props: {
