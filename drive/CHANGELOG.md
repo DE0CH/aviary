@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.0.0](https://github.com/opencloud-eu/web/releases/tag/v3.0.0) - 2025-06-02
+## [3.0.0](https://github.com/opencloud-eu/web/releases/tag/v3.0.0) - 2025-06-10
 
 ### ❤️ Thanks to all contributors! ❤️
 
@@ -19,20 +19,29 @@
 - feat: add cropping to space images [[#722](https://github.com/opencloud-eu/web/pull/722)]
 - feat: polish account page design [[#707](https://github.com/opencloud-eu/web/pull/707)]
 
-### 📈 Enhancement
-
-- feat: show avatars in shares view [[#767](https://github.com/opencloud-eu/web/pull/767)]
-- feat: polish account page followup [[#738](https://github.com/opencloud-eu/web/pull/738)]
-- feat: remove space membership info in file list [[#721](https://github.com/opencloud-eu/web/pull/721)]
-
 ### 🐛 Bug Fixes
 
+- fix: status column appears multiple times [[#806](https://github.com/opencloud-eu/web/pull/806)]
+- fix: modal window doesn't close on browser navigation [[#783](https://github.com/opencloud-eu/web/pull/783)]
+- fix: space quota not initial set [[#779](https://github.com/opencloud-eu/web/pull/779)]
+- fix: avatar initials not shown in shares table [[#784](https://github.com/opencloud-eu/web/pull/784)]
 - fix(admin-settings): broken update user space quota for users with sp… [[#774](https://github.com/opencloud-eu/web/pull/774)]
 - fix: add resource name length check [[#776](https://github.com/opencloud-eu/web/pull/776)]
 - fix: SpaceImageModal import [[#734](https://github.com/opencloud-eu/web/pull/734)]
 
+### 📈 Enhancement
+
+- feat: add keyboard support for space image and user avatar cropping [[#805](https://github.com/opencloud-eu/web/pull/805)]
+- feat: adjust appreance of the group avatars in the admin settings [[#799](https://github.com/opencloud-eu/web/pull/799)]
+- feat: change visual representation of stacked avatars [[#793](https://github.com/opencloud-eu/web/pull/793)]
+- feat: show avatars in shares view [[#767](https://github.com/opencloud-eu/web/pull/767)]
+- feat: polish account page followup [[#738](https://github.com/opencloud-eu/web/pull/738)]
+- feat: remove space membership info in file list [[#721](https://github.com/opencloud-eu/web/pull/721)]
+
 ### ✅ Tests
 
+- [full-ci] delete unused files for upload [[#795](https://github.com/opencloud-eu/web/pull/795)]
+- e2e-tests. Check avatar tests in shares view [[#792](https://github.com/opencloud-eu/web/pull/792)]
 - e2e tests. user profile photo [[#742](https://github.com/opencloud-eu/web/pull/742)]
 - chore: add avatar upload tests [[#743](https://github.com/opencloud-eu/web/pull/743)]
 - check ratio after cropping space image [[#731](https://github.com/opencloud-eu/web/pull/731)]
@@ -40,6 +49,10 @@
 
 ### 📦️ Dependencies
 
+- Revert "fix(deps): update dependency eslint-plugin-n to v17.19.0" [[#810](https://github.com/opencloud-eu/web/pull/810)]
+- chore(deps): update apache/tika docker tag to v3.2.0.0 [[#780](https://github.com/opencloud-eu/web/pull/780)]
+- fix(deps): update dependency eslint-plugin-n to v17.19.0 [[#781](https://github.com/opencloud-eu/web/pull/781)]
+- chore(deps): update pnpm to v10.11.1 [[#786](https://github.com/opencloud-eu/web/pull/786)]
 - chore(deps): update dependency rollup-plugin-visualizer to v6 [[#746](https://github.com/opencloud-eu/web/pull/746)]
 - fix(deps): update dependency focus-trap to v7.6.5 [[#763](https://github.com/opencloud-eu/web/pull/763)]
 - chore(deps): update traefik docker tag to v3.4.1 [[#760](https://github.com/opencloud-eu/web/pull/760)]
