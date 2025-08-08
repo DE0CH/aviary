@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -78,7 +78,7 @@ interface OpenAIResponseFormat {
 }
 
 export class OpenAIContentGenerator implements ContentGenerator {
-  private client: OpenAI;
+  protected client: OpenAI;
   private model: string;
   private config: Config;
   private streamingToolCalls: Map<
@@ -114,14 +114,21 @@ export class OpenAIContentGenerator implements ContentGenerator {
       timeoutConfig.maxRetries = contentGeneratorConfig.maxRetries;
     }
 
+    // Set up User-Agent header (same format as contentGenerator.ts)
+    const version = process.env.CLI_VERSION || process.version;
+    const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
+
     // Check if using OpenRouter and add required headers
     const isOpenRouter = baseURL.includes('openrouter.ai');
-    const defaultHeaders = isOpenRouter
-      ? {
-          'HTTP-Referer': 'https://github.com/QwenLM/qwen-code.git',
-          'X-Title': 'Qwen Code',
-        }
-      : undefined;
+    const defaultHeaders = {
+      'User-Agent': userAgent,
+      ...(isOpenRouter
+        ? {
+            'HTTP-Referer': 'https://github.com/QwenLM/qwen-code.git',
+            'X-Title': 'Qwen Code',
+          }
+        : {}),
+    };
 
     this.client = new OpenAI({
       apiKey,
@@ -130,6 +137,19 @@ export class OpenAIContentGenerator implements ContentGenerator {
       maxRetries: timeoutConfig.maxRetries,
       defaultHeaders,
     });
+  }
+
+  /**
+   * Hook for subclasses to customize error handling behavior
+   * @param error The error that occurred
+   * @param request The original request
+   * @returns true if error logging should be suppressed, false otherwise
+   */
+  protected shouldSuppressErrorLogging(
+    _error: unknown,
+    _request: GenerateContentParameters,
+  ): boolean {
+    return false; // Default behavior: never suppress error logging
   }
 
   /**
@@ -275,7 +295,10 @@ export class OpenAIContentGenerator implements ContentGenerator {
         );
       }
 
-      console.error('OpenAI API Error:', errorMessage);
+      // Allow subclasses to suppress error logging for specific scenarios
+      if (!this.shouldSuppressErrorLogging(error, request)) {
+        console.error('OpenAI API Error:', errorMessage);
+      }
 
       // Provide helpful timeout-specific error message
       if (isTimeoutError) {
@@ -288,7 +311,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
         );
       }
 
-      throw new Error(`OpenAI API error: ${errorMessage}`);
+      throw error;
     }
   }
 
@@ -486,7 +509,10 @@ export class OpenAIContentGenerator implements ContentGenerator {
       );
       logApiResponse(this.config, errorEvent);
 
-      console.error('OpenAI API Streaming Error:', errorMessage);
+      // Allow subclasses to suppress error logging for specific scenarios
+      if (!this.shouldSuppressErrorLogging(error, request)) {
+        console.error('OpenAI API Streaming Error:', errorMessage);
+      }
 
       // Provide helpful timeout-specific error message for streaming setup
       if (isTimeoutError) {
@@ -499,7 +525,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
         );
       }
 
-      throw new Error(`OpenAI API error: ${errorMessage}`);
+      throw error;
     }
   }
 

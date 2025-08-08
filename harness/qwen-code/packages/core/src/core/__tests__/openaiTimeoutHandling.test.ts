@@ -128,7 +128,8 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
               : String(thrownError);
           expect(errorMessage).not.toMatch(/timeout after \d+s/);
           expect(errorMessage).not.toMatch(/Troubleshooting tips:/);
-          expect(errorMessage).toMatch(/OpenAI API error:/);
+          // Should preserve the original error message
+          expect(errorMessage).toMatch(new RegExp(error.message));
         }
       }
     });
@@ -161,7 +162,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       await expect(generator.generateContent(request)).rejects.toThrow(
-        'OpenAI API error: Invalid API key',
+        'Invalid API key',
       );
     });
 
@@ -238,6 +239,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         baseURL: '',
         timeout: 120000,
         maxRetries: 3,
+        defaultHeaders: {
+          'User-Agent': expect.stringMatching(/^QwenCode/),
+        },
       });
     });
 
@@ -256,6 +260,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         baseURL: '',
         timeout: 300000,
         maxRetries: 5,
+        defaultHeaders: {
+          'User-Agent': expect.stringMatching(/^QwenCode/),
+        },
       });
     });
 
@@ -271,6 +278,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         baseURL: '',
         timeout: 120000, // default
         maxRetries: 3, // default
+        defaultHeaders: {
+          'User-Agent': expect.stringMatching(/^QwenCode/),
+        },
       });
     });
   });
