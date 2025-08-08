@@ -187,6 +187,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
 
   async generateContent(
     request: GenerateContentParameters,
+    userPromptId: string,
   ): Promise<GenerateContentResponse> {
     const startTime = Date.now();
     const messages = this.convertToOpenAIFormat(request);
@@ -204,6 +205,10 @@ export class OpenAIContentGenerator implements ContentGenerator {
         model: this.model,
         messages,
         ...samplingParams,
+        metadata: {
+          sessionId: this.config.getSessionId?.(),
+          promptId: userPromptId,
+        },
       };
 
       if (request.config?.tools) {
@@ -223,7 +228,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
       const responseEvent = new ApiResponseEvent(
         this.model,
         durationMs,
-        `openai-${Date.now()}`, // Generate a prompt ID
+        userPromptId,
         this.config.getContentGeneratorConfig()?.authType,
         response.usageMetadata,
       );
@@ -277,7 +282,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
       const errorEvent = new ApiResponseEvent(
         this.model,
         durationMs,
-        `openai-${Date.now()}`, // Generate a prompt ID
+        userPromptId,
         this.config.getContentGeneratorConfig()?.authType,
         estimatedUsage,
         undefined,
@@ -317,10 +322,11 @@ export class OpenAIContentGenerator implements ContentGenerator {
 
   async generateContentStream(
     request: GenerateContentParameters,
+    userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     const startTime = Date.now();
     const messages = this.convertToOpenAIFormat(request);
-
+    
     try {
       // Build sampling parameters with clear priority
       const samplingParams = this.buildSamplingParameters(request);
@@ -333,6 +339,10 @@ export class OpenAIContentGenerator implements ContentGenerator {
         ...samplingParams,
         stream: true,
         stream_options: { include_usage: true },
+        metadata: {
+          sessionId: this.config.getSessionId?.(),
+          promptId: userPromptId,
+        },
       };
 
       if (request.config?.tools) {
@@ -372,7 +382,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
           const responseEvent = new ApiResponseEvent(
             this.model,
             durationMs,
-            `openai-stream-${Date.now()}`, // Generate a prompt ID
+            userPromptId,
             this.config.getContentGeneratorConfig()?.authType,
             finalUsageMetadata,
           );
@@ -428,7 +438,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
           const errorEvent = new ApiResponseEvent(
             this.model,
             durationMs,
-            `openai-stream-${Date.now()}`, // Generate a prompt ID
+            userPromptId,
             this.config.getContentGeneratorConfig()?.authType,
             estimatedUsage,
             undefined,
@@ -501,7 +511,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
       const errorEvent = new ApiResponseEvent(
         this.model,
         durationMs,
-        `openai-stream-${Date.now()}`, // Generate a prompt ID
+        userPromptId,
         this.config.getContentGeneratorConfig()?.authType,
         estimatedUsage,
         undefined,

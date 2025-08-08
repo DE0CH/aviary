@@ -189,7 +189,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       expect(result.candidates).toHaveLength(1);
       if (
@@ -236,7 +236,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -302,7 +302,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       if (
         result.candidates &&
@@ -345,7 +345,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -381,7 +381,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -439,7 +439,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request);
+      const stream = await generator.generateContentStream(request, 'test-prompt-id');
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -528,7 +528,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request);
+      const stream = await generator.generateContentStream(request, 'test-prompt-id');
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -668,7 +668,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         'Invalid API key',
       );
     });
@@ -683,7 +683,7 @@ describe('OpenAIContentGenerator', () => {
       };
 
       try {
-        await generator.generateContent(request);
+        await generator.generateContent(request, 'test-prompt-id');
       } catch (error) {
         // Error should be thrown but token estimation should have been attempted
         expect(error).toBeInstanceOf(Error);
@@ -703,7 +703,7 @@ describe('OpenAIContentGenerator', () => {
       };
 
       try {
-        await generator.generateContent(request);
+        await generator.generateContent(request, 'test-prompt-id');
         expect.fail('Expected error to be thrown');
       } catch (error: unknown) {
         // Should throw the original error object with status preserved
@@ -763,7 +763,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -828,7 +828,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       // Should not include the orphaned tool call
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
@@ -872,7 +872,7 @@ describe('OpenAIContentGenerator', () => {
           model: 'gpt-4',
         };
 
-        const result = await generator.generateContent(request);
+        const result = await generator.generateContent(request, 'test-prompt-id');
         if (
           result.candidates &&
           result.candidates.length > 0 &&
@@ -919,7 +919,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await loggingGenerator.generateContent(request);
+      await loggingGenerator.generateContent(request, 'test-prompt-id');
 
       // Verify logging was called
       const { openaiLogger } = await import('../utils/openaiLogger.js');
@@ -949,7 +949,7 @@ describe('OpenAIContentGenerator', () => {
         };
 
         try {
-          await generator.generateContent(request);
+          await generator.generateContent(request, 'test-prompt-id');
           // Should not reach here
           expect(true).toBe(false);
         } catch (error) {
@@ -969,7 +969,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         /Troubleshooting tips.*Reduce input length.*Increase timeout.*Check network/s,
       );
     });
@@ -985,7 +985,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContentStream(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         'Streaming setup failed',
       );
     });
@@ -999,7 +999,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContentStream(request)).rejects.toThrow(
+      await expect(generator.generateContentStream(request, 'test-prompt-id')).rejects.toThrow(
         /Streaming setup timeout troubleshooting.*Reduce input length/s,
       );
     });
@@ -1042,7 +1042,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await loggingGenerator.generateContentStream(request);
+      const stream = await loggingGenerator.generateContentStream(request, 'test-prompt-id');
 
       // Consume the stream and expect error
       await expect(async () => {
@@ -1113,7 +1113,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1191,7 +1191,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1296,7 +1296,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1404,7 +1404,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1460,7 +1460,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1495,7 +1495,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(testGenerator.generateContent(request)).rejects.toThrow();
+      await expect(testGenerator.generateContent(request, 'test-prompt-id')).rejects.toThrow();
 
       // Error logging should be suppressed
       expect(consoleSpy).not.toHaveBeenCalledWith(
@@ -1519,7 +1519,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request)).rejects.toThrow();
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow();
 
       // Error logging should occur by default
       expect(consoleSpy).toHaveBeenCalledWith(
@@ -1566,7 +1566,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       // Should handle malformed JSON gracefully
       if (
@@ -1643,7 +1643,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request);
+      const stream = await generator.generateContentStream(request, 'test-prompt-id');
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -1692,7 +1692,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       expect(result.candidates).toHaveLength(1);
       if (
@@ -1733,7 +1733,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       expect(result.usageMetadata).toEqual({
         promptTokenCount: 70, // 70% of 100
@@ -1772,7 +1772,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const result = await generator.generateContent(request);
+      const result = await generator.generateContent(request, 'test-prompt-id');
 
       expect(result.usageMetadata).toEqual({
         promptTokenCount: 50,
@@ -1884,7 +1884,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await loggingGenerator.generateContent(request);
+      await loggingGenerator.generateContent(request, 'test-prompt-id');
 
       // Verify that logging was called with properly converted request/response
       const { openaiLogger } = await import('../utils/openaiLogger.js');
@@ -2039,7 +2039,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await loggingGenerator.generateContentStream(request);
+      const stream = await loggingGenerator.generateContentStream(request, 'test-prompt-id');
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -2083,7 +2083,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request);
+      const stream = await generator.generateContentStream(request, 'test-prompt-id');
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -2166,7 +2166,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2204,7 +2204,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await generator.generateContent(request);
+      await generator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2260,7 +2260,7 @@ describe('OpenAIContentGenerator', () => {
         },
       };
 
-      await testGenerator.generateContent(request);
+      await testGenerator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2312,7 +2312,7 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await testGenerator.generateContent(request);
+      await testGenerator.generateContent(request, 'test-prompt-id');
 
       expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({

@@ -78,6 +78,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
    */
   async generateContent(
     request: GenerateContentParameters,
+    userPromptId: string,
   ): Promise<GenerateContentResponse> {
     return this.withValidToken(async (token) => {
       // Temporarily update the API key and base URL
@@ -87,7 +88,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
       this.client.baseURL = this.getCurrentEndpoint();
 
       try {
-        return await super.generateContent(request);
+        return await super.generateContent(request, userPromptId);
       } finally {
         // Restore original values
         this.client.apiKey = originalApiKey;
@@ -101,6 +102,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
    */
   async generateContentStream(
     request: GenerateContentParameters,
+    userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     return this.withValidTokenForStream(async (token) => {
       // Update the API key and base URL before streaming
@@ -110,7 +112,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
       this.client.baseURL = this.getCurrentEndpoint();
 
       try {
-        return await super.generateContentStream(request);
+        return await super.generateContentStream(request, userPromptId);
       } catch (error) {
         // Restore original values on error
         this.client.apiKey = originalApiKey;

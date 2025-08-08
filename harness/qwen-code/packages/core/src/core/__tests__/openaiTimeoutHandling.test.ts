@@ -87,7 +87,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         mockOpenAIClient.chat.completions.create.mockRejectedValueOnce(error);
 
         try {
-          await generator.generateContent(request);
+          await generator.generateContent(request, 'test-prompt-id');
         } catch (thrownError: unknown) {
           // Should contain timeout-specific messaging and troubleshooting tips
           const errorMessage =
@@ -119,7 +119,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         mockOpenAIClient.chat.completions.create.mockRejectedValueOnce(error);
 
         try {
-          await generator.generateContent(request);
+          await generator.generateContent(request, 'test-prompt-id');
         } catch (thrownError: unknown) {
           // Should NOT contain timeout-specific messaging
           const errorMessage =
@@ -146,7 +146,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         /Request timeout after \d+s\. Try reducing input length or increasing timeout in config\./,
       );
     });
@@ -161,7 +161,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         'Invalid API key',
       );
     });
@@ -176,7 +176,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       try {
-        await generator.generateContent(request);
+        await generator.generateContent(request, 'test-prompt-id');
       } catch (error: unknown) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -199,7 +199,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContentStream(request)).rejects.toThrow(
+      await expect(generator.generateContentStream(request, 'test-prompt-id')).rejects.toThrow(
         /Streaming setup timeout after \d+s\. Try reducing input length or increasing timeout in config\./,
       );
     });
@@ -214,7 +214,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       try {
-        await generator.generateContentStream(request);
+        await generator.generateContentStream(request, 'test-prompt-id');
       } catch (error: unknown) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -300,7 +300,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       try {
-        await generator.generateContent(request);
+        await generator.generateContent(request, 'test-prompt-id');
       } catch (_error) {
         // Verify that countTokens was called for estimation
         expect(mockCountTokens).toHaveBeenCalledWith({
@@ -324,7 +324,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       // Should not throw due to token counting failure
-      await expect(generator.generateContent(request)).rejects.toThrow(
+      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
         /Request timeout after \d+s/,
       );
     });

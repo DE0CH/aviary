@@ -154,7 +154,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      const result = await qwenContentGenerator.generateContent(request);
+      const result = await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       expect(result.text).toBe('Generated content');
       expect(mockQwenClient.getAccessToken).toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello stream' }] }],
       };
 
-      const stream = await qwenContentGenerator.generateContentStream(request);
+      const stream = await qwenContentGenerator.generateContentStream(request, 'test-prompt-id');
       const chunks: string[] = [];
 
       for await (const chunk of stream) {
@@ -238,7 +238,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      const result = await qwenContentGenerator.generateContent(request);
+      const result = await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       expect(result.text).toBe('Generated content');
       expect(mockQwenClient.refreshAccessToken).toHaveBeenCalled();
@@ -258,7 +258,7 @@ describe('QwenContentGenerator', () => {
       };
 
       await expect(
-        qwenContentGenerator.generateContent(request),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
       ).rejects.toThrow(
         'Failed to obtain valid Qwen access token. Please re-authenticate.',
       );
@@ -278,7 +278,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       expect(mockQwenClient.getCredentials).toHaveBeenCalled();
     });
@@ -315,7 +315,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       // Should use default endpoint with /v1 suffix
       expect(capturedBaseURL).toBe(
@@ -355,7 +355,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       // Should add https:// and /v1
       expect(capturedBaseURL).toBe('https://custom-endpoint.com/v1');
@@ -393,7 +393,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       // Should preserve https:// and add /v1
       expect(capturedBaseURL).toBe('https://custom-endpoint.com/v1');
@@ -431,7 +431,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       // Should not duplicate /v1
       expect(capturedBaseURL).toBe('https://custom-endpoint.com/v1');
@@ -464,7 +464,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      await qwenContentGenerator.generateContent(request);
+      await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       // Should restore original values after operation
       expect(client.apiKey).toBe(originalApiKey);
@@ -499,7 +499,7 @@ describe('QwenContentGenerator', () => {
       };
 
       try {
-        await qwenContentGenerator.generateContent(request);
+        await qwenContentGenerator.generateContent(request, 'test-prompt-id');
       } catch (error) {
         expect(error).toBe(mockError);
       }
@@ -545,7 +545,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
       };
 
-      const result = await qwenContentGenerator.generateContent(request);
+      const result = await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       expect(result.text).toBe('Success after retry');
       expect(mockGenerateContent).toHaveBeenCalledTimes(2);
@@ -576,7 +576,7 @@ describe('QwenContentGenerator', () => {
       };
 
       await expect(
-        qwenContentGenerator.generateContent(request),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
       ).rejects.toThrow('Network timeout');
       expect(mockGenerateContent).toHaveBeenCalledTimes(1);
       expect(mockQwenClient.refreshAccessToken).not.toHaveBeenCalled();
@@ -600,7 +600,7 @@ describe('QwenContentGenerator', () => {
       };
 
       await expect(
-        qwenContentGenerator.generateContent(request),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
       ).rejects.toThrow('Failed to obtain valid Qwen access token');
     });
   });
@@ -691,9 +691,9 @@ describe('QwenContentGenerator', () => {
 
       // Make multiple concurrent requests - should all use the same refresh promise
       const promises = [
-        qwenContentGenerator.generateContent(request),
-        qwenContentGenerator.generateContent(request),
-        qwenContentGenerator.generateContent(request),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
+        qwenContentGenerator.generateContent(request, 'test-prompt-id'),
       ];
 
       const results = await Promise.all(promises);
@@ -795,7 +795,7 @@ describe('QwenContentGenerator', () => {
         contents: [{ role: 'user', parts: [{ text: 'Test message' }] }],
       };
 
-      const result = await qwenContentGenerator.generateContent(request);
+      const result = await qwenContentGenerator.generateContent(request, 'test-prompt-id');
 
       expect(result.text).toBe('Success after refresh');
       expect(mockQwenClient.getAccessToken).toHaveBeenCalled();
