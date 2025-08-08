@@ -326,7 +326,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     const startTime = Date.now();
     const messages = this.convertToOpenAIFormat(request);
-    
+
     try {
       // Build sampling parameters with clear priority
       const samplingParams = this.buildSamplingParameters(request);

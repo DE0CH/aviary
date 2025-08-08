@@ -439,7 +439,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request, 'test-prompt-id');
+      const stream = await generator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -528,7 +531,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request, 'test-prompt-id');
+      const stream = await generator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -668,9 +674,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
-        'Invalid API key',
-      );
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow('Invalid API key');
     });
 
     it('should estimate tokens on error for telemetry', async () => {
@@ -872,7 +878,10 @@ describe('OpenAIContentGenerator', () => {
           model: 'gpt-4',
         };
 
-        const result = await generator.generateContent(request, 'test-prompt-id');
+        const result = await generator.generateContent(
+          request,
+          'test-prompt-id',
+        );
         if (
           result.candidates &&
           result.candidates.length > 0 &&
@@ -969,7 +978,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow(
         /Troubleshooting tips.*Reduce input length.*Increase timeout.*Check network/s,
       );
     });
@@ -985,9 +996,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
-        'Streaming setup failed',
-      );
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow('Streaming setup failed');
     });
 
     it('should handle timeout errors during streaming setup', async () => {
@@ -999,7 +1010,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContentStream(request, 'test-prompt-id')).rejects.toThrow(
+      await expect(
+        generator.generateContentStream(request, 'test-prompt-id'),
+      ).rejects.toThrow(
         /Streaming setup timeout troubleshooting.*Reduce input length/s,
       );
     });
@@ -1042,7 +1055,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await loggingGenerator.generateContentStream(request, 'test-prompt-id');
+      const stream = await loggingGenerator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
 
       // Consume the stream and expect error
       await expect(async () => {
@@ -1495,7 +1511,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(testGenerator.generateContent(request, 'test-prompt-id')).rejects.toThrow();
+      await expect(
+        testGenerator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow();
 
       // Error logging should be suppressed
       expect(consoleSpy).not.toHaveBeenCalledWith(
@@ -1519,7 +1537,9 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow();
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow();
 
       // Error logging should occur by default
       expect(consoleSpy).toHaveBeenCalledWith(
@@ -1643,7 +1663,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request, 'test-prompt-id');
+      const stream = await generator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -2039,7 +2062,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await loggingGenerator.generateContentStream(request, 'test-prompt-id');
+      const stream = await loggingGenerator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
       const responses = [];
       for await (const response of stream) {
         responses.push(response);
@@ -2083,7 +2109,10 @@ describe('OpenAIContentGenerator', () => {
         model: 'gpt-4',
       };
 
-      const stream = await generator.generateContentStream(request, 'test-prompt-id');
+      const stream = await generator.generateContentStream(
+        request,
+        'test-prompt-id',
+      );
       const responses = [];
       for await (const response of stream) {
         responses.push(response);

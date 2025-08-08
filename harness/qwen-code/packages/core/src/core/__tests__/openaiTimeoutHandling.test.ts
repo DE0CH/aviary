@@ -146,7 +146,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow(
         /Request timeout after \d+s\. Try reducing input length or increasing timeout in config\./,
       );
     });
@@ -161,9 +163,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
-        'Invalid API key',
-      );
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow('Invalid API key');
     });
 
     it('should include troubleshooting tips for timeout errors', async () => {
@@ -199,7 +201,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         model: 'gpt-4',
       };
 
-      await expect(generator.generateContentStream(request, 'test-prompt-id')).rejects.toThrow(
+      await expect(
+        generator.generateContentStream(request, 'test-prompt-id'),
+      ).rejects.toThrow(
         /Streaming setup timeout after \d+s\. Try reducing input length or increasing timeout in config\./,
       );
     });
@@ -324,9 +328,9 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
       };
 
       // Should not throw due to token counting failure
-      await expect(generator.generateContent(request, 'test-prompt-id')).rejects.toThrow(
-        /Request timeout after \d+s/,
-      );
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow(/Request timeout after \d+s/);
     });
   });
 });
