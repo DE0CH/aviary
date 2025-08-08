@@ -27,7 +27,7 @@ Get started with Qwen Code at no cost using any of these free options:
 - **60 requests per minute** rate limit
 - Simply run `qwen` and authenticate with your qwen.ai account
 - Automatic credential management and refresh
-- No API key setup required
+- Use `/auth` command to switch to Qwen OAuth if you have initialized with OpenAI compatible mode
 
 ### 🌏 Regional Free Tiers
 
