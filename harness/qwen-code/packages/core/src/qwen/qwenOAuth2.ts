@@ -15,8 +15,7 @@ import { Config } from '../config/config.js';
 import { randomUUID } from 'node:crypto';
 
 // OAuth Endpoints
-const QWEN_OAUTH_BASE_URL = 'https://pre4-chat.qwen.ai';
-// const QWEN_OAUTH_BASE_URL = 'https://chat.qwen.ai';
+const QWEN_OAUTH_BASE_URL = 'https://chat.qwen.ai';
 
 const QWEN_OAUTH_DEVICE_CODE_ENDPOINT = `${QWEN_OAUTH_BASE_URL}/api/v1/oauth2/device/code`;
 const QWEN_OAUTH_TOKEN_ENDPOINT = `${QWEN_OAUTH_BASE_URL}/api/v1/oauth2/token`;
