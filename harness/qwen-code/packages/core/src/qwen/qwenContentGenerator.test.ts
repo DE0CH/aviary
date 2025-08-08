@@ -7,9 +7,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   IQwenOAuth2Client,
-  QwenCredentials,
-  ErrorData,
-} from '../code_assist/qwenOAuth2.js';
+  type QwenCredentials,
+  type ErrorData,
+} from './qwenOAuth2.js';
 import {
   GenerateContentParameters,
   GenerateContentResponse,
@@ -23,7 +23,7 @@ import { QwenContentGenerator } from './qwenContentGenerator.js';
 import { Config } from '../config/config.js';
 
 // Mock the OpenAIContentGenerator parent class
-vi.mock('./openaiContentGenerator.js', () => ({
+vi.mock('../core/openaiContentGenerator.js', () => ({
   OpenAIContentGenerator: class {
     client: {
       apiKey: string;
@@ -106,7 +106,19 @@ describe('QwenContentGenerator', () => {
     vi.clearAllMocks();
 
     // Mock Config
-    mockConfig = {} as Config;
+    mockConfig = {
+      getContentGeneratorConfig: vi.fn().mockReturnValue({
+        authType: 'qwen',
+        enableOpenAILogging: false,
+        timeout: 120000,
+        maxRetries: 3,
+        samplingParams: {
+          temperature: 0.7,
+          max_tokens: 1000,
+          top_p: 0.9,
+        },
+      }),
+    } as unknown as Config;
 
     // Mock QwenOAuth2Client
     mockQwenClient = {

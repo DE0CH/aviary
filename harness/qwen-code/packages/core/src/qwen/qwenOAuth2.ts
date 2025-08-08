@@ -22,7 +22,6 @@ const QWEN_OAUTH_DEVICE_CODE_ENDPOINT = `${QWEN_OAUTH_BASE_URL}/api/v1/oauth2/de
 const QWEN_OAUTH_TOKEN_ENDPOINT = `${QWEN_OAUTH_BASE_URL}/api/v1/oauth2/token`;
 
 // OAuth Client Configuration
-// const QWEN_OAUTH_CLIENT_ID = '93a239d6ed36412c8c442e91b60fa305';
 const QWEN_OAUTH_CLIENT_ID = 'f0304373b74a44d2b584a3fb70ca9e56';
 
 const QWEN_OAUTH_SCOPE = 'openid profile email model.completion';
@@ -332,8 +331,6 @@ export class QwenOAuth2Client implements IQwenOAuth2Client {
       try {
         const errorData = (await response.json()) as ErrorData;
 
-        console.log(errorData.error);
-
         // According to OAuth RFC 8628, handle standard polling responses
         if (
           response.status === 400 &&
@@ -567,14 +564,13 @@ async function authWithQwenDeviceFlow(
     // Emit device authorization event for UI integration immediately
     qwenOAuth2Events.emit(QwenOAuth2Event.AuthUri, deviceAuth);
 
-    console.log('\n=== Qwen OAuth Device Authorization ===');
-    console.log(
-      `Please visit the following URL on your phone or browser for authorization:`,
-    );
-    console.log(`\n${deviceAuth.verification_uri_complete}\n`);
-
     const showFallbackMessage = () => {
-      // Fallback message for console output
+      console.log('\n=== Qwen OAuth Device Authorization ===');
+      console.log(
+        'Please visit the following URL in your browser to authorize:',
+      );
+      console.log(`\n${deviceAuth.verification_uri_complete}\n`);
+      console.log('Waiting for authorization to complete...\n');
     };
 
     // If browser launch is not suppressed, try to open the URL
@@ -645,8 +641,7 @@ async function authWithQwenDeviceFlow(
             token_type: tokenData.token_type,
             resource_url: tokenData.resource_url,
             expiry_date: tokenData.expires_in
-              ? /* ts-ignore */
-                Date.now() + (tokenData.expires_in ?? 1) * 1000
+              ? Date.now() + tokenData.expires_in * 1000
               : undefined,
           };
 
@@ -669,8 +664,6 @@ async function authWithQwenDeviceFlow(
         // Check if the response is pending
         if (isDeviceTokenPending(tokenResponse)) {
           const pendingData = tokenResponse as DeviceTokenPendingData;
-
-          console.log(pendingData);
 
           // Handle slow_down error by increasing poll interval
           if (pendingData.slowDown) {

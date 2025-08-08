@@ -22,6 +22,7 @@ Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI
 Get started with Qwen Code at no cost using any of these free options:
 
 ### 🔥 Qwen OAuth (Recommended)
+
 - **2,000 requests per day** with no token limits
 - **60 requests per minute** rate limit
 - Simply run `qwen` and authenticate with your qwen.ai account
@@ -29,6 +30,7 @@ Get started with Qwen Code at no cost using any of these free options:
 - No API key setup required
 
 ### 🌏 Regional Free Tiers
+
 - **Mainland China**: ModelScope offers **2,000 free API calls per day**
 - **International**: OpenRouter provides **up to 1,000 free API calls per day** worldwide
 
@@ -117,15 +119,17 @@ qwen
 ```
 
 **What happens:**
-1. **Instant Setup**: CLI opens your browser automatically  
+
+1. **Instant Setup**: CLI opens your browser automatically
 2. **One-Click Login**: Authenticate with your qwen.ai account
 3. **Automatic Management**: Credentials cached locally for future use
 4. **No Configuration**: Zero setup required - just start coding!
 
 **Free Tier Benefits:**
+
 - ✅ **2,000 requests/day** (no token counting needed)
 - ✅ **60 requests/minute** rate limit
-- ✅ **Automatic credential refresh** 
+- ✅ **Automatic credential refresh**
 - ✅ **Zero cost** for individual users
 - ℹ️ **Note**: Model fallback may occur to maintain service quality
 

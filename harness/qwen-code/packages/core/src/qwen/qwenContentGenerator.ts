@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { OpenAIContentGenerator } from './openaiContentGenerator.js';
+import { OpenAIContentGenerator } from '../core/openaiContentGenerator.js';
 import {
   IQwenOAuth2Client,
   type TokenRefreshData,
   type ErrorData,
   isErrorResponse,
-} from '../code_assist/qwenOAuth2.js';
+} from './qwenOAuth2.js';
 import { Config } from '../config/config.js';
 import {
   GenerateContentParameters,

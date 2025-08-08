@@ -65,12 +65,7 @@ export const useQwenAuth = (
     }));
 
     // Set up event listeners
-    const handleDeviceAuth = (deviceAuth: {
-      verification_uri: string;
-      verification_uri_complete: string;
-      user_code: string;
-      expires_in: number;
-    }) => {
+    const handleDeviceAuth = (deviceAuth: DeviceAuthorizationInfo) => {
       setQwenAuthState((prev) => ({
         ...prev,
         deviceAuth: {
