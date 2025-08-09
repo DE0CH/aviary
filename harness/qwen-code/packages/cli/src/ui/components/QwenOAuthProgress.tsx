@@ -17,18 +17,24 @@ interface QwenOAuthProgressProps {
   onCancel: () => void;
   deviceAuth?: DeviceAuthorizationInfo;
   authStatus?:
-  | 'idle'
-  | 'polling'
-  | 'success'
-  | 'error'
-  | 'timeout'
-  | 'rate_limit';
+    | 'idle'
+    | 'polling'
+    | 'success'
+    | 'error'
+    | 'timeout'
+    | 'rate_limit';
   authMessage?: string | null;
 }
 
 interface StaticItem {
   key: string;
-  type: 'title' | 'instructions' | 'url' | 'qr-instructions' | 'qr-code' | 'auth-content';
+  type:
+    | 'title'
+    | 'instructions'
+    | 'url'
+    | 'qr-instructions'
+    | 'qr-code'
+    | 'auth-content';
   url?: string;
   qrCode?: string;
 }
@@ -172,11 +178,19 @@ export function QwenOAuthProgress({
   return (
     <>
       {qrCodeData && (
-        <Static items={[
-          { key: 'auth-content', type: 'auth-content' as const, url: deviceAuth.verification_uri_complete, qrCode: qrCodeData }
-        ] as StaticItem[]}
+        <Static
+          items={
+            [
+              {
+                key: 'auth-content',
+                type: 'auth-content' as const,
+                url: deviceAuth.verification_uri_complete,
+                qrCode: qrCodeData,
+              },
+            ] as StaticItem[]
+          }
           style={{
-            width: "100%"
+            width: '100%',
           }}
         >
           {(item: StaticItem) => (
@@ -220,7 +234,6 @@ export function QwenOAuthProgress({
         padding={1}
         width="100%"
       >
-
         <Box marginTop={1}>
           <Text>
             <Spinner type="dots" /> Waiting for authorization{dots}
