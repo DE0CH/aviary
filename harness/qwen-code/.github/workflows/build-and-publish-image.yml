@@ -47,10 +47,10 @@ jobs:
         run: npm run prepare:package
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515a931808326393b # v3
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@6524bf65af31da8452434dd49aa1939b02787313 # v3
+        uses: docker/setup-buildx-action@v3
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
