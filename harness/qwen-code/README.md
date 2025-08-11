@@ -17,6 +17,9 @@
 
 Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI**](https://github.com/google-gemini/gemini-cli) ([details](./README.gemini.md)), specifically optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder) models. It enhances your development workflow with advanced code understanding, automated tasks, and intelligent assistance.
 
+> [!NOTE]
+> 🖥️ There is also a powerful **desktop/web/mobile** UI for Qwen Coder/Gemini CLI called [**Gemini Desktop**](https://github.com/Piebald-AI).
+
 ## 💡 Free Options Available
 
 Get started with Qwen Code at no cost using any of these free options:
@@ -101,7 +104,7 @@ Create or edit `.qwen/settings.json` in your home directory:
 
 - **`/compress`** - Compress conversation history to continue within token limits
 - **`/clear`** - Clear all conversation history and start fresh
-- **`/stats`** - Check current token usage and limits
+- **`/status`** - Check current token usage and limits
 
 > 📝 **Note**: Session token limit applies to a single conversation, not cumulative API calls.
 
@@ -310,7 +313,7 @@ qwen
 - `/help` - Display available commands
 - `/clear` - Clear conversation history
 - `/compress` - Compress history to save tokens
-- `/stats` - Show current session information
+- `/status` - Show current session information
 - `/exit` or `/quit` - Exit Qwen Code
 
 ### Keyboard Shortcuts
