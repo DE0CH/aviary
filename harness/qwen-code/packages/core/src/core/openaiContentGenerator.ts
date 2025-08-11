@@ -20,7 +20,7 @@ import {
   FunctionCall,
   FunctionResponse,
 } from '@google/genai';
-import { ContentGenerator } from './contentGenerator.js';
+import { AuthType, ContentGenerator } from './contentGenerator.js';
 import OpenAI from 'openai';
 import { logApiResponse } from '../telemetry/loggers.js';
 import { ApiResponseEvent } from '../telemetry/types.js';
@@ -185,6 +185,46 @@ export class OpenAIContentGenerator implements ContentGenerator {
     );
   }
 
+  /**
+   * Determine if metadata should be included in the request.
+   * Only include the `metadata` field if the provider is QWEN_OAUTH
+   * or the baseUrl is 'https://dashscope.aliyuncs.com/compatible-mode/v1'.
+   * This is because some models/providers do not support metadata or need extra configuration.
+   *
+   * @returns true if metadata should be included, false otherwise
+   */
+  private shouldIncludeMetadata(): boolean {
+    const authType = this.config.getContentGeneratorConfig?.()?.authType;
+    // baseUrl may be undefined; default to empty string if so
+    const baseUrl = this.client?.baseURL || '';
+
+    return (
+      authType === AuthType.QWEN_OAUTH ||
+      baseUrl === 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    );
+  }
+
+  /**
+   * Build metadata object for OpenAI API requests.
+   *
+   * @param userPromptId The user prompt ID to include in metadata
+   * @returns metadata object if shouldIncludeMetadata() returns true, undefined otherwise
+   */
+  private buildMetadata(
+    userPromptId: string,
+  ): { metadata: { sessionId?: string; promptId: string } } | undefined {
+    if (!this.shouldIncludeMetadata()) {
+      return undefined;
+    }
+
+    return {
+      metadata: {
+        sessionId: this.config.getSessionId?.(),
+        promptId: userPromptId,
+      },
+    };
+  }
+
   async generateContent(
     request: GenerateContentParameters,
     userPromptId: string,
@@ -205,10 +245,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
         model: this.model,
         messages,
         ...samplingParams,
-        metadata: {
-          sessionId: this.config.getSessionId?.(),
-          promptId: userPromptId,
-        },
+        ...(this.buildMetadata(userPromptId) || {}),
       };
 
       if (request.config?.tools) {
@@ -339,10 +376,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
         ...samplingParams,
         stream: true,
         stream_options: { include_usage: true },
-        metadata: {
-          sessionId: this.config.getSessionId?.(),
-          promptId: userPromptId,
-        },
+        ...(this.buildMetadata(userPromptId) || {}),
       };
 
       if (request.config?.tools) {
