@@ -22,7 +22,12 @@ vi.mock('fs', async (importOriginal) => {
     existsSync,
     writeFileSync,
     readFileSync,
-    default: { ...(actual as unknown as Record<string, unknown>), existsSync, writeFileSync, readFileSync },
+    default: {
+      ...(actual as unknown as Record<string, unknown>),
+      existsSync,
+      writeFileSync,
+      readFileSync,
+    },
   } as unknown as typeof import('fs');
 });
 
@@ -87,7 +92,9 @@ describe('initCommand', () => {
 
     // Assert: Check that the correct prompt is submitted
     expect(result.type).toBe('submit_prompt');
-    expect(result.content).toContain('You are Qwen Code, an interactive CLI agent');
+    expect(result.content).toContain(
+      'You are Qwen Code, an interactive CLI agent',
+    );
   });
 
   it(`should proceed to initialize when ${DEFAULT_CONTEXT_FILENAME} exists but is empty`, async () => {
