@@ -28,7 +28,6 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
 import { initializeMetrics } from './metrics.js';
-import { QwenLogger } from './qwen-logger/qwen-logger.js';
 import {
   FileLogExporter,
   FileMetricExporter,

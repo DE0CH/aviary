@@ -322,9 +322,8 @@ export class QwenLogger {
     this.flushIfNeeded();
   }
 
-  logApiRequestEvent(event: ApiRequestEvent): void {
+  logApiRequestEvent(_event: ApiRequestEvent): void {
     // ignore for now
-    console.log('logApiRequestEvent', event);
     return;
 
     // const rumEvent = this.createResourceEvent('api', 'api_request', {
