@@ -45,6 +45,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
         timeout: 120000,
         maxRetries: 3,
       }),
+      getCliVersion: vi.fn().mockReturnValue('1.0.0'),
     } as unknown as Config;
 
     // Mock OpenAI client
@@ -256,6 +257,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
           timeout: 300000, // 5 minutes
           maxRetries: 5,
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       new OpenAIContentGenerator('test-key', 'gpt-4', customConfig);
@@ -274,6 +276,7 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
     it('should handle missing timeout config gracefully', () => {
       const noTimeoutConfig = {
         getContentGeneratorConfig: vi.fn().mockReturnValue({}),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       new OpenAIContentGenerator('test-key', 'gpt-4', noTimeoutConfig);

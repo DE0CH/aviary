@@ -412,6 +412,7 @@ export async function loadCliConfig(
   }
 
   const sandboxConfig = await loadSandboxConfig(settings, argv);
+  const cliVersion = await getCliVersion();
 
   return new Config({
     sessionId,
@@ -497,6 +498,7 @@ export async function loadCliConfig(
       },
     ],
     contentGenerator: settings.contentGenerator,
+    cliVersion,
   });
 }
 
