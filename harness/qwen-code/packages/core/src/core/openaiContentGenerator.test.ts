@@ -23,6 +23,7 @@ vi.mock('openai');
 // Mock logger modules
 vi.mock('../telemetry/loggers.js', () => ({
   logApiResponse: vi.fn(),
+  logApiError: vi.fn(),
 }));
 
 vi.mock('../utils/openaiLogger.js', () => ({

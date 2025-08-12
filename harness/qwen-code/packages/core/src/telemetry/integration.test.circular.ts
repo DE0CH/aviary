@@ -48,6 +48,8 @@ describe('Circular Reference Integration Test', () => {
     const problematicEvent: RumEvent = {
       timestamp: Date.now(),
       event_type: 'exception',
+      type: 'error',
+      name: 'api_error',
       error: new Error('Network error'),
       function_args: {
         filePath: '/test/file.txt',

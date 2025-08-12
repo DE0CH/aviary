@@ -22,8 +22,8 @@ import {
 } from '@google/genai';
 import { ContentGenerator } from './contentGenerator.js';
 import OpenAI from 'openai';
-import { logApiResponse } from '../telemetry/loggers.js';
-import { ApiResponseEvent } from '../telemetry/types.js';
+import { logApiError, logApiResponse } from '../telemetry/loggers.js';
+import { ApiErrorEvent, ApiResponseEvent } from '../telemetry/types.js';
 import { Config } from '../config/config.js';
 import { openaiLogger } from '../utils/openaiLogger.js';
 
@@ -226,6 +226,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
 
       // Log API response event for UI telemetry
       const responseEvent = new ApiResponseEvent(
+        response.responseId || 'unknown',
         this.model,
         durationMs,
         userPromptId,
@@ -254,41 +255,21 @@ export class OpenAIContentGenerator implements ContentGenerator {
           ? error.message
           : String(error);
 
-      // Estimate token usage even when there's an error
-      // This helps track costs and usage even for failed requests
-      let estimatedUsage;
-      try {
-        const tokenCountResult = await this.countTokens({
-          contents: request.contents,
-          model: this.model,
-        });
-        estimatedUsage = {
-          promptTokenCount: tokenCountResult.totalTokens,
-          candidatesTokenCount: 0, // No completion tokens since request failed
-          totalTokenCount: tokenCountResult.totalTokens,
-        };
-      } catch {
-        // If token counting also fails, provide a minimal estimate
-        const contentStr = JSON.stringify(request.contents);
-        const estimatedTokens = Math.ceil(contentStr.length / 4);
-        estimatedUsage = {
-          promptTokenCount: estimatedTokens,
-          candidatesTokenCount: 0,
-          totalTokenCount: estimatedTokens,
-        };
-      }
-
-      // Log API error event for UI telemetry with estimated usage
-      const errorEvent = new ApiResponseEvent(
+      // Log API error event for UI telemetry
+      const errorEvent = new ApiErrorEvent(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).requestID || 'unknown',
         this.model,
+        errorMessage,
         durationMs,
         userPromptId,
         this.config.getContentGeneratorConfig()?.authType,
-        estimatedUsage,
-        undefined,
-        errorMessage,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).type,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).code,
       );
-      logApiResponse(this.config, errorEvent);
+      logApiError(this.config, errorEvent);
 
       // Log error interaction if enabled
       if (this.config.getContentGeneratorConfig()?.enableOpenAILogging) {
@@ -380,6 +361,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
 
           // Log API response event for UI telemetry
           const responseEvent = new ApiResponseEvent(
+            responses[responses.length - 1]?.responseId || 'unknown',
             this.model,
             durationMs,
             userPromptId,
@@ -411,40 +393,21 @@ export class OpenAIContentGenerator implements ContentGenerator {
               ? error.message
               : String(error);
 
-          // Estimate token usage even when there's an error in streaming
-          let estimatedUsage;
-          try {
-            const tokenCountResult = await this.countTokens({
-              contents: request.contents,
-              model: this.model,
-            });
-            estimatedUsage = {
-              promptTokenCount: tokenCountResult.totalTokens,
-              candidatesTokenCount: 0, // No completion tokens since request failed
-              totalTokenCount: tokenCountResult.totalTokens,
-            };
-          } catch {
-            // If token counting also fails, provide a minimal estimate
-            const contentStr = JSON.stringify(request.contents);
-            const estimatedTokens = Math.ceil(contentStr.length / 4);
-            estimatedUsage = {
-              promptTokenCount: estimatedTokens,
-              candidatesTokenCount: 0,
-              totalTokenCount: estimatedTokens,
-            };
-          }
-
-          // Log API error event for UI telemetry with estimated usage
-          const errorEvent = new ApiResponseEvent(
+          // Log API error event for UI telemetry
+          const errorEvent = new ApiErrorEvent(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (error as any).requestID || 'unknown',
             this.model,
+            errorMessage,
             durationMs,
             userPromptId,
             this.config.getContentGeneratorConfig()?.authType,
-            estimatedUsage,
-            undefined,
-            errorMessage,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (error as any).type,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (error as any).code,
           );
-          logApiResponse(this.config, errorEvent);
+          logApiError(this.config, errorEvent);
 
           // Log error interaction if enabled
           if (this.config.getContentGeneratorConfig()?.enableOpenAILogging) {
@@ -484,40 +447,21 @@ export class OpenAIContentGenerator implements ContentGenerator {
           ? error.message
           : String(error);
 
-      // Estimate token usage even when there's an error in streaming setup
-      let estimatedUsage;
-      try {
-        const tokenCountResult = await this.countTokens({
-          contents: request.contents,
-          model: this.model,
-        });
-        estimatedUsage = {
-          promptTokenCount: tokenCountResult.totalTokens,
-          candidatesTokenCount: 0, // No completion tokens since request failed
-          totalTokenCount: tokenCountResult.totalTokens,
-        };
-      } catch {
-        // If token counting also fails, provide a minimal estimate
-        const contentStr = JSON.stringify(request.contents);
-        const estimatedTokens = Math.ceil(contentStr.length / 4);
-        estimatedUsage = {
-          promptTokenCount: estimatedTokens,
-          candidatesTokenCount: 0,
-          totalTokenCount: estimatedTokens,
-        };
-      }
-
-      // Log API error event for UI telemetry with estimated usage
-      const errorEvent = new ApiResponseEvent(
+      // Log API error event for UI telemetry
+      const errorEvent = new ApiErrorEvent(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).requestID || 'unknown',
         this.model,
+        errorMessage,
         durationMs,
         userPromptId,
         this.config.getContentGeneratorConfig()?.authType,
-        estimatedUsage,
-        undefined,
-        errorMessage,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).type,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error as any).code,
       );
-      logApiResponse(this.config, errorEvent);
+      logApiError(this.config, errorEvent);
 
       // Allow subclasses to suppress error logging for specific scenarios
       if (!this.shouldSuppressErrorLogging(error, request)) {

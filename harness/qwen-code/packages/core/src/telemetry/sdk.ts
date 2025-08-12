@@ -141,7 +141,6 @@ export async function shutdownTelemetry(): Promise<void> {
     return;
   }
   try {
-    QwenLogger.getInstance()?.shutdown();
     await sdk.shutdown();
     console.log('OpenTelemetry SDK shut down successfully.');
   } catch (error) {

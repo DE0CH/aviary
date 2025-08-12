@@ -22,32 +22,28 @@ export interface RumView {
 export interface RumEvent {
   timestamp?: number;
   event_type?: 'view' | 'action' | 'exception' | 'resource';
+  type: string; // Event type
+  name: string; // Event name
+  snapshots?: string; // JSON string of event snapshots
+  properties?: Record<string, unknown>;
   // [key: string]: unknown;
 }
 
 export interface RumViewEvent extends RumEvent {
-  type?: string; // View event type: pv, perf
-  name?: string; // View event name
   view_type?: string; // View rendering type
   time_spent?: number; // Time spent on current view in ms
-  snapshots?: string; // View snapshots JSON string, mainly for native apps
 }
 
 export interface RumActionEvent extends RumEvent {
-  type?: string; // User action type
-  name?: string; // Semantic name, e.g.: click#checkout
   target_name?: string; // Element user interacted with (for auto-collected actions only)
   duration?: number; // Action duration in ms
-  snapshots?: string; // Action snapshots
   method_info?: string; // Action callback, e.g.: onClick()
 }
 
 export interface RumExceptionEvent extends RumEvent {
   source?: string; // Error source, e.g.: console, event
   file?: string; // Error file
-  type?: string; // Error type: crash, custom, error
   subtype?: string; // Secondary classification of error type
-  name?: string; // Error name
   message?: string; // Concise, readable message explaining the event
   stack?: string; // Stack trace or supplemental information about the error
   caused_by?: string; // Exception cause
@@ -55,16 +51,13 @@ export interface RumExceptionEvent extends RumEvent {
   column?: number; // Column number where exception occurred
   thread_id?: string; // Thread ID
   binary_images?: string; // Error source
-  snapshots?: string; // Error snapshots
 }
 
 export interface RumResourceEvent extends RumEvent {
-  type?: string; // Resource type: css, javascript, media, XHR, image, navigation (XHR/fetch will be considered as API)
   method?: string; // HTTP request method: POST, GET, etc.
   status_code?: string; // Resource status code
   message?: string; // Error message content, corresponds to resource.error_msg
   url?: string; // Resource URL
-  name?: string; // Default is URL path part, can be matched by rules or user configuration
   provider_type?: string; // Resource provider type: first-party, cdn, ad, analytics
   trace_id?: string; // Resource request TraceID
   success?: number; // Resource loading success: 1 (default) success, 0 failure
@@ -78,7 +71,6 @@ export interface RumResourceEvent extends RumEvent {
   download_duration?: number; // Time spent downloading response in ms (responseEnd - responseStart)
   timing_data?: string; // JSON string of PerformanceResourceTiming
   trace_data?: string; // Trace information snapshot JSON string
-  snapshots?: string; // View snapshots, mainly for native apps
 }
 
 export interface RumPayload {
