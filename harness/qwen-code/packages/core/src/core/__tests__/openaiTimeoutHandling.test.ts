@@ -15,6 +15,7 @@ vi.mock('openai');
 // Mock logger modules
 vi.mock('../../telemetry/loggers.js', () => ({
   logApiResponse: vi.fn(),
+  logApiError: vi.fn(),
 }));
 
 vi.mock('../../utils/openaiLogger.js', () => ({
@@ -290,28 +291,18 @@ describe('OpenAIContentGenerator Timeout Handling', () => {
   });
 
   describe('token estimation on timeout', () => {
-    it('should estimate tokens even when request times out', async () => {
+    it('should surface a clear timeout error when request times out', async () => {
       const timeoutError = new Error('Request timeout');
       mockOpenAIClient.chat.completions.create.mockRejectedValue(timeoutError);
-
-      // Mock countTokens to return a value
-      const mockCountTokens = vi.spyOn(generator, 'countTokens');
-      mockCountTokens.mockResolvedValue({ totalTokens: 100 });
 
       const request = {
         contents: [{ role: 'user' as const, parts: [{ text: 'Hello world' }] }],
         model: 'gpt-4',
       };
 
-      try {
-        await generator.generateContent(request, 'test-prompt-id');
-      } catch (_error) {
-        // Verify that countTokens was called for estimation
-        expect(mockCountTokens).toHaveBeenCalledWith({
-          contents: request.contents,
-          model: 'gpt-4',
-        });
-      }
+      await expect(
+        generator.generateContent(request, 'test-prompt-id'),
+      ).rejects.toThrow(/Request timeout after \d+s/);
     });
 
     it('should fall back to character-based estimation if countTokens fails', async () => {

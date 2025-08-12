@@ -523,3 +523,5 @@ You can opt out of usage statistics collection at any time by setting the `usage
   "usageStatisticsEnabled": false
 }
 ```
+
+Note: When usage statistics are enabled, events are sent to an Alibaba Cloud RUM collection endpoint.
