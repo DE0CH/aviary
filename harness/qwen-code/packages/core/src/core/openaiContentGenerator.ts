@@ -114,8 +114,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
       timeoutConfig.maxRetries = contentGeneratorConfig.maxRetries;
     }
 
-    // Set up User-Agent header (same format as contentGenerator.ts)
-    const version = process.env.CLI_VERSION || process.version;
+    const version = config.getCliVersion() || 'unknown';
     const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
 
     // Check if using OpenRouter and add required headers

@@ -66,6 +66,7 @@ describe('OpenAIContentGenerator', () => {
           top_p: 0.9,
         },
       }),
+      getCliVersion: vi.fn().mockReturnValue('1.0.0'),
     } as unknown as Config;
 
     // Mock OpenAI client
@@ -143,6 +144,7 @@ describe('OpenAIContentGenerator', () => {
           timeout: 300000,
           maxRetries: 5,
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       new OpenAIContentGenerator('test-key', 'gpt-4', customConfig);
@@ -901,6 +903,7 @@ describe('OpenAIContentGenerator', () => {
         getContentGeneratorConfig: vi.fn().mockReturnValue({
           enableOpenAILogging: true,
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const loggingGenerator = new OpenAIContentGenerator(
@@ -1023,6 +1026,7 @@ describe('OpenAIContentGenerator', () => {
         getContentGeneratorConfig: vi.fn().mockReturnValue({
           enableOpenAILogging: true,
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const loggingGenerator = new OpenAIContentGenerator(
@@ -1817,6 +1821,7 @@ describe('OpenAIContentGenerator', () => {
             max_tokens: 500,
           },
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const loggingGenerator = new OpenAIContentGenerator(
@@ -2001,6 +2006,7 @@ describe('OpenAIContentGenerator', () => {
         getContentGeneratorConfig: vi.fn().mockReturnValue({
           enableOpenAILogging: true,
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const loggingGenerator = new OpenAIContentGenerator(
@@ -2257,6 +2263,7 @@ describe('OpenAIContentGenerator', () => {
             top_p: undefined,
           },
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const testGenerator = new OpenAIContentGenerator(
@@ -2314,6 +2321,7 @@ describe('OpenAIContentGenerator', () => {
             frequency_penalty: 0.3,
           },
         }),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const testGenerator = new OpenAIContentGenerator(
@@ -2394,6 +2402,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('test-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const qwenGenerator = new OpenAIContentGenerator(
@@ -2447,6 +2456,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('dashscope-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const dashscopeGenerator = new OpenAIContentGenerator(
@@ -2507,6 +2517,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('regular-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const regularGenerator = new OpenAIContentGenerator(
@@ -2552,6 +2563,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('other-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const otherGenerator = new OpenAIContentGenerator(
@@ -2600,6 +2612,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('other-base-url-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const otherBaseUrlGenerator = new OpenAIContentGenerator(
@@ -2648,6 +2661,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('streaming-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const qwenGenerator = new OpenAIContentGenerator(
@@ -2726,6 +2740,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('regular-streaming-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const regularGenerator = new OpenAIContentGenerator(
@@ -2799,6 +2814,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue(undefined), // Undefined session ID
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const qwenGenerator = new OpenAIContentGenerator(
@@ -2852,6 +2868,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('no-base-url-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const noBaseUrlGenerator = new OpenAIContentGenerator(
@@ -2900,6 +2917,7 @@ describe('OpenAIContentGenerator', () => {
           enableOpenAILogging: false,
         }),
         getSessionId: vi.fn().mockReturnValue('undefined-auth-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const undefinedAuthGenerator = new OpenAIContentGenerator(
@@ -2945,6 +2963,7 @@ describe('OpenAIContentGenerator', () => {
       const undefinedConfig = {
         getContentGeneratorConfig: vi.fn().mockReturnValue(undefined), // Undefined config
         getSessionId: vi.fn().mockReturnValue('undefined-config-session-id'),
+        getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       } as unknown as Config;
 
       const undefinedConfigGenerator = new OpenAIContentGenerator(

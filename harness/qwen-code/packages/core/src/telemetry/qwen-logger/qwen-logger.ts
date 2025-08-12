@@ -140,14 +140,14 @@ export class QwenLogger {
     return this.createRumEvent('exception', type, name, properties);
   }
 
-  createRumPayload(): RumPayload {
-    const version = process.env.CLI_VERSION || process.version;
+  async createRumPayload(): Promise<RumPayload> {
+    const version = this.config?.getCliVersion() || 'unknown';
 
     return {
       app: {
         id: RUN_APP_ID,
         env: process.env.DEBUG ? 'dev' : 'prod',
-        version,
+        version: version || 'unknown',
         type: 'cli',
       },
       user: {
@@ -190,7 +190,7 @@ export class QwenLogger {
 
     this.isFlushInProgress = true;
 
-    const rumPayload = this.createRumPayload();
+    const rumPayload = await this.createRumPayload();
     const flushFn = () =>
       new Promise<Buffer>((resolve, reject) => {
         const body = safeJsonStringify(rumPayload);
