@@ -48,6 +48,8 @@ import { shouldAttemptBrowserLaunch } from '../utils/browser.js';
 import { MCPOAuthConfig } from '../mcp/oauth-provider.js';
 import { IdeClient } from '../ide/ide-client.js';
 import type { Content } from '@google/genai';
+import { logIdeConnection } from '../telemetry/loggers.js';
+import { IdeConnectionEvent, IdeConnectionType } from '../telemetry/types.js';
 
 // Re-export OAuth config type
 export type { MCPOAuthConfig };
@@ -196,7 +198,6 @@ export interface ConfigParameters {
   summarizeToolOutput?: Record<string, SummarizeToolOutputSettings>;
   ideModeFeature?: boolean;
   ideMode?: boolean;
-  ideClient?: IdeClient;
   enableOpenAILogging?: boolean;
   sampling_params?: Record<string, unknown>;
   systemPromptMappings?: Array<{
@@ -209,6 +210,7 @@ export interface ConfigParameters {
     maxRetries?: number;
   };
   cliVersion?: string;
+  loadMemoryFromIncludeDirectories?: boolean;
 }
 
 export class Config {
@@ -283,6 +285,8 @@ export class Config {
     maxRetries?: number;
   };
   private readonly cliVersion?: string;
+  private readonly loadMemoryFromIncludeDirectories: boolean = false;
+
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
     this.embeddingModel =
@@ -345,14 +349,19 @@ export class Config {
     this.summarizeToolOutput = params.summarizeToolOutput;
     this.ideModeFeature = params.ideModeFeature ?? false;
     this.ideMode = params.ideMode ?? false;
-    this.ideClient =
-      params.ideClient ??
-      IdeClient.getInstance(this.ideMode && this.ideModeFeature);
+    this.ideClient = IdeClient.getInstance();
+    if (this.ideMode && this.ideModeFeature) {
+      this.ideClient.connect();
+      logIdeConnection(this, new IdeConnectionEvent(IdeConnectionType.START));
+    }
     this.systemPromptMappings = params.systemPromptMappings;
     this.enableOpenAILogging = params.enableOpenAILogging ?? false;
     this.sampling_params = params.sampling_params;
     this.contentGenerator = params.contentGenerator;
     this.cliVersion = params.cliVersion;
+
+    this.loadMemoryFromIncludeDirectories =
+      params.loadMemoryFromIncludeDirectories ?? false;
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -413,6 +422,10 @@ export class Config {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  shouldLoadMemoryFromIncludeDirectories(): boolean {
+    return this.loadMemoryFromIncludeDirectories;
   }
 
   getContentGeneratorConfig(): ContentGeneratorConfig {
@@ -698,12 +711,14 @@ export class Config {
     this.ideMode = value;
   }
 
-  setIdeClientDisconnected(): void {
-    this.ideClient.setDisconnected();
-  }
-
-  setIdeClientConnected(): void {
-    this.ideClient.reconnect(this.ideMode && this.ideModeFeature);
+  async setIdeModeAndSyncConnection(value: boolean): Promise<void> {
+    this.ideMode = value;
+    if (value) {
+      await this.ideClient.connect();
+      logIdeConnection(this, new IdeConnectionEvent(IdeConnectionType.SESSION));
+    } else {
+      this.ideClient.disconnect();
+    }
   }
 
   getEnableOpenAILogging(): boolean {
