@@ -42,7 +42,7 @@
     "marked": "^15.0.12",
     "micromatch": "^4.0.8",
     "open": "^10.1.2",
-    "openai": "^5.7.0",
+    "openai": "5.11.0",
     "picomatch": "^4.0.1",
     "shell-quote": "^1.8.3",
     "simple-git": "^3.28.0",
