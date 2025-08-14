@@ -82,9 +82,8 @@ export class QwenLogger {
       return undefined;
     if (!QwenLogger.instance) {
       QwenLogger.instance = new QwenLogger(config);
+      process.on('exit', QwenLogger.instance.shutdown.bind(QwenLogger.instance));
     }
-
-    process.on('exit', QwenLogger.instance.shutdown.bind(QwenLogger.instance));
 
     return QwenLogger.instance;
   }
