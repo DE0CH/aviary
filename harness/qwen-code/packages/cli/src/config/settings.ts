@@ -147,6 +147,9 @@ export interface Settings {
   includeDirectories?: string[];
 
   loadMemoryFromIncludeDirectories?: boolean;
+
+  // Web search API keys
+  tavilyApiKey?: string;
 }
 
 export interface SettingsError {

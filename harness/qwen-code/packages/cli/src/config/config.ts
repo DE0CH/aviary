@@ -69,6 +69,7 @@ export interface CliArgs {
   proxy: string | undefined;
   includeDirectories: string[] | undefined;
   loadMemoryFromIncludeDirectories: boolean | undefined;
+  tavilyApiKey: string | undefined;
 }
 
 export async function parseArguments(): Promise<CliArgs> {
@@ -215,6 +216,10 @@ export async function parseArguments(): Promise<CliArgs> {
       type: 'string',
       description: 'OpenAI base URL (for custom endpoints)',
     })
+    .option('tavily-api-key', {
+      type: 'string',
+      description: 'Tavily API key for web search functionality',
+    })
     .option('proxy', {
       type: 'string',
       description:
@@ -332,6 +337,11 @@ export async function loadCliConfig(
   // Handle OpenAI base URL from command line
   if (argv.openaiBaseUrl) {
     process.env.OPENAI_BASE_URL = argv.openaiBaseUrl;
+  }
+
+  // Handle Tavily API key from command line
+  if (argv.tavilyApiKey) {
+    process.env.TAVILY_API_KEY = argv.tavilyApiKey;
   }
 
   // Set the context filename in the server's memoryTool module BEFORE loading memory
@@ -513,6 +523,8 @@ export async function loadCliConfig(
     ],
     contentGenerator: settings.contentGenerator,
     cliVersion,
+    tavilyApiKey:
+      argv.tavilyApiKey || settings.tavilyApiKey || process.env.TAVILY_API_KEY,
   });
 }
 

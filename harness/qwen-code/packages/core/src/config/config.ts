@@ -211,6 +211,8 @@ export interface ConfigParameters {
   };
   cliVersion?: string;
   loadMemoryFromIncludeDirectories?: boolean;
+  // Web search providers
+  tavilyApiKey?: string;
 }
 
 export class Config {
@@ -286,6 +288,7 @@ export class Config {
   };
   private readonly cliVersion?: string;
   private readonly loadMemoryFromIncludeDirectories: boolean = false;
+  private readonly tavilyApiKey?: string;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -362,6 +365,9 @@ export class Config {
 
     this.loadMemoryFromIncludeDirectories =
       params.loadMemoryFromIncludeDirectories ?? false;
+
+    // Web search
+    this.tavilyApiKey = params.tavilyApiKey;
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -695,6 +701,11 @@ export class Config {
     return this.summarizeToolOutput;
   }
 
+  // Web search provider configuration
+  getTavilyApiKey(): string | undefined {
+    return this.tavilyApiKey;
+  }
+
   getIdeModeFeature(): boolean {
     return this.ideModeFeature;
   }
@@ -805,7 +816,10 @@ export class Config {
     registerCoreTool(ReadManyFilesTool, this);
     registerCoreTool(ShellTool, this);
     registerCoreTool(MemoryTool);
-    registerCoreTool(WebSearchTool, this);
+    // Conditionally register web search tool only if Tavily API key is set
+    if (this.getTavilyApiKey()) {
+      registerCoreTool(WebSearchTool, this);
+    }
 
     await registry.discoverAllTools();
     return registry;
