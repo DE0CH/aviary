@@ -174,10 +174,18 @@ ${textContent}
     // Perform GitHub URL conversion here to differentiate between user-provided
     // URL and the actual URL to be fetched.
     let url = params.url;
-    if (url.includes('github.com') && url.includes('/blob/')) {
-      url = url
-        .replace('github.com', 'raw.githubusercontent.com')
-        .replace('/blob/', '/');
+    try {
+      const parsedUrl = new URL(url);
+      if (
+        parsedUrl.hostname === 'github.com' &&
+        parsedUrl.pathname.includes('/blob/')
+      ) {
+        url = url
+          .replace('github.com', 'raw.githubusercontent.com')
+          .replace('/blob/', '/');
+      }
+    } catch (e) {
+      // If the URL is invalid, leave it unchanged (or handle as needed)
     }
 
     const confirmationDetails: ToolCallConfirmationDetails = {
