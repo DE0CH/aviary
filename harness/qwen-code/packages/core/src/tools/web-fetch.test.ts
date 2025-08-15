@@ -19,13 +19,17 @@ describe('WebFetchTool', () => {
   describe('shouldConfirmExecute', () => {
     it('should return confirmation details with the correct prompt and urls', async () => {
       const tool = new WebFetchTool(mockConfig);
-      const params = { prompt: 'fetch https://example.com' };
+      const params = {
+        url: 'https://example.com',
+        prompt: 'summarize this page',
+      };
       const confirmationDetails = await tool.shouldConfirmExecute(params);
 
       expect(confirmationDetails).toEqual({
         type: 'info',
         title: 'Confirm Web Fetch',
-        prompt: 'fetch https://example.com',
+        prompt:
+          'Fetch content from https://example.com and process with: summarize this page',
         urls: ['https://example.com'],
         onConfirm: expect.any(Function),
       });
@@ -34,8 +38,8 @@ describe('WebFetchTool', () => {
     it('should convert github urls to raw format', async () => {
       const tool = new WebFetchTool(mockConfig);
       const params = {
-        prompt:
-          'fetch https://github.com/google/gemini-react/blob/main/README.md',
+        url: 'https://github.com/google/gemini-react/blob/main/README.md',
+        prompt: 'summarize the README',
       };
       const confirmationDetails = await tool.shouldConfirmExecute(params);
 
@@ -43,7 +47,7 @@ describe('WebFetchTool', () => {
         type: 'info',
         title: 'Confirm Web Fetch',
         prompt:
-          'fetch https://github.com/google/gemini-react/blob/main/README.md',
+          'Fetch content from https://github.com/google/gemini-react/blob/main/README.md and process with: summarize the README',
         urls: [
           'https://raw.githubusercontent.com/google/gemini-react/main/README.md',
         ],
@@ -56,7 +60,10 @@ describe('WebFetchTool', () => {
         ...mockConfig,
         getApprovalMode: () => ApprovalMode.AUTO_EDIT,
       } as unknown as Config);
-      const params = { prompt: 'fetch https://example.com' };
+      const params = {
+        url: 'https://example.com',
+        prompt: 'summarize this page',
+      };
       const confirmationDetails = await tool.shouldConfirmExecute(params);
 
       expect(confirmationDetails).toBe(false);
@@ -68,7 +75,10 @@ describe('WebFetchTool', () => {
         ...mockConfig,
         setApprovalMode,
       } as unknown as Config);
-      const params = { prompt: 'fetch https://example.com' };
+      const params = {
+        url: 'https://example.com',
+        prompt: 'summarize this page',
+      };
       const confirmationDetails = await tool.shouldConfirmExecute(params);
 
       if (
