@@ -35,7 +35,7 @@ describe('WebFetchTool', () => {
       });
     });
 
-    it('should convert github urls to raw format', async () => {
+    it('should return github urls as-is in confirmation details', async () => {
       const tool = new WebFetchTool(mockConfig);
       const params = {
         url: 'https://github.com/google/gemini-react/blob/main/README.md',
@@ -48,9 +48,7 @@ describe('WebFetchTool', () => {
         title: 'Confirm Web Fetch',
         prompt:
           'Fetch content from https://github.com/google/gemini-react/blob/main/README.md and process with: summarize the README',
-        urls: [
-          'https://raw.githubusercontent.com/google/gemini-react/main/README.md',
-        ],
+        urls: ['https://github.com/google/gemini-react/blob/main/README.md'],
         onConfirm: expect.any(Function),
       });
     });
