@@ -150,7 +150,7 @@ class VsCodeInstaller implements IdeInstaller {
 class OpenVSXInstaller implements IdeInstaller {
   async install(): Promise<InstallResult> {
     // TODO: Use the correct extension path.
-    const command = `npx ovsx get google.gemini-cli-vscode-ide-companion`;
+    const command = `npx ovsx get qwenlm.qwen-code-vscode-ide-companion`;
     try {
       child_process.execSync(command, { stdio: 'pipe' });
       return {

@@ -86,7 +86,7 @@ describe('ide-installer', () => {
           .mockImplementation(() => '');
         const result = await installer.install();
         expect(execSyncSpy).toHaveBeenCalledWith(
-          'npx ovsx get google.gemini-cli-vscode-ide-companion',
+          'npx ovsx get qwenlm.qwen-code-vscode-ide-companion',
           { stdio: 'pipe' },
         );
         expect(result.success).toBe(true);

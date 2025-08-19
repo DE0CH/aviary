@@ -83,7 +83,7 @@ export class IdeClient {
     if (!this.currentIde || !this.currentIdeDisplayName) {
       this.setState(
         IDEConnectionStatus.Disconnected,
-        `IDE integration is not supported in your current environment. To use this feature, run Gemini CLI in one of these supported IDEs: ${Object.values(
+        `IDE integration is not supported in your current environment. To use this feature, run Qwen Code in one of these supported IDEs: ${Object.values(
           DetectedIde,
         )
           .map((ide) => getIdeDisplayName(ide))
@@ -233,7 +233,7 @@ export class IdeClient {
   }
 
   private validateWorkspacePath(): boolean {
-    const ideWorkspacePath = process.env['GEMINI_CLI_IDE_WORKSPACE_PATH'];
+    const ideWorkspacePath = process.env['QWEN_CODE_IDE_WORKSPACE_PATH'];
     if (ideWorkspacePath === undefined) {
       this.setState(
         IDEConnectionStatus.Disconnected,
@@ -257,7 +257,7 @@ export class IdeClient {
     if (rel.startsWith('..') || path.isAbsolute(rel)) {
       this.setState(
         IDEConnectionStatus.Disconnected,
-        `Directory mismatch. Gemini CLI is running in a different location than the open workspace in ${this.currentIdeDisplayName}. Please run the CLI from the same directory as your project's root folder.`,
+        `Directory mismatch. Qwen Code is running in a different location than the open workspace in ${this.currentIdeDisplayName}. Please run the CLI from the same directory as your project's root folder.`,
         true,
       );
       return false;
@@ -266,7 +266,7 @@ export class IdeClient {
   }
 
   private getPortFromEnv(): string | undefined {
-    const port = process.env['GEMINI_CLI_IDE_SERVER_PORT'];
+    const port = process.env['QWEN_CODE_IDE_SERVER_PORT'];
     if (!port) {
       this.setState(
         IDEConnectionStatus.Disconnected,

@@ -1093,7 +1093,7 @@ describe('loadCliConfig ideModeFeature', () => {
     vi.mocked(os.homedir).mockReturnValue('/mock/home/user');
     process.env.GEMINI_API_KEY = 'test-api-key';
     delete process.env.SANDBOX;
-    delete process.env.GEMINI_CLI_IDE_SERVER_PORT;
+    delete process.env.QWEN_CODE_IDE_SERVER_PORT;
   });
 
   afterEach(() => {

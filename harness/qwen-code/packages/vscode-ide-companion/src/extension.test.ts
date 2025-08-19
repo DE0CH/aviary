@@ -80,8 +80,8 @@ describe('activate', () => {
     vi.mocked(context.globalState.get).mockReturnValue(undefined);
     await activate(context);
     expect(showInformationMessageMock).toHaveBeenCalledWith(
-      'Gemini CLI Companion extension successfully installed. Please restart your terminal to enable full IDE integration.',
-      'Re-launch Gemini CLI',
+      'Qwen Code Companion extension successfully installed. Please restart your terminal to enable full IDE integration.',
+      'Run Qwen Code',
     );
   });
 
@@ -91,16 +91,16 @@ describe('activate', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
-  it('should launch the Gemini CLI when the user clicks the button', async () => {
+  it('should launch Qwen Code when the user clicks the button', async () => {
     const showInformationMessageMock = vi
       .mocked(vscode.window.showInformationMessage)
-      .mockResolvedValue('Re-launch Gemini CLI' as never);
+      .mockResolvedValue('Run Qwen Code' as never);
     vi.mocked(context.globalState.get).mockReturnValue(undefined);
     await activate(context);
     expect(showInformationMessageMock).toHaveBeenCalled();
     await new Promise(process.nextTick); // Wait for the promise to resolve
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-      'gemini-cli.runGeminiCLI',
+      'qwen-code.runQwenCode',
     );
   });
 });

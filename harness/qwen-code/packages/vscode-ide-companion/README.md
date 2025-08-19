@@ -8,9 +8,9 @@ The Qwen Code Companion extension seamlessly integrates [Qwen Code](https://gith
 
 - Selection Context: Qwen Code can easily access your cursor's position and selected text within the editor, giving it valuable context directly from your current work.
 
-- Native Diffing: Seamlessly view, modify, and accept code changes suggested by Gemini CLI directly within the editor.
+- Native Diffing: Seamlessly view, modify, and accept code changes suggested by Qwen Code directly within the editor.
 
-- Launch Gemini CLI: Quickly start a new Gemini CLI session from the Command Palette (Cmd+Shift+P or Ctrl+Shift+P) by running the "Gemini CLI: Run" command.
+- Launch Qwen Code: Quickly start a new Qwen Code session from the Command Palette (Cmd+Shift+P or Ctrl+Shift+P) by running the "Qwen Code: Run" command.
 
 # Requirements
 
