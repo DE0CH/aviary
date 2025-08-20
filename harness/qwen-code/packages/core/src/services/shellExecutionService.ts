@@ -101,7 +101,7 @@ export class ShellExecutionService {
       detached: !isWindows,
       env: {
         ...process.env,
-        GEMINI_CLI: '1',
+        QWEN_CODE: '1',
       },
     });
 
