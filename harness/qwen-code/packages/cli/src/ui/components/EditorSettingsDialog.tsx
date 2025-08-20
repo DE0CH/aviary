@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
 import {
   EDITOR_DISPLAY_NAMES,
@@ -15,6 +15,7 @@ import {
 import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
 import { LoadedSettings, SettingScope } from '../../config/settings.js';
 import { EditorType, isEditorAvailable } from '@qwen-code/qwen-code-core';
+import { useKeypress } from '../hooks/useKeypress.js';
 
 interface EditorDialogProps {
   onSelect: (editorType: EditorType | undefined, scope: SettingScope) => void;
@@ -33,14 +34,17 @@ export function EditorSettingsDialog({
   const [focusedSection, setFocusedSection] = useState<'editor' | 'scope'>(
     'editor',
   );
-  useInput((_, key) => {
-    if (key.tab) {
-      setFocusedSection((prev) => (prev === 'editor' ? 'scope' : 'editor'));
-    }
-    if (key.escape) {
-      onExit();
-    }
-  });
+  useKeypress(
+    (key) => {
+      if (key.name === 'tab') {
+        setFocusedSection((prev) => (prev === 'editor' ? 'scope' : 'editor'));
+      }
+      if (key.name === 'escape') {
+        onExit();
+      }
+    },
+    { isActive: true },
+  );
 
   const editorItems: EditorDisplay[] =
     editorSettingsManager.getAvailableEditorDisplays();
@@ -49,8 +53,8 @@ export function EditorSettingsDialog({
     settings.forScope(selectedScope).settings.preferredEditor;
   let editorIndex = currentPreference
     ? editorItems.findIndex(
-        (item: EditorDisplay) => item.type === currentPreference,
-      )
+      (item: EditorDisplay) => item.type === currentPreference,
+    )
     : 0;
   if (editorIndex === -1) {
     console.error(`Editor is not supported: ${currentPreference}`);
