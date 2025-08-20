@@ -85,7 +85,7 @@ jobs:
             ## Steps
 
             1. Run: `gh label list --repo ${{ github.repository }} --limit 100` to get all available labels.
-            2. Check environment variable for issues to triage: $ISSUES_TO_TRIAGE (JSON array of issues)
+            2. Use right tool to check environment variable for issues to triage: $ISSUES_TO_TRIAGE (JSON array of issues)
             3. Review the issue title, body and any comments provided in the environment variables.
             4. Ignore any existing priorities or tags on the issue.
             5. Select the most relevant labels from the existing labels, focusing on kind/*, area/*, sub-area/* and priority/*. 
