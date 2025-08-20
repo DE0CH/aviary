@@ -23,7 +23,7 @@ When you authenticate using your qwen.ai account, these Terms of Service and Pri
 - **Terms of Service:** Your use is governed by the [Qwen Terms of Service](https://qwen.ai/termsservice).
 - **Privacy Notice:** The collection and use of your data is described in the [Qwen Privacy Policy](https://qwen.ai/privacypolicy).
 
-For details about quotas, pricing, and features, see [Quotas and Pricing](./quota-and-pricing.md).
+For details about authentication setup, quotas, and supported features, see [Authentication Setup](./cli/authentication.md).
 
 ## 2. If you are using OpenAI-Compatible API Authentication
 
