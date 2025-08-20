@@ -33,7 +33,7 @@ const memoryToolSchemaData: FunctionDeclaration = {
           'The specific fact or piece of information to remember. Should be a clear, self-contained statement.',
       },
       scope: {
-        type: Type.STRING,
+        type: 'string',
         description:
           'Where to save the memory: "global" saves to user-level ~/.qwen/QWEN.md (shared across all projects), "project" saves to current project\'s QWEN.md (project-specific). If not specified, will prompt user to choose.',
         enum: ['global', 'project'],
@@ -226,6 +226,7 @@ export class MemoryTool
         type: 'edit',
         title: `Choose Memory Storage Location`,
         fileName: 'Memory Storage Options',
+        filePath: '',
         fileDiff: `Choose where to save this memory:\n\n"${params.fact}"\n\nOptions:\n- Global: ${globalPath} (shared across all projects)\n- Project: ${projectPath} (current project only)\n\nPlease specify the scope parameter: "global" or "project"`,
         originalContent: '',
         newContent: `Memory to save: ${params.fact}\n\nScope options:\n- global: ${globalPath}\n- project: ${projectPath}`,
