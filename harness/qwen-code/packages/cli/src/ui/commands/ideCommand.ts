@@ -7,6 +7,7 @@
 import {
   Config,
   DetectedIde,
+  QWEN_CODE_COMPANION_EXTENSION_NAME,
   IDEConnectionStatus,
   getIdeDisplayName,
   getIdeInstaller,
@@ -170,7 +171,7 @@ export const ideCommand = (config: Config | null): SlashCommand | null => {
         context.ui.addItem(
           {
             type: 'error',
-            text: `No installer is available for ${ideClient.getDetectedIdeDisplayName()}. Please install the IDE companion manually from its marketplace.`,
+            text: `No installer is available for ${ideClient.getDetectedIdeDisplayName()}. Please install the '${QWEN_CODE_COMPANION_EXTENSION_NAME}' extension manually from the marketplace.`,
           },
           Date.now(),
         );
