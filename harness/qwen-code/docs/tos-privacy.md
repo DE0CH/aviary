@@ -11,10 +11,10 @@ Qwen Code supports two main authentication methods to access AI models. Your aut
 
 For each authentication method, different Terms of Service and Privacy Notices may apply depending on the underlying service provider.
 
-| Authentication Method         | Provider            | Terms of Service                                                                                        | Privacy Notice                                                                                                                                                                                   |
-| :---------------------------- | :------------------ | :------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Qwen OAuth                    | Qwen AI             | [Qwen Terms of Service](https://qwen.ai/termsservice)                                                         | [Qwen Privacy Policy](https://qwen.ai/privacypolicy)                                                                                                                                                  |
-| OpenAI-Compatible API         | Various Providers   | Depends on your chosen API provider (OpenAI, Alibaba Cloud, ModelScope, etc.)                         | Depends on your chosen API provider                                                                                                                                                             |
+| Authentication Method | Provider          | Terms of Service                                                              | Privacy Notice                                       |
+| :-------------------- | :---------------- | :---------------------------------------------------------------------------- | :--------------------------------------------------- |
+| Qwen OAuth            | Qwen AI           | [Qwen Terms of Service](https://qwen.ai/termsservice)                         | [Qwen Privacy Policy](https://qwen.ai/privacypolicy) |
+| OpenAI-Compatible API | Various Providers | Depends on your chosen API provider (OpenAI, Alibaba Cloud, ModelScope, etc.) | Depends on your chosen API provider                  |
 
 ## 1. If you are using Qwen OAuth Authentication
 
@@ -23,24 +23,15 @@ When you authenticate using your qwen.ai account, these Terms of Service and Pri
 - **Terms of Service:** Your use is governed by the [Qwen Terms of Service](https://qwen.ai/termsservice).
 - **Privacy Notice:** The collection and use of your data is described in the [Qwen Privacy Policy](https://qwen.ai/privacypolicy).
 
-**Key Features:**
-- Free access to Qwen models
-- 60 requests per minute, 2,000 requests per day
-- Automatic credential refresh
-- Seamless integration with Qwen AI services
+For details about quotas, pricing, and features, see [Quotas and Pricing](./quota-and-pricing.md).
 
 ## 2. If you are using OpenAI-Compatible API Authentication
 
-When you authenticate using API keys from OpenAI-compatible providers, the applicable Terms of Service and Privacy Notice depend on your chosen provider:
+When you authenticate using API keys from OpenAI-compatible providers, the applicable Terms of Service and Privacy Notice depend on your chosen provider.
 
-**Common Providers:**
-- **OpenAI:** [OpenAI Terms of Use](https://openai.com/terms/) and [OpenAI Privacy Policy](https://openai.com/privacy/)
-- **Alibaba Cloud Bailian:** [Alibaba Cloud Terms of Service](https://www.alibabacloud.com/terms-of-use) and [Alibaba Cloud Privacy Policy](https://www.alibabacloud.com/privacy-policy)
-- **ModelScope:** [ModelScope Terms of Service](https://modelscope.cn/terms) and [ModelScope Privacy Policy](https://modelscope.cn/privacy)
-- **OpenRouter:** [OpenRouter Terms of Service](https://openrouter.ai/terms) and [OpenRouter Privacy Policy](https://openrouter.ai/privacy)
-- **Azure OpenAI:** [Microsoft Services Agreement](https://www.microsoft.com/servicesagreement/) and [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement)
+**Important:** When using OpenAI-compatible API authentication, you are subject to the terms and privacy policies of your chosen API provider, not Qwen Code's terms. Please review your provider's documentation for specific details about data usage, retention, and privacy practices.
 
-**Important:** When using OpenAI-compatible API authentication, you are subject to the terms and privacy policies of your chosen provider, not Qwen Code's terms. Please review your provider's documentation for specific details about data usage, retention, and privacy practices.
+Qwen Code supports various OpenAI-compatible providers. Please refer to your specific provider's terms of service and privacy policy for detailed information.
 
 ## Usage Statistics and Telemetry
 
@@ -49,6 +40,7 @@ Qwen Code may collect anonymous usage statistics and telemetry data to improve t
 ### What Data is Collected
 
 When enabled, Qwen Code may collect:
+
 - Anonymous usage statistics (commands run, performance metrics)
 - Error reports and crash data
 - Feature usage patterns
@@ -70,9 +62,7 @@ Whether your code, including prompts and answers, is used to train AI models dep
 
 - **Qwen OAuth**: Data usage is governed by [Qwen's Privacy Policy](https://qwen.ai/privacy). Please refer to their policy for specific details about data collection and model training practices.
 
-- **OpenAI-Compatible API**: Data usage depends entirely on your chosen API provider:
-  - **OpenAI**: Refer to [OpenAI's data usage policies](https://openai.com/privacy/) for information about how your data is used
-  - **Other providers**: Each provider (Alibaba Cloud, ModelScope, OpenRouter, etc.) has their own data usage policies. Please review the privacy policy of your specific provider.
+- **OpenAI-Compatible API**: Data usage depends entirely on your chosen API provider. Each provider has their own data usage policies. Please review the privacy policy and terms of service of your specific provider.
 
 **Important**: Qwen Code itself does not use your prompts, code, or responses for model training. Any data usage for training purposes would be governed by the policies of the AI service provider you authenticate with.
 
@@ -81,11 +71,13 @@ Whether your code, including prompts and answers, is used to train AI models dep
 The **Usage Statistics** setting controls optional data collection by Qwen Code for improving the user experience and product quality.
 
 When enabled, Qwen Code may collect:
+
 - Anonymous telemetry (commands run, performance metrics, feature usage)
 - Error reports and crash data
 - General usage patterns
 
 **What is NOT collected by Qwen Code:**
+
 - Your code content
 - Prompts sent to AI models
 - Responses from AI models
