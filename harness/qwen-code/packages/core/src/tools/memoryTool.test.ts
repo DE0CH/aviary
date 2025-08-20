@@ -314,6 +314,11 @@ describe('MemoryTool', () => {
       memoryTool = new MemoryTool();
       // Mock fs.readFile to return empty string (file doesn't exist)
       vi.mocked(fs.readFile).mockResolvedValue('');
+
+      // Clear allowlist before each test to ensure clean state
+      const invocation = memoryTool.build({ fact: 'test', scope: 'global' });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (invocation.constructor as any).allowlist.clear();
     });
 
     it('should return confirmation details when memory file is not allowlisted for global scope', async () => {

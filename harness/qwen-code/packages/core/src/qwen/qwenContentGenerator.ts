@@ -65,7 +65,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   /**
    * Override error logging behavior to suppress auth errors during token refresh
    */
-  protected shouldSuppressErrorLogging(
+  protected override shouldSuppressErrorLogging(
     error: unknown,
     _request: GenerateContentParameters,
   ): boolean {
@@ -76,7 +76,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   /**
    * Override to use dynamic token and endpoint
    */
-  async generateContent(
+  override async generateContent(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
@@ -100,7 +100,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   /**
    * Override to use dynamic token and endpoint
    */
-  async generateContentStream(
+  override async generateContentStream(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
@@ -127,7 +127,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   /**
    * Override to use dynamic token and endpoint
    */
-  async countTokens(
+  override async countTokens(
     request: CountTokensParameters,
   ): Promise<CountTokensResponse> {
     return this.withValidToken(async (token) => {
@@ -148,7 +148,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   /**
    * Override to use dynamic token and endpoint
    */
-  async embedContent(
+  override async embedContent(
     request: EmbedContentParameters,
   ): Promise<EmbedContentResponse> {
     return this.withValidToken(async (token) => {

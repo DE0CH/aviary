@@ -382,9 +382,7 @@ export class ShellTool extends BaseDeclarativeTool<
     );
   }
 
-  protected override validateToolParams(
-    params: ShellToolParams,
-  ): string | null {
+  override validateToolParams(params: ShellToolParams): string | null {
     const commandCheck = isCommandAllowed(params.command, this.config);
     if (!commandCheck.allowed) {
       if (!commandCheck.reason) {

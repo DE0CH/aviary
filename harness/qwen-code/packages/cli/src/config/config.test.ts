@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ShellTool, EditTool, WriteFileTool } from '@qwen-code/qwen-code-core';
-import { loadCliConfig, parseArguments } from './config.js';
+import { loadCliConfig, parseArguments, CliArgs } from './config.js';
 import { Settings } from './settings.js';
 import { Extension } from './extension.js';
 import * as ServerConfig from '@qwen-code/qwen-code-core';
@@ -242,7 +242,7 @@ describe('parseArguments', () => {
     await expect(parseArguments()).rejects.toThrow('process.exit called');
 
     expect(mockConsoleError).toHaveBeenCalledWith(
-      expect.stringContaining('Invalid values:'),
+      expect.stringContaining('无效的选项值：'),
     );
 
     mockExit.mockRestore();
@@ -566,6 +566,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
     const settings: Settings = {};
     const extensions: Extension[] = [
       {
+        path: '/path/to/ext1',
         config: {
           name: 'ext1',
           version: '1.0.0',
@@ -573,6 +574,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
         contextFiles: ['/path/to/ext1/QWEN.md'],
       },
       {
+        path: '/path/to/ext2',
         config: {
           name: 'ext2',
           version: '1.0.0',
@@ -580,6 +582,7 @@ describe('Hierarchical Memory Loading (config.ts) - Placeholder Suite', () => {
         contextFiles: [],
       },
       {
+        path: '/path/to/ext3',
         config: {
           name: 'ext3',
           version: '1.0.0',
@@ -645,6 +648,7 @@ describe('mergeMcpServers', () => {
     };
     const extensions: Extension[] = [
       {
+        path: '/path/to/ext1',
         config: {
           name: 'ext1',
           version: '1.0.0',
@@ -743,6 +747,7 @@ describe('mergeExcludeTools', () => {
     const settings: Settings = { excludeTools: ['tool1', 'tool2'] };
     const extensions: Extension[] = [
       {
+        path: '/path/to/ext1',
         config: {
           name: 'ext1',
           version: '1.0.0',
@@ -751,6 +756,7 @@ describe('mergeExcludeTools', () => {
         contextFiles: [],
       },
       {
+        path: '/path/to/ext2',
         config: {
           name: 'ext2',
           version: '1.0.0',
@@ -777,6 +783,7 @@ describe('mergeExcludeTools', () => {
     const settings: Settings = { excludeTools: ['tool1', 'tool2'] };
     const extensions: Extension[] = [
       {
+        path: '/path/to/ext1',
         config: {
           name: 'ext1',
           version: '1.0.0',

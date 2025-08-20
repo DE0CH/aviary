@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { DetectedIde, getIdeInfo } from '@google/gemini-cli-core';
+import { DetectedIde, getIdeInfo } from '@qwen-code/qwen-code-core';
 import { Box, Text } from 'ink';
 import {
   RadioButtonSelect,

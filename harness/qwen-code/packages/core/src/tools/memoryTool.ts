@@ -201,7 +201,7 @@ class MemoryToolInvocation extends BaseToolInvocation<
   getDescription(): string {
     const scope = this.params.scope || 'global';
     const memoryFilePath = getMemoryFilePath(scope);
-    return `in ${tildeifyPath(memoryFilePath)} (${scope})`;
+    return `${tildeifyPath(memoryFilePath)} (${scope})`;
   }
 
   override async shouldConfirmExecute(

@@ -366,6 +366,253 @@ describe('ShellTool', () => {
         await promise;
       });
     });
+
+    describe('addCoAuthorToGitCommit', () => {
+      it('should add co-author to git commit with double quotes', async () => {
+        const command = 'git commit -m "Initial commit"';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        // Mock the shell execution to return success
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        // Verify that the command was executed with co-author added
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should add co-author to git commit with single quotes', async () => {
+        const command = "git commit -m 'Fix bug'";
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should handle git commit with additional flags', async () => {
+        const command = 'git commit -a -m "Add feature"';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should not modify non-git commands', async () => {
+        const command = 'npm install';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        // On Linux, commands are wrapped with pgrep functionality
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining('npm install'),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should not modify git commands without -m flag', async () => {
+        const command = 'git commit';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        // On Linux, commands are wrapped with pgrep functionality
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining('git commit'),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should handle git commit with escaped quotes in message', async () => {
+        const command = 'git commit -m "Fix \\"quoted\\" text"';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should not add co-author when disabled in config', async () => {
+        // Mock config with disabled co-author
+        (mockConfig.getGitCoAuthor as Mock).mockReturnValue({
+          enabled: false,
+          name: 'Qwen-Coder',
+          email: 'qwen-coder@alibabacloud.com',
+        });
+
+        const command = 'git commit -m "Initial commit"';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        // On Linux, commands are wrapped with pgrep functionality
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining('git commit -m "Initial commit"'),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+
+      it('should use custom name and email from config', async () => {
+        // Mock config with custom co-author details
+        (mockConfig.getGitCoAuthor as Mock).mockReturnValue({
+          enabled: true,
+          name: 'Custom Bot',
+          email: 'custom@example.com',
+        });
+
+        const command = 'git commit -m "Test commit"';
+        const invocation = shellTool.build({ command });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+        });
+
+        await promise;
+
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Custom Bot <custom@example.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+        );
+      });
+    });
   });
 
   describe('shouldConfirmExecute', () => {
@@ -394,123 +641,6 @@ describe('ShellTool', () => {
 
     it('should throw an error if validation fails', () => {
       expect(() => shellTool.build({ command: '' })).toThrow();
-    });
-  });
-
-  describe('addCoAuthorToGitCommit', () => {
-    it('should add co-author to git commit with double quotes', () => {
-      const command = 'git commit -m "Initial commit"';
-      // Use public test method
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe(
-        `git commit -m "Initial commit
-
-Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>"`,
-      );
-    });
-
-    it('should add co-author to git commit with single quotes', () => {
-      const command = "git commit -m 'Fix bug'";
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe(
-        `git commit -m 'Fix bug
-
-Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>'`,
-      );
-    });
-
-    it('should handle git commit with additional flags', () => {
-      const command = 'git commit -a -m "Add feature"';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe(
-        `git commit -a -m "Add feature
-
-Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>"`,
-      );
-    });
-
-    it('should not modify non-git commands', () => {
-      const command = 'npm install';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe('npm install');
-    });
-
-    it('should not modify git commands without -m flag', () => {
-      const command = 'git commit';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe('git commit');
-    });
-
-    it('should handle git commit with escaped quotes in message', () => {
-      const command = 'git commit -m "Fix \\"quoted\\" text"';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe(
-        `git commit -m "Fix \\"quoted\\" text
-
-Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>"`,
-      );
-    });
-
-    it('should not add co-author when disabled in config', () => {
-      // Mock config with disabled co-author
-      (mockConfig.getGitCoAuthor as Mock).mockReturnValue({
-        enabled: false,
-        name: 'Qwen-Coder',
-        email: 'qwen-coder@alibabacloud.com',
-      });
-
-      const command = 'git commit -m "Initial commit"';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe('git commit -m "Initial commit"');
-    });
-
-    it('should use custom name and email from config', () => {
-      // Mock config with custom co-author details
-      (mockConfig.getGitCoAuthor as Mock).mockReturnValue({
-        enabled: true,
-        name: 'Custom Bot',
-        email: 'custom@example.com',
-      });
-
-      const command = 'git commit -m "Test commit"';
-      const result = (
-        shellTool as unknown as {
-          addCoAuthorToGitCommit: (command: string) => string;
-        }
-      ).addCoAuthorToGitCommit(command);
-      expect(result).toBe(
-        `git commit -m "Test commit
-
-Co-authored-by: Custom Bot <custom@example.com>"`,
-      );
     });
   });
 });

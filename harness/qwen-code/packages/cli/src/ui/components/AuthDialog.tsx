@@ -111,7 +111,6 @@ export function AuthDialog({
 
   useKeypress(
     (key) => {
-
       if (showOpenAIKeyPrompt) {
         return;
       }

@@ -17,7 +17,7 @@ import {
   KittySequenceOverflowEvent,
   logKittySequenceOverflow,
   Config,
-} from '@google/gemini-cli-core';
+} from '@qwen-code/qwen-code-core';
 import { FOCUS_IN, FOCUS_OUT } from './useFocus.js';
 
 const ESC = '\u001B';

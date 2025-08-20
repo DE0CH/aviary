@@ -70,6 +70,7 @@ export type ContentGeneratorConfig = {
     max_tokens?: number;
   };
   proxy?: string | undefined;
+  userAgent?: string;
 };
 
 export function createContentGeneratorConfig(

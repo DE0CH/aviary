@@ -53,8 +53,8 @@ export function EditorSettingsDialog({
     settings.forScope(selectedScope).settings.preferredEditor;
   let editorIndex = currentPreference
     ? editorItems.findIndex(
-      (item: EditorDisplay) => item.type === currentPreference,
-    )
+        (item: EditorDisplay) => item.type === currentPreference,
+      )
     : 0;
   if (editorIndex === -1) {
     console.error(`Editor is not supported: ${currentPreference}`);
