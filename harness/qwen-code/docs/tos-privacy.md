@@ -1,93 +1,106 @@
 # Qwen Code: Terms of Service and Privacy Notice
 
-Qwen Code is an open-source tool. Some parts of this document refer to Google services because Qwen Code can interoperate with them, but Qwen Code itself is maintained by the Qwen Code team. The Terms of Service and Privacy Notices that apply when using Google services depend on the type of account you use to authenticate with Google.
-
-This article outlines the specific terms and privacy policies applicable for different account types and authentication methods when using Google services. Note: See [quotas and pricing](./quota-and-pricing.md) for details related to Google-backed usage paths.
+Qwen Code is an open-source AI coding assistant tool maintained by the Qwen Code team. This document outlines the terms of service and privacy policies that apply when using Qwen Code's authentication methods and AI model services.
 
 ## How to determine your authentication method
 
-Your authentication method refers to the method you use to log into and access model services. There are four common Google-related ways to authenticate:
+Qwen Code supports two main authentication methods to access AI models. Your authentication method determines which terms of service and privacy policies apply to your usage:
 
-- Logging in with your Google account to Gemini Code Assist for Individuals
-- Logging in with your Google account to Gemini Code Assist for Workspace, Standard, or Enterprise Users
-- Using an API key with Gemini Developer
-- Using an API key with Vertex AI GenAI API
+1. **Qwen OAuth** - Log in with your qwen.ai account
+2. **OpenAI-Compatible API** - Use API keys from various AI model providers
 
-For each of these four methods of authentication, different Terms of Service and Privacy Notices may apply.
+For each authentication method, different Terms of Service and Privacy Notices may apply depending on the underlying service provider.
 
-| Authentication                | Account             | Terms of Service                                                                                        | Privacy Notice                                                                                                                                                                                   |
+| Authentication Method         | Provider            | Terms of Service                                                                                        | Privacy Notice                                                                                                                                                                                   |
 | :---------------------------- | :------------------ | :------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gemini Code Assist via Google | Individual          | [Google Terms of Service](https://policies.google.com/terms?hl=en-US)                                   | [Gemini Code Assist Privacy Notice for Individuals](https://developers.google.com/gemini-code-assist/resources/privacy-notice-gemini-code-assist-individuals)                                    |
-| Gemini Code Assist via Google | Standard/Enterprise | [Google Cloud Platform Terms of Service](https://cloud.google.com/terms)                                | [Gemini Code Assist Privacy Notice for Standard and Enterprise](https://cloud.google.com/gemini/docs/codeassist/security-privacy-compliance#standard_and_enterprise_data_protection_and_privacy) |
-| Gemini Developer API          | Unpaid              | [Gemini API Terms of Service - Unpaid Services](https://ai.google.dev/gemini-api/terms#unpaid-services) | [Google Privacy Policy](https://policies.google.com/privacy)                                                                                                                                     |
-| Gemini Developer API          | Paid                | [Gemini API Terms of Service - Paid Services](https://ai.google.dev/gemini-api/terms#paid-services)     | [Google Privacy Policy](https://policies.google.com/privacy)                                                                                                                                     |
-| Vertex AI Gen API             |                     | [Google Cloud Platform Service Terms](https://cloud.google.com/terms/service-terms/)                    | [Google Cloud Privacy Notice](https://cloud.google.com/terms/cloud-privacy-notice)                                                                                                               |
+| Qwen OAuth                    | Qwen AI             | [Qwen Terms of Service](https://qwen.ai/termsservice)                                                         | [Qwen Privacy Policy](https://qwen.ai/privacypolicy)                                                                                                                                                  |
+| OpenAI-Compatible API         | Various Providers   | Depends on your chosen API provider (OpenAI, Alibaba Cloud, ModelScope, etc.)                         | Depends on your chosen API provider                                                                                                                                                             |
 
-## 1. If you have logged in with your Google account to Gemini Code Assist for Individuals
+## 1. If you are using Qwen OAuth Authentication
 
-For users who use their Google account to access [Gemini Code Assist for Individuals](https://developers.google.com/gemini-code-assist/docs/overview#supported-features-gca), these Terms of Service and Privacy Notice documents apply:
+When you authenticate using your qwen.ai account, these Terms of Service and Privacy Notice documents apply:
 
-- **Terms of Service:** Your use is governed by the [Google Terms of Service](https://policies.google.com/terms?hl=en-US).
-- **Privacy Notice:** The collection and use of your data is described in the [Gemini Code Assist Privacy Notice for Individuals](https://developers.google.com/gemini-code-assist/resources/privacy-notice-gemini-code-assist-individuals).
+- **Terms of Service:** Your use is governed by the [Qwen Terms of Service](https://qwen.ai/termsservice).
+- **Privacy Notice:** The collection and use of your data is described in the [Qwen Privacy Policy](https://qwen.ai/privacypolicy).
 
-## 2. If you have logged in with your Google account to Gemini Code Assist for Workspace, Standard, or Enterprise Users
+**Key Features:**
+- Free access to Qwen models
+- 60 requests per minute, 2,000 requests per day
+- Automatic credential refresh
+- Seamless integration with Qwen AI services
 
-For users who use their Google account to access the [Standard or Enterprise edition](https://cloud.google.com/gemini/docs/codeassist/overview#editions-overview) of Gemini Code Assist, these Terms of Service and Privacy Notice documents apply:
+## 2. If you are using OpenAI-Compatible API Authentication
 
-- **Terms of Service:** Your use is governed by the [Google Cloud Platform Terms of Service](https://cloud.google.com/terms).
-- **Privacy Notice:** The collection and use of your data is described in the [Gemini Code Assist Privacy Notices for Standard and Enterprise Users](https://cloud.google.com/gemini/docs/codeassist/security-privacy-compliance#standard_and_enterprise_data_protection_and_privacy).
+When you authenticate using API keys from OpenAI-compatible providers, the applicable Terms of Service and Privacy Notice depend on your chosen provider:
 
-## 3. If you have logged in with a Gemini API key to the Gemini Developer API
+**Common Providers:**
+- **OpenAI:** [OpenAI Terms of Use](https://openai.com/terms/) and [OpenAI Privacy Policy](https://openai.com/privacy/)
+- **Alibaba Cloud Bailian:** [Alibaba Cloud Terms of Service](https://www.alibabacloud.com/terms-of-use) and [Alibaba Cloud Privacy Policy](https://www.alibabacloud.com/privacy-policy)
+- **ModelScope:** [ModelScope Terms of Service](https://modelscope.cn/terms) and [ModelScope Privacy Policy](https://modelscope.cn/privacy)
+- **OpenRouter:** [OpenRouter Terms of Service](https://openrouter.ai/terms) and [OpenRouter Privacy Policy](https://openrouter.ai/privacy)
+- **Azure OpenAI:** [Microsoft Services Agreement](https://www.microsoft.com/servicesagreement/) and [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement)
 
-If you are using a Gemini API key for authentication with the [Gemini Developer API](https://ai.google.dev/gemini-api/docs), these Terms of Service and Privacy Notice documents apply:
+**Important:** When using OpenAI-compatible API authentication, you are subject to the terms and privacy policies of your chosen provider, not Qwen Code's terms. Please review your provider's documentation for specific details about data usage, retention, and privacy practices.
 
-- **Terms of Service:** Your use is governed by the [Gemini API Terms of Service](https://ai.google.dev/gemini-api/terms). These terms may differ depending on whether you are using an unpaid or paid service:
-  - For unpaid services, refer to the [Gemini API Terms of Service - Unpaid Services](https://ai.google.dev/gemini-api/terms#unpaid-services).
-  - For paid services, refer to the [Gemini API Terms of Service - Paid Services](https://ai.google.dev/gemini-api/terms#paid-services).
-- **Privacy Notice:** The collection and use of your data is described in the [Google Privacy Policy](https://policies.google.com/privacy).
+## Usage Statistics and Telemetry
 
-## 4. If you have logged in with a Gemini API key to the Vertex AI GenAI API
+Qwen Code may collect anonymous usage statistics and telemetry data to improve the user experience and product quality. This data collection is optional and can be controlled through configuration settings.
 
-If you are using a Gemini API key for authentication with a [Vertex AI GenAI API](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest) backend, these Terms of Service and Privacy Notice documents apply:
+### What Data is Collected
 
-- **Terms of Service:** Your use is governed by the [Google Cloud Platform Service Terms](https://cloud.google.com/terms/service-terms/).
-- **Privacy Notice:** The collection and use of your data is described in the [Google Cloud Privacy Notice](https://cloud.google.com/terms/cloud-privacy-notice).
+When enabled, Qwen Code may collect:
+- Anonymous usage statistics (commands run, performance metrics)
+- Error reports and crash data
+- Feature usage patterns
 
-### Usage Statistics Opt-Out
+### Data Collection by Authentication Method
 
-You may opt-out from sending Usage Statistics to Google by following the instructions available here: [Usage Statistics Configuration](./cli/configuration.md#usage-statistics).
+- **Qwen OAuth:** Usage statistics are governed by Qwen's privacy policy. You can opt-out through Qwen Code's configuration settings.
+- **OpenAI-Compatible API:** No additional data is collected by Qwen Code beyond what your chosen API provider collects.
+
+### Opt-Out Instructions
+
+You can disable usage statistics collection by following the instructions in the [Usage Statistics Configuration](./cli/configuration.md#usage-statistics) documentation.
 
 ## Frequently Asked Questions (FAQ)
 
-### 1. Is my code, including prompts and answers, used to train Google's models?
+### 1. Is my code, including prompts and answers, used to train AI models?
 
-Whether your code, including prompts and answers, is used to train Google's models depends on the type of authentication method you use and your account type.
+Whether your code, including prompts and answers, is used to train AI models depends on your authentication method and the specific AI service provider you use:
 
-By default (if you have not opted out):
+- **Qwen OAuth**: Data usage is governed by [Qwen's Privacy Policy](https://qwen.ai/privacy). Please refer to their policy for specific details about data collection and model training practices.
 
-- **Google account with Gemini Code Assist for Individuals**: Yes. When you use your personal Google account, the [Gemini Code Assist Privacy Notice for Individuals](https://developers.google.com/gemini-code-assist/resources/privacy-notice-gemini-code-assist-individuals) applies. Under this notice,
-  your **prompts, answers, and related code are collected** and may be used to improve Google's products, including for model training.
-- **Google account with Gemini Code Assist for Workspace, Standard, or Enterprise**: No. For these accounts, your data is governed by the [Gemini Code Assist Privacy Notices](https://cloud.google.com/gemini/docs/codeassist/security-privacy-compliance#standard_and_enterprise_data_protection_and_privacy) terms, which treat your inputs as confidential. Your **prompts, answers, and related code are not collected** and are not used to train models.
-- **Gemini API key via the Gemini Developer API**: Whether your code is collected or used depends on whether you are using an unpaid or paid service.
-  - **Unpaid services**: Yes. When you use the Gemini API key via the Gemini Developer API with an unpaid service, the [Gemini API Terms of Service - Unpaid Services](https://ai.google.dev/gemini-api/terms#unpaid-services) terms apply. Under this notice, your **prompts, answers, and related code are collected** and may be used to improve Google's products, including for model training.
-  - **Paid services**: No. When you use the Gemini API key via the Gemini Developer API with a paid service, the [Gemini API Terms of Service - Paid Services](https://ai.google.dev/gemini-api/terms#paid-services) terms apply, which treats your inputs as confidential. Your **prompts, answers, and related code are not collected** and are not used to train models.
-- **Gemini API key via the Vertex AI GenAI API**: No. For these accounts, your data is governed by the [Google Cloud Privacy Notice](https://cloud.google.com/terms/cloud-privacy-notice) terms, which treat your inputs as confidential. Your **prompts, answers, and related code are not collected** and are not used to train models.
+- **OpenAI-Compatible API**: Data usage depends entirely on your chosen API provider:
+  - **OpenAI**: Refer to [OpenAI's data usage policies](https://openai.com/privacy/) for information about how your data is used
+  - **Other providers**: Each provider (Alibaba Cloud, ModelScope, OpenRouter, etc.) has their own data usage policies. Please review the privacy policy of your specific provider.
 
-For more information about opting out, refer to the next question.
+**Important**: Qwen Code itself does not use your prompts, code, or responses for model training. Any data usage for training purposes would be governed by the policies of the AI service provider you authenticate with.
 
 ### 2. What are Usage Statistics and what does the opt-out control?
 
-The **Usage Statistics** setting is the single control for all optional data collection when using the Google-backed flows.
+The **Usage Statistics** setting controls optional data collection by Qwen Code for improving the user experience and product quality.
 
-The data it collects depends on your account and authentication type:
+When enabled, Qwen Code may collect:
+- Anonymous telemetry (commands run, performance metrics, feature usage)
+- Error reports and crash data
+- General usage patterns
 
-- **Google account with Gemini Code Assist for Individuals**: When enabled, this setting allows Google to collect both anonymous telemetry (for example, commands run and performance metrics) and **your prompts and answers, including code,** for model improvement.
-- **Google account with Gemini Code Assist for Workspace, Standard, or Enterprise**: This setting only controls the collection of anonymous telemetry. Your prompts and answers, including code, are never collected, regardless of this setting.
-- **Gemini API key via the Gemini Developer API**:
-  **Unpaid services**: When enabled, this setting allows Google to collect both anonymous telemetry (like commands run and performance metrics) and **your prompts and answers, including code,** for model improvement. When disabled we will use your data as described in [How Google Uses Your Data](https://ai.google.dev/gemini-api/terms#data-use-unpaid).
-  **Paid services**: This setting only controls the collection of anonymous telemetry. Google logs prompts and responses for a limited period of time, solely for the purpose of detecting violations of the Prohibited Use Policy and any required legal or regulatory disclosures.
-- **Gemini API key via the Vertex AI GenAI API:** This setting only controls the collection of anonymous telemetry. Your prompts and answers, including code, are never collected, regardless of this setting.
+**What is NOT collected by Qwen Code:**
+- Your code content
+- Prompts sent to AI models
+- Responses from AI models
+- Personal information
 
-Please refer to the Privacy Notice that applies to your authentication method for more information about what data is collected and how this data is used.
+The Usage Statistics setting only controls data collection by Qwen Code itself. It does not affect what data your chosen AI service provider (Qwen, OpenAI, etc.) may collect according to their own privacy policies.
 
-You can disable Usage Statistics for any account type by following the instructions in the [Usage Statistics Configuration](./cli/configuration.md#usage-statistics) documentation.
+You can disable Usage Statistics collection by following the instructions in the [Usage Statistics Configuration](./cli/configuration.md#usage-statistics) documentation.
+
+### 3. How do I switch between authentication methods?
+
+You can switch between Qwen OAuth and OpenAI-compatible API authentication at any time:
+
+1. **During startup**: Choose your preferred authentication method when prompted
+2. **Within the CLI**: Use the `/auth` command to reconfigure your authentication method
+3. **Environment variables**: Set up `.env` files for automatic OpenAI-compatible API authentication
+
+For detailed instructions, see the [Authentication Setup](./cli/authentication.md) documentation.

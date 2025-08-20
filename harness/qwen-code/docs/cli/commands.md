@@ -373,4 +373,4 @@ The `!` prefix lets you interact with your system's shell directly from within Q
 
 - **Caution for all `!` usage:** Commands you execute in shell mode have the same permissions and impact as if you ran them directly in your terminal.
 
-- **Environment Variable:** When a command is executed via `!` or in shell mode, the `GEMINI_CLI=1` environment variable is set in the subprocess's environment. This allows scripts or tools to detect if they are being run from within the CLI.
+- **Environment Variable:** When a command is executed via `!` or in shell mode, the `QWEN_CODE=1` environment variable is set in the subprocess's environment. This allows scripts or tools to detect if they are being run from within the CLI.
