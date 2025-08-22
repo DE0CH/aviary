@@ -1,5 +1,5 @@
-name: Bug Report
-description: Report a bug to help us improve Qwen Code
+name: 'Bug Report'
+description: 'Report a bug to help us improve Qwen Code'
 labels: ['kind/bug', 'status/need-triage']
 body:
   - type: 'markdown'
@@ -28,8 +28,8 @@ body:
   - type: 'textarea'
     id: 'info'
     attributes:
-      label: Client information
-      description: Please paste the full text from the `/about` command run from Qwen Code. Also include which platform (macOS, Windows, Linux).
+      label: 'Client information'
+      description: 'Please paste the full text from the `/about` command run from Qwen Code. Also include which platform (macOS, Windows, Linux).'
       value: |
         <details>
 
@@ -45,8 +45,8 @@ body:
   - type: 'textarea'
     id: 'login-info'
     attributes:
-      label: Login information
-      description: Describe how you are logging in (e.g., API Config).
+      label: 'Login information'
+      description: 'Describe how you are logging in (e.g., API Config).'
 
   - type: 'textarea'
     id: 'additional-context'

@@ -1,4 +1,4 @@
-name: Qwen Automated Issue Triage
+name: 'Qwen Automated Issue Triage'
 
 on:
   issues:
@@ -33,19 +33,20 @@ permissions:
 jobs:
   triage-issue:
     timeout-minutes: 5
-    if: ${{ github.repository == 'QwenLM/qwen-code' }}
-    runs-on: ubuntu-latest
+    if: '${{ github.repository == "QwenLM/qwen-code" }}'
+    runs-on: 'ubuntu-latest'
     steps:
-      - name: Run Qwen Issue Triage
-        uses: QwenLM/qwen-code-action@5fd6818d04d64e87d255ee4d5f77995e32fbf4c2
+      - name: 'Run Qwen Issue Analysis'
+        uses: 'QwenLM/qwen-code-action@5fd6818d04d64e87d255ee4d5f77995e32fbf4c2'
+        id: 'qwen_issue_analysis'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          ISSUE_TITLE: '${{ github.event.issue.title }}'
+          ISSUE_BODY: '${{ github.event.issue.body }}'
         with:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
+          OPENAI_BASE_URL: '${{ secrets.OPENAI_BASE_URL }}'
+          OPENAI_MODEL: '${{ secrets.OPENAI_MODEL }}'
           settings_json: |
             {
               "maxSessionTurns": 25,
@@ -65,11 +66,11 @@ jobs:
 
             ## Steps
 
-            1. Run: `gh label list --repo "${REPOSITORY}" --limit 100` to get all available labels.
+            1. Run: `gh label list --repo ${{ github.repository }} --limit 100` to get all available labels.
             2. Use right tool to review the issue title and body provided in the environment variables: "${ISSUE_TITLE}" and "${ISSUE_BODY}".
             3. Ignore any existing priorities or tags on the issue. Just report your findings.
             4. Select the most relevant labels from the existing labels, focusing on kind/*, area/*, sub-area/* and priority/*. For area/* and kind/* limit yourself to only the single most applicable label in each case.
-            6. Apply the selected labels to this issue using: `gh issue edit "${ISSUE_NUMBER}" --repo "${REPOSITORY}" --add-label "label1,label2"`.
+            6. Apply the selected labels to this issue using: `gh issue edit ${{ github.event.issue.number }} --repo ${{ github.repository }} --add-label "label1,label2"`.
             7. For each issue please check if CLI version is present, this is usually in the output of the /about command  and will look like 0.1.5 for anything more than 6 versions older than the most recent should add the status/need-retesting label.
             8. If you see that the issue doesn't look like it has sufficient information recommend the status/need-information label.
             9. Use Area definitions mentioned below to help you narrow down issues.
@@ -160,19 +161,20 @@ jobs:
             - other general software performance like, memory usage, CPU consumption, and algorithmic efficiency.
             - Switching models from one to the other unexpectedly.
 
-      - name: 'Post Issue Triage Failure Comment'
+      - name: 'Post Issue Analysis Failure Comment'
         if: |-
-          ${{ failure() && steps.gemini_issue_triage.outcome == 'failure' }}
+          ${{ failure() && steps.qwen_issue_analysis.outcome == 'failure' }}
         uses: 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea' # ratchet:actions/github-script@v7
         env:
+          ISSUE_NUMBER: '${{ github.event.issue.number }}'
           REPOSITORY: '${{ github.repository }}'
           RUN_URL: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
         with:
-          github-token: '${{ steps.generate_token.outputs.token }}'
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
           script: |-
             github.rest.issues.createComment({
               owner: process.env.REPOSITORY.split('/')[0],
               repo: process.env.REPOSITORY.split('/')[1],
-              issue_number: '${{ github.event.issue.number }}',
-              body: 'There is a problem with the Qwen Code issue triaging. Please check the [action logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+              issue_number: parseInt(process.env.ISSUE_NUMBER),
+              body: 'There is a problem with the Qwen Code issue analysis. Please check the [action logs](${process.env.RUN_URL}) for details.'
             })
