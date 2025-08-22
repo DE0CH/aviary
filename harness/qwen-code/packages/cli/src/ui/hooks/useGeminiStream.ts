@@ -192,6 +192,7 @@ export const useGeminiStream = (
       return;
     }
     turnCancelledRef.current = true;
+    isSubmittingQueryRef.current = false;
     abortControllerRef.current?.abort();
     if (pendingHistoryItemRef.current) {
       addItem(pendingHistoryItemRef.current, Date.now());

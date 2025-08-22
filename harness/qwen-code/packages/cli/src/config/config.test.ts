@@ -242,7 +242,7 @@ describe('parseArguments', () => {
     await expect(parseArguments()).rejects.toThrow('process.exit called');
 
     expect(mockConsoleError).toHaveBeenCalledWith(
-      expect.stringContaining('无效的选项值：'),
+      expect.stringContaining('Invalid values:'),
     );
 
     mockExit.mockRestore();

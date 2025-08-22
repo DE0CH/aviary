@@ -53,6 +53,7 @@ export enum AuthType {
 export type ContentGeneratorConfig = {
   model: string;
   apiKey?: string;
+  baseUrl?: string;
   vertexai?: boolean;
   authType?: AuthType | undefined;
   enableOpenAILogging?: boolean;
@@ -77,11 +78,16 @@ export function createContentGeneratorConfig(
   config: Config,
   authType: AuthType | undefined,
 ): ContentGeneratorConfig {
+  // google auth
   const geminiApiKey = process.env.GEMINI_API_KEY || undefined;
   const googleApiKey = process.env.GOOGLE_API_KEY || undefined;
   const googleCloudProject = process.env.GOOGLE_CLOUD_PROJECT || undefined;
   const googleCloudLocation = process.env.GOOGLE_CLOUD_LOCATION || undefined;
+
+  // openai auth
   const openaiApiKey = process.env.OPENAI_API_KEY;
+  const openaiBaseUrl = process.env.OPENAI_BASE_URL || undefined;
+  const openaiModel = process.env.OPENAI_MODEL || undefined;
 
   // Use runtime model from config if available; otherwise, fall back to parameter or default
   const effectiveModel = config.getModel() || DEFAULT_GEMINI_MODEL;
@@ -93,7 +99,7 @@ export function createContentGeneratorConfig(
     enableOpenAILogging: config.getEnableOpenAILogging(),
     timeout: config.getContentGeneratorTimeout(),
     maxRetries: config.getContentGeneratorMaxRetries(),
-    samplingParams: config.getSamplingParams(),
+    samplingParams: config.getContentGeneratorSamplingParams(),
   };
 
   // If we are using Google auth or we are in Cloud Shell, there is nothing else to validate for now
@@ -123,8 +129,8 @@ export function createContentGeneratorConfig(
 
   if (authType === AuthType.USE_OPENAI && openaiApiKey) {
     contentGeneratorConfig.apiKey = openaiApiKey;
-    contentGeneratorConfig.model =
-      process.env.OPENAI_MODEL || DEFAULT_GEMINI_MODEL;
+    contentGeneratorConfig.baseUrl = openaiBaseUrl;
+    contentGeneratorConfig.model = openaiModel || DEFAULT_QWEN_MODEL;
 
     return contentGeneratorConfig;
   }
@@ -192,7 +198,7 @@ export async function createContentGenerator(
     );
 
     // Always use OpenAIContentGenerator, logging is controlled by enableOpenAILogging flag
-    return new OpenAIContentGenerator(config.apiKey, config.model, gcConfig);
+    return new OpenAIContentGenerator(config, gcConfig);
   }
 
   if (config.authType === AuthType.QWEN_OAUTH) {
@@ -213,7 +219,7 @@ export async function createContentGenerator(
       const qwenClient = await getQwenOauthClient(gcConfig);
 
       // Create the content generator with dynamic token management
-      return new QwenContentGenerator(qwenClient, config.model, gcConfig);
+      return new QwenContentGenerator(qwenClient, config, gcConfig);
     } catch (error) {
       throw new Error(
         `Failed to initialize Qwen: ${error instanceof Error ? error.message : String(error)}`,

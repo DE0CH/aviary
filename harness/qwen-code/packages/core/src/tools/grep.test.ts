@@ -439,4 +439,84 @@ describe('GrepTool', () => {
       expect(invocation.getDescription()).toBe("'testPattern' within ./");
     });
   });
+
+  describe('Result limiting', () => {
+    beforeEach(async () => {
+      // Create many test files with matches to test limiting
+      for (let i = 1; i <= 30; i++) {
+        const fileName = `test${i}.txt`;
+        const content = `This is test file ${i} with the pattern testword in it.`;
+        await fs.writeFile(path.join(tempRootDir, fileName), content);
+      }
+    });
+
+    it('should limit results to default 20 matches', async () => {
+      const params: GrepToolParams = { pattern: 'testword' };
+      const invocation = grepTool.build(params);
+      const result = await invocation.execute(abortSignal);
+
+      expect(result.llmContent).toContain('Found 20 matches');
+      expect(result.llmContent).toContain(
+        'showing first 20 of 30+ total matches',
+      );
+      expect(result.llmContent).toContain('WARNING: Results truncated');
+      expect(result.returnDisplay).toContain(
+        'Found 20 matches (truncated from 30+)',
+      );
+    });
+
+    it('should respect custom maxResults parameter', async () => {
+      const params: GrepToolParams = { pattern: 'testword', maxResults: 5 };
+      const invocation = grepTool.build(params);
+      const result = await invocation.execute(abortSignal);
+
+      expect(result.llmContent).toContain('Found 5 matches');
+      expect(result.llmContent).toContain(
+        'showing first 5 of 30+ total matches',
+      );
+      expect(result.llmContent).toContain('current: 5');
+      expect(result.returnDisplay).toContain(
+        'Found 5 matches (truncated from 30+)',
+      );
+    });
+
+    it('should not show truncation warning when all results fit', async () => {
+      const params: GrepToolParams = { pattern: 'testword', maxResults: 50 };
+      const invocation = grepTool.build(params);
+      const result = await invocation.execute(abortSignal);
+
+      expect(result.llmContent).toContain('Found 30 matches');
+      expect(result.llmContent).not.toContain('WARNING: Results truncated');
+      expect(result.llmContent).not.toContain('showing first');
+      expect(result.returnDisplay).toBe('Found 30 matches');
+    });
+
+    it('should validate maxResults parameter', () => {
+      const invalidParams = [
+        { pattern: 'test', maxResults: 0 },
+        { pattern: 'test', maxResults: 101 },
+        { pattern: 'test', maxResults: -1 },
+        { pattern: 'test', maxResults: 1.5 },
+      ];
+
+      invalidParams.forEach((params) => {
+        const error = grepTool.validateToolParams(params as GrepToolParams);
+        expect(error).toBeTruthy(); // Just check that validation fails
+        expect(error).toMatch(/maxResults|must be/); // Check it's about maxResults validation
+      });
+    });
+
+    it('should accept valid maxResults parameter', () => {
+      const validParams = [
+        { pattern: 'test', maxResults: 1 },
+        { pattern: 'test', maxResults: 50 },
+        { pattern: 'test', maxResults: 100 },
+      ];
+
+      validParams.forEach((params) => {
+        const error = grepTool.validateToolParams(params);
+        expect(error).toBeNull();
+      });
+    });
+  });
 });

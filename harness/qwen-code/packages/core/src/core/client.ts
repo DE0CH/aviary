@@ -589,10 +589,7 @@ export class GeminiClient {
       model || this.config.getModel() || DEFAULT_GEMINI_FLASH_MODEL;
     try {
       const userMemory = this.config.getUserMemory();
-      const systemPromptMappings = this.config.getSystemPromptMappings();
-      const systemInstruction = getCoreSystemPrompt(userMemory, {
-        systemPromptMappings,
-      });
+      const systemInstruction = getCoreSystemPrompt(userMemory);
       const requestConfig = {
         abortSignal,
         ...this.generateContentConfig,
@@ -680,10 +677,7 @@ export class GeminiClient {
 
     try {
       const userMemory = this.config.getUserMemory();
-      const systemPromptMappings = this.config.getSystemPromptMappings();
-      const systemInstruction = getCoreSystemPrompt(userMemory, {
-        systemPromptMappings,
-      });
+      const systemInstruction = getCoreSystemPrompt(userMemory);
 
       const requestConfig = {
         abortSignal,

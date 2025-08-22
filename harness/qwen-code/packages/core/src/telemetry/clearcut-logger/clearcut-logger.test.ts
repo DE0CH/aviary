@@ -205,10 +205,26 @@ describe('ClearcutLogger', () => {
       'logs the current surface for as $expectedValue, preempting vscode detection',
       ({ env, expectedValue }) => {
         const { logger } = setup({});
+
+        // Clear all environment variables that could interfere with surface detection
+        vi.stubEnv('SURFACE', undefined);
+        vi.stubEnv('GITHUB_SHA', undefined);
+        vi.stubEnv('CURSOR_TRACE_ID', undefined);
+        vi.stubEnv('__COG_BASHRC_SOURCED', undefined);
+        vi.stubEnv('REPLIT_USER', undefined);
+        vi.stubEnv('CODESPACES', undefined);
+        vi.stubEnv('EDITOR_IN_CLOUD_SHELL', undefined);
+        vi.stubEnv('CLOUD_SHELL', undefined);
+        vi.stubEnv('TERM_PRODUCT', undefined);
+        vi.stubEnv('FIREBASE_DEPLOY_AGENT', undefined);
+        vi.stubEnv('MONOSPACE_ENV', undefined);
+
+        // Set the specific environment variables for this test case
         for (const [key, value] of Object.entries(env)) {
           vi.stubEnv(key, value);
         }
         vi.stubEnv('TERM_PROGRAM', 'vscode');
+
         const event = logger?.createLogEvent('abc', []);
         expect(event?.event_metadata[0][1]).toEqual({
           gemini_cli_key: EventMetadataKey.GEMINI_CLI_SURFACE,

@@ -495,7 +495,6 @@ export const SETTINGS_SCHEMA = {
     description: 'Show line numbers in the chat.',
     showInDialog: true,
   },
-
   contentGenerator: {
     type: 'object',
     label: 'Content Generator',
@@ -503,15 +502,6 @@ export const SETTINGS_SCHEMA = {
     requiresRestart: false,
     default: undefined as Record<string, unknown> | undefined,
     description: 'Content generator settings.',
-    showInDialog: false,
-  },
-  sampling_params: {
-    type: 'object',
-    label: 'Sampling Params',
-    category: 'General',
-    requiresRestart: false,
-    default: undefined as Record<string, unknown> | undefined,
-    description: 'Sampling parameters for the model.',
     showInDialog: false,
   },
   enableOpenAILogging: {

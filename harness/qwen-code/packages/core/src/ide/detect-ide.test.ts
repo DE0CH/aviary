@@ -54,15 +54,39 @@ describe('detectIde', () => {
       expected: DetectedIde.FirebaseStudio,
     },
   ])('detects the IDE for $expected', ({ env, expected }) => {
+    // Clear all environment variables first
+    vi.unstubAllEnvs();
+
+    // Set TERM_PROGRAM to vscode (required for all IDE detection)
     vi.stubEnv('TERM_PROGRAM', 'vscode');
+
+    // Explicitly stub all environment variables that detectIde() checks to undefined
+    // This ensures no real environment variables interfere with the tests
+    vi.stubEnv('__COG_BASHRC_SOURCED', undefined);
+    vi.stubEnv('REPLIT_USER', undefined);
+    vi.stubEnv('CURSOR_TRACE_ID', undefined);
+    vi.stubEnv('CODESPACES', undefined);
+    vi.stubEnv('EDITOR_IN_CLOUD_SHELL', undefined);
+    vi.stubEnv('CLOUD_SHELL', undefined);
+    vi.stubEnv('TERM_PRODUCT', undefined);
+    vi.stubEnv('FIREBASE_DEPLOY_AGENT', undefined);
+    vi.stubEnv('MONOSPACE_ENV', undefined);
+
+    // Set only the specific environment variables for this test case
     for (const [key, value] of Object.entries(env)) {
       vi.stubEnv(key, value);
     }
+
     expect(detectIde()).toBe(expected);
   });
 
   it('returns undefined for non-vscode', () => {
+    // Clear all environment variables first
+    vi.unstubAllEnvs();
+
+    // Set TERM_PROGRAM to something other than vscode
     vi.stubEnv('TERM_PROGRAM', 'definitely-not-vscode');
+
     expect(detectIde()).toBeUndefined();
   });
 });
