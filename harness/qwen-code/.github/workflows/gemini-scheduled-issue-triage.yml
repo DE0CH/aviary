@@ -23,7 +23,8 @@ permissions:
 jobs:
   triage-issues:
     timeout-minutes: 10
-    if: '${{ github.repository == "QwenLM/qwen-code" }}'
+    if: |-
+      ${{ github.repository == 'QwenLM/qwen-code' }}
     runs-on: 'ubuntu-latest'
     permissions:
       contents: 'read'
@@ -54,7 +55,8 @@ jobs:
           echo "issues_to_triage=${ISSUES}" >> "${GITHUB_OUTPUT}"
 
       - name: 'Run Qwen Issue Triage'
-        if: 'steps.find_issues.outputs.issues_to_triage != "[]"'
+        if: |-
+          ${{ steps.find_issues.outputs.issues_to_triage != '[]' }}
         uses: 'QwenLM/qwen-code-action@5fd6818d04d64e87d255ee4d5f77995e32fbf4c2'
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'

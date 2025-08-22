@@ -55,7 +55,8 @@ jobs:
 
       - name: 'Get PR details (pull_request_target & workflow_dispatch)'
         id: 'get_pr'
-        if: 'github.event_name == "pull_request_target" || github.event_name == "workflow_dispatch"'
+        if: |-
+          ${{ github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch' }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         run: |
@@ -76,7 +77,8 @@ jobs:
 
       - name: 'Get PR details (issue_comment)'
         id: 'get_pr_comment'
-        if: 'github.event_name == "issue_comment"'
+        if: |-
+          ${{ github.event_name == 'issue_comment' }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           COMMENT_BODY: '${{ github.event.comment.body }}'

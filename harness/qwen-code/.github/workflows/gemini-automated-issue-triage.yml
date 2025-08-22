@@ -33,7 +33,8 @@ permissions:
 jobs:
   triage-issue:
     timeout-minutes: 5
-    if: '${{ github.repository == "QwenLM/qwen-code" }}'
+    if: |-
+      ${{ github.repository == 'QwenLM/qwen-code' }}
     runs-on: 'ubuntu-latest'
     steps:
       - name: 'Run Qwen Issue Analysis'
