@@ -425,13 +425,16 @@ describe('MemoryTool', () => {
       expect(result).not.toBe(false);
 
       if (result && result.type === 'edit') {
-        expect(result.title).toBe('Choose Memory Storage Location');
-        expect(result.fileName).toBe('Memory Storage Options');
-        expect(result.fileDiff).toContain('Choose where to save this memory');
+        expect(result.title).toContain('Choose Memory Location');
+        expect(result.title).toContain('GLOBAL');
+        expect(result.title).toContain('PROJECT');
+        expect(result.fileName).toBe('QWEN.md');
         expect(result.fileDiff).toContain('Test fact');
-        expect(result.fileDiff).toContain('Global:');
-        expect(result.fileDiff).toContain('Project:');
-        expect(result.originalContent).toBe('');
+        expect(result.fileDiff).toContain('--- QWEN.md');
+        expect(result.fileDiff).toContain('+++ QWEN.md');
+        expect(result.fileDiff).toContain('+- Test fact');
+        expect(result.originalContent).toContain('scope: global');
+        expect(result.originalContent).toContain('INSTRUCTIONS:');
       }
     });
 

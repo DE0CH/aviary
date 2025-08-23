@@ -44,29 +44,66 @@ export const memoryCommand: SlashCommand = {
     },
     {
       name: 'add',
-      description: 'Add content to the memory.',
+      description:
+        'Add content to the memory. Use --global for global memory or --project for project memory.',
       kind: CommandKind.BUILT_IN,
       action: (context, args): SlashCommandActionReturn | void => {
         if (!args || args.trim() === '') {
           return {
             type: 'message',
             messageType: 'error',
-            content: 'Usage: /memory add <text to remember>',
+            content:
+              'Usage: /memory add [--global|--project] <text to remember>',
           };
         }
 
+        const trimmedArgs = args.trim();
+        let scope: 'global' | 'project' | undefined;
+        let fact: string;
+
+        // Check for scope flags
+        if (trimmedArgs.startsWith('--global ')) {
+          scope = 'global';
+          fact = trimmedArgs.substring('--global '.length).trim();
+        } else if (trimmedArgs.startsWith('--project ')) {
+          scope = 'project';
+          fact = trimmedArgs.substring('--project '.length).trim();
+        } else if (trimmedArgs === '--global' || trimmedArgs === '--project') {
+          // Flag provided but no text after it
+          return {
+            type: 'message',
+            messageType: 'error',
+            content:
+              'Usage: /memory add [--global|--project] <text to remember>',
+          };
+        } else {
+          // No scope specified, will be handled by the tool
+          fact = trimmedArgs;
+        }
+
+        if (!fact || fact.trim() === '') {
+          return {
+            type: 'message',
+            messageType: 'error',
+            content:
+              'Usage: /memory add [--global|--project] <text to remember>',
+          };
+        }
+
+        const scopeText = scope ? ` (${scope})` : '';
         context.ui.addItem(
           {
             type: MessageType.INFO,
-            text: `Attempting to save to memory: "${args.trim()}"`,
+            text: `Attempting to save to memory${scopeText}: "${fact}"`,
           },
           Date.now(),
         );
 
+        const toolArgs = scope ? { fact, scope } : { fact };
         return {
           type: 'tool',
           toolName: 'save_memory',
-          toolArgs: { fact: args.trim() },
+          toolArgs,
         };
       },
     },
