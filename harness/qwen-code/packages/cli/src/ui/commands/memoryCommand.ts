@@ -7,7 +7,7 @@
 import {
   getErrorMessage,
   loadServerHierarchicalMemory,
-  GEMINI_DIR,
+  QWEN_DIR,
 } from '@qwen-code/qwen-code-core';
 import path from 'node:path';
 import os from 'os';
@@ -89,7 +89,7 @@ export const memoryCommand: SlashCommand = {
             try {
               const globalMemoryPath = path.join(
                 os.homedir(),
-                GEMINI_DIR,
+                QWEN_DIR,
                 'QWEN.md',
               );
               const globalMemoryContent = await fs.readFile(
