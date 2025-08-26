@@ -132,7 +132,7 @@ describe('memoryCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: `Attempting to save to memory: "${fact}"`,
+          text: `Attempting to save to memory : "${fact}"`,
         },
         expect.any(Number),
       );
@@ -228,7 +228,7 @@ describe('memoryCommand', () => {
 
       mockContext = createMockCommandContext({
         services: {
-          config: Promise.resolve(mockConfig),
+          config: mockConfig,
           settings: {
             merged: {
               memoryDiscoveryMaxDirs: 1000,

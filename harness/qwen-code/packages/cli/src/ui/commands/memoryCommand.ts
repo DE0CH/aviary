@@ -7,7 +7,11 @@
 import {
   getErrorMessage,
   loadServerHierarchicalMemory,
+  GEMINI_DIR,
 } from '@qwen-code/qwen-code-core';
+import path from 'node:path';
+import os from 'os';
+import fs from 'fs/promises';
 import { MessageType } from '../types.js';
 import {
   CommandKind,
@@ -41,6 +45,71 @@ export const memoryCommand: SlashCommand = {
           Date.now(),
         );
       },
+      subCommands: [
+        {
+          name: '--project',
+          description: 'Show project-level memory contents.',
+          kind: CommandKind.BUILT_IN,
+          action: async (context) => {
+            const memoryContent =
+              context.services.config?.getUserMemory() || '';
+            const fileCount =
+              context.services.config?.getGeminiMdFileCount() || 0;
+
+            const messageContent =
+              memoryContent.length > 0
+                ? `Project memory content from ${fileCount} file(s):\n\n---\n${memoryContent}\n---`
+                : 'Project memory is currently empty.';
+
+            context.ui.addItem(
+              {
+                type: MessageType.INFO,
+                text: messageContent,
+              },
+              Date.now(),
+            );
+          },
+        },
+        {
+          name: '--global',
+          description: 'Show global memory contents.',
+          kind: CommandKind.BUILT_IN,
+          action: async (context) => {
+            try {
+              const globalMemoryPath = path.join(
+                os.homedir(),
+                GEMINI_DIR,
+                'QWEN.md',
+              );
+              const globalMemoryContent = await fs.readFile(
+                globalMemoryPath,
+                'utf-8',
+              );
+
+              const messageContent =
+                globalMemoryContent.trim().length > 0
+                  ? `Global memory content:\n\n---\n${globalMemoryContent}\n---`
+                  : 'Global memory is currently empty.';
+
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: messageContent,
+                },
+                Date.now(),
+              );
+            } catch (_error) {
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: 'Global memory file not found or is currently empty.',
+                },
+                Date.now(),
+              );
+            }
+          },
+        },
+      ],
     },
     {
       name: 'add',
@@ -90,22 +159,79 @@ export const memoryCommand: SlashCommand = {
           };
         }
 
-        const scopeText = scope ? ` (${scope})` : '';
+        const scopeText = scope ? `(${scope})` : '';
         context.ui.addItem(
           {
             type: MessageType.INFO,
-            text: `Attempting to save to memory${scopeText}: "${fact}"`,
+            text: `Attempting to save to memory ${scopeText}: "${fact}"`,
           },
           Date.now(),
         );
 
-        const toolArgs = scope ? { fact, scope } : { fact };
         return {
           type: 'tool',
           toolName: 'save_memory',
-          toolArgs,
+          toolArgs: scope ? { fact, scope } : { fact },
         };
       },
+      subCommands: [
+        {
+          name: '--project',
+          description: 'Add content to project-level memory.',
+          kind: CommandKind.BUILT_IN,
+          action: (context, args): SlashCommandActionReturn | void => {
+            if (!args || args.trim() === '') {
+              return {
+                type: 'message',
+                messageType: 'error',
+                content: 'Usage: /memory add --project <text to remember>',
+              };
+            }
+
+            context.ui.addItem(
+              {
+                type: MessageType.INFO,
+                text: `Attempting to save to project memory: "${args.trim()}"`,
+              },
+              Date.now(),
+            );
+
+            return {
+              type: 'tool',
+              toolName: 'save_memory',
+              toolArgs: { fact: args.trim(), scope: 'project' },
+            };
+          },
+        },
+        {
+          name: '--global',
+          description: 'Add content to global memory.',
+          kind: CommandKind.BUILT_IN,
+          action: (context, args): SlashCommandActionReturn | void => {
+            if (!args || args.trim() === '') {
+              return {
+                type: 'message',
+                messageType: 'error',
+                content: 'Usage: /memory add --global <text to remember>',
+              };
+            }
+
+            context.ui.addItem(
+              {
+                type: MessageType.INFO,
+                text: `Attempting to save to global memory: "${args.trim()}"`,
+              },
+              Date.now(),
+            );
+
+            return {
+              type: 'tool',
+              toolName: 'save_memory',
+              toolArgs: { fact: args.trim(), scope: 'global' },
+            };
+          },
+        },
+      ],
     },
     {
       name: 'refresh',
@@ -121,7 +247,7 @@ export const memoryCommand: SlashCommand = {
         );
 
         try {
-          const config = await context.services.config;
+          const config = context.services.config;
           if (config) {
             const { memoryContent, fileCount } =
               await loadServerHierarchicalMemory(
