@@ -51,23 +51,34 @@ export const memoryCommand: SlashCommand = {
           description: 'Show project-level memory contents.',
           kind: CommandKind.BUILT_IN,
           action: async (context) => {
-            const memoryContent =
-              context.services.config?.getUserMemory() || '';
-            const fileCount =
-              context.services.config?.getGeminiMdFileCount() || 0;
+            try {
+              const projectMemoryPath = path.join(process.cwd(), 'QWEN.md');
+              const memoryContent = await fs.readFile(
+                projectMemoryPath,
+                'utf-8',
+              );
 
-            const messageContent =
-              memoryContent.length > 0
-                ? `Project memory content from ${fileCount} file(s):\n\n---\n${memoryContent}\n---`
-                : 'Project memory is currently empty.';
+              const messageContent =
+                memoryContent.trim().length > 0
+                  ? `Project memory content from ${projectMemoryPath}:\n\n---\n${memoryContent}\n---`
+                  : 'Project memory is currently empty.';
 
-            context.ui.addItem(
-              {
-                type: MessageType.INFO,
-                text: messageContent,
-              },
-              Date.now(),
-            );
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: messageContent,
+                },
+                Date.now(),
+              );
+            } catch (_error) {
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: 'Project memory file not found or is currently empty.',
+                },
+                Date.now(),
+              );
+            }
           },
         },
         {
