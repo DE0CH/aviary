@@ -217,6 +217,7 @@ export interface ConfigParameters {
   contentGenerator?: {
     timeout?: number;
     maxRetries?: number;
+    disableCacheControl?: boolean;
     samplingParams?: {
       [key: string]: unknown;
     };
@@ -302,6 +303,7 @@ export class Config {
   private readonly contentGenerator?: {
     timeout?: number;
     maxRetries?: number;
+    disableCacheControl?: boolean;
     samplingParams?: Record<string, unknown>;
   };
   private readonly cliVersion?: string;
@@ -799,6 +801,10 @@ export class Config {
 
   getContentGeneratorMaxRetries(): number | undefined {
     return this.contentGenerator?.maxRetries;
+  }
+
+  getContentGeneratorDisableCacheControl(): boolean | undefined {
+    return this.contentGenerator?.disableCacheControl;
   }
 
   getContentGeneratorSamplingParams(): ContentGeneratorConfig['samplingParams'] {

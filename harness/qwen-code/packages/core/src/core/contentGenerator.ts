@@ -62,6 +62,8 @@ export type ContentGeneratorConfig = {
   timeout?: number;
   // Maximum retries for failed requests
   maxRetries?: number;
+  // Disable cache control for DashScope providers
+  disableCacheControl?: boolean;
   samplingParams?: {
     top_p?: number;
     top_k?: number;
@@ -99,6 +101,7 @@ export function createContentGeneratorConfig(
     enableOpenAILogging: config.getEnableOpenAILogging(),
     timeout: config.getContentGeneratorTimeout(),
     maxRetries: config.getContentGeneratorMaxRetries(),
+    disableCacheControl: config.getContentGeneratorDisableCacheControl(),
     samplingParams: config.getContentGeneratorSamplingParams(),
   };
 

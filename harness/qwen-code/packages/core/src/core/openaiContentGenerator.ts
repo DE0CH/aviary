@@ -213,6 +213,17 @@ export class OpenAIContentGenerator implements ContentGenerator {
   }
 
   /**
+   * Check if cache control should be disabled based on configuration.
+   *
+   * @returns true if cache control should be disabled, false otherwise
+   */
+  private shouldDisableCacheControl(): boolean {
+    return (
+      this.config.getContentGeneratorConfig()?.disableCacheControl === true
+    );
+  }
+
+  /**
    * Build metadata object for OpenAI API requests.
    *
    * @param userPromptId The user prompt ID to include in metadata
@@ -242,7 +253,7 @@ export class OpenAIContentGenerator implements ContentGenerator {
 
     // Add cache control to system and last messages for DashScope providers
     // Only add cache control to system message for non-streaming requests
-    if (this.isDashScopeProvider()) {
+    if (this.isDashScopeProvider() && !this.shouldDisableCacheControl()) {
       messages = this.addDashScopeCacheControl(
         messages,
         streaming ? 'both' : 'system',
