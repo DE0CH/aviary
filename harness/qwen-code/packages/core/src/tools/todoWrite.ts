@@ -17,7 +17,6 @@ import * as path from 'path';
 import * as process from 'process';
 
 import { QWEN_DIR } from '../utils/paths.js';
-import { SchemaValidator } from '../utils/schemaValidator.js';
 import { Config } from '../config/config.js';
 
 export interface TodoItem {
@@ -248,7 +247,8 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 const TODO_SUBDIR = 'todos';
 
 function getTodoFilePath(sessionId?: string): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || process.cwd();
+  const homeDir =
+    process.env['HOME'] || process.env['USERPROFILE'] || process.cwd();
   const todoDir = path.join(homeDir, QWEN_DIR, TODO_SUBDIR);
 
   // Use sessionId if provided, otherwise fall back to 'default'
@@ -383,7 +383,7 @@ export async function readTodosForSession(
 export async function listTodoSessions(): Promise<string[]> {
   try {
     const homeDir =
-      process.env.HOME || process.env.USERPROFILE || process.cwd();
+      process.env['HOME'] || process.env['USERPROFILE'] || process.cwd();
     const todoDir = path.join(homeDir, QWEN_DIR, TODO_SUBDIR);
     const files = await fs.readdir(todoDir);
     return files
@@ -415,14 +415,6 @@ export class TodoWriteTool extends BaseDeclarativeTool<
   }
 
   override validateToolParams(params: TodoWriteParams): string | null {
-    const errors = SchemaValidator.validate(
-      this.schema.parametersJsonSchema,
-      params,
-    );
-    if (errors) {
-      return errors;
-    }
-
     // Validate todos array
     if (!Array.isArray(params.todos)) {
       return 'Parameter "todos" must be an array.';
