@@ -67,6 +67,9 @@ export * from './tools/tools.js';
 export * from './tools/tool-error.js';
 export * from './tools/tool-registry.js';
 
+// Export subagents (Phase 1)
+export * from './subagents/index.js';
+
 // Export prompt logic
 export * from './prompts/mcp-prompts.js';
 
