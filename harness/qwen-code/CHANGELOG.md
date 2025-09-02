@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.10
+
+- Synced upstream `gemini-cli` to v0.2.1.
+- Add todo write tool for task management and progress tracking.
+
 ## 0.0.9
 
 - Synced upstream `gemini-cli` to v0.1.21.
