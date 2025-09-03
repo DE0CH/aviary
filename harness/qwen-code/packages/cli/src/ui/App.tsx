@@ -24,6 +24,7 @@ import { useQwenAuth } from './hooks/useQwenAuth.js';
 import { useFolderTrust } from './hooks/useFolderTrust.js';
 import { useEditorSettings } from './hooks/useEditorSettings.js';
 import { useSlashCommandProcessor } from './hooks/slashCommandProcessor.js';
+import { useSubagentCreateDialog } from './hooks/useSubagentCreateDialog.js';
 import { useAutoAcceptIndicator } from './hooks/useAutoAcceptIndicator.js';
 import { useMessageQueue } from './hooks/useMessageQueue.js';
 import { useConsoleMessages } from './hooks/useConsoleMessages.js';
@@ -41,6 +42,7 @@ import { EditorSettingsDialog } from './components/EditorSettingsDialog.js';
 import { FolderTrustDialog } from './components/FolderTrustDialog.js';
 import { ShellConfirmationDialog } from './components/ShellConfirmationDialog.js';
 import { RadioButtonSelect } from './components/shared/RadioButtonSelect.js';
+import { SubagentCreationWizard } from './components/subagents/SubagentCreationWizard.js';
 import { Colors } from './colors.js';
 import { loadHierarchicalGeminiMemory } from '../config/config.js';
 import { LoadedSettings, SettingScope } from '../config/settings.js';
@@ -268,6 +270,12 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
 
   const { isSettingsDialogOpen, openSettingsDialog, closeSettingsDialog } =
     useSettingsCommand();
+
+  const {
+    isSubagentCreateDialogOpen,
+    openSubagentCreateDialog,
+    closeSubagentCreateDialog,
+  } = useSubagentCreateDialog();
 
   const { isFolderTrustDialogOpen, handleFolderTrustSelect } = useFolderTrust(
     settings,
@@ -565,6 +573,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     setQuittingMessages,
     openPrivacyNotice,
     openSettingsDialog,
+    openSubagentCreateDialog,
     toggleVimEnabled,
     setIsProcessing,
     setGeminiMdFileCount,
@@ -894,6 +903,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
       !isAuthDialogOpen &&
       !isThemeDialogOpen &&
       !isEditorDialogOpen &&
+      !isSubagentCreateDialogOpen &&
       !showPrivacyNotice &&
       geminiClient?.isInitialized?.()
     ) {
@@ -907,6 +917,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     isAuthDialogOpen,
     isThemeDialogOpen,
     isEditorDialogOpen,
+    isSubagentCreateDialogOpen,
     showPrivacyNotice,
     geminiClient,
   ]);
@@ -1067,6 +1078,13 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
                 settings={settings}
                 onSelect={() => closeSettingsDialog()}
                 onRestartRequest={() => process.exit(0)}
+              />
+            </Box>
+          ) : isSubagentCreateDialogOpen ? (
+            <Box flexDirection="column">
+              <SubagentCreationWizard
+                onClose={closeSubagentCreateDialog}
+                config={config}
               />
             </Box>
           ) : isAuthenticating ? (
