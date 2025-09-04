@@ -68,33 +68,6 @@ export interface SubagentConfig {
 }
 
 /**
- * Metadata extracted from a subagent configuration file.
- * Used for listing and discovery without loading full configuration.
- */
-export interface SubagentMetadata {
-  /** Unique name identifier */
-  name: string;
-
-  /** Human-readable description */
-  description: string;
-
-  /** Optional list of allowed tools */
-  tools?: string[];
-
-  /** Storage level */
-  level: SubagentLevel;
-
-  /** File path */
-  filePath: string;
-
-  /** File modification time for sorting */
-  lastModified?: Date;
-
-  /** Additional metadata from YAML frontmatter */
-  [key: string]: unknown;
-}
-
-/**
  * Runtime configuration that converts file-based config to existing SubAgentScope.
  * This interface maps SubagentConfig to the existing runtime interfaces.
  */

@@ -4,16 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useReducer, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { managementReducer, initialManagementState } from './reducers.js';
 import { AgentSelectionStep } from './AgentSelectionStep.js';
 import { ActionSelectionStep } from './ActionSelectionStep.js';
 import { AgentViewerStep } from './AgentViewerStep.js';
-import { ManagementStepProps, MANAGEMENT_STEPS } from './types.js';
+import { EditOptionsStep } from './AgentEditStep.js';
+import { AgentDeleteStep } from './AgentDeleteStep.js';
+import { ToolSelector } from './ToolSelector.js';
+import { ColorSelector } from './ColorSelector.js';
+import { MANAGEMENT_STEPS } from './types.js';
 import { Colors } from '../../colors.js';
 import { theme } from '../../semantic-colors.js';
-import { Config } from '@qwen-code/qwen-code-core';
+import { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface AgentsManagerDialogProps {
   onClose: () => void;
@@ -27,67 +30,132 @@ export function AgentsManagerDialog({
   onClose,
   config,
 }: AgentsManagerDialogProps) {
-  const [state, dispatch] = useReducer(
-    managementReducer,
-    initialManagementState,
+  // Simple state management with useState hooks
+  const [availableAgents, setAvailableAgents] = useState<SubagentConfig[]>([]);
+  const [selectedAgentIndex, setSelectedAgentIndex] = useState<number>(-1);
+  const [navigationStack, setNavigationStack] = useState<string[]>([
+    MANAGEMENT_STEPS.AGENT_SELECTION,
+  ]);
+
+  // Memoized selectedAgent based on index
+  const selectedAgent = useMemo(
+    () =>
+      selectedAgentIndex >= 0 ? availableAgents[selectedAgentIndex] : null,
+    [availableAgents, selectedAgentIndex],
   );
 
-  const handleNext = useCallback(() => {
-    dispatch({ type: 'GO_TO_NEXT_STEP' });
+  // Function to load agents
+  const loadAgents = useCallback(async () => {
+    if (!config) return;
+
+    const manager = config.getSubagentManager();
+
+    // Load agents from both levels separately to show all agents including conflicts
+    const [projectAgents, userAgents] = await Promise.all([
+      manager.listSubagents({ level: 'project' }),
+      manager.listSubagents({ level: 'user' }),
+    ]);
+
+    // Combine all agents (project and user level)
+    const allAgents = [...(projectAgents || []), ...(userAgents || [])];
+
+    setAvailableAgents(allAgents);
+  }, [config]);
+
+  // Load agents when component mounts or config changes
+  useEffect(() => {
+    loadAgents();
+  }, [loadAgents]);
+
+  // Helper to get current step
+  const getCurrentStep = useCallback(
+    () =>
+      navigationStack[navigationStack.length - 1] ||
+      MANAGEMENT_STEPS.AGENT_SELECTION,
+    [navigationStack],
+  );
+
+  const handleSelectAgent = useCallback((agentIndex: number) => {
+    setSelectedAgentIndex(agentIndex);
+    setNavigationStack((prev) => [...prev, MANAGEMENT_STEPS.ACTION_SELECTION]);
   }, []);
 
-  const handlePrevious = useCallback(() => {
-    dispatch({ type: 'GO_TO_PREVIOUS_STEP' });
+  const handleNavigateToStep = useCallback((step: string) => {
+    setNavigationStack((prev) => [...prev, step]);
   }, []);
 
-  const handleCancel = useCallback(() => {
-    dispatch({ type: 'RESET_DIALOG' });
-    onClose();
-  }, [onClose]);
+  const handleNavigateBack = useCallback(() => {
+    setNavigationStack((prev) => {
+      if (prev.length <= 1) {
+        return prev; // Can't go back from root step
+      }
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleDeleteAgent = useCallback(
+    async (agent: SubagentConfig) => {
+      if (!config) return;
+
+      try {
+        const subagentManager = config.getSubagentManager();
+        await subagentManager.deleteSubagent(agent.name, agent.level);
+
+        // Reload agents to get updated state
+        await loadAgents();
+
+        // Navigate back to agent selection after successful deletion
+        setNavigationStack([MANAGEMENT_STEPS.AGENT_SELECTION]);
+        setSelectedAgentIndex(-1);
+      } catch (error) {
+        console.error('Failed to delete agent:', error);
+        throw error; // Re-throw to let the component handle the error state
+      }
+    },
+    [config, loadAgents],
+  );
 
   // Centralized ESC key handling for the entire dialog
   useInput((input, key) => {
     if (key.escape) {
-      // Agent viewer step handles its own ESC logic
-      if (state.currentStep === MANAGEMENT_STEPS.AGENT_VIEWER) {
-        return; // Let AgentViewerStep handle it
-      }
-
-      if (state.currentStep === MANAGEMENT_STEPS.AGENT_SELECTION) {
+      const currentStep = getCurrentStep();
+      if (currentStep === MANAGEMENT_STEPS.AGENT_SELECTION) {
         // On first step, ESC cancels the entire dialog
-        handleCancel();
+        onClose();
       } else {
-        // On other steps, ESC goes back to previous step
-        handlePrevious();
+        // On other steps, ESC goes back to previous step in navigation stack
+        handleNavigateBack();
       }
     }
   });
 
-  const stepProps: ManagementStepProps = useMemo(
+  // Props for child components - now using direct state and callbacks
+  const commonProps = useMemo(
     () => ({
-      state,
-      config,
-      dispatch,
-      onNext: handleNext,
-      onPrevious: handlePrevious,
-      onCancel: handleCancel,
+      onNavigateToStep: handleNavigateToStep,
+      onNavigateBack: handleNavigateBack,
     }),
-    [state, dispatch, handleNext, handlePrevious, handleCancel, config],
+    [handleNavigateToStep, handleNavigateBack],
   );
 
   const renderStepHeader = useCallback(() => {
+    const currentStep = getCurrentStep();
     const getStepHeaderText = () => {
-      switch (state.currentStep) {
+      switch (currentStep) {
         case MANAGEMENT_STEPS.AGENT_SELECTION:
           return 'Agents';
         case MANAGEMENT_STEPS.ACTION_SELECTION:
           return 'Choose Action';
         case MANAGEMENT_STEPS.AGENT_VIEWER:
-          return state.selectedAgent?.name;
-        case MANAGEMENT_STEPS.AGENT_EDITOR:
-          return `Editing: ${state.selectedAgent?.name || 'Unknown'}`;
+          return selectedAgent?.name;
+        case MANAGEMENT_STEPS.EDIT_OPTIONS:
+          return `Edit ${selectedAgent?.name}`;
+        case MANAGEMENT_STEPS.EDIT_TOOLS:
+          return `Edit Tools: ${selectedAgent?.name}`;
+        case MANAGEMENT_STEPS.EDIT_COLOR:
+          return `Edit Color: ${selectedAgent?.name}`;
         case MANAGEMENT_STEPS.DELETE_CONFIRMATION:
-          return `Delete: ${state.selectedAgent?.name || 'Unknown'}`;
+          return `Delete ${selectedAgent?.name}`;
         default:
           return 'Unknown Step';
       }
@@ -98,22 +166,27 @@ export function AgentsManagerDialog({
         <Text bold>{getStepHeaderText()}</Text>
       </Box>
     );
-  }, [state.currentStep, state.selectedAgent?.name]);
+  }, [getCurrentStep, selectedAgent]);
 
   const renderStepFooter = useCallback(() => {
+    const currentStep = getCurrentStep();
     const getNavigationInstructions = () => {
-      if (state.currentStep === MANAGEMENT_STEPS.ACTION_SELECTION) {
-        return 'Enter to select, ↑↓ to navigate, Esc to go back';
-      }
-
-      if (state.currentStep === MANAGEMENT_STEPS.AGENT_SELECTION) {
-        if (state.availableAgents.length === 0) {
+      if (currentStep === MANAGEMENT_STEPS.AGENT_SELECTION) {
+        if (availableAgents.length === 0) {
           return 'Esc to close';
         }
         return 'Enter to select, ↑↓ to navigate, Esc to close';
       }
 
-      return 'Esc to go back';
+      if (currentStep === MANAGEMENT_STEPS.AGENT_VIEWER) {
+        return 'Esc to go back';
+      }
+
+      if (currentStep === MANAGEMENT_STEPS.DELETE_CONFIRMATION) {
+        return 'Enter to confirm, Esc to cancel';
+      }
+
+      return 'Enter to select, ↑↓ to navigate, Esc to go back';
     };
 
     return (
@@ -121,42 +194,110 @@ export function AgentsManagerDialog({
         <Text color={theme.text.secondary}>{getNavigationInstructions()}</Text>
       </Box>
     );
-  }, [state.currentStep, state.availableAgents.length]);
+  }, [getCurrentStep, availableAgents]);
 
   const renderStepContent = useCallback(() => {
-    switch (state.currentStep) {
+    const currentStep = getCurrentStep();
+    switch (currentStep) {
       case MANAGEMENT_STEPS.AGENT_SELECTION:
-        return <AgentSelectionStep {...stepProps} />;
-      case MANAGEMENT_STEPS.ACTION_SELECTION:
-        return <ActionSelectionStep {...stepProps} />;
-      case MANAGEMENT_STEPS.AGENT_VIEWER:
-        return <AgentViewerStep {...stepProps} />;
-      case MANAGEMENT_STEPS.AGENT_EDITOR:
         return (
-          <Box>
-            <Text color={theme.status.warning}>
-              Agent editing not yet implemented
-            </Text>
+          <AgentSelectionStep
+            availableAgents={availableAgents}
+            onAgentSelect={handleSelectAgent}
+            {...commonProps}
+          />
+        );
+      case MANAGEMENT_STEPS.ACTION_SELECTION:
+        return <ActionSelectionStep {...commonProps} />;
+      case MANAGEMENT_STEPS.AGENT_VIEWER:
+        return (
+          <AgentViewerStep selectedAgent={selectedAgent} {...commonProps} />
+        );
+      case MANAGEMENT_STEPS.EDIT_OPTIONS:
+        return (
+          <EditOptionsStep selectedAgent={selectedAgent} {...commonProps} />
+        );
+      case MANAGEMENT_STEPS.EDIT_TOOLS:
+        return (
+          <Box flexDirection="column" gap={1}>
+            <ToolSelector
+              tools={selectedAgent?.tools || []}
+              onSelect={async (tools) => {
+                if (selectedAgent && config) {
+                  try {
+                    // Save the changes using SubagentManager
+                    const subagentManager = config.getSubagentManager();
+                    await subagentManager.updateSubagent(
+                      selectedAgent.name,
+                      { tools },
+                      selectedAgent.level,
+                    );
+                    // Reload agents to get updated state
+                    await loadAgents();
+                    handleNavigateBack();
+                  } catch (error) {
+                    console.error('Failed to save agent changes:', error);
+                  }
+                }
+              }}
+              config={config}
+            />
+          </Box>
+        );
+      case MANAGEMENT_STEPS.EDIT_COLOR:
+        return (
+          <Box flexDirection="column" gap={1}>
+            <ColorSelector
+              backgroundColor={selectedAgent?.backgroundColor || 'auto'}
+              agentName={selectedAgent?.name || 'Agent'}
+              onSelect={async (color) => {
+                // Save changes and reload agents
+                if (selectedAgent && config) {
+                  try {
+                    // Save the changes using SubagentManager
+                    const subagentManager = config.getSubagentManager();
+                    await subagentManager.updateSubagent(
+                      selectedAgent.name,
+                      { backgroundColor: color },
+                      selectedAgent.level,
+                    );
+                    // Reload agents to get updated state
+                    await loadAgents();
+                    handleNavigateBack();
+                  } catch (error) {
+                    console.error('Failed to save color changes:', error);
+                  }
+                }
+              }}
+            />
           </Box>
         );
       case MANAGEMENT_STEPS.DELETE_CONFIRMATION:
         return (
-          <Box>
-            <Text color={theme.status.warning}>
-              Agent deletion not yet implemented
-            </Text>
-          </Box>
+          <AgentDeleteStep
+            selectedAgent={selectedAgent}
+            onDelete={handleDeleteAgent}
+            {...commonProps}
+          />
         );
       default:
         return (
           <Box>
-            <Text color={theme.status.error}>
-              Invalid step: {state.currentStep}
-            </Text>
+            <Text color={theme.status.error}>Invalid step: {currentStep}</Text>
           </Box>
         );
     }
-  }, [stepProps, state.currentStep]);
+  }, [
+    getCurrentStep,
+    availableAgents,
+    selectedAgent,
+    commonProps,
+    config,
+    loadAgents,
+    handleNavigateBack,
+    handleSelectAgent,
+    handleDeleteAgent,
+  ]);
 
   return (
     <Box flexDirection="column">

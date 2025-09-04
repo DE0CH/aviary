@@ -4,20 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Box, Text, useInput } from 'ink';
-import { ManagementStepProps } from './types.js';
+import { Box, Text } from 'ink';
 import { theme } from '../../semantic-colors.js';
 import { shouldShowColor, getColorForDisplay } from './utils.js';
+import { SubagentConfig } from '@qwen-code/qwen-code-core';
 
-export const AgentViewerStep = ({ state, onPrevious }: ManagementStepProps) => {
-  // Handle keyboard input
-  useInput((input, key) => {
-    if (key.escape || input === 'b') {
-      onPrevious();
-    }
-  });
+interface AgentViewerStepProps {
+  selectedAgent: SubagentConfig | null;
+}
 
-  if (!state.selectedAgent) {
+export const AgentViewerStep = ({ selectedAgent }: AgentViewerStepProps) => {
+  if (!selectedAgent) {
     return (
       <Box>
         <Text color={theme.status.error}>No agent selected</Text>
@@ -25,7 +22,7 @@ export const AgentViewerStep = ({ state, onPrevious }: ManagementStepProps) => {
     );
   }
 
-  const agent = state.selectedAgent;
+  const agent = selectedAgent;
 
   const toolsDisplay = agent.tools ? agent.tools.join(', ') : '*';
 

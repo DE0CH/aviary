@@ -23,7 +23,6 @@
 // Core types and interfaces
 export type {
   SubagentConfig,
-  SubagentMetadata,
   SubagentLevel,
   SubagentRuntimeConfig,
   ValidationResult,

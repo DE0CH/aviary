@@ -7,7 +7,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { WizardStepProps, WizardAction } from './types.js';
-import { sanitizeInput } from './validation.js';
+import { sanitizeInput } from './utils.js';
 import { Config, subagentGenerator } from '@qwen-code/qwen-code-core';
 import { useTextBuffer } from '../shared/text-buffer.js';
 import { useKeypress, Key } from '../../hooks/useKeypress.js';

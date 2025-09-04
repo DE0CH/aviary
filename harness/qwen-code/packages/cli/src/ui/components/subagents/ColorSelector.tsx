@@ -4,25 +4,43 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
-import { WizardStepProps, ColorOption } from './types.js';
+import { ColorOption } from './types.js';
 import { Colors } from '../../colors.js';
 import { COLOR_OPTIONS } from './constants.js';
 
 const colorOptions: ColorOption[] = COLOR_OPTIONS;
 
+interface ColorSelectorProps {
+  backgroundColor?: string;
+  agentName?: string;
+  onSelect: (color: string) => void;
+}
+
 /**
- * Step 5: Background color selection with preview.
+ * Color selection with preview.
  */
 export function ColorSelector({
-  state,
-  dispatch,
-  onNext,
-  onPrevious: _onPrevious,
-}: WizardStepProps) {
-  const handleSelect = (_selectedValue: string) => {
-    onNext();
+  backgroundColor = 'auto',
+  agentName = 'Agent',
+  onSelect,
+}: ColorSelectorProps) {
+  const [selectedColor, setSelectedColor] = useState<string>(backgroundColor);
+
+  // Update selected color when backgroundColor prop changes
+  useEffect(() => {
+    setSelectedColor(backgroundColor);
+  }, [backgroundColor]);
+
+  const handleSelect = (selectedValue: string) => {
+    const colorOption = colorOptions.find(
+      (option) => option.id === selectedValue,
+    );
+    if (colorOption) {
+      onSelect(colorOption.name);
+    }
   };
 
   const handleHighlight = (selectedValue: string) => {
@@ -30,12 +48,12 @@ export function ColorSelector({
       (option) => option.id === selectedValue,
     );
     if (colorOption) {
-      dispatch({ type: 'SET_BACKGROUND_COLOR', color: colorOption.name });
+      setSelectedColor(colorOption.name);
     }
   };
 
   const currentColor =
-    colorOptions.find((option) => option.name === state.backgroundColor) ||
+    colorOptions.find((option) => option.name === selectedColor) ||
     colorOptions[0];
 
   return (
@@ -58,7 +76,7 @@ export function ColorSelector({
       <Box flexDirection="row">
         <Text color={Colors.Gray}>Preview:</Text>
         <Box marginLeft={2} backgroundColor={currentColor.value}>
-          <Text color="black">{` ${state.generatedName} `}</Text>
+          <Text color="black">{` ${agentName} `}</Text>
         </Box>
       </Box>
     </Box>

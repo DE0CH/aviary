@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { ManagementStepProps } from './types.js';
 import { theme } from '../../semantic-colors.js';
 import { Colors } from '../../colors.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
+import { SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface NavigationState {
   currentBlock: 'project' | 'user';
@@ -17,13 +17,15 @@ interface NavigationState {
   userIndex: number;
 }
 
+interface AgentSelectionStepProps {
+  availableAgents: SubagentConfig[];
+  onAgentSelect: (agentIndex: number) => void;
+}
+
 export const AgentSelectionStep = ({
-  state,
-  dispatch,
-  onNext,
-  config,
-}: ManagementStepProps) => {
-  const [isLoading, setIsLoading] = useState(false);
+  availableAgents,
+  onAgentSelect,
+}: AgentSelectionStepProps) => {
   const [navigation, setNavigation] = useState<NavigationState>({
     currentBlock: 'project',
     projectIndex: 0,
@@ -31,60 +33,27 @@ export const AgentSelectionStep = ({
   });
 
   // Group agents by level
-  const projectAgents = state.availableAgents.filter(
-    (agent) => agent.level === 'project',
+  const projectAgents = useMemo(
+    () => availableAgents.filter((agent) => agent.level === 'project'),
+    [availableAgents],
   );
-  const userAgents = state.availableAgents.filter(
-    (agent) => agent.level === 'user',
+  const userAgents = useMemo(
+    () => availableAgents.filter((agent) => agent.level === 'user'),
+    [availableAgents],
   );
-  const projectNames = new Set(projectAgents.map((agent) => agent.name));
+  const projectNames = useMemo(
+    () => new Set(projectAgents.map((agent) => agent.name)),
+    [projectAgents],
+  );
 
-  useEffect(() => {
-    const loadAgents = async () => {
-      setIsLoading(true);
-      dispatch({ type: 'SET_LOADING', payload: true });
-
-      try {
-        if (!config) {
-          throw new Error('Configuration not available');
-        }
-        const manager = config.getSubagentManager();
-
-        // Load agents from both levels separately to show all agents including conflicts
-        const [projectAgents, userAgents] = await Promise.all([
-          manager.listSubagents({ level: 'project' }),
-          manager.listSubagents({ level: 'user' }),
-        ]);
-
-        // Combine all agents (project and user level)
-        const allAgents = [...projectAgents, ...userAgents];
-
-        dispatch({ type: 'SET_AVAILABLE_AGENTS', payload: allAgents });
-        dispatch({ type: 'SET_ERROR', payload: null });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        dispatch({
-          type: 'SET_ERROR',
-          payload: `Failed to load agents: ${errorMessage}`,
-        });
-      } finally {
-        setIsLoading(false);
-        dispatch({ type: 'SET_LOADING', payload: false });
-      }
-    };
-
-    loadAgents();
-  }, [dispatch, config]);
-
-  // Initialize navigation state when agents are loaded
+  // Initialize navigation state when agents are loaded (only once)
   useEffect(() => {
     if (projectAgents.length > 0) {
       setNavigation((prev) => ({ ...prev, currentBlock: 'project' }));
     } else if (userAgents.length > 0) {
       setNavigation((prev) => ({ ...prev, currentBlock: 'user' }));
     }
-  }, [projectAgents.length, userAgents.length]);
+  }, [projectAgents, userAgents]);
 
   // Custom keyboard navigation
   useKeypress(
@@ -148,71 +117,24 @@ export const AgentSelectionStep = ({
           }
         });
       } else if (name === 'return' || name === 'space') {
-        // Select current item
-        const currentAgent =
-          navigation.currentBlock === 'project'
-            ? projectAgents[navigation.projectIndex]
-            : userAgents[navigation.userIndex];
+        // Calculate global index and select current item
+        let globalIndex: number;
+        if (navigation.currentBlock === 'project') {
+          globalIndex = navigation.projectIndex;
+        } else {
+          // User agents come after project agents in the availableAgents array
+          globalIndex = projectAgents.length + navigation.userIndex;
+        }
 
-        if (currentAgent) {
-          const agentIndex = state.availableAgents.indexOf(currentAgent);
-          handleAgentSelect(agentIndex);
+        if (globalIndex >= 0 && globalIndex < availableAgents.length) {
+          onAgentSelect(globalIndex);
         }
       }
     },
     { isActive: true },
   );
 
-  const handleAgentSelect = async (index: number) => {
-    const selectedMetadata = state.availableAgents[index];
-    if (!selectedMetadata) return;
-
-    try {
-      if (!config) {
-        throw new Error('Configuration not available');
-      }
-      const manager = config.getSubagentManager();
-      const agent = await manager.loadSubagent(
-        selectedMetadata.name,
-        selectedMetadata.level,
-      );
-
-      if (agent) {
-        dispatch({ type: 'SELECT_AGENT', payload: { agent, index } });
-        onNext();
-      } else {
-        dispatch({
-          type: 'SET_ERROR',
-          payload: `Failed to load agent: ${selectedMetadata.name}`,
-        });
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      dispatch({
-        type: 'SET_ERROR',
-        payload: `Failed to load agent: ${errorMessage}`,
-      });
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <Box>
-        <Text color={theme.text.secondary}>Loading agents...</Text>
-      </Box>
-    );
-  }
-
-  if (state.error) {
-    return (
-      <Box>
-        <Text color={theme.status.error}>{state.error}</Text>
-      </Box>
-    );
-  }
-
-  if (state.availableAgents.length === 0) {
+  if (availableAgents.length === 0) {
     return (
       <Box flexDirection="column">
         <Text color={theme.text.secondary}>No subagents found.</Text>

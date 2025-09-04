@@ -4,16 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useState } from 'react';
 import { Box } from 'ink';
 import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
-import { ManagementStepProps } from './types.js';
+import { MANAGEMENT_STEPS } from './types.js';
+
+interface ActionSelectionStepProps {
+  onNavigateToStep: (step: string) => void;
+  onNavigateBack: () => void;
+}
 
 export const ActionSelectionStep = ({
-  state,
-  dispatch,
-  onNext,
-  onPrevious,
-}: ManagementStepProps) => {
+  onNavigateToStep,
+  onNavigateBack,
+}: ActionSelectionStepProps) => {
+  const [selectedAction, setSelectedAction] = useState<
+    'view' | 'edit' | 'delete' | null
+  >(null);
   const actions = [
     { label: 'View Agent', value: 'view' as const },
     { label: 'Edit Agent', value: 'edit' as const },
@@ -23,16 +30,24 @@ export const ActionSelectionStep = ({
 
   const handleActionSelect = (value: 'view' | 'edit' | 'delete' | 'back') => {
     if (value === 'back') {
-      onPrevious();
+      onNavigateBack();
       return;
     }
 
-    dispatch({ type: 'SELECT_ACTION', payload: value });
-    onNext();
+    setSelectedAction(value);
+
+    // Navigate to appropriate step based on action
+    if (value === 'view') {
+      onNavigateToStep(MANAGEMENT_STEPS.AGENT_VIEWER);
+    } else if (value === 'edit') {
+      onNavigateToStep(MANAGEMENT_STEPS.EDIT_OPTIONS);
+    } else if (value === 'delete') {
+      onNavigateToStep(MANAGEMENT_STEPS.DELETE_CONFIRMATION);
+    }
   };
 
-  const selectedIndex = state.selectedAction
-    ? actions.findIndex((action) => action.value === state.selectedAction)
+  const selectedIndex = selectedAction
+    ? actions.findIndex((action) => action.value === selectedAction)
     : 0;
 
   return (

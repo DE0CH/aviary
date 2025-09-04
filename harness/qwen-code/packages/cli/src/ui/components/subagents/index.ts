@@ -18,6 +18,7 @@ export { AgentsManagerDialog } from './AgentsManagerDialog.js';
 export { AgentSelectionStep } from './AgentSelectionStep.js';
 export { ActionSelectionStep } from './ActionSelectionStep.js';
 export { AgentViewerStep } from './AgentViewerStep.js';
+export { AgentDeleteStep } from './AgentDeleteStep.js';
 
 // Creation Wizard Types and State
 export type {
@@ -30,16 +31,3 @@ export type {
 } from './types.js';
 
 export { wizardReducer, initialWizardState } from './reducers.js';
-
-// Management Dialog Types and State
-export type {
-  ManagementDialogState,
-  ManagementAction,
-  ManagementStepProps,
-} from './types.js';
-
-export {
-  managementReducer,
-  initialManagementState,
-  MANAGEMENT_STEPS,
-} from './reducers.js';

@@ -4,16 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  CreationWizardState,
-  WizardAction,
-  ManagementDialogState,
-  ManagementAction,
-  MANAGEMENT_STEPS,
-} from './types.js';
+import { CreationWizardState, WizardAction } from './types.js';
 import { WIZARD_STEPS, TOTAL_WIZARD_STEPS } from './constants.js';
-
-export { MANAGEMENT_STEPS };
 
 /**
  * Initial state for the creation wizard.
@@ -26,7 +18,7 @@ export const initialWizardState: CreationWizardState = {
   generatedSystemPrompt: '',
   generatedDescription: '',
   generatedName: '',
-  selectedTools: 'all',
+  selectedTools: [],
   backgroundColor: 'auto',
   isGenerating: false,
   validationErrors: [],
@@ -167,127 +159,6 @@ function validateStep(step: number, state: CreationWizardState): boolean {
     case WIZARD_STEPS.FINAL_CONFIRMATION: // Final confirmation
       return state.backgroundColor.length > 0;
 
-    default:
-      return false;
-  }
-}
-
-/**
- * Initial state for the management dialog.
- */
-export const initialManagementState: ManagementDialogState = {
-  currentStep: MANAGEMENT_STEPS.AGENT_SELECTION,
-  availableAgents: [],
-  selectedAgent: null,
-  selectedAgentIndex: -1,
-  selectedAction: null,
-  isLoading: false,
-  error: null,
-  canProceed: false,
-};
-
-/**
- * Reducer for managing management dialog state transitions.
- */
-export function managementReducer(
-  state: ManagementDialogState,
-  action: ManagementAction,
-): ManagementDialogState {
-  switch (action.type) {
-    case 'SET_AVAILABLE_AGENTS':
-      return {
-        ...state,
-        availableAgents: action.payload,
-        canProceed: action.payload.length > 0,
-      };
-
-    case 'SELECT_AGENT':
-      return {
-        ...state,
-        selectedAgent: action.payload.agent,
-        selectedAgentIndex: action.payload.index,
-        canProceed: true,
-      };
-
-    case 'SELECT_ACTION':
-      return {
-        ...state,
-        selectedAction: action.payload,
-        canProceed: true,
-      };
-
-    case 'GO_TO_NEXT_STEP': {
-      const nextStep = state.currentStep + 1;
-      return {
-        ...state,
-        currentStep: nextStep,
-        canProceed: getCanProceedForStep(nextStep, state),
-      };
-    }
-
-    case 'GO_TO_PREVIOUS_STEP': {
-      const prevStep = Math.max(
-        MANAGEMENT_STEPS.AGENT_SELECTION,
-        state.currentStep - 1,
-      );
-      return {
-        ...state,
-        currentStep: prevStep,
-        canProceed: getCanProceedForStep(prevStep, state),
-      };
-    }
-
-    case 'GO_TO_STEP':
-      return {
-        ...state,
-        currentStep: action.payload,
-        canProceed: getCanProceedForStep(action.payload, state),
-      };
-
-    case 'SET_LOADING':
-      return {
-        ...state,
-        isLoading: action.payload,
-      };
-
-    case 'SET_ERROR':
-      return {
-        ...state,
-        error: action.payload,
-      };
-
-    case 'SET_CAN_PROCEED':
-      return {
-        ...state,
-        canProceed: action.payload,
-      };
-
-    case 'RESET_DIALOG':
-      return initialManagementState;
-
-    default:
-      return state;
-  }
-}
-
-/**
- * Validates whether a management step can proceed based on current state.
- */
-function getCanProceedForStep(
-  step: number,
-  state: ManagementDialogState,
-): boolean {
-  switch (step) {
-    case MANAGEMENT_STEPS.AGENT_SELECTION:
-      return state.availableAgents.length > 0 && state.selectedAgent !== null;
-    case MANAGEMENT_STEPS.ACTION_SELECTION:
-      return state.selectedAction !== null;
-    case MANAGEMENT_STEPS.AGENT_VIEWER:
-      return true; // Can always go back from viewer
-    case MANAGEMENT_STEPS.AGENT_EDITOR:
-      return true; // TODO: Add validation for editor
-    case MANAGEMENT_STEPS.DELETE_CONFIRMATION:
-      return true; // Can always proceed from confirmation
     default:
       return false;
   }

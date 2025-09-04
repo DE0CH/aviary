@@ -16,7 +16,6 @@ import {
 import {
   SubagentConfig,
   SubagentRuntimeConfig,
-  SubagentMetadata,
   SubagentLevel,
   ListSubagentsOptions,
   CreateSubagentOptions,
@@ -235,8 +234,8 @@ export class SubagentManager {
    */
   async listSubagents(
     options: ListSubagentsOptions = {},
-  ): Promise<SubagentMetadata[]> {
-    const subagents: SubagentMetadata[] = [];
+  ): Promise<SubagentConfig[]> {
+    const subagents: SubagentConfig[] = [];
     const seenNames = new Set<string>();
 
     const levelsToCheck: SubagentLevel[] = options.level
@@ -275,12 +274,6 @@ export class SubagentManager {
           case 'name':
             comparison = a.name.localeCompare(b.name);
             break;
-          case 'lastModified': {
-            const aTime = a.lastModified?.getTime() || 0;
-            const bTime = b.lastModified?.getTime() || 0;
-            comparison = aTime - bTime;
-            break;
-          }
           case 'level':
             // Project comes before user
             comparison =
@@ -302,18 +295,18 @@ export class SubagentManager {
    * Finds a subagent by name and returns its metadata.
    *
    * @param name - Name of the subagent to find
-   * @returns SubagentMetadata or null if not found
+   * @returns SubagentConfig or null if not found
    */
   async findSubagentByName(
     name: string,
     level?: SubagentLevel,
-  ): Promise<SubagentMetadata | null> {
+  ): Promise<SubagentConfig | null> {
     const config = await this.loadSubagent(name, level);
     if (!config) {
       return null;
     }
 
-    return this.configToMetadata(config);
+    return config;
   }
 
   /**
@@ -584,7 +577,7 @@ export class SubagentManager {
    */
   private async listSubagentsAtLevel(
     level: SubagentLevel,
-  ): Promise<SubagentMetadata[]> {
+  ): Promise<SubagentConfig[]> {
     const baseDir =
       level === 'project'
         ? path.join(this.projectRoot, QWEN_CONFIG_DIR, AGENT_CONFIG_DIR)
@@ -592,7 +585,7 @@ export class SubagentManager {
 
     try {
       const files = await fs.readdir(baseDir);
-      const subagents: SubagentMetadata[] = [];
+      const subagents: SubagentConfig[] = [];
 
       for (const file of files) {
         if (!file.endsWith('.md')) continue;
@@ -601,8 +594,7 @@ export class SubagentManager {
 
         try {
           const config = await this.parseSubagentFile(filePath);
-          const metadata = this.configToMetadata(config);
-          subagents.push(metadata);
+          subagents.push(config);
         } catch (error) {
           // Skip invalid files but log the error
           console.warn(
@@ -616,24 +608,6 @@ export class SubagentManager {
       // Directory doesn't exist or can't be read
       return [];
     }
-  }
-
-  /**
-   * Converts a SubagentConfig to SubagentMetadata.
-   *
-   * @param config - Full configuration
-   * @returns Metadata object
-   */
-  private configToMetadata(config: SubagentConfig): SubagentMetadata {
-    return {
-      name: config.name,
-      description: config.description,
-      tools: config.tools,
-      level: config.level,
-      filePath: config.filePath,
-      // Add file stats if available
-      lastModified: undefined, // Would need to stat the file
-    };
   }
 
   /**

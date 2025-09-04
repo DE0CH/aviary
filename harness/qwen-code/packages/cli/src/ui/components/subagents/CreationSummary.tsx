@@ -5,18 +5,12 @@
  */
 
 import { useCallback, useState, useEffect } from 'react';
-import { Box, Text, useInput, useStdin } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import { WizardStepProps } from './types.js';
-import { validateSubagentConfig } from './validation.js';
-import {
-  SubagentManager,
-  SubagentConfig,
-  EditorType,
-} from '@qwen-code/qwen-code-core';
-import { useSettings } from '../../contexts/SettingsContext.js';
-import { spawnSync } from 'child_process';
+import { SubagentManager, SubagentConfig } from '@qwen-code/qwen-code-core';
 import { theme } from '../../semantic-colors.js';
 import { shouldShowColor, getColorForDisplay } from './utils.js';
+import { useLaunchEditor } from './useLaunchEditor.js';
 
 /**
  * Step 6: Final confirmation and actions.
@@ -31,8 +25,7 @@ export function CreationSummary({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  const settings = useSettings();
-  const { stdin, setRawMode } = useStdin();
+  const launchEditor = useLaunchEditor();
 
   const truncateText = (text: string, maxLength: number): string => {
     if (text.length <= maxLength) return text;
@@ -113,19 +106,6 @@ export function CreationSummary({
 
   // Common method to save subagent configuration
   const saveSubagent = useCallback(async (): Promise<SubagentManager> => {
-    // Validate configuration before saving
-    const configToValidate = {
-      name: state.generatedName,
-      description: state.generatedDescription,
-      systemPrompt: state.generatedSystemPrompt,
-      tools: state.selectedTools,
-    };
-
-    const validation = validateSubagentConfig(configToValidate);
-    if (!validation.isValid) {
-      throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
-    }
-
     // Create SubagentManager instance
     if (!config) {
       throw new Error('Configuration not available');
@@ -190,62 +170,11 @@ export function CreationSummary({
         state.location,
       );
 
-      // Determine editor to use
-      const preferredEditor = settings.merged.preferredEditor as
-        | EditorType
-        | undefined;
-
-      let editor: string;
-      if (preferredEditor) {
-        editor = preferredEditor;
-      } else {
-        // Platform-specific defaults with UI preference for macOS
-        switch (process.platform) {
-          case 'darwin':
-            editor = 'open -t'; // TextEdit in plain text mode
-            break;
-          case 'win32':
-            editor = 'notepad';
-            break;
-          default:
-            editor = process.env['VISUAL'] || process.env['EDITOR'] || 'vi';
-            break;
-        }
-      }
-
       // Launch editor with the actual subagent file
-      const wasRaw = stdin?.isRaw ?? false;
-      try {
-        setRawMode?.(false);
+      await launchEditor(subagentFilePath);
 
-        // Handle different editor command formats
-        let editorCommand: string;
-        let editorArgs: string[];
-
-        if (editor === 'open -t') {
-          // macOS TextEdit in plain text mode
-          editorCommand = 'open';
-          editorArgs = ['-t', subagentFilePath];
-        } else {
-          // Standard editor command
-          editorCommand = editor;
-          editorArgs = [subagentFilePath];
-        }
-
-        const { status, error } = spawnSync(editorCommand, editorArgs, {
-          stdio: 'inherit',
-        });
-
-        if (error) throw error;
-        if (typeof status === 'number' && status !== 0) {
-          throw new Error(`Editor exited with status ${status}`);
-        }
-
-        // Show success UI and auto-close after successful edit
-        showSuccessAndClose();
-      } finally {
-        if (wasRaw) setRawMode?.(true);
-      }
+      // Show success UI and auto-close after successful edit
+      showSuccessAndClose();
     } catch (error) {
       setSaveError(
         `Failed to save and edit subagent: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -256,9 +185,7 @@ export function CreationSummary({
     showSuccessAndClose,
     state.generatedName,
     state.location,
-    settings.merged.preferredEditor,
-    stdin,
-    setRawMode,
+    launchEditor,
   ]);
 
   // Handle keyboard input

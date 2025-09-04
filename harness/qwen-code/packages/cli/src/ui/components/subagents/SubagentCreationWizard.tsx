@@ -194,9 +194,27 @@ export function SubagentCreationWizard({
       case WIZARD_STEPS.DESCRIPTION_INPUT:
         return <DescriptionInput {...stepProps} />;
       case WIZARD_STEPS.TOOL_SELECTION:
-        return <ToolSelector {...stepProps} />;
+        return (
+          <ToolSelector
+            tools={state.selectedTools}
+            onSelect={(tools) => {
+              dispatch({ type: 'SET_TOOLS', tools });
+              handleNext();
+            }}
+            config={config}
+          />
+        );
       case WIZARD_STEPS.COLOR_SELECTION:
-        return <ColorSelector {...stepProps} />;
+        return (
+          <ColorSelector
+            backgroundColor={state.backgroundColor}
+            agentName={state.generatedName}
+            onSelect={(color) => {
+              dispatch({ type: 'SET_BACKGROUND_COLOR', color });
+              handleNext();
+            }}
+          />
+        );
       case WIZARD_STEPS.FINAL_CONFIRMATION:
         return <CreationSummary {...stepProps} />;
       default:
@@ -208,7 +226,16 @@ export function SubagentCreationWizard({
           </Box>
         );
     }
-  }, [stepProps, state.currentStep]);
+  }, [
+    stepProps,
+    state.currentStep,
+    state.selectedTools,
+    state.backgroundColor,
+    state.generatedName,
+    config,
+    handleNext,
+    dispatch,
+  ]);
 
   return (
     <Box flexDirection="column">

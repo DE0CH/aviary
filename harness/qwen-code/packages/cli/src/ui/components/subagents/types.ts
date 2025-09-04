@@ -4,12 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  SubagentLevel,
-  SubagentConfig,
-  SubagentMetadata,
-  Config,
-} from '@qwen-code/qwen-code-core';
+import { SubagentLevel, Config } from '@qwen-code/qwen-code-core';
 
 /**
  * State management for the subagent creation wizard.
@@ -37,7 +32,7 @@ export interface CreationWizardState {
   generatedName: string;
 
   /** Selected tools for the subagent */
-  selectedTools: string[] | 'all';
+  selectedTools: string[];
 
   /** Background color for runtime display */
   backgroundColor: string;
@@ -84,7 +79,7 @@ export type WizardAction =
       description: string;
       systemPrompt: string;
     }
-  | { type: 'SET_TOOLS'; tools: string[] | 'all' }
+  | { type: 'SET_TOOLS'; tools: string[] }
   | { type: 'SET_BACKGROUND_COLOR'; color: string }
   | { type: 'SET_GENERATING'; isGenerating: boolean }
   | { type: 'SET_VALIDATION_ERRORS'; errors: string[] }
@@ -116,54 +111,20 @@ export interface WizardResult {
   backgroundColor: string;
 }
 
-/**
- * State management for the subagent management dialog.
- */
-export interface ManagementDialogState {
-  currentStep: number;
-  availableAgents: SubagentMetadata[];
-  selectedAgent: SubagentConfig | null;
-  selectedAgentIndex: number;
-  selectedAction: 'view' | 'edit' | 'delete' | null;
-  isLoading: boolean;
-  error: string | null;
-  canProceed: boolean;
-}
-
-/**
- * Actions that can be dispatched to update management dialog state.
- */
-export type ManagementAction =
-  | { type: 'SET_AVAILABLE_AGENTS'; payload: SubagentMetadata[] }
-  | { type: 'SELECT_AGENT'; payload: { agent: SubagentConfig; index: number } }
-  | { type: 'SELECT_ACTION'; payload: 'view' | 'edit' | 'delete' }
-  | { type: 'GO_TO_NEXT_STEP' }
-  | { type: 'GO_TO_PREVIOUS_STEP' }
-  | { type: 'GO_TO_STEP'; payload: number }
-  | { type: 'SET_LOADING'; payload: boolean }
-  | { type: 'SET_ERROR'; payload: string | null }
-  | { type: 'SET_CAN_PROCEED'; payload: boolean }
-  | { type: 'RESET_DIALOG' };
-
-/**
- * Props for management dialog step components.
- */
-export interface ManagementStepProps {
-  state: ManagementDialogState;
-  dispatch: React.Dispatch<ManagementAction>;
-  onNext: () => void;
-  onPrevious: () => void;
-  onCancel: () => void;
-  config: Config | null;
-}
-
-/**
- * Constants for management dialog steps.
- */
 export const MANAGEMENT_STEPS = {
-  AGENT_SELECTION: 1,
-  ACTION_SELECTION: 2,
-  AGENT_VIEWER: 3,
-  AGENT_EDITOR: 4,
-  DELETE_CONFIRMATION: 5,
+  AGENT_SELECTION: 'agent-selection',
+  ACTION_SELECTION: 'action-selection',
+  AGENT_VIEWER: 'agent-viewer',
+  EDIT_OPTIONS: 'edit-options',
+  EDIT_TOOLS: 'edit-tools',
+  EDIT_COLOR: 'edit-color',
+  DELETE_CONFIRMATION: 'delete-confirmation',
 } as const;
+
+/**
+ * Common props for step navigation.
+ */
+export interface StepNavigationProps {
+  onNavigateToStep: (step: string) => void;
+  onNavigateBack: () => void;
+}

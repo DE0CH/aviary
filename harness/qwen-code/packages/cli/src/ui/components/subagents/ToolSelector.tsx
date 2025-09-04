@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
-import { WizardStepProps, ToolCategory } from './types.js';
-import { Kind } from '@qwen-code/qwen-code-core';
+import { ToolCategory } from './types.js';
+import { Kind, Config } from '@qwen-code/qwen-code-core';
 import { Colors } from '../../colors.js';
 
 interface ToolOption {
@@ -17,20 +17,28 @@ interface ToolOption {
   category: ToolCategory;
 }
 
+interface ToolSelectorProps {
+  tools?: string[];
+  onSelect: (tools: string[]) => void;
+  config: Config | null;
+}
+
 /**
- * Step 4: Tool selection with categories.
+ * Tool selection with categories.
  */
 export function ToolSelector({
-  state: _state,
-  dispatch,
-  onNext,
-  onPrevious: _onPrevious,
+  tools = [],
+  onSelect,
   config,
-}: WizardStepProps) {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-
+}: ToolSelectorProps) {
   // Generate tool categories from actual tool registry
-  const { toolCategories, readTools, editTools, executeTools } = useMemo(() => {
+  const {
+    toolCategories,
+    readTools,
+    editTools,
+    executeTools,
+    initialCategory,
+  } = useMemo(() => {
     if (!config) {
       // Fallback categories if config not available
       return {
@@ -44,6 +52,7 @@ export function ToolSelector({
         readTools: [],
         editTools: [],
         executeTools: [],
+        initialCategory: 'all',
       };
     }
 
@@ -100,8 +109,49 @@ export function ToolSelector({
       },
     ].filter((category) => category.id === 'all' || category.tools.length > 0);
 
-    return { toolCategories, readTools, editTools, executeTools };
-  }, [config]);
+    // Determine initial category based on tools prop
+    let initialCategory = 'all'; // default to first option
+
+    if (tools.length === 0) {
+      // Empty array represents all tools
+      initialCategory = 'all';
+    } else {
+      // Try to match tools array to a category
+      const matchingCategory = toolCategories.find((category) => {
+        if (category.id === 'all') return false;
+
+        // Check if the tools array exactly matches this category's tools
+        const categoryToolsSet = new Set(category.tools);
+        const inputToolsSet = new Set(tools);
+
+        return (
+          categoryToolsSet.size === inputToolsSet.size &&
+          [...categoryToolsSet].every((tool) => inputToolsSet.has(tool))
+        );
+      });
+
+      if (matchingCategory) {
+        initialCategory = matchingCategory.id;
+      }
+      // If no exact match found, keep default 'all'
+    }
+
+    return {
+      toolCategories,
+      readTools,
+      editTools,
+      executeTools,
+      initialCategory,
+    };
+  }, [config, tools]);
+
+  const [selectedCategory, setSelectedCategory] =
+    useState<string>(initialCategory);
+
+  // Update selected category when initialCategory changes (when tools prop changes)
+  useEffect(() => {
+    setSelectedCategory(initialCategory);
+  }, [initialCategory]);
 
   const toolOptions: ToolOption[] = toolCategories.map((category) => ({
     label: category.name,
@@ -117,11 +167,10 @@ export function ToolSelector({
     const category = toolCategories.find((cat) => cat.id === selectedValue);
     if (category) {
       if (category.id === 'all') {
-        dispatch({ type: 'SET_TOOLS', tools: 'all' });
+        onSelect([]); // Empty array for 'all'
       } else {
-        dispatch({ type: 'SET_TOOLS', tools: category.tools });
+        onSelect(category.tools);
       }
-      onNext();
     }
   };
 
