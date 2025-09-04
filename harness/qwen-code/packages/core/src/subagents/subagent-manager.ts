@@ -111,12 +111,28 @@ export class SubagentManager {
 
   /**
    * Loads a subagent configuration by name.
-   * Searches project-level first, then user-level.
+   * If level is specified, only searches that level.
+   * If level is omitted, searches project-level first, then user-level.
    *
    * @param name - Name of the subagent to load
+   * @param level - Optional level to limit search to specific level
    * @returns SubagentConfig or null if not found
    */
-  async loadSubagent(name: string): Promise<SubagentConfig | null> {
+  async loadSubagent(
+    name: string,
+    level?: SubagentLevel,
+  ): Promise<SubagentConfig | null> {
+    if (level) {
+      // Search only the specified level
+      const path = this.getSubagentPath(name, level);
+      try {
+        const config = await this.parseSubagentFile(path);
+        return config;
+      } catch (_error) {
+        return null;
+      }
+    }
+
     // Try project level first
     const projectPath = this.getSubagentPath(name, 'project');
     try {
@@ -147,8 +163,9 @@ export class SubagentManager {
   async updateSubagent(
     name: string,
     updates: Partial<SubagentConfig>,
+    level?: SubagentLevel,
   ): Promise<void> {
-    const existing = await this.loadSubagent(name);
+    const existing = await this.loadSubagent(name, level);
     if (!existing) {
       throw new SubagentError(
         `Subagent "${name}" not found`,
@@ -287,8 +304,11 @@ export class SubagentManager {
    * @param name - Name of the subagent to find
    * @returns SubagentMetadata or null if not found
    */
-  async findSubagentByName(name: string): Promise<SubagentMetadata | null> {
-    const config = await this.loadSubagent(name);
+  async findSubagentByName(
+    name: string,
+    level?: SubagentLevel,
+  ): Promise<SubagentMetadata | null> {
+    const config = await this.loadSubagent(name, level);
     if (!config) {
       return null;
     }
@@ -361,6 +381,9 @@ export class SubagentManager {
       const runConfig = frontmatter['runConfig'] as
         | Record<string, unknown>
         | undefined;
+      const backgroundColor = frontmatter['backgroundColor'] as
+        | string
+        | undefined;
 
       // Determine level from file path
       // Project level paths contain the project root, user level paths are in home directory
@@ -382,6 +405,7 @@ export class SubagentManager {
         runConfig: runConfig as Partial<
           import('../core/subagent.js').RunConfig
         >,
+        backgroundColor,
       };
 
       // Validate the parsed configuration
@@ -422,6 +446,10 @@ export class SubagentManager {
 
     if (config.runConfig) {
       frontmatter['runConfig'] = config.runConfig;
+    }
+
+    if (config.backgroundColor && config.backgroundColor !== 'auto') {
+      frontmatter['backgroundColor'] = config.backgroundColor;
     }
 
     // Serialize to YAML
@@ -616,7 +644,7 @@ export class SubagentManager {
    * @returns True if name is available
    */
   async isNameAvailable(name: string, level?: SubagentLevel): Promise<boolean> {
-    const existing = await this.loadSubagent(name);
+    const existing = await this.loadSubagent(name, level);
 
     if (!existing) {
       return true; // Name is available

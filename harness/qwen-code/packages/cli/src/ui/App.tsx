@@ -25,6 +25,7 @@ import { useFolderTrust } from './hooks/useFolderTrust.js';
 import { useEditorSettings } from './hooks/useEditorSettings.js';
 import { useSlashCommandProcessor } from './hooks/slashCommandProcessor.js';
 import { useSubagentCreateDialog } from './hooks/useSubagentCreateDialog.js';
+import { useAgentsManagerDialog } from './hooks/useAgentsManagerDialog.js';
 import { useAutoAcceptIndicator } from './hooks/useAutoAcceptIndicator.js';
 import { useMessageQueue } from './hooks/useMessageQueue.js';
 import { useConsoleMessages } from './hooks/useConsoleMessages.js';
@@ -42,7 +43,10 @@ import { EditorSettingsDialog } from './components/EditorSettingsDialog.js';
 import { FolderTrustDialog } from './components/FolderTrustDialog.js';
 import { ShellConfirmationDialog } from './components/ShellConfirmationDialog.js';
 import { RadioButtonSelect } from './components/shared/RadioButtonSelect.js';
-import { SubagentCreationWizard } from './components/subagents/SubagentCreationWizard.js';
+import {
+  SubagentCreationWizard,
+  AgentsManagerDialog,
+} from './components/subagents/index.js';
 import { Colors } from './colors.js';
 import { loadHierarchicalGeminiMemory } from '../config/config.js';
 import { LoadedSettings, SettingScope } from '../config/settings.js';
@@ -276,6 +280,12 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     openSubagentCreateDialog,
     closeSubagentCreateDialog,
   } = useSubagentCreateDialog();
+
+  const {
+    isAgentsManagerDialogOpen,
+    openAgentsManagerDialog,
+    closeAgentsManagerDialog,
+  } = useAgentsManagerDialog();
 
   const { isFolderTrustDialogOpen, handleFolderTrustSelect } = useFolderTrust(
     settings,
@@ -574,6 +584,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     openPrivacyNotice,
     openSettingsDialog,
     openSubagentCreateDialog,
+    openAgentsManagerDialog,
     toggleVimEnabled,
     setIsProcessing,
     setGeminiMdFileCount,
@@ -1084,6 +1095,13 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
             <Box flexDirection="column">
               <SubagentCreationWizard
                 onClose={closeSubagentCreateDialog}
+                config={config}
+              />
+            </Box>
+          ) : isAgentsManagerDialogOpen ? (
+            <Box flexDirection="column">
+              <AgentsManagerDialog
+                onClose={closeAgentsManagerDialog}
                 config={config}
               />
             </Box>

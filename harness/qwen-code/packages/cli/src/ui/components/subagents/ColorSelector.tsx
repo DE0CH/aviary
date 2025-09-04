@@ -8,44 +8,9 @@ import { Box, Text } from 'ink';
 import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
 import { WizardStepProps, ColorOption } from './types.js';
 import { Colors } from '../../colors.js';
+import { COLOR_OPTIONS } from './constants.js';
 
-const colorOptions: ColorOption[] = [
-  {
-    id: 'auto',
-    name: 'Automatic Color',
-    value: 'auto',
-  },
-  {
-    id: 'blue',
-    name: 'Blue',
-    value: '#3b82f6',
-  },
-  {
-    id: 'green',
-    name: 'Green',
-    value: '#10b981',
-  },
-  {
-    id: 'purple',
-    name: 'Purple',
-    value: '#8b5cf6',
-  },
-  {
-    id: 'orange',
-    name: 'Orange',
-    value: '#f59e0b',
-  },
-  {
-    id: 'red',
-    name: 'Red',
-    value: '#ef4444',
-  },
-  {
-    id: 'cyan',
-    name: 'Cyan',
-    value: '#06b6d4',
-  },
-];
+const colorOptions: ColorOption[] = COLOR_OPTIONS;
 
 /**
  * Step 5: Background color selection with preview.
@@ -65,12 +30,12 @@ export function ColorSelector({
       (option) => option.id === selectedValue,
     );
     if (colorOption) {
-      dispatch({ type: 'SET_BACKGROUND_COLOR', color: colorOption.value });
+      dispatch({ type: 'SET_BACKGROUND_COLOR', color: colorOption.name });
     }
   };
 
   const currentColor =
-    colorOptions.find((option) => option.value === state.backgroundColor) ||
+    colorOptions.find((option) => option.name === state.backgroundColor) ||
     colorOptions[0];
 
   return (
@@ -92,8 +57,8 @@ export function ColorSelector({
 
       <Box flexDirection="row">
         <Text color={Colors.Gray}>Preview:</Text>
-        <Box marginLeft={2}>
-          <Text color={currentColor.value}>{state.generatedName}</Text>
+        <Box marginLeft={2} backgroundColor={currentColor.value}>
+          <Text color="black">{` ${state.generatedName} `}</Text>
         </Box>
       </Box>
     </Box>

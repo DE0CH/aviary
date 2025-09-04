@@ -6,14 +6,13 @@
 
 import { useReducer, useCallback, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { wizardReducer, initialWizardState } from './wizardReducer.js';
+import { wizardReducer, initialWizardState } from './reducers.js';
 import { LocationSelector } from './LocationSelector.js';
 import { GenerationMethodSelector } from './GenerationMethodSelector.js';
 import { DescriptionInput } from './DescriptionInput.js';
 import { ToolSelector } from './ToolSelector.js';
 import { ColorSelector } from './ColorSelector.js';
 import { CreationSummary } from './CreationSummary.js';
-import { ErrorBoundary } from './ErrorBoundary.js';
 import { WizardStepProps } from './types.js';
 import { WIZARD_STEPS } from './constants.js';
 import { Config } from '@qwen-code/qwen-code-core';
@@ -113,9 +112,9 @@ export function SubagentCreationWizard({
     }
 
     return (
-      <Box borderStyle="single" borderColor="yellow" padding={1}>
+      <Box borderStyle="single" borderColor={theme.status.warning} padding={1}>
         <Box flexDirection="column">
-          <Text color="yellow" bold>
+          <Text color={theme.status.warning} bold>
             Debug Info:
           </Text>
           <Text color={Colors.Gray}>Step: {state.currentStep}</Text>
@@ -128,7 +127,9 @@ export function SubagentCreationWizard({
           <Text color={Colors.Gray}>Location: {state.location}</Text>
           <Text color={Colors.Gray}>Method: {state.generationMethod}</Text>
           {state.validationErrors.length > 0 && (
-            <Text color="red">Errors: {state.validationErrors.join(', ')}</Text>
+            <Text color={theme.status.error}>
+              Errors: {state.validationErrors.join(', ')}
+            </Text>
           )}
         </Box>
       </Box>
@@ -201,35 +202,30 @@ export function SubagentCreationWizard({
       default:
         return (
           <Box>
-            <Text color="red">Invalid step: {state.currentStep}</Text>
+            <Text color={theme.status.error}>
+              Invalid step: {state.currentStep}
+            </Text>
           </Box>
         );
     }
   }, [stepProps, state.currentStep]);
 
   return (
-    <ErrorBoundary
-      onError={(error, errorInfo) => {
-        // Additional error handling if needed
-        console.error('Subagent wizard error:', error, errorInfo);
-      }}
-    >
-      <Box flexDirection="column">
-        {/* Main content wrapped in bounding box */}
-        <Box
-          borderStyle="single"
-          borderColor={Colors.Gray}
-          flexDirection="column"
-          padding={1}
-          width="100%"
-          gap={1}
-        >
-          {renderStepHeader()}
-          {renderStepContent()}
-          {renderDebugContent()}
-          {renderStepFooter()}
-        </Box>
+    <Box flexDirection="column">
+      {/* Main content wrapped in bounding box */}
+      <Box
+        borderStyle="single"
+        borderColor={Colors.Gray}
+        flexDirection="column"
+        padding={1}
+        width="100%"
+        gap={1}
+      >
+        {renderStepHeader()}
+        {renderStepContent()}
+        {renderDebugContent()}
+        {renderStepFooter()}
       </Box>
-    </ErrorBoundary>
+    </Box>
   );
 }

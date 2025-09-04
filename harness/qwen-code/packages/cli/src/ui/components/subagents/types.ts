@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SubagentLevel, Config } from '@qwen-code/qwen-code-core';
+import {
+  SubagentLevel,
+  SubagentConfig,
+  SubagentMetadata,
+  Config,
+} from '@qwen-code/qwen-code-core';
 
 /**
  * State management for the subagent creation wizard.
@@ -110,3 +115,55 @@ export interface WizardResult {
   tools?: string[];
   backgroundColor: string;
 }
+
+/**
+ * State management for the subagent management dialog.
+ */
+export interface ManagementDialogState {
+  currentStep: number;
+  availableAgents: SubagentMetadata[];
+  selectedAgent: SubagentConfig | null;
+  selectedAgentIndex: number;
+  selectedAction: 'view' | 'edit' | 'delete' | null;
+  isLoading: boolean;
+  error: string | null;
+  canProceed: boolean;
+}
+
+/**
+ * Actions that can be dispatched to update management dialog state.
+ */
+export type ManagementAction =
+  | { type: 'SET_AVAILABLE_AGENTS'; payload: SubagentMetadata[] }
+  | { type: 'SELECT_AGENT'; payload: { agent: SubagentConfig; index: number } }
+  | { type: 'SELECT_ACTION'; payload: 'view' | 'edit' | 'delete' }
+  | { type: 'GO_TO_NEXT_STEP' }
+  | { type: 'GO_TO_PREVIOUS_STEP' }
+  | { type: 'GO_TO_STEP'; payload: number }
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'SET_ERROR'; payload: string | null }
+  | { type: 'SET_CAN_PROCEED'; payload: boolean }
+  | { type: 'RESET_DIALOG' };
+
+/**
+ * Props for management dialog step components.
+ */
+export interface ManagementStepProps {
+  state: ManagementDialogState;
+  dispatch: React.Dispatch<ManagementAction>;
+  onNext: () => void;
+  onPrevious: () => void;
+  onCancel: () => void;
+  config: Config | null;
+}
+
+/**
+ * Constants for management dialog steps.
+ */
+export const MANAGEMENT_STEPS = {
+  AGENT_SELECTION: 1,
+  ACTION_SELECTION: 2,
+  AGENT_VIEWER: 3,
+  AGENT_EDITOR: 4,
+  DELETE_CONFIRMATION: 5,
+} as const;

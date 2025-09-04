@@ -302,7 +302,7 @@ export function DescriptionInput({
           {state.validationErrors.length > 0 && (
             <Box flexDirection="column">
               {state.validationErrors.map((error, index) => (
-                <Text key={index} color="red">
+                <Text key={index} color={theme.status.error}>
                   ⚠ {error}
                 </Text>
               ))}

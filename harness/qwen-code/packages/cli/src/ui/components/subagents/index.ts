@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Creation Wizard Components
 export { SubagentCreationWizard } from './SubagentCreationWizard.js';
 export { LocationSelector } from './LocationSelector.js';
 export { GenerationMethodSelector } from './GenerationMethodSelector.js';
@@ -12,6 +13,13 @@ export { ToolSelector } from './ToolSelector.js';
 export { ColorSelector } from './ColorSelector.js';
 export { CreationSummary } from './CreationSummary.js';
 
+// Management Dialog Components
+export { AgentsManagerDialog } from './AgentsManagerDialog.js';
+export { AgentSelectionStep } from './AgentSelectionStep.js';
+export { ActionSelectionStep } from './ActionSelectionStep.js';
+export { AgentViewerStep } from './AgentViewerStep.js';
+
+// Creation Wizard Types and State
 export type {
   CreationWizardState,
   WizardAction,
@@ -21,4 +29,17 @@ export type {
   ColorOption,
 } from './types.js';
 
-export { wizardReducer, initialWizardState } from './wizardReducer.js';
+export { wizardReducer, initialWizardState } from './reducers.js';
+
+// Management Dialog Types and State
+export type {
+  ManagementDialogState,
+  ManagementAction,
+  ManagementStepProps,
+} from './types.js';
+
+export {
+  managementReducer,
+  initialManagementState,
+  MANAGEMENT_STEPS,
+} from './reducers.js';

@@ -59,6 +59,12 @@ export interface SubagentConfig {
    * Can specify max_time_minutes and max_turns.
    */
   runConfig?: Partial<RunConfig>;
+
+  /**
+   * Optional background color for runtime display.
+   * If 'auto' or omitted, uses automatic color assignment.
+   */
+  backgroundColor?: string;
 }
 
 /**

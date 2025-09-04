@@ -145,6 +145,7 @@ describe('useSlashCommandProcessor', () => {
         vi.fn(), // openPrivacyNotice
         vi.fn(), // openSettingsDialog
         vi.fn(), // openSubagentCreateDialog
+        vi.fn(), // openAgentsManagerDialog
         vi.fn(), // toggleVimEnabled
         setIsProcessing,
         vi.fn(), // setGeminiMdFileCount
@@ -898,6 +899,7 @@ describe('useSlashCommandProcessor', () => {
           vi.fn(), // openPrivacyNotice
           vi.fn(), // openSettingsDialog
           vi.fn(), // openSubagentCreateDialog
+          vi.fn(), // openAgentsManagerDialog
           vi.fn(), // toggleVimEnabled
           vi.fn(), // setIsProcessing
           vi.fn(), // setGeminiMdFileCount

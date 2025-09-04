@@ -16,6 +16,7 @@ import {
 import { useSettings } from '../../contexts/SettingsContext.js';
 import { spawnSync } from 'child_process';
 import { theme } from '../../semantic-colors.js';
+import { shouldShowColor, getColorForDisplay } from './utils.js';
 
 /**
  * Step 6: Final confirmation and actions.
@@ -47,8 +48,7 @@ export function CreationSummary({
 
       try {
         // Get project root from config
-        const projectRoot = config.getProjectRoot();
-        const subagentManager = new SubagentManager(projectRoot);
+        const subagentManager = config.getSubagentManager();
 
         // Check for name conflicts
         const isAvailable = await subagentManager.isNameAvailable(
@@ -130,8 +130,7 @@ export function CreationSummary({
     if (!config) {
       throw new Error('Configuration not available');
     }
-    const projectRoot = config.getProjectRoot();
-    const subagentManager = new SubagentManager(projectRoot);
+    const subagentManager = config.getSubagentManager();
 
     // Build subagent configuration
     const subagentConfig: SubagentConfig = {
@@ -143,6 +142,7 @@ export function CreationSummary({
       tools: Array.isArray(state.selectedTools)
         ? state.selectedTools
         : undefined,
+      backgroundColor: state.backgroundColor,
     };
 
     // Create the subagent
@@ -316,6 +316,15 @@ export function CreationSummary({
           <Text>{toolsDisplay}</Text>
         </Box>
 
+        {shouldShowColor(state.backgroundColor) && (
+          <Box>
+            <Text bold>Color: </Text>
+            <Box backgroundColor={getColorForDisplay(state.backgroundColor)}>
+              <Text color="black">{` ${state.generatedName} `}</Text>
+            </Box>
+          </Box>
+        )}
+
         <Box marginTop={1}>
           <Text bold>Description:</Text>
         </Box>
@@ -337,11 +346,11 @@ export function CreationSummary({
 
       {saveError && (
         <Box flexDirection="column">
-          <Text bold color="red">
+          <Text bold color={theme.status.error}>
             ❌ Error saving subagent:
           </Text>
           <Box flexDirection="column" padding={1} paddingBottom={0}>
-            <Text color="red" wrap="wrap">
+            <Text color={theme.status.error} wrap="wrap">
               {saveError}
             </Text>
           </Box>
