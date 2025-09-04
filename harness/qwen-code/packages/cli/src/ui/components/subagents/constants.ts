@@ -30,10 +30,3 @@ export const STEP_NAMES: Record<number, string> = {
   [WIZARD_STEPS.COLOR_SELECTION]: 'Color Selection',
   [WIZARD_STEPS.FINAL_CONFIRMATION]: 'Final Confirmation',
 };
-
-// UI constants
-export const UI = {
-  AUTO_CLOSE_DELAY_MS: 2000,
-  PROGRESS_BAR_FILLED: '█',
-  PROGRESS_BAR_EMPTY: '░',
-} as const;

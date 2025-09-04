@@ -539,7 +539,7 @@ export class SubagentManager {
    * @param level - Storage level
    * @returns Absolute file path
    */
-  private getSubagentPath(name: string, level: SubagentLevel): string {
+  getSubagentPath(name: string, level: SubagentLevel): string {
     const baseDir =
       level === 'project'
         ? path.join(this.projectRoot, QWEN_CONFIG_DIR, AGENT_CONFIG_DIR)

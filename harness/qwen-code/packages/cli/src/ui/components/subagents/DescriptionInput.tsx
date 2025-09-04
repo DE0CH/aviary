@@ -30,17 +30,22 @@ export function DescriptionInput({
   const [inputWidth] = useState(80); // Fixed width for now
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const buffer = useTextBuffer({
-    initialText: state.userDescription || '',
-    viewport: { height: 10, width: inputWidth },
-    isValidPath: () => false, // For subagent description, we don't need file path validation
-    onChange: (text) => {
+  const handleTextChange = useCallback(
+    (text: string) => {
       const sanitized = sanitizeInput(text);
       dispatch({
         type: 'SET_USER_DESCRIPTION',
         description: sanitized,
       });
     },
+    [dispatch],
+  );
+
+  const buffer = useTextBuffer({
+    initialText: state.userDescription || '',
+    viewport: { height: 10, width: inputWidth },
+    isValidPath: () => false, // For subagent description, we don't need file path validation
+    onChange: handleTextChange,
   });
 
   const handleGenerate = useCallback(
