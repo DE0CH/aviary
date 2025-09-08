@@ -28,6 +28,7 @@ import {
   GEMINI_CONFIG_DIR as GEMINI_DIR,
 } from '../tools/memoryTool.js';
 import { TodoWriteTool } from '../tools/todoWrite.js';
+import { TaskTool } from '../tools/task.js';
 import { WebSearchTool } from '../tools/web-search.js';
 import { GeminiClient } from '../core/client.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
@@ -237,6 +238,7 @@ export interface ConfigParameters {
 export class Config {
   private toolRegistry!: ToolRegistry;
   private promptRegistry!: PromptRegistry;
+  private subagentManager!: SubagentManager;
   private sessionId: string;
   private fileSystemService: FileSystemService;
   private contentGeneratorConfig!: ContentGeneratorConfig;
@@ -317,7 +319,6 @@ export class Config {
   private readonly shouldUseNodePtyShell: boolean;
   private readonly skipNextSpeakerCheck: boolean;
   private initialized: boolean = false;
-  private subagentManager: SubagentManager | null = null;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -427,6 +428,7 @@ export class Config {
       await this.getGitService();
     }
     this.promptRegistry = new PromptRegistry();
+    this.subagentManager = new SubagentManager(this);
     this.toolRegistry = await this.createToolRegistry();
   }
 
@@ -868,9 +870,6 @@ export class Config {
   }
 
   getSubagentManager(): SubagentManager {
-    if (!this.subagentManager) {
-      this.subagentManager = new SubagentManager(this.targetDir);
-    }
     return this.subagentManager;
   }
 
@@ -910,6 +909,7 @@ export class Config {
       }
     };
 
+    registerCoreTool(TaskTool, this);
     registerCoreTool(LSTool, this);
     registerCoreTool(ReadFileTool, this);
     registerCoreTool(GrepTool, this);

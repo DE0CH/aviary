@@ -4,21 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { SubagentValidator } from './validation.js';
 import { SubagentConfig, SubagentError } from './types.js';
-import { ToolRegistry } from '../tools/tool-registry.js';
 
 describe('SubagentValidator', () => {
   let validator: SubagentValidator;
-  let mockToolRegistry: ToolRegistry;
 
   beforeEach(() => {
-    mockToolRegistry = {
-      getTool: vi.fn(),
-    } as unknown as ToolRegistry;
-
-    validator = new SubagentValidator(mockToolRegistry);
+    validator = new SubagentValidator();
   });
 
   describe('validateName', () => {
@@ -191,9 +185,6 @@ describe('SubagentValidator', () => {
 
   describe('validateTools', () => {
     it('should accept valid tool arrays', () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.mocked(mockToolRegistry.getTool).mockReturnValue({} as any);
-
       const result = validator.validateTools(['read_file', 'write_file']);
       expect(result.isValid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -215,9 +206,6 @@ describe('SubagentValidator', () => {
     });
 
     it('should warn about duplicate tools', () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.mocked(mockToolRegistry.getTool).mockReturnValue({} as any);
-
       const result = validator.validateTools([
         'read_file',
         'read_file',
@@ -242,16 +230,6 @@ describe('SubagentValidator', () => {
       const result = validator.validateTools(['', 'read_file']);
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Tool name cannot be empty');
-    });
-
-    it('should reject unknown tools when registry is available', () => {
-      vi.mocked(mockToolRegistry.getTool).mockReturnValue(undefined);
-
-      const result = validator.validateTools(['unknown_tool']);
-      expect(result.isValid).toBe(false);
-      expect(result.errors).toContain(
-        'Tool "unknown_tool" not found in tool registry',
-      );
     });
   });
 

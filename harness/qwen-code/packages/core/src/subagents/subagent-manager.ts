@@ -29,9 +29,8 @@ import {
   ModelConfig,
   RunConfig,
   ToolConfig,
-} from '../core/subagent.js';
+} from './subagent.js';
 import { Config } from '../config/config.js';
-import { ToolRegistry } from '../tools/tool-registry.js';
 
 const QWEN_CONFIG_DIR = '.qwen';
 const AGENT_CONFIG_DIR = 'agents';
@@ -43,11 +42,8 @@ const AGENT_CONFIG_DIR = 'agents';
 export class SubagentManager {
   private readonly validator: SubagentValidator;
 
-  constructor(
-    private readonly projectRoot: string,
-    private readonly toolRegistry?: ToolRegistry,
-  ) {
-    this.validator = new SubagentValidator(toolRegistry);
+  constructor(private readonly config: Config) {
+    this.validator = new SubagentValidator();
   }
 
   /**
@@ -61,7 +57,6 @@ export class SubagentManager {
     config: SubagentConfig,
     options: CreateSubagentOptions,
   ): Promise<void> {
-    // Validate the configuration
     this.validator.validateOrThrow(config);
 
     // Determine file path
@@ -381,7 +376,7 @@ export class SubagentManager {
       // Determine level from file path
       // Project level paths contain the project root, user level paths are in home directory
       const isProjectLevel =
-        filePath.includes(this.projectRoot) &&
+        filePath.includes(this.config.getProjectRoot()) &&
         filePath.includes(`/${QWEN_CONFIG_DIR}/${AGENT_CONFIG_DIR}/`);
       const level: SubagentLevel = isProjectLevel ? 'project' : 'user';
 
@@ -393,11 +388,9 @@ export class SubagentManager {
         level,
         filePath,
         modelConfig: modelConfig as Partial<
-          import('../core/subagent.js').ModelConfig
+          import('./subagent.js').ModelConfig
         >,
-        runConfig: runConfig as Partial<
-          import('../core/subagent.js').RunConfig
-        >,
+        runConfig: runConfig as Partial<import('./subagent.js').RunConfig>,
         backgroundColor,
       };
 
@@ -433,6 +426,8 @@ export class SubagentManager {
       frontmatter['tools'] = config.tools;
     }
 
+    // No outputs section
+
     if (config.modelConfig) {
       frontmatter['modelConfig'] = config.modelConfig;
     }
@@ -465,6 +460,10 @@ export class SubagentManager {
   async createSubagentScope(
     config: SubagentConfig,
     runtimeContext: Config,
+    options?: {
+      eventEmitter?: import('./subagent-events.js').SubAgentEventEmitter;
+      hooks?: import('./subagent-hooks.js').SubagentHooks;
+    },
   ): Promise<SubAgentScope> {
     try {
       const runtimeConfig = this.convertToRuntimeConfig(config);
@@ -476,6 +475,8 @@ export class SubagentManager {
         runtimeConfig.modelConfig,
         runtimeConfig.runConfig,
         runtimeConfig.toolConfig,
+        options?.eventEmitter,
+        options?.hooks,
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -515,8 +516,10 @@ export class SubagentManager {
     // Build tool configuration if tools are specified
     let toolConfig: ToolConfig | undefined;
     if (config.tools && config.tools.length > 0) {
+      // Transform tools array to ensure all entries are tool names (not display names)
+      const toolNames = this.transformToToolNames(config.tools);
       toolConfig = {
-        tools: config.tools,
+        tools: toolNames,
       };
     }
 
@@ -526,6 +529,53 @@ export class SubagentManager {
       runConfig,
       toolConfig,
     };
+  }
+
+  /**
+   * Transforms a tools array that may contain tool names or display names
+   * into an array containing only tool names.
+   *
+   * @param tools - Array of tool names or display names
+   * @returns Array of tool names
+   * @private
+   */
+  private transformToToolNames(tools: string[]): string[] {
+    const toolRegistry = this.config.getToolRegistry();
+    if (!toolRegistry) {
+      return tools;
+    }
+
+    const allTools = toolRegistry.getAllTools();
+
+    const result: string[] = [];
+    for (const toolIdentifier of tools) {
+      // First, try to find an exact match by tool name (highest priority)
+      const exactNameMatch = allTools.find(
+        (tool) => tool.name === toolIdentifier,
+      );
+      if (exactNameMatch) {
+        result.push(exactNameMatch.name);
+        continue;
+      }
+
+      // If no exact name match, try to find by display name
+      const displayNameMatch = allTools.find(
+        (tool) => tool.displayName === toolIdentifier,
+      );
+      if (displayNameMatch) {
+        result.push(displayNameMatch.name);
+        continue;
+      }
+
+      // If no match found, preserve the original identifier as-is
+      // This allows for tools that might not be registered yet or custom tools
+      result.push(toolIdentifier);
+      console.warn(
+        `Tool "${toolIdentifier}" not found in tool registry, preserving as-is`,
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -563,7 +613,11 @@ export class SubagentManager {
   getSubagentPath(name: string, level: SubagentLevel): string {
     const baseDir =
       level === 'project'
-        ? path.join(this.projectRoot, QWEN_CONFIG_DIR, AGENT_CONFIG_DIR)
+        ? path.join(
+            this.config.getProjectRoot(),
+            QWEN_CONFIG_DIR,
+            AGENT_CONFIG_DIR,
+          )
         : path.join(os.homedir(), QWEN_CONFIG_DIR, AGENT_CONFIG_DIR);
 
     return path.join(baseDir, `${name}.md`);
@@ -580,7 +634,11 @@ export class SubagentManager {
   ): Promise<SubagentConfig[]> {
     const baseDir =
       level === 'project'
-        ? path.join(this.projectRoot, QWEN_CONFIG_DIR, AGENT_CONFIG_DIR)
+        ? path.join(
+            this.config.getProjectRoot(),
+            QWEN_CONFIG_DIR,
+            AGENT_CONFIG_DIR,
+          )
         : path.join(os.homedir(), QWEN_CONFIG_DIR, AGENT_CONFIG_DIR);
 
     try {
@@ -629,21 +687,5 @@ export class SubagentManager {
     }
 
     return false; // Name is already in use
-  }
-
-  /**
-   * Gets available tools from the tool registry.
-   * Useful for validation and UI purposes.
-   *
-   * @returns Array of available tool names
-   */
-  getAvailableTools(): string[] {
-    if (!this.toolRegistry) {
-      return [];
-    }
-
-    // This would need to be implemented in ToolRegistry
-    // For now, return empty array
-    return [];
   }
 }

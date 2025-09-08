@@ -73,7 +73,7 @@ export type ExecutingToolCall = {
   request: ToolCallRequestInfo;
   tool: AnyDeclarativeTool;
   invocation: AnyToolInvocation;
-  liveOutput?: string;
+  liveOutput?: ToolResultDisplay;
   startTime?: number;
   outcome?: ToolConfirmationOutcome;
 };
@@ -120,7 +120,7 @@ export type ConfirmHandler = (
 
 export type OutputUpdateHandler = (
   toolCallId: string,
-  outputChunk: string,
+  outputChunk: ToolResultDisplay,
 ) => void;
 
 export type AllToolCallsCompleteHandler = (
@@ -818,7 +818,7 @@ export class CoreToolScheduler {
 
         const liveOutputCallback =
           scheduledCall.tool.canUpdateOutput && this.outputUpdateHandler
-            ? (outputChunk: string) => {
+            ? (outputChunk: ToolResultDisplay) => {
                 if (this.outputUpdateHandler) {
                   this.outputUpdateHandler(callId, outputChunk);
                 }

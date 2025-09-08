@@ -13,7 +13,11 @@ import { MarkdownDisplay } from '../../utils/MarkdownDisplay.js';
 import { GeminiRespondingSpinner } from '../GeminiRespondingSpinner.js';
 import { MaxSizedBox } from '../shared/MaxSizedBox.js';
 import { TodoDisplay } from '../TodoDisplay.js';
-import { TodoResultDisplay } from '@qwen-code/qwen-code-core';
+import {
+  TodoResultDisplay,
+  TaskResultDisplay,
+} from '@qwen-code/qwen-code-core';
+import { SubagentExecutionDisplay } from '../subagents/index.js';
 
 const STATIC_HEIGHT = 1;
 const RESERVED_LINE_COUNT = 5; // for tool name, status, padding etc.
@@ -29,7 +33,8 @@ type DisplayRendererResult =
   | { type: 'none' }
   | { type: 'todo'; data: TodoResultDisplay }
   | { type: 'string'; data: string }
-  | { type: 'diff'; data: { fileDiff: string; fileName: string } };
+  | { type: 'diff'; data: { fileDiff: string; fileName: string } }
+  | { type: 'subagent_execution'; data: TaskResultDisplay };
 
 /**
  * Custom hook to determine the type of result display and return appropriate rendering info
@@ -52,6 +57,19 @@ const useResultDisplayRenderer = (
       return {
         type: 'todo',
         data: resultDisplay as TodoResultDisplay,
+      };
+    }
+
+    // Check for SubagentExecutionResultDisplay (for non-task tools)
+    if (
+      typeof resultDisplay === 'object' &&
+      resultDisplay !== null &&
+      'type' in resultDisplay &&
+      resultDisplay.type === 'subagent_execution'
+    ) {
+      return {
+        type: 'subagent_execution',
+        data: resultDisplay as TaskResultDisplay,
       };
     }
 
@@ -80,6 +98,15 @@ const useResultDisplayRenderer = (
 const TodoResultRenderer: React.FC<{ data: TodoResultDisplay }> = ({
   data,
 }) => <TodoDisplay todos={data.todos} />;
+
+/**
+ * Component to render subagent execution results
+ */
+const SubagentExecutionRenderer: React.FC<{
+  data: TaskResultDisplay;
+  availableHeight?: number;
+  childWidth: number;
+}> = ({ data }) => <SubagentExecutionDisplay data={data} />;
 
 /**
  * Component to render string results (markdown or plain text)
@@ -188,6 +215,13 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           <Box flexDirection="column">
             {displayRenderer.type === 'todo' && (
               <TodoResultRenderer data={displayRenderer.data} />
+            )}
+            {displayRenderer.type === 'subagent_execution' && (
+              <SubagentExecutionRenderer
+                data={displayRenderer.data}
+                availableHeight={availableHeight}
+                childWidth={childWidth}
+              />
             )}
             {displayRenderer.type === 'string' && (
               <StringResultRenderer

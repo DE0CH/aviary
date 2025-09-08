@@ -47,6 +47,19 @@ export type {
   ToolConfig,
   SubagentTerminateMode,
   OutputObject,
-} from '../core/subagent.js';
+} from './subagent.js';
 
-export { SubAgentScope } from '../core/subagent.js';
+export { SubAgentScope } from './subagent.js';
+
+// Event system for UI integration
+export type {
+  SubAgentEvent,
+  SubAgentStartEvent,
+  SubAgentFinishEvent,
+  SubAgentRoundEvent,
+  SubAgentToolCallEvent,
+  SubAgentToolResultEvent,
+  SubAgentModelTextEvent,
+} from './subagent-events.js';
+
+export { SubAgentEventEmitter } from './subagent-events.js';

@@ -12,14 +12,13 @@ import {
   PromptConfig,
   ModelConfig,
   RunConfig,
-  OutputConfig,
   ToolConfig,
 } from './subagent.js';
 import { Config, ConfigParameters } from '../config/config.js';
-import { GeminiChat } from './geminiChat.js';
-import { createContentGenerator } from './contentGenerator.js';
+import { GeminiChat } from '../core/geminiChat.js';
+import { createContentGenerator } from '../core/contentGenerator.js';
 import { getEnvironmentContext } from '../utils/environmentContext.js';
-import { executeToolCall } from './nonInteractiveToolExecutor.js';
+import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
 import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
 import {
@@ -31,10 +30,10 @@ import {
 } from '@google/genai';
 import { ToolErrorType } from '../tools/tool-error.js';
 
-vi.mock('./geminiChat.js');
-vi.mock('./contentGenerator.js');
+vi.mock('../core/geminiChat.js');
+vi.mock('../core/contentGenerator.js');
 vi.mock('../utils/environmentContext.js');
-vi.mock('./nonInteractiveToolExecutor.js');
+vi.mock('../core/nonInteractiveToolExecutor.js');
 vi.mock('../ide/ide-client.js');
 
 async function createMockConfig(
@@ -55,6 +54,7 @@ async function createMockConfig(
   // Mock ToolRegistry
   const mockToolRegistry = {
     getTool: vi.fn(),
+    getFunctionDeclarations: vi.fn().mockReturnValue([]),
     getFunctionDeclarationsFiltered: vi.fn().mockReturnValue([]),
     ...toolRegistryMocks,
   } as unknown as ToolRegistry;
@@ -74,11 +74,27 @@ const createMockStream = (
     return (async function* () {
       if (response === 'stop') {
         // When stopping, the model might return text, but the subagent logic primarily cares about the absence of functionCalls.
-        yield { text: 'Done.' };
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'Done.' }],
+              },
+            },
+          ],
+        };
       } else if (response.length > 0) {
         yield { functionCalls: response };
       } else {
-        yield { text: 'Done.' }; // Handle empty array also as stop
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'Done.' }],
+              },
+            },
+          ],
+        }; // Handle empty array also as stop
       }
     })();
   });
@@ -134,6 +150,15 @@ describe('subagent.ts', () => {
             sendMessageStream: mockSendMessageStream,
           }) as unknown as GeminiChat,
       );
+
+      // Default mock for executeToolCall
+      vi.mocked(executeToolCall).mockResolvedValue({
+        callId: 'default-call',
+        responseParts: 'default response',
+        resultDisplay: 'Default tool result',
+        error: undefined,
+        errorType: undefined,
+      });
     });
 
     afterEach(() => {
@@ -329,45 +354,6 @@ describe('subagent.ts', () => {
         ]);
       });
 
-      it('should include output instructions in the system prompt when outputs are defined', async () => {
-        const { config } = await createMockConfig();
-        vi.mocked(GeminiChat).mockClear();
-
-        const promptConfig: PromptConfig = { systemPrompt: 'Do the task.' };
-        const outputConfig: OutputConfig = {
-          outputs: {
-            result1: 'The first result',
-          },
-        };
-        const context = new ContextState();
-
-        // Model stops immediately
-        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          undefined, // ToolConfig
-          outputConfig,
-        );
-
-        await scope.runNonInteractive(context);
-
-        const generationConfig = getGenerationConfigFromMock();
-        const systemInstruction = generationConfig.systemInstruction as string;
-
-        expect(systemInstruction).toContain('Do the task.');
-        expect(systemInstruction).toContain(
-          'you MUST emit the required output variables',
-        );
-        expect(systemInstruction).toContain(
-          "Use 'self.emitvalue' to emit the 'result1' key",
-        );
-      });
-
       it('should use initialMessages instead of systemPrompt if provided', async () => {
         const { config } = await createMockConfig();
         vi.mocked(GeminiChat).mockClear();
@@ -473,7 +459,7 @@ describe('subagent.ts', () => {
         await scope.runNonInteractive(new ContextState());
 
         expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({});
+        expect(scope.output.result).toBe('Done.');
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
         // Check the initial message
         expect(mockSendMessageStream.mock.calls[0][0].message).toEqual([
@@ -481,28 +467,11 @@ describe('subagent.ts', () => {
         ]);
       });
 
-      it('should handle self.emitvalue and terminate with GOAL when outputs are met', async () => {
+      it('should terminate with GOAL when model provides final text', async () => {
         const { config } = await createMockConfig();
-        const outputConfig: OutputConfig = {
-          outputs: { result: 'The final result' },
-        };
 
-        // Turn 1: Model responds with emitvalue call
-        // Turn 2: Model stops after receiving the tool response
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            [
-              {
-                name: 'self.emitvalue',
-                args: {
-                  emit_variable_name: 'result',
-                  emit_variable_value: 'Success!',
-                },
-              },
-            ],
-            'stop',
-          ]),
-        );
+        // Model stops immediately with text response
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
 
         const scope = await SubAgentScope.create(
           'test-agent',
@@ -510,21 +479,13 @@ describe('subagent.ts', () => {
           promptConfig,
           defaultModelConfig,
           defaultRunConfig,
-          undefined,
-          outputConfig,
         );
 
         await scope.runNonInteractive(new ContextState());
 
         expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({ result: 'Success!' });
-        expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
-
-        // Check the tool response sent back in the second call
-        const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-        expect(secondCallArgs.message).toEqual([
-          { text: 'Emitted variable result successfully' },
-        ]);
+        expect(scope.output.result).toBe('Done.');
+        expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
       });
 
       it('should execute external tools and provide the response to the model', async () => {
@@ -640,59 +601,6 @@ describe('subagent.ts', () => {
           },
         ]);
       });
-
-      it('should nudge the model if it stops before emitting all required variables', async () => {
-        const { config } = await createMockConfig();
-        const outputConfig: OutputConfig = {
-          outputs: { required_var: 'Must be present' },
-        };
-
-        // Turn 1: Model stops prematurely
-        // Turn 2: Model responds to the nudge and emits the variable
-        // Turn 3: Model stops
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            'stop',
-            [
-              {
-                name: 'self.emitvalue',
-                args: {
-                  emit_variable_name: 'required_var',
-                  emit_variable_value: 'Here it is',
-                },
-              },
-            ],
-            'stop',
-          ]),
-        );
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          undefined,
-          outputConfig,
-        );
-
-        await scope.runNonInteractive(new ContextState());
-
-        // Check the nudge message sent in Turn 2
-        const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-
-        // We check that the message contains the required variable name and the nudge phrasing.
-        expect(secondCallArgs.message[0].text).toContain('required_var');
-        expect(secondCallArgs.message[0].text).toContain(
-          'You have stopped calling tools',
-        );
-
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({
-          required_var: 'Here it is',
-        });
-        expect(mockSendMessageStream).toHaveBeenCalledTimes(3);
-      });
     });
 
     describe('runNonInteractive - Termination and Recovery', () => {
@@ -702,26 +610,26 @@ describe('subagent.ts', () => {
         const { config } = await createMockConfig();
         const runConfig: RunConfig = { ...defaultRunConfig, max_turns: 2 };
 
-        // Model keeps looping by calling emitvalue repeatedly
+        // Model keeps calling tools repeatedly
         mockSendMessageStream.mockImplementation(
           createMockStream([
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v1' },
+                name: 'list_files',
+                args: { path: '/test' },
               },
             ],
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v2' },
+                name: 'list_files',
+                args: { path: '/test2' },
               },
             ],
             // This turn should not happen
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v3' },
+                name: 'list_files',
+                args: { path: '/test3' },
               },
             ],
           ]),

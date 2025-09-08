@@ -50,7 +50,7 @@ export interface ToolInvocation<
    */
   execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult>;
 }
 
@@ -78,7 +78,7 @@ export abstract class BaseToolInvocation<
 
   abstract execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult>;
 }
 
@@ -196,7 +196,7 @@ export abstract class DeclarativeTool<
   async buildAndExecute(
     params: TParams,
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult> {
     const invocation = this.build(params);
     return invocation.execute(signal, updateOutput);
@@ -421,7 +421,31 @@ export function hasCycleInSchema(schema: object): boolean {
   return traverse(schema, new Set<string>(), new Set<string>());
 }
 
-export type ToolResultDisplay = string | FileDiff | TodoResultDisplay;
+export interface TaskResultDisplay {
+  type: 'subagent_execution';
+  subagentName: string;
+  taskDescription: string;
+  status: 'running' | 'completed' | 'failed';
+  terminateReason?: string;
+  result?: string;
+  executionSummary?: string;
+  progress?: {
+    toolCalls?: Array<{
+      name: string;
+      status: 'executing' | 'success' | 'failed';
+      error?: string;
+      args?: Record<string, unknown>;
+      result?: string;
+      returnDisplay?: string;
+    }>;
+  };
+}
+
+export type ToolResultDisplay =
+  | string
+  | FileDiff
+  | TodoResultDisplay
+  | TaskResultDisplay;
 
 export interface FileDiff {
   fileDiff: string;

@@ -6,9 +6,9 @@
 
 import { reportError } from '../utils/errorReporting.js';
 import { Config } from '../config/config.js';
-import { ToolCallRequestInfo } from './turn.js';
-import { executeToolCall } from './nonInteractiveToolExecutor.js';
-import { createContentGenerator } from './contentGenerator.js';
+import { ToolCallRequestInfo } from '../core/turn.js';
+import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
+import { createContentGenerator } from '../core/contentGenerator.js';
 import { getEnvironmentContext } from '../utils/environmentContext.js';
 import {
   Content,
@@ -16,9 +16,15 @@ import {
   FunctionCall,
   GenerateContentConfig,
   FunctionDeclaration,
-  Type,
+  GenerateContentResponseUsageMetadata,
 } from '@google/genai';
-import { GeminiChat } from './geminiChat.js';
+import { GeminiChat } from '../core/geminiChat.js';
+import { SubAgentEventEmitter } from './subagent-events.js';
+import { formatCompact, formatDetailed } from './subagent-result-format.js';
+import { SubagentStatistics } from './subagent-statistics.js';
+import { SubagentHooks } from './subagent-hooks.js';
+import { logSubagentExecution } from '../telemetry/loggers.js';
+import { SubagentExecutionEvent } from '../telemetry/types.js';
 
 /**
  * @fileoverview Defines the configuration interfaces for a subagent.
@@ -26,6 +32,19 @@ import { GeminiChat } from './geminiChat.js';
  * These interfaces specify the structure for defining the subagent's prompt,
  * the model parameters, and the execution settings.
  */
+
+interface ExecutionStats {
+  startTimeMs: number;
+  totalDurationMs: number;
+  rounds: number;
+  totalToolCalls: number;
+  successfulToolCalls: number;
+  failedToolCalls: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  estimatedCost?: number;
+}
 
 /**
  * Describes the possible termination modes for a subagent.
@@ -53,14 +72,14 @@ export enum SubagentTerminateMode {
 /**
  * Represents the output structure of a subagent's execution.
  * This interface defines the data that a subagent will return upon completion,
- * including any emitted variables and the reason for its termination.
+ * including the final result and the reason for its termination.
  */
 export interface OutputObject {
   /**
-   * A record of key-value pairs representing variables emitted by the subagent
-   * during its execution. These variables can be used by the calling agent.
+   * The final result text returned by the subagent upon completion.
+   * This contains the direct output from the model's final response.
    */
-  emitted_vars: Record<string, string>;
+  result: string;
   /**
    * The reason for the subagent's termination, indicating whether it completed
    * successfully, timed out, or encountered an error.
@@ -94,17 +113,6 @@ export interface ToolConfig {
    * that the subagent is permitted to use.
    */
   tools: Array<string | FunctionDeclaration>;
-}
-
-/**
- * Configures the expected outputs for the subagent.
- */
-export interface OutputConfig {
-  /**
-   * A record describing the variables the subagent is expected to emit.
-   * The subagent will be prompted to generate these values before terminating.
-   */
-  outputs: Record<string, string>;
 }
 
 /**
@@ -232,8 +240,35 @@ function templateString(template: string, context: ContextState): string {
 export class SubAgentScope {
   output: OutputObject = {
     terminate_reason: SubagentTerminateMode.ERROR,
-    emitted_vars: {},
+    result: '',
   };
+  executionStats: ExecutionStats = {
+    startTimeMs: 0,
+    totalDurationMs: 0,
+    rounds: 0,
+    totalToolCalls: 0,
+    successfulToolCalls: 0,
+    failedToolCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCost: 0,
+  };
+  private toolUsage = new Map<
+    string,
+    {
+      count: number;
+      success: number;
+      failure: number;
+      lastError?: string;
+      totalDurationMs?: number;
+      averageDurationMs?: number;
+    }
+  >();
+  private eventEmitter?: SubAgentEventEmitter;
+  private finalText: string = '';
+  private readonly stats = new SubagentStatistics();
+  private hooks?: SubagentHooks;
   private readonly subagentId: string;
 
   /**
@@ -244,7 +279,6 @@ export class SubAgentScope {
    * @param modelConfig - Configuration for the generative model parameters.
    * @param runConfig - Configuration for the subagent's execution environment.
    * @param toolConfig - Optional configuration for tools available to the subagent.
-   * @param outputConfig - Optional configuration for the subagent's expected outputs.
    */
   private constructor(
     readonly name: string,
@@ -253,10 +287,13 @@ export class SubAgentScope {
     private readonly modelConfig: ModelConfig,
     private readonly runConfig: RunConfig,
     private readonly toolConfig?: ToolConfig,
-    private readonly outputConfig?: OutputConfig,
+    eventEmitter?: SubAgentEventEmitter,
+    hooks?: SubagentHooks,
   ) {
     const randomPart = Math.random().toString(36).slice(2, 8);
     this.subagentId = `${this.name}-${randomPart}`;
+    this.eventEmitter = eventEmitter;
+    this.hooks = hooks;
   }
 
   /**
@@ -269,7 +306,6 @@ export class SubAgentScope {
    * @param {ModelConfig} modelConfig - Configuration for the generative model parameters.
    * @param {RunConfig} runConfig - Configuration for the subagent's execution environment.
    * @param {ToolConfig} [toolConfig] - Optional configuration for tools.
-   * @param {OutputConfig} [outputConfig] - Optional configuration for expected outputs.
    * @returns {Promise<SubAgentScope>} A promise that resolves to a valid SubAgentScope instance.
    * @throws {Error} If any tool requires user confirmation.
    */
@@ -280,43 +316,60 @@ export class SubAgentScope {
     modelConfig: ModelConfig,
     runConfig: RunConfig,
     toolConfig?: ToolConfig,
-    outputConfig?: OutputConfig,
+    eventEmitter?: SubAgentEventEmitter,
+    hooks?: SubagentHooks,
   ): Promise<SubAgentScope> {
-    if (toolConfig) {
+    // Validate tools for non-interactive use
+    if (toolConfig?.tools) {
       const toolRegistry = runtimeContext.getToolRegistry();
-      const toolsToLoad: string[] = [];
-      for (const tool of toolConfig.tools) {
-        if (typeof tool === 'string') {
-          toolsToLoad.push(tool);
+
+      for (const toolItem of toolConfig.tools) {
+        if (typeof toolItem !== 'string') {
+          continue; // Skip inline function declarations
         }
-      }
+        const tool = toolRegistry.getTool(toolItem);
+        if (!tool) {
+          continue; // Skip unknown tools
+        }
 
-      for (const toolName of toolsToLoad) {
-        const tool = toolRegistry.getTool(toolName);
-        if (tool) {
-          const requiredParams = tool.schema.parameters?.required ?? [];
-          if (requiredParams.length > 0) {
-            // This check is imperfect. A tool might require parameters but still
-            // be interactive (e.g., `delete_file(path)`). However, we cannot
-            // build a generic invocation without knowing what dummy parameters
-            // to provide. Crashing here because `build({})` fails is worse
-            // than allowing a potential hang later if an interactive tool is
-            // used. This is a best-effort check.
-            console.warn(
-              `Cannot check tool "${toolName}" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.`,
-            );
-            continue;
-          }
+        // Check if tool has required parameters
+        const hasRequiredParams =
+          tool.schema?.parameters?.required &&
+          Array.isArray(tool.schema.parameters.required) &&
+          tool.schema.parameters.required.length > 0;
 
-          const invocation = tool.build({});
-          const confirmationDetails = await invocation.shouldConfirmExecute(
+        if (hasRequiredParams) {
+          // Can't check interactivity without parameters, log warning and continue
+          console.warn(
+            `Cannot check tool "${toolItem}" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.`,
+          );
+          continue;
+        }
+
+        // Try to build the tool to check if it requires confirmation
+        try {
+          const toolInstance = tool.build({});
+          const confirmationDetails = await toolInstance.shouldConfirmExecute(
             new AbortController().signal,
           );
+
           if (confirmationDetails) {
             throw new Error(
-              `Tool "${toolName}" requires user confirmation and cannot be used in a non-interactive subagent.`,
+              `Tool "${toolItem}" requires user confirmation and cannot be used in a non-interactive subagent.`,
             );
           }
+        } catch (error) {
+          // If we can't build the tool, assume it's safe
+          if (
+            error instanceof Error &&
+            error.message.includes('requires user confirmation')
+          ) {
+            throw error; // Re-throw confirmation errors
+          }
+          // For other build errors, log warning and continue
+          console.warn(
+            `Cannot check tool "${toolItem}" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.`,
+          );
         }
       }
     }
@@ -328,7 +381,8 @@ export class SubAgentScope {
       modelConfig,
       runConfig,
       toolConfig,
-      outputConfig,
+      eventEmitter,
+      hooks,
     );
   }
 
@@ -339,7 +393,10 @@ export class SubAgentScope {
    * @param {ContextState} context - The current context state containing variables for prompt templating.
    * @returns {Promise<void>} A promise that resolves when the subagent has completed its execution.
    */
-  async runNonInteractive(context: ContextState): Promise<void> {
+  async runNonInteractive(
+    context: ContextState,
+    externalSignal?: AbortSignal,
+  ): Promise<void> {
     const chat = await this.createChatObject(context);
 
     if (!chat) {
@@ -348,35 +405,64 @@ export class SubAgentScope {
     }
 
     const abortController = new AbortController();
+    const onAbort = () => abortController.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) abortController.abort();
+      externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
     const toolRegistry = this.runtimeContext.getToolRegistry();
 
     // Prepare the list of tools available to the subagent.
+    // If no explicit toolConfig or it contains "*" or is empty, inherit all tools.
     const toolsList: FunctionDeclaration[] = [];
     if (this.toolConfig) {
-      const toolsToLoad: string[] = [];
-      for (const tool of this.toolConfig.tools) {
-        if (typeof tool === 'string') {
-          toolsToLoad.push(tool);
-        } else {
-          toolsList.push(tool);
-        }
-      }
-      toolsList.push(
-        ...toolRegistry.getFunctionDeclarationsFiltered(toolsToLoad),
+      const asStrings = this.toolConfig.tools.filter(
+        (t): t is string => typeof t === 'string',
       );
-    }
-    // Add local scope functions if outputs are expected.
-    if (this.outputConfig && this.outputConfig.outputs) {
-      toolsList.push(...this.getScopeLocalFuncDefs());
+      const hasWildcard = asStrings.includes('*');
+      const onlyInlineDecls = this.toolConfig.tools.filter(
+        (t): t is FunctionDeclaration => typeof t !== 'string',
+      );
+
+      if (hasWildcard || asStrings.length === 0) {
+        toolsList.push(...toolRegistry.getFunctionDeclarations());
+      } else {
+        toolsList.push(
+          ...toolRegistry.getFunctionDeclarationsFiltered(asStrings),
+        );
+      }
+      toolsList.push(...onlyInlineDecls);
+    } else {
+      // Inherit all available tools by default when not specified.
+      toolsList.push(...toolRegistry.getFunctionDeclarations());
     }
 
+    const initialTaskText = String(
+      (context.get('task_prompt') as string) ?? 'Get Started!',
+    );
     let currentMessages: Content[] = [
-      { role: 'user', parts: [{ text: 'Get Started!' }] },
+      { role: 'user', parts: [{ text: initialTaskText }] },
     ];
 
     const startTime = Date.now();
+    this.executionStats.startTimeMs = startTime;
+    this.stats.start(startTime);
     let turnCounter = 0;
     try {
+      // Emit start event
+      this.eventEmitter?.emit('start', {
+        subagentId: this.subagentId,
+        name: this.name,
+        model: this.modelConfig.model,
+        tools: (this.toolConfig?.tools || ['*']).map((t) =>
+          typeof t === 'string' ? t : t.name,
+        ),
+        timestamp: Date.now(),
+      });
+
+      // Log telemetry for subagent start
+      const startEvent = new SubagentExecutionEvent(this.name, 'started');
+      logSubagentExecution(this.runtimeContext, startEvent);
       while (true) {
         // Check termination conditions.
         if (
@@ -408,12 +494,37 @@ export class SubAgentScope {
           messageParams,
           promptId,
         );
+        this.eventEmitter?.emit('round_start', {
+          subagentId: this.subagentId,
+          round: turnCounter,
+          promptId,
+          timestamp: Date.now(),
+        });
 
         const functionCalls: FunctionCall[] = [];
+        let roundText = '';
+        let lastUsage: GenerateContentResponseUsageMetadata | undefined =
+          undefined;
         for await (const resp of responseStream) {
           if (abortController.signal.aborted) return;
           if (resp.functionCalls) functionCalls.push(...resp.functionCalls);
+          const content = resp.candidates?.[0]?.content;
+          const parts = content?.parts || [];
+          for (const p of parts) {
+            const txt = (p as Part & { text?: string }).text;
+            if (txt) roundText += txt;
+            if (txt)
+              this.eventEmitter?.emit('model_text', {
+                subagentId: this.subagentId,
+                round: turnCounter,
+                text: txt,
+                timestamp: Date.now(),
+              });
+          }
+          if (resp.usageMetadata) lastUsage = resp.usageMetadata;
         }
+        this.executionStats.rounds = turnCounter;
+        this.stats.setRounds(turnCounter);
 
         durationMin = (Date.now() - startTime) / (1000 * 60);
         if (
@@ -424,6 +535,31 @@ export class SubAgentScope {
           break;
         }
 
+        // Update token usage if available
+        if (lastUsage) {
+          const inTok = Number(lastUsage.promptTokenCount || 0);
+          const outTok = Number(lastUsage.candidatesTokenCount || 0);
+          if (isFinite(inTok) || isFinite(outTok)) {
+            this.stats.recordTokens(
+              isFinite(inTok) ? inTok : 0,
+              isFinite(outTok) ? outTok : 0,
+            );
+            // mirror legacy fields for compatibility
+            this.executionStats.inputTokens =
+              (this.executionStats.inputTokens || 0) +
+              (isFinite(inTok) ? inTok : 0);
+            this.executionStats.outputTokens =
+              (this.executionStats.outputTokens || 0) +
+              (isFinite(outTok) ? outTok : 0);
+            this.executionStats.totalTokens =
+              (this.executionStats.inputTokens || 0) +
+              (this.executionStats.outputTokens || 0);
+            this.executionStats.estimatedCost =
+              (this.executionStats.inputTokens || 0) * 3e-5 +
+              (this.executionStats.outputTokens || 0) * 6e-5;
+          }
+        }
+
         if (functionCalls.length > 0) {
           currentMessages = await this.processFunctionCalls(
             functionCalls,
@@ -431,42 +567,90 @@ export class SubAgentScope {
             promptId,
           );
         } else {
-          // Model stopped calling tools. Check if goal is met.
-          if (
-            !this.outputConfig ||
-            Object.keys(this.outputConfig.outputs).length === 0
-          ) {
+          // No tool calls — treat this as the model's final answer.
+          if (roundText && roundText.trim().length > 0) {
+            this.finalText = roundText.trim();
+            this.output.result = this.finalText;
             this.output.terminate_reason = SubagentTerminateMode.GOAL;
             break;
           }
-
-          const remainingVars = Object.keys(this.outputConfig.outputs).filter(
-            (key) => !(key in this.output.emitted_vars),
-          );
-
-          if (remainingVars.length === 0) {
-            this.output.terminate_reason = SubagentTerminateMode.GOAL;
-            break;
-          }
-
-          const nudgeMessage = `You have stopped calling tools but have not emitted the following required variables: ${remainingVars.join(
-            ', ',
-          )}. Please use the 'self.emitvalue' tool to emit them now, or continue working if necessary.`;
-
-          console.debug(nudgeMessage);
-
+          // Otherwise, nudge the model to finalize a result.
           currentMessages = [
             {
               role: 'user',
-              parts: [{ text: nudgeMessage }],
+              parts: [
+                {
+                  text: 'Please provide the final result now and stop calling tools.',
+                },
+              ],
             },
           ];
         }
+        this.eventEmitter?.emit('round_end', {
+          subagentId: this.subagentId,
+          round: turnCounter,
+          promptId,
+          timestamp: Date.now(),
+        });
       }
     } catch (error) {
       console.error('Error during subagent execution:', error);
       this.output.terminate_reason = SubagentTerminateMode.ERROR;
+      this.eventEmitter?.emit('error', {
+        subagentId: this.subagentId,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: Date.now(),
+      });
+
+      // Log telemetry for subagent error
+      const errorEvent = new SubagentExecutionEvent(this.name, 'failed', {
+        terminate_reason: SubagentTerminateMode.ERROR,
+        result: error instanceof Error ? error.message : String(error),
+      });
+      logSubagentExecution(this.runtimeContext, errorEvent);
+
       throw error;
+    } finally {
+      if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+      this.executionStats.totalDurationMs = Date.now() - startTime;
+      const summary = this.stats.getSummary(Date.now());
+      this.eventEmitter?.emit('finish', {
+        subagentId: this.subagentId,
+        terminate_reason: this.output.terminate_reason,
+        timestamp: Date.now(),
+        rounds: summary.rounds,
+        totalDurationMs: summary.totalDurationMs,
+        totalToolCalls: summary.totalToolCalls,
+        successfulToolCalls: summary.successfulToolCalls,
+        failedToolCalls: summary.failedToolCalls,
+        inputTokens: summary.inputTokens,
+        outputTokens: summary.outputTokens,
+        totalTokens: summary.totalTokens,
+      });
+
+      // Log telemetry for subagent completion
+      const completionEvent = new SubagentExecutionEvent(
+        this.name,
+        this.output.terminate_reason === SubagentTerminateMode.GOAL
+          ? 'completed'
+          : 'failed',
+        {
+          terminate_reason: this.output.terminate_reason,
+          result: this.finalText,
+          execution_summary: this.formatCompactResult(
+            'Subagent execution completed',
+          ),
+        },
+      );
+      logSubagentExecution(this.runtimeContext, completionEvent);
+
+      await this.hooks?.onStop?.({
+        subagentId: this.subagentId,
+        name: this.name,
+        terminateReason: this.output.terminate_reason,
+        summary: summary as unknown as Record<string, unknown>,
+        timestamp: Date.now(),
+      });
     }
   }
 
@@ -489,6 +673,7 @@ export class SubAgentScope {
     const toolResponseParts: Part[] = [];
 
     for (const functionCall of functionCalls) {
+      const toolName = String(functionCall.name || 'unknown');
       const callId = functionCall.id ?? `${functionCall.name}-${Date.now()}`;
       const requestInfo: ToolCallRequestInfo = {
         callId,
@@ -498,27 +683,111 @@ export class SubAgentScope {
         prompt_id: promptId,
       };
 
-      let toolResponse;
-
-      // Handle scope-local tools first.
-      if (functionCall.name === 'self.emitvalue') {
-        const valName = String(requestInfo.args['emit_variable_name']);
-        const valVal = String(requestInfo.args['emit_variable_value']);
-        this.output.emitted_vars[valName] = valVal;
-
-        toolResponse = {
-          callId,
-          responseParts: `Emitted variable ${valName} successfully`,
-          resultDisplay: `Emitted variable ${valName} successfully`,
-          error: undefined,
-        };
+      // Execute tools with timing and hooks
+      const start = Date.now();
+      await this.hooks?.preToolUse?.({
+        subagentId: this.subagentId,
+        name: this.name,
+        toolName,
+        args: requestInfo.args,
+        timestamp: Date.now(),
+      });
+      const toolResponse = await executeToolCall(
+        this.runtimeContext,
+        requestInfo,
+        abortController.signal,
+      );
+      const duration = Date.now() - start;
+      // Update tool call stats
+      this.executionStats.totalToolCalls += 1;
+      if (toolResponse.error) {
+        this.executionStats.failedToolCalls += 1;
       } else {
-        toolResponse = await executeToolCall(
-          this.runtimeContext,
-          requestInfo,
-          abortController.signal,
-        );
+        this.executionStats.successfulToolCalls += 1;
       }
+
+      // Update per-tool usage
+      const tu = this.toolUsage.get(toolName) || {
+        count: 0,
+        success: 0,
+        failure: 0,
+        totalDurationMs: 0,
+        averageDurationMs: 0,
+      };
+      tu.count += 1;
+      if (toolResponse?.error) {
+        tu.failure += 1;
+        const disp =
+          typeof toolResponse.resultDisplay === 'string'
+            ? toolResponse.resultDisplay
+            : toolResponse.resultDisplay
+              ? JSON.stringify(toolResponse.resultDisplay)
+              : undefined;
+        tu.lastError = disp || toolResponse.error?.message || 'Unknown error';
+      } else {
+        tu.success += 1;
+      }
+      if (typeof tu.totalDurationMs === 'number') {
+        tu.totalDurationMs += duration;
+        tu.averageDurationMs =
+          tu.count > 0 ? tu.totalDurationMs / tu.count : tu.totalDurationMs;
+      } else {
+        tu.totalDurationMs = duration;
+        tu.averageDurationMs = duration;
+      }
+      this.toolUsage.set(toolName, tu);
+
+      // Emit tool call/result events
+      this.eventEmitter?.emit('tool_call', {
+        subagentId: this.subagentId,
+        round: this.executionStats.rounds,
+        callId,
+        name: toolName,
+        args: requestInfo.args,
+        timestamp: Date.now(),
+      });
+      this.eventEmitter?.emit('tool_result', {
+        subagentId: this.subagentId,
+        round: this.executionStats.rounds,
+        callId,
+        name: toolName,
+        success: !toolResponse?.error,
+        error: toolResponse?.error
+          ? typeof toolResponse.resultDisplay === 'string'
+            ? toolResponse.resultDisplay
+            : toolResponse.resultDisplay
+              ? JSON.stringify(toolResponse.resultDisplay)
+              : toolResponse.error.message
+          : undefined,
+        durationMs: duration,
+        timestamp: Date.now(),
+      });
+
+      // Update statistics service
+      this.stats.recordToolCall(
+        toolName,
+        !toolResponse?.error,
+        duration,
+        this.toolUsage.get(toolName)?.lastError,
+      );
+
+      // post-tool hook
+      await this.hooks?.postToolUse?.({
+        subagentId: this.subagentId,
+        name: this.name,
+        toolName,
+        args: requestInfo.args,
+        success: !toolResponse?.error,
+        durationMs: duration,
+        errorMessage: toolResponse?.error
+          ? typeof toolResponse.resultDisplay === 'string'
+            ? toolResponse.resultDisplay
+            : toolResponse.resultDisplay
+              ? JSON.stringify(toolResponse.resultDisplay)
+              : toolResponse.error.message
+          : undefined,
+        timestamp: Date.now(),
+      });
 
       if (toolResponse.error) {
         console.error(
@@ -547,6 +816,65 @@ export class SubAgentScope {
     }
 
     return [{ role: 'user', parts: toolResponseParts }];
+  }
+
+  getEventEmitter() {
+    return this.eventEmitter;
+  }
+
+  getStatistics() {
+    const total = this.executionStats.totalToolCalls;
+    const successRate =
+      total > 0 ? (this.executionStats.successfulToolCalls / total) * 100 : 0;
+    return {
+      ...this.executionStats,
+      successRate,
+      toolUsage: Array.from(this.toolUsage.entries()).map(([name, v]) => ({
+        name,
+        ...v,
+      })),
+    };
+  }
+
+  formatCompactResult(taskDesc: string, _useColors = false) {
+    const stats = this.getStatistics();
+    return formatCompact(
+      {
+        rounds: stats.rounds,
+        totalDurationMs: stats.totalDurationMs,
+        totalToolCalls: stats.totalToolCalls,
+        successfulToolCalls: stats.successfulToolCalls,
+        failedToolCalls: stats.failedToolCalls,
+        successRate: stats.successRate,
+        inputTokens: this.executionStats.inputTokens,
+        outputTokens: this.executionStats.outputTokens,
+        totalTokens: this.executionStats.totalTokens,
+      },
+      taskDesc,
+    );
+  }
+
+  getFinalText(): string {
+    return this.finalText;
+  }
+
+  formatDetailedResult(taskDesc: string) {
+    const stats = this.getStatistics();
+    return formatDetailed(
+      {
+        rounds: stats.rounds,
+        totalDurationMs: stats.totalDurationMs,
+        totalToolCalls: stats.totalToolCalls,
+        successfulToolCalls: stats.successfulToolCalls,
+        failedToolCalls: stats.failedToolCalls,
+        successRate: stats.successRate,
+        inputTokens: this.executionStats.inputTokens,
+        outputTokens: this.executionStats.outputTokens,
+        totalTokens: this.executionStats.totalTokens,
+        toolUsage: stats.toolUsage,
+      },
+      taskDesc,
+    );
   }
 
   private async createChatObject(context: ContextState) {
@@ -616,43 +944,6 @@ export class SubAgentScope {
     }
   }
 
-  /**
-   * Returns an array of FunctionDeclaration objects for tools that are local to the subagent's scope.
-   * Currently, this includes the `self.emitvalue` tool for emitting variables.
-   * @returns An array of `FunctionDeclaration` objects.
-   */
-  private getScopeLocalFuncDefs() {
-    const emitValueTool: FunctionDeclaration = {
-      name: 'self.emitvalue',
-      description: `* This tool emits A SINGLE return value from this execution, such that it can be collected and presented to the calling function.
-        * You can only emit ONE VALUE each time you call this tool. You are expected to call this tool MULTIPLE TIMES if you have MULTIPLE OUTPUTS.`,
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          emit_variable_name: {
-            description: 'This is the name of the variable to be returned.',
-            type: Type.STRING,
-          },
-          emit_variable_value: {
-            description:
-              'This is the _value_ to be returned for this variable.',
-            type: Type.STRING,
-          },
-        },
-        required: ['emit_variable_name', 'emit_variable_value'],
-      },
-    };
-
-    return [emitValueTool];
-  }
-
-  /**
-   * Builds the system prompt for the chat based on the provided configurations.
-   * It templates the base system prompt and appends instructions for emitting
-   * variables if an `OutputConfig` is provided.
-   * @param {ContextState} context - The context for templating.
-   * @returns {string} The complete system prompt.
-   */
   private buildChatSystemPrompt(context: ContextState): string {
     if (!this.promptConfig.systemPrompt) {
       // This should ideally be caught in createChatObject, but serves as a safeguard.
@@ -661,23 +952,13 @@ export class SubAgentScope {
 
     let finalPrompt = templateString(this.promptConfig.systemPrompt, context);
 
-    // Add instructions for emitting variables if needed.
-    if (this.outputConfig && this.outputConfig.outputs) {
-      let outputInstructions =
-        '\n\nAfter you have achieved all other goals, you MUST emit the required output variables. For each expected output, make one final call to the `self.emitvalue` tool.';
-
-      for (const [key, value] of Object.entries(this.outputConfig.outputs)) {
-        outputInstructions += `\n* Use 'self.emitvalue' to emit the '${key}' key, with a value described as: '${value}'`;
-      }
-      finalPrompt += outputInstructions;
-    }
-
     // Add general non-interactive instructions.
     finalPrompt += `
 
 Important Rules:
- * You are running in a non-interactive mode. You CANNOT ask the user for input or clarification. You must proceed with the information you have.
- * Once you believe all goals have been met and all required outputs have been emitted, stop calling tools.`;
+ - You operate in non-interactive mode: do not ask the user questions; proceed with available context.
+ - Use tools only when necessary to obtain facts or make changes.
+ - When the task is complete, return the final result as a normal model response (not a tool call) and stop.`;
 
     return finalPrompt;
   }

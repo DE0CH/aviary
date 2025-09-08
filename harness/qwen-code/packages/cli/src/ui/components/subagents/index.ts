@@ -20,6 +20,9 @@ export { ActionSelectionStep } from './ActionSelectionStep.js';
 export { AgentViewerStep } from './AgentViewerStep.js';
 export { AgentDeleteStep } from './AgentDeleteStep.js';
 
+// Execution Display Components
+export { SubagentExecutionDisplay } from './SubagentExecutionDisplay.js';
+
 // Creation Wizard Types and State
 export type {
   CreationWizardState,

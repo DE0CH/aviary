@@ -11,6 +11,8 @@ import * as os from 'os';
 import { SubagentManager } from './subagent-manager.js';
 import { SubagentConfig, SubagentError } from './types.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
+import { Config } from '../config/config.js';
+import { makeFakeConfig } from '../test-utils/config.js';
 
 // Mock file system operations
 vi.mock('fs/promises');
@@ -36,15 +38,30 @@ vi.mock('./validation.js', () => ({
   },
 }));
 
-vi.mock('../core/subagent.js');
+vi.mock('./subagent.js');
 
 describe('SubagentManager', () => {
   let manager: SubagentManager;
   let mockToolRegistry: ToolRegistry;
-  const projectRoot = '/test/project';
+  let mockConfig: Config;
 
   beforeEach(() => {
-    mockToolRegistry = {} as ToolRegistry;
+    mockToolRegistry = {
+      getAllTools: vi.fn().mockReturnValue([
+        { name: 'read_file', displayName: 'Read File' },
+        { name: 'write_file', displayName: 'Write File' },
+        { name: 'grep', displayName: 'Search Files' },
+      ]),
+    } as unknown as ToolRegistry;
+
+    // Create mock Config object using test utility
+    mockConfig = makeFakeConfig({
+      sessionId: 'test-session-id',
+    });
+
+    // Mock the tool registry and project root methods
+    vi.spyOn(mockConfig, 'getToolRegistry').mockReturnValue(mockToolRegistry);
+    vi.spyOn(mockConfig, 'getProjectRoot').mockReturnValue('/test/project');
 
     // Mock os.homedir
     vi.mocked(os.homedir).mockReturnValue('/home/user');
@@ -134,7 +151,7 @@ describe('SubagentManager', () => {
       return yaml.trim();
     });
 
-    manager = new SubagentManager(projectRoot, mockToolRegistry);
+    manager = new SubagentManager(mockConfig);
   });
 
   afterEach(() => {
@@ -736,6 +753,25 @@ System prompt 3`);
         expect(runtimeConfig.toolConfig!.tools).toEqual([
           'read_file',
           'write_file',
+        ]);
+      });
+
+      it('should transform display names to tool names in tool configuration', () => {
+        const configWithDisplayNames: SubagentConfig = {
+          ...validConfig,
+          tools: ['Read File', 'write_file', 'Search Files', 'unknown_tool'],
+        };
+
+        const runtimeConfig = manager.convertToRuntimeConfig(
+          configWithDisplayNames,
+        );
+
+        expect(runtimeConfig.toolConfig).toBeDefined();
+        expect(runtimeConfig.toolConfig!.tools).toEqual([
+          'read_file', // 'Read File' -> 'read_file' (display name match)
+          'write_file', // 'write_file' -> 'write_file' (exact name match)
+          'grep', // 'Search Files' -> 'grep' (display name match)
+          'unknown_tool', // 'unknown_tool' -> 'unknown_tool' (preserved as-is)
         ]);
       });
 

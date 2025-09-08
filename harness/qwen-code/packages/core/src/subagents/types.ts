@@ -9,7 +9,7 @@ import {
   ModelConfig,
   RunConfig,
   ToolConfig,
-} from '../core/subagent.js';
+} from './subagent.js';
 
 /**
  * Represents the storage level for a subagent configuration.

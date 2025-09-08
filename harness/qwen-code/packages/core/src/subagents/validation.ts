@@ -10,15 +10,12 @@ import {
   SubagentError,
   SubagentErrorCode,
 } from './types.js';
-import { ToolRegistry } from '../tools/tool-registry.js';
 
 /**
  * Validates subagent configurations to ensure they are well-formed
  * and compatible with the runtime system.
  */
 export class SubagentValidator {
-  constructor(private readonly toolRegistry?: ToolRegistry) {}
-
   /**
    * Validates a complete subagent configuration.
    *
@@ -238,14 +235,6 @@ export class SubagentValidator {
         errors.push('Tool name cannot be empty');
         continue;
       }
-
-      // Check if tool exists in registry (if available)
-      if (this.toolRegistry) {
-        const toolInstance = this.toolRegistry.getTool(tool);
-        if (!toolInstance) {
-          errors.push(`Tool "${tool}" not found in tool registry`);
-        }
-      }
     }
 
     return {
@@ -262,7 +251,7 @@ export class SubagentValidator {
    * @returns ValidationResult
    */
   validateModelConfig(
-    modelConfig: Partial<import('../core/subagent.js').ModelConfig>,
+    modelConfig: Partial<import('./subagent.js').ModelConfig>,
   ): ValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -310,7 +299,7 @@ export class SubagentValidator {
    * @returns ValidationResult
    */
   validateRunConfig(
-    runConfig: Partial<import('../core/subagent.js').RunConfig>,
+    runConfig: Partial<import('./subagent.js').RunConfig>,
   ): ValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];

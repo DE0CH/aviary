@@ -23,6 +23,7 @@ import {
   EVENT_INVALID_CHUNK,
   EVENT_CONTENT_RETRY,
   EVENT_CONTENT_RETRY_FAILURE,
+  EVENT_SUBAGENT_EXECUTION,
 } from './constants.js';
 import {
   ApiErrorEvent,
@@ -41,6 +42,7 @@ import {
   InvalidChunkEvent,
   ContentRetryEvent,
   ContentRetryFailureEvent,
+  SubagentExecutionEvent,
 } from './types.js';
 import {
   recordApiErrorMetrics,
@@ -51,6 +53,7 @@ import {
   recordInvalidChunk,
   recordContentRetry,
   recordContentRetryFailure,
+  recordSubagentExecutionMetrics,
 } from './metrics.js';
 import { QwenLogger } from './qwen-logger/qwen-logger.js';
 import { isTelemetrySdkInitialized } from './sdk.js';
@@ -503,4 +506,32 @@ export function logContentRetryFailure(
   };
   logger.emit(logRecord);
   recordContentRetryFailure(config);
+}
+
+export function logSubagentExecution(
+  config: Config,
+  event: SubagentExecutionEvent,
+): void {
+  QwenLogger.getInstance(config)?.logSubagentExecutionEvent(event);
+  if (!isTelemetrySdkInitialized()) return;
+
+  const attributes: LogAttributes = {
+    ...getCommonAttributes(config),
+    ...event,
+    'event.name': EVENT_SUBAGENT_EXECUTION,
+    'event.timestamp': new Date().toISOString(),
+  };
+
+  const logger = logs.getLogger(SERVICE_NAME);
+  const logRecord: LogRecord = {
+    body: `Subagent execution: ${event.subagent_name}.`,
+    attributes,
+  };
+  logger.emit(logRecord);
+  recordSubagentExecutionMetrics(
+    config,
+    event.subagent_name,
+    event.status,
+    event.terminate_reason,
+  );
 }
