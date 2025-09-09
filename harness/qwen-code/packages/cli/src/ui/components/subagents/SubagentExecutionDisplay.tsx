@@ -289,9 +289,7 @@ const ToolCallItem: React.FC<{
       <Box flexDirection="row">
         <Box minWidth={STATUS_INDICATOR_WIDTH}>{statusIcon}</Box>
         <Text wrap="truncate-end">
-          <Text>
-            {toolCall.name}
-          </Text>{' '}
+          <Text>{toolCall.name}</Text>{' '}
           <Text color={Colors.Gray}>{description}</Text>
           {toolCall.error && (
             <Text color={theme.status.error}> - {toolCall.error}</Text>

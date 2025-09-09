@@ -33,6 +33,9 @@ export type {
 
 export { SubagentError } from './types.js';
 
+// Built-in agents registry
+export { BuiltinAgentRegistry } from './builtin-agents.js';
+
 // Validation system
 export { SubagentValidator } from './validation.js';
 
@@ -70,4 +73,3 @@ export type {
   SubagentStatsSummary,
   ToolUsageStats,
 } from './subagent-statistics.js';
-export { formatCompact, formatDetailed } from './subagent-result-format.js';

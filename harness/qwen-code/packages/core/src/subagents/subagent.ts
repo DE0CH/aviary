@@ -38,7 +38,6 @@ import {
   SubAgentStreamTextEvent,
   SubAgentErrorEvent,
 } from './subagent-events.js';
-import { formatCompact } from './subagent-result-format.js';
 import {
   SubagentStatistics,
   SubagentStatsSummary,
@@ -551,8 +550,7 @@ export class SubAgentScope {
         {
           terminate_reason: this.output.terminate_reason,
           result: this.finalText,
-          execution_summary: formatCompact(
-            summary,
+          execution_summary: this.stats.formatCompact(
             'Subagent execution completed',
           ),
         },

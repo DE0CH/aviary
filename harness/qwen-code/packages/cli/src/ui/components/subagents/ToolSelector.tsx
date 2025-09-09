@@ -65,7 +65,8 @@ export function ToolSelector({
         (tool) =>
           tool.kind === Kind.Read ||
           tool.kind === Kind.Search ||
-          tool.kind === Kind.Fetch,
+          tool.kind === Kind.Fetch ||
+          tool.kind === Kind.Think,
       )
       .map((tool) => tool.displayName)
       .sort();
@@ -75,8 +76,7 @@ export function ToolSelector({
         (tool) =>
           tool.kind === Kind.Edit ||
           tool.kind === Kind.Delete ||
-          tool.kind === Kind.Move ||
-          tool.kind === Kind.Think,
+          tool.kind === Kind.Move,
       )
       .map((tool) => tool.displayName)
       .sort();

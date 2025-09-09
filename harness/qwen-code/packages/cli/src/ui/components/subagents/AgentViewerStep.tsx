@@ -30,15 +30,6 @@ export const AgentViewerStep = ({ selectedAgent }: AgentViewerStepProps) => {
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Box>
-          <Text bold>Location: </Text>
-          <Text>
-            {agent.level === 'project'
-              ? 'Project Level (.qwen/agents/)'
-              : 'User Level (~/.qwen/agents/)'}
-          </Text>
-        </Box>
-
-        <Box>
           <Text bold>File Path: </Text>
           <Text>{agent.filePath}</Text>
         </Box>

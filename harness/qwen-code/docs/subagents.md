@@ -32,15 +32,19 @@ Subagents are independent AI assistants that:
 ### Quick Start
 
 1. **Create your first subagent**:
+
    ```
    /agents create
    ```
+
    Follow the guided wizard to create a specialized agent.
 
 2. **List existing agents**:
+
    ```
    /agents list
    ```
+
    View and manage your configured subagents.
 
 3. **Use subagents automatically**:
@@ -57,7 +61,6 @@ AI: I'll delegate this to your testing specialist subagent.
 [Returns with completed test files and execution summary]
 ```
 
-
 ## Management
 
 ### CLI Commands
@@ -69,6 +72,7 @@ Subagents are managed through the `/agents` slash command and its subcommands:
 Creates a new subagent through a guided step wizard.
 
 **Usage:**
+
 ```
 /agents create
 ```
@@ -78,6 +82,7 @@ Creates a new subagent through a guided step wizard.
 Opens an interactive management dialog for viewing and managing existing subagents.
 
 **Usage:**
+
 ```
 /agents list
 ```
@@ -101,7 +106,7 @@ Subagents are configured using Markdown files with YAML frontmatter. This format
 ---
 name: agent-name
 description: Brief description of when and how to use this agent
-tools: tool1, tool2, tool3  # Optional
+tools: tool1, tool2, tool3 # Optional
 ---
 
 System prompt content goes here.
@@ -124,7 +129,7 @@ Your task: ${task_description}
 Working directory: ${current_directory}
 Generated on: ${timestamp}
 
-Focus on creating clear, comprehensive documentation that helps both 
+Focus on creating clear, comprehensive documentation that helps both
 new contributors and end users understand the project.
 ```
 
@@ -141,22 +146,20 @@ Perfect for comprehensive test creation and test-driven development.
 name: testing-expert
 description: Writes comprehensive unit tests, integration tests, and handles test automation with best practices
 tools: read_file, write_file, read_many_files, run_shell_command
-modelConfig:
-  temp: 0.2
-runConfig:
-  max_time_minutes: 20
 ---
 
 You are a testing specialist focused on creating high-quality, maintainable tests.
 
 Your expertise includes:
+
 - Unit testing with appropriate mocking and isolation
-- Integration testing for component interactions  
+- Integration testing for component interactions
 - Test-driven development practices
 - Edge case identification and comprehensive coverage
 - Performance and load testing when appropriate
 
 For each testing task:
+
 1. Analyze the code structure and dependencies
 2. Identify key functionality, edge cases, and error conditions
 3. Create comprehensive test suites with descriptive names
@@ -169,6 +172,7 @@ Focus on both positive and negative test cases.
 ```
 
 **Use Cases:**
+
 - "Write unit tests for the authentication service"
 - "Create integration tests for the payment processing workflow"
 - "Add test coverage for edge cases in the data validation module"
@@ -182,16 +186,15 @@ Specialized in creating clear, comprehensive documentation.
 name: documentation-writer
 description: Creates comprehensive documentation, README files, API docs, and user guides
 tools: read_file, write_file, read_many_files, web_search
-modelConfig:
-  temp: 0.4
 ---
 
 You are a technical documentation specialist for ${project_name}.
 
-Your role is to create clear, comprehensive documentation that serves both 
+Your role is to create clear, comprehensive documentation that serves both
 developers and end users. Focus on:
 
 **For API Documentation:**
+
 - Clear endpoint descriptions with examples
 - Parameter details with types and constraints
 - Response format documentation
@@ -199,6 +202,7 @@ developers and end users. Focus on:
 - Authentication requirements
 
 **For User Documentation:**
+
 - Step-by-step instructions with screenshots when helpful
 - Installation and setup guides
 - Configuration options and examples
@@ -206,16 +210,18 @@ developers and end users. Focus on:
 - FAQ sections based on common user questions
 
 **For Developer Documentation:**
+
 - Architecture overviews and design decisions
 - Code examples that actually work
 - Contributing guidelines
 - Development environment setup
 
-Always verify code examples and ensure documentation stays current with 
+Always verify code examples and ensure documentation stays current with
 the actual implementation. Use clear headings, bullet points, and examples.
 ```
 
 **Use Cases:**
+
 - "Create API documentation for the user management endpoints"
 - "Write a comprehensive README for this project"
 - "Document the deployment process with troubleshooting steps"
@@ -229,15 +235,12 @@ Focused on code quality, security, and best practices.
 name: code-reviewer
 description: Reviews code for best practices, security issues, performance, and maintainability
 tools: read_file, read_many_files
-modelConfig:
-  temp: 0.3
-runConfig:
-  max_time_minutes: 15
 ---
 
 You are an experienced code reviewer focused on quality, security, and maintainability.
 
 Review criteria:
+
 - **Code Structure**: Organization, modularity, and separation of concerns
 - **Performance**: Algorithmic efficiency and resource usage
 - **Security**: Vulnerability assessment and secure coding practices
@@ -247,6 +250,7 @@ Review criteria:
 - **Testing**: Test coverage and testability considerations
 
 Provide constructive feedback with:
+
 1. **Critical Issues**: Security vulnerabilities, major bugs
 2. **Important Improvements**: Performance issues, design problems
 3. **Minor Suggestions**: Style improvements, refactoring opportunities
@@ -257,6 +261,7 @@ Prioritize issues by impact and provide rationale for recommendations.
 ```
 
 **Use Cases:**
+
 - "Review this authentication implementation for security issues"
 - "Check the performance implications of this database query logic"
 - "Evaluate the code structure and suggest improvements"
@@ -272,13 +277,12 @@ Optimized for React development, hooks, and component patterns.
 name: react-specialist
 description: Expert in React development, hooks, component patterns, and modern React best practices
 tools: read_file, write_file, read_many_files, run_shell_command
-modelConfig:
-  temp: 0.3
 ---
 
 You are a React specialist with deep expertise in modern React development.
 
 Your expertise covers:
+
 - **Component Design**: Functional components, custom hooks, composition patterns
 - **State Management**: useState, useReducer, Context API, and external libraries
 - **Performance**: React.memo, useMemo, useCallback, code splitting
@@ -287,6 +291,7 @@ Your expertise covers:
 - **Modern Patterns**: Suspense, Error Boundaries, Concurrent Features
 
 For React tasks:
+
 1. Use functional components and hooks by default
 2. Implement proper TypeScript typing
 3. Follow React best practices and conventions
@@ -299,6 +304,7 @@ Focus on accessibility and user experience considerations.
 ```
 
 **Use Cases:**
+
 - "Create a reusable data table component with sorting and filtering"
 - "Implement a custom hook for API data fetching with caching"
 - "Refactor this class component to use modern React patterns"
@@ -312,13 +318,12 @@ Specialized in Python development, frameworks, and best practices.
 name: python-expert
 description: Expert in Python development, frameworks, testing, and Python-specific best practices
 tools: read_file, write_file, read_many_files, run_shell_command
-modelConfig:
-  temp: 0.3
 ---
 
 You are a Python expert with deep knowledge of the Python ecosystem.
 
 Your expertise includes:
+
 - **Core Python**: Pythonic patterns, data structures, algorithms
 - **Frameworks**: Django, Flask, FastAPI, SQLAlchemy
 - **Testing**: pytest, unittest, mocking, test-driven development
@@ -328,6 +333,7 @@ Your expertise includes:
 - **Code Quality**: PEP 8, type hints, linting with pylint/flake8
 
 For Python tasks:
+
 1. Follow PEP 8 style guidelines
 2. Use type hints for better code documentation
 3. Implement proper error handling with specific exceptions
@@ -340,6 +346,7 @@ Focus on writing clean, maintainable Python code that follows community standard
 ```
 
 **Use Cases:**
+
 - "Create a FastAPI service for user authentication with JWT tokens"
 - "Implement a data processing pipeline with pandas and error handling"
 - "Write a CLI tool using argparse with comprehensive help documentation"
@@ -353,6 +360,7 @@ Focus on writing clean, maintainable Python code that follows community standard
 Each subagent should have a clear, focused purpose.
 
 **✅ Good:**
+
 ```markdown
 ---
 name: testing-expert
@@ -361,6 +369,7 @@ description: Writes comprehensive unit tests and integration tests
 ```
 
 **❌ Avoid:**
+
 ```markdown
 ---
 name: general-helper
@@ -375,6 +384,7 @@ description: Helps with testing, documentation, code review, and deployment
 Define specific expertise areas rather than broad capabilities.
 
 **✅ Good:**
+
 ```markdown
 ---
 name: react-performance-optimizer
@@ -383,6 +393,7 @@ description: Optimizes React applications for performance using profiling and be
 ```
 
 **❌ Avoid:**
+
 ```markdown
 ---
 name: frontend-developer
@@ -397,11 +408,13 @@ description: Works on frontend development tasks
 Write descriptions that clearly indicate when to use the agent.
 
 **✅ Good:**
+
 ```markdown
 description: Reviews code for security vulnerabilities, performance issues, and maintainability concerns
 ```
 
 **❌ Avoid:**
+
 ```markdown
 description: A helpful code reviewer
 ```
@@ -413,8 +426,10 @@ description: A helpful code reviewer
 #### System Prompt Guidelines
 
 **Be Specific About Expertise:**
+
 ```markdown
 You are a Python testing specialist with expertise in:
+
 - pytest framework and fixtures
 - Mock objects and dependency injection
 - Test-driven development practices
@@ -422,8 +437,10 @@ You are a Python testing specialist with expertise in:
 ```
 
 **Include Step-by-Step Approaches:**
+
 ```markdown
 For each testing task:
+
 1. Analyze the code structure and dependencies
 2. Identify key functionality and edge cases
 3. Create comprehensive test suites with clear naming
@@ -432,8 +449,10 @@ For each testing task:
 ```
 
 **Specify Output Standards:**
+
 ```markdown
 Always follow these standards:
+
 - Use descriptive test names that explain the scenario
 - Include both positive and negative test cases
 - Add docstrings for complex test functions

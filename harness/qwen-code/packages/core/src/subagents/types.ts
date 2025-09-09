@@ -10,8 +10,9 @@ import { Content, FunctionDeclaration } from '@google/genai';
  * Represents the storage level for a subagent configuration.
  * - 'project': Stored in `.qwen/agents/` within the project directory
  * - 'user': Stored in `~/.qwen/agents/` in the user's home directory
+ * - 'builtin': Built-in agents embedded in the codebase, always available
  */
-export type SubagentLevel = 'project' | 'user';
+export type SubagentLevel = 'project' | 'user' | 'builtin';
 
 /**
  * Core configuration for a subagent as stored in Markdown files.
@@ -60,6 +61,12 @@ export interface SubagentConfig {
    * If 'auto' or omitted, uses automatic color assignment.
    */
   color?: string;
+
+  /**
+   * Indicates whether this is a built-in agent.
+   * Built-in agents cannot be modified or deleted.
+   */
+  readonly isBuiltin?: boolean;
 }
 
 /**

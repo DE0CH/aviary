@@ -50,14 +50,19 @@ export function AgentsManagerDialog({
 
     const manager = config.getSubagentManager();
 
-    // Load agents from both levels separately to show all agents including conflicts
-    const [projectAgents, userAgents] = await Promise.all([
+    // Load agents from all levels separately to show all agents including conflicts
+    const [projectAgents, userAgents, builtinAgents] = await Promise.all([
       manager.listSubagents({ level: 'project' }),
       manager.listSubagents({ level: 'user' }),
+      manager.listSubagents({ level: 'builtin' }),
     ]);
 
-    // Combine all agents (project and user level)
-    const allAgents = [...(projectAgents || []), ...(userAgents || [])];
+    // Combine all agents (project, user, and builtin level)
+    const allAgents = [
+      ...(projectAgents || []),
+      ...(userAgents || []),
+      ...(builtinAgents || []),
+    ];
 
     setAvailableAgents(allAgents);
   }, [config]);
@@ -208,7 +213,9 @@ export function AgentsManagerDialog({
           />
         );
       case MANAGEMENT_STEPS.ACTION_SELECTION:
-        return <ActionSelectionStep {...commonProps} />;
+        return (
+          <ActionSelectionStep selectedAgent={selectedAgent} {...commonProps} />
+        );
       case MANAGEMENT_STEPS.AGENT_VIEWER:
         return (
           <AgentViewerStep selectedAgent={selectedAgent} {...commonProps} />

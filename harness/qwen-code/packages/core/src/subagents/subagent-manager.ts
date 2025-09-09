@@ -29,6 +29,7 @@ import {
 import { SubagentValidator } from './validation.js';
 import { SubAgentScope } from './subagent.js';
 import { Config } from '../config/config.js';
+import { BuiltinAgentRegistry } from './builtin-agents.js';
 
 const QWEN_CONFIG_DIR = '.qwen';
 const AGENT_CONFIG_DIR = 'agents';
@@ -104,7 +105,7 @@ export class SubagentManager {
   /**
    * Loads a subagent configuration by name.
    * If level is specified, only searches that level.
-   * If level is omitted, searches project-level first, then user-level.
+   * If level is omitted, searches project-level first, then user-level, then built-in.
    *
    * @param name - Name of the subagent to load
    * @param level - Optional level to limit search to specific level
@@ -116,6 +117,10 @@ export class SubagentManager {
   ): Promise<SubagentConfig | null> {
     if (level) {
       // Search only the specified level
+      if (level === 'builtin') {
+        return BuiltinAgentRegistry.getBuiltinAgent(name);
+      }
+
       const path = this.getSubagentPath(name, level);
       try {
         const config = await this.parseSubagentFile(path);
@@ -140,9 +145,11 @@ export class SubagentManager {
       const config = await this.parseSubagentFile(userPath);
       return config;
     } catch (_error) {
-      // Not found at either level
-      return null;
+      // Continue to built-in agents
     }
+
+    // Try built-in agents as fallback
+    return BuiltinAgentRegistry.getBuiltinAgent(name);
   }
 
   /**
@@ -162,6 +169,15 @@ export class SubagentManager {
       throw new SubagentError(
         `Subagent "${name}" not found`,
         SubagentErrorCode.NOT_FOUND,
+        name,
+      );
+    }
+
+    // Prevent updating built-in agents
+    if (existing.isBuiltin) {
+      throw new SubagentError(
+        `Cannot update built-in subagent "${name}"`,
+        SubagentErrorCode.INVALID_CONFIG,
         name,
       );
     }
@@ -194,12 +210,26 @@ export class SubagentManager {
    * @throws SubagentError if deletion fails
    */
   async deleteSubagent(name: string, level?: SubagentLevel): Promise<void> {
+    // Check if it's a built-in agent first
+    if (BuiltinAgentRegistry.isBuiltinAgent(name)) {
+      throw new SubagentError(
+        `Cannot delete built-in subagent "${name}"`,
+        SubagentErrorCode.INVALID_CONFIG,
+        name,
+      );
+    }
+
     const levelsToCheck: SubagentLevel[] = level
       ? [level]
       : ['project', 'user'];
     let deleted = false;
 
     for (const currentLevel of levelsToCheck) {
+      // Skip builtin level for deletion
+      if (currentLevel === 'builtin') {
+        continue;
+      }
+
       const filePath = this.getSubagentPath(name, currentLevel);
 
       try {
@@ -233,14 +263,14 @@ export class SubagentManager {
 
     const levelsToCheck: SubagentLevel[] = options.level
       ? [options.level]
-      : ['project', 'user'];
+      : ['project', 'user', 'builtin'];
 
-    // Collect subagents from each level (project takes precedence)
+    // Collect subagents from each level (project takes precedence over user, user takes precedence over builtin)
     for (const level of levelsToCheck) {
       const levelSubagents = await this.listSubagentsAtLevel(level);
 
       for (const subagent of levelSubagents) {
-        // Skip if we've already seen this name (project takes precedence)
+        // Skip if we've already seen this name (precedence: project > user > builtin)
         if (seenNames.has(subagent.name)) {
           continue;
         }
@@ -267,11 +297,12 @@ export class SubagentManager {
           case 'name':
             comparison = a.name.localeCompare(b.name);
             break;
-          case 'level':
-            // Project comes before user
-            comparison =
-              a.level === 'project' ? -1 : b.level === 'project' ? 1 : 0;
+          case 'level': {
+            // Project comes before user, user comes before builtin
+            const levelOrder = { project: 0, user: 1, builtin: 2 };
+            comparison = levelOrder[a.level] - levelOrder[b.level];
             break;
+          }
           default:
             comparison = 0;
             break;
@@ -605,6 +636,10 @@ export class SubagentManager {
    * @returns Absolute file path
    */
   getSubagentPath(name: string, level: SubagentLevel): string {
+    if (level === 'builtin') {
+      return `<builtin:${name}>`;
+    }
+
     const baseDir =
       level === 'project'
         ? path.join(
@@ -626,6 +661,11 @@ export class SubagentManager {
   private async listSubagentsAtLevel(
     level: SubagentLevel,
   ): Promise<SubagentConfig[]> {
+    // Handle built-in agents
+    if (level === 'builtin') {
+      return BuiltinAgentRegistry.getBuiltinAgents();
+    }
+
     const baseDir =
       level === 'project'
         ? path.join(

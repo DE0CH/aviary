@@ -70,7 +70,7 @@ export class TaskTool extends BaseDeclarativeTool<TaskParams, ToolResult> {
       TaskTool.Name,
       'Task',
       'Delegate tasks to specialized subagents. Loading available subagents...', // Initial description
-      Kind.Execute,
+      Kind.Other,
       initialSchema,
       true, // isOutputMarkdown
       true, // canUpdateOutput - Enable live output updates for real-time progress

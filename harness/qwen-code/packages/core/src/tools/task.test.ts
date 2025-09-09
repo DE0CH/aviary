@@ -96,7 +96,7 @@ describe('TaskTool', () => {
     it('should initialize with correct name and properties', () => {
       expect(taskTool.name).toBe('task');
       expect(taskTool.displayName).toBe('Task');
-      expect(taskTool.kind).toBe('execute');
+      expect(taskTool.kind).toBe('other');
     });
 
     it('should load available subagents during initialization', () => {
