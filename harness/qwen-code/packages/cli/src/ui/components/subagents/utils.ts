@@ -1,3 +1,9 @@
+/**
+ * @license
+ * Copyright 2025 Qwen
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { COLOR_OPTIONS } from './constants.js';
 
 export const shouldShowColor = (color?: string): boolean =>

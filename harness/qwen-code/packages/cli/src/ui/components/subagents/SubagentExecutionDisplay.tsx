@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -225,8 +225,8 @@ const ToolCallsList: React.FC<{
         )}
       </Box>
       {reversedDisplayCalls.map((toolCall, index) => (
-          <ToolCallItem key={`${toolCall.name}-${index}`} toolCall={toolCall} />
-        ))}
+        <ToolCallItem key={`${toolCall.name}-${index}`} toolCall={toolCall} />
+      ))}
     </Box>
   );
 };
@@ -395,9 +395,7 @@ const ResultsSection: React.FC<{
     {/* Execution Summary section */}
     <Box flexDirection="column">
       <Box flexDirection="row" marginBottom={1}>
-        <Text color={theme.text.primary}>
-          Execution Summary:
-        </Text>
+        <Text color={theme.text.primary}>Execution Summary:</Text>
       </Box>
       <ExecutionSummaryDetails data={data} displayMode={displayMode} />
     </Box>
@@ -406,9 +404,7 @@ const ResultsSection: React.FC<{
     {data.executionSummary && (
       <Box flexDirection="column">
         <Box flexDirection="row" marginBottom={1}>
-          <Text color={theme.text.primary}>
-            Tool Usage:
-          </Text>
+          <Text color={theme.text.primary}>Tool Usage:</Text>
         </Box>
         <ToolUsageStats executionSummary={data.executionSummary} />
       </Box>
