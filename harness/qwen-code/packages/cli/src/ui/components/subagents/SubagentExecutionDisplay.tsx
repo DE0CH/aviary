@@ -289,7 +289,7 @@ const ToolCallItem: React.FC<{
       <Box flexDirection="row">
         <Box minWidth={STATUS_INDICATOR_WIDTH}>{statusIcon}</Box>
         <Text wrap="truncate-end">
-          <Text color={Colors.Foreground} bold>
+          <Text>
             {toolCall.name}
           </Text>{' '}
           <Text color={Colors.Gray}>{description}</Text>
@@ -358,10 +358,10 @@ const ToolUsageStats: React.FC<{
   return (
     <Box flexDirection="column" paddingLeft={1}>
       <Text>
-        • <Text bold>Total Calls:</Text> {executionSummary.totalToolCalls}
+        • <Text>Total Calls:</Text> {executionSummary.totalToolCalls}
       </Text>
       <Text>
-        • <Text bold>Success Rate:</Text>{' '}
+        • <Text>Success Rate:</Text>{' '}
         <Text color={Colors.AccentGreen}>
           {executionSummary.successRate.toFixed(1)}%
         </Text>{' '}
