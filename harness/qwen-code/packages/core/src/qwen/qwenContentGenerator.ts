@@ -153,17 +153,10 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
       return await attemptOperation();
     } catch (error) {
       if (this.isAuthError(error)) {
-        try {
-          // Use SharedTokenManager to properly refresh and persist the token
-          // This ensures the refreshed token is saved to oauth_creds.json
-          await this.sharedManager.getValidCredentials(this.qwenClient, true);
-          // Retry the operation once with fresh credentials
-          return await attemptOperation();
-        } catch (_refreshError) {
-          throw new Error(
-            'Failed to obtain valid Qwen access token. Please re-authenticate.',
-          );
-        }
+        // Use SharedTokenManager to properly refresh and persist the token
+        // This ensures the refreshed token is saved to oauth_creds.json
+        await this.sharedManager.getValidCredentials(this.qwenClient, true);
+        return await attemptOperation();
       }
       throw error;
     }
