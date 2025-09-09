@@ -207,7 +207,7 @@ export function SubagentCreationWizard({
       case WIZARD_STEPS.COLOR_SELECTION:
         return (
           <ColorSelector
-            backgroundColor={state.backgroundColor}
+            color={state.color}
             agentName={state.generatedName}
             onSelect={(color) => {
               dispatch({ type: 'SET_BACKGROUND_COLOR', color });
@@ -230,7 +230,7 @@ export function SubagentCreationWizard({
     stepProps,
     state.currentStep,
     state.selectedTools,
-    state.backgroundColor,
+    state.color,
     state.generatedName,
     config,
     handleNext,

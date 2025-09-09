@@ -48,12 +48,12 @@ export const AgentViewerStep = ({ selectedAgent }: AgentViewerStepProps) => {
           <Text>{toolsDisplay}</Text>
         </Box>
 
-        {shouldShowColor(agent.backgroundColor) && (
+        {shouldShowColor(agent.color) && (
           <Box>
             <Text bold>Color: </Text>
-            <Box backgroundColor={getColorForDisplay(agent.backgroundColor)}>
-              <Text color="black">{` ${agent.name} `}</Text>
-            </Box>
+            <Text
+              color={getColorForDisplay(agent.color)}
+            >{` ${agent.name} `}</Text>
           </Box>
         )}
 

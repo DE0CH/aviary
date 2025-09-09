@@ -14,7 +14,7 @@ import { COLOR_OPTIONS } from './constants.js';
 const colorOptions: ColorOption[] = COLOR_OPTIONS;
 
 interface ColorSelectorProps {
-  backgroundColor?: string;
+  color?: string;
   agentName?: string;
   onSelect: (color: string) => void;
 }
@@ -23,16 +23,16 @@ interface ColorSelectorProps {
  * Color selection with preview.
  */
 export function ColorSelector({
-  backgroundColor = 'auto',
+  color = 'auto',
   agentName = 'Agent',
   onSelect,
 }: ColorSelectorProps) {
-  const [selectedColor, setSelectedColor] = useState<string>(backgroundColor);
+  const [selectedColor, setSelectedColor] = useState<string>(color);
 
-  // Update selected color when backgroundColor prop changes
+  // Update selected color when color prop changes
   useEffect(() => {
-    setSelectedColor(backgroundColor);
-  }, [backgroundColor]);
+    setSelectedColor(color);
+  }, [color]);
 
   const handleSelect = (selectedValue: string) => {
     const colorOption = colorOptions.find(
@@ -75,8 +75,8 @@ export function ColorSelector({
 
       <Box flexDirection="row">
         <Text color={Colors.Gray}>Preview:</Text>
-        <Box marginLeft={2} backgroundColor={currentColor.value}>
-          <Text color="black">{` ${agentName} `}</Text>
+        <Box marginLeft={2}>
+          <Text color={currentColor.value}>{` ${agentName} `}</Text>
         </Box>
       </Box>
     </Box>

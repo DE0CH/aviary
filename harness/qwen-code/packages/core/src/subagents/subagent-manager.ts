@@ -21,15 +21,13 @@ import {
   CreateSubagentOptions,
   SubagentError,
   SubagentErrorCode,
-} from './types.js';
-import { SubagentValidator } from './validation.js';
-import {
-  SubAgentScope,
   PromptConfig,
   ModelConfig,
   RunConfig,
   ToolConfig,
-} from './subagent.js';
+} from './types.js';
+import { SubagentValidator } from './validation.js';
+import { SubAgentScope } from './subagent.js';
 import { Config } from '../config/config.js';
 
 const QWEN_CONFIG_DIR = '.qwen';
@@ -369,9 +367,7 @@ export class SubagentManager {
       const runConfig = frontmatter['runConfig'] as
         | Record<string, unknown>
         | undefined;
-      const backgroundColor = frontmatter['backgroundColor'] as
-        | string
-        | undefined;
+      const color = frontmatter['color'] as string | undefined;
 
       // Determine level from file path
       // Project level paths contain the project root, user level paths are in home directory
@@ -387,11 +383,9 @@ export class SubagentManager {
         systemPrompt: systemPrompt.trim(),
         level,
         filePath,
-        modelConfig: modelConfig as Partial<
-          import('./subagent.js').ModelConfig
-        >,
-        runConfig: runConfig as Partial<import('./subagent.js').RunConfig>,
-        backgroundColor,
+        modelConfig: modelConfig as Partial<ModelConfig>,
+        runConfig: runConfig as Partial<RunConfig>,
+        color,
       };
 
       // Validate the parsed configuration
@@ -436,8 +430,8 @@ export class SubagentManager {
       frontmatter['runConfig'] = config.runConfig;
     }
 
-    if (config.backgroundColor && config.backgroundColor !== 'auto') {
-      frontmatter['backgroundColor'] = config.backgroundColor;
+    if (config.color && config.color !== 'auto') {
+      frontmatter['color'] = config.color;
     }
 
     // Serialize to YAML

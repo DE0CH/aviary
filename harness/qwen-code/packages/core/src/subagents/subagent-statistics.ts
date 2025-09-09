@@ -14,7 +14,7 @@ export interface ToolUsageStats {
   averageDurationMs: number;
 }
 
-export interface SubagentSummary {
+export interface SubagentStatsSummary {
   rounds: number;
   totalDurationMs: number;
   totalToolCalls: number;
@@ -79,7 +79,7 @@ export class SubagentStatistics {
     this.outputTokens += Math.max(0, output || 0);
   }
 
-  getSummary(now = Date.now()): SubagentSummary {
+  getSummary(now = Date.now()): SubagentStatsSummary {
     const totalDurationMs = this.startTimeMs ? now - this.startTimeMs : 0;
     const totalToolCalls = this.totalToolCalls;
     const successRate =

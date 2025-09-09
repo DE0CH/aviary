@@ -4,14 +4,53 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../../colors.js';
-import { TaskResultDisplay } from '@qwen-code/qwen-code-core';
+import {
+  TaskResultDisplay,
+  SubagentStatsSummary,
+} from '@qwen-code/qwen-code-core';
+import { theme } from '../../semantic-colors.js';
+import { useKeypress } from '../../hooks/useKeypress.js';
+import { COLOR_OPTIONS } from './constants.js';
+import { fmtDuration } from './utils.js';
+
+export type DisplayMode = 'compact' | 'default' | 'verbose';
 
 export interface SubagentExecutionDisplayProps {
   data: TaskResultDisplay;
 }
+
+const getStatusColor = (
+  status: TaskResultDisplay['status'] | 'executing' | 'success',
+) => {
+  switch (status) {
+    case 'running':
+    case 'executing':
+      return theme.status.warning;
+    case 'completed':
+    case 'success':
+      return theme.status.success;
+    case 'failed':
+      return theme.status.error;
+    default:
+      return Colors.Gray;
+  }
+};
+
+const getStatusText = (status: TaskResultDisplay['status']) => {
+  switch (status) {
+    case 'running':
+      return 'Running';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
+    default:
+      return 'Unknown';
+  }
+};
 
 /**
  * Component to display subagent execution progress and results.
@@ -20,61 +59,133 @@ export interface SubagentExecutionDisplayProps {
  */
 export const SubagentExecutionDisplay: React.FC<
   SubagentExecutionDisplayProps
-> = ({ data }) => (
-  <Box flexDirection="column" paddingX={1}>
-    {/* Header with subagent name and status */}
-    <Box flexDirection="row" marginBottom={1}>
-      <StatusDot status={data.status} />
-      <Text bold color={Colors.AccentBlue}>
-        {data.subagentName}
-      </Text>
-      <Text color={Colors.Gray}> • </Text>
-      <StatusIndicator status={data.status} />
+> = ({ data }) => {
+  const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
+
+  const agentColor = useMemo(() => {
+    const colorOption = COLOR_OPTIONS.find(
+      (option) => option.name === data.subagentColor,
+    );
+    return colorOption?.value || theme.text.accent;
+  }, [data.subagentColor]);
+
+  const footerText = React.useMemo(() => {
+    // This component only listens to keyboard shortcut events when the subagent is running
+    if (data.status !== 'running') return '';
+
+    if (displayMode === 'verbose') return 'Press ctrl+r to show less.';
+
+    if (displayMode === 'default') {
+      const hasMoreLines = data.taskPrompt.split('\n').length > 10;
+      const hasMoreToolCalls = data.toolCalls && data.toolCalls.length > 5;
+
+      if (hasMoreToolCalls || hasMoreLines) {
+        return 'Press ctrl+s to show more.';
+      }
+      return '';
+    }
+    return '';
+  }, [displayMode, data.toolCalls, data.taskPrompt, data.status]);
+
+  // Handle ctrl+s and ctrl+r keypresses to control display mode
+  useKeypress(
+    (key) => {
+      if (key.ctrl && key.name === 's') {
+        setDisplayMode((current) =>
+          current === 'default' ? 'verbose' : 'verbose',
+        );
+      } else if (key.ctrl && key.name === 'r') {
+        setDisplayMode((current) =>
+          current === 'verbose' ? 'default' : 'default',
+        );
+      }
+    },
+    { isActive: true },
+  );
+
+  return (
+    <Box flexDirection="column" paddingX={1} gap={1}>
+      {/* Header with subagent name and status */}
+      <Box flexDirection="row">
+        <Text bold color={agentColor}>
+          {data.subagentName}
+        </Text>
+        <StatusDot status={data.status} />
+        <StatusIndicator status={data.status} />
+      </Box>
+
+      {/* Task description */}
+      <TaskPromptSection
+        taskPrompt={data.taskPrompt}
+        displayMode={displayMode}
+      />
+
+      {/* Progress section for running tasks */}
+      {data.status === 'running' &&
+        data.toolCalls &&
+        data.toolCalls.length > 0 && (
+          <Box flexDirection="column">
+            <ToolCallsList
+              toolCalls={data.toolCalls}
+              displayMode={displayMode}
+            />
+          </Box>
+        )}
+
+      {/* Results section for completed/failed tasks */}
+      {(data.status === 'completed' || data.status === 'failed') && (
+        <ResultsSection data={data} displayMode={displayMode} />
+      )}
+
+      {/* Footer with keyboard shortcuts */}
+      {footerText && (
+        <Box flexDirection="row">
+          <Text color={Colors.Gray}>{footerText}</Text>
+        </Box>
+      )}
     </Box>
+  );
+};
 
-    {/* Task description */}
-    <Box flexDirection="row" marginBottom={1}>
-      <Text color={Colors.Gray}>Task: </Text>
-      <Text wrap="wrap">{data.taskDescription}</Text>
+/**
+ * Task prompt section with truncation support
+ */
+const TaskPromptSection: React.FC<{
+  taskPrompt: string;
+  displayMode: DisplayMode;
+}> = ({ taskPrompt, displayMode }) => {
+  const lines = taskPrompt.split('\n');
+  const shouldTruncate = lines.length > 10;
+  const showFull = displayMode === 'verbose';
+  const displayLines = showFull ? lines : lines.slice(0, 10);
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="row">
+        <Text color={theme.text.primary}>Task Detail: </Text>
+        {shouldTruncate && displayMode === 'default' && (
+          <Text color={Colors.Gray}> Showing the first 10 lines.</Text>
+        )}
+      </Box>
+      <Box paddingLeft={1}>
+        <Text wrap="wrap">
+          {displayLines.join('\n') + (shouldTruncate && !showFull ? '...' : '')}
+        </Text>
+      </Box>
     </Box>
-
-    {/* Progress section for running tasks */}
-    {data.status === 'running' && (
-      <ProgressSection progress={data.progress || { toolCalls: [] }} />
-    )}
-
-    {/* Results section for completed/failed tasks */}
-    {(data.status === 'completed' || data.status === 'failed') && (
-      <ResultsSection data={data} />
-    )}
-  </Box>
-);
+  );
+};
 
 /**
  * Status dot component with similar height as text
  */
 const StatusDot: React.FC<{
   status: TaskResultDisplay['status'];
-}> = ({ status }) => {
-  const color = React.useMemo(() => {
-    switch (status) {
-      case 'running':
-        return Colors.AccentYellow;
-      case 'completed':
-        return Colors.AccentGreen;
-      case 'failed':
-        return Colors.AccentRed;
-      default:
-        return Colors.Gray;
-    }
-  }, [status]);
-
-  return (
-    <Box marginRight={1}>
-      <Text color={color}>●</Text>
-    </Box>
-  );
-};
+}> = ({ status }) => (
+  <Box marginLeft={1} marginRight={1}>
+    <Text color={getStatusColor(status)}>●</Text>
+  </Box>
+);
 
 /**
  * Status indicator component
@@ -82,109 +193,95 @@ const StatusDot: React.FC<{
 const StatusIndicator: React.FC<{
   status: TaskResultDisplay['status'];
 }> = ({ status }) => {
-  switch (status) {
-    case 'running':
-      return <Text color={Colors.AccentYellow}>Running</Text>;
-    case 'completed':
-      return <Text color={Colors.AccentGreen}>Completed</Text>;
-    case 'failed':
-      return <Text color={Colors.AccentRed}>Failed</Text>;
-    default:
-      return <Text color={Colors.Gray}>Unknown</Text>;
-  }
+  const color = getStatusColor(status);
+  const text = getStatusText(status);
+  return <Text color={color}>{text}</Text>;
 };
 
 /**
- * Progress section for running executions
+ * Tool calls list - format consistent with ToolInfo in ToolMessage.tsx
  */
-const ProgressSection: React.FC<{
-  progress: {
-    toolCalls?: Array<{
-      name: string;
-      status: 'executing' | 'success' | 'failed';
-      error?: string;
-      args?: Record<string, unknown>;
-      result?: string;
-      returnDisplay?: string;
-    }>;
-  };
-}> = ({ progress }) => (
-  <Box flexDirection="column" marginBottom={1}>
-    {progress.toolCalls && progress.toolCalls.length > 0 && (
-      <CleanToolCallsList toolCalls={progress.toolCalls} />
-    )}
-  </Box>
-);
+const ToolCallsList: React.FC<{
+  toolCalls: TaskResultDisplay['toolCalls'];
+  displayMode: DisplayMode;
+}> = ({ toolCalls, displayMode }) => {
+  const calls = toolCalls || [];
+  const shouldTruncate = calls.length > 5;
+  const showAll = displayMode === 'verbose';
+  const displayCalls = showAll ? calls : calls.slice(-5); // Show last 5
 
-/**
- * Clean tool calls list - format consistent with ToolInfo in ToolMessage.tsx
- */
-const CleanToolCallsList: React.FC<{
-  toolCalls: Array<{
-    name: string;
-    status: 'executing' | 'success' | 'failed';
-    error?: string;
-    args?: Record<string, unknown>;
-    result?: string;
-    returnDisplay?: string;
-  }>;
-}> = ({ toolCalls }) => (
-  <Box flexDirection="column" marginBottom={1}>
-    <Box flexDirection="row" marginBottom={1}>
-      <Text bold>Tools:</Text>
+  // Reverse the order to show most recent first
+  const reversedDisplayCalls = [...displayCalls].reverse();
+
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" marginBottom={1}>
+        <Text color={theme.text.primary}>Tools:</Text>
+        {shouldTruncate && displayMode === 'default' && (
+          <Text color={Colors.Gray}>
+            {' '}
+            Showing the last 5 of {calls.length} tools.
+          </Text>
+        )}
+      </Box>
+      {reversedDisplayCalls.map((toolCall, index) => (
+          <ToolCallItem key={`${toolCall.name}-${index}`} toolCall={toolCall} />
+        ))}
     </Box>
-    {toolCalls.map((toolCall, index) => (
-      <CleanToolCallItem
-        key={`${toolCall.name}-${index}`}
-        toolCall={toolCall}
-      />
-    ))}
-  </Box>
-);
+  );
+};
 
 /**
  * Individual tool call item - consistent with ToolInfo format
  */
-const CleanToolCallItem: React.FC<{
+const ToolCallItem: React.FC<{
   toolCall: {
     name: string;
     status: 'executing' | 'success' | 'failed';
     error?: string;
     args?: Record<string, unknown>;
     result?: string;
-    returnDisplay?: string;
+    resultDisplay?: string;
+    description?: string;
   };
 }> = ({ toolCall }) => {
   const STATUS_INDICATOR_WIDTH = 3;
 
   // Map subagent status to ToolCallStatus-like display
   const statusIcon = React.useMemo(() => {
+    const color = getStatusColor(toolCall.status);
     switch (toolCall.status) {
       case 'executing':
-        return <Text color={Colors.AccentYellow}>⊷</Text>; // Using same as ToolMessage
+        return <Text color={color}>⊷</Text>; // Using same as ToolMessage
       case 'success':
-        return <Text color={Colors.AccentGreen}>✔</Text>;
+        return <Text color={color}>✔</Text>;
       case 'failed':
         return (
-          <Text color={Colors.AccentRed} bold>
+          <Text color={color} bold>
             x
           </Text>
         );
       default:
-        return <Text color={Colors.Gray}>o</Text>;
+        return <Text color={color}>o</Text>;
     }
   }, [toolCall.status]);
 
-  const description = getToolDescription(toolCall);
-
-  // Get first line of returnDisplay for truncated output
-  const truncatedOutput = React.useMemo(() => {
-    if (!toolCall.returnDisplay) return '';
-    const firstLine = toolCall.returnDisplay.split('\n')[0];
+  const description = React.useMemo(() => {
+    if (!toolCall.description) return '';
+    const firstLine = toolCall.description.split('\n')[0];
     return firstLine.length > 80
       ? firstLine.substring(0, 80) + '...'
       : firstLine;
-  }, [toolCall.returnDisplay]);
+  }, [toolCall.description]);
+
+  // Get first line of resultDisplay for truncated output
+  const truncatedOutput = React.useMemo(() => {
+    if (!toolCall.resultDisplay) return '';
+    const firstLine = toolCall.resultDisplay.split('\n')[0];
+    return firstLine.length > 80
+      ? firstLine.substring(0, 80) + '...'
+      : firstLine;
+  }, [toolCall.resultDisplay]);
 
   return (
     <Box flexDirection="column" paddingLeft={1} marginBottom={0}>
@@ -197,7 +294,7 @@ const CleanToolCallItem: React.FC<{
           </Text>{' '}
           <Text color={Colors.Gray}>{description}</Text>
           {toolCall.error && (
-            <Text color={Colors.AccentRed}> - {toolCall.error}</Text>
+            <Text color={theme.status.error}> - {toolCall.error}</Text>
           )}
         </Text>
       </Box>
@@ -213,58 +310,15 @@ const CleanToolCallItem: React.FC<{
 };
 
 /**
- * Helper function to get tool description from args
- */
-const getToolDescription = (toolCall: {
-  name: string;
-  args?: Record<string, unknown>;
-}): string => {
-  if (!toolCall.args) return '';
-
-  // Handle common tool patterns
-  if (toolCall.name === 'Glob' && toolCall.args['glob_pattern']) {
-    return `"${toolCall.args['glob_pattern']}"`;
-  }
-  if (toolCall.name === 'ReadFile' && toolCall.args['target_file']) {
-    const path = toolCall.args['target_file'] as string;
-    return path.split('/').pop() || path;
-  }
-  if (toolCall.name === 'SearchFileContent' && toolCall.args['pattern']) {
-    return `"${toolCall.args['pattern']}"`;
-  }
-
-  // Generic fallback
-  const firstArg = Object.values(toolCall.args)[0];
-  if (typeof firstArg === 'string' && firstArg.length < 50) {
-    return firstArg;
-  }
-
-  return '';
-};
-
-/**
  * Execution summary details component
  */
 const ExecutionSummaryDetails: React.FC<{
   data: TaskResultDisplay;
-}> = ({ data }) => {
-  // Parse execution summary for structured data
-  const summaryData = React.useMemo(() => {
-    if (!data.executionSummary) return null;
+  displayMode: DisplayMode;
+}> = ({ data, displayMode: _displayMode }) => {
+  const stats = data.executionSummary;
 
-    // Try to extract structured data from execution summary
-    const durationMatch = data.executionSummary.match(/Duration:\s*([^\n]+)/i);
-    const roundsMatch = data.executionSummary.match(/Rounds:\s*(\d+)/i);
-    const tokensMatch = data.executionSummary.match(/Tokens:\s*([\d,]+)/i);
-
-    return {
-      duration: durationMatch?.[1] || 'N/A',
-      rounds: roundsMatch?.[1] || 'N/A',
-      tokens: tokensMatch?.[1] || 'N/A',
-    };
-  }, [data.executionSummary]);
-
-  if (!summaryData) {
+  if (!stats) {
     return (
       <Box flexDirection="column" paddingLeft={1}>
         <Text color={Colors.Gray}>• No summary available</Text>
@@ -275,13 +329,13 @@ const ExecutionSummaryDetails: React.FC<{
   return (
     <Box flexDirection="column" paddingLeft={1}>
       <Text>
-        • <Text bold>Duration:</Text> {summaryData.duration}
+        • <Text>Duration: {fmtDuration(stats.totalDurationMs)}</Text>
       </Text>
       <Text>
-        • <Text bold>Rounds:</Text> {summaryData.rounds}
+        • <Text>Rounds: {stats.rounds}</Text>
       </Text>
       <Text>
-        • <Text bold>Tokens:</Text> {summaryData.tokens}
+        • <Text>Tokens: {stats.totalTokens.toLocaleString()}</Text>
       </Text>
     </Box>
   );
@@ -291,37 +345,35 @@ const ExecutionSummaryDetails: React.FC<{
  * Tool usage statistics component
  */
 const ToolUsageStats: React.FC<{
-  toolCalls: Array<{
-    name: string;
-    status: 'executing' | 'success' | 'failed';
-    error?: string;
-    args?: Record<string, unknown>;
-    result?: string;
-    returnDisplay?: string;
-  }>;
-}> = ({ toolCalls }) => {
-  const stats = React.useMemo(() => {
-    const total = toolCalls.length;
-    const successful = toolCalls.filter(
-      (call) => call.status === 'success',
-    ).length;
-    const failed = toolCalls.filter((call) => call.status === 'failed').length;
-    const successRate =
-      total > 0 ? ((successful / total) * 100).toFixed(1) : '0.0';
-
-    return { total, successful, failed, successRate };
-  }, [toolCalls]);
+  executionSummary?: SubagentStatsSummary;
+}> = ({ executionSummary }) => {
+  if (!executionSummary) {
+    return (
+      <Box flexDirection="column" paddingLeft={1}>
+        <Text color={Colors.Gray}>• No tool usage data available</Text>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" paddingLeft={1}>
       <Text>
-        • <Text bold>Total Calls:</Text> {stats.total}
+        • <Text bold>Total Calls:</Text> {executionSummary.totalToolCalls}
       </Text>
       <Text>
         • <Text bold>Success Rate:</Text>{' '}
-        <Text color={Colors.AccentGreen}>{stats.successRate}%</Text> (
-        <Text color={Colors.AccentGreen}>{stats.successful} success</Text>,{' '}
-        <Text color={Colors.AccentRed}>{stats.failed} failed</Text>)
+        <Text color={Colors.AccentGreen}>
+          {executionSummary.successRate.toFixed(1)}%
+        </Text>{' '}
+        (
+        <Text color={Colors.AccentGreen}>
+          {executionSummary.successfulToolCalls} success
+        </Text>
+        ,{' '}
+        <Text color={Colors.AccentRed}>
+          {executionSummary.failedToolCalls} failed
+        </Text>
+        )
       </Text>
     </Box>
   );
@@ -332,47 +384,39 @@ const ToolUsageStats: React.FC<{
  */
 const ResultsSection: React.FC<{
   data: TaskResultDisplay;
-}> = ({ data }) => (
-  <Box flexDirection="column">
+  displayMode: DisplayMode;
+}> = ({ data, displayMode }) => (
+  <Box flexDirection="column" gap={1}>
     {/* Tool calls section - clean list format */}
-    {data.progress?.toolCalls && data.progress.toolCalls.length > 0 && (
-      <CleanToolCallsList toolCalls={data.progress.toolCalls} />
+    {data.toolCalls && data.toolCalls.length > 0 && (
+      <ToolCallsList toolCalls={data.toolCalls} displayMode={displayMode} />
     )}
 
-    {/* Task Completed section */}
-    <Box flexDirection="row" marginTop={1} marginBottom={1}>
-      <Text>📄 </Text>
-      <Text bold>Task Completed: </Text>
-      <Text>{data.taskDescription}</Text>
-    </Box>
-
     {/* Execution Summary section */}
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       <Box flexDirection="row" marginBottom={1}>
-        <Text>📊 </Text>
-        <Text bold color={Colors.AccentBlue}>
+        <Text color={theme.text.primary}>
           Execution Summary:
         </Text>
       </Box>
-      <ExecutionSummaryDetails data={data} />
+      <ExecutionSummaryDetails data={data} displayMode={displayMode} />
     </Box>
 
     {/* Tool Usage section */}
-    {data.progress?.toolCalls && data.progress.toolCalls.length > 0 && (
+    {data.executionSummary && (
       <Box flexDirection="column">
         <Box flexDirection="row" marginBottom={1}>
-          <Text>🔧 </Text>
-          <Text bold color={Colors.AccentBlue}>
+          <Text color={theme.text.primary}>
             Tool Usage:
           </Text>
         </Box>
-        <ToolUsageStats toolCalls={data.progress.toolCalls} />
+        <ToolUsageStats executionSummary={data.executionSummary} />
       </Box>
     )}
 
     {/* Error reason for failed tasks */}
     {data.status === 'failed' && data.terminateReason && (
-      <Box flexDirection="row" marginTop={1}>
+      <Box flexDirection="row">
         <Text color={Colors.AccentRed}>❌ Failed: </Text>
         <Text color={Colors.Gray}>{data.terminateReason}</Text>
       </Box>

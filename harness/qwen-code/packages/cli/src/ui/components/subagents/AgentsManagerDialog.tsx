@@ -248,7 +248,7 @@ export function AgentsManagerDialog({
         return (
           <Box flexDirection="column" gap={1}>
             <ColorSelector
-              backgroundColor={selectedAgent?.backgroundColor || 'auto'}
+              color={selectedAgent?.color || 'auto'}
               agentName={selectedAgent?.name || 'Agent'}
               onSelect={async (color) => {
                 // Save changes and reload agents
@@ -258,7 +258,7 @@ export function AgentsManagerDialog({
                     const subagentManager = config.getSubagentManager();
                     await subagentManager.updateSubagent(
                       selectedAgent.name,
-                      { backgroundColor: color },
+                      { color },
                       selectedAgent.level,
                     );
                     // Reload agents to get updated state

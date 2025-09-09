@@ -47,7 +47,7 @@ export type {
   ToolConfig,
   SubagentTerminateMode,
   OutputObject,
-} from './subagent.js';
+} from './types.js';
 
 export { SubAgentScope } from './subagent.js';
 
@@ -55,11 +55,19 @@ export { SubAgentScope } from './subagent.js';
 export type {
   SubAgentEvent,
   SubAgentStartEvent,
-  SubAgentFinishEvent,
   SubAgentRoundEvent,
+  SubAgentStreamTextEvent,
   SubAgentToolCallEvent,
   SubAgentToolResultEvent,
-  SubAgentModelTextEvent,
+  SubAgentFinishEvent,
+  SubAgentErrorEvent,
 } from './subagent-events.js';
 
 export { SubAgentEventEmitter } from './subagent-events.js';
+
+// Statistics and formatting
+export type {
+  SubagentStatsSummary,
+  ToolUsageStats,
+} from './subagent-statistics.js';
+export { formatCompact, formatDetailed } from './subagent-result-format.js';

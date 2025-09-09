@@ -122,7 +122,7 @@ export function CreationSummary({
       tools: Array.isArray(state.selectedTools)
         ? state.selectedTools
         : undefined,
-      backgroundColor: state.backgroundColor,
+      color: state.color,
     };
 
     // Create the subagent
@@ -243,12 +243,12 @@ export function CreationSummary({
           <Text>{toolsDisplay}</Text>
         </Box>
 
-        {shouldShowColor(state.backgroundColor) && (
+        {shouldShowColor(state.color) && (
           <Box>
             <Text bold>Color: </Text>
-            <Box backgroundColor={getColorForDisplay(state.backgroundColor)}>
-              <Text color="black">{` ${state.generatedName} `}</Text>
-            </Box>
+            <Text
+              color={getColorForDisplay(state.color)}
+            >{` ${state.generatedName} `}</Text>
           </Box>
         )}
 

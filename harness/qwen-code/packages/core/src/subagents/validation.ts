@@ -9,6 +9,8 @@ import {
   ValidationResult,
   SubagentError,
   SubagentErrorCode,
+  ModelConfig,
+  RunConfig,
 } from './types.js';
 
 /**
@@ -250,9 +252,7 @@ export class SubagentValidator {
    * @param modelConfig - Partial model configuration to validate
    * @returns ValidationResult
    */
-  validateModelConfig(
-    modelConfig: Partial<import('./subagent.js').ModelConfig>,
-  ): ValidationResult {
+  validateModelConfig(modelConfig: ModelConfig): ValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -298,9 +298,7 @@ export class SubagentValidator {
    * @param runConfig - Partial run configuration to validate
    * @returns ValidationResult
    */
-  validateRunConfig(
-    runConfig: Partial<import('./subagent.js').RunConfig>,
-  ): ValidationResult {
+  validateRunConfig(runConfig: RunConfig): ValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 

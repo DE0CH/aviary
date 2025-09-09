@@ -8,6 +8,7 @@ import { FunctionDeclaration, PartListUnion } from '@google/genai';
 import { ToolErrorType } from './tool-error.js';
 import { DiffUpdateResult } from '../ide/ideContext.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
+import { SubagentStatsSummary } from '../subagents/subagent-statistics.js';
 
 /**
  * Represents a validated and ready-to-execute tool call.
@@ -422,23 +423,25 @@ export function hasCycleInSchema(schema: object): boolean {
 }
 
 export interface TaskResultDisplay {
-  type: 'subagent_execution';
+  type: 'task_execution';
   subagentName: string;
+  subagentColor?: string;
   taskDescription: string;
+  taskPrompt: string;
   status: 'running' | 'completed' | 'failed';
   terminateReason?: string;
   result?: string;
-  executionSummary?: string;
-  progress?: {
-    toolCalls?: Array<{
-      name: string;
-      status: 'executing' | 'success' | 'failed';
-      error?: string;
-      args?: Record<string, unknown>;
-      result?: string;
-      returnDisplay?: string;
-    }>;
-  };
+  executionSummary?: SubagentStatsSummary;
+  toolCalls?: Array<{
+    callId: string;
+    name: string;
+    status: 'executing' | 'success' | 'failed';
+    error?: string;
+    args?: Record<string, unknown>;
+    result?: string;
+    resultDisplay?: string;
+    description?: string;
+  }>;
 }
 
 export type ToolResultDisplay =

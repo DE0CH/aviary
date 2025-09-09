@@ -5,15 +5,14 @@
  */
 
 import { vi, describe, it, expect, beforeEach, Mock, afterEach } from 'vitest';
+import { ContextState, SubAgentScope } from './subagent.js';
 import {
-  ContextState,
-  SubAgentScope,
   SubagentTerminateMode,
   PromptConfig,
   ModelConfig,
   RunConfig,
   ToolConfig,
-} from './subagent.js';
+} from './types.js';
 import { Config, ConfigParameters } from '../config/config.js';
 import { GeminiChat } from '../core/geminiChat.js';
 import { createContentGenerator } from '../core/contentGenerator.js';

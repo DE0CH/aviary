@@ -196,7 +196,7 @@ describe('<ToolMessage />', () => {
 
   it('shows subagent execution display for task tool with proper result display', () => {
     const subagentResultDisplay = {
-      type: 'subagent_execution' as const,
+      type: 'task_execution' as const,
       subagentName: 'file-search',
       taskDescription: 'Search for files matching pattern',
       status: 'running' as const,

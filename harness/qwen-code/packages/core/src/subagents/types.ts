@@ -4,12 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  PromptConfig,
-  ModelConfig,
-  RunConfig,
-  ToolConfig,
-} from './subagent.js';
+import { Content, FunctionDeclaration } from '@google/genai';
 
 /**
  * Represents the storage level for a subagent configuration.
@@ -61,10 +56,10 @@ export interface SubagentConfig {
   runConfig?: Partial<RunConfig>;
 
   /**
-   * Optional background color for runtime display.
+   * Optional color for runtime display.
    * If 'auto' or omitted, uses automatic color assignment.
    */
-  backgroundColor?: string;
+  color?: string;
 }
 
 /**
@@ -159,3 +154,111 @@ export const SubagentErrorCode = {
 
 export type SubagentErrorCode =
   (typeof SubagentErrorCode)[keyof typeof SubagentErrorCode];
+
+/**
+ * Describes the possible termination modes for a subagent.
+ * This enum provides a clear indication of why a subagent's execution might have ended.
+ */
+export enum SubagentTerminateMode {
+  /**
+   * Indicates that the subagent's execution terminated due to an unrecoverable error.
+   */
+  ERROR = 'ERROR',
+  /**
+   * Indicates that the subagent's execution terminated because it exceeded the maximum allowed working time.
+   */
+  TIMEOUT = 'TIMEOUT',
+  /**
+   * Indicates that the subagent's execution successfully completed all its defined goals.
+   */
+  GOAL = 'GOAL',
+  /**
+   * Indicates that the subagent's execution terminated because it exceeded the maximum number of turns.
+   */
+  MAX_TURNS = 'MAX_TURNS',
+}
+
+/**
+ * Represents the output structure of a subagent's execution.
+ * This interface defines the data that a subagent will return upon completion,
+ * including the final result and the reason for its termination.
+ */
+export interface OutputObject {
+  /**
+   * The final result text returned by the subagent upon completion.
+   * This contains the direct output from the model's final response.
+   */
+  result: string;
+  /**
+   * The reason for the subagent's termination, indicating whether it completed
+   * successfully, timed out, or encountered an error.
+   */
+  terminate_reason: SubagentTerminateMode;
+}
+
+/**
+ * Configures the initial prompt for the subagent.
+ */
+export interface PromptConfig {
+  /**
+   * A single system prompt string that defines the subagent's persona and instructions.
+   * Note: You should use either `systemPrompt` or `initialMessages`, but not both.
+   */
+  systemPrompt?: string;
+
+  /**
+   * An array of user/model content pairs to seed the chat history for few-shot prompting.
+   * Note: You should use either `systemPrompt` or `initialMessages`, but not both.
+   */
+  initialMessages?: Content[];
+}
+
+/**
+ * Configures the tools available to the subagent during its execution.
+ */
+export interface ToolConfig {
+  /**
+   * A list of tool names (from the tool registry) or full function declarations
+   * that the subagent is permitted to use.
+   */
+  tools: Array<string | FunctionDeclaration>;
+}
+
+/**
+ * Configures the generative model parameters for the subagent.
+ * This interface specifies the model to be used and its associated generation settings,
+ * such as temperature and top-p values, which influence the creativity and diversity of the model's output.
+ */
+export interface ModelConfig {
+  /**
+   * The name or identifier of the model to be used (e.g., 'gemini-2.5-pro').
+   *
+   * TODO: In the future, this needs to support 'auto' or some other string to support routing use cases.
+   */
+  model?: string;
+  /**
+   * The temperature for the model's sampling process.
+   */
+  temp?: number;
+  /**
+   * The top-p value for nucleus sampling.
+   */
+  top_p?: number;
+}
+
+/**
+ * Configures the execution environment and constraints for the subagent.
+ * This interface defines parameters that control the subagent's runtime behavior,
+ * such as maximum execution time, to prevent infinite loops or excessive resource consumption.
+ *
+ * TODO: Consider adding max_tokens as a form of budgeting.
+ */
+export interface RunConfig {
+  /** The maximum execution time for the subagent in minutes. */
+  max_time_minutes?: number;
+  /**
+   * The maximum number of conversational turns (a user message + model response)
+   * before the execution is terminated. Helps prevent infinite loops.
+   */
+  max_turns?: number;
+}

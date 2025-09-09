@@ -19,7 +19,7 @@ export const initialWizardState: CreationWizardState = {
   generatedDescription: '',
   generatedName: '',
   selectedTools: [],
-  backgroundColor: 'auto',
+  color: 'auto',
   isGenerating: false,
   validationErrors: [],
   canProceed: false,
@@ -84,7 +84,7 @@ export function wizardReducer(
     case 'SET_BACKGROUND_COLOR':
       return {
         ...state,
-        backgroundColor: action.color,
+        color: action.color,
         canProceed: true,
       };
 
@@ -157,7 +157,7 @@ function validateStep(step: number, state: CreationWizardState): boolean {
       return true; // Always can proceed from tool selection
 
     case WIZARD_STEPS.FINAL_CONFIRMATION: // Final confirmation
-      return state.backgroundColor.length > 0;
+      return state.color.length > 0;
 
     default:
       return false;

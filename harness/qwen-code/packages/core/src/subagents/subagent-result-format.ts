@@ -4,17 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export interface SubAgentBasicStats {
-  rounds: number;
-  totalDurationMs: number;
-  totalToolCalls: number;
-  successfulToolCalls: number;
-  failedToolCalls: number;
-  successRate?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-}
+import { SubagentStatsSummary } from './subagent-statistics.js';
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -30,7 +20,7 @@ function fmtDuration(ms: number): string {
 }
 
 export function formatCompact(
-  stats: SubAgentBasicStats,
+  stats: SubagentStatsSummary,
   taskDesc: string,
 ): string {
   const sr =
@@ -52,16 +42,7 @@ export function formatCompact(
 }
 
 export function formatDetailed(
-  stats: SubAgentBasicStats & {
-    toolUsage?: Array<{
-      name: string;
-      count: number;
-      success: number;
-      failure: number;
-      lastError?: string;
-      averageDurationMs?: number;
-    }>;
-  },
+  stats: SubagentStatsSummary,
   taskDesc: string,
 ): string {
   const sr =
@@ -118,18 +99,7 @@ export function formatDetailed(
   return lines.join('\n');
 }
 
-export function generatePerformanceTips(
-  stats: SubAgentBasicStats & {
-    toolUsage?: Array<{
-      name: string;
-      count: number;
-      success: number;
-      failure: number;
-      lastError?: string;
-      averageDurationMs?: number;
-    }>;
-  },
-): string[] {
+export function generatePerformanceTips(stats: SubagentStatsSummary): string[] {
   const tips: string[] = [];
   const totalCalls = stats.totalToolCalls;
   const sr =

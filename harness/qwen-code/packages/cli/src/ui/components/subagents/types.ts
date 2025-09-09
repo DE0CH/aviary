@@ -34,8 +34,8 @@ export interface CreationWizardState {
   /** Selected tools for the subagent */
   selectedTools: string[];
 
-  /** Background color for runtime display */
-  backgroundColor: string;
+  /** Color for runtime display */
+  color: string;
 
   /** Whether LLM generation is in progress */
   isGenerating: boolean;
@@ -108,7 +108,7 @@ export interface WizardResult {
   systemPrompt: string;
   location: SubagentLevel;
   tools?: string[];
-  backgroundColor: string;
+  color: string;
 }
 
 export const MANAGEMENT_STEPS = {

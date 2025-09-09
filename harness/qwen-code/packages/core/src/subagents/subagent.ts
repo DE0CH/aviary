@@ -19,9 +19,30 @@ import {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import { GeminiChat } from '../core/geminiChat.js';
-import { SubAgentEventEmitter } from './subagent-events.js';
-import { formatCompact, formatDetailed } from './subagent-result-format.js';
-import { SubagentStatistics } from './subagent-statistics.js';
+import {
+  OutputObject,
+  SubagentTerminateMode,
+  PromptConfig,
+  ModelConfig,
+  RunConfig,
+  ToolConfig,
+} from './types.js';
+import {
+  SubAgentEventEmitter,
+  SubAgentEventType,
+  SubAgentFinishEvent,
+  SubAgentRoundEvent,
+  SubAgentStartEvent,
+  SubAgentToolCallEvent,
+  SubAgentToolResultEvent,
+  SubAgentStreamTextEvent,
+  SubAgentErrorEvent,
+} from './subagent-events.js';
+import { formatCompact } from './subagent-result-format.js';
+import {
+  SubagentStatistics,
+  SubagentStatsSummary,
+} from './subagent-statistics.js';
 import { SubagentHooks } from './subagent-hooks.js';
 import { logSubagentExecution } from '../telemetry/loggers.js';
 import { SubagentExecutionEvent } from '../telemetry/types.js';
@@ -44,114 +65,6 @@ interface ExecutionStats {
   outputTokens?: number;
   totalTokens?: number;
   estimatedCost?: number;
-}
-
-/**
- * Describes the possible termination modes for a subagent.
- * This enum provides a clear indication of why a subagent's execution might have ended.
- */
-export enum SubagentTerminateMode {
-  /**
-   * Indicates that the subagent's execution terminated due to an unrecoverable error.
-   */
-  ERROR = 'ERROR',
-  /**
-   * Indicates that the subagent's execution terminated because it exceeded the maximum allowed working time.
-   */
-  TIMEOUT = 'TIMEOUT',
-  /**
-   * Indicates that the subagent's execution successfully completed all its defined goals.
-   */
-  GOAL = 'GOAL',
-  /**
-   * Indicates that the subagent's execution terminated because it exceeded the maximum number of turns.
-   */
-  MAX_TURNS = 'MAX_TURNS',
-}
-
-/**
- * Represents the output structure of a subagent's execution.
- * This interface defines the data that a subagent will return upon completion,
- * including the final result and the reason for its termination.
- */
-export interface OutputObject {
-  /**
-   * The final result text returned by the subagent upon completion.
-   * This contains the direct output from the model's final response.
-   */
-  result: string;
-  /**
-   * The reason for the subagent's termination, indicating whether it completed
-   * successfully, timed out, or encountered an error.
-   */
-  terminate_reason: SubagentTerminateMode;
-}
-
-/**
- * Configures the initial prompt for the subagent.
- */
-export interface PromptConfig {
-  /**
-   * A single system prompt string that defines the subagent's persona and instructions.
-   * Note: You should use either `systemPrompt` or `initialMessages`, but not both.
-   */
-  systemPrompt?: string;
-
-  /**
-   * An array of user/model content pairs to seed the chat history for few-shot prompting.
-   * Note: You should use either `systemPrompt` or `initialMessages`, but not both.
-   */
-  initialMessages?: Content[];
-}
-
-/**
- * Configures the tools available to the subagent during its execution.
- */
-export interface ToolConfig {
-  /**
-   * A list of tool names (from the tool registry) or full function declarations
-   * that the subagent is permitted to use.
-   */
-  tools: Array<string | FunctionDeclaration>;
-}
-
-/**
- * Configures the generative model parameters for the subagent.
- * This interface specifies the model to be used and its associated generation settings,
- * such as temperature and top-p values, which influence the creativity and diversity of the model's output.
- */
-export interface ModelConfig {
-  /**
-   * The name or identifier of the model to be used (e.g., 'gemini-2.5-pro').
-   *
-   * TODO: In the future, this needs to support 'auto' or some other string to support routing use cases.
-   */
-  model?: string;
-  /**
-   * The temperature for the model's sampling process.
-   */
-  temp?: number;
-  /**
-   * The top-p value for nucleus sampling.
-   */
-  top_p?: number;
-}
-
-/**
- * Configures the execution environment and constraints for the subagent.
- * This interface defines parameters that control the subagent's runtime behavior,
- * such as maximum execution time, to prevent infinite loops or excessive resource consumption.
- *
- * TODO: Consider adding max_tokens as a form of budgeting.
- */
-export interface RunConfig {
-  /** The maximum execution time for the subagent in minutes. */
-  max_time_minutes?: number;
-  /**
-   * The maximum number of conversational turns (a user message + model response)
-   * before the execution is terminated. Helps prevent infinite loops.
-   */
-  max_turns?: number;
 }
 
 /**
@@ -450,7 +363,7 @@ export class SubAgentScope {
     let turnCounter = 0;
     try {
       // Emit start event
-      this.eventEmitter?.emit('start', {
+      this.eventEmitter?.emit(SubAgentEventType.START, {
         subagentId: this.subagentId,
         name: this.name,
         model: this.modelConfig.model,
@@ -458,7 +371,7 @@ export class SubAgentScope {
           typeof t === 'string' ? t : t.name,
         ),
         timestamp: Date.now(),
-      });
+      } as SubAgentStartEvent);
 
       // Log telemetry for subagent start
       const startEvent = new SubagentExecutionEvent(this.name, 'started');
@@ -494,12 +407,12 @@ export class SubAgentScope {
           messageParams,
           promptId,
         );
-        this.eventEmitter?.emit('round_start', {
+        this.eventEmitter?.emit(SubAgentEventType.ROUND_START, {
           subagentId: this.subagentId,
           round: turnCounter,
           promptId,
           timestamp: Date.now(),
-        });
+        } as SubAgentRoundEvent);
 
         const functionCalls: FunctionCall[] = [];
         let roundText = '';
@@ -514,12 +427,12 @@ export class SubAgentScope {
             const txt = (p as Part & { text?: string }).text;
             if (txt) roundText += txt;
             if (txt)
-              this.eventEmitter?.emit('model_text', {
+              this.eventEmitter?.emit(SubAgentEventType.STREAM_TEXT, {
                 subagentId: this.subagentId,
                 round: turnCounter,
                 text: txt,
                 timestamp: Date.now(),
-              });
+              } as SubAgentStreamTextEvent);
           }
           if (resp.usageMetadata) lastUsage = resp.usageMetadata;
         }
@@ -565,6 +478,7 @@ export class SubAgentScope {
             functionCalls,
             abortController,
             promptId,
+            turnCounter,
           );
         } else {
           // No tool calls — treat this as the model's final answer.
@@ -586,21 +500,21 @@ export class SubAgentScope {
             },
           ];
         }
-        this.eventEmitter?.emit('round_end', {
+        this.eventEmitter?.emit(SubAgentEventType.ROUND_END, {
           subagentId: this.subagentId,
           round: turnCounter,
           promptId,
           timestamp: Date.now(),
-        });
+        } as SubAgentRoundEvent);
       }
     } catch (error) {
       console.error('Error during subagent execution:', error);
       this.output.terminate_reason = SubagentTerminateMode.ERROR;
-      this.eventEmitter?.emit('error', {
+      this.eventEmitter?.emit(SubAgentEventType.ERROR, {
         subagentId: this.subagentId,
         error: error instanceof Error ? error.message : String(error),
         timestamp: Date.now(),
-      });
+      } as SubAgentErrorEvent);
 
       // Log telemetry for subagent error
       const errorEvent = new SubagentExecutionEvent(this.name, 'failed', {
@@ -614,7 +528,7 @@ export class SubAgentScope {
       if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
       this.executionStats.totalDurationMs = Date.now() - startTime;
       const summary = this.stats.getSummary(Date.now());
-      this.eventEmitter?.emit('finish', {
+      this.eventEmitter?.emit(SubAgentEventType.FINISH, {
         subagentId: this.subagentId,
         terminate_reason: this.output.terminate_reason,
         timestamp: Date.now(),
@@ -626,7 +540,7 @@ export class SubAgentScope {
         inputTokens: summary.inputTokens,
         outputTokens: summary.outputTokens,
         totalTokens: summary.totalTokens,
-      });
+      } as SubAgentFinishEvent);
 
       // Log telemetry for subagent completion
       const completionEvent = new SubagentExecutionEvent(
@@ -637,7 +551,8 @@ export class SubAgentScope {
         {
           terminate_reason: this.output.terminate_reason,
           result: this.finalText,
-          execution_summary: this.formatCompactResult(
+          execution_summary: formatCompact(
+            summary,
             'Subagent execution completed',
           ),
         },
@@ -669,6 +584,7 @@ export class SubAgentScope {
     functionCalls: FunctionCall[],
     abortController: AbortController,
     promptId: string,
+    currentRound: number,
   ): Promise<Content[]> {
     const toolResponseParts: Part[] = [];
 
@@ -682,6 +598,20 @@ export class SubAgentScope {
         isClientInitiated: true,
         prompt_id: promptId,
       };
+
+      // Get tool description before execution
+      const description = this.getToolDescription(toolName, requestInfo.args);
+
+      // Emit tool call event BEFORE execution
+      this.eventEmitter?.emit(SubAgentEventType.TOOL_CALL, {
+        subagentId: this.subagentId,
+        round: currentRound,
+        callId,
+        name: toolName,
+        args: requestInfo.args,
+        description,
+        timestamp: Date.now(),
+      } as SubAgentToolCallEvent);
 
       // Execute tools with timing and hooks
       const start = Date.now();
@@ -717,13 +647,7 @@ export class SubAgentScope {
       tu.count += 1;
       if (toolResponse?.error) {
         tu.failure += 1;
-        const disp =
-          typeof toolResponse.resultDisplay === 'string'
-            ? toolResponse.resultDisplay
-            : toolResponse.resultDisplay
-              ? JSON.stringify(toolResponse.resultDisplay)
-              : undefined;
-        tu.lastError = disp || toolResponse.error?.message || 'Unknown error';
+        tu.lastError = toolResponse.error?.message || 'Unknown error';
       } else {
         tu.success += 1;
       }
@@ -737,31 +661,22 @@ export class SubAgentScope {
       }
       this.toolUsage.set(toolName, tu);
 
-      // Emit tool call/result events
-      this.eventEmitter?.emit('tool_call', {
+      // Emit tool result event
+      this.eventEmitter?.emit(SubAgentEventType.TOOL_RESULT, {
         subagentId: this.subagentId,
-        round: this.executionStats.rounds,
-        callId,
-        name: toolName,
-        args: requestInfo.args,
-        timestamp: Date.now(),
-      });
-      this.eventEmitter?.emit('tool_result', {
-        subagentId: this.subagentId,
-        round: this.executionStats.rounds,
+        round: currentRound,
         callId,
         name: toolName,
         success: !toolResponse?.error,
-        error: toolResponse?.error
+        error: toolResponse?.error?.message,
+        resultDisplay: toolResponse?.resultDisplay
           ? typeof toolResponse.resultDisplay === 'string'
             ? toolResponse.resultDisplay
-            : toolResponse.resultDisplay
-              ? JSON.stringify(toolResponse.resultDisplay)
-              : toolResponse.error.message
+            : JSON.stringify(toolResponse.resultDisplay)
           : undefined,
         durationMs: duration,
         timestamp: Date.now(),
-      });
+      } as SubAgentToolResultEvent);
 
       // Update statistics service
       this.stats.recordToolCall(
@@ -779,19 +694,13 @@ export class SubAgentScope {
         args: requestInfo.args,
         success: !toolResponse?.error,
         durationMs: duration,
-        errorMessage: toolResponse?.error
-          ? typeof toolResponse.resultDisplay === 'string'
-            ? toolResponse.resultDisplay
-            : toolResponse.resultDisplay
-              ? JSON.stringify(toolResponse.resultDisplay)
-              : toolResponse.error.message
-          : undefined,
+        errorMessage: toolResponse?.error?.message,
         timestamp: Date.now(),
       });
 
       if (toolResponse.error) {
         console.error(
-          `Error executing tool ${functionCall.name}: ${toolResponse.resultDisplay || toolResponse.error.message}`,
+          `Error executing tool ${functionCall.name}: ${toolResponse.error.message}`,
         );
       }
 
@@ -836,45 +745,12 @@ export class SubAgentScope {
     };
   }
 
-  formatCompactResult(taskDesc: string, _useColors = false) {
-    const stats = this.getStatistics();
-    return formatCompact(
-      {
-        rounds: stats.rounds,
-        totalDurationMs: stats.totalDurationMs,
-        totalToolCalls: stats.totalToolCalls,
-        successfulToolCalls: stats.successfulToolCalls,
-        failedToolCalls: stats.failedToolCalls,
-        successRate: stats.successRate,
-        inputTokens: this.executionStats.inputTokens,
-        outputTokens: this.executionStats.outputTokens,
-        totalTokens: this.executionStats.totalTokens,
-      },
-      taskDesc,
-    );
+  getExecutionSummary(): SubagentStatsSummary {
+    return this.stats.getSummary();
   }
 
   getFinalText(): string {
     return this.finalText;
-  }
-
-  formatDetailedResult(taskDesc: string) {
-    const stats = this.getStatistics();
-    return formatDetailed(
-      {
-        rounds: stats.rounds,
-        totalDurationMs: stats.totalDurationMs,
-        totalToolCalls: stats.totalToolCalls,
-        successfulToolCalls: stats.successfulToolCalls,
-        failedToolCalls: stats.failedToolCalls,
-        successRate: stats.successRate,
-        inputTokens: this.executionStats.inputTokens,
-        outputTokens: this.executionStats.outputTokens,
-        totalTokens: this.executionStats.totalTokens,
-        toolUsage: stats.toolUsage,
-      },
-      taskDesc,
-    );
   }
 
   private async createChatObject(context: ContextState) {
@@ -941,6 +817,33 @@ export class SubAgentScope {
       );
       // The calling function will handle the undefined return.
       return undefined;
+    }
+  }
+
+  /**
+   * Safely retrieves the description of a tool by attempting to build it.
+   * Returns an empty string if any error occurs during the process.
+   *
+   * @param toolName The name of the tool to get description for.
+   * @param args The arguments that would be passed to the tool.
+   * @returns The tool description or empty string if error occurs.
+   */
+  private getToolDescription(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): string {
+    try {
+      const toolRegistry = this.runtimeContext.getToolRegistry();
+      const tool = toolRegistry.getTool(toolName);
+      if (!tool) {
+        return '';
+      }
+
+      const toolInstance = tool.build(args);
+      return toolInstance.getDescription() || '';
+    } catch {
+      // Safely ignore all runtime errors and return empty string
+      return '';
     }
   }
 

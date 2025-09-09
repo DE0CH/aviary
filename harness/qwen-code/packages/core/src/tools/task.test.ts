@@ -6,14 +6,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TaskTool, TaskParams } from './task.js';
+import type { PartListUnion } from '@google/genai';
+import type { ToolResultDisplay, TaskResultDisplay } from './tools.js';
 import { Config } from '../config/config.js';
 import { SubagentManager } from '../subagents/subagent-manager.js';
-import { SubagentConfig } from '../subagents/types.js';
-import {
-  SubAgentScope,
-  ContextState,
-  SubagentTerminateMode,
-} from '../subagents/subagent.js';
+import { SubagentConfig, SubagentTerminateMode } from '../subagents/types.js';
+import { SubAgentScope, ContextState } from '../subagents/subagent.js';
 import { partToString } from '../utils/partUtils.js';
 
 // Type for accessing protected methods in tests
@@ -23,8 +21,8 @@ type TaskToolWithProtectedMethods = TaskTool & {
       signal?: AbortSignal,
       liveOutputCallback?: (chunk: string) => void,
     ) => Promise<{
-      llmContent: string;
-      returnDisplay: unknown;
+      llmContent: PartListUnion;
+      returnDisplay: ToolResultDisplay;
     }>;
     getDescription: () => string;
     shouldConfirmExecute: () => Promise<boolean>;
@@ -270,6 +268,36 @@ describe('TaskTool', () => {
           .mockReturnValue(
             '✅ Success: Search files completed with GOAL termination',
           ),
+        getExecutionSummary: vi.fn().mockReturnValue({
+          rounds: 2,
+          totalDurationMs: 1500,
+          totalToolCalls: 3,
+          successfulToolCalls: 3,
+          failedToolCalls: 0,
+          successRate: 100,
+          inputTokens: 1000,
+          outputTokens: 500,
+          totalTokens: 1500,
+          estimatedCost: 0.045,
+          toolUsage: [
+            {
+              name: 'grep',
+              count: 2,
+              success: 2,
+              failure: 0,
+              totalDurationMs: 800,
+              averageDurationMs: 400,
+            },
+            {
+              name: 'read_file',
+              count: 1,
+              success: 1,
+              failure: 0,
+              totalDurationMs: 200,
+              averageDurationMs: 200,
+            },
+          ],
+        }),
         getStatistics: vi.fn().mockReturnValue({
           rounds: 2,
           totalDurationMs: 1500,
@@ -319,13 +347,11 @@ describe('TaskTool', () => {
       );
 
       const llmText = partToString(result.llmContent);
-      const parsedResult = JSON.parse(llmText) as {
-        success: boolean;
-        subagent_name?: string;
-        error?: string;
-      };
-      expect(parsedResult.success).toBe(true);
-      expect(parsedResult.subagent_name).toBe('file-search');
+      expect(llmText).toBe('Task completed successfully');
+      const display = result.returnDisplay as TaskResultDisplay;
+      expect(display.type).toBe('task_execution');
+      expect(display.status).toBe('completed');
+      expect(display.subagentName).toBe('file-search');
     });
 
     it('should handle subagent not found error', async () => {
@@ -343,13 +369,10 @@ describe('TaskTool', () => {
       const result = await invocation.execute();
 
       const llmText = partToString(result.llmContent);
-      const parsedResult = JSON.parse(llmText) as {
-        success: boolean;
-        subagent_name?: string;
-        error?: string;
-      };
-      expect(parsedResult.success).toBe(false);
-      expect(parsedResult.error).toContain('Subagent "non-existent" not found');
+      expect(llmText).toContain('Subagent "non-existent" not found');
+      const display = result.returnDisplay as TaskResultDisplay;
+      expect(display.status).toBe('failed');
+      expect(display.subagentName).toBe('non-existent');
     });
 
     it('should handle subagent execution failure', async () => {
@@ -366,16 +389,9 @@ describe('TaskTool', () => {
       ).createInvocation(params);
       const result = await invocation.execute();
 
-      const llmText = partToString(result.llmContent);
-      const parsedResult = JSON.parse(llmText) as {
-        success: boolean;
-        subagent_name?: string;
-        error?: string;
-      };
-      expect(parsedResult.success).toBe(false);
-      expect(parsedResult.error).toContain(
-        'Task did not complete successfully',
-      );
+      const display = result.returnDisplay as TaskResultDisplay;
+      expect(display.status).toBe('failed');
+      expect(display.terminateReason).toBe('ERROR');
     });
 
     it('should handle execution errors gracefully', async () => {
@@ -395,13 +411,13 @@ describe('TaskTool', () => {
       const result = await invocation.execute();
 
       const llmText = partToString(result.llmContent);
-      const parsedResult = JSON.parse(llmText) as {
-        success: boolean;
-        subagent_name?: string;
-        error?: string;
-      };
-      expect(parsedResult.success).toBe(false);
-      expect(parsedResult.error).toContain('Failed to start subagent');
+      expect(llmText).toContain('Failed to run subagent: Creation failed');
+      const display = result.returnDisplay as TaskResultDisplay;
+
+      expect(display.status).toBe('failed');
+      expect(display.result ?? '').toContain(
+        'Failed to run subagent: Creation failed',
+      );
     });
 
     it('should execute subagent without live output callback', async () => {
@@ -421,12 +437,11 @@ describe('TaskTool', () => {
       expect(result.returnDisplay).toBeDefined();
 
       // Verify the result has the expected structure
-      const llmContent = Array.isArray(result.llmContent)
-        ? result.llmContent
-        : [result.llmContent];
-      const parsedResult = JSON.parse((llmContent[0] as { text: string }).text);
-      expect(parsedResult.success).toBe(true);
-      expect(parsedResult.subagent_name).toBe('file-search');
+      const text = partToString(result.llmContent);
+      expect(text).toBe('Task completed successfully');
+      const display = result.returnDisplay as TaskResultDisplay;
+      expect(display.status).toBe('completed');
+      expect(display.subagentName).toBe('file-search');
     });
 
     it('should set context variables correctly', async () => {
@@ -460,7 +475,7 @@ describe('TaskTool', () => {
       const result = await invocation.execute();
 
       expect(typeof result.returnDisplay).toBe('object');
-      expect(result.returnDisplay).toHaveProperty('type', 'subagent_execution');
+      expect(result.returnDisplay).toHaveProperty('type', 'task_execution');
       expect(result.returnDisplay).toHaveProperty(
         'subagentName',
         'file-search',
@@ -499,9 +514,7 @@ describe('TaskTool', () => {
       ).createInvocation(params);
       const description = invocation.getDescription();
 
-      expect(description).toBe(
-        'file-search subagent: "Search files"',
-      );
+      expect(description).toBe('file-search subagent: "Search files"');
     });
   });
 });

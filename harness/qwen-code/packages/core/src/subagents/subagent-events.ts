@@ -10,17 +10,21 @@ export type SubAgentEvent =
   | 'start'
   | 'round_start'
   | 'round_end'
-  | 'model_text'
+  | 'stream_text'
   | 'tool_call'
   | 'tool_result'
   | 'finish'
   | 'error';
 
-export interface SubAgentModelTextEvent {
-  subagentId: string;
-  round: number;
-  text: string;
-  timestamp: number;
+export enum SubAgentEventType {
+  START = 'start',
+  ROUND_START = 'round_start',
+  ROUND_END = 'round_end',
+  STREAM_TEXT = 'stream_text',
+  TOOL_CALL = 'tool_call',
+  TOOL_RESULT = 'tool_result',
+  FINISH = 'finish',
+  ERROR = 'error',
 }
 
 export interface SubAgentStartEvent {
@@ -38,12 +42,20 @@ export interface SubAgentRoundEvent {
   timestamp: number;
 }
 
+export interface SubAgentStreamTextEvent {
+  subagentId: string;
+  round: number;
+  text: string;
+  timestamp: number;
+}
+
 export interface SubAgentToolCallEvent {
   subagentId: string;
   round: number;
   callId: string;
   name: string;
   args: Record<string, unknown>;
+  description: string;
   timestamp: number;
 }
 
@@ -54,6 +66,7 @@ export interface SubAgentToolResultEvent {
   name: string;
   success: boolean;
   error?: string;
+  resultDisplay?: string;
   durationMs?: number;
   timestamp: number;
 }
@@ -70,6 +83,12 @@ export interface SubAgentFinishEvent {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+}
+
+export interface SubAgentErrorEvent {
+  subagentId: string;
+  error: string;
+  timestamp: number;
 }
 
 export class SubAgentEventEmitter {

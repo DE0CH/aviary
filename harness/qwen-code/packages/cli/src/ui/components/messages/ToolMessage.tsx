@@ -34,7 +34,7 @@ type DisplayRendererResult =
   | { type: 'todo'; data: TodoResultDisplay }
   | { type: 'string'; data: string }
   | { type: 'diff'; data: { fileDiff: string; fileName: string } }
-  | { type: 'subagent_execution'; data: TaskResultDisplay };
+  | { type: 'task'; data: TaskResultDisplay };
 
 /**
  * Custom hook to determine the type of result display and return appropriate rendering info
@@ -65,10 +65,10 @@ const useResultDisplayRenderer = (
       typeof resultDisplay === 'object' &&
       resultDisplay !== null &&
       'type' in resultDisplay &&
-      resultDisplay.type === 'subagent_execution'
+      resultDisplay.type === 'task_execution'
     ) {
       return {
-        type: 'subagent_execution',
+        type: 'task',
         data: resultDisplay as TaskResultDisplay,
       };
     }
@@ -216,7 +216,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
             {displayRenderer.type === 'todo' && (
               <TodoResultRenderer data={displayRenderer.data} />
             )}
-            {displayRenderer.type === 'subagent_execution' && (
+            {displayRenderer.type === 'task' && (
               <SubagentExecutionRenderer
                 data={displayRenderer.data}
                 availableHeight={availableHeight}
