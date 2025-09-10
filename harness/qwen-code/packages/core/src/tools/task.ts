@@ -24,7 +24,6 @@ import {
   SubAgentEventType,
   SubAgentErrorEvent,
 } from '../subagents/subagent-events.js';
-import { ChatRecordingService } from '../services/chatRecordingService.js';
 
 export interface TaskParams {
   description: string;
@@ -413,42 +412,11 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
       if (updateOutput) {
         updateOutput(this.currentDisplay);
       }
-      const chatRecorder = new ChatRecordingService(this.config);
-      try {
-        chatRecorder.initialize();
-      } catch {
-        // Initialization failed, continue without recording
-      }
       const subagentScope = await this.subagentManager.createSubagentScope(
         subagentConfig,
         this.config,
         { eventEmitter: this.eventEmitter },
       );
-
-      // Set up basic event listeners for chat recording
-      this.eventEmitter.on('start', () => {
-        chatRecorder.recordMessage({
-          type: 'user',
-          content: `Subagent(${this.params.subagent_type}) Task: ${this.params.description}\n\n${this.params.prompt}`,
-        });
-      });
-
-      this.eventEmitter.on('finish', (e) => {
-        const finishEvent = e as {
-          inputTokens?: number;
-          outputTokens?: number;
-        };
-        const text = subagentScope.getFinalText() || '';
-        chatRecorder.recordMessage({ type: 'gemini', content: text });
-        const input = finishEvent.inputTokens ?? 0;
-        const output = finishEvent.outputTokens ?? 0;
-        chatRecorder.recordMessageTokens({
-          input,
-          output,
-          cached: 0,
-          total: input + output,
-        });
-      });
 
       // Create context state with the task prompt
       const contextState = new ContextState();

@@ -199,6 +199,7 @@ describe('<ToolMessage />', () => {
       type: 'task_execution' as const,
       subagentName: 'file-search',
       taskDescription: 'Search for files matching pattern',
+      taskPrompt: 'Search for files matching pattern',
       status: 'running' as const,
     };
 
