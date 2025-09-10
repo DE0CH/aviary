@@ -4,17 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import OpenAI from 'openai';
-import {
+import type OpenAI from 'openai';
+import type {
   GenerateContentParameters,
   GenerateContentResponse,
 } from '@google/genai';
-import { Config } from '../../config/config.js';
-import { ContentGeneratorConfig } from '../contentGenerator.js';
+import type { Config } from '../../config/config.js';
+import type { ContentGeneratorConfig } from '../contentGenerator.js';
 import { type OpenAICompatibleProvider } from './provider/index.js';
 import { OpenAIContentConverter } from './converter.js';
-import { TelemetryService, RequestContext } from './telemetryService.js';
-import { ErrorHandler } from './errorHandler.js';
+import type { TelemetryService, RequestContext } from './telemetryService.js';
+import type { ErrorHandler } from './errorHandler.js';
 
 export interface PipelineConfig {
   cliConfig: Config;

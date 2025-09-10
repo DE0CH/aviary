@@ -4,20 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
-import OpenAI from 'openai';
-import {
-  GenerateContentParameters,
-  GenerateContentResponse,
-  Type,
-} from '@google/genai';
-import { ContentGenerationPipeline, PipelineConfig } from './pipeline.js';
+import type { Mock } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type OpenAI from 'openai';
+import type { GenerateContentParameters } from '@google/genai';
+import { GenerateContentResponse, Type } from '@google/genai';
+import type { PipelineConfig } from './pipeline.js';
+import { ContentGenerationPipeline } from './pipeline.js';
 import { OpenAIContentConverter } from './converter.js';
-import { Config } from '../../config/config.js';
-import { ContentGeneratorConfig, AuthType } from '../contentGenerator.js';
-import { OpenAICompatibleProvider } from './provider/index.js';
-import { TelemetryService } from './telemetryService.js';
-import { ErrorHandler } from './errorHandler.js';
+import type { Config } from '../../config/config.js';
+import type { ContentGeneratorConfig, AuthType } from '../contentGenerator.js';
+import type { OpenAICompatibleProvider } from './provider/index.js';
+import type { TelemetryService } from './telemetryService.js';
+import type { ErrorHandler } from './errorHandler.js';
 
 // Mock dependencies
 vi.mock('./converter.js');
