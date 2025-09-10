@@ -294,7 +294,7 @@ export function recordContentRetryFailure(config: Config): void {
 export function recordSubagentExecutionMetrics(
   config: Config,
   subagentName: string,
-  status: 'started' | 'progress' | 'completed' | 'failed',
+  status: 'started' | 'completed' | 'failed' | 'cancelled',
   terminateReason?: string,
 ): void {
   if (!subagentExecutionCounter || !isMetricsInitialized) return;

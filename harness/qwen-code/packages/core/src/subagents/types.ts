@@ -183,24 +183,10 @@ export enum SubagentTerminateMode {
    * Indicates that the subagent's execution terminated because it exceeded the maximum number of turns.
    */
   MAX_TURNS = 'MAX_TURNS',
-}
-
-/**
- * Represents the output structure of a subagent's execution.
- * This interface defines the data that a subagent will return upon completion,
- * including the final result and the reason for its termination.
- */
-export interface OutputObject {
   /**
-   * The final result text returned by the subagent upon completion.
-   * This contains the direct output from the model's final response.
+   * Indicates that the subagent's execution was cancelled via an abort signal.
    */
-  result: string;
-  /**
-   * The reason for the subagent's termination, indicating whether it completed
-   * successfully, timed out, or encountered an error.
-   */
-  terminate_reason: SubagentTerminateMode;
+  CANCELLED = 'CANCELLED',
 }
 
 /**

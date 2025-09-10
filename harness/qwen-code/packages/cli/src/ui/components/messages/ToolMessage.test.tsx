@@ -40,7 +40,7 @@ vi.mock('../../utils/MarkdownDisplay.js', () => ({
   },
 }));
 vi.mock('../subagents/index.js', () => ({
-  SubagentExecutionDisplay: function MockSubagentExecutionDisplay({
+  AgentExecutionDisplay: function MockAgentExecutionDisplay({
     data,
   }: {
     data: { subagentName: string; taskDescription: string };

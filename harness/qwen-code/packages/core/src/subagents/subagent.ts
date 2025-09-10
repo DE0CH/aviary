@@ -20,7 +20,6 @@ import {
 } from '@google/genai';
 import { GeminiChat } from '../core/geminiChat.js';
 import {
-  OutputObject,
   SubagentTerminateMode,
   PromptConfig,
   ModelConfig,
@@ -150,10 +149,6 @@ function templateString(template: string, context: ContextState): string {
  * runtime context, and the collection of its outputs.
  */
 export class SubAgentScope {
-  output: OutputObject = {
-    terminate_reason: SubagentTerminateMode.ERROR,
-    result: '',
-  };
   executionStats: ExecutionStats = {
     startTimeMs: 0,
     totalDurationMs: 0,
@@ -179,6 +174,7 @@ export class SubAgentScope {
   >();
   private eventEmitter?: SubAgentEventEmitter;
   private finalText: string = '';
+  private terminateMode: SubagentTerminateMode = SubagentTerminateMode.ERROR;
   private readonly stats = new SubagentStatistics();
   private hooks?: SubagentHooks;
   private readonly subagentId: string;
@@ -312,14 +308,18 @@ export class SubAgentScope {
     const chat = await this.createChatObject(context);
 
     if (!chat) {
-      this.output.terminate_reason = SubagentTerminateMode.ERROR;
+      this.terminateMode = SubagentTerminateMode.ERROR;
       return;
     }
 
     const abortController = new AbortController();
     const onAbort = () => abortController.abort();
     if (externalSignal) {
-      if (externalSignal.aborted) abortController.abort();
+      if (externalSignal.aborted) {
+        abortController.abort();
+        this.terminateMode = SubagentTerminateMode.CANCELLED;
+        return;
+      }
       externalSignal.addEventListener('abort', onAbort, { once: true });
     }
     const toolRegistry = this.runtimeContext.getToolRegistry();
@@ -381,7 +381,7 @@ export class SubAgentScope {
           this.runConfig.max_turns &&
           turnCounter >= this.runConfig.max_turns
         ) {
-          this.output.terminate_reason = SubagentTerminateMode.MAX_TURNS;
+          this.terminateMode = SubagentTerminateMode.MAX_TURNS;
           break;
         }
         let durationMin = (Date.now() - startTime) / (1000 * 60);
@@ -389,7 +389,7 @@ export class SubAgentScope {
           this.runConfig.max_time_minutes &&
           durationMin >= this.runConfig.max_time_minutes
         ) {
-          this.output.terminate_reason = SubagentTerminateMode.TIMEOUT;
+          this.terminateMode = SubagentTerminateMode.TIMEOUT;
           break;
         }
 
@@ -418,7 +418,10 @@ export class SubAgentScope {
         let lastUsage: GenerateContentResponseUsageMetadata | undefined =
           undefined;
         for await (const resp of responseStream) {
-          if (abortController.signal.aborted) return;
+          if (abortController.signal.aborted) {
+            this.terminateMode = SubagentTerminateMode.CANCELLED;
+            return;
+          }
           if (resp.functionCalls) functionCalls.push(...resp.functionCalls);
           const content = resp.candidates?.[0]?.content;
           const parts = content?.parts || [];
@@ -443,7 +446,7 @@ export class SubAgentScope {
           this.runConfig.max_time_minutes &&
           durationMin >= this.runConfig.max_time_minutes
         ) {
-          this.output.terminate_reason = SubagentTerminateMode.TIMEOUT;
+          this.terminateMode = SubagentTerminateMode.TIMEOUT;
           break;
         }
 
@@ -483,8 +486,7 @@ export class SubAgentScope {
           // No tool calls — treat this as the model's final answer.
           if (roundText && roundText.trim().length > 0) {
             this.finalText = roundText.trim();
-            this.output.result = this.finalText;
-            this.output.terminate_reason = SubagentTerminateMode.GOAL;
+            this.terminateMode = SubagentTerminateMode.GOAL;
             break;
           }
           // Otherwise, nudge the model to finalize a result.
@@ -508,7 +510,7 @@ export class SubAgentScope {
       }
     } catch (error) {
       console.error('Error during subagent execution:', error);
-      this.output.terminate_reason = SubagentTerminateMode.ERROR;
+      this.terminateMode = SubagentTerminateMode.ERROR;
       this.eventEmitter?.emit(SubAgentEventType.ERROR, {
         subagentId: this.subagentId,
         error: error instanceof Error ? error.message : String(error),
@@ -529,7 +531,7 @@ export class SubAgentScope {
       const summary = this.stats.getSummary(Date.now());
       this.eventEmitter?.emit(SubAgentEventType.FINISH, {
         subagentId: this.subagentId,
-        terminate_reason: this.output.terminate_reason,
+        terminate_reason: this.terminateMode,
         timestamp: Date.now(),
         rounds: summary.rounds,
         totalDurationMs: summary.totalDurationMs,
@@ -541,14 +543,13 @@ export class SubAgentScope {
         totalTokens: summary.totalTokens,
       } as SubAgentFinishEvent);
 
-      // Log telemetry for subagent completion
       const completionEvent = new SubagentExecutionEvent(
         this.name,
-        this.output.terminate_reason === SubagentTerminateMode.GOAL
+        this.terminateMode === SubagentTerminateMode.GOAL
           ? 'completed'
           : 'failed',
         {
-          terminate_reason: this.output.terminate_reason,
+          terminate_reason: this.terminateMode,
           result: this.finalText,
           execution_summary: this.stats.formatCompact(
             'Subagent execution completed',
@@ -560,7 +561,7 @@ export class SubAgentScope {
       await this.hooks?.onStop?.({
         subagentId: this.subagentId,
         name: this.name,
-        terminateReason: this.output.terminate_reason,
+        terminateReason: this.terminateMode,
         summary: summary as unknown as Record<string, unknown>,
         timestamp: Date.now(),
       });
@@ -749,6 +750,10 @@ export class SubAgentScope {
 
   getFinalText(): string {
     return this.finalText;
+  }
+
+  getTerminateMode(): SubagentTerminateMode {
+    return this.terminateMode;
   }
 
   private async createChatObject(context: ContextState) {

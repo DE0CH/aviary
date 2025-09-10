@@ -6,11 +6,11 @@
 
 import { useCallback, useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { WizardStepProps } from './types.js';
+import { WizardStepProps } from '../types.js';
 import { SubagentManager, SubagentConfig } from '@qwen-code/qwen-code-core';
-import { theme } from '../../semantic-colors.js';
-import { shouldShowColor, getColorForDisplay } from './utils.js';
-import { useLaunchEditor } from './useLaunchEditor.js';
+import { theme } from '../../../semantic-colors.js';
+import { shouldShowColor, getColorForDisplay } from '../utils.js';
+import { useLaunchEditor } from '../../../hooks/useLaunchEditor.js';
 
 /**
  * Step 6: Final confirmation and actions.

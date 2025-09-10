@@ -6,9 +6,9 @@
 
 import { Box, Text } from 'ink';
 import { SubagentConfig } from '@qwen-code/qwen-code-core';
-import { StepNavigationProps } from './types.js';
-import { theme } from '../../semantic-colors.js';
-import { useKeypress } from '../../hooks/useKeypress.js';
+import { StepNavigationProps } from '../types.js';
+import { theme } from '../../../semantic-colors.js';
+import { useKeypress } from '../../../hooks/useKeypress.js';
 
 interface AgentDeleteStepProps extends StepNavigationProps {
   selectedAgent: SubagentConfig | null;

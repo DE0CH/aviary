@@ -448,14 +448,14 @@ export class SubagentExecutionEvent implements BaseTelemetryEvent {
   'event.name': 'subagent_execution';
   'event.timestamp': string;
   subagent_name: string;
-  status: 'started' | 'progress' | 'completed' | 'failed';
+  status: 'started' | 'completed' | 'failed' | 'cancelled';
   terminate_reason?: string;
   result?: string;
   execution_summary?: string;
 
   constructor(
     subagent_name: string,
-    status: 'started' | 'progress' | 'completed' | 'failed',
+    status: 'started' | 'completed' | 'failed' | 'cancelled',
     options?: {
       terminate_reason?: string;
       result?: string;

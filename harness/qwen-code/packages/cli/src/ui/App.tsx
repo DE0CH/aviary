@@ -44,7 +44,7 @@ import { FolderTrustDialog } from './components/FolderTrustDialog.js';
 import { ShellConfirmationDialog } from './components/ShellConfirmationDialog.js';
 import { RadioButtonSelect } from './components/shared/RadioButtonSelect.js';
 import {
-  SubagentCreationWizard,
+  AgentCreationWizard,
   AgentsManagerDialog,
 } from './components/subagents/index.js';
 import { Colors } from './colors.js';
@@ -1093,7 +1093,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
             </Box>
           ) : isSubagentCreateDialogOpen ? (
             <Box flexDirection="column">
-              <SubagentCreationWizard
+              <AgentCreationWizard
                 onClose={closeSubagentCreateDialog}
                 config={config}
               />

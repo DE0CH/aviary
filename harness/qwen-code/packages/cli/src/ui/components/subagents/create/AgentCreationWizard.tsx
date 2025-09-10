@@ -6,20 +6,20 @@
 
 import { useReducer, useCallback, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { wizardReducer, initialWizardState } from './reducers.js';
+import { wizardReducer, initialWizardState } from '../reducers.js';
 import { LocationSelector } from './LocationSelector.js';
 import { GenerationMethodSelector } from './GenerationMethodSelector.js';
 import { DescriptionInput } from './DescriptionInput.js';
 import { ToolSelector } from './ToolSelector.js';
 import { ColorSelector } from './ColorSelector.js';
 import { CreationSummary } from './CreationSummary.js';
-import { WizardStepProps } from './types.js';
-import { WIZARD_STEPS } from './constants.js';
+import { WizardStepProps } from '../types.js';
+import { WIZARD_STEPS } from '../constants.js';
 import { Config } from '@qwen-code/qwen-code-core';
-import { Colors } from '../../colors.js';
-import { theme } from '../../semantic-colors.js';
+import { Colors } from '../../../colors.js';
+import { theme } from '../../../semantic-colors.js';
 
-interface SubagentCreationWizardProps {
+interface AgentCreationWizardProps {
   onClose: () => void;
   config: Config | null;
 }
@@ -27,10 +27,10 @@ interface SubagentCreationWizardProps {
 /**
  * Main orchestrator component for the subagent creation wizard.
  */
-export function SubagentCreationWizard({
+export function AgentCreationWizard({
   onClose,
   config,
-}: SubagentCreationWizardProps) {
+}: AgentCreationWizardProps) {
   const [state, dispatch] = useReducer(wizardReducer, initialWizardState);
 
   const handleNext = useCallback(() => {

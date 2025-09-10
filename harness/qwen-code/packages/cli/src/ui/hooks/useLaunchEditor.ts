@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 import { useStdin } from 'ink';
 import { EditorType } from '@qwen-code/qwen-code-core';
 import { spawnSync } from 'child_process';
-import { useSettings } from '../../contexts/SettingsContext.js';
+import { useSettings } from '../contexts/SettingsContext.js';
 
 /**
  * Determines the editor command to use based on user preferences and platform.

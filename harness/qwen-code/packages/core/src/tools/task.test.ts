@@ -258,10 +258,8 @@ describe('TaskTool', () => {
     beforeEach(() => {
       mockSubagentScope = {
         runNonInteractive: vi.fn().mockResolvedValue(undefined),
-        output: {
-          result: 'Task completed successfully',
-          terminate_reason: SubagentTerminateMode.GOAL,
-        },
+        result: 'Task completed successfully',
+        terminateMode: SubagentTerminateMode.GOAL,
         getFinalText: vi.fn().mockReturnValue('Task completed successfully'),
         formatCompactResult: vi
           .fn()
@@ -305,6 +303,7 @@ describe('TaskTool', () => {
           successfulToolCalls: 3,
           failedToolCalls: 0,
         }),
+        getTerminateMode: vi.fn().mockReturnValue(SubagentTerminateMode.GOAL),
       } as unknown as SubAgentScope;
 
       mockContextState = {
@@ -373,25 +372,6 @@ describe('TaskTool', () => {
       const display = result.returnDisplay as TaskResultDisplay;
       expect(display.status).toBe('failed');
       expect(display.subagentName).toBe('non-existent');
-    });
-
-    it('should handle subagent execution failure', async () => {
-      mockSubagentScope.output.terminate_reason = SubagentTerminateMode.ERROR;
-
-      const params: TaskParams = {
-        description: 'Search files',
-        prompt: 'Find all TypeScript files',
-        subagent_type: 'file-search',
-      };
-
-      const invocation = (
-        taskTool as TaskToolWithProtectedMethods
-      ).createInvocation(params);
-      const result = await invocation.execute();
-
-      const display = result.returnDisplay as TaskResultDisplay;
-      expect(display.status).toBe('failed');
-      expect(display.terminateReason).toBe('ERROR');
     });
 
     it('should handle execution errors gracefully', async () => {

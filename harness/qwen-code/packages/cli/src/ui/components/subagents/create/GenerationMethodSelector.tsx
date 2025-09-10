@@ -5,8 +5,8 @@
  */
 
 import { Box } from 'ink';
-import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
-import { WizardStepProps } from './types.js';
+import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
+import { WizardStepProps } from '../types.js';
 
 interface GenerationOption {
   label: string;

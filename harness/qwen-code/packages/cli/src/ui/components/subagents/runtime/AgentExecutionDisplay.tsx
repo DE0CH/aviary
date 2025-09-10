@@ -6,19 +6,19 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { Colors } from '../../colors.js';
+import { Colors } from '../../../colors.js';
 import {
   TaskResultDisplay,
   SubagentStatsSummary,
 } from '@qwen-code/qwen-code-core';
-import { theme } from '../../semantic-colors.js';
-import { useKeypress } from '../../hooks/useKeypress.js';
-import { COLOR_OPTIONS } from './constants.js';
-import { fmtDuration } from './utils.js';
+import { theme } from '../../../semantic-colors.js';
+import { useKeypress } from '../../../hooks/useKeypress.js';
+import { COLOR_OPTIONS } from '../constants.js';
+import { fmtDuration } from '../utils.js';
 
-export type DisplayMode = 'compact' | 'default' | 'verbose';
+export type DisplayMode = 'default' | 'verbose';
 
-export interface SubagentExecutionDisplayProps {
+export interface AgentExecutionDisplayProps {
   data: TaskResultDisplay;
 }
 
@@ -32,6 +32,8 @@ const getStatusColor = (
     case 'completed':
     case 'success':
       return theme.status.success;
+    case 'cancelled':
+      return theme.status.warning;
     case 'failed':
       return theme.status.error;
     default:
@@ -45,6 +47,8 @@ const getStatusText = (status: TaskResultDisplay['status']) => {
       return 'Running';
     case 'completed':
       return 'Completed';
+    case 'cancelled':
+      return 'User Cancelled';
     case 'failed':
       return 'Failed';
     default:
@@ -52,14 +56,17 @@ const getStatusText = (status: TaskResultDisplay['status']) => {
   }
 };
 
+const MAX_TOOL_CALLS = 5;
+const MAX_TASK_PROMPT_LINES = 5;
+
 /**
  * Component to display subagent execution progress and results.
  * This is now a pure component that renders the provided SubagentExecutionResultDisplay data.
  * Real-time updates are handled by the parent component updating the data prop.
  */
-export const SubagentExecutionDisplay: React.FC<
-  SubagentExecutionDisplayProps
-> = ({ data }) => {
+export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
+  data,
+}) => {
   const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
 
   const agentColor = useMemo(() => {
@@ -76,27 +83,25 @@ export const SubagentExecutionDisplay: React.FC<
     if (displayMode === 'verbose') return 'Press ctrl+r to show less.';
 
     if (displayMode === 'default') {
-      const hasMoreLines = data.taskPrompt.split('\n').length > 10;
-      const hasMoreToolCalls = data.toolCalls && data.toolCalls.length > 5;
+      const hasMoreLines =
+        data.taskPrompt.split('\n').length > MAX_TASK_PROMPT_LINES;
+      const hasMoreToolCalls =
+        data.toolCalls && data.toolCalls.length > MAX_TOOL_CALLS;
 
       if (hasMoreToolCalls || hasMoreLines) {
-        return 'Press ctrl+s to show more.';
+        return 'Press ctrl+r to show more.';
       }
       return '';
     }
     return '';
   }, [displayMode, data.toolCalls, data.taskPrompt, data.status]);
 
-  // Handle ctrl+s and ctrl+r keypresses to control display mode
+  // Handle ctrl+r keypresses to control display mode
   useKeypress(
     (key) => {
-      if (key.ctrl && key.name === 's') {
+      if (key.ctrl && key.name === 'r') {
         setDisplayMode((current) =>
-          current === 'default' ? 'verbose' : 'verbose',
-        );
-      } else if (key.ctrl && key.name === 'r') {
-        setDisplayMode((current) =>
-          current === 'verbose' ? 'default' : 'default',
+          current === 'default' ? 'verbose' : 'default',
         );
       }
     },
@@ -133,7 +138,9 @@ export const SubagentExecutionDisplay: React.FC<
         )}
 
       {/* Results section for completed/failed tasks */}
-      {(data.status === 'completed' || data.status === 'failed') && (
+      {(data.status === 'completed' ||
+        data.status === 'failed' ||
+        data.status === 'cancelled') && (
         <ResultsSection data={data} displayMode={displayMode} />
       )}
 
@@ -157,7 +164,7 @@ const TaskPromptSection: React.FC<{
   const lines = taskPrompt.split('\n');
   const shouldTruncate = lines.length > 10;
   const showFull = displayMode === 'verbose';
-  const displayLines = showFull ? lines : lines.slice(0, 10);
+  const displayLines = showFull ? lines : lines.slice(0, MAX_TASK_PROMPT_LINES);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -206,9 +213,9 @@ const ToolCallsList: React.FC<{
   displayMode: DisplayMode;
 }> = ({ toolCalls, displayMode }) => {
   const calls = toolCalls || [];
-  const shouldTruncate = calls.length > 5;
+  const shouldTruncate = calls.length > MAX_TOOL_CALLS;
   const showAll = displayMode === 'verbose';
-  const displayCalls = showAll ? calls : calls.slice(-5); // Show last 5
+  const displayCalls = showAll ? calls : calls.slice(-MAX_TOOL_CALLS); // Show last 5
 
   // Reverse the order to show most recent first
   const reversedDisplayCalls = [...displayCalls].reverse();
@@ -220,7 +227,7 @@ const ToolCallsList: React.FC<{
         {shouldTruncate && displayMode === 'default' && (
           <Text color={Colors.Gray}>
             {' '}
-            Showing the last 5 of {calls.length} tools.
+            Showing the last {MAX_TOOL_CALLS} of {calls.length} tools.
           </Text>
         )}
       </Box>
@@ -390,16 +397,18 @@ const ResultsSection: React.FC<{
       <ToolCallsList toolCalls={data.toolCalls} displayMode={displayMode} />
     )}
 
-    {/* Execution Summary section */}
-    <Box flexDirection="column">
-      <Box flexDirection="row" marginBottom={1}>
-        <Text color={theme.text.primary}>Execution Summary:</Text>
+    {/* Execution Summary section - hide when cancelled */}
+    {data.status !== 'cancelled' && (
+      <Box flexDirection="column">
+        <Box flexDirection="row" marginBottom={1}>
+          <Text color={theme.text.primary}>Execution Summary:</Text>
+        </Box>
+        <ExecutionSummaryDetails data={data} displayMode={displayMode} />
       </Box>
-      <ExecutionSummaryDetails data={data} displayMode={displayMode} />
-    </Box>
+    )}
 
-    {/* Tool Usage section */}
-    {data.executionSummary && (
+    {/* Tool Usage section - hide when cancelled */}
+    {data.status !== 'cancelled' && data.executionSummary && (
       <Box flexDirection="column">
         <Box flexDirection="row" marginBottom={1}>
           <Text color={theme.text.primary}>Tool Usage:</Text>
@@ -409,11 +418,18 @@ const ResultsSection: React.FC<{
     )}
 
     {/* Error reason for failed tasks */}
-    {data.status === 'failed' && data.terminateReason && (
+    {data.status === 'cancelled' && (
       <Box flexDirection="row">
-        <Text color={Colors.AccentRed}>❌ Failed: </Text>
-        <Text color={Colors.Gray}>{data.terminateReason}</Text>
+        <Text color={theme.status.warning}>⏹ User Cancelled</Text>
       </Box>
     )}
+    {data.status === 'failed' &&
+      data.terminateReason &&
+      data.terminateReason !== 'CANCELLED' && (
+        <Box flexDirection="row">
+          <Text color={Colors.AccentRed}>❌ Failed: </Text>
+          <Text color={Colors.Gray}>{data.terminateReason}</Text>
+        </Box>
+      )}
   </Box>
 );

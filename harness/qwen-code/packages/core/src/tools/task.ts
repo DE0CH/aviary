@@ -14,7 +14,7 @@ import {
 } from './tools.js';
 import { Config } from '../config/config.js';
 import { SubagentManager } from '../subagents/subagent-manager.js';
-import { SubagentConfig } from '../subagents/types.js';
+import { SubagentConfig, SubagentTerminateMode } from '../subagents/types.js';
 import { ContextState } from '../subagents/subagent.js';
 import {
   SubAgentEventEmitter,
@@ -409,21 +409,6 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
       // Set up event listeners for real-time updates
       this.setupEventListeners(updateOutput);
 
-      if (signal) {
-        signal.addEventListener('abort', () => {
-          if (this.currentDisplay) {
-            this.updateDisplay(
-              {
-                status: 'failed',
-                terminateReason: 'CANCELLED',
-                result: 'Task was cancelled by user',
-              },
-              updateOutput,
-            );
-          }
-        });
-      }
-
       // Send initial display
       if (updateOutput) {
         updateOutput(this.currentDisplay);
@@ -474,20 +459,31 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
 
       // Get the results
       const finalText = subagentScope.getFinalText();
-      const terminateReason = subagentScope.output.terminate_reason;
-      const success = terminateReason === 'GOAL';
+      const terminateReason = subagentScope.getTerminateMode();
+      const success = terminateReason === SubagentTerminateMode.GOAL;
       const executionSummary = subagentScope.getExecutionSummary();
 
-      // Update the final display state
-      this.updateDisplay(
-        {
-          status: success ? 'completed' : 'failed',
-          terminateReason,
-          result: finalText,
-          executionSummary,
-        },
-        updateOutput,
-      );
+      if (signal?.aborted) {
+        this.updateDisplay(
+          {
+            status: 'cancelled',
+            terminateReason: 'CANCELLED',
+            result: finalText || 'Task was cancelled by user',
+            executionSummary,
+          },
+          updateOutput,
+        );
+      } else {
+        this.updateDisplay(
+          {
+            status: success ? 'completed' : 'failed',
+            terminateReason,
+            result: finalText,
+            executionSummary,
+          },
+          updateOutput,
+        );
+      }
 
       return {
         llmContent: [{ text: finalText }],
@@ -500,7 +496,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
 
       const errorDisplay: TaskResultDisplay = {
         ...this.currentDisplay!,
-        status: 'failed' as const,
+        status: 'failed',
         terminateReason: 'ERROR',
         result: `Failed to run subagent: ${errorMessage}`,
       };

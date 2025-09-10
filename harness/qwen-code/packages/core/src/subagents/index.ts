@@ -49,7 +49,6 @@ export type {
   RunConfig,
   ToolConfig,
   SubagentTerminateMode,
-  OutputObject,
 } from './types.js';
 
 export { SubAgentScope } from './subagent.js';

@@ -428,7 +428,7 @@ export interface TaskResultDisplay {
   subagentColor?: string;
   taskDescription: string;
   taskPrompt: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   terminateReason?: string;
   result?: string;
   executionSummary?: SubagentStatsSummary;

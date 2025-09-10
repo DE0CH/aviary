@@ -17,7 +17,7 @@ import {
   TodoResultDisplay,
   TaskResultDisplay,
 } from '@qwen-code/qwen-code-core';
-import { SubagentExecutionDisplay } from '../subagents/index.js';
+import { AgentExecutionDisplay } from '../subagents/index.js';
 
 const STATIC_HEIGHT = 1;
 const RESERVED_LINE_COUNT = 5; // for tool name, status, padding etc.
@@ -106,7 +106,7 @@ const SubagentExecutionRenderer: React.FC<{
   data: TaskResultDisplay;
   availableHeight?: number;
   childWidth: number;
-}> = ({ data }) => <SubagentExecutionDisplay data={data} />;
+}> = ({ data }) => <AgentExecutionDisplay data={data} />;
 
 /**
  * Component to render string results (markdown or plain text)

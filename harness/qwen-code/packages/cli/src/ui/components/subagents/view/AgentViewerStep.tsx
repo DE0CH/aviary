@@ -5,8 +5,8 @@
  */
 
 import { Box, Text } from 'ink';
-import { theme } from '../../semantic-colors.js';
-import { shouldShowColor, getColorForDisplay } from './utils.js';
+import { theme } from '../../../semantic-colors.js';
+import { shouldShowColor, getColorForDisplay } from '../utils.js';
 import { SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface AgentViewerStepProps {

@@ -374,6 +374,13 @@ export class CoreToolScheduler {
                 newContent: waitingCall.confirmationDetails.newContent,
               };
             }
+          } else if (currentCall.status === 'executing') {
+            // If the tool was streaming live output, preserve the latest
+            // output so the UI can continue to show it after cancellation.
+            const executingCall = currentCall as ExecutingToolCall;
+            if (executingCall.liveOutput !== undefined) {
+              resultDisplay = executingCall.liveOutput;
+            }
           }
 
           return {
@@ -816,20 +823,19 @@ export class CoreToolScheduler {
         const invocation = scheduledCall.invocation;
         this.setStatusInternal(callId, 'executing');
 
-        const liveOutputCallback =
-          scheduledCall.tool.canUpdateOutput && this.outputUpdateHandler
-            ? (outputChunk: ToolResultDisplay) => {
-                if (this.outputUpdateHandler) {
-                  this.outputUpdateHandler(callId, outputChunk);
-                }
-                this.toolCalls = this.toolCalls.map((tc) =>
-                  tc.request.callId === callId && tc.status === 'executing'
-                    ? { ...tc, liveOutput: outputChunk }
-                    : tc,
-                );
-                this.notifyToolCallsUpdate();
+        const liveOutputCallback = scheduledCall.tool.canUpdateOutput
+          ? (outputChunk: ToolResultDisplay) => {
+              if (this.outputUpdateHandler) {
+                this.outputUpdateHandler(callId, outputChunk);
               }
-            : undefined;
+              this.toolCalls = this.toolCalls.map((tc) =>
+                tc.request.callId === callId && tc.status === 'executing'
+                  ? { ...tc, liveOutput: outputChunk }
+                  : tc,
+              );
+              this.notifyToolCallsUpdate();
+            }
+          : undefined;
 
         invocation
           .execute(signal, liveOutputCallback)

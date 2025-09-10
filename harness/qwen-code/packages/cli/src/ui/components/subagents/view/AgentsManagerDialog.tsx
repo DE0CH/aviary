@@ -11,11 +11,11 @@ import { ActionSelectionStep } from './ActionSelectionStep.js';
 import { AgentViewerStep } from './AgentViewerStep.js';
 import { EditOptionsStep } from './AgentEditStep.js';
 import { AgentDeleteStep } from './AgentDeleteStep.js';
-import { ToolSelector } from './ToolSelector.js';
-import { ColorSelector } from './ColorSelector.js';
-import { MANAGEMENT_STEPS } from './types.js';
-import { Colors } from '../../colors.js';
-import { theme } from '../../semantic-colors.js';
+import { ToolSelector } from '../create/ToolSelector.js';
+import { ColorSelector } from '../create/ColorSelector.js';
+import { MANAGEMENT_STEPS } from '../types.js';
+import { Colors } from '../../../colors.js';
+import { theme } from '../../../semantic-colors.js';
 import { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface AgentsManagerDialogProps {

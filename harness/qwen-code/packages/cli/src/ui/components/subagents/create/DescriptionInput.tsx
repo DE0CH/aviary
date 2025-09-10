@@ -6,17 +6,17 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { WizardStepProps, WizardAction } from './types.js';
-import { sanitizeInput } from './utils.js';
+import { WizardStepProps, WizardAction } from '../types.js';
+import { sanitizeInput } from '../utils.js';
 import { Config, subagentGenerator } from '@qwen-code/qwen-code-core';
-import { useTextBuffer } from '../shared/text-buffer.js';
-import { useKeypress, Key } from '../../hooks/useKeypress.js';
-import { keyMatchers, Command } from '../../keyMatchers.js';
-import { theme } from '../../semantic-colors.js';
-import { cpSlice, cpLen } from '../../utils/textUtils.js';
+import { useTextBuffer } from '../../shared/text-buffer.js';
+import { useKeypress, Key } from '../../../hooks/useKeypress.js';
+import { keyMatchers, Command } from '../../../keyMatchers.js';
+import { theme } from '../../../semantic-colors.js';
+import { cpSlice, cpLen } from '../../../utils/textUtils.js';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
-import { Colors } from '../../colors.js';
+import { Colors } from '../../../colors.js';
 
 /**
  * Step 3: Description input with LLM generation.

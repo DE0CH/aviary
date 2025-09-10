@@ -412,7 +412,7 @@ describe('subagent.ts', () => {
         await expect(scope.runNonInteractive(context)).rejects.toThrow(
           'Missing context values for the following keys: missing',
         );
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
 
       it('should validate that systemPrompt and initialMessages are mutually exclusive', async () => {
@@ -434,7 +434,7 @@ describe('subagent.ts', () => {
         await expect(agent.runNonInteractive(context)).rejects.toThrow(
           'PromptConfig cannot have both `systemPrompt` and `initialMessages` defined.',
         );
-        expect(agent.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(agent.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
     });
 
@@ -457,8 +457,7 @@ describe('subagent.ts', () => {
 
         await scope.runNonInteractive(new ContextState());
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.result).toBe('Done.');
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
         // Check the initial message
         expect(mockSendMessageStream.mock.calls[0][0].message).toEqual([
@@ -482,8 +481,7 @@ describe('subagent.ts', () => {
 
         await scope.runNonInteractive(new ContextState());
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.result).toBe('Done.');
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
       });
 
@@ -549,7 +547,7 @@ describe('subagent.ts', () => {
           { text: 'file1.txt\nfile2.ts' },
         ]);
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
       });
 
       it('should provide specific tool error responses to the model', async () => {
@@ -645,9 +643,7 @@ describe('subagent.ts', () => {
         await scope.runNonInteractive(new ContextState());
 
         expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
-        expect(scope.output.terminate_reason).toBe(
-          SubagentTerminateMode.MAX_TURNS,
-        );
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.MAX_TURNS);
       });
 
       it('should terminate with TIMEOUT if the time limit is reached during an LLM call', async () => {
@@ -690,9 +686,7 @@ describe('subagent.ts', () => {
 
         await runPromise;
 
-        expect(scope.output.terminate_reason).toBe(
-          SubagentTerminateMode.TIMEOUT,
-        );
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.TIMEOUT);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
 
         vi.useRealTimers();
@@ -713,7 +707,7 @@ describe('subagent.ts', () => {
         await expect(
           scope.runNonInteractive(new ContextState()),
         ).rejects.toThrow('API Failure');
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
     });
   });

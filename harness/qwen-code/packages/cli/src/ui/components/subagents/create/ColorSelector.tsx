@@ -6,10 +6,10 @@
 
 import { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { RadioButtonSelect } from '../shared/RadioButtonSelect.js';
-import { ColorOption } from './types.js';
-import { Colors } from '../../colors.js';
-import { COLOR_OPTIONS } from './constants.js';
+import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
+import { ColorOption } from '../types.js';
+import { Colors } from '../../../colors.js';
+import { COLOR_OPTIONS } from '../constants.js';
 
 const colorOptions: ColorOption[] = COLOR_OPTIONS;
 
