@@ -15,9 +15,11 @@ import { ColorSelector } from './ColorSelector.js';
 import { CreationSummary } from './CreationSummary.js';
 import { WizardStepProps } from '../types.js';
 import { WIZARD_STEPS } from '../constants.js';
+import { getStepKind } from '../utils.js';
 import { Config } from '@qwen-code/qwen-code-core';
 import { Colors } from '../../../colors.js';
 import { theme } from '../../../semantic-colors.js';
+import { TextEntryStep } from './TextEntryStep.js';
 
 interface AgentCreationWizardProps {
   onClose: () => void;
@@ -49,11 +51,9 @@ export function AgentCreationWizard({
   // Centralized ESC key handling for the entire wizard
   useInput((input, key) => {
     if (key.escape) {
-      // Step 3 (DescriptionInput) handles its own ESC logic when generating
-      if (
-        state.currentStep === WIZARD_STEPS.DESCRIPTION_INPUT &&
-        state.isGenerating
-      ) {
+      // LLM DescriptionInput handles its own ESC logic when generating
+      const kind = getStepKind(state.generationMethod, state.currentStep);
+      if (kind === 'LLM_DESC' && state.isGenerating) {
         return; // Let DescriptionInput handle it
       }
 
@@ -81,19 +81,27 @@ export function AgentCreationWizard({
 
   const renderStepHeader = useCallback(() => {
     const getStepHeaderText = () => {
-      switch (state.currentStep) {
-        case WIZARD_STEPS.LOCATION_SELECTION:
-          return 'Step 1: Choose Location';
-        case WIZARD_STEPS.GENERATION_METHOD:
-          return 'Step 2: Choose Generation Method';
-        case WIZARD_STEPS.DESCRIPTION_INPUT:
-          return 'Step 3: Describe Your Subagent';
-        case WIZARD_STEPS.TOOL_SELECTION:
-          return 'Step 4: Select Tools';
-        case WIZARD_STEPS.COLOR_SELECTION:
-          return 'Step 5: Choose Background Color';
-        case WIZARD_STEPS.FINAL_CONFIRMATION:
-          return 'Step 6: Confirm and Save';
+      const kind = getStepKind(state.generationMethod, state.currentStep);
+      const n = state.currentStep;
+      switch (kind) {
+        case 'LOCATION':
+          return `Step ${n}: Choose Location`;
+        case 'GEN_METHOD':
+          return `Step ${n}: Choose Generation Method`;
+        case 'LLM_DESC':
+          return `Step ${n}: Describe Your Subagent`;
+        case 'MANUAL_NAME':
+          return `Step ${n}: Enter Subagent Name`;
+        case 'MANUAL_PROMPT':
+          return `Step ${n}: Enter System Prompt`;
+        case 'MANUAL_DESC':
+          return `Step ${n}: Enter Description`;
+        case 'TOOLS':
+          return `Step ${n}: Select Tools`;
+        case 'COLOR':
+          return `Step ${n}: Choose Background Color`;
+        case 'FINAL':
+          return `Step ${n}: Confirm and Save`;
         default:
           return 'Unknown Step';
       }
@@ -104,7 +112,7 @@ export function AgentCreationWizard({
         <Text bold>{getStepHeaderText()}</Text>
       </Box>
     );
-  }, [state.currentStep]);
+  }, [state.currentStep, state.generationMethod]);
 
   const renderDebugContent = useCallback(() => {
     if (process.env['NODE_ENV'] !== 'development') {
@@ -146,28 +154,22 @@ export function AgentCreationWizard({
   const renderStepFooter = useCallback(() => {
     const getNavigationInstructions = () => {
       // Special case: During generation in description input step, only show cancel option
-      if (
-        state.currentStep === WIZARD_STEPS.DESCRIPTION_INPUT &&
-        state.isGenerating
-      ) {
+      const kind = getStepKind(state.generationMethod, state.currentStep);
+      if (kind === 'LLM_DESC' && state.isGenerating) {
         return 'Esc to cancel';
       }
 
-      if (state.currentStep === WIZARD_STEPS.FINAL_CONFIRMATION) {
+      if (getStepKind(state.generationMethod, state.currentStep) === 'FINAL') {
         return 'Press Enter to save, e to save and edit, Esc to go back';
       }
 
       // Steps that have ↑↓ navigation (RadioButtonSelect components)
-      const stepsWithNavigation = [
-        WIZARD_STEPS.LOCATION_SELECTION,
-        WIZARD_STEPS.GENERATION_METHOD,
-        WIZARD_STEPS.TOOL_SELECTION,
-        WIZARD_STEPS.COLOR_SELECTION,
-      ] as const;
-
-      const hasNavigation = (stepsWithNavigation as readonly number[]).includes(
-        state.currentStep,
-      );
+      const kindForNav = getStepKind(state.generationMethod, state.currentStep);
+      const hasNavigation =
+        kindForNav === 'LOCATION' ||
+        kindForNav === 'GEN_METHOD' ||
+        kindForNav === 'TOOLS' ||
+        kindForNav === 'COLOR';
       const navigationPart = hasNavigation ? '↑↓ to navigate, ' : '';
 
       const escAction =
@@ -183,17 +185,79 @@ export function AgentCreationWizard({
         <Text color={theme.text.secondary}>{getNavigationInstructions()}</Text>
       </Box>
     );
-  }, [state.currentStep, state.isGenerating]);
+  }, [state.currentStep, state.isGenerating, state.generationMethod]);
 
   const renderStepContent = useCallback(() => {
-    switch (state.currentStep) {
-      case WIZARD_STEPS.LOCATION_SELECTION:
+    const kind = getStepKind(state.generationMethod, state.currentStep);
+    switch (kind) {
+      case 'LOCATION':
         return <LocationSelector {...stepProps} />;
-      case WIZARD_STEPS.GENERATION_METHOD:
+      case 'GEN_METHOD':
         return <GenerationMethodSelector {...stepProps} />;
-      case WIZARD_STEPS.DESCRIPTION_INPUT:
+      case 'LLM_DESC':
         return <DescriptionInput {...stepProps} />;
-      case WIZARD_STEPS.TOOL_SELECTION:
+      case 'MANUAL_NAME':
+        return (
+          <TextEntryStep
+            key="manual-name"
+            state={state}
+            dispatch={dispatch}
+            onNext={handleNext}
+            description="Enter a clear, unique name for this subagent."
+            placeholder="e.g., Code Reviewer"
+            height={1}
+            initialText={state.generatedName}
+            onChange={(t) => {
+              const value = t; // keep raw, trim later when validating
+              dispatch({ type: 'SET_GENERATED_NAME', name: value });
+            }}
+            validate={(t) =>
+              t.trim().length === 0 ? 'Name cannot be empty.' : null
+            }
+          />
+        );
+      case 'MANUAL_PROMPT':
+        return (
+          <TextEntryStep
+            key="manual-prompt"
+            state={state}
+            dispatch={dispatch}
+            onNext={handleNext}
+            description="Write the system prompt that defines this subagent's behavior. Be comprehensive for best results."
+            placeholder="e.g., You are an expert code reviewer..."
+            height={10}
+            initialText={state.generatedSystemPrompt}
+            onChange={(t) => {
+              dispatch({
+                type: 'SET_GENERATED_SYSTEM_PROMPT',
+                systemPrompt: t,
+              });
+            }}
+            validate={(t) =>
+              t.trim().length === 0 ? 'System prompt cannot be empty.' : null
+            }
+          />
+        );
+      case 'MANUAL_DESC':
+        return (
+          <TextEntryStep
+            key="manual-desc"
+            state={state}
+            dispatch={dispatch}
+            onNext={handleNext}
+            description="Describe when and how this subagent should be used."
+            placeholder="e.g., Reviews code for best practices and potential bugs."
+            height={6}
+            initialText={state.generatedDescription}
+            onChange={(t) => {
+              dispatch({ type: 'SET_GENERATED_DESCRIPTION', description: t });
+            }}
+            validate={(t) =>
+              t.trim().length === 0 ? 'Description cannot be empty.' : null
+            }
+          />
+        );
+      case 'TOOLS':
         return (
           <ToolSelector
             tools={state.selectedTools}
@@ -204,7 +268,7 @@ export function AgentCreationWizard({
             config={config}
           />
         );
-      case WIZARD_STEPS.COLOR_SELECTION:
+      case 'COLOR':
         return (
           <ColorSelector
             color={state.color}
@@ -215,7 +279,7 @@ export function AgentCreationWizard({
             }}
           />
         );
-      case WIZARD_STEPS.FINAL_CONFIRMATION:
+      case 'FINAL':
         return <CreationSummary {...stepProps} />;
       default:
         return (
@@ -226,16 +290,7 @@ export function AgentCreationWizard({
           </Box>
         );
     }
-  }, [
-    stepProps,
-    state.currentStep,
-    state.selectedTools,
-    state.color,
-    state.generatedName,
-    config,
-    handleNext,
-    dispatch,
-  ]);
+  }, [stepProps, state, config, handleNext, dispatch]);
 
   return (
     <Box flexDirection="column">

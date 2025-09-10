@@ -73,6 +73,9 @@ export type WizardAction =
   | { type: 'SET_LOCATION'; location: SubagentLevel }
   | { type: 'SET_GENERATION_METHOD'; method: 'qwen' | 'manual' }
   | { type: 'SET_USER_DESCRIPTION'; description: string }
+  | { type: 'SET_GENERATED_NAME'; name: string }
+  | { type: 'SET_GENERATED_SYSTEM_PROMPT'; systemPrompt: string }
+  | { type: 'SET_GENERATED_DESCRIPTION'; description: string }
   | {
       type: 'SET_GENERATED_CONTENT';
       name: string;

@@ -5,7 +5,8 @@
  */
 
 import { CreationWizardState, WizardAction } from './types.js';
-import { WIZARD_STEPS, TOTAL_WIZARD_STEPS } from './constants.js';
+import { WIZARD_STEPS } from './constants.js';
+import { getStepKind, getTotalSteps } from './utils.js';
 
 /**
  * Initial state for the creation wizard.
@@ -38,7 +39,7 @@ export function wizardReducer(
         ...state,
         currentStep: Math.max(
           WIZARD_STEPS.LOCATION_SELECTION,
-          Math.min(TOTAL_WIZARD_STEPS, action.step),
+          Math.min(getTotalSteps(state.generationMethod), action.step),
         ),
         validationErrors: [],
       };
@@ -74,6 +75,27 @@ export function wizardReducer(
         canProceed: true,
       };
 
+    case 'SET_GENERATED_NAME':
+      return {
+        ...state,
+        generatedName: action.name,
+        canProceed: action.name.trim().length > 0,
+      };
+
+    case 'SET_GENERATED_SYSTEM_PROMPT':
+      return {
+        ...state,
+        generatedSystemPrompt: action.systemPrompt,
+        canProceed: action.systemPrompt.trim().length > 0,
+      };
+
+    case 'SET_GENERATED_DESCRIPTION':
+      return {
+        ...state,
+        generatedDescription: action.description,
+        canProceed: action.description.trim().length > 0,
+      };
+
     case 'SET_TOOLS':
       return {
         ...state,
@@ -103,7 +125,10 @@ export function wizardReducer(
       };
 
     case 'GO_TO_NEXT_STEP':
-      if (state.canProceed && state.currentStep < TOTAL_WIZARD_STEPS) {
+      if (
+        state.canProceed &&
+        state.currentStep < getTotalSteps(state.generationMethod)
+      ) {
         return {
           ...state,
           currentStep: state.currentStep + 1,
@@ -136,29 +161,29 @@ export function wizardReducer(
  * Validates whether a step can proceed based on current state.
  */
 function validateStep(step: number, state: CreationWizardState): boolean {
-  switch (step) {
-    case WIZARD_STEPS.LOCATION_SELECTION: // Location selection
-      return true; // Always can proceed from location selection
-
-    case WIZARD_STEPS.GENERATION_METHOD: // Generation method
-      return true; // Always can proceed from method selection
-
-    case WIZARD_STEPS.DESCRIPTION_INPUT: // Description input
+  const kind = getStepKind(state.generationMethod, step);
+  switch (kind) {
+    case 'LOCATION':
+    case 'GEN_METHOD':
+      return true;
+    case 'LLM_DESC':
       return state.userDescription.trim().length >= 0;
-
-    case WIZARD_STEPS.TOOL_SELECTION: // Tool selection
+    case 'MANUAL_NAME':
+      return state.generatedName.trim().length > 0;
+    case 'MANUAL_PROMPT':
+      return state.generatedSystemPrompt.trim().length > 0;
+    case 'MANUAL_DESC':
+      return state.generatedDescription.trim().length > 0;
+    case 'TOOLS':
       return (
         state.generatedName.length > 0 &&
         state.generatedDescription.length > 0 &&
         state.generatedSystemPrompt.length > 0
       );
-
-    case WIZARD_STEPS.COLOR_SELECTION: // Color selection
-      return true; // Always can proceed from tool selection
-
-    case WIZARD_STEPS.FINAL_CONFIRMATION: // Final confirmation
+    case 'COLOR':
+      return true;
+    case 'FINAL':
       return state.color.length > 0;
-
     default:
       return false;
   }
