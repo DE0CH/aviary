@@ -108,6 +108,12 @@ describe('SubagentManager', () => {
       if (yamlString.includes('name: agent3')) {
         return { name: 'agent3', description: 'Third agent' };
       }
+      if (yamlString.includes('name: 11')) {
+        return { name: 11, description: 333 }; // Numeric values test case
+      }
+      if (yamlString.includes('name: true')) {
+        return { name: true, description: false }; // Boolean values test case
+      }
       if (!yamlString.includes('name:')) {
         return { description: 'A test subagent' }; // Missing name case
       }
@@ -248,6 +254,46 @@ You are a helpful assistant.
       expect(config.runConfig).toEqual({ max_time_minutes: 5, max_turns: 10 });
     });
 
+    it('should handle numeric name and description values', () => {
+      const markdownWithNumeric = `---
+name: 11
+description: 333
+---
+
+You are a helpful assistant.
+`;
+
+      const config = manager.parseSubagentContent(
+        markdownWithNumeric,
+        validConfig.filePath,
+      );
+
+      expect(config.name).toBe('11');
+      expect(config.description).toBe('333');
+      expect(typeof config.name).toBe('string');
+      expect(typeof config.description).toBe('string');
+    });
+
+    it('should handle boolean name and description values', () => {
+      const markdownWithBoolean = `---
+name: true
+description: false
+---
+
+You are a helpful assistant.
+`;
+
+      const config = manager.parseSubagentContent(
+        markdownWithBoolean,
+        validConfig.filePath,
+      );
+
+      expect(config.name).toBe('true');
+      expect(config.description).toBe('false');
+      expect(typeof config.name).toBe('string');
+      expect(typeof config.description).toBe('string');
+    });
+
     it('should determine level from file path', () => {
       const projectPath = '/test/project/.qwen/agents/test-agent.md';
       const userPath = '/home/user/.qwen/agents/test-agent.md';
@@ -358,7 +404,7 @@ You are a helpful assistant.
       await manager.createSubagent(validConfig, { level: 'project' });
 
       expect(fs.mkdir).toHaveBeenCalledWith(
-        path.dirname(validConfig.filePath),
+        path.normalize(path.dirname(validConfig.filePath)),
         { recursive: true },
       );
       expect(fs.writeFile).toHaveBeenCalledWith(
@@ -428,7 +474,7 @@ You are a helpful assistant.
       expect(config).toBeDefined();
       expect(config!.name).toBe('test-agent');
       expect(fs.readFile).toHaveBeenCalledWith(
-        '/test/project/.qwen/agents/test-agent.md',
+        path.normalize('/test/project/.qwen/agents/test-agent.md'),
         'utf8',
       );
     });
@@ -443,7 +489,7 @@ You are a helpful assistant.
       expect(config).toBeDefined();
       expect(config!.name).toBe('test-agent');
       expect(fs.readFile).toHaveBeenCalledWith(
-        '/home/user/.qwen/agents/test-agent.md',
+        path.normalize('/home/user/.qwen/agents/test-agent.md'),
         'utf8',
       );
     });
@@ -507,7 +553,7 @@ You are a helpful assistant.
       await manager.deleteSubagent('test-agent', 'project');
 
       expect(fs.unlink).toHaveBeenCalledWith(
-        '/test/project/.qwen/agents/test-agent.md',
+        path.normalize('/test/project/.qwen/agents/test-agent.md'),
       );
     });
 
@@ -518,10 +564,10 @@ You are a helpful assistant.
 
       expect(fs.unlink).toHaveBeenCalledTimes(2);
       expect(fs.unlink).toHaveBeenCalledWith(
-        '/test/project/.qwen/agents/test-agent.md',
+        path.normalize('/test/project/.qwen/agents/test-agent.md'),
       );
       expect(fs.unlink).toHaveBeenCalledWith(
-        '/home/user/.qwen/agents/test-agent.md',
+        path.normalize('/home/user/.qwen/agents/test-agent.md'),
       );
     });
 

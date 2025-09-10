@@ -121,9 +121,9 @@ export class SubagentManager {
         return BuiltinAgentRegistry.getBuiltinAgent(name);
       }
 
-      const path = this.getSubagentPath(name, level);
+      const filePath = this.getSubagentPath(name, level);
       try {
-        const config = await this.parseSubagentFile(path);
+        const config = await this.parseSubagentFile(filePath);
         return config;
       } catch (_error) {
         return null;
@@ -378,17 +378,21 @@ export class SubagentManager {
       // Parse YAML frontmatter
       const frontmatter = parseYaml(frontmatterYaml) as Record<string, unknown>;
 
-      // Extract required fields
-      const name = frontmatter['name'] as string;
-      const description = frontmatter['description'] as string;
+      // Extract required fields and convert to strings
+      const nameRaw = frontmatter['name'];
+      const descriptionRaw = frontmatter['description'];
 
-      if (!name || typeof name !== 'string') {
-        throw new Error('Missing or invalid "name" in frontmatter');
+      if (nameRaw == null || nameRaw === '') {
+        throw new Error('Missing "name" in frontmatter');
       }
 
-      if (!description || typeof description !== 'string') {
-        throw new Error('Missing or invalid "description" in frontmatter');
+      if (descriptionRaw == null || descriptionRaw === '') {
+        throw new Error('Missing "description" in frontmatter');
       }
+
+      // Convert to strings (handles numbers, booleans, etc.)
+      const name = String(nameRaw);
+      const description = String(descriptionRaw);
 
       // Extract optional fields
       const tools = frontmatter['tools'] as string[] | undefined;
@@ -400,11 +404,19 @@ export class SubagentManager {
         | undefined;
       const color = frontmatter['color'] as string | undefined;
 
-      // Determine level from file path
-      // Project level paths contain the project root, user level paths are in home directory
+      // Determine level from file path using robust, cross-platform check
+      // A project-level agent lives under <projectRoot>/.qwen/agents
+      const projectAgentsDir = path.join(
+        this.config.getProjectRoot(),
+        QWEN_CONFIG_DIR,
+        AGENT_CONFIG_DIR,
+      );
+      const rel = path.relative(
+        path.normalize(projectAgentsDir),
+        path.normalize(filePath),
+      );
       const isProjectLevel =
-        filePath.includes(this.config.getProjectRoot()) &&
-        filePath.includes(`/${QWEN_CONFIG_DIR}/${AGENT_CONFIG_DIR}/`);
+        rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
       const level: SubagentLevel = isProjectLevel ? 'project' : 'user';
 
       const config: SubagentConfig = {
