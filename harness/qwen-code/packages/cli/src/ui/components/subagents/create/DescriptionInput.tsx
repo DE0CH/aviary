@@ -6,6 +6,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { Box, Text } from 'ink';
+import Spinner from 'ink-spinner';
 import { WizardStepProps, WizardAction } from '../types.js';
 import { sanitizeInput } from '../utils.js';
 import { Config, subagentGenerator } from '@qwen-code/qwen-code-core';
@@ -239,8 +240,11 @@ export function DescriptionInput({
 
       {state.isGenerating ? (
         <Box>
+          <Box marginRight={1}>
+            <Spinner />
+          </Box>
           <Text color={theme.text.accent}>
-            ⏳ Generating subagent configuration...
+            Generating subagent configuration...
           </Text>
         </Box>
       ) : (

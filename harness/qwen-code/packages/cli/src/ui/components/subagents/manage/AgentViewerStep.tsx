@@ -30,33 +30,31 @@ export const AgentViewerStep = ({ selectedAgent }: AgentViewerStepProps) => {
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Box>
-          <Text bold>File Path: </Text>
+          <Text color={theme.text.primary}>File Path: </Text>
           <Text>{agent.filePath}</Text>
         </Box>
 
         <Box>
-          <Text bold>Tools: </Text>
+          <Text color={theme.text.primary}>Tools: </Text>
           <Text>{toolsDisplay}</Text>
         </Box>
 
         {shouldShowColor(agent.color) && (
           <Box>
-            <Text bold>Color: </Text>
-            <Text
-              color={getColorForDisplay(agent.color)}
-            >{` ${agent.name} `}</Text>
+            <Text color={theme.text.primary}>Color: </Text>
+            <Text color={getColorForDisplay(agent.color)}>{agent.color}</Text>
           </Box>
         )}
 
         <Box marginTop={1}>
-          <Text bold>Description:</Text>
+          <Text color={theme.text.primary}>Description:</Text>
         </Box>
         <Box padding={1} paddingBottom={0}>
           <Text wrap="wrap">{agent.description}</Text>
         </Box>
 
         <Box marginTop={1}>
-          <Text bold>System Prompt:</Text>
+          <Text color={theme.text.primary}>System Prompt:</Text>
         </Box>
         <Box padding={1} paddingBottom={0}>
           <Text wrap="wrap">{agent.systemPrompt}</Text>

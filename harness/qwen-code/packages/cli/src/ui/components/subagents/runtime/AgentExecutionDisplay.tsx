@@ -171,7 +171,10 @@ const TaskPromptSection: React.FC<{
       <Box flexDirection="row">
         <Text color={theme.text.primary}>Task Detail: </Text>
         {shouldTruncate && displayMode === 'default' && (
-          <Text color={Colors.Gray}> Showing the first 10 lines.</Text>
+          <Text color={Colors.Gray}>
+            {' '}
+            Showing the first {MAX_TASK_PROMPT_LINES} lines.
+          </Text>
         )}
       </Box>
       <Box paddingLeft={1}>

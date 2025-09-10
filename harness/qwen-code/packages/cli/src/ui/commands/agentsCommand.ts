@@ -12,7 +12,7 @@ export const agentsCommand: SlashCommand = {
   kind: CommandKind.BUILT_IN,
   subCommands: [
     {
-      name: 'list',
+      name: 'manage',
       description: 'Manage existing subagents (view, edit, delete).',
       kind: CommandKind.BUILT_IN,
       action: (): OpenDialogActionReturn => ({

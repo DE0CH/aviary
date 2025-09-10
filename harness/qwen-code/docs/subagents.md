@@ -39,10 +39,10 @@ Subagents are independent AI assistants that:
 
    Follow the guided wizard to create a specialized agent.
 
-2. **List existing agents**:
+2. **Manage existing agents**:
 
    ```
-   /agents list
+   /agents manage
    ```
 
    View and manage your configured subagents.
@@ -77,14 +77,14 @@ Creates a new subagent through a guided step wizard.
 /agents create
 ```
 
-#### `/agents list`
+#### `/agents manage`
 
 Opens an interactive management dialog for viewing and managing existing subagents.
 
 **Usage:**
 
 ```
-/agents list
+/agents manage
 ```
 
 ### Storage Locations

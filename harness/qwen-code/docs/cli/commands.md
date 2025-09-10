@@ -122,9 +122,9 @@ Slash commands provide meta-level control over the CLI itself.
     - **`create`**:
       - **Description:** Launch an interactive wizard to create a new subagent. The wizard guides you through location selection, AI-powered prompt generation, tool selection, and visual customization.
       - **Usage:** `/agents create`
-    - **`list`**:
+    - **`manage`**:
       - **Description:** Open an interactive management dialog to view, edit, and delete existing subagents. Shows both project-level and user-level agents.
-      - **Usage:** `/agents list`
+      - **Usage:** `/agents manage`
   - **Storage Locations:**
     - **Project-level:** `.qwen/agents/` (shared with team, takes precedence)
     - **User-level:** `~/.qwen/agents/` (personal agents, available across projects)

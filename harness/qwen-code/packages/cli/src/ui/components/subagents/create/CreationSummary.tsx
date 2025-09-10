@@ -100,9 +100,9 @@ export function CreationSummary({
     state.location,
   ]);
 
-  const toolsDisplay = Array.isArray(state.selectedTools)
-    ? state.selectedTools.join(', ')
-    : '*';
+  // If no tools explicitly selected, it means "all tools" for this agent
+  const toolsDisplay =
+    state.selectedTools.length === 0 ? '*' : state.selectedTools.join(', ');
 
   // Common method to save subagent configuration
   const saveSubagent = useCallback(async (): Promise<SubagentManager> => {
@@ -225,12 +225,14 @@ export function CreationSummary({
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
         <Box>
-          <Text bold>Name: </Text>
-          <Text>{state.generatedName}</Text>
+          <Text color={theme.text.primary}>Name: </Text>
+          <Text color={getColorForDisplay(state.color)}>
+            {state.generatedName}
+          </Text>
         </Box>
 
         <Box>
-          <Text bold>Location: </Text>
+          <Text color={theme.text.primary}>Location: </Text>
           <Text>
             {state.location === 'project'
               ? 'Project Level (.qwen/agents/)'
@@ -239,21 +241,19 @@ export function CreationSummary({
         </Box>
 
         <Box>
-          <Text bold>Tools: </Text>
+          <Text color={theme.text.primary}>Tools: </Text>
           <Text>{toolsDisplay}</Text>
         </Box>
 
         {shouldShowColor(state.color) && (
           <Box>
-            <Text bold>Color: </Text>
-            <Text
-              color={getColorForDisplay(state.color)}
-            >{` ${state.generatedName} `}</Text>
+            <Text color={theme.text.primary}>Color: </Text>
+            <Text color={getColorForDisplay(state.color)}>{state.color}</Text>
           </Box>
         )}
 
         <Box marginTop={1}>
-          <Text bold>Description:</Text>
+          <Text color={theme.text.primary}>Description:</Text>
         </Box>
         <Box padding={1} paddingBottom={0}>
           <Text wrap="wrap">
@@ -262,7 +262,7 @@ export function CreationSummary({
         </Box>
 
         <Box marginTop={1}>
-          <Text bold>System Prompt:</Text>
+          <Text color={theme.text.primary}>System Prompt:</Text>
         </Box>
         <Box padding={1} paddingBottom={0}>
           <Text wrap="wrap">

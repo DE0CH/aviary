@@ -16,8 +16,7 @@
  * - Runtime conversion functions integrated into the manager
  * - Manager class for CRUD operations on subagent files
  *
- * The implementation follows the Markdown + YAML frontmatter format specified
- * in the Claude Code product manual, with storage at both project and user levels.
+ * The implementation follows the Markdown + YAML frontmatter format , with storage at both project and user levels.
  */
 
 // Core types and interfaces
