@@ -5,6 +5,10 @@
  */
 
 import { EventEmitter } from 'events';
+import {
+  ToolCallConfirmationDetails,
+  ToolConfirmationOutcome,
+} from '../tools/tools.js';
 
 export type SubAgentEvent =
   | 'start'
@@ -13,6 +17,7 @@ export type SubAgentEvent =
   | 'stream_text'
   | 'tool_call'
   | 'tool_result'
+  | 'tool_waiting_approval'
   | 'finish'
   | 'error';
 
@@ -23,6 +28,7 @@ export enum SubAgentEventType {
   STREAM_TEXT = 'stream_text',
   TOOL_CALL = 'tool_call',
   TOOL_RESULT = 'tool_result',
+  TOOL_WAITING_APPROVAL = 'tool_waiting_approval',
   FINISH = 'finish',
   ERROR = 'error',
 }
@@ -71,9 +77,25 @@ export interface SubAgentToolResultEvent {
   timestamp: number;
 }
 
+export interface SubAgentApprovalRequestEvent {
+  subagentId: string;
+  round: number;
+  callId: string;
+  name: string;
+  description: string;
+  confirmationDetails: Omit<ToolCallConfirmationDetails, 'onConfirm'> & {
+    type: ToolCallConfirmationDetails['type'];
+  };
+  respond: (
+    outcome: ToolConfirmationOutcome,
+    payload?: Parameters<ToolCallConfirmationDetails['onConfirm']>[1],
+  ) => Promise<void>;
+  timestamp: number;
+}
+
 export interface SubAgentFinishEvent {
   subagentId: string;
-  terminate_reason: string;
+  terminateReason: string;
   timestamp: number;
   rounds?: number;
   totalDurationMs?: number;

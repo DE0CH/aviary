@@ -12,6 +12,11 @@ import {
   ToolResultDisplay,
   TaskResultDisplay,
 } from './tools.js';
+import { ToolConfirmationOutcome } from './tools.js';
+import type {
+  ToolCallConfirmationDetails,
+  ToolConfirmationPayload,
+} from './tools.js';
 import { Config } from '../config/config.js';
 import { SubagentManager } from '../subagents/subagent-manager.js';
 import { SubagentConfig, SubagentTerminateMode } from '../subagents/types.js';
@@ -23,6 +28,7 @@ import {
   SubAgentFinishEvent,
   SubAgentEventType,
   SubAgentErrorEvent,
+  SubAgentApprovalRequestEvent,
 } from '../subagents/subagent-events.js';
 
 export interface TaskParams {
@@ -338,9 +344,8 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
       const event = args[0] as SubAgentFinishEvent;
       this.updateDisplay(
         {
-          status: event.terminate_reason === 'GOAL' ? 'completed' : 'failed',
-          terminateReason: event.terminate_reason,
-          // Keep toolCalls data for final display
+          status: event.terminateReason === 'GOAL' ? 'completed' : 'failed',
+          terminateReason: event.terminateReason,
         },
         updateOutput,
       );
@@ -356,6 +361,85 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
         updateOutput,
       );
     });
+
+    // Indicate when a tool call is waiting for approval
+    this.eventEmitter.on(
+      SubAgentEventType.TOOL_WAITING_APPROVAL,
+      (...args: unknown[]) => {
+        const event = args[0] as SubAgentApprovalRequestEvent;
+        const idx = this.currentToolCalls!.findIndex(
+          (c) => c.callId === event.callId,
+        );
+        if (idx >= 0) {
+          this.currentToolCalls![idx] = {
+            ...this.currentToolCalls![idx],
+            status: 'awaiting_approval',
+          };
+        } else {
+          this.currentToolCalls!.push({
+            callId: event.callId,
+            name: event.name,
+            status: 'awaiting_approval',
+            description: event.description,
+          });
+        }
+
+        // Bridge scheduler confirmation details to UI inline prompt
+        const details: ToolCallConfirmationDetails = {
+          ...(event.confirmationDetails as Omit<
+            ToolCallConfirmationDetails,
+            'onConfirm'
+          >),
+          onConfirm: async (
+            outcome: ToolConfirmationOutcome,
+            payload?: ToolConfirmationPayload,
+          ) => {
+            // Clear the inline prompt immediately
+            // and optimistically mark the tool as executing for proceed outcomes.
+            const proceedOutcomes = new Set<ToolConfirmationOutcome>([
+              ToolConfirmationOutcome.ProceedOnce,
+              ToolConfirmationOutcome.ProceedAlways,
+              ToolConfirmationOutcome.ProceedAlwaysServer,
+              ToolConfirmationOutcome.ProceedAlwaysTool,
+            ]);
+
+            if (proceedOutcomes.has(outcome)) {
+              const idx2 = this.currentToolCalls!.findIndex(
+                (c) => c.callId === event.callId,
+              );
+              if (idx2 >= 0) {
+                this.currentToolCalls![idx2] = {
+                  ...this.currentToolCalls![idx2],
+                  status: 'executing',
+                };
+              }
+              this.updateDisplay(
+                {
+                  toolCalls: [...this.currentToolCalls!],
+                  pendingConfirmation: undefined,
+                },
+                updateOutput,
+              );
+            } else {
+              this.updateDisplay(
+                { pendingConfirmation: undefined },
+                updateOutput,
+              );
+            }
+
+            await event.respond(outcome, payload);
+          },
+        } as ToolCallConfirmationDetails;
+
+        this.updateDisplay(
+          {
+            toolCalls: [...this.currentToolCalls!],
+            pendingConfirmation: details,
+          },
+          updateOutput,
+        );
+      },
+    );
   }
 
   getDescription(): string {
@@ -384,9 +468,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
           taskDescription: this.params.description,
           taskPrompt: this.params.prompt,
           status: 'failed' as const,
-          terminateReason: 'ERROR',
-          result: `Subagent "${this.params.subagent_type}" not found`,
-          subagentColor: undefined,
+          terminateReason: `Subagent "${this.params.subagent_type}" not found`,
         };
 
         return {
@@ -427,16 +509,15 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
 
       // Get the results
       const finalText = subagentScope.getFinalText();
-      const terminateReason = subagentScope.getTerminateMode();
-      const success = terminateReason === SubagentTerminateMode.GOAL;
+      const terminateMode = subagentScope.getTerminateMode();
+      const success = terminateMode === SubagentTerminateMode.GOAL;
       const executionSummary = subagentScope.getExecutionSummary();
 
       if (signal?.aborted) {
         this.updateDisplay(
           {
             status: 'cancelled',
-            terminateReason: 'CANCELLED',
-            result: finalText || 'Task was cancelled by user',
+            terminateReason: 'Task was cancelled by user',
             executionSummary,
           },
           updateOutput,
@@ -445,7 +526,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
         this.updateDisplay(
           {
             status: success ? 'completed' : 'failed',
-            terminateReason,
+            terminateReason: terminateMode,
             result: finalText,
             executionSummary,
           },
@@ -465,8 +546,7 @@ class TaskToolInvocation extends BaseToolInvocation<TaskParams, ToolResult> {
       const errorDisplay: TaskResultDisplay = {
         ...this.currentDisplay!,
         status: 'failed',
-        terminateReason: 'ERROR',
-        result: `Failed to run subagent: ${errorMessage}`,
+        terminateReason: `Failed to run subagent: ${errorMessage}`,
       };
 
       return {

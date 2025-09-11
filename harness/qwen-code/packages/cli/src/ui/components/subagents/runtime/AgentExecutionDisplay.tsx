@@ -15,19 +15,27 @@ import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
 import { COLOR_OPTIONS } from '../constants.js';
 import { fmtDuration } from '../utils.js';
+import { ToolConfirmationMessage } from '../../messages/ToolConfirmationMessage.js';
 
 export type DisplayMode = 'default' | 'verbose';
 
 export interface AgentExecutionDisplayProps {
   data: TaskResultDisplay;
+  availableHeight?: number;
+  childWidth?: number;
 }
 
 const getStatusColor = (
-  status: TaskResultDisplay['status'] | 'executing' | 'success',
+  status:
+    | TaskResultDisplay['status']
+    | 'executing'
+    | 'success'
+    | 'awaiting_approval',
 ) => {
   switch (status) {
     case 'running':
     case 'executing':
+    case 'awaiting_approval':
       return theme.status.warning;
     case 'completed':
     case 'success':
@@ -66,6 +74,8 @@ const MAX_TASK_PROMPT_LINES = 5;
  */
 export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
   data,
+  availableHeight,
+  childWidth,
 }) => {
   const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
 
@@ -136,6 +146,18 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
             />
           </Box>
         )}
+
+      {/* Inline approval prompt when awaiting confirmation */}
+      {data.pendingConfirmation && (
+        <Box flexDirection="column">
+          <ToolConfirmationMessage
+            confirmationDetails={data.pendingConfirmation}
+            isFocused={true}
+            availableTerminalHeight={availableHeight}
+            terminalWidth={childWidth ?? 80}
+          />
+        </Box>
+      )}
 
       {/* Results section for completed/failed tasks */}
       {(data.status === 'completed' ||
@@ -247,7 +269,7 @@ const ToolCallsList: React.FC<{
 const ToolCallItem: React.FC<{
   toolCall: {
     name: string;
-    status: 'executing' | 'success' | 'failed';
+    status: 'executing' | 'awaiting_approval' | 'success' | 'failed';
     error?: string;
     args?: Record<string, unknown>;
     result?: string;
@@ -263,6 +285,8 @@ const ToolCallItem: React.FC<{
     switch (toolCall.status) {
       case 'executing':
         return <Text color={color}>⊷</Text>; // Using same as ToolMessage
+      case 'awaiting_approval':
+        return <Text color={theme.status.warning}>?</Text>;
       case 'success':
         return <Text color={color}>✔</Text>;
       case 'failed':
@@ -401,7 +425,7 @@ const ResultsSection: React.FC<{
     )}
 
     {/* Execution Summary section - hide when cancelled */}
-    {data.status !== 'cancelled' && (
+    {data.status === 'completed' && (
       <Box flexDirection="column">
         <Box flexDirection="row" marginBottom={1}>
           <Text color={theme.text.primary}>Execution Summary:</Text>
@@ -411,7 +435,7 @@ const ResultsSection: React.FC<{
     )}
 
     {/* Tool Usage section - hide when cancelled */}
-    {data.status !== 'cancelled' && data.executionSummary && (
+    {data.status === 'completed' && data.executionSummary && (
       <Box flexDirection="column">
         <Box flexDirection="row" marginBottom={1}>
           <Text color={theme.text.primary}>Tool Usage:</Text>
@@ -426,13 +450,11 @@ const ResultsSection: React.FC<{
         <Text color={theme.status.warning}>⏹ User Cancelled</Text>
       </Box>
     )}
-    {data.status === 'failed' &&
-      data.terminateReason &&
-      data.terminateReason !== 'CANCELLED' && (
-        <Box flexDirection="row">
-          <Text color={Colors.AccentRed}>❌ Failed: </Text>
-          <Text color={Colors.Gray}>{data.terminateReason}</Text>
-        </Box>
-      )}
+    {data.status === 'failed' && (
+      <Box flexDirection="row">
+        <Text color={theme.status.error}>Task Failed: </Text>
+        <Text color={theme.status.error}>{data.terminateReason}</Text>
+      </Box>
+    )}
   </Box>
 );

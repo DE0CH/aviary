@@ -106,7 +106,13 @@ const SubagentExecutionRenderer: React.FC<{
   data: TaskResultDisplay;
   availableHeight?: number;
   childWidth: number;
-}> = ({ data }) => <AgentExecutionDisplay data={data} />;
+}> = ({ data, availableHeight, childWidth }) => (
+  <AgentExecutionDisplay
+    data={data}
+    availableHeight={availableHeight}
+    childWidth={childWidth}
+  />
+);
 
 /**
  * Component to render string results (markdown or plain text)

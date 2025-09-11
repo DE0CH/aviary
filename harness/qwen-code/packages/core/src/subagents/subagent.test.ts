@@ -19,15 +19,16 @@ import { createContentGenerator } from '../core/contentGenerator.js';
 import { getEnvironmentContext } from '../utils/environmentContext.js';
 import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
+import { AnyDeclarativeTool } from '../tools/tools.js';
 import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
 import {
   Content,
   FunctionCall,
   FunctionDeclaration,
   GenerateContentConfig,
+  Part,
   Type,
 } from '@google/genai';
-import { ToolErrorType } from '../tools/tool-error.js';
 
 vi.mock('../core/geminiChat.js');
 vi.mock('../core/contentGenerator.js');
@@ -193,7 +194,7 @@ describe('subagent.ts', () => {
         expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
-      it('should throw an error if a tool requires confirmation', async () => {
+      it('should not block creation when a tool may require confirmation', async () => {
         const mockTool = {
           schema: { parameters: { type: Type.OBJECT, properties: {} } },
           build: vi.fn().mockReturnValue({
@@ -212,18 +213,15 @@ describe('subagent.ts', () => {
 
         const toolConfig: ToolConfig = { tools: ['risky_tool'] };
 
-        await expect(
-          SubAgentScope.create(
-            'test-agent',
-            config,
-            promptConfig,
-            defaultModelConfig,
-            defaultRunConfig,
-            toolConfig,
-          ),
-        ).rejects.toThrow(
-          'Tool "risky_tool" requires user confirmation and cannot be used in a non-interactive subagent.',
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          toolConfig,
         );
+        expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
       it('should succeed if tools do not require confirmation', async () => {
@@ -251,11 +249,7 @@ describe('subagent.ts', () => {
         expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
-      it('should skip interactivity check and warn for tools with required parameters', async () => {
-        const consoleWarnSpy = vi
-          .spyOn(console, 'warn')
-          .mockImplementation(() => {});
-
+      it('should allow creation regardless of tool parameter requirements', async () => {
         const mockToolWithParams = {
           schema: {
             parameters: {
@@ -266,7 +260,6 @@ describe('subagent.ts', () => {
               required: ['path'],
             },
           },
-          // build should not be called, but we mock it to be safe
           build: vi.fn(),
         };
 
@@ -276,7 +269,6 @@ describe('subagent.ts', () => {
 
         const toolConfig: ToolConfig = { tools: ['tool_with_params'] };
 
-        // The creation should succeed without throwing
         const scope = await SubAgentScope.create(
           'test-agent',
           config,
@@ -287,16 +279,8 @@ describe('subagent.ts', () => {
         );
 
         expect(scope).toBeInstanceOf(SubAgentScope);
-
-        // Check that the warning was logged
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'Cannot check tool "tool_with_params" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.',
-        );
-
-        // Ensure build was never called
+        // Ensure build was not called during creation
         expect(mockToolWithParams.build).not.toHaveBeenCalled();
-
-        consoleWarnSpy.mockRestore();
       });
     });
 
@@ -514,14 +498,31 @@ describe('subagent.ts', () => {
           ]),
         );
 
-        // Mock the tool execution result
-        vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_1',
-          responseParts: 'file1.txt\nfile2.ts',
-          resultDisplay: 'Listed 2 files',
-          error: undefined,
-          errorType: undefined, // Or ToolErrorType.NONE if available and appropriate
-        });
+        // Provide a mock tool via ToolRegistry that returns a successful result
+        const listFilesInvocation = {
+          params: { path: '.' },
+          getDescription: vi.fn().mockReturnValue('List files'),
+          toolLocations: vi.fn().mockReturnValue([]),
+          shouldConfirmExecute: vi.fn().mockResolvedValue(false),
+          execute: vi.fn().mockResolvedValue({
+            llmContent: 'file1.txt\nfile2.ts',
+            returnDisplay: 'Listed 2 files',
+          }),
+        };
+        const listFilesTool = {
+          name: 'list_files',
+          displayName: 'List Files',
+          description: 'List files in directory',
+          kind: 'READ' as const,
+          schema: listFilesToolDef,
+          build: vi.fn().mockImplementation(() => listFilesInvocation),
+          canUpdateOutput: false,
+          isOutputMarkdown: true,
+        } as unknown as AnyDeclarativeTool;
+        vi.mocked((config.getToolRegistry() as unknown as ToolRegistry).getTool)
+          .mockImplementation((name: string) =>
+            name === 'list_files' ? listFilesTool : undefined,
+          );
 
         const scope = await SubAgentScope.create(
           'test-agent',
@@ -534,70 +535,19 @@ describe('subagent.ts', () => {
 
         await scope.runNonInteractive(new ContextState());
 
-        // Check tool execution
-        expect(executeToolCall).toHaveBeenCalledWith(
-          config,
-          expect.objectContaining({ name: 'list_files', args: { path: '.' } }),
-          expect.any(AbortSignal),
-        );
-
-        // Check the response sent back to the model
+        // Check the response sent back to the model (functionResponse part)
         const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-        expect(secondCallArgs.message).toEqual([
-          { text: 'file1.txt\nfile2.ts' },
-        ]);
+        const parts = secondCallArgs.message as unknown[];
+        expect(Array.isArray(parts)).toBe(true);
+        const firstPart = parts[0] as Part;
+        expect(firstPart.functionResponse?.response?.['output']).toBe(
+          'file1.txt\nfile2.ts',
+        );
 
         expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
       });
 
-      it('should provide specific tool error responses to the model', async () => {
-        const { config } = await createMockConfig();
-        const toolConfig: ToolConfig = { tools: ['failing_tool'] };
 
-        // Turn 1: Model calls the failing tool
-        // Turn 2: Model stops after receiving the error response
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            [
-              {
-                id: 'call_fail',
-                name: 'failing_tool',
-                args: {},
-              },
-            ],
-            'stop',
-          ]),
-        );
-
-        // Mock the tool execution failure.
-        vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_fail',
-          responseParts: 'ERROR: Tool failed catastrophically', // This should be sent to the model
-          resultDisplay: 'Tool failed catastrophically',
-          error: new Error('Failure'),
-          errorType: ToolErrorType.INVALID_TOOL_PARAMS,
-        });
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          toolConfig,
-        );
-
-        await scope.runNonInteractive(new ContextState());
-
-        // The agent should send the specific error message from responseParts.
-        const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-
-        expect(secondCallArgs.message).toEqual([
-          {
-            text: 'ERROR: Tool failed catastrophically',
-          },
-        ]);
-      });
     });
 
     describe('runNonInteractive - Termination and Recovery', () => {

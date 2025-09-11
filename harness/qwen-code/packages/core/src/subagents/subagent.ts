@@ -7,7 +7,15 @@
 import { reportError } from '../utils/errorReporting.js';
 import { Config } from '../config/config.js';
 import { ToolCallRequestInfo } from '../core/turn.js';
-import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
+import {
+  CoreToolScheduler,
+  ToolCall,
+  WaitingToolCall,
+} from '../core/coreToolScheduler.js';
+import type {
+  ToolConfirmationOutcome,
+  ToolCallConfirmationDetails,
+} from '../tools/tools.js';
 import { createContentGenerator } from '../core/contentGenerator.js';
 import { getEnvironmentContext } from '../utils/environmentContext.js';
 import {
@@ -227,61 +235,6 @@ export class SubAgentScope {
     eventEmitter?: SubAgentEventEmitter,
     hooks?: SubagentHooks,
   ): Promise<SubAgentScope> {
-    // Validate tools for non-interactive use
-    if (toolConfig?.tools) {
-      const toolRegistry = runtimeContext.getToolRegistry();
-
-      for (const toolItem of toolConfig.tools) {
-        if (typeof toolItem !== 'string') {
-          continue; // Skip inline function declarations
-        }
-        const tool = toolRegistry.getTool(toolItem);
-        if (!tool) {
-          continue; // Skip unknown tools
-        }
-
-        // Check if tool has required parameters
-        const hasRequiredParams =
-          tool.schema?.parameters?.required &&
-          Array.isArray(tool.schema.parameters.required) &&
-          tool.schema.parameters.required.length > 0;
-
-        if (hasRequiredParams) {
-          // Can't check interactivity without parameters, log warning and continue
-          console.warn(
-            `Cannot check tool "${toolItem}" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.`,
-          );
-          continue;
-        }
-
-        // Try to build the tool to check if it requires confirmation
-        try {
-          const toolInstance = tool.build({});
-          const confirmationDetails = await toolInstance.shouldConfirmExecute(
-            new AbortController().signal,
-          );
-
-          if (confirmationDetails) {
-            throw new Error(
-              `Tool "${toolItem}" requires user confirmation and cannot be used in a non-interactive subagent.`,
-            );
-          }
-        } catch (error) {
-          // If we can't build the tool, assume it's safe
-          if (
-            error instanceof Error &&
-            error.message.includes('requires user confirmation')
-          ) {
-            throw error; // Re-throw confirmation errors
-          }
-          // For other build errors, log warning and continue
-          console.warn(
-            `Cannot check tool "${toolItem}" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.`,
-          );
-        }
-      }
-    }
-
     return new SubAgentScope(
       name,
       runtimeContext,
@@ -517,13 +470,6 @@ export class SubAgentScope {
         timestamp: Date.now(),
       } as SubAgentErrorEvent);
 
-      // Log telemetry for subagent error
-      const errorEvent = new SubagentExecutionEvent(this.name, 'failed', {
-        terminate_reason: SubagentTerminateMode.ERROR,
-        result: error instanceof Error ? error.message : String(error),
-      });
-      logSubagentExecution(this.runtimeContext, errorEvent);
-
       throw error;
     } finally {
       if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
@@ -531,7 +477,7 @@ export class SubAgentScope {
       const summary = this.stats.getSummary(Date.now());
       this.eventEmitter?.emit(SubAgentEventType.FINISH, {
         subagentId: this.subagentId,
-        terminate_reason: this.terminateMode,
+        terminateReason: this.terminateMode,
         timestamp: Date.now(),
         rounds: summary.rounds,
         totalDurationMs: summary.totalDurationMs,
@@ -587,134 +533,192 @@ export class SubAgentScope {
   ): Promise<Content[]> {
     const toolResponseParts: Part[] = [];
 
-    for (const functionCall of functionCalls) {
-      const toolName = String(functionCall.name || 'unknown');
-      const callId = functionCall.id ?? `${functionCall.name}-${Date.now()}`;
-      const requestInfo: ToolCallRequestInfo = {
+    // Build scheduler
+    const responded = new Set<string>();
+    let resolveBatch: (() => void) | null = null;
+    const scheduler = new CoreToolScheduler({
+      toolRegistry: this.runtimeContext.getToolRegistry(),
+      outputUpdateHandler: undefined,
+      onAllToolCallsComplete: async (completedCalls) => {
+        for (const call of completedCalls) {
+          const toolName = call.request.name;
+          const duration = call.durationMs ?? 0;
+          const success = call.status === 'success';
+          const errorMessage =
+            call.status === 'error' || call.status === 'cancelled'
+              ? call.response.error?.message
+              : undefined;
+
+          // Update aggregate stats
+          this.executionStats.totalToolCalls += 1;
+          if (success) {
+            this.executionStats.successfulToolCalls += 1;
+          } else {
+            this.executionStats.failedToolCalls += 1;
+          }
+
+          // Per-tool usage
+          const tu = this.toolUsage.get(toolName) || {
+            count: 0,
+            success: 0,
+            failure: 0,
+            totalDurationMs: 0,
+            averageDurationMs: 0,
+          };
+          tu.count += 1;
+          if (success) {
+            tu.success += 1;
+          } else {
+            tu.failure += 1;
+            tu.lastError = errorMessage || 'Unknown error';
+          }
+          tu.totalDurationMs = (tu.totalDurationMs || 0) + duration;
+          tu.averageDurationMs =
+            tu.count > 0 ? tu.totalDurationMs / tu.count : 0;
+          this.toolUsage.set(toolName, tu);
+
+          // Emit tool result event
+          this.eventEmitter?.emit(SubAgentEventType.TOOL_RESULT, {
+            subagentId: this.subagentId,
+            round: currentRound,
+            callId: call.request.callId,
+            name: toolName,
+            success,
+            error: errorMessage,
+            resultDisplay: call.response.resultDisplay
+              ? typeof call.response.resultDisplay === 'string'
+                ? call.response.resultDisplay
+                : JSON.stringify(call.response.resultDisplay)
+              : undefined,
+            durationMs: duration,
+            timestamp: Date.now(),
+          } as SubAgentToolResultEvent);
+
+          // Update statistics service
+          this.stats.recordToolCall(
+            toolName,
+            success,
+            duration,
+            this.toolUsage.get(toolName)?.lastError,
+          );
+
+          // post-tool hook
+          await this.hooks?.postToolUse?.({
+            subagentId: this.subagentId,
+            name: this.name,
+            toolName,
+            args: call.request.args,
+            success,
+            durationMs: duration,
+            errorMessage,
+            timestamp: Date.now(),
+          });
+
+          // Append response parts
+          const respParts = call.response.responseParts;
+          if (respParts) {
+            const parts = Array.isArray(respParts) ? respParts : [respParts];
+            for (const part of parts) {
+              if (typeof part === 'string') {
+                toolResponseParts.push({ text: part });
+              } else if (part) {
+                toolResponseParts.push(part);
+              }
+            }
+          }
+        }
+        // Signal that this batch is complete (all tools terminal)
+        resolveBatch?.();
+      },
+      onToolCallsUpdate: (calls: ToolCall[]) => {
+        for (const call of calls) {
+          if (call.status !== 'awaiting_approval') continue;
+          const waiting = call as WaitingToolCall;
+
+          // Emit approval request event for UI visibility
+          try {
+            const { confirmationDetails } = waiting;
+            const { onConfirm: _onConfirm, ...rest } = confirmationDetails;
+            this.eventEmitter?.emit(SubAgentEventType.TOOL_WAITING_APPROVAL, {
+              subagentId: this.subagentId,
+              round: currentRound,
+              callId: waiting.request.callId,
+              name: waiting.request.name,
+              description: this.getToolDescription(
+                waiting.request.name,
+                waiting.request.args,
+              ),
+              confirmationDetails: rest,
+              respond: async (
+                outcome: ToolConfirmationOutcome,
+                payload?: Parameters<
+                  ToolCallConfirmationDetails['onConfirm']
+                >[1],
+              ) => {
+                if (responded.has(waiting.request.callId)) return;
+                responded.add(waiting.request.callId);
+                await waiting.confirmationDetails.onConfirm(outcome, payload);
+              },
+              timestamp: Date.now(),
+            });
+          } catch {
+            // ignore UI event emission failures
+          }
+
+          // UI now renders inline confirmation via task tool live output.
+        }
+      },
+      getPreferredEditor: () => undefined,
+      config: this.runtimeContext,
+      onEditorClose: () => {},
+    });
+
+    // Prepare requests and emit TOOL_CALL events
+    const requests: ToolCallRequestInfo[] = functionCalls.map((fc) => {
+      const toolName = String(fc.name || 'unknown');
+      const callId = fc.id ?? `${fc.name}-${Date.now()}`;
+      const args = (fc.args ?? {}) as Record<string, unknown>;
+      const request: ToolCallRequestInfo = {
         callId,
-        name: functionCall.name as string,
-        args: (functionCall.args ?? {}) as Record<string, unknown>,
+        name: toolName,
+        args,
         isClientInitiated: true,
         prompt_id: promptId,
       };
 
-      // Get tool description before execution
-      const description = this.getToolDescription(toolName, requestInfo.args);
-
-      // Emit tool call event BEFORE execution
+      const description = this.getToolDescription(toolName, args);
       this.eventEmitter?.emit(SubAgentEventType.TOOL_CALL, {
         subagentId: this.subagentId,
         round: currentRound,
         callId,
         name: toolName,
-        args: requestInfo.args,
+        args,
         description,
         timestamp: Date.now(),
       } as SubAgentToolCallEvent);
 
-      // Execute tools with timing and hooks
-      const start = Date.now();
-      await this.hooks?.preToolUse?.({
+      // pre-tool hook
+      void this.hooks?.preToolUse?.({
         subagentId: this.subagentId,
         name: this.name,
         toolName,
-        args: requestInfo.args,
-        timestamp: Date.now(),
-      });
-      const toolResponse = await executeToolCall(
-        this.runtimeContext,
-        requestInfo,
-        abortController.signal,
-      );
-      const duration = Date.now() - start;
-      // Update tool call stats
-      this.executionStats.totalToolCalls += 1;
-      if (toolResponse.error) {
-        this.executionStats.failedToolCalls += 1;
-      } else {
-        this.executionStats.successfulToolCalls += 1;
-      }
-
-      // Update per-tool usage
-      const tu = this.toolUsage.get(toolName) || {
-        count: 0,
-        success: 0,
-        failure: 0,
-        totalDurationMs: 0,
-        averageDurationMs: 0,
-      };
-      tu.count += 1;
-      if (toolResponse?.error) {
-        tu.failure += 1;
-        tu.lastError = toolResponse.error?.message || 'Unknown error';
-      } else {
-        tu.success += 1;
-      }
-      if (typeof tu.totalDurationMs === 'number') {
-        tu.totalDurationMs += duration;
-        tu.averageDurationMs =
-          tu.count > 0 ? tu.totalDurationMs / tu.count : tu.totalDurationMs;
-      } else {
-        tu.totalDurationMs = duration;
-        tu.averageDurationMs = duration;
-      }
-      this.toolUsage.set(toolName, tu);
-
-      // Emit tool result event
-      this.eventEmitter?.emit(SubAgentEventType.TOOL_RESULT, {
-        subagentId: this.subagentId,
-        round: currentRound,
-        callId,
-        name: toolName,
-        success: !toolResponse?.error,
-        error: toolResponse?.error?.message,
-        resultDisplay: toolResponse?.resultDisplay
-          ? typeof toolResponse.resultDisplay === 'string'
-            ? toolResponse.resultDisplay
-            : JSON.stringify(toolResponse.resultDisplay)
-          : undefined,
-        durationMs: duration,
-        timestamp: Date.now(),
-      } as SubAgentToolResultEvent);
-
-      // Update statistics service
-      this.stats.recordToolCall(
-        toolName,
-        !toolResponse?.error,
-        duration,
-        this.toolUsage.get(toolName)?.lastError,
-      );
-
-      // post-tool hook
-      await this.hooks?.postToolUse?.({
-        subagentId: this.subagentId,
-        name: this.name,
-        toolName,
-        args: requestInfo.args,
-        success: !toolResponse?.error,
-        durationMs: duration,
-        errorMessage: toolResponse?.error?.message,
+        args,
         timestamp: Date.now(),
       });
 
-      if (toolResponse.error) {
-        console.error(
-          `Error executing tool ${functionCall.name}: ${toolResponse.error.message}`,
-        );
-      }
+      return request;
+    });
 
-      if (toolResponse.responseParts) {
-        const parts = Array.isArray(toolResponse.responseParts)
-          ? toolResponse.responseParts
-          : [toolResponse.responseParts];
-        for (const part of parts) {
-          if (typeof part === 'string') {
-            toolResponseParts.push({ text: part });
-          } else if (part) {
-            toolResponseParts.push(part);
-          }
-        }
-      }
+    if (requests.length > 0) {
+      // Create a per-batch completion promise, resolve when onAllToolCallsComplete fires
+      const batchDone = new Promise<void>((resolve) => {
+        resolveBatch = () => {
+          resolve();
+          resolveBatch = null;
+        };
+      });
+      await scheduler.schedule(requests, abortController.signal);
+      await batchDone; // Wait for approvals + execution to finish
     }
     // If all tool calls failed, inform the model so it can re-evaluate.
     if (functionCalls.length > 0 && toolResponseParts.length === 0) {

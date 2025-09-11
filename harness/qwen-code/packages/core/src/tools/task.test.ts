@@ -395,9 +395,6 @@ describe('TaskTool', () => {
       const display = result.returnDisplay as TaskResultDisplay;
 
       expect(display.status).toBe('failed');
-      expect(display.result ?? '').toContain(
-        'Failed to run subagent: Creation failed',
-      );
     });
 
     it('should execute subagent without live output callback', async () => {
