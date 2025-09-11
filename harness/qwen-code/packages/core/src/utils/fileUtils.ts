@@ -11,7 +11,7 @@ import mime from 'mime-types';
 import { FileSystemService } from '../services/fileSystemService.js';
 
 // Constants for text file processing
-const DEFAULT_MAX_LINES_TEXT_FILE = 2000;
+export const DEFAULT_MAX_LINES_TEXT_FILE = 2000;
 const MAX_LINE_LENGTH_TEXT_FILE = 2000;
 
 // Default values for encoding and separator format
