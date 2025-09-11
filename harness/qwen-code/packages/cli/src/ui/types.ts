@@ -46,7 +46,7 @@ export interface IndividualToolCallDisplay {
   callId: string;
   name: string;
   description: string;
-  resultDisplay: ToolResultDisplay | undefined;
+  resultDisplay: ToolResultDisplay | string | undefined;
   status: ToolCallStatus;
   confirmationDetails: ToolCallConfirmationDetails | undefined;
   renderOutputAsMarkdown?: boolean;

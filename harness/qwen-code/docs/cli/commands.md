@@ -127,6 +127,20 @@ Slash commands provide meta-level control over the CLI itself.
 - **`/about`**
   - **Description:** Show version info. Please share this information when filing issues.
 
+- **`/agents`**
+  - **Description:** Manage specialized AI subagents for focused tasks. Subagents are independent AI assistants configured with specific expertise and tool access.
+  - **Sub-commands:**
+    - **`create`**:
+      - **Description:** Launch an interactive wizard to create a new subagent. The wizard guides you through location selection, AI-powered prompt generation, tool selection, and visual customization.
+      - **Usage:** `/agents create`
+    - **`manage`**:
+      - **Description:** Open an interactive management dialog to view, edit, and delete existing subagents. Shows both project-level and user-level agents.
+      - **Usage:** `/agents manage`
+  - **Storage Locations:**
+    - **Project-level:** `.qwen/agents/` (shared with team, takes precedence)
+    - **User-level:** `~/.qwen/agents/` (personal agents, available across projects)
+  - **Note:** For detailed information on creating and managing subagents, see the [Subagents documentation](../subagents.md).
+
 - [**`/tools`**](../tools/index.md)
   - **Description:** Display a list of tools that are currently available within Qwen Code.
   - **Sub-commands:**

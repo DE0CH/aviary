@@ -22,6 +22,7 @@ import {
   Config,
   Kind,
   ApprovalMode,
+  ToolResultDisplay,
   ToolRegistry,
 } from '../index.js';
 import { Part, PartListUnion } from '@google/genai';
@@ -630,6 +631,135 @@ describe('CoreToolScheduler YOLO mode', () => {
     if (completedCall.status === 'success') {
       expect(completedCall.response.resultDisplay).toBe('Tool executed');
     }
+  });
+});
+
+describe('CoreToolScheduler cancellation during executing with live output', () => {
+  it('sets status to cancelled and preserves last output', async () => {
+    class StreamingInvocation extends BaseToolInvocation<
+      { id: string },
+      ToolResult
+    > {
+      getDescription(): string {
+        return `Streaming tool ${this.params.id}`;
+      }
+
+      async execute(
+        signal: AbortSignal,
+        updateOutput?: (output: ToolResultDisplay) => void,
+      ): Promise<ToolResult> {
+        updateOutput?.('hello');
+        // Wait until aborted to emulate a long-running task
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+        // Return a normal (non-error) result; scheduler should still mark cancelled
+        return { llmContent: 'done', returnDisplay: 'done' };
+      }
+    }
+
+    class StreamingTool extends BaseDeclarativeTool<
+      { id: string },
+      ToolResult
+    > {
+      constructor() {
+        super(
+          'stream-tool',
+          'Stream Tool',
+          'Emits live output and waits for abort',
+          Kind.Other,
+          {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+            required: ['id'],
+          },
+          true,
+          true,
+        );
+      }
+      protected createInvocation(params: { id: string }) {
+        return new StreamingInvocation(params);
+      }
+    }
+
+    const tool = new StreamingTool();
+    const mockToolRegistry = {
+      getTool: () => tool,
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+      discovery: {},
+      registerTool: () => {},
+      getToolByName: () => tool,
+      getToolByDisplayName: () => tool,
+      getTools: () => [],
+      discoverTools: async () => {},
+      getAllTools: () => [],
+      getToolsByServer: () => [],
+    } as unknown as ToolRegistry;
+
+    const onAllToolCallsComplete = vi.fn();
+    const onToolCallsUpdate = vi.fn();
+
+    const mockConfig = {
+      getSessionId: () => 'test-session-id',
+      getUsageStatisticsEnabled: () => true,
+      getDebugMode: () => false,
+      getApprovalMode: () => ApprovalMode.DEFAULT,
+      getContentGeneratorConfig: () => ({
+        model: 'test-model',
+        authType: 'oauth-personal',
+      }),
+    } as unknown as Config;
+
+    const scheduler = new CoreToolScheduler({
+      config: mockConfig,
+      toolRegistry: mockToolRegistry,
+      onAllToolCallsComplete,
+      onToolCallsUpdate,
+      getPreferredEditor: () => 'vscode',
+      onEditorClose: vi.fn(),
+    });
+
+    const abortController = new AbortController();
+    const request = {
+      callId: '1',
+      name: 'stream-tool',
+      args: { id: 'x' },
+      isClientInitiated: true,
+      prompt_id: 'prompt-stream',
+    };
+
+    const schedulePromise = scheduler.schedule(
+      [request],
+      abortController.signal,
+    );
+
+    // Wait until executing
+    await vi.waitFor(() => {
+      const calls = onToolCallsUpdate.mock.calls;
+      const last = calls[calls.length - 1]?.[0][0] as ToolCall | undefined;
+      expect(last?.status).toBe('executing');
+    });
+
+    // Now abort
+    abortController.abort();
+
+    await schedulePromise;
+
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalled();
+    });
+    const completedCalls = onAllToolCallsComplete.mock
+      .calls[0][0] as ToolCall[];
+    expect(completedCalls[0].status).toBe('cancelled');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cancelled: any = completedCalls[0];
+    expect(cancelled.response.resultDisplay).toBe('hello');
   });
 });
 

@@ -14,6 +14,7 @@ import {
   BaseToolInvocation,
   ToolInvocation,
   ToolResult,
+  ToolResultDisplay,
   ToolCallConfirmationDetails,
   ToolExecuteConfirmationDetails,
   ToolConfirmationOutcome,
@@ -100,7 +101,7 @@ class ShellToolInvocation extends BaseToolInvocation<
 
   async execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
     terminalColumns?: number,
     terminalRows?: number,
   ): Promise<ToolResult> {
