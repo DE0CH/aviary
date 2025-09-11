@@ -511,7 +511,9 @@ You are a helpful assistant.
 
       expect(config).toBeDefined();
       expect(config!.name).toBe('test-agent');
-      expect(fs.readdir).toHaveBeenCalledWith('/test/project/.qwen/agents');
+      expect(fs.readdir).toHaveBeenCalledWith(
+        path.normalize('/test/project/.qwen/agents'),
+      );
       expect(fs.readFile).toHaveBeenCalledWith(
         path.normalize('/test/project/.qwen/agents/test-agent.md'),
         'utf8',
@@ -529,7 +531,9 @@ You are a helpful assistant.
 
       expect(config).toBeDefined();
       expect(config!.name).toBe('test-agent');
-      expect(fs.readdir).toHaveBeenCalledWith('/home/user/.qwen/agents');
+      expect(fs.readdir).toHaveBeenCalledWith(
+        path.normalize('/home/user/.qwen/agents'),
+      );
       expect(fs.readFile).toHaveBeenCalledWith(
         path.normalize('/home/user/.qwen/agents/test-agent.md'),
         'utf8',
@@ -587,11 +591,13 @@ You are another assistant.`;
       expect(config).toBeDefined();
       expect(config!.name).toBe('correct-agent-name');
       expect(config!.filePath).toBe(
-        '/test/project/.qwen/agents/wrong-filename.md',
+        path.normalize('/test/project/.qwen/agents/wrong-filename.md'),
       );
 
       // Verify it scanned the directory instead of using direct path
-      expect(fs.readdir).toHaveBeenCalledWith('/test/project/.qwen/agents');
+      expect(fs.readdir).toHaveBeenCalledWith(
+        path.normalize('/test/project/.qwen/agents'),
+      );
     });
 
     it('should search user level when filename mismatch at project level', async () => {
@@ -635,7 +641,9 @@ You are a helpful assistant.`;
 
       expect(config).toBeDefined();
       expect(config!.name).toBe('target-agent');
-      expect(config!.filePath).toBe('/home/user/.qwen/agents/user-agent.md');
+      expect(config!.filePath).toBe(
+        path.normalize('/home/user/.qwen/agents/user-agent.md'),
+      );
       expect(config!.level).toBe('user');
     });
 
@@ -662,7 +670,7 @@ You are a helpful assistant.`;
       expect(config).toBeDefined();
       expect(config!.name).toBe('specific-agent');
       expect(config!.filePath).toBe(
-        '/test/project/.qwen/agents/misnamed-file.md',
+        path.normalize('/test/project/.qwen/agents/misnamed-file.md'),
       );
     });
   });
