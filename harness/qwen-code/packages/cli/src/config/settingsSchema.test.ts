@@ -52,6 +52,7 @@ describe('SettingsSchema', () => {
         'model',
         'hasSeenIdeIntegrationNudge',
         'folderTrustFeature',
+        'enableWelcomeBack',
       ];
 
       expectedSettings.forEach((setting) => {

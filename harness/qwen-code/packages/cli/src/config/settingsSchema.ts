@@ -604,6 +604,16 @@ export const SETTINGS_SCHEMA = {
     description: 'Skip the next speaker check.',
     showInDialog: true,
   },
+  enableWelcomeBack: {
+    type: 'boolean',
+    label: 'Enable Welcome Back',
+    category: 'UI',
+    requiresRestart: false,
+    default: true,
+    description:
+      'Show welcome back dialog when returning to a project with conversation history.',
+    showInDialog: true,
+  },
 } as const;
 
 type InferSettings<T extends SettingsSchema> = {

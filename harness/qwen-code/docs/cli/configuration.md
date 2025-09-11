@@ -607,3 +607,11 @@ You can opt out of usage statistics collection at any time by setting the `usage
 ```
 
 Note: When usage statistics are enabled, events are sent to an Alibaba Cloud RUM collection endpoint.
+
+- **`enableWelcomeBack`** (boolean):
+  - **Description:** Show welcome back dialog when returning to a project with conversation history.
+  - **Default:** `true`
+  - **Category:** UI
+  - **Requires Restart:** No
+  - **Example:** `"enableWelcomeBack": false`
+  - **Details:** When enabled, Qwen Code will automatically detect if you're returning to a project with a previously generated project summary (`.qwen/PROJECT_SUMMARY.md`) and show a dialog allowing you to continue your previous conversation or start fresh. This feature integrates with the `/chat summary` command and quit confirmation dialog. See the [Welcome Back documentation](./welcome-back.md) for more details.

@@ -14,6 +14,7 @@ import { ErrorMessage } from './messages/ErrorMessage.js';
 import { ToolGroupMessage } from './messages/ToolGroupMessage.js';
 import { GeminiMessageContent } from './messages/GeminiMessageContent.js';
 import { CompressionMessage } from './messages/CompressionMessage.js';
+import { SummaryMessage } from './messages/SummaryMessage.js';
 import { Box } from 'ink';
 import { AboutBox } from './AboutBox.js';
 import { StatsDisplay } from './StatsDisplay.js';
@@ -81,6 +82,9 @@ export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
     {item.type === 'model_stats' && <ModelStatsDisplay />}
     {item.type === 'tool_stats' && <ToolStatsDisplay />}
     {item.type === 'quit' && <SessionSummaryDisplay duration={item.duration} />}
+    {item.type === 'quit_confirmation' && (
+      <SessionSummaryDisplay duration={item.duration} />
+    )}
     {item.type === 'tool_group' && (
       <ToolGroupMessage
         toolCalls={item.tools}
@@ -94,5 +98,6 @@ export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
     {item.type === 'compression' && (
       <CompressionMessage compression={item.compression} />
     )}
+    {item.type === 'summary' && <SummaryMessage summary={item.summary} />}
   </Box>
 );

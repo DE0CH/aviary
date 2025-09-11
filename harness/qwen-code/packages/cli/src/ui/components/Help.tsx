@@ -111,7 +111,7 @@ export const Help: React.FC<Help> = ({ commands }) => (
       <Text bold color={Colors.AccentPurple}>
         Ctrl+C
       </Text>{' '}
-      - Quit application
+      - Close dialogs, cancel requests, or quit application
     </Text>
     <Text color={Colors.Foreground}>
       <Text bold color={Colors.AccentPurple}>

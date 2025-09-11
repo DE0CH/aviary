@@ -35,6 +35,17 @@ Slash commands provide meta-level control over the CLI itself.
   - **Description:** Clear the terminal screen, including the visible session history and scrollback within the CLI. The underlying session data (for history recall) might be preserved depending on the exact implementation, but the visual display is cleared.
   - **Keyboard shortcut:** Press **Ctrl+L** at any time to perform a clear action.
 
+- **`/summary`**
+  - **Description:** Generate a comprehensive project summary from the current conversation history and save it to `.qwen/PROJECT_SUMMARY.md`. This summary includes the overall goal, key knowledge, recent actions, and current plan, making it perfect for resuming work in future sessions.
+  - **Usage:** `/summary`
+  - **Features:**
+    - Analyzes the entire conversation history to extract important context
+    - Creates a structured markdown summary with sections for goals, knowledge, actions, and plans
+    - Automatically saves to `.qwen/PROJECT_SUMMARY.md` in your project root
+    - Shows progress indicators during generation and saving
+    - Integrates with the Welcome Back feature for seamless session resumption
+  - **Note:** This command requires an active conversation with at least 2 messages to generate a meaningful summary.
+
 - **`/compress`**
   - **Description:** Replace the entire chat context with a summary. This saves on tokens used for future tasks while retaining a high level summary of what has happened.
 
@@ -127,8 +138,18 @@ Slash commands provide meta-level control over the CLI itself.
 - **`/privacy`**
   - **Description:** Display the Privacy Notice and allow users to select whether they consent to the collection of their data for service improvement purposes.
 
+- **`/quit-confirm`**
+  - **Description:** Show a confirmation dialog before exiting Qwen Code, allowing you to choose how to handle your current session.
+  - **Usage:** `/quit-confirm`
+  - **Features:**
+    - **Quit immediately:** Exit without saving anything (equivalent to `/quit`)
+    - **Generate summary and quit:** Create a project summary using `/summary` before exiting
+    - **Save conversation and quit:** Save the current conversation with an auto-generated tag before exiting
+  - **Keyboard shortcut:** Press **Ctrl+C** twice to trigger the quit confirmation dialog
+  - **Note:** This command is automatically triggered when you press Ctrl+C once, providing a safety mechanism to prevent accidental exits.
+
 - **`/quit`** (or **`/exit`**)
-  - **Description:** Exit Qwen Code.
+  - **Description:** Exit Qwen Code immediately without any confirmation dialog.
 
 - **`/vim`**
   - **Description:** Toggle vim mode on or off. When vim mode is enabled, the input area supports vim-style navigation and editing commands in both NORMAL and INSERT modes.

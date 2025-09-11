@@ -434,7 +434,7 @@ describe('useSlashCommandProcessor', () => {
           });
 
           await act(async () => {
-            await vi.advanceTimersByTimeAsync(200);
+            await vi.advanceTimersByTimeAsync(1000); // Advance by 1000ms to trigger the setTimeout callback
           });
 
           expect(mockSetQuittingMessages).toHaveBeenCalledWith([]);
@@ -466,7 +466,7 @@ describe('useSlashCommandProcessor', () => {
           });
 
           await act(async () => {
-            await vi.advanceTimersByTimeAsync(200);
+            await vi.advanceTimersByTimeAsync(1000); // Advance by 1000ms to trigger the setTimeout callback
           });
 
           expect(mockRunExitCleanup).toHaveBeenCalledTimes(1);
