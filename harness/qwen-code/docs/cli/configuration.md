@@ -453,7 +453,7 @@ Arguments passed directly when running the CLI can override other configurations
 - **`--approval-mode <mode>`**:
   - Sets the approval mode for tool calls. Available modes:
     - `default`: Prompt for approval on each tool call (default behavior)
-    - `auto_edit`: Automatically approve edit tools (replace, write_file) while prompting for others
+    - `auto_edit`: Automatically approve edit tools (edit, write_file) while prompting for others
     - `yolo`: Automatically approve all tool calls (equivalent to `--yolo`)
   - Cannot be used together with `--yolo`. Use `--approval-mode=yolo` instead of `--yolo` for the new unified approach.
   - Example: `qwen --approval-mode auto_edit`
@@ -607,3 +607,11 @@ You can opt out of usage statistics collection at any time by setting the `usage
 ```
 
 Note: When usage statistics are enabled, events are sent to an Alibaba Cloud RUM collection endpoint.
+
+- **`enableWelcomeBack`** (boolean):
+  - **Description:** Show welcome back dialog when returning to a project with conversation history.
+  - **Default:** `true`
+  - **Category:** UI
+  - **Requires Restart:** No
+  - **Example:** `"enableWelcomeBack": false`
+  - **Details:** When enabled, Qwen Code will automatically detect if you're returning to a project with a previously generated project summary (`.qwen/PROJECT_SUMMARY.md`) and show a dialog allowing you to continue your previous conversation or start fresh. This feature integrates with the `/chat summary` command and quit confirmation dialog. See the [Welcome Back documentation](./welcome-back.md) for more details.

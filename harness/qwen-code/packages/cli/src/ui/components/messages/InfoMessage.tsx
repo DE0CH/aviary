@@ -14,6 +14,11 @@ interface InfoMessageProps {
 }
 
 export const InfoMessage: React.FC<InfoMessageProps> = ({ text }) => {
+  // Don't render anything if text is empty
+  if (!text || text.trim() === '') {
+    return null;
+  }
+
   const prefix = 'ℹ ';
   const prefixWidth = prefix.length;
 

@@ -18,6 +18,7 @@ import {
   ToolConfirmationOutcome,
 } from '@qwen-code/qwen-code-core';
 import { useSessionStats } from '../contexts/SessionContext.js';
+import { formatDuration } from '../utils/formatters.js';
 import { runExitCleanup } from '../../utils/cleanup.js';
 import {
   Message,
@@ -56,6 +57,7 @@ export const useSlashCommandProcessor = (
   toggleVimEnabled: () => Promise<boolean>,
   setIsProcessing: (isProcessing: boolean) => void,
   setGeminiMdFileCount: (count: number) => void,
+  _showQuitConfirmation: () => void,
 ) => {
   const session = useSessionStats();
   const [commands, setCommands] = useState<readonly SlashCommand[]>([]);
@@ -76,6 +78,10 @@ export const useSlashCommandProcessor = (
     prompt: React.ReactNode;
     onConfirm: (confirmed: boolean) => void;
   }>(null);
+  const [quitConfirmationRequest, setQuitConfirmationRequest] =
+    useState<null | {
+      onConfirm: (shouldQuit: boolean, action?: string) => void;
+    }>(null);
 
   const [sessionShellAllowlist, setSessionShellAllowlist] = useState(
     new Set<string>(),
@@ -143,10 +149,20 @@ export const useSlashCommandProcessor = (
           type: 'quit',
           duration: message.duration,
         };
+      } else if (message.type === MessageType.QUIT_CONFIRMATION) {
+        historyItemContent = {
+          type: 'quit_confirmation',
+          duration: message.duration,
+        };
       } else if (message.type === MessageType.COMPRESSION) {
         historyItemContent = {
           type: 'compression',
           compression: message.compression,
+        };
+      } else if (message.type === MessageType.SUMMARY) {
+        historyItemContent = {
+          type: 'summary',
+          summary: message.summary,
         };
       } else {
         historyItemContent = {
@@ -409,12 +425,85 @@ export const useSlashCommandProcessor = (
                   });
                   return { type: 'handled' };
                 }
+                case 'quit_confirmation':
+                  // Show quit confirmation dialog instead of immediately quitting
+                  setQuitConfirmationRequest({
+                    onConfirm: (shouldQuit: boolean, action?: string) => {
+                      setQuitConfirmationRequest(null);
+                      if (!shouldQuit) {
+                        // User cancelled the quit operation - do nothing
+                        return;
+                      }
+                      if (shouldQuit) {
+                        if (action === 'save_and_quit') {
+                          // First save conversation with auto-generated tag, then quit
+                          const timestamp = new Date()
+                            .toISOString()
+                            .replace(/[:.]/g, '-');
+                          const autoSaveTag = `auto-save chat ${timestamp}`;
+                          handleSlashCommand(`/chat save "${autoSaveTag}"`);
+                          setTimeout(() => handleSlashCommand('/quit'), 100);
+                        } else if (action === 'summary_and_quit') {
+                          // Generate summary and then quit
+                          handleSlashCommand('/summary')
+                            .then(() => {
+                              // Wait for user to see the summary result
+                              setTimeout(() => {
+                                handleSlashCommand('/quit');
+                              }, 1200);
+                            })
+                            .catch((error) => {
+                              // If summary fails, still quit but show error
+                              addItem(
+                                {
+                                  type: 'error',
+                                  text: `Failed to generate summary before quit: ${
+                                    error instanceof Error
+                                      ? error.message
+                                      : String(error)
+                                  }`,
+                                },
+                                Date.now(),
+                              );
+                              // Give user time to see the error message
+                              setTimeout(() => {
+                                handleSlashCommand('/quit');
+                              }, 1000);
+                            });
+                        } else {
+                          // Just quit immediately - trigger the actual quit action
+                          const now = Date.now();
+                          const { sessionStartTime } = session.stats;
+                          const wallDuration = now - sessionStartTime.getTime();
+
+                          setQuittingMessages([
+                            {
+                              type: 'user',
+                              text: `/quit`,
+                              id: now - 1,
+                            },
+                            {
+                              type: 'quit',
+                              duration: formatDuration(wallDuration),
+                              id: now,
+                            },
+                          ]);
+                          setTimeout(async () => {
+                            await runExitCleanup();
+                            process.exit(0);
+                          }, 100);
+                        }
+                      }
+                    },
+                  });
+                  return { type: 'handled' };
+
                 case 'quit':
                   setQuittingMessages(result.messages);
                   setTimeout(async () => {
                     await runExitCleanup();
                     process.exit(0);
-                  }, 100);
+                  }, 1000);
                   return { type: 'handled' };
 
                 case 'submit_prompt':
@@ -570,6 +659,7 @@ export const useSlashCommandProcessor = (
       setSessionShellAllowlist,
       setIsProcessing,
       setConfirmationRequest,
+      session.stats,
     ],
   );
 
@@ -580,5 +670,6 @@ export const useSlashCommandProcessor = (
     commandContext,
     shellConfirmationRequest,
     confirmationRequest,
+    quitConfirmationRequest,
   };
 };

@@ -88,6 +88,12 @@ export interface QuitActionReturn {
   messages: HistoryItem[];
 }
 
+/** The return type for a command action that requests quit confirmation. */
+export interface QuitConfirmationActionReturn {
+  type: 'quit_confirmation';
+  messages: HistoryItem[];
+}
+
 /**
  * The return type for a command action that results in a simple message
  * being displayed to the user.
@@ -162,6 +168,7 @@ export type SlashCommandActionReturn =
   | ToolActionReturn
   | MessageActionReturn
   | QuitActionReturn
+  | QuitConfirmationActionReturn
   | OpenDialogActionReturn
   | LoadHistoryActionReturn
   | SubmitPromptActionReturn
