@@ -52,6 +52,7 @@ import {
 import { SubagentHooks } from './subagent-hooks.js';
 import { logSubagentExecution } from '../telemetry/loggers.js';
 import { SubagentExecutionEvent } from '../telemetry/types.js';
+import { TaskTool } from '../tools/task.js';
 
 /**
  * @fileoverview Defines the configuration interfaces for a subagent.
@@ -290,7 +291,11 @@ export class SubAgentScope {
       );
 
       if (hasWildcard || asStrings.length === 0) {
-        toolsList.push(...toolRegistry.getFunctionDeclarations());
+        toolsList.push(
+          ...toolRegistry
+            .getFunctionDeclarations()
+            .filter((t) => t.name !== TaskTool.Name),
+        );
       } else {
         toolsList.push(
           ...toolRegistry.getFunctionDeclarationsFiltered(asStrings),
@@ -299,7 +304,11 @@ export class SubAgentScope {
       toolsList.push(...onlyInlineDecls);
     } else {
       // Inherit all available tools by default when not specified.
-      toolsList.push(...toolRegistry.getFunctionDeclarations());
+      toolsList.push(
+        ...toolRegistry
+          .getFunctionDeclarations()
+          .filter((t) => t.name !== TaskTool.Name),
+      );
     }
 
     const initialTaskText = String(

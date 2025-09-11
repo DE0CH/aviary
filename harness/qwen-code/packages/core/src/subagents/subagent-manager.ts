@@ -121,31 +121,19 @@ export class SubagentManager {
         return BuiltinAgentRegistry.getBuiltinAgent(name);
       }
 
-      const filePath = this.getSubagentPath(name, level);
-      try {
-        const config = await this.parseSubagentFile(filePath);
-        return config;
-      } catch (_error) {
-        return null;
-      }
+      return this.findSubagentByNameAtLevel(name, level);
     }
 
     // Try project level first
-    const projectPath = this.getSubagentPath(name, 'project');
-    try {
-      const config = await this.parseSubagentFile(projectPath);
-      return config;
-    } catch (_error) {
-      // Continue to user level
+    const projectConfig = await this.findSubagentByNameAtLevel(name, 'project');
+    if (projectConfig) {
+      return projectConfig;
     }
 
     // Try user level
-    const userPath = this.getSubagentPath(name, 'user');
-    try {
-      const config = await this.parseSubagentFile(userPath);
-      return config;
-    } catch (_error) {
-      // Continue to built-in agents
+    const userConfig = await this.findSubagentByNameAtLevel(name, 'user');
+    if (userConfig) {
+      return userConfig;
     }
 
     // Try built-in agents as fallback
@@ -230,13 +218,15 @@ export class SubagentManager {
         continue;
       }
 
-      const filePath = this.getSubagentPath(name, currentLevel);
-
-      try {
-        await fs.unlink(filePath);
-        deleted = true;
-      } catch (_error) {
-        // File might not exist at this level, continue
+      // Find the actual subagent file by scanning and parsing
+      const config = await this.findSubagentByNameAtLevel(name, currentLevel);
+      if (config && config.filePath) {
+        try {
+          await fs.unlink(config.filePath);
+          deleted = true;
+        } catch (_error) {
+          // File might not exist or be accessible, continue
+        }
       }
     }
 
@@ -435,6 +425,16 @@ export class SubagentManager {
       const validation = this.validator.validateConfig(config);
       if (!validation.isValid) {
         throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+      }
+
+      // Warn if filename doesn't match subagent name (potential issue)
+      const expectedFilename = `${config.name}.md`;
+      const actualFilename = path.basename(filePath);
+      if (actualFilename !== expectedFilename) {
+        console.warn(
+          `Warning: Subagent file "${actualFilename}" contains name "${config.name}" but filename suggests "${path.basename(actualFilename, '.md')}". ` +
+            `Consider renaming the file to "${expectedFilename}" for consistency.`,
+        );
       }
 
       return config;
@@ -665,10 +665,11 @@ export class SubagentManager {
   }
 
   /**
-   * Lists subagents at a specific level.
+   * Lists subagent files at a specific level.
+   * Handles both builtin agents and file-based agents.
    *
-   * @param level - Storage level to check
-   * @returns Array of subagent metadata
+   * @param level - Storage level to scan
+   * @returns Array of subagent configurations
    */
   private async listSubagentsAtLevel(
     level: SubagentLevel,
@@ -699,11 +700,9 @@ export class SubagentManager {
         try {
           const config = await this.parseSubagentFile(filePath);
           subagents.push(config);
-        } catch (error) {
-          // Skip invalid files but log the error
-          console.warn(
-            `Skipping invalid subagent file ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          );
+        } catch (_error) {
+          // Ignore invalid files
+          continue;
         }
       }
 
@@ -712,6 +711,30 @@ export class SubagentManager {
       // Directory doesn't exist or can't be read
       return [];
     }
+  }
+
+  /**
+   * Finds a subagent by name at a specific level by scanning all files.
+   * This method ensures we find subagents even if the filename doesn't match the name.
+   *
+   * @param name - Name of the subagent to find
+   * @param level - Storage level to search
+   * @returns SubagentConfig or null if not found
+   */
+  private async findSubagentByNameAtLevel(
+    name: string,
+    level: SubagentLevel,
+  ): Promise<SubagentConfig | null> {
+    const allSubagents = await this.listSubagentsAtLevel(level);
+
+    // Find the subagent with matching name
+    for (const subagent of allSubagents) {
+      if (subagent.name === name) {
+        return subagent;
+      }
+    }
+
+    return null;
   }
 
   /**

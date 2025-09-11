@@ -519,10 +519,11 @@ describe('subagent.ts', () => {
           canUpdateOutput: false,
           isOutputMarkdown: true,
         } as unknown as AnyDeclarativeTool;
-        vi.mocked((config.getToolRegistry() as unknown as ToolRegistry).getTool)
-          .mockImplementation((name: string) =>
-            name === 'list_files' ? listFilesTool : undefined,
-          );
+        vi.mocked(
+          (config.getToolRegistry() as unknown as ToolRegistry).getTool,
+        ).mockImplementation((name: string) =>
+          name === 'list_files' ? listFilesTool : undefined,
+        );
 
         const scope = await SubAgentScope.create(
           'test-agent',
@@ -546,8 +547,6 @@ describe('subagent.ts', () => {
 
         expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
       });
-
-
     });
 
     describe('runNonInteractive - Termination and Recovery', () => {
