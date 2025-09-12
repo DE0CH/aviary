@@ -288,7 +288,7 @@ const ToolCallItem: React.FC<{
       case 'awaiting_approval':
         return <Text color={theme.status.warning}>?</Text>;
       case 'success':
-        return <Text color={color}>✔</Text>;
+        return <Text color={color}>✓</Text>;
       case 'failed':
         return (
           <Text color={color} bold>
