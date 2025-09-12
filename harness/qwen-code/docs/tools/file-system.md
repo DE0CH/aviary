@@ -157,7 +157,7 @@ search_file_content(pattern="function", include="*.js", maxResults=10)
   - If `old_string` is provided, it reads the `file_path` and attempts to find exactly one occurrence of `old_string`.
   - If one occurrence is found, it replaces it with `new_string`.
   - **Enhanced Reliability (Multi-Stage Edit Correction):** To significantly improve the success rate of edits, especially when the model-provided `old_string` might not be perfectly precise, the tool incorporates a multi-stage edit correction mechanism.
-    - If the initial `old_string` isn't found or matches multiple locations, the tool can leverage the Gemini model to iteratively refine `old_string` (and potentially `new_string`).
+    - If the initial `old_string` isn't found or matches multiple locations, the tool can leverage the Qwen model to iteratively refine `old_string` (and potentially `new_string`).
     - This self-correction process attempts to identify the unique segment the model intended to modify, making the `edit` operation more robust even with slightly imperfect initial context.
 - **Failure conditions:** Despite the correction mechanism, the tool will fail if:
   - `file_path` is not absolute or is outside the root directory.
