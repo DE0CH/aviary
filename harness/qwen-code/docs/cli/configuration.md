@@ -24,6 +24,12 @@ Qwen Code uses `settings.json` files for persistent configuration. There are thr
   - **Location:** `.qwen/settings.json` within your project's root directory.
   - **Scope:** Applies only when running Qwen Code from that specific project. Project settings override user settings.
 
+- **System settings file:**
+  - **Location:** `/etc/qwen-code/settings.json` (Linux), `C:\ProgramData\qwen-code\settings.json` (Windows) or `/Library/Application Support/QwenCode/settings.json` (macOS). The path can be overridden using the `QWEN_CODE_SYSTEM_SETTINGS_PATH` environment variable.
+  - **Scope:** Applies to all Qwen Code sessions on the system, for all users. System settings override user and project settings. May be useful for system administrators at enterprises to have controls over users' Qwen Code setups.
+
+**Note on environment variables in settings:** String values within your `settings.json` files can reference environment variables using either `$VAR_NAME` or `${VAR_NAME}` syntax. These variables will be automatically resolved when the settings are loaded. For example, if you have an environment variable `MY_API_TOKEN`, you could use it in `settings.json` like this: `"apiKey": "$MY_API_TOKEN"`.
+
 ### The `.qwen` directory in your project
 
 In addition to a project settings file, a project's `.qwen` directory can contain other project-specific files related to Qwen Code's operation, such as:
@@ -374,7 +380,7 @@ The CLI automatically loads environment variables from an `.env` file. The loadi
   - Specifies the default OPENAI model to use.
   - Overrides the hardcoded default
   - Example: `export OPENAI_MODEL="qwen3-coder-plus"`
-- **`QWEN_SANDBOX`**:
+- **`GEMINI_SANDBOX`**:
   - Alternative to the `sandbox` setting in `settings.json`.
   - Accepts `true`, `false`, `docker`, `podman`, or a custom command string.
 - **`SEATBELT_PROFILE`** (macOS specific):
@@ -534,7 +540,7 @@ Qwen Code can execute potentially unsafe operations (like shell commands and fil
 Sandboxing is disabled by default, but you can enable it in a few ways:
 
 - Using `--sandbox` or `-s` flag.
-- Setting `QWEN_SANDBOX` environment variable.
+- Setting `GEMINI_SANDBOX` environment variable.
 - Sandbox is enabled when using `--yolo` or `--approval-mode=yolo` by default.
 
 By default, it uses a pre-built `qwen-code-sandbox` Docker image.

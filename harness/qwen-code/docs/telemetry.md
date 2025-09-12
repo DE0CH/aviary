@@ -273,7 +273,7 @@ Metrics are numerical measurements of behavior over time. The following metrics 
     - `user_added_lines` (Int, if applicable): Number of lines added/changed by user in AI proposed changes.
     - `user_removed_lines` (Int, if applicable): Number of lines removed/changed by user in AI proposed changes.
 
-- `qwen_code.chat_compression` (Counter, Int): Counts chat compression operations
+- `qwen-code.chat_compression` (Counter, Int): Counts chat compression operations
   - **Attributes**:
     - `tokens_before`: (Int): Number of tokens in context prior to compression
     - `tokens_after`: (Int): Number of tokens in context after compression
