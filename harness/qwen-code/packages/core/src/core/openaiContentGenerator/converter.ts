@@ -18,6 +18,7 @@ import {
   ContentListUnion,
   ContentUnion,
   PartUnion,
+  Candidate,
 } from '@google/genai';
 import OpenAI from 'openai';
 import { safeJsonParse } from '../../utils/safeJsonParse.js';
@@ -652,19 +653,21 @@ export class OpenAIContentConverter {
         this.streamingToolCallParser.reset();
       }
 
-      response.candidates = [
-        {
-          content: {
-            parts,
-            role: 'model' as const,
-          },
-          finishReason: choice.finish_reason
-            ? this.mapOpenAIFinishReasonToGemini(choice.finish_reason)
-            : FinishReason.FINISH_REASON_UNSPECIFIED,
-          index: 0,
-          safetyRatings: [],
+      // Only include finishReason key if finish_reason is present
+      const candidate: Candidate = {
+        content: {
+          parts,
+          role: 'model' as const,
         },
-      ];
+        index: 0,
+        safetyRatings: [],
+      };
+      if (choice.finish_reason) {
+        candidate.finishReason = this.mapOpenAIFinishReasonToGemini(
+          choice.finish_reason,
+        );
+      }
+      response.candidates = [candidate];
     } else {
       response.candidates = [];
     }
