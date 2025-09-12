@@ -321,7 +321,8 @@ const ToolInfo: React.FC<ToolInfo> = ({
       >
         <Text color={nameColor} bold>
           {name}
-        </Text>{' '}
+        </Text>
+        <Text> </Text>
         <Text color={Colors.Gray}>{description}</Text>
       </Text>
     </Box>
