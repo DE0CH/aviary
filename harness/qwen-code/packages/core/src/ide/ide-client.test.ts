@@ -18,7 +18,7 @@ describe('IdeClient.validateWorkspacePath', () => {
     expect(result.isValid).toBe(true);
   });
 
-  it('should return invalid if GEMINI_CLI_IDE_WORKSPACE_PATH is undefined', () => {
+  it('should return invalid if QWEN_CODE_IDE_WORKSPACE_PATH is undefined', () => {
     const result = IdeClient.validateWorkspacePath(
       undefined,
       'VS Code',
@@ -28,7 +28,7 @@ describe('IdeClient.validateWorkspacePath', () => {
     expect(result.error).toContain('Failed to connect');
   });
 
-  it('should return invalid if GEMINI_CLI_IDE_WORKSPACE_PATH is empty', () => {
+  it('should return invalid if QWEN_CODE_IDE_WORKSPACE_PATH is empty', () => {
     const result = IdeClient.validateWorkspacePath(
       '',
       'VS Code',
