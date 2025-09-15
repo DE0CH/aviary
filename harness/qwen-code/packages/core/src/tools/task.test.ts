@@ -5,12 +5,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { TaskTool, TaskParams } from './task.js';
+import { TaskTool, type TaskParams } from './task.js';
 import type { PartListUnion } from '@google/genai';
 import type { ToolResultDisplay, TaskResultDisplay } from './tools.js';
 import { Config } from '../config/config.js';
 import { SubagentManager } from '../subagents/subagent-manager.js';
-import { SubagentConfig, SubagentTerminateMode } from '../subagents/types.js';
+import {
+  type SubagentConfig,
+  SubagentTerminateMode,
+} from '../subagents/types.js';
 import { SubAgentScope, ContextState } from '../subagents/subagent.js';
 import { partToString } from '../utils/partUtils.js';
 

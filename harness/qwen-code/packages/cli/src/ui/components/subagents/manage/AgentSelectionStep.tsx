@@ -9,7 +9,7 @@ import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { Colors } from '../../../colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
-import { SubagentConfig } from '@qwen-code/qwen-code-core';
+import { type SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface NavigationState {
   currentBlock: 'project' | 'user' | 'builtin';
@@ -318,12 +318,12 @@ export const AgentSelectionStep = ({
       {(projectAgents.length > 0 ||
         userAgents.length > 0 ||
         builtinAgents.length > 0) && (
-        <Box marginTop={1}>
-          <Text color={theme.text.secondary}>
-            Using: {enabledAgentsCount} agents
-          </Text>
-        </Box>
-      )}
+          <Box marginTop={1}>
+            <Text color={theme.text.secondary}>
+              Using: {enabledAgentsCount} agents
+            </Text>
+          </Box>
+        )}
     </Box>
   );
 };

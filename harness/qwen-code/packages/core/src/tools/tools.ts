@@ -8,7 +8,7 @@ import type { FunctionDeclaration, PartListUnion } from '@google/genai';
 import { ToolErrorType } from './tool-error.js';
 import type { DiffUpdateResult } from '../ide/ideContext.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
-import { SubagentStatsSummary } from '../subagents/subagent-statistics.js';
+import { type SubagentStatsSummary } from '../subagents/subagent-statistics.js';
 
 /**
  * Represents a validated and ready-to-execute tool call.

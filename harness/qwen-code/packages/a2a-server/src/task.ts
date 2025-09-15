@@ -416,6 +416,7 @@ export class Task {
 
   private createScheduler(): CoreToolScheduler {
     const scheduler = new CoreToolScheduler({
+      /* @ts-expect-error */
       outputUpdateHandler: this._schedulerOutputUpdate.bind(this),
       onAllToolCallsComplete: this._schedulerAllToolCallsComplete.bind(this),
       onToolCallsUpdate: this._schedulerToolCallsUpdate.bind(this),

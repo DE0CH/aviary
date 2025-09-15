@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { SummaryProps } from '../../types.js';
+import type { SummaryProps } from '../../types.js';
 import Spinner from 'ink-spinner';
 import { Colors } from '../../colors.js';
 

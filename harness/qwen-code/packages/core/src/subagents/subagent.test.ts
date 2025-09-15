@@ -165,7 +165,7 @@ describe('subagent.ts', () => {
       // Default mock for executeToolCall
       vi.mocked(executeToolCall).mockResolvedValue({
         callId: 'default-call',
-        responseParts: 'default response',
+        responseParts: [{ text: 'default response' }],
         resultDisplay: 'Default tool result',
         error: undefined,
         errorType: undefined,

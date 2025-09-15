@@ -13,19 +13,18 @@ import {
   parse as parseYaml,
   stringify as stringifyYaml,
 } from '../utils/yaml-parser.js';
-import {
+import type {
   SubagentConfig,
   SubagentRuntimeConfig,
   SubagentLevel,
   ListSubagentsOptions,
   CreateSubagentOptions,
-  SubagentError,
-  SubagentErrorCode,
   PromptConfig,
   ModelConfig,
   RunConfig,
   ToolConfig,
 } from './types.js';
+import { SubagentError, SubagentErrorCode } from './types.js';
 import { SubagentValidator } from './validation.js';
 import { SubAgentScope } from './subagent.js';
 import { Config } from '../config/config.js';

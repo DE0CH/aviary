@@ -9,7 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { SubagentManager } from './subagent-manager.js';
-import { SubagentConfig, SubagentError } from './types.js';
+import { type SubagentConfig, SubagentError } from './types.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
 import { Config } from '../config/config.js';
 import { makeFakeConfig } from '../test-utils/config.js';

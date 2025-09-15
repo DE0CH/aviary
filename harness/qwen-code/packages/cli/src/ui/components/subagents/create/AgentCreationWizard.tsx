@@ -13,7 +13,7 @@ import { DescriptionInput } from './DescriptionInput.js';
 import { ToolSelector } from './ToolSelector.js';
 import { ColorSelector } from './ColorSelector.js';
 import { CreationSummary } from './CreationSummary.js';
-import { WizardStepProps } from '../types.js';
+import { type WizardStepProps } from '../types.js';
 import { WIZARD_STEPS } from '../constants.js';
 import { getStepKind } from '../utils.js';
 import { Config } from '@qwen-code/qwen-code-core';

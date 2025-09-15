@@ -17,7 +17,7 @@ import { MANAGEMENT_STEPS } from '../types.js';
 import { Colors } from '../../../colors.js';
 import { theme } from '../../../semantic-colors.js';
 import { getColorForDisplay, shouldShowColor } from '../utils.js';
-import { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
+import { Config, type SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface AgentsManagerDialogProps {
   onClose: () => void;
@@ -170,8 +170,8 @@ export function AgentsManagerDialog({
     // Use agent color for the Agent Viewer header
     const headerColor =
       currentStep === MANAGEMENT_STEPS.AGENT_VIEWER &&
-      selectedAgent &&
-      shouldShowColor(selectedAgent.color)
+        selectedAgent &&
+        shouldShowColor(selectedAgent.color)
         ? getColorForDisplay(selectedAgent.color)
         : undefined;
 

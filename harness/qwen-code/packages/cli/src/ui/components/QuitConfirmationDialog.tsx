@@ -9,7 +9,7 @@ import React from 'react';
 import { Colors } from '../colors.js';
 import {
   RadioButtonSelect,
-  RadioSelectItem,
+  type RadioSelectItem,
 } from './shared/RadioButtonSelect.js';
 import { useKeypress } from '../hooks/useKeypress.js';
 

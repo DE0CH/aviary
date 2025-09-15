@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Box } from 'ink';
 import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
 import { MANAGEMENT_STEPS } from '../types.js';
-import { SubagentConfig } from '@qwen-code/qwen-code-core';
+import { type SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface ActionSelectionStepProps {
   selectedAgent: SubagentConfig | null;
@@ -35,8 +35,8 @@ export const ActionSelectionStep = ({
 
   const actions = selectedAgent?.isBuiltin
     ? allActions.filter(
-        (action) => action.value === 'view' || action.value === 'back',
-      )
+      (action) => action.value === 'view' || action.value === 'back',
+    )
     : allActions;
 
   const handleActionSelect = (value: 'view' | 'edit' | 'delete' | 'back') => {

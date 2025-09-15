@@ -794,11 +794,11 @@ describe('CoreToolScheduler cancellation during executing with live output', () 
         model: 'test-model',
         authType: 'oauth-personal',
       }),
+      getToolRegistry: () => mockToolRegistry,
     } as unknown as Config;
 
     const scheduler = new CoreToolScheduler({
       config: mockConfig,
-      toolRegistry: mockToolRegistry,
       onAllToolCallsComplete,
       onToolCallsUpdate,
       getPreferredEditor: () => 'vscode',

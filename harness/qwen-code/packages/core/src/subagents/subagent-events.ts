@@ -6,7 +6,7 @@
 
 import { EventEmitter } from 'events';
 import {
-  ToolCallConfirmationDetails,
+  type ToolCallConfirmationDetails,
   ToolConfirmationOutcome,
 } from '../tools/tools.js';
 

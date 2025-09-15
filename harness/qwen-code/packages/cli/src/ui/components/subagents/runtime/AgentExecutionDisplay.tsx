@@ -7,7 +7,7 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../../../colors.js';
-import {
+import type {
   TaskResultDisplay,
   SubagentStatsSummary,
 } from '@qwen-code/qwen-code-core';
@@ -163,8 +163,8 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
       {(data.status === 'completed' ||
         data.status === 'failed' ||
         data.status === 'cancelled') && (
-        <ResultsSection data={data} displayMode={displayMode} />
-      )}
+          <ResultsSection data={data} displayMode={displayMode} />
+        )}
 
       {/* Footer with keyboard shortcuts */}
       {footerText && (
