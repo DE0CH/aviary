@@ -34,7 +34,7 @@ body:
         <details>
         <summary>Client Information</summary>
 
-        Run `gemini` to enter the interactive CLI, then run the `/about` command.
+        Run `qwen` to enter the interactive CLI, then run the `/about` command.
 
         ```console
         $ qwen /about
