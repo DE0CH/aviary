@@ -363,7 +363,42 @@ export function KeypressProvider({
         markerLength = pasteModeSuffixBuffer.length;
 
         if (nextMarkerPos === -1) {
-          keypressStream.write(data.slice(pos));
+          // Heuristic fallback for terminals that don't send bracketed paste
+          // (commonly seen on Windows when using right-click paste). If the
+          // remaining chunk contains CR/LF or is substantially long, treat it
+          // as a single paste event so embedded newlines don't trigger submit.
+          const remaining = data.slice(pos);
+          const containsNewline =
+            remaining.includes(0x0a) || remaining.includes(0x0d);
+          const isLongurst = remaining.length >= 64; // conservative threshold
+          if (containsNewline || isLongurst) {
+            const text = remaining.toString('utf8');
+            const createPasteKeyEvent = (
+              name: 'paste-start' | 'paste-end',
+            ): Key => ({
+              name,
+              ctrl: false,
+              meta: false,
+              shift: false,
+              paste: false,
+              sequence: '',
+            });
+            handleKeypress(undefined, createPasteKeyEvent('paste-start'));
+            handleKeypress(undefined, {
+              name: '',
+              ctrl: false,
+              meta: false,
+              shift: false,
+              paste: false,
+              sequence: text,
+            });
+            handleKeypress(undefined, createPasteKeyEvent('paste-end'));
+            return;
+          }
+
+          // Fallback: no paste markers and not a likely paste burst. Pass
+          // through to readline to decode into key events.
+          keypressStream.write(remaining);
           return;
         }
 
