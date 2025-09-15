@@ -68,6 +68,8 @@ const renderWithContext = (
 };
 
 describe('<ToolMessage />', () => {
+  const mockConfig = {} as any; // Mock config for tests
+
   const baseProps: ToolMessageProps = {
     callId: 'tool-123',
     name: 'test-tool',
@@ -77,6 +79,7 @@ describe('<ToolMessage />', () => {
     terminalWidth: 80,
     confirmationDetails: undefined,
     emphasis: 'medium',
+    config: mockConfig,
   };
 
   it('renders basic tool information', () => {
@@ -212,6 +215,7 @@ describe('<ToolMessage />', () => {
       terminalWidth: 80,
       callId: 'test-call-id-2',
       confirmationDetails: undefined,
+      config: mockConfig,
     };
 
     const { lastFrame } = renderWithContext(

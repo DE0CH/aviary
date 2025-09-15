@@ -18,6 +18,7 @@ import { TOOL_STATUS } from '../../constants.js';
 import type {
   TodoResultDisplay,
   TaskResultDisplay,
+  Config,
 } from '@qwen-code/qwen-code-core';
 import { AgentExecutionDisplay } from '../subagents/index.js';
 
@@ -108,11 +109,13 @@ const SubagentExecutionRenderer: React.FC<{
   data: TaskResultDisplay;
   availableHeight?: number;
   childWidth: number;
-}> = ({ data, availableHeight, childWidth }) => (
+  config: Config;
+}> = ({ data, availableHeight, childWidth, config }) => (
   <AgentExecutionDisplay
     data={data}
     availableHeight={availableHeight}
     childWidth={childWidth}
+    config={config}
   />
 );
 
@@ -175,6 +178,7 @@ export interface ToolMessageProps extends IndividualToolCallDisplay {
   terminalWidth: number;
   emphasis?: TextEmphasis;
   renderOutputAsMarkdown?: boolean;
+  config: Config;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({
@@ -186,6 +190,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   terminalWidth,
   emphasis = 'medium',
   renderOutputAsMarkdown = true,
+  config,
 }) => {
   const availableHeight = availableTerminalHeight
     ? Math.max(
@@ -229,6 +234,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
                 data={displayRenderer.data}
                 availableHeight={availableHeight}
                 childWidth={childWidth}
+                config={config}
               />
             )}
             {displayRenderer.type === 'string' && (

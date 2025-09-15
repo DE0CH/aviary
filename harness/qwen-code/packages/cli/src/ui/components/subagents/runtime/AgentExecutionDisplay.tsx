@@ -10,6 +10,7 @@ import { Colors } from '../../../colors.js';
 import type {
   TaskResultDisplay,
   SubagentStatsSummary,
+  Config,
 } from '@qwen-code/qwen-code-core';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -23,6 +24,7 @@ export interface AgentExecutionDisplayProps {
   data: TaskResultDisplay;
   availableHeight?: number;
   childWidth?: number;
+  config: Config;
 }
 
 const getStatusColor = (
@@ -76,6 +78,7 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
   data,
   availableHeight,
   childWidth,
+  config,
 }) => {
   const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
 
@@ -152,6 +155,7 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
         <Box flexDirection="column">
           <ToolConfirmationMessage
             confirmationDetails={data.pendingConfirmation}
+            config={config}
             isFocused={true}
             availableTerminalHeight={availableHeight}
             terminalWidth={childWidth ?? 80}
