@@ -64,6 +64,7 @@ async function createMockConfig(
     getTool: vi.fn(),
     getFunctionDeclarations: vi.fn().mockReturnValue([]),
     getFunctionDeclarationsFiltered: vi.fn().mockReturnValue([]),
+    getAllToolNames: vi.fn().mockReturnValue([]),
     ...toolRegistryMocks,
   } as unknown as ToolRegistry;
 
@@ -86,25 +87,36 @@ const createMockStream = (
       if (response === 'stop') {
         // When stopping, the model might return text, but the subagent logic primarily cares about the absence of functionCalls.
         yield {
-          candidates: [
-            {
-              content: {
-                parts: [{ text: 'Done.' }],
+          type: 'chunk',
+          value: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: 'Done.' }],
+                },
               },
-            },
-          ],
+            ],
+          },
         };
       } else if (response.length > 0) {
-        yield { functionCalls: response };
+        yield {
+          type: 'chunk',
+          value: {
+            functionCalls: response,
+          },
+        };
       } else {
         yield {
-          candidates: [
-            {
-              content: {
-                parts: [{ text: 'Done.' }],
+          type: 'chunk',
+          value: {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: 'Done.' }],
+                },
               },
-            },
-          ],
+            ],
+          },
         }; // Handle empty array also as stop
       }
     })();

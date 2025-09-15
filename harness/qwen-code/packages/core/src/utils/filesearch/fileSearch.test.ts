@@ -66,8 +66,8 @@ describe('FileSearch', () => {
 
     expect(results).toEqual([
       'src/',
-      '.qwenignore',
       '.gitignore',
+      '.qwenignore',
       'src/not-ignored.js',
     ]);
   });
