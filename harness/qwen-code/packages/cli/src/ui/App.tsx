@@ -891,7 +891,6 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
       ctrlDTimerRef,
       handleSlashCommand,
       isAuthenticating,
-      cancelOngoingRequest,
       settings.merged.general?.debugKeystrokeLogging,
     ],
   );

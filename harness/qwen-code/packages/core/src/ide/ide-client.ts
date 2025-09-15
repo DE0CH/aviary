@@ -405,10 +405,16 @@ export class IdeClient {
       };
       const options = fetchOptions as unknown as import('undici').RequestInit;
       const response = await fetchFn(url, options);
+      // Convert undici Headers to standard Headers for compatibility
+      const standardHeaders = new Headers();
+      for (const [key, value] of response.headers.entries()) {
+        standardHeaders.set(key, value);
+      }
+
       return new Response(response.body as ReadableStream<unknown> | null, {
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers,
+        headers: standardHeaders,
       });
     };
   }
