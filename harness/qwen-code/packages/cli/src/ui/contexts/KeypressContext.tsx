@@ -339,7 +339,13 @@ export function KeypressProvider({
       broadcast({ ...key, paste: isPaste });
     };
 
-    const handleRawKeypress = (data: Buffer) => {
+    const handleRawKeypress = (_data: Buffer) => {
+      if (_data.length < 2) {
+        keypressStream.write(_data);
+        return;
+      }
+
+      const data = Buffer.isBuffer(_data) ? _data : Buffer.from(_data, 'utf8');
       const pasteModePrefixBuffer = Buffer.from(PASTE_MODE_PREFIX);
       const pasteModeSuffixBuffer = Buffer.from(PASTE_MODE_SUFFIX);
 
