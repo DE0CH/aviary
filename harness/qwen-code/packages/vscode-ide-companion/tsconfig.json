@@ -12,7 +12,6 @@
      * type checking error in ../../node_modules/@types/request/index.d.ts.
      */
     "skipLibCheck": true,
-    "rootDir": "src",
     "strict": true /* enable all strict type-checking options */
     /* Additional Checks */
     // "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
