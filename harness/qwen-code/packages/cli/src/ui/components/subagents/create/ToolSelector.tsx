@@ -8,7 +8,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
 import type { ToolCategory } from '../types.js';
-import { Kind, Config } from '@qwen-code/qwen-code-core';
+import { Kind, type Config } from '@qwen-code/qwen-code-core';
 import { Colors } from '../../../colors.js';
 
 interface ToolOption {

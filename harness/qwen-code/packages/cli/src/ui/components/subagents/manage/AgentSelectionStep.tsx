@@ -318,12 +318,12 @@ export const AgentSelectionStep = ({
       {(projectAgents.length > 0 ||
         userAgents.length > 0 ||
         builtinAgents.length > 0) && (
-          <Box marginTop={1}>
-            <Text color={theme.text.secondary}>
-              Using: {enabledAgentsCount} agents
-            </Text>
-          </Box>
-        )}
+        <Box marginTop={1}>
+          <Text color={theme.text.secondary}>
+            Using: {enabledAgentsCount} agents
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };

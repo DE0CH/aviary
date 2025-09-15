@@ -60,12 +60,12 @@ export const ToolGroupMessage: React.FC<ToolGroupMessageProps> = ({
   const countOneLineToolCalls = toolCalls.length - countToolCallsWithResults;
   const availableTerminalHeightPerToolMessage = availableTerminalHeight
     ? Math.max(
-      Math.floor(
-        (availableTerminalHeight - staticHeight - countOneLineToolCalls) /
-        Math.max(1, countToolCallsWithResults),
-      ),
-      1,
-    )
+        Math.floor(
+          (availableTerminalHeight - staticHeight - countOneLineToolCalls) /
+            Math.max(1, countToolCallsWithResults),
+        ),
+        1,
+      )
     : undefined;
 
   return (

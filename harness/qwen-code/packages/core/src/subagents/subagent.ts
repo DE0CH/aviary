@@ -5,7 +5,7 @@
  */
 
 import { reportError } from '../utils/errorReporting.js';
-import { Config } from '../config/config.js';
+import type { Config } from '../config/config.js';
 import { type ToolCallRequestInfo } from '../core/turn.js';
 import {
   CoreToolScheduler,
@@ -43,7 +43,10 @@ import type {
   SubAgentStreamTextEvent,
   SubAgentErrorEvent,
 } from './subagent-events.js';
-import { SubAgentEventEmitter, SubAgentEventType } from './subagent-events.js';
+import {
+  type SubAgentEventEmitter,
+  SubAgentEventType,
+} from './subagent-events.js';
 import {
   SubagentStatistics,
   type SubagentStatsSummary,

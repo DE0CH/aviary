@@ -26,7 +26,7 @@ import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
 import { createContentGenerator } from '../core/contentGenerator.js';
 import { GeminiChat } from '../core/geminiChat.js';
 import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
-import { ToolRegistry } from '../tools/tool-registry.js';
+import type { ToolRegistry } from '../tools/tool-registry.js';
 import { type AnyDeclarativeTool } from '../tools/tools.js';
 import { getEnvironmentContext } from '../utils/environmentContext.js';
 import { ContextState, SubAgentScope } from './subagent.js';

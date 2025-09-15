@@ -15,8 +15,8 @@ import type {
   Tool,
 } from '@google/genai';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
-import { UserTierId } from '../code_assist/types.js';
-import { Config } from '../config/config.js';
+import type { UserTierId } from '../code_assist/types.js';
+import type { Config } from '../config/config.js';
 import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
 import type { File, IdeContext } from '../ide/ideContext.js';
 import { ideContext } from '../ide/ideContext.js';

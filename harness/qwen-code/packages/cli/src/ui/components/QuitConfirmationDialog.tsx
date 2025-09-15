@@ -5,7 +5,7 @@
  */
 
 import { Box, Text } from 'ink';
-import React from 'react';
+import type React from 'react';
 import { Colors } from '../colors.js';
 import {
   RadioButtonSelect,

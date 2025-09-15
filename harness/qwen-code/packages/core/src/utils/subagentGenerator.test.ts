@@ -13,7 +13,7 @@ import {
   type Mock,
   afterEach,
 } from 'vitest';
-import { type Content, GoogleGenAI, Models } from '@google/genai';
+import type { Content, GoogleGenAI, Models } from '@google/genai';
 import { DEFAULT_QWEN_MODEL } from '../config/models.js';
 import { GeminiClient } from '../core/client.js';
 import { Config } from '../config/config.js';

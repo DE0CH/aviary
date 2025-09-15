@@ -15,8 +15,8 @@ import type {
   ToolCallConfirmationDetails,
   ToolConfirmationPayload,
 } from './tools.js';
-import { Config } from '../config/config.js';
-import { SubagentManager } from '../subagents/subagent-manager.js';
+import type { Config } from '../config/config.js';
+import type { SubagentManager } from '../subagents/subagent-manager.js';
 import {
   type SubagentConfig,
   SubagentTerminateMode,

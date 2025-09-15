@@ -27,7 +27,7 @@ import type {
 import { SubagentError, SubagentErrorCode } from './types.js';
 import { SubagentValidator } from './validation.js';
 import { SubAgentScope } from './subagent.js';
-import { Config } from '../config/config.js';
+import type { Config } from '../config/config.js';
 import { BuiltinAgentRegistry } from './builtin-agents.js';
 
 const QWEN_CONFIG_DIR = '.qwen';

@@ -35,8 +35,8 @@ export const ActionSelectionStep = ({
 
   const actions = selectedAgent?.isBuiltin
     ? allActions.filter(
-      (action) => action.value === 'view' || action.value === 'back',
-    )
+        (action) => action.value === 'view' || action.value === 'back',
+      )
     : allActions;
 
   const handleActionSelect = (value: 'view' | 'edit' | 'delete' | 'back') => {
