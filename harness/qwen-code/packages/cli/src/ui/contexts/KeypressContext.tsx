@@ -98,8 +98,14 @@ export function KeypressProvider({
     const keypressStream = new PassThrough();
     let usePassthrough = false;
     const nodeMajorVersion = parseInt(process.versions.node.split('.')[0], 10);
+    const isWindows = process.platform === 'win32';
+    // On Windows, Node's readline keypress stream often loses bracketed paste
+    // boundaries, causing multi-line pastes to be delivered as plain Return
+    // key events. This leads to accidental submits on Enter within pasted text.
+    // Force passthrough on Windows to parse raw bytes and detect ESC[200~...201~.
     if (
       nodeMajorVersion < 20 ||
+      isWindows ||
       process.env['PASTE_WORKAROUND'] === '1' ||
       process.env['PASTE_WORKAROUND'] === 'true'
     ) {
