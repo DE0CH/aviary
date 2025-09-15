@@ -40,6 +40,19 @@ vi.mock('../../utils/MarkdownDisplay.js', () => ({
     return <Text>MockMarkdown:{text}</Text>;
   },
 }));
+vi.mock('../subagents/index.js', () => ({
+  AgentExecutionDisplay: function MockAgentExecutionDisplay({
+    data,
+  }: {
+    data: { subagentName: string; taskDescription: string };
+  }) {
+    return (
+      <Text>
+        🤖 {data.subagentName} • Task: {data.taskDescription}
+      </Text>
+    );
+  },
+}));
 
 // Helper to render with context
 const renderWithContext = (
@@ -180,5 +193,35 @@ describe('<ToolMessage />', () => {
     // This is harder to assert directly in text output without color checks.
     // We can at least ensure it doesn't have the high emphasis indicator.
     expect(lowEmphasisFrame()).not.toContain('←');
+  });
+
+  it('shows subagent execution display for task tool with proper result display', () => {
+    const subagentResultDisplay = {
+      type: 'task_execution' as const,
+      subagentName: 'file-search',
+      taskDescription: 'Search for files matching pattern',
+      taskPrompt: 'Search for files matching pattern',
+      status: 'running' as const,
+    };
+
+    const props: ToolMessageProps = {
+      name: 'task',
+      description: 'Delegate task to subagent',
+      resultDisplay: subagentResultDisplay,
+      status: ToolCallStatus.Executing,
+      terminalWidth: 80,
+      callId: 'test-call-id-2',
+      confirmationDetails: undefined,
+    };
+
+    const { lastFrame } = renderWithContext(
+      <ToolMessage {...props} />,
+      StreamingState.Responding,
+    );
+
+    const output = lastFrame();
+    expect(output).toContain('🤖'); // Subagent execution display should show
+    expect(output).toContain('file-search'); // Actual subagent name
+    expect(output).toContain('Search for files matching pattern'); // Actual task description
   });
 });

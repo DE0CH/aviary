@@ -28,6 +28,7 @@ import type {
   ContentRetryEvent,
   ContentRetryFailureEvent,
   ConversationFinishedEvent,
+  SubagentExecutionEvent,
 } from '../types.js';
 import { EndSessionEvent } from '../types.js';
 import type {
@@ -667,6 +668,20 @@ export class QwenLogger {
         }),
       },
     );
+
+    this.enqueueLogEvent(rumEvent);
+    this.flushIfNeeded();
+  }
+
+  logSubagentExecutionEvent(event: SubagentExecutionEvent): void {
+    const rumEvent = this.createActionEvent('subagent', 'subagent_execution', {
+      snapshots: JSON.stringify({
+        subagent_name: event.subagent_name,
+        status: event.status,
+        terminate_reason: event.terminate_reason,
+        execution_summary: event.execution_summary,
+      }),
+    });
 
     this.enqueueLogEvent(rumEvent);
     this.flushIfNeeded();

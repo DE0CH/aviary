@@ -13,6 +13,7 @@ import { ToolErrorType } from './tool-error.js';
 import type {
   ToolInvocation,
   ToolResult,
+  ToolResultDisplay,
   ToolCallConfirmationDetails,
   ToolExecuteConfirmationDetails,
 } from './tools.js';
@@ -101,7 +102,7 @@ class ShellToolInvocation extends BaseToolInvocation<
 
   async execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
     terminalColumns?: number,
     terminalRows?: number,
   ): Promise<ToolResult> {

@@ -8,6 +8,7 @@ import type { FunctionDeclaration } from '@google/genai';
 import type {
   AnyDeclarativeTool,
   ToolResult,
+  ToolResultDisplay,
   ToolInvocation,
 } from './tools.js';
 import { Kind, BaseDeclarativeTool, BaseToolInvocation } from './tools.js';
@@ -41,7 +42,7 @@ class DiscoveredToolInvocation extends BaseToolInvocation<
 
   async execute(
     _signal: AbortSignal,
-    _updateOutput?: (output: string) => void,
+    _updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<ToolResult> {
     const callCommand = this.config.getToolCallCommand()!;
     const child = spawn(callCommand, [this.toolName]);

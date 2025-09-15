@@ -62,15 +62,23 @@ const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
 };
 /**
  * Returns true if the response is valid, false otherwise.
+ *
+ * The DashScope provider may return the last 2 chunks as:
+ * 1. A choice(candidate) with finishReason and empty content
+ * 2. Empty choices with usage metadata
+ * We'll check separately for both of these cases.
  */
 function isValidResponse(response: GenerateContentResponse): boolean {
-  // The Dashscope provider returns empty content with usage metadata at the end of the stream
   if (response.usageMetadata) {
     return true;
   }
 
   if (response.candidates === undefined || response.candidates.length === 0) {
     return false;
+  }
+
+  if (response.candidates.some((candidate) => candidate.finishReason)) {
+    return true;
   }
 
   const content = response.candidates[0]?.content;

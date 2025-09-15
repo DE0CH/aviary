@@ -100,6 +100,26 @@ describe('IdeClient', () => {
   });
 
   describe('connect', () => {
+    it('should return invalid if QWEN_CODE_IDE_WORKSPACE_PATH is undefined', () => {
+      const result = IdeClient.validateWorkspacePath(
+        undefined,
+        'VS Code',
+        '/Users/person/gemini-cli/sub-dir',
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain('Failed to connect');
+    });
+
+    it('should return invalid if QWEN_CODE_IDE_WORKSPACE_PATH is empty', () => {
+      const result = IdeClient.validateWorkspacePath(
+        '',
+        'VS Code',
+        '/Users/person/gemini-cli/sub-dir',
+      );
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain('please open a workspace folder');
+    });
+
     it('should connect using HTTP when port is provided in config file', async () => {
       const config = { port: '8080' };
       vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));

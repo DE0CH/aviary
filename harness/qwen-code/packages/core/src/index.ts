@@ -48,6 +48,8 @@ export * from './utils/errorParsing.js';
 export * from './utils/workspaceContext.js';
 export * from './utils/ignorePatterns.js';
 export * from './utils/partUtils.js';
+export * from './utils/subagentGenerator.js';
+export * from './utils/projectSummary.js';
 
 // Export services
 export * from './services/fileDiscoveryService.js';
@@ -70,6 +72,9 @@ export * from './services/shellExecutionService.js';
 export * from './tools/tools.js';
 export * from './tools/tool-error.js';
 export * from './tools/tool-registry.js';
+
+// Export subagents (Phase 1)
+export * from './subagents/index.js';
 
 // Export prompt logic
 export * from './prompts/mcp-prompts.js';

@@ -8,7 +8,7 @@ import type { Mock } from 'vitest';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type OpenAI from 'openai';
 import type { GenerateContentParameters } from '@google/genai';
-import { GenerateContentResponse, Type } from '@google/genai';
+import { GenerateContentResponse, Type, FinishReason } from '@google/genai';
 import type { PipelineConfig } from './pipeline.js';
 import { ContentGenerationPipeline } from './pipeline.js';
 import { OpenAIContentConverter } from './converter.js';
@@ -468,6 +468,418 @@ describe('ContentGenerationPipeline', () => {
         expect.any(Object),
         request,
       );
+    });
+
+    it('should merge finishReason and usageMetadata from separate chunks', async () => {
+      // Arrange
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      // Content chunk
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [
+          { delta: { content: 'Hello response' }, finish_reason: null },
+        ],
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Finish reason chunk (empty content, has finish_reason)
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Usage metadata chunk (empty candidates, has usage)
+      const mockChunk3 = {
+        id: 'chunk-3',
+        object: 'chat.completion.chunk',
+        created: Date.now(),
+        model: 'test-model',
+        choices: [],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+          yield mockChunk3;
+        },
+      };
+
+      // Mock converter responses
+      const mockContentResponse = new GenerateContentResponse();
+      mockContentResponse.candidates = [
+        { content: { parts: [{ text: 'Hello response' }], role: 'model' } },
+      ];
+
+      const mockFinishResponse = new GenerateContentResponse();
+      mockFinishResponse.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+
+      const mockUsageResponse = new GenerateContentResponse();
+      mockUsageResponse.candidates = [];
+      mockUsageResponse.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      // Expected merged response (finishReason + usageMetadata combined)
+      const mockMergedResponse = new GenerateContentResponse();
+      mockMergedResponse.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+      mockMergedResponse.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockContentResponse)
+        .mockReturnValueOnce(mockFinishResponse)
+        .mockReturnValueOnce(mockUsageResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        mockStream,
+      );
+
+      // Act
+      const resultGenerator = await pipeline.executeStream(
+        request,
+        userPromptId,
+      );
+      const results = [];
+      for await (const result of resultGenerator) {
+        results.push(result);
+      }
+
+      // Assert
+      expect(results).toHaveLength(2); // Content chunk + merged finish/usage chunk
+      expect(results[0]).toBe(mockContentResponse);
+
+      // The last result should have both finishReason and usageMetadata
+      const lastResult = results[1];
+      expect(lastResult.candidates?.[0]?.finishReason).toBe(FinishReason.STOP);
+      expect(lastResult.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+
+      expect(mockTelemetryService.logStreamingSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userPromptId,
+          model: 'test-model',
+          authType: 'openai',
+          isStreaming: true,
+        }),
+        results,
+        expect.any(Object),
+        [mockChunk1, mockChunk2, mockChunk3],
+      );
+    });
+
+    it('should handle ideal case where last chunk has both finishReason and usageMetadata', async () => {
+      // Arrange
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      // Content chunk
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [
+          { delta: { content: 'Hello response' }, finish_reason: null },
+        ],
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Final chunk with both finish_reason and usage (ideal case)
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+        },
+      };
+
+      // Mock converter responses
+      const mockContentResponse = new GenerateContentResponse();
+      mockContentResponse.candidates = [
+        { content: { parts: [{ text: 'Hello response' }], role: 'model' } },
+      ];
+
+      const mockFinalResponse = new GenerateContentResponse();
+      mockFinalResponse.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+      mockFinalResponse.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockContentResponse)
+        .mockReturnValueOnce(mockFinalResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        mockStream,
+      );
+
+      // Act
+      const resultGenerator = await pipeline.executeStream(
+        request,
+        userPromptId,
+      );
+      const results = [];
+      for await (const result of resultGenerator) {
+        results.push(result);
+      }
+
+      // Assert
+      expect(results).toHaveLength(2);
+      expect(results[0]).toBe(mockContentResponse);
+      expect(results[1]).toBe(mockFinalResponse);
+
+      // The last result should have both finishReason and usageMetadata
+      const lastResult = results[1];
+      expect(lastResult.candidates?.[0]?.finishReason).toBe(FinishReason.STOP);
+      expect(lastResult.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+    });
+
+    it('should handle providers that send zero usage in finish chunk (like modelscope)', async () => {
+      // Arrange
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      // Content chunk with zero usage (typical for modelscope)
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [
+          { delta: { content: 'Hello response' }, finish_reason: null },
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Finish chunk with zero usage (has finishReason but usage is all zeros)
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Final usage chunk with actual usage data
+      const mockChunk3 = {
+        id: 'chunk-3',
+        object: 'chat.completion.chunk',
+        created: Date.now(),
+        model: 'test-model',
+        choices: [],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+          yield mockChunk3;
+        },
+      };
+
+      // Mock converter responses
+      const mockContentResponse = new GenerateContentResponse();
+      mockContentResponse.candidates = [
+        { content: { parts: [{ text: 'Hello response' }], role: 'model' } },
+      ];
+      // Content chunk has zero usage metadata (should be filtered or ignored)
+      mockContentResponse.usageMetadata = {
+        promptTokenCount: 0,
+        candidatesTokenCount: 0,
+        totalTokenCount: 0,
+      };
+
+      const mockFinishResponseWithZeroUsage = new GenerateContentResponse();
+      mockFinishResponseWithZeroUsage.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+      // Finish chunk has zero usage metadata (should be treated as no usage)
+      mockFinishResponseWithZeroUsage.usageMetadata = {
+        promptTokenCount: 0,
+        candidatesTokenCount: 0,
+        totalTokenCount: 0,
+      };
+
+      const mockUsageResponse = new GenerateContentResponse();
+      mockUsageResponse.candidates = [];
+      mockUsageResponse.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockContentResponse)
+        .mockReturnValueOnce(mockFinishResponseWithZeroUsage)
+        .mockReturnValueOnce(mockUsageResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        mockStream,
+      );
+
+      // Act
+      const resultGenerator = await pipeline.executeStream(
+        request,
+        userPromptId,
+      );
+      const results = [];
+      for await (const result of resultGenerator) {
+        results.push(result);
+      }
+
+      // Assert
+      expect(results).toHaveLength(2); // Content chunk + merged finish/usage chunk
+      expect(results[0]).toBe(mockContentResponse);
+
+      // The last result should have both finishReason and valid usageMetadata
+      const lastResult = results[1];
+      expect(lastResult.candidates?.[0]?.finishReason).toBe(FinishReason.STOP);
+      expect(lastResult.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
+
+      expect(mockTelemetryService.logStreamingSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userPromptId,
+          model: 'test-model',
+          authType: 'openai',
+          isStreaming: true,
+        }),
+        results,
+        expect.any(Object),
+        [mockChunk1, mockChunk2, mockChunk3],
+      );
+    });
+
+    it('should handle providers that send finishReason and valid usage in same chunk', async () => {
+      // Arrange
+      const request: GenerateContentParameters = {
+        model: 'test-model',
+        contents: [{ parts: [{ text: 'Hello' }], role: 'user' }],
+      };
+      const userPromptId = 'test-prompt-id';
+
+      // Content chunk with zero usage
+      const mockChunk1 = {
+        id: 'chunk-1',
+        choices: [
+          { delta: { content: 'Hello response' }, finish_reason: null },
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      // Finish chunk with both finishReason and valid usage in same chunk
+      const mockChunk2 = {
+        id: 'chunk-2',
+        choices: [{ delta: { content: '' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      } as OpenAI.Chat.ChatCompletionChunk;
+
+      const mockStream = {
+        async *[Symbol.asyncIterator]() {
+          yield mockChunk1;
+          yield mockChunk2;
+        },
+      };
+
+      // Mock converter responses
+      const mockContentResponse = new GenerateContentResponse();
+      mockContentResponse.candidates = [
+        { content: { parts: [{ text: 'Hello response' }], role: 'model' } },
+      ];
+      mockContentResponse.usageMetadata = {
+        promptTokenCount: 0,
+        candidatesTokenCount: 0,
+        totalTokenCount: 0,
+      };
+
+      const mockFinalResponse = new GenerateContentResponse();
+      mockFinalResponse.candidates = [
+        {
+          content: { parts: [], role: 'model' },
+          finishReason: FinishReason.STOP,
+        },
+      ];
+      mockFinalResponse.usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      };
+
+      (mockConverter.convertGeminiRequestToOpenAI as Mock).mockReturnValue([]);
+      (mockConverter.convertOpenAIChunkToGemini as Mock)
+        .mockReturnValueOnce(mockContentResponse)
+        .mockReturnValueOnce(mockFinalResponse);
+      (mockClient.chat.completions.create as Mock).mockResolvedValue(
+        mockStream,
+      );
+
+      // Act
+      const resultGenerator = await pipeline.executeStream(
+        request,
+        userPromptId,
+      );
+      const results = [];
+      for await (const result of resultGenerator) {
+        results.push(result);
+      }
+
+      // Assert
+      expect(results).toHaveLength(2);
+      expect(results[0]).toBe(mockContentResponse);
+      expect(results[1]).toBe(mockFinalResponse);
+
+      // The last result should have both finishReason and valid usageMetadata
+      const lastResult = results[1];
+      expect(lastResult.candidates?.[0]?.finishReason).toBe(FinishReason.STOP);
+      expect(lastResult.usageMetadata).toEqual({
+        promptTokenCount: 10,
+        candidatesTokenCount: 20,
+        totalTokenCount: 30,
+      });
     });
   });
 

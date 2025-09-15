@@ -24,6 +24,7 @@ import {
   EVENT_INVALID_CHUNK,
   EVENT_NEXT_SPEAKER_CHECK,
   EVENT_SLASH_COMMAND,
+  EVENT_SUBAGENT_EXECUTION,
   EVENT_TOOL_CALL,
   EVENT_USER_PROMPT,
   SERVICE_NAME,
@@ -36,6 +37,7 @@ import {
   recordContentRetryFailure,
   recordFileOperationMetric,
   recordInvalidChunk,
+  recordSubagentExecutionMetrics,
   recordTokenUsageMetrics,
   recordToolCallMetrics,
 } from './metrics.js';
@@ -58,11 +60,11 @@ import type {
   NextSpeakerCheckEvent,
   SlashCommandEvent,
   StartSessionEvent,
+  SubagentExecutionEvent,
   ToolCallEvent,
   UserPromptEvent,
 } from './types.js';
-import type { UiEvent } from './uiTelemetry.js';
-import { uiTelemetryService } from './uiTelemetry.js';
+import { type UiEvent, uiTelemetryService } from './uiTelemetry.js';
 
 const shouldLogUserPrompts = (config: Config): boolean =>
   config.getTelemetryLogPromptsEnabled();
@@ -560,4 +562,32 @@ export function logContentRetryFailure(
   };
   logger.emit(logRecord);
   recordContentRetryFailure(config);
+}
+
+export function logSubagentExecution(
+  config: Config,
+  event: SubagentExecutionEvent,
+): void {
+  QwenLogger.getInstance(config)?.logSubagentExecutionEvent(event);
+  if (!isTelemetrySdkInitialized()) return;
+
+  const attributes: LogAttributes = {
+    ...getCommonAttributes(config),
+    ...event,
+    'event.name': EVENT_SUBAGENT_EXECUTION,
+    'event.timestamp': new Date().toISOString(),
+  };
+
+  const logger = logs.getLogger(SERVICE_NAME);
+  const logRecord: LogRecord = {
+    body: `Subagent execution: ${event.subagent_name}.`,
+    attributes,
+  };
+  logger.emit(logRecord);
+  recordSubagentExecutionMetrics(
+    config,
+    event.subagent_name,
+    event.status,
+    event.terminate_reason,
+  );
 }

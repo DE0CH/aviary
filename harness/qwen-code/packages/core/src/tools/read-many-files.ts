@@ -16,6 +16,7 @@ import {
   processSingleFileContent,
   DEFAULT_ENCODING,
   getSpecificMimeType,
+  DEFAULT_MAX_LINES_TEXT_FILE,
 } from '../utils/fileUtils.js';
 import type { PartListUnion } from '@google/genai';
 import type { Config } from '../config/config.js';
@@ -322,6 +323,8 @@ ${finalExclusionPatternsForDescription
     }
 
     const sortedFiles = Array.from(filesToConsider).sort();
+    const file_line_limit =
+      DEFAULT_MAX_LINES_TEXT_FILE / Math.max(1, sortedFiles.length);
 
     const fileProcessingPromises = sortedFiles.map(
       async (filePath): Promise<FileProcessingResult> => {
@@ -360,6 +363,8 @@ ${finalExclusionPatternsForDescription
             filePath,
             this.config.getTargetDir(),
             this.config.getFileSystemService(),
+            0,
+            file_line_limit,
           );
 
           if (fileReadResult.error) {

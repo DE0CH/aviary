@@ -1,46 +1,47 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { Mock } from 'vitest';
-import {
-  ContextState,
-  SubAgentScope,
-  SubagentTerminateMode,
-} from './subagent.js';
-import type {
-  PromptConfig,
-  ModelConfig,
-  RunConfig,
-  OutputConfig,
-  ToolConfig,
-  SubAgentOptions,
-} from './subagent.js';
-import { Config } from '../config/config.js';
-import type { ConfigParameters } from '../config/config.js';
-import { GeminiChat, StreamEventType } from './geminiChat.js';
-import { createContentGenerator } from './contentGenerator.js';
-import { getEnvironmentContext } from '../utils/environmentContext.js';
-import { executeToolCall } from './nonInteractiveToolExecutor.js';
-import type { ToolRegistry } from '../tools/tool-registry.js';
-import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
-import { Type } from '@google/genai';
 import type {
   Content,
   FunctionCall,
   FunctionDeclaration,
   GenerateContentConfig,
-  GenerateContentResponse,
+  Part,
 } from '@google/genai';
-import { ToolErrorType } from '../tools/tool-error.js';
+import { Type } from '@google/genai';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from 'vitest';
+import { Config, type ConfigParameters } from '../config/config.js';
+import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
+import { createContentGenerator } from '../core/contentGenerator.js';
+import { GeminiChat } from '../core/geminiChat.js';
+import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
+import { ToolRegistry } from '../tools/tool-registry.js';
+import { type AnyDeclarativeTool } from '../tools/tools.js';
+import { getEnvironmentContext } from '../utils/environmentContext.js';
+import { ContextState, SubAgentScope } from './subagent.js';
+import type {
+  ModelConfig,
+  PromptConfig,
+  RunConfig,
+  ToolConfig,
+} from './types.js';
+import { SubagentTerminateMode } from './types.js';
 
-vi.mock('./geminiChat.js');
-vi.mock('./contentGenerator.js');
+vi.mock('../core/geminiChat.js');
+vi.mock('../core/contentGenerator.js');
 vi.mock('../utils/environmentContext.js');
-vi.mock('./nonInteractiveToolExecutor.js');
+vi.mock('../core/nonInteractiveToolExecutor.js');
 vi.mock('../ide/ide-client.js');
 
 async function createMockConfig(
@@ -61,6 +62,7 @@ async function createMockConfig(
   // Mock ToolRegistry
   const mockToolRegistry = {
     getTool: vi.fn(),
+    getFunctionDeclarations: vi.fn().mockReturnValue([]),
     getFunctionDeclarationsFiltered: vi.fn().mockReturnValue([]),
     ...toolRegistryMocks,
   } as unknown as ToolRegistry;
@@ -81,26 +83,30 @@ const createMockStream = (
     index++;
 
     return (async function* () {
-      let mockResponseValue: Partial<GenerateContentResponse>;
-
-      if (response === 'stop' || response.length === 0) {
-        // Simulate a text response for stop/empty conditions.
-        mockResponseValue = {
-          candidates: [{ content: { parts: [{ text: 'Done.' }] } }],
+      if (response === 'stop') {
+        // When stopping, the model might return text, but the subagent logic primarily cares about the absence of functionCalls.
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'Done.' }],
+              },
+            },
+          ],
         };
+      } else if (response.length > 0) {
+        yield { functionCalls: response };
       } else {
-        // Simulate a tool call response.
-        mockResponseValue = {
-          candidates: [], // Good practice to include for safety.
-          functionCalls: response,
-        };
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'Done.' }],
+              },
+            },
+          ],
+        }; // Handle empty array also as stop
       }
-
-      // The stream must now yield a StreamEvent object of type CHUNK.
-      yield {
-        type: StreamEventType.CHUNK,
-        value: mockResponseValue as GenerateContentResponse,
-      };
     })();
   });
 };
@@ -155,6 +161,15 @@ describe('subagent.ts', () => {
             sendMessageStream: mockSendMessageStream,
           }) as unknown as GeminiChat,
       );
+
+      // Default mock for executeToolCall
+      vi.mocked(executeToolCall).mockResolvedValue({
+        callId: 'default-call',
+        responseParts: 'default response',
+        resultDisplay: 'Default tool result',
+        error: undefined,
+        errorType: undefined,
+      });
     });
 
     afterEach(() => {
@@ -190,7 +205,7 @@ describe('subagent.ts', () => {
         expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
-      it('should throw an error if a tool requires confirmation', async () => {
+      it('should not block creation when a tool may require confirmation', async () => {
         const mockTool = {
           name: 'risky_tool',
           schema: { parametersJsonSchema: { type: 'object', properties: {} } },
@@ -209,20 +224,16 @@ describe('subagent.ts', () => {
         });
 
         const toolConfig: ToolConfig = { tools: ['risky_tool'] };
-        const options: SubAgentOptions = { toolConfig };
 
-        await expect(
-          SubAgentScope.create(
-            'test-agent',
-            config,
-            promptConfig,
-            defaultModelConfig,
-            defaultRunConfig,
-            options,
-          ),
-        ).rejects.toThrow(
-          'Tool "risky_tool" requires user confirmation and cannot be used in a non-interactive subagent.',
+        const scope = await SubAgentScope.create(
+          'test-agent',
+          config,
+          promptConfig,
+          defaultModelConfig,
+          defaultRunConfig,
+          toolConfig,
         );
+        expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
       it('should succeed if tools do not require confirmation', async () => {
@@ -239,7 +250,6 @@ describe('subagent.ts', () => {
         });
 
         const toolConfig: ToolConfig = { tools: ['safe_tool'] };
-        const options: SubAgentOptions = { toolConfig };
 
         const scope = await SubAgentScope.create(
           'test-agent',
@@ -247,16 +257,12 @@ describe('subagent.ts', () => {
           promptConfig,
           defaultModelConfig,
           defaultRunConfig,
-          options,
+          toolConfig,
         );
         expect(scope).toBeInstanceOf(SubAgentScope);
       });
 
-      it('should skip interactivity check and warn for tools with required parameters', async () => {
-        const consoleWarnSpy = vi
-          .spyOn(console, 'warn')
-          .mockImplementation(() => {});
-
+      it('should allow creation regardless of tool parameter requirements', async () => {
         const mockToolWithParams = {
           name: 'tool_with_params',
           schema: {
@@ -268,7 +274,6 @@ describe('subagent.ts', () => {
               required: ['path'],
             },
           },
-          // build should not be called, but we mock it to be safe
           build: vi.fn(),
         };
 
@@ -278,29 +283,19 @@ describe('subagent.ts', () => {
         });
 
         const toolConfig: ToolConfig = { tools: ['tool_with_params'] };
-        const options: SubAgentOptions = { toolConfig };
 
-        // The creation should succeed without throwing
         const scope = await SubAgentScope.create(
           'test-agent',
           config,
           promptConfig,
           defaultModelConfig,
           defaultRunConfig,
-          options,
+          toolConfig,
         );
 
         expect(scope).toBeInstanceOf(SubAgentScope);
-
-        // Check that the warning was logged
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'Cannot check tool "tool_with_params" for interactivity because it requires parameters. Assuming it is safe for non-interactive use.',
-        );
-
-        // Ensure build was never called
+        // Ensure build was not called during creation
         expect(mockToolWithParams.build).not.toHaveBeenCalled();
-
-        consoleWarnSpy.mockRestore();
       });
     });
 
@@ -355,44 +350,6 @@ describe('subagent.ts', () => {
             parts: [{ text: 'Got it. Thanks for the context!' }],
           },
         ]);
-      });
-
-      it('should include output instructions in the system prompt when outputs are defined', async () => {
-        const { config } = await createMockConfig();
-        vi.mocked(GeminiChat).mockClear();
-
-        const promptConfig: PromptConfig = { systemPrompt: 'Do the task.' };
-        const outputConfig: OutputConfig = {
-          outputs: {
-            result1: 'The first result',
-          },
-        };
-        const context = new ContextState();
-
-        // Model stops immediately
-        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          { outputConfig },
-        );
-
-        await scope.runNonInteractive(context);
-
-        const generationConfig = getGenerationConfigFromMock();
-        const systemInstruction = generationConfig.systemInstruction as string;
-
-        expect(systemInstruction).toContain('Do the task.');
-        expect(systemInstruction).toContain(
-          'you MUST emit the required output variables',
-        );
-        expect(systemInstruction).toContain(
-          "Use 'self.emitvalue' to emit the 'result1' key",
-        );
       });
 
       it('should use initialMessages instead of systemPrompt if provided', async () => {
@@ -454,7 +411,7 @@ describe('subagent.ts', () => {
         await expect(scope.runNonInteractive(context)).rejects.toThrow(
           'Missing context values for the following keys: missing',
         );
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
 
       it('should validate that systemPrompt and initialMessages are mutually exclusive', async () => {
@@ -476,7 +433,7 @@ describe('subagent.ts', () => {
         await expect(agent.runNonInteractive(context)).rejects.toThrow(
           'PromptConfig cannot have both `systemPrompt` and `initialMessages` defined.',
         );
-        expect(agent.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(agent.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
     });
 
@@ -499,8 +456,7 @@ describe('subagent.ts', () => {
 
         await scope.runNonInteractive(new ContextState());
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({});
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
         // Check the initial message
         expect(mockSendMessageStream.mock.calls[0][0].message).toEqual([
@@ -508,28 +464,11 @@ describe('subagent.ts', () => {
         ]);
       });
 
-      it('should handle self.emitvalue and terminate with GOAL when outputs are met', async () => {
+      it('should terminate with GOAL when model provides final text', async () => {
         const { config } = await createMockConfig();
-        const outputConfig: OutputConfig = {
-          outputs: { result: 'The final result' },
-        };
 
-        // Turn 1: Model responds with emitvalue call
-        // Turn 2: Model stops after receiving the tool response
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            [
-              {
-                name: 'self.emitvalue',
-                args: {
-                  emit_variable_name: 'result',
-                  emit_variable_value: 'Success!',
-                },
-              },
-            ],
-            'stop',
-          ]),
-        );
+        // Model stops immediately with text response
+        mockSendMessageStream.mockImplementation(createMockStream(['stop']));
 
         const scope = await SubAgentScope.create(
           'test-agent',
@@ -537,18 +476,12 @@ describe('subagent.ts', () => {
           promptConfig,
           defaultModelConfig,
           defaultRunConfig,
-          { outputConfig },
         );
 
         await scope.runNonInteractive(new ContextState());
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({ result: 'Success!' });
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
-
-        // Check the tool response sent back in the second call
-        const secondCallArgs = mockSendMessageStream.mock.calls[0][0];
-        expect(secondCallArgs.message).toEqual([{ text: 'Get Started!' }]);
       });
 
       it('should execute external tools and provide the response to the model', async () => {
@@ -581,114 +514,31 @@ describe('subagent.ts', () => {
           ]),
         );
 
-        // Mock the tool execution result
-        vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_1',
-          responseParts: [{ text: 'file1.txt\nfile2.ts' }],
-          resultDisplay: 'Listed 2 files',
-          error: undefined,
-          errorType: undefined, // Or ToolErrorType.NONE if available and appropriate
-        });
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          { toolConfig },
-        );
-
-        await scope.runNonInteractive(new ContextState());
-
-        // Check tool execution
-        expect(executeToolCall).toHaveBeenCalledWith(
-          config,
-          expect.objectContaining({ name: 'list_files', args: { path: '.' } }),
-          expect.any(AbortSignal),
-        );
-
-        // Check the response sent back to the model
-        const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-        expect(secondCallArgs.message).toEqual([
-          { text: 'file1.txt\nfile2.ts' },
-        ]);
-
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-      });
-
-      it('should provide specific tool error responses to the model', async () => {
-        const { config } = await createMockConfig();
-        const toolConfig: ToolConfig = { tools: ['failing_tool'] };
-
-        // Turn 1: Model calls the failing tool
-        // Turn 2: Model stops after receiving the error response
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            [
-              {
-                id: 'call_fail',
-                name: 'failing_tool',
-                args: {},
-              },
-            ],
-            'stop',
-          ]),
-        );
-
-        // Mock the tool execution failure.
-        vi.mocked(executeToolCall).mockResolvedValue({
-          callId: 'call_fail',
-          responseParts: [{ text: 'ERROR: Tool failed catastrophically' }], // This should be sent to the model
-          resultDisplay: 'Tool failed catastrophically',
-          error: new Error('Failure'),
-          errorType: ToolErrorType.INVALID_TOOL_PARAMS,
-        });
-
-        const scope = await SubAgentScope.create(
-          'test-agent',
-          config,
-          promptConfig,
-          defaultModelConfig,
-          defaultRunConfig,
-          { toolConfig },
-        );
-
-        await scope.runNonInteractive(new ContextState());
-
-        // The agent should send the specific error message from responseParts.
-        const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-
-        expect(secondCallArgs.message).toEqual([
-          {
-            text: 'ERROR: Tool failed catastrophically',
-          },
-        ]);
-      });
-
-      it('should nudge the model if it stops before emitting all required variables', async () => {
-        const { config } = await createMockConfig();
-        const outputConfig: OutputConfig = {
-          outputs: { required_var: 'Must be present' },
+        // Provide a mock tool via ToolRegistry that returns a successful result
+        const listFilesInvocation = {
+          params: { path: '.' },
+          getDescription: vi.fn().mockReturnValue('List files'),
+          toolLocations: vi.fn().mockReturnValue([]),
+          shouldConfirmExecute: vi.fn().mockResolvedValue(false),
+          execute: vi.fn().mockResolvedValue({
+            llmContent: 'file1.txt\nfile2.ts',
+            returnDisplay: 'Listed 2 files',
+          }),
         };
-
-        // Turn 1: Model stops prematurely
-        // Turn 2: Model responds to the nudge and emits the variable
-        // Turn 3: Model stops
-        mockSendMessageStream.mockImplementation(
-          createMockStream([
-            'stop',
-            [
-              {
-                name: 'self.emitvalue',
-                args: {
-                  emit_variable_name: 'required_var',
-                  emit_variable_value: 'Here it is',
-                },
-              },
-            ],
-            'stop',
-          ]),
+        const listFilesTool = {
+          name: 'list_files',
+          displayName: 'List Files',
+          description: 'List files in directory',
+          kind: 'READ' as const,
+          schema: listFilesToolDef,
+          build: vi.fn().mockImplementation(() => listFilesInvocation),
+          canUpdateOutput: false,
+          isOutputMarkdown: true,
+        } as unknown as AnyDeclarativeTool;
+        vi.mocked(
+          (config.getToolRegistry() as unknown as ToolRegistry).getTool,
+        ).mockImplementation((name: string) =>
+          name === 'list_files' ? listFilesTool : undefined,
         );
 
         const scope = await SubAgentScope.create(
@@ -697,25 +547,21 @@ describe('subagent.ts', () => {
           promptConfig,
           defaultModelConfig,
           defaultRunConfig,
-          { outputConfig },
+          toolConfig,
         );
 
         await scope.runNonInteractive(new ContextState());
 
-        // Check the nudge message sent in Turn 2
+        // Check the response sent back to the model (functionResponse part)
         const secondCallArgs = mockSendMessageStream.mock.calls[1][0];
-
-        // We check that the message contains the required variable name and the nudge phrasing.
-        expect(secondCallArgs.message[0].text).toContain('required_var');
-        expect(secondCallArgs.message[0].text).toContain(
-          'You have stopped calling tools',
+        const parts = secondCallArgs.message as unknown[];
+        expect(Array.isArray(parts)).toBe(true);
+        const firstPart = parts[0] as Part;
+        expect(firstPart.functionResponse?.response?.['output']).toBe(
+          'file1.txt\nfile2.ts',
         );
 
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.GOAL);
-        expect(scope.output.emitted_vars).toEqual({
-          required_var: 'Here it is',
-        });
-        expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.GOAL);
       });
     });
 
@@ -726,26 +572,26 @@ describe('subagent.ts', () => {
         const { config } = await createMockConfig();
         const runConfig: RunConfig = { ...defaultRunConfig, max_turns: 2 };
 
-        // Model keeps looping by calling emitvalue repeatedly
+        // Model keeps calling tools repeatedly
         mockSendMessageStream.mockImplementation(
           createMockStream([
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v1' },
+                name: 'list_files',
+                args: { path: '/test' },
               },
             ],
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v2' },
+                name: 'list_files',
+                args: { path: '/test2' },
               },
             ],
             // This turn should not happen
             [
               {
-                name: 'self.emitvalue',
-                args: { emit_variable_name: 'loop', emit_variable_value: 'v3' },
+                name: 'list_files',
+                args: { path: '/test3' },
               },
             ],
           ]),
@@ -762,9 +608,7 @@ describe('subagent.ts', () => {
         await scope.runNonInteractive(new ContextState());
 
         expect(mockSendMessageStream).toHaveBeenCalledTimes(2);
-        expect(scope.output.terminate_reason).toBe(
-          SubagentTerminateMode.MAX_TURNS,
-        );
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.MAX_TURNS);
       });
 
       it('should terminate with TIMEOUT if the time limit is reached during an LLM call', async () => {
@@ -807,9 +651,7 @@ describe('subagent.ts', () => {
 
         await runPromise;
 
-        expect(scope.output.terminate_reason).toBe(
-          SubagentTerminateMode.TIMEOUT,
-        );
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.TIMEOUT);
         expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
 
         vi.useRealTimers();
@@ -830,7 +672,7 @@ describe('subagent.ts', () => {
         await expect(
           scope.runNonInteractive(new ContextState()),
         ).rejects.toThrow('API Failure');
-        expect(scope.output.terminate_reason).toBe(SubagentTerminateMode.ERROR);
+        expect(scope.getTerminateMode()).toBe(SubagentTerminateMode.ERROR);
       });
     });
   });

@@ -8,6 +8,7 @@ import type { FunctionDeclaration, PartListUnion } from '@google/genai';
 import { ToolErrorType } from './tool-error.js';
 import type { DiffUpdateResult } from '../ide/ideContext.js';
 import { SchemaValidator } from '../utils/schemaValidator.js';
+import { SubagentStatsSummary } from '../subagents/subagent-statistics.js';
 
 /**
  * Represents a validated and ready-to-execute tool call.
@@ -51,7 +52,7 @@ export interface ToolInvocation<
    */
   execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult>;
 }
 
@@ -79,7 +80,7 @@ export abstract class BaseToolInvocation<
 
   abstract execute(
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult>;
 }
 
@@ -197,7 +198,7 @@ export abstract class DeclarativeTool<
   async buildAndExecute(
     params: TParams,
     signal: AbortSignal,
-    updateOutput?: (output: string) => void,
+    updateOutput?: (output: ToolResultDisplay) => void,
   ): Promise<TResult> {
     const invocation = this.build(params);
     return invocation.execute(signal, updateOutput);
@@ -432,7 +433,38 @@ export function hasCycleInSchema(schema: object): boolean {
   return traverse(schema, new Set<string>(), new Set<string>());
 }
 
-export type ToolResultDisplay = string | FileDiff | TodoResultDisplay;
+export interface TaskResultDisplay {
+  type: 'task_execution';
+  subagentName: string;
+  subagentColor?: string;
+  taskDescription: string;
+  taskPrompt: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  terminateReason?: string;
+  result?: string;
+  executionSummary?: SubagentStatsSummary;
+
+  // If the subagent is awaiting approval for a tool call,
+  // this contains the confirmation details for inline UI rendering.
+  pendingConfirmation?: ToolCallConfirmationDetails;
+
+  toolCalls?: Array<{
+    callId: string;
+    name: string;
+    status: 'executing' | 'awaiting_approval' | 'success' | 'failed';
+    error?: string;
+    args?: Record<string, unknown>;
+    result?: string;
+    resultDisplay?: string;
+    description?: string;
+  }>;
+}
+
+export type ToolResultDisplay =
+  | string
+  | FileDiff
+  | TodoResultDisplay
+  | TaskResultDisplay;
 
 export interface FileDiff {
   fileDiff: string;

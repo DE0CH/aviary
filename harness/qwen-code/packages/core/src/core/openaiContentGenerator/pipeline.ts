@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type OpenAI from 'openai';
-import type {
-  GenerateContentParameters,
+import OpenAI from 'openai';
+import {
+  type GenerateContentParameters,
   GenerateContentResponse,
 } from '@google/genai';
-import type { Config } from '../../config/config.js';
-import type { ContentGeneratorConfig } from '../contentGenerator.js';
+import { Config } from '../../config/config.js';
+import { type ContentGeneratorConfig } from '../contentGenerator.js';
 import { type OpenAICompatibleProvider } from './provider/index.js';
 import { OpenAIContentConverter } from './converter.js';
-import type { TelemetryService, RequestContext } from './telemetryService.js';
-import type { ErrorHandler } from './errorHandler.js';
+import {
+  type TelemetryService,
+  type RequestContext,
+} from './telemetryService.js';
+import { type ErrorHandler } from './errorHandler.js';
 
 export interface PipelineConfig {
   cliConfig: Config;
@@ -96,8 +99,9 @@ export class ContentGenerationPipeline {
    * This method handles the complete stream processing pipeline:
    * 1. Convert OpenAI chunks to Gemini format while preserving original chunks
    * 2. Filter empty responses
-   * 3. Collect both formats for logging
-   * 4. Handle success/error logging with original OpenAI format
+   * 3. Handle chunk merging for providers that send finishReason and usageMetadata separately
+   * 4. Collect both formats for logging
+   * 5. Handle success/error logging with original OpenAI format
    */
   private async *processStreamWithLogging(
     stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
@@ -111,6 +115,9 @@ export class ContentGenerationPipeline {
     // Reset streaming tool calls to prevent data pollution from previous streams
     this.converter.resetStreamingToolCalls();
 
+    // State for handling chunk merging
+    let pendingFinishResponse: GenerateContentResponse | null = null;
+
     try {
       // Stage 2a: Convert and yield each chunk while preserving original
       for await (const chunk of stream) {
@@ -119,18 +126,40 @@ export class ContentGenerationPipeline {
         // Stage 2b: Filter empty responses to avoid downstream issues
         if (
           response.candidates?.[0]?.content?.parts?.length === 0 &&
+          !response.candidates?.[0]?.finishReason &&
           !response.usageMetadata
         ) {
           continue;
         }
 
-        // Stage 2c: Collect both formats and yield Gemini format to consumer
-        collectedGeminiResponses.push(response);
-        collectedOpenAIChunks.push(chunk);
-        yield response;
+        // Stage 2c: Handle chunk merging for providers that send finishReason and usageMetadata separately
+        const shouldYield = this.handleChunkMerging(
+          response,
+          chunk,
+          collectedGeminiResponses,
+          collectedOpenAIChunks,
+          (mergedResponse) => {
+            pendingFinishResponse = mergedResponse;
+          },
+        );
+
+        if (shouldYield) {
+          // If we have a pending finish response, yield it instead
+          if (pendingFinishResponse) {
+            yield pendingFinishResponse;
+            pendingFinishResponse = null;
+          } else {
+            yield response;
+          }
+        }
       }
 
-      // Stage 2d: Stream completed successfully - perform logging with original OpenAI chunks
+      // Stage 2d: If there's still a pending finish response at the end, yield it
+      if (pendingFinishResponse) {
+        yield pendingFinishResponse;
+      }
+
+      // Stage 2e: Stream completed successfully - perform logging with original OpenAI chunks
       context.duration = Date.now() - context.startTime;
 
       await this.config.telemetryService.logStreamingSuccess(
@@ -154,6 +183,72 @@ export class ContentGenerationPipeline {
 
       this.config.errorHandler.handle(error, context, request);
     }
+  }
+
+  /**
+   * Handle chunk merging for providers that send finishReason and usageMetadata separately.
+   *
+   * Strategy: When we encounter a finishReason chunk, we hold it and merge all subsequent
+   * chunks into it until the stream ends. This ensures the final chunk contains both
+   * finishReason and the most up-to-date usage information from any provider pattern.
+   *
+   * @param response Current Gemini response
+   * @param chunk Current OpenAI chunk
+   * @param collectedGeminiResponses Array to collect responses for logging
+   * @param collectedOpenAIChunks Array to collect chunks for logging
+   * @param setPendingFinish Callback to set pending finish response
+   * @returns true if the response should be yielded, false if it should be held for merging
+   */
+  private handleChunkMerging(
+    response: GenerateContentResponse,
+    chunk: OpenAI.Chat.ChatCompletionChunk,
+    collectedGeminiResponses: GenerateContentResponse[],
+    collectedOpenAIChunks: OpenAI.Chat.ChatCompletionChunk[],
+    setPendingFinish: (response: GenerateContentResponse) => void,
+  ): boolean {
+    const isFinishChunk = response.candidates?.[0]?.finishReason;
+
+    // Check if we have a pending finish response from previous chunks
+    const hasPendingFinish =
+      collectedGeminiResponses.length > 0 &&
+      collectedGeminiResponses[collectedGeminiResponses.length - 1]
+        .candidates?.[0]?.finishReason;
+
+    if (isFinishChunk) {
+      // This is a finish reason chunk
+      collectedGeminiResponses.push(response);
+      collectedOpenAIChunks.push(chunk);
+      setPendingFinish(response);
+      return false; // Don't yield yet, wait for potential subsequent chunks to merge
+    } else if (hasPendingFinish) {
+      // We have a pending finish chunk, merge this chunk's data into it
+      const lastResponse =
+        collectedGeminiResponses[collectedGeminiResponses.length - 1];
+      const mergedResponse = new GenerateContentResponse();
+
+      // Keep the finish reason from the previous chunk
+      mergedResponse.candidates = lastResponse.candidates;
+
+      // Merge usage metadata if this chunk has it
+      if (response.usageMetadata) {
+        mergedResponse.usageMetadata = response.usageMetadata;
+      } else {
+        mergedResponse.usageMetadata = lastResponse.usageMetadata;
+      }
+
+      // Update the collected responses with the merged response
+      collectedGeminiResponses[collectedGeminiResponses.length - 1] =
+        mergedResponse;
+      collectedOpenAIChunks.push(chunk);
+
+      setPendingFinish(mergedResponse);
+      return true; // Yield the merged response
+    }
+
+    // Normal chunk - collect and yield
+    collectedGeminiResponses.push(response);
+    collectedOpenAIChunks.push(chunk);
+    return true;
   }
 
   private async buildRequest(

@@ -507,6 +507,34 @@ export class ContentRetryFailureEvent implements BaseTelemetryEvent {
   }
 }
 
+export class SubagentExecutionEvent implements BaseTelemetryEvent {
+  'event.name': 'subagent_execution';
+  'event.timestamp': string;
+  subagent_name: string;
+  status: 'started' | 'completed' | 'failed' | 'cancelled';
+  terminate_reason?: string;
+  result?: string;
+  execution_summary?: string;
+
+  constructor(
+    subagent_name: string,
+    status: 'started' | 'completed' | 'failed' | 'cancelled',
+    options?: {
+      terminate_reason?: string;
+      result?: string;
+      execution_summary?: string;
+    },
+  ) {
+    this['event.name'] = 'subagent_execution';
+    this['event.timestamp'] = new Date().toISOString();
+    this.subagent_name = subagent_name;
+    this.status = status;
+    this.terminate_reason = options?.terminate_reason;
+    this.result = options?.result;
+    this.execution_summary = options?.execution_summary;
+  }
+}
+
 export type TelemetryEvent =
   | StartSessionEvent
   | EndSessionEvent
@@ -526,4 +554,5 @@ export type TelemetryEvent =
   | FileOperationEvent
   | InvalidChunkEvent
   | ContentRetryEvent
-  | ContentRetryFailureEvent;
+  | ContentRetryFailureEvent
+  | SubagentExecutionEvent;

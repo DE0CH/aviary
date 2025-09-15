@@ -19,6 +19,7 @@ import {
   METRIC_INVALID_CHUNK_COUNT,
   METRIC_CONTENT_RETRY_COUNT,
   METRIC_CONTENT_RETRY_FAILURE_COUNT,
+  METRIC_SUBAGENT_EXECUTION_COUNT,
 } from './constants.js';
 import type { Config } from '../config/config.js';
 import type { DiffStat } from '../tools/tools.js';
@@ -40,6 +41,7 @@ let chatCompressionCounter: Counter | undefined;
 let invalidChunkCounter: Counter | undefined;
 let contentRetryCounter: Counter | undefined;
 let contentRetryFailureCounter: Counter | undefined;
+let subagentExecutionCounter: Counter | undefined;
 let isMetricsInitialized = false;
 
 function getCommonAttributes(config: Config): Attributes {
@@ -108,6 +110,14 @@ export function initializeMetrics(config: Config): void {
     METRIC_CONTENT_RETRY_FAILURE_COUNT,
     {
       description: 'Counts occurrences of all content retries failing.',
+      valueType: ValueType.INT,
+    },
+  );
+  subagentExecutionCounter = meter.createCounter(
+    METRIC_SUBAGENT_EXECUTION_COUNT,
+    {
+      description:
+        'Counts subagent execution events, tagged by status and subagent name.',
       valueType: ValueType.INT,
     },
   );
@@ -274,4 +284,28 @@ export function recordContentRetry(config: Config): void {
 export function recordContentRetryFailure(config: Config): void {
   if (!contentRetryFailureCounter || !isMetricsInitialized) return;
   contentRetryFailureCounter.add(1, getCommonAttributes(config));
+}
+
+/**
+ * Records a metric for subagent execution events.
+ */
+export function recordSubagentExecutionMetrics(
+  config: Config,
+  subagentName: string,
+  status: 'started' | 'completed' | 'failed' | 'cancelled',
+  terminateReason?: string,
+): void {
+  if (!subagentExecutionCounter || !isMetricsInitialized) return;
+
+  const attributes: Attributes = {
+    ...getCommonAttributes(config),
+    subagent_name: subagentName,
+    status,
+  };
+
+  if (terminateReason) {
+    attributes['terminate_reason'] = terminateReason;
+  }
+
+  subagentExecutionCounter.add(1, attributes);
 }

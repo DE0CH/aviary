@@ -24,6 +24,7 @@ export const EVENT_CONTENT_RETRY_FAILURE =
 export const EVENT_CONVERSATION_FINISHED = 'qwen-code.conversation_finished';
 export const EVENT_MALFORMED_JSON_RESPONSE =
   'qwen-code.malformed_json_response';
+export const EVENT_SUBAGENT_EXECUTION = 'qwen-code.subagent_execution';
 
 export const METRIC_TOOL_CALL_COUNT = 'qwen-code.tool.call.count';
 export const METRIC_TOOL_CALL_LATENCY = 'qwen-code.tool.call.latency';
@@ -36,3 +37,5 @@ export const METRIC_INVALID_CHUNK_COUNT = 'qwen-code.chat.invalid_chunk.count';
 export const METRIC_CONTENT_RETRY_COUNT = 'qwen-code.chat.content_retry.count';
 export const METRIC_CONTENT_RETRY_FAILURE_COUNT =
   'qwen-code.chat.content_retry_failure.count';
+export const METRIC_SUBAGENT_EXECUTION_COUNT =
+  'qwen-code.subagent.execution.count';

@@ -42,7 +42,10 @@ vi.mock('../ui/commands/extensionsCommand.js', () => ({
 vi.mock('../ui/commands/helpCommand.js', () => ({ helpCommand: {} }));
 vi.mock('../ui/commands/memoryCommand.js', () => ({ memoryCommand: {} }));
 vi.mock('../ui/commands/privacyCommand.js', () => ({ privacyCommand: {} }));
-vi.mock('../ui/commands/quitCommand.js', () => ({ quitCommand: {} }));
+vi.mock('../ui/commands/quitCommand.js', () => ({
+  quitCommand: {},
+  quitConfirmCommand: {},
+}));
 vi.mock('../ui/commands/statsCommand.js', () => ({ statsCommand: {} }));
 vi.mock('../ui/commands/themeCommand.js', () => ({ themeCommand: {} }));
 vi.mock('../ui/commands/toolsCommand.js', () => ({ toolsCommand: {} }));

@@ -22,6 +22,7 @@ import {
   StandardFileSystemService,
 } from '../services/fileSystemService.js';
 import { GitService } from '../services/gitService.js';
+import { SubagentManager } from '../subagents/subagent-manager.js';
 import type { TelemetryTarget } from '../telemetry/index.js';
 import {
   DEFAULT_OTLP_ENDPOINT,
@@ -40,6 +41,7 @@ import { ReadFileTool } from '../tools/read-file.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
 import { RipGrepTool } from '../tools/ripGrep.js';
 import { ShellTool } from '../tools/shell.js';
+import { TaskTool } from '../tools/task.js';
 import { TodoWriteTool } from '../tools/todoWrite.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
 import type { AnyToolInvocation } from '../tools/tools.js';
@@ -241,6 +243,7 @@ export interface ConfigParameters {
 export class Config {
   private toolRegistry!: ToolRegistry;
   private promptRegistry!: PromptRegistry;
+  private subagentManager!: SubagentManager;
   private sessionId: string;
   private fileSystemService: FileSystemService;
   private contentGeneratorConfig!: ContentGeneratorConfig;
@@ -444,6 +447,7 @@ export class Config {
       await this.getGitService();
     }
     this.promptRegistry = new PromptRegistry();
+    this.subagentManager = new SubagentManager(this);
     this.toolRegistry = await this.createToolRegistry();
     logCliConfiguration(this, new StartSessionEvent(this, this.toolRegistry));
   }
@@ -925,6 +929,10 @@ export class Config {
     return this.fileExclusions;
   }
 
+  getSubagentManager(): SubagentManager {
+    return this.subagentManager;
+  }
+
   async createToolRegistry(): Promise<ToolRegistry> {
     const registry = new ToolRegistry(this);
 
@@ -960,6 +968,7 @@ export class Config {
       }
     };
 
+    registerCoreTool(TaskTool, this);
     registerCoreTool(LSTool, this);
     registerCoreTool(ReadFileTool, this);
 

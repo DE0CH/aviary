@@ -124,7 +124,7 @@ export function AuthDialog({
         if (settings.merged.security?.auth?.selectedType === undefined) {
           // Prevent exiting if no auth method is set
           setErrorMessage(
-            'You must select an auth method to proceed. Press Ctrl+C twice to exit.',
+            'You must select an auth method to proceed. Press Ctrl+C again to exit.',
           );
           return;
         }

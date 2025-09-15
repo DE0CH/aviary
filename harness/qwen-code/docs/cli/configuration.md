@@ -27,6 +27,7 @@ Qwen Code uses JSON settings files for persistent configuration. There are four 
 - **Project settings file:**
   - **Location:** `.qwen/settings.json` within your project's root directory.
   - **Scope:** Applies only when running Qwen Code from that specific project. Project settings override user settings.
+
 - **System settings file:**
   - **Location:** `/etc/qwen-code/settings.json` (Linux), `C:\ProgramData\qwen-code\settings.json` (Windows) or `/Library/Application Support/QwenCode/settings.json` (macOS). The path can be overridden using the `QWEN_CODE_SYSTEM_SETTINGS_PATH` environment variable.
   - **Scope:** Applies to all Qwen Code sessions on the system, for all users. System settings override user and project settings. May be useful for system administrators at enterprises to have controls over users' Qwen Code setups.
@@ -404,37 +405,16 @@ The CLI automatically loads environment variables from an `.env` file. The loadi
 
 **Environment Variable Exclusion:** Some environment variables (like `DEBUG` and `DEBUG_MODE`) are automatically excluded from project `.env` files by default to prevent interference with the CLI behavior. Variables from `.qwen/.env` files are never excluded. You can customize this behavior using the `excludedProjectEnvVars` setting in your `settings.json` file.
 
-**To avoid confusion, we will reorganize all available environment variables in an upcoming release.**
-
-- **`GEMINI_API_KEY`**:
-  - Your API key for the Gemini API.
+- **`OPENAI_API_KEY`**:
   - One of several available [authentication methods](./authentication.md).
   - Set this in your shell profile (e.g., `~/.bashrc`, `~/.zshrc`) or an `.env` file.
-- **`GEMINI_MODEL`**:
-  - Specifies the default Gemini model to use.
+- **`OPENAI_BASE_URL`**:
+  - One of several available [authentication methods](./authentication.md).
+  - Set this in your shell profile (e.g., `~/.bashrc`, `~/.zshrc`) or an `.env` file.
+- **`OPENAI_MODEL`**:
+  - Specifies the default OPENAI model to use.
   - Overrides the hardcoded default
-  - Example: `export GEMINI_MODEL="gemini-2.5-flash"`
-- **`GOOGLE_API_KEY`**:
-  - Your Google Cloud API key.
-  - Required for using Vertex AI in express mode.
-  - Ensure you have the necessary permissions.
-  - Example: `export GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"`.
-- **`GOOGLE_CLOUD_PROJECT`**:
-  - Your Google Cloud Project ID.
-  - Required for using Code Assist or Vertex AI.
-  - If using Vertex AI, ensure you have the necessary permissions in this project.
-  - **Cloud Shell Note:** When running in a Cloud Shell environment, this variable defaults to a special project allocated for Cloud Shell users. If you have `GOOGLE_CLOUD_PROJECT` set in your global environment in Cloud Shell, it will be overridden by this default. To use a different project in Cloud Shell, you must define `GOOGLE_CLOUD_PROJECT` in a `.env` file.
-  - Example: `export GOOGLE_CLOUD_PROJECT="YOUR_PROJECT_ID"`.
-- **`GOOGLE_APPLICATION_CREDENTIALS`** (string):
-  - **Description:** The path to your Google Application Credentials JSON file.
-  - **Example:** `export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/credentials.json"`
-- **`OTLP_GOOGLE_CLOUD_PROJECT`**:
-  - Your Google Cloud Project ID for Telemetry in Google Cloud
-  - Example: `export OTLP_GOOGLE_CLOUD_PROJECT="YOUR_PROJECT_ID"`.
-- **`GOOGLE_CLOUD_LOCATION`**:
-  - Your Google Cloud Project Location (e.g., us-central1).
-  - Required for using Vertex AI in non express mode.
-  - Example: `export GOOGLE_CLOUD_LOCATION="YOUR_PROJECT_LOCATION"`.
+  - Example: `export OPENAI_MODEL="qwen3-coder-plus"`
 - **`GEMINI_SANDBOX`**:
   - Alternative to the `sandbox` setting in `settings.json`.
   - Accepts `true`, `false`, `docker`, `podman`, or a custom command string.
@@ -464,7 +444,7 @@ The CLI automatically loads environment variables from an `.env` file. The loadi
 Arguments passed directly when running the CLI can override other configurations for that specific session.
 
 - **`--model <model_name>`** (**`-m <model_name>`**):
-  - Specifies the model to use for this session.
+  - Specifies the Qwen model to use for this session.
   - Example: `npm start -- --model qwen3-coder-plus`
 - **`--prompt <your_prompt>`** (**`-p <your_prompt>`**):
   - Used to pass a prompt directly to the command. This invokes Qwen Code in a non-interactive mode.
@@ -537,7 +517,7 @@ Arguments passed directly when running the CLI can override other configurations
 
 While not strictly configuration for the CLI's _behavior_, context files (defaulting to `QWEN.md` but configurable via the `contextFileName` setting) are crucial for configuring the _instructional context_ (also referred to as "memory"). This powerful feature allows you to give project-specific instructions, coding style guides, or any relevant background information to the AI, making its responses more tailored and accurate to your needs. The CLI includes UI elements, such as an indicator in the footer showing the number of loaded context files, to keep you informed about the active context.
 
-- **Purpose:** These Markdown files contain instructions, guidelines, or context that you want the model to be aware of during your interactions. The system is designed to manage this instructional context hierarchically.
+- **Purpose:** These Markdown files contain instructions, guidelines, or context that you want the Qwen model to be aware of during your interactions. The system is designed to manage this instructional context hierarchically.
 
 ### Example Context File Content (e.g., `QWEN.md`)
 
@@ -649,3 +629,11 @@ You can opt out of usage statistics collection at any time by setting the `usage
 ```
 
 Note: When usage statistics are enabled, events are sent to an Alibaba Cloud RUM collection endpoint.
+
+- **`enableWelcomeBack`** (boolean):
+  - **Description:** Show welcome back dialog when returning to a project with conversation history.
+  - **Default:** `true`
+  - **Category:** UI
+  - **Requires Restart:** No
+  - **Example:** `"enableWelcomeBack": false`
+  - **Details:** When enabled, Qwen Code will automatically detect if you're returning to a project with a previously generated project summary (`.qwen/PROJECT_SUMMARY.md`) and show a dialog allowing you to continue your previous conversation or start fresh. This feature integrates with the `/chat summary` command and quit confirmation dialog. See the [Welcome Back documentation](./welcome-back.md) for more details.

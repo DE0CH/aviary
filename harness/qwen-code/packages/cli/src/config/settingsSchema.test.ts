@@ -24,6 +24,7 @@ describe('SettingsSchema', () => {
         'mcp',
         'security',
         'advanced',
+        'enableWelcomeBack',
       ];
 
       expectedSettings.forEach((setting) => {

@@ -193,7 +193,7 @@ Logs are timestamped records of specific events. The following events are logged
     - `error_type` (if applicable)
     - `metadata` (if applicable, dictionary of string -> any)
 
-- `qwen-code.api_request`: This event occurs when making a request to Gemini API.
+- `qwen-code.api_request`: This event occurs when making a request to Qwen API.
   - **Attributes**:
     - `model`
     - `request_text` (if applicable)
@@ -207,7 +207,7 @@ Logs are timestamped records of specific events. The following events are logged
     - `duration_ms`
     - `auth_type`
 
-- `qwen-code.api_response`: This event occurs upon receiving a response from Gemini API.
+- `qwen-code.api_response`: This event occurs upon receiving a response from Qwen API.
   - **Attributes**:
     - `model`
     - `status_code`
@@ -275,7 +275,7 @@ Metrics are numerical measurements of behavior over time. The following metrics 
     - `user_removed_lines` (Int, if applicable): Number of lines removed/changed by user in AI proposed changes.
     - `programming_language` (string, if applicable): The programming language of the file.
 
-- `gemini_cli.chat_compression` (Counter, Int): Counts chat compression operations
+- `qwen-code.chat_compression` (Counter, Int): Counts chat compression operations
   - **Attributes**:
     - `tokens_before`: (Int): Number of tokens in context prior to compression
     - `tokens_after`: (Int): Number of tokens in context after compression

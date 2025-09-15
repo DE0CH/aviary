@@ -15,8 +15,8 @@ import type {
   Tool,
 } from '@google/genai';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
-import type { UserTierId } from '../code_assist/types.js';
-import type { Config } from '../config/config.js';
+import { UserTierId } from '../code_assist/types.js';
+import { Config } from '../config/config.js';
 import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
 import type { File, IdeContext } from '../ide/ideContext.js';
 import { ideContext } from '../ide/ideContext.js';
@@ -45,7 +45,11 @@ import type {
 } from './contentGenerator.js';
 import { AuthType, createContentGenerator } from './contentGenerator.js';
 import { GeminiChat } from './geminiChat.js';
-import { getCompressionPrompt, getCoreSystemPrompt } from './prompts.js';
+import {
+  getCompressionPrompt,
+  getCoreSystemPrompt,
+  getCustomSystemPrompt,
+} from './prompts.js';
 import { tokenLimit } from './tokenLimits.js';
 import type { ChatCompressionInfo, ServerGeminiStreamEvent } from './turn.js';
 import { CompressionStatus, GeminiEventType, Turn } from './turn.js';
@@ -621,11 +625,15 @@ export class GeminiClient {
       model || this.config.getModel() || DEFAULT_GEMINI_FLASH_MODEL;
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
+      const finalSystemInstruction = config.systemInstruction
+        ? getCustomSystemPrompt(config.systemInstruction, userMemory)
+        : getCoreSystemPrompt(userMemory);
+
       const requestConfig = {
         abortSignal,
         ...this.generateContentConfig,
         ...config,
+        systemInstruction: finalSystemInstruction,
       };
 
       // Convert schema to function declaration
@@ -647,7 +655,6 @@ export class GeminiClient {
             model: modelToUse,
             config: {
               ...requestConfig,
-              systemInstruction,
               tools,
             },
             contents,
@@ -709,12 +716,14 @@ export class GeminiClient {
 
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
+      const finalSystemInstruction = generationConfig.systemInstruction
+        ? getCustomSystemPrompt(generationConfig.systemInstruction, userMemory)
+        : getCoreSystemPrompt(userMemory);
 
       const requestConfig: GenerateContentConfig = {
         abortSignal,
         ...configToUse,
-        systemInstruction,
+        systemInstruction: finalSystemInstruction,
       };
 
       const apiCall = () =>
