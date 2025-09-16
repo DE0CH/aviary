@@ -34,6 +34,8 @@ import { FOCUS_IN, FOCUS_OUT } from '../hooks/useFocus.js';
 const ESC = '\u001B';
 export const PASTE_MODE_PREFIX = `${ESC}[200~`;
 export const PASTE_MODE_SUFFIX = `${ESC}[201~`;
+const RAW_PASTE_DEBOUNCE_MS = 8; // Debounce window to coalesce fragmented paste chunks
+const RAW_PASTE_BUFFER_LIMIT = 32;
 
 export interface Key {
   name: string;
@@ -117,6 +119,8 @@ export function KeypressProvider({
     let kittySequenceBuffer = '';
     let backslashTimeout: NodeJS.Timeout | null = null;
     let waitingForEnterAfterBackslash = false;
+    let rawDataBuffer = Buffer.alloc(0);
+    let rawFlushTimeout: NodeJS.Timeout | null = null;
 
     const parseKittySequence = (sequence: string): Key | null => {
       const kittyPattern = new RegExp(`^${ESC}\\[(\\d+)(;(\\d+))?([u~])$`);
@@ -339,96 +343,110 @@ export function KeypressProvider({
       broadcast({ ...key, paste: isPaste });
     };
 
-    const handleRawKeypress = (_data: Buffer) => {
-      if (_data.length < 2) {
-        keypressStream.write(_data);
+    const clearRawFlushTimeout = () => {
+      if (rawFlushTimeout) {
+        clearTimeout(rawFlushTimeout);
+        rawFlushTimeout = null;
+      }
+    };
+
+    const createPasteKeyEvent = (
+      name: 'paste-start' | 'paste-end' | '' = '',
+      sequence: string = '',
+    ): Key => ({
+      name,
+      ctrl: false,
+      meta: false,
+      shift: false,
+      paste: false,
+      sequence,
+    });
+
+    const flushRawBuffer = () => {
+      if (!rawDataBuffer.length) {
         return;
       }
 
-      const data = Buffer.isBuffer(_data) ? _data : Buffer.from(_data, 'utf8');
       const pasteModePrefixBuffer = Buffer.from(PASTE_MODE_PREFIX);
       const pasteModeSuffixBuffer = Buffer.from(PASTE_MODE_SUFFIX);
+      const data = rawDataBuffer;
+      let cursor = 0;
 
-      let pos = 0;
-      while (pos < data.length) {
-        const prefixPos = data.indexOf(pasteModePrefixBuffer, pos);
-        const suffixPos = data.indexOf(pasteModeSuffixBuffer, pos);
-        const isPrefixNext =
-          prefixPos !== -1 && (suffixPos === -1 || prefixPos < suffixPos);
-        const isSuffixNext =
-          suffixPos !== -1 && (prefixPos === -1 || suffixPos < prefixPos);
+      while (cursor < data.length) {
+        const prefixPos = data.indexOf(pasteModePrefixBuffer, cursor);
+        const suffixPos = data.indexOf(pasteModeSuffixBuffer, cursor);
+        const hasPrefix =
+          prefixPos !== -1 &&
+          prefixPos + pasteModePrefixBuffer.length <= data.length;
+        const hasSuffix =
+          suffixPos !== -1 &&
+          suffixPos + pasteModeSuffixBuffer.length <= data.length;
 
-        let nextMarkerPos = -1;
+        let markerPos = -1;
         let markerLength = 0;
+        let markerType: 'prefix' | 'suffix' | null = null;
 
-        if (isPrefixNext) {
-          nextMarkerPos = prefixPos;
-        } else if (isSuffixNext) {
-          nextMarkerPos = suffixPos;
-        }
-        markerLength = pasteModeSuffixBuffer.length;
-
-        if (nextMarkerPos === -1) {
-          // Heuristic fallback for terminals that don't send bracketed paste
-          // (commonly seen on Windows when using right-click paste). If the
-          // remaining chunk contains CR/LF or is substantially long, treat it
-          // as a single paste event so embedded newlines don't trigger submit.
-          const remaining = data.slice(pos);
-          const containsNewline =
-            remaining.includes(0x0a) || remaining.includes(0x0d);
-          const isLongurst = remaining.length >= 64; // conservative threshold
-          if (containsNewline || isLongurst) {
-            const text = remaining.toString('utf8');
-            const createPasteKeyEvent = (
-              name: 'paste-start' | 'paste-end',
-            ): Key => ({
-              name,
-              ctrl: false,
-              meta: false,
-              shift: false,
-              paste: false,
-              sequence: '',
-            });
-            handleKeypress(undefined, createPasteKeyEvent('paste-start'));
-            handleKeypress(undefined, {
-              name: '',
-              ctrl: false,
-              meta: false,
-              shift: false,
-              paste: false,
-              sequence: text,
-            });
-            handleKeypress(undefined, createPasteKeyEvent('paste-end'));
-            return;
-          }
-
-          // Fallback: no paste markers and not a likely paste burst. Pass
-          // through to readline to decode into key events.
-          keypressStream.write(remaining);
-          return;
+        if (hasPrefix && (!hasSuffix || prefixPos < suffixPos)) {
+          markerPos = prefixPos;
+          markerLength = pasteModePrefixBuffer.length;
+          markerType = 'prefix';
+        } else if (hasSuffix) {
+          markerPos = suffixPos;
+          markerLength = pasteModeSuffixBuffer.length;
+          markerType = 'suffix';
         }
 
-        const nextData = data.slice(pos, nextMarkerPos);
+        if (markerPos === -1) {
+          break;
+        }
+
+        const nextData = data.slice(cursor, markerPos);
         if (nextData.length > 0) {
           keypressStream.write(nextData);
         }
-        const createPasteKeyEvent = (
-          name: 'paste-start' | 'paste-end',
-        ): Key => ({
-          name,
-          ctrl: false,
-          meta: false,
-          shift: false,
-          paste: false,
-          sequence: '',
-        });
-        if (isPrefixNext) {
+        if (markerType === 'prefix') {
           handleKeypress(undefined, createPasteKeyEvent('paste-start'));
-        } else if (isSuffixNext) {
+        } else if (markerType === 'suffix') {
           handleKeypress(undefined, createPasteKeyEvent('paste-end'));
         }
-        pos = nextMarkerPos + markerLength;
+        cursor = markerPos + markerLength;
       }
+
+      rawDataBuffer = data.slice(cursor);
+
+      if (rawDataBuffer.length === 0) {
+        return;
+      }
+
+      if (rawDataBuffer.length <= 2 || isPaste) {
+        keypressStream.write(rawDataBuffer);
+      } else {
+        // Flush raw data buffer as a paste event
+        handleKeypress(undefined, createPasteKeyEvent('paste-start'));
+        keypressStream.write(rawDataBuffer);
+        handleKeypress(undefined, createPasteKeyEvent('paste-end'));
+      }
+
+      rawDataBuffer = Buffer.alloc(0);
+      clearRawFlushTimeout();
+    };
+
+    const handleRawKeypress = (_data: Buffer) => {
+      const data = Buffer.isBuffer(_data) ? _data : Buffer.from(_data, 'utf8');
+
+      // Buffer the incoming data
+      rawDataBuffer = Buffer.concat([rawDataBuffer, data]);
+
+      // If buffered data exceeds limit, flush immediately
+      if (rawDataBuffer.length > RAW_PASTE_BUFFER_LIMIT) {
+        clearRawFlushTimeout();
+        flushRawBuffer();
+        return;
+      }
+
+      clearRawFlushTimeout();
+
+      rawFlushTimeout = setTimeout(flushRawBuffer, RAW_PASTE_DEBOUNCE_MS);
     };
 
     let rl: readline.Interface;
@@ -462,6 +480,11 @@ export function KeypressProvider({
       if (backslashTimeout) {
         clearTimeout(backslashTimeout);
         backslashTimeout = null;
+      }
+
+      if (rawFlushTimeout) {
+        clearTimeout(rawFlushTimeout);
+        rawFlushTimeout = null;
       }
 
       // Flush any pending paste data to avoid data loss on exit.
