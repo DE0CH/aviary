@@ -66,11 +66,16 @@ describe('KeypressContext - Kitty Protocol', () => {
   const wrapper = ({
     children,
     kittyProtocolEnabled = true,
+    pasteWorkaround = false,
   }: {
     children: React.ReactNode;
     kittyProtocolEnabled?: boolean;
+    pasteWorkaround?: boolean;
   }) => (
-    <KeypressProvider kittyProtocolEnabled={kittyProtocolEnabled}>
+    <KeypressProvider
+      kittyProtocolEnabled={kittyProtocolEnabled}
+      pasteWorkaround={pasteWorkaround}
+    >
       {children}
     </KeypressProvider>
   );
@@ -389,17 +394,15 @@ describe('KeypressContext - Kitty Protocol', () => {
     });
 
     describe('paste mode markers', () => {
-      beforeEach(() => {
-        // Force passthrough mode for raw keypress testing
-        vi.stubEnv('PASTE_WORKAROUND', '1');
-      });
+      // These tests use pasteWorkaround=true to force passthrough mode for raw keypress testing
 
       it('should handle complete paste sequence with markers', async () => {
         const keyHandler = vi.fn();
         const pastedText = 'pasted content';
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -429,7 +432,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -459,7 +463,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -515,7 +520,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -554,7 +560,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -658,7 +665,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -689,7 +697,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const multilineContent = 'line1\nline2\nline3';
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -721,7 +730,8 @@ describe('KeypressContext - Kitty Protocol', () => {
         const keyHandler = vi.fn();
 
         const { result } = renderHook(() => useKeypressContext(), {
-          wrapper,
+          wrapper: ({ children }) =>
+            wrapper({ children, pasteWorkaround: true }),
         });
 
         act(() => {
@@ -754,7 +764,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -789,17 +799,14 @@ describe('KeypressContext - Kitty Protocol', () => {
   });
 
   describe('Raw keypress pipeline', () => {
-    beforeEach(() => {
-      // Force passthrough mode for raw keypress testing
-      vi.stubEnv('PASTE_WORKAROUND', '1');
-    });
+    // These tests use pasteWorkaround=true to force passthrough mode for raw keypress testing
 
     it('should buffer input data and wait for timeout', () => {
       vi.useFakeTimers();
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -829,7 +836,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -892,7 +899,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -934,7 +941,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -987,7 +994,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
@@ -1036,7 +1043,7 @@ describe('KeypressContext - Kitty Protocol', () => {
       const keyHandler = vi.fn();
 
       const { result } = renderHook(() => useKeypressContext(), {
-        wrapper,
+        wrapper: ({ children }) => wrapper({ children, pasteWorkaround: true }),
       });
 
       act(() => {
