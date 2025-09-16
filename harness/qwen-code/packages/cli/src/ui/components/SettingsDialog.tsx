@@ -544,16 +544,16 @@ export function SettingsDialog({
                     ? defaultValue
                     : false
                   : typeof defaultValue === 'number' ||
-                      typeof defaultValue === 'string'
+                    typeof defaultValue === 'string'
                     ? defaultValue
                     : undefined;
               const immediateSettingsObject =
                 toSaveValue !== undefined
                   ? setPendingSettingValueAny(
-                      currentSetting.value,
-                      toSaveValue,
-                      {} as Settings,
-                    )
+                    currentSetting.value,
+                    toSaveValue,
+                    {} as Settings,
+                  )
                   : ({} as Settings);
 
               saveModifiedSettings(
@@ -780,7 +780,7 @@ export function SettingsDialog({
         </Text>
         {showRestartPrompt && (
           <Text color={Colors.AccentYellow}>
-            To see changes, Gemini CLI must be restarted. Press r to exit and
+            To see changes, Qwen Code must be restarted. Press r to exit and
             apply changes now.
           </Text>
         )}

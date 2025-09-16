@@ -47,7 +47,7 @@ export function WorkspaceMigrationDialog(props: {
           <>
             <Text>
               The following extensions failed to migrate. Please try installing
-              them manually. To see other changes, Gemini CLI must be restarted.
+              them manually. To see other changes, Qwen Code must be restarted.
               Press {"'q'"} to quit.
             </Text>
             <Box flexDirection="column" marginTop={1} marginLeft={2}>
@@ -58,7 +58,7 @@ export function WorkspaceMigrationDialog(props: {
           </>
         ) : (
           <Text>
-            Migration complete. To see changes, Gemini CLI must be restarted.
+            Migration complete. To see changes, Qwen Code must be restarted.
             Press {"'q'"} to quit.
           </Text>
         )}

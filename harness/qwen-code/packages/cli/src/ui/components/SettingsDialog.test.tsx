@@ -429,7 +429,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => {}}
+            onSelect={() => { }}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,
@@ -450,7 +450,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => {}}
+            onSelect={() => { }}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,
@@ -678,7 +678,7 @@ describe('SettingsDialog', () => {
 
       // Should not show restart prompt initially
       expect(lastFrame()).not.toContain(
-        'To see changes, Gemini CLI must be restarted',
+        'To see changes, Qwen Code must be restarted',
       );
 
       unmount();
@@ -973,7 +973,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => {}}
+            onSelect={() => { }}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,
