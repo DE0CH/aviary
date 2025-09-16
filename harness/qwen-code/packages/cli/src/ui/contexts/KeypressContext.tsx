@@ -34,8 +34,6 @@ import { FOCUS_IN, FOCUS_OUT } from '../hooks/useFocus.js';
 const ESC = '\u001B';
 export const PASTE_MODE_PREFIX = `${ESC}[200~`;
 export const PASTE_MODE_SUFFIX = `${ESC}[201~`;
-const RAW_PASTE_DEBOUNCE_MS = 8; // Debounce window to coalesce fragmented paste chunks
-const RAW_PASTE_BUFFER_LIMIT = 32;
 
 export interface Key {
   name: string;
@@ -437,16 +435,18 @@ export function KeypressProvider({
       // Buffer the incoming data
       rawDataBuffer = Buffer.concat([rawDataBuffer, data]);
 
-      // If buffered data exceeds limit, flush immediately
-      if (rawDataBuffer.length > RAW_PASTE_BUFFER_LIMIT) {
-        clearRawFlushTimeout();
-        flushRawBuffer();
-        return;
-      }
-
       clearRawFlushTimeout();
 
-      rawFlushTimeout = setTimeout(flushRawBuffer, RAW_PASTE_DEBOUNCE_MS);
+      // On some Windows terminals, during a paste, the terminal might send a
+      // single return character chunk. In this case, we need to wait a time period
+      // to know if it is part of a paste or just a return character.
+      const isReturnChar =
+        rawDataBuffer.length <= 2 && rawDataBuffer.includes(0x0d);
+      if (isReturnChar) {
+        rawFlushTimeout = setTimeout(flushRawBuffer, 100);
+      } else {
+        flushRawBuffer();
+      }
     };
 
     let rl: readline.Interface;

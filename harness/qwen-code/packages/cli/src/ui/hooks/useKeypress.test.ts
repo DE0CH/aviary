@@ -54,8 +54,8 @@ vi.mock('readline', () => {
 class MockStdin extends EventEmitter {
   isTTY = true;
   setRawMode = vi.fn();
-  on = this.addListener;
-  removeListener = this.removeListener;
+  override on = this.addListener;
+  override removeListener = super.removeListener;
   write = vi.fn();
   resume = vi.fn();
 
@@ -110,7 +110,7 @@ describe('useKeypress', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     stdin = new MockStdin();
-    (useStdin as vi.Mock).mockReturnValue({
+    (useStdin as ReturnType<typeof vi.fn>).mockReturnValue({
       stdin,
       setRawMode: mockSetRawMode,
     });
@@ -278,23 +278,16 @@ describe('useKeypress', () => {
       // Unmounting should trigger the flush
       unmount();
 
-      if (isLegacy) {
-        // In legacy/passthrough mode, partial paste content may not be flushed on unmount
-        // due to the asynchronous nature of the raw data processing pipeline.
-        // The current implementation doesn't reliably flush partial pastes in legacy mode
-        expect(onKeypress).not.toHaveBeenCalled();
-      } else {
-        // In modern Node mode, partial paste content should be flushed on unmount
-        expect(onKeypress).toHaveBeenCalledTimes(1);
-        expect(onKeypress).toHaveBeenCalledWith({
-          name: '',
-          ctrl: false,
-          meta: false,
-          shift: false,
-          paste: true,
-          sequence: pasteText,
-        });
-      }
+      // Both legacy and modern modes now flush partial paste content on unmount
+      expect(onKeypress).toHaveBeenCalledTimes(1);
+      expect(onKeypress).toHaveBeenCalledWith({
+        name: '',
+        ctrl: false,
+        meta: false,
+        shift: false,
+        paste: true,
+        sequence: pasteText,
+      });
     });
   });
 });
