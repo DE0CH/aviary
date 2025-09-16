@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import { AgentSelectionStep } from './AgentSelectionStep.js';
 import { ActionSelectionStep } from './ActionSelectionStep.js';
 import { AgentViewerStep } from './AgentViewerStep.js';
@@ -18,6 +18,7 @@ import { Colors } from '../../../colors.js';
 import { theme } from '../../../semantic-colors.js';
 import { getColorForDisplay, shouldShowColor } from '../utils.js';
 import { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
+import { useKeypress } from '../../../hooks/useKeypress.js';
 
 interface AgentsManagerDialogProps {
   onClose: () => void;
@@ -122,8 +123,12 @@ export function AgentsManagerDialog({
   );
 
   // Centralized ESC key handling for the entire dialog
-  useInput((input, key) => {
-    if (key.escape) {
+  useKeypress(
+    (key) => {
+      if (key.name !== 'escape') {
+        return;
+      }
+
       const currentStep = getCurrentStep();
       if (currentStep === MANAGEMENT_STEPS.AGENT_SELECTION) {
         // On first step, ESC cancels the entire dialog
@@ -132,8 +137,9 @@ export function AgentsManagerDialog({
         // On other steps, ESC goes back to previous step in navigation stack
         handleNavigateBack();
       }
-    }
-  });
+    },
+    { isActive: true },
+  );
 
   // Props for child components - now using direct state and callbacks
   const commonProps = useMemo(
