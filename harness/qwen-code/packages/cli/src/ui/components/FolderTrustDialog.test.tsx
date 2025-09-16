@@ -30,7 +30,7 @@ describe('FolderTrustDialog', () => {
 
     expect(lastFrame()).toContain('Do you trust this folder?');
     expect(lastFrame()).toContain(
-      'Trusting a folder allows Gemini to execute commands it suggests.',
+      'Trusting a folder allows Qwen Code to execute commands it suggests.',
     );
   });
 

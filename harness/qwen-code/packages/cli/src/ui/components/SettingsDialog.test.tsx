@@ -429,7 +429,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => { }}
+            onSelect={() => {}}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,
@@ -450,7 +450,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => { }}
+            onSelect={() => {}}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,
@@ -973,7 +973,7 @@ describe('SettingsDialog', () => {
         <KeypressProvider kittyProtocolEnabled={false}>
           <SettingsDialog
             settings={settings}
-            onSelect={() => { }}
+            onSelect={() => {}}
             onRestartRequest={onRestartRequest}
           />
         </KeypressProvider>,

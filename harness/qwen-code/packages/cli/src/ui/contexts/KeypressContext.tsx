@@ -495,8 +495,6 @@ export function KeypressProvider({
     stdin,
     setRawMode,
     kittyProtocolEnabled,
-    config,
-    subscribers,
     debugKeystrokeLogging,
     pasteWorkaround,
     config,
