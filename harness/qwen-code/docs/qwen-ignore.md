@@ -1,8 +1,8 @@
 # Ignoring Files
 
-This document provides an overview of the Gemini Ignore (`.qwenignore`) feature of Qwen Code.
+This document provides an overview of the Qwen Ignore (`.qwenignore`) feature of Qwen Code.
 
-Qwen Code includes the ability to automatically ignore files, similar to `.gitignore` (used by Git) and `.aiexclude` (used by Gemini Code Assist). Adding paths to your `.qwenignore` file will exclude them from tools that support this feature, although they will still be visible to other services (such as Git).
+Qwen Code includes the ability to automatically ignore files, similar to `.gitignore` (used by Git). Adding paths to your `.qwenignore` file will exclude them from tools that support this feature, although they will still be visible to other services (such as Git).
 
 ## How it works
 

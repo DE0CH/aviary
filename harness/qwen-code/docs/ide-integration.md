@@ -45,7 +45,7 @@ You can also install the extension directly from a marketplace.
 - **For VS Code Forks:** To support forks of VS Code, the extension is also published on the [Open VSX Registry](https://open-vsx.org/extension/qwenlm/qwen-code-vscode-ide-companion). Follow your editor's instructions for installing extensions from this registry.
 
 > NOTE:
-> The "Gemini CLI Companion" extension may appear towards the bottom of search results. If you don't see it immediately, try scrolling down or sorting by "Newly Published".
+> The "Qwen Code Companion" extension may appear towards the bottom of search results. If you don't see it immediately, try scrolling down or sorting by "Newly Published".
 >
 > After manually installing the extension, you must run `/ide enable` in the CLI to activate the integration.
 
@@ -80,7 +80,7 @@ If connected, this command will show the IDE it's connected to and a list of rec
 
 ### Working with Diffs
 
-When you ask Gemini to modify a file, it can open a diff view directly in your editor.
+When you ask Qwen model to modify a file, it can open a diff view directly in your editor.
 
 **To accept a diff**, you can perform any of the following actions:
 
@@ -139,6 +139,6 @@ If you encounter issues with IDE integration, here are some common error message
   - **Cause:** You are running Qwen Code in a terminal or environment that is not a supported IDE.
   - **Solution:** Run Qwen Code from the integrated terminal of a supported IDE, like VS Code.
 
-- **Message:** `No installer is available for IDE. Please install the Gemini CLI Companion extension manually from the marketplace.`
+- **Message:** `No installer is available for IDE. Please install the Qwen Code Companion extension manually from the marketplace.`
   - **Cause:** You ran `/ide install`, but the CLI does not have an automated installer for your specific IDE.
   - **Solution:** Open your IDE's extension marketplace, search for "Qwen Code Companion", and install it manually.

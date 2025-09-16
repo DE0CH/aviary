@@ -330,14 +330,14 @@ describe('installExtension', () => {
     );
   });
 
-  it('should throw an error and cleanup if gemini-extension.json is missing', async () => {
+  it('should throw an error and cleanup if qwen-extension.json is missing', async () => {
     const sourceExtDir = path.join(tempHomeDir, 'bad-extension');
     fs.mkdirSync(sourceExtDir, { recursive: true });
 
     await expect(
       installExtension({ source: sourceExtDir, type: 'local' }),
     ).rejects.toThrow(
-      `Invalid extension at ${sourceExtDir}. Please make sure it has a valid gemini-extension.json file.`,
+      `Invalid extension at ${sourceExtDir}. Please make sure it has a valid qwen-extension.json file.`,
     );
 
     const targetExtDir = path.join(userExtensionsDir, 'bad-extension');
@@ -345,8 +345,8 @@ describe('installExtension', () => {
   });
 
   it('should install an extension from a git URL', async () => {
-    const gitUrl = 'https://github.com/google/gemini-extensions.git';
-    const extensionName = 'gemini-extensions';
+    const gitUrl = 'https://github.com/google/qwen-extensions.git';
+    const extensionName = 'qwen-extensions';
     const targetExtDir = path.join(userExtensionsDir, extensionName);
     const metadataPath = path.join(targetExtDir, INSTALL_METADATA_FILENAME);
 
@@ -555,8 +555,8 @@ describe('updateExtension', () => {
 
   it('should update a git-installed extension', async () => {
     // 1. "Install" an extension
-    const gitUrl = 'https://github.com/google/gemini-extensions.git';
-    const extensionName = 'gemini-extensions';
+    const gitUrl = 'https://github.com/google/qwen-extensions.git';
+    const extensionName = 'qwen-extensions';
     const targetExtDir = path.join(userExtensionsDir, extensionName);
     const metadataPath = path.join(targetExtDir, INSTALL_METADATA_FILENAME);
 

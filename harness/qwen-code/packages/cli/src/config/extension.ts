@@ -71,9 +71,7 @@ export class ExtensionStorage {
   }
 
   static async createTmpDir(): Promise<string> {
-    return await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), 'gemini-extension'),
-    );
+    return await fs.promises.mkdtemp(path.join(os.tmpdir(), 'qwen-extension'));
   }
 }
 
@@ -355,11 +353,11 @@ export async function installExtension(
     const newExtension = loadExtension(localSourcePath);
     if (!newExtension) {
       throw new Error(
-        `Invalid extension at ${installMetadata.source}. Please make sure it has a valid gemini-extension.json file.`,
+        `Invalid extension at ${installMetadata.source}. Please make sure it has a valid qwen-extension.json file.`,
       );
     }
 
-    // ~/.gemini/extensions/{ExtensionConfig.name}.
+    // ~/.qwen/extensions/{ExtensionConfig.name}.
     newExtensionName = newExtension.config.name;
     const extensionStorage = new ExtensionStorage(newExtensionName);
     const destinationPath = extensionStorage.getExtensionDir();
@@ -455,7 +453,7 @@ export async function updateExtension(
   }
   if (!extension.installMetadata) {
     throw new Error(
-      `Extension cannot be updated because it is missing the .gemini-extension.install.json file. To update manually, uninstall and then reinstall the updated version.`,
+      `Extension cannot be updated because it is missing the .qwen-extension.install.json file. To update manually, uninstall and then reinstall the updated version.`,
     );
   }
   const originalVersion = extension.config.version;

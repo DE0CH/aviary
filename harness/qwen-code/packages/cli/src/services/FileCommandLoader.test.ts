@@ -525,7 +525,7 @@ describe('FileCommandLoader', () => {
       ).getProjectCommandsDir();
       const extensionDir = path.join(
         process.cwd(),
-        '.gemini/extensions/test-ext',
+        '.qwen/extensions/test-ext',
       );
 
       mock({
@@ -536,7 +536,7 @@ describe('FileCommandLoader', () => {
           'project.toml': 'prompt = "Project command"',
         },
         [extensionDir]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'test-ext',
             version: '1.0.0',
           }),
@@ -576,12 +576,12 @@ describe('FileCommandLoader', () => {
       ).getProjectCommandsDir();
       const extensionDir = path.join(
         process.cwd(),
-        '.gemini/extensions/test-ext',
+        '.qwen/extensions/test-ext',
       );
 
       mock({
         [extensionDir]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'test-ext',
             version: '1.0.0',
           }),
@@ -670,16 +670,16 @@ describe('FileCommandLoader', () => {
     it('only loads commands from active extensions', async () => {
       const extensionDir1 = path.join(
         process.cwd(),
-        '.gemini/extensions/active-ext',
+        '.qwen/extensions/active-ext',
       );
       const extensionDir2 = path.join(
         process.cwd(),
-        '.gemini/extensions/inactive-ext',
+        '.qwen/extensions/inactive-ext',
       );
 
       mock({
         [extensionDir1]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'active-ext',
             version: '1.0.0',
           }),
@@ -688,7 +688,7 @@ describe('FileCommandLoader', () => {
           },
         },
         [extensionDir2]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'inactive-ext',
             version: '1.0.0',
           }),
@@ -727,12 +727,12 @@ describe('FileCommandLoader', () => {
     it('handles missing extension commands directory gracefully', async () => {
       const extensionDir = path.join(
         process.cwd(),
-        '.gemini/extensions/no-commands',
+        '.qwen/extensions/no-commands',
       );
 
       mock({
         [extensionDir]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'no-commands',
             version: '1.0.0',
           }),
@@ -757,11 +757,11 @@ describe('FileCommandLoader', () => {
     });
 
     it('handles nested command structure in extensions', async () => {
-      const extensionDir = path.join(process.cwd(), '.gemini/extensions/a');
+      const extensionDir = path.join(process.cwd(), '.qwen/extensions/a');
 
       mock({
         [extensionDir]: {
-          'gemini-extension.json': JSON.stringify({
+          'qwen-extension.json': JSON.stringify({
             name: 'a',
             version: '1.0.0',
           }),

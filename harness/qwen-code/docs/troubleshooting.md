@@ -75,7 +75,7 @@ This guide provides solutions to common issues and debugging tips, including top
 
 ## Exit Codes
 
-The Gemini CLI uses specific exit codes to indicate the reason for termination. This is especially useful for scripting and automation.
+The Qwen Code uses specific exit codes to indicate the reason for termination. This is especially useful for scripting and automation.
 
 | Exit Code | Error Type                 | Description                                                                                         |
 | --------- | -------------------------- | --------------------------------------------------------------------------------------------------- |

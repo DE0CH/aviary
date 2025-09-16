@@ -81,20 +81,20 @@ You can install extensions using the `install` command. This command allows you 
 
 ### Usage
 
-`gemini extensions install <source> | [options]`
+`qwen extensions install <source> | [options]`
 
 ### Options
 
-- `source <url> positional argument`: The URL of a Git repository to install the extension from. The repository must contain a `gemini-extension.json` file in its root.
-- `--path <path>`: The path to a local directory to install as an extension. The directory must contain a `gemini-extension.json` file.
+- `source <url> positional argument`: The URL of a Git repository to install the extension from. The repository must contain a `qwen-extension.json` file in its root.
+- `--path <path>`: The path to a local directory to install as an extension. The directory must contain a `qwen-extension.json` file.
 
 # Variables
 
-Gemini CLI extensions allow variable substitution in `gemini-extension.json`. This can be useful if e.g., you need the current directory to run an MCP server using `"cwd": "${extensionPath}${/}run.ts"`.
+Qwen Code extensions allow variable substitution in `qwen-extension.json`. This can be useful if e.g., you need the current directory to run an MCP server using `"cwd": "${extensionPath}${/}run.ts"`.
 
 **Supported variables:**
 
-| variable                   | description                                                                                                                                                     |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `${extensionPath}`         | The fully-qualified path of the extension in the user's filesystem e.g., '/Users/username/.gemini/extensions/example-extension'. This will not unwrap symlinks. |
-| `${/} or ${pathSeparator}` | The path separator (differs per OS).                                                                                                                            |
+| variable                   | description                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `${extensionPath}`         | The fully-qualified path of the extension in the user's filesystem e.g., '/Users/username/.qwen/extensions/example-extension'. This will not unwrap symlinks. |
+| `${/} or ${pathSeparator}` | The path separator (differs per OS).                                                                                                                          |
