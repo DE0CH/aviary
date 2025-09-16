@@ -238,6 +238,7 @@ export interface ConfigParameters {
   skipNextSpeakerCheck?: boolean;
   extensionManagement?: boolean;
   enablePromptCompletion?: boolean;
+  skipLoopDetection?: boolean;
 }
 
 export class Config {
@@ -328,6 +329,7 @@ export class Config {
   private readonly skipNextSpeakerCheck: boolean;
   private readonly extensionManagement: boolean;
   private readonly enablePromptCompletion: boolean = false;
+  private readonly skipLoopDetection: boolean;
   private initialized: boolean = false;
   readonly storage: Storage;
   private readonly fileExclusions: FileExclusions;
@@ -410,6 +412,9 @@ export class Config {
     this.chatCompression = params.chatCompression;
     this.interactive = params.interactive ?? false;
     this.trustedFolder = params.trustedFolder;
+    this.shouldUseNodePtyShell = params.shouldUseNodePtyShell ?? false;
+    this.skipNextSpeakerCheck = params.skipNextSpeakerCheck ?? false;
+    this.skipLoopDetection = params.skipLoopDetection ?? false;
 
     // Web search
     this.tavilyApiKey = params.tavilyApiKey;
@@ -915,6 +920,10 @@ export class Config {
 
   getEnablePromptCompletion(): boolean {
     return this.enablePromptCompletion;
+  }
+
+  getSkipLoopDetection(): boolean {
+    return this.skipLoopDetection;
   }
 
   async getGitService(): Promise<GitService> {
