@@ -80,7 +80,7 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
   childWidth,
   config,
 }) => {
-  const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
+  const [displayMode, setDisplayMode] = React.useState<DisplayMode>('compact');
 
   const agentColor = useMemo(() => {
     const colorOption = COLOR_OPTIONS.find(
@@ -133,35 +133,72 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
   if (displayMode === 'compact') {
     return (
       <Box flexDirection="column">
-        {data.toolCalls && data.toolCalls.length > 0 && (
-          <Box flexDirection="column">
-            <ToolCallItem
-              toolCall={data.toolCalls[data.toolCalls.length - 1]}
-              compact={true}
-            />
-            {/* Show count of additional tool calls if there are more than 1 */}
-            {data.toolCalls.length > 1 && !data.pendingConfirmation && (
-              <Box flexDirection="row" paddingLeft={4}>
-                <Text color={Colors.Gray}>
-                  +{data.toolCalls.length - 1} more tool calls{' '}
-                  {data.status === 'running' ? '(ctrl+r to expand)' : ''}
-                </Text>
-              </Box>
-            )}
+        {/* Header: Agent name and status */}
+        {!data.pendingConfirmation && (
+          <Box flexDirection="row">
+            <Text bold color={agentColor}>
+              {data.subagentName}
+            </Text>
+            <StatusDot status={data.status} />
+            <StatusIndicator status={data.status} />
           </Box>
         )}
 
-        {/* Inline approval prompt when awaiting confirmation */}
-        {data.pendingConfirmation && (
-          <Box flexDirection="column" marginTop={1} paddingLeft={1}>
-            <ToolConfirmationMessage
-              confirmationDetails={data.pendingConfirmation}
-              isFocused={true}
-              availableTerminalHeight={availableHeight}
-              terminalWidth={childWidth}
-              compactMode={true}
-              config={config}
-            />
+        {/* Running state: Show current tool call and progress */}
+        {data.status === 'running' && (
+          <>
+            {/* Current tool call */}
+            {data.toolCalls && data.toolCalls.length > 0 && (
+              <Box flexDirection="column">
+                <ToolCallItem
+                  toolCall={data.toolCalls[data.toolCalls.length - 1]}
+                  compact={true}
+                />
+                {/* Show count of additional tool calls if there are more than 1 */}
+                {data.toolCalls.length > 1 && !data.pendingConfirmation && (
+                  <Box flexDirection="row" paddingLeft={4}>
+                    <Text color={Colors.Gray}>
+                      +{data.toolCalls.length - 1} more tool calls (ctrl+r to
+                      expand)
+                    </Text>
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {/* Inline approval prompt when awaiting confirmation */}
+            {data.pendingConfirmation && (
+              <Box flexDirection="column" marginTop={1} paddingLeft={1}>
+                <ToolConfirmationMessage
+                  confirmationDetails={data.pendingConfirmation}
+                  isFocused={true}
+                  availableTerminalHeight={availableHeight}
+                  terminalWidth={childWidth}
+                  compactMode={true}
+                  config={config}
+                />
+              </Box>
+            )}
+          </>
+        )}
+
+        {/* Completed state: Show summary line */}
+        {data.status === 'completed' && data.executionSummary && (
+          <Box flexDirection="row" marginTop={1}>
+            <Text color={theme.text.secondary}>
+              Execution Summary: {data.executionSummary.totalToolCalls} tool
+              uses · {data.executionSummary.totalTokens.toLocaleString()} tokens
+              · {fmtDuration(data.executionSummary.totalDurationMs)}
+            </Text>
+          </Box>
+        )}
+
+        {/* Failed/Cancelled state: Show error reason */}
+        {data.status === 'failed' && (
+          <Box flexDirection="row" marginTop={1}>
+            <Text color={theme.status.error}>
+              Failed: {data.terminateReason}
+            </Text>
           </Box>
         )}
       </Box>
