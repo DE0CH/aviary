@@ -17,7 +17,7 @@ import { MANAGEMENT_STEPS } from '../types.js';
 import { Colors } from '../../../colors.js';
 import { theme } from '../../../semantic-colors.js';
 import { getColorForDisplay, shouldShowColor } from '../utils.js';
-import { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
+import type { Config, SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface AgentsManagerDialogProps {
   onClose: () => void;
