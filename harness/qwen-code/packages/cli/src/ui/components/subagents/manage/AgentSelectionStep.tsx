@@ -9,7 +9,7 @@ import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { Colors } from '../../../colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
-import { SubagentConfig } from '@qwen-code/qwen-code-core';
+import { type SubagentConfig } from '@qwen-code/qwen-code-core';
 
 interface NavigationState {
   currentBlock: 'project' | 'user' | 'builtin';

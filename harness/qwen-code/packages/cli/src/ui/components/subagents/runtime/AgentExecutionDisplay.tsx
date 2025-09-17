@@ -7,9 +7,10 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../../../colors.js';
-import {
+import type {
   TaskResultDisplay,
   SubagentStatsSummary,
+  Config,
 } from '@qwen-code/qwen-code-core';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -23,6 +24,7 @@ export interface AgentExecutionDisplayProps {
   data: TaskResultDisplay;
   availableHeight?: number;
   childWidth: number;
+  config: Config;
 }
 
 const getStatusColor = (
@@ -76,8 +78,9 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
   data,
   availableHeight,
   childWidth,
-}: AgentExecutionDisplayProps) => {
-  const [displayMode, setDisplayMode] = React.useState<DisplayMode>('compact');
+  config,
+}) => {
+  const [displayMode, setDisplayMode] = React.useState<DisplayMode>('default');
 
   const agentColor = useMemo(() => {
     const colorOption = COLOR_OPTIONS.find(
@@ -157,6 +160,7 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
               availableTerminalHeight={availableHeight}
               terminalWidth={childWidth}
               compactMode={true}
+              config={config}
             />
           </Box>
         )}
@@ -199,6 +203,7 @@ export const AgentExecutionDisplay: React.FC<AgentExecutionDisplayProps> = ({
         <Box flexDirection="column">
           <ToolConfirmationMessage
             confirmationDetails={data.pendingConfirmation}
+            config={config}
             isFocused={true}
             availableTerminalHeight={availableHeight}
             terminalWidth={childWidth}
