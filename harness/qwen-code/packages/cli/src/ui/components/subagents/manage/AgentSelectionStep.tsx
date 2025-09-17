@@ -227,7 +227,7 @@ export const AgentSelectionStep = ({
     const textColor = isSelected ? theme.text.accent : theme.text.primary;
 
     return (
-      <Box key={agent.name} alignItems="center">
+      <Box key={`${agent.name}-${agent.level}`} alignItems="center">
         <Box minWidth={2} flexShrink={0}>
           <Text color={isSelected ? theme.text.accent : theme.text.primary}>
             {isSelected ? '●' : ' '}

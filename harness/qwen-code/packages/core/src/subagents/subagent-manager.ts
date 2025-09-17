@@ -330,7 +330,10 @@ export class SubagentManager {
    * @returns SubagentConfig
    * @throws SubagentError if parsing fails
    */
-  async parseSubagentFile(filePath: string): Promise<SubagentConfig> {
+  async parseSubagentFile(
+    filePath: string,
+    level: SubagentLevel,
+  ): Promise<SubagentConfig> {
     let content: string;
 
     try {
@@ -342,7 +345,7 @@ export class SubagentManager {
       );
     }
 
-    return this.parseSubagentContent(content, filePath);
+    return this.parseSubagentContent(content, filePath, level);
   }
 
   /**
@@ -353,7 +356,11 @@ export class SubagentManager {
    * @returns SubagentConfig
    * @throws SubagentError if parsing fails
    */
-  parseSubagentContent(content: string, filePath: string): SubagentConfig {
+  parseSubagentContent(
+    content: string,
+    filePath: string,
+    level: SubagentLevel,
+  ): SubagentConfig {
     try {
       // Split frontmatter and content
       const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
@@ -394,47 +401,22 @@ export class SubagentManager {
         | undefined;
       const color = frontmatter['color'] as string | undefined;
 
-      // Determine level from file path using robust, cross-platform check
-      // A project-level agent lives under <projectRoot>/.qwen/agents
-      const projectAgentsDir = path.join(
-        this.config.getProjectRoot(),
-        QWEN_CONFIG_DIR,
-        AGENT_CONFIG_DIR,
-      );
-      const rel = path.relative(
-        path.normalize(projectAgentsDir),
-        path.normalize(filePath),
-      );
-      const isProjectLevel =
-        rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-      const level: SubagentLevel = isProjectLevel ? 'project' : 'user';
-
       const config: SubagentConfig = {
         name,
         description,
         tools,
         systemPrompt: systemPrompt.trim(),
-        level,
         filePath,
         modelConfig: modelConfig as Partial<ModelConfig>,
         runConfig: runConfig as Partial<RunConfig>,
         color,
+        level,
       };
 
       // Validate the parsed configuration
       const validation = this.validator.validateConfig(config);
       if (!validation.isValid) {
         throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
-      }
-
-      // Warn if filename doesn't match subagent name (potential issue)
-      const expectedFilename = `${config.name}.md`;
-      const actualFilename = path.basename(filePath);
-      if (actualFilename !== expectedFilename) {
-        console.warn(
-          `Warning: Subagent file "${actualFilename}" contains name "${config.name}" but filename suggests "${path.basename(actualFilename, '.md')}". ` +
-            `Consider renaming the file to "${expectedFilename}" for consistency.`,
-        );
       }
 
       return config;
@@ -679,14 +661,18 @@ export class SubagentManager {
       return BuiltinAgentRegistry.getBuiltinAgents();
     }
 
-    const baseDir =
-      level === 'project'
-        ? path.join(
-            this.config.getProjectRoot(),
-            QWEN_CONFIG_DIR,
-            AGENT_CONFIG_DIR,
-          )
-        : path.join(os.homedir(), QWEN_CONFIG_DIR, AGENT_CONFIG_DIR);
+    const projectRoot = this.config.getProjectRoot();
+    const homeDir = os.homedir();
+    const isHomeDirectory = path.resolve(projectRoot) === path.resolve(homeDir);
+
+    // If project level is requested but project root is same as home directory,
+    // return empty array to avoid conflicts between project and global agents
+    if (level === 'project' && isHomeDirectory) {
+      return [];
+    }
+
+    let baseDir = level === 'project' ? projectRoot : homeDir;
+    baseDir = path.join(baseDir, QWEN_CONFIG_DIR, AGENT_CONFIG_DIR);
 
     try {
       const files = await fs.readdir(baseDir);
@@ -698,7 +684,7 @@ export class SubagentManager {
         const filePath = path.join(baseDir, file);
 
         try {
-          const config = await this.parseSubagentFile(filePath);
+          const config = await this.parseSubagentFile(filePath, level);
           subagents.push(config);
         } catch (_error) {
           // Ignore invalid files
