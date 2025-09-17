@@ -116,6 +116,9 @@ export interface ListSubagentsOptions {
 
   /** Sort direction */
   sortOrder?: 'asc' | 'desc';
+
+  /** Force refresh from disk, bypassing cache. Defaults to false. */
+  force?: boolean;
 }
 
 /**

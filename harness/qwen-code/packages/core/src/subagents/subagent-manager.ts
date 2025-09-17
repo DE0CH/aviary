@@ -40,6 +40,7 @@ const AGENT_CONFIG_DIR = 'agents';
  */
 export class SubagentManager {
   private readonly validator: SubagentValidator;
+  private subagentsCache: Map<SubagentLevel, SubagentConfig[]> | null = null;
 
   constructor(private readonly config: Config) {
     this.validator = new SubagentValidator();
@@ -93,6 +94,8 @@ export class SubagentManager {
 
     try {
       await fs.writeFile(filePath, content, 'utf8');
+      // Clear cache after successful creation
+      this.clearCache();
     } catch (error) {
       throw new SubagentError(
         `Failed to write subagent file: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -181,6 +184,8 @@ export class SubagentManager {
 
     try {
       await fs.writeFile(existing.filePath, content, 'utf8');
+      // Clear cache after successful update
+      this.clearCache();
     } catch (error) {
       throw new SubagentError(
         `Failed to update subagent file: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -237,6 +242,9 @@ export class SubagentManager {
         name,
       );
     }
+
+    // Clear cache after successful deletion
+    this.clearCache();
   }
 
   /**
@@ -255,9 +263,17 @@ export class SubagentManager {
       ? [options.level]
       : ['project', 'user', 'builtin'];
 
+    // Check if we should use cache or force refresh
+    const shouldUseCache = !options.force && this.subagentsCache !== null;
+
+    // Initialize cache if it doesn't exist or we're forcing a refresh
+    if (!shouldUseCache) {
+      await this.refreshCache();
+    }
+
     // Collect subagents from each level (project takes precedence over user, user takes precedence over builtin)
     for (const level of levelsToCheck) {
-      const levelSubagents = await this.listSubagentsAtLevel(level);
+      const levelSubagents = this.subagentsCache?.get(level) || [];
 
       for (const subagent of levelSubagents) {
         // Skip if we've already seen this name (precedence: project > user > builtin)
@@ -303,6 +319,30 @@ export class SubagentManager {
     }
 
     return subagents;
+  }
+
+  /**
+   * Refreshes the subagents cache by loading all subagents from disk.
+   * This method is called automatically when cache is null or when force=true.
+   *
+   * @private
+   */
+  private async refreshCache(): Promise<void> {
+    this.subagentsCache = new Map();
+
+    const levels: SubagentLevel[] = ['project', 'user', 'builtin'];
+
+    for (const level of levels) {
+      const levelSubagents = await this.listSubagentsAtLevel(level);
+      this.subagentsCache.set(level, levelSubagents);
+    }
+  }
+
+  /**
+   * Clears the subagents cache, forcing the next listSubagents call to reload from disk.
+   */
+  clearCache(): void {
+    this.subagentsCache = null;
   }
 
   /**

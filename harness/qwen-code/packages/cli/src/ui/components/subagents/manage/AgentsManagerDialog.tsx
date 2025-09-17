@@ -53,18 +53,7 @@ export function AgentsManagerDialog({
     const manager = config.getSubagentManager();
 
     // Load agents from all levels separately to show all agents including conflicts
-    const [projectAgents, userAgents, builtinAgents] = await Promise.all([
-      manager.listSubagents({ level: 'project' }),
-      manager.listSubagents({ level: 'user' }),
-      manager.listSubagents({ level: 'builtin' }),
-    ]);
-
-    // Combine all agents (project, user, and builtin level)
-    const allAgents = [
-      ...(projectAgents || []),
-      ...(userAgents || []),
-      ...(builtinAgents || []),
-    ];
+    const allAgents = await manager.listSubagents();
 
     setAvailableAgents(allAgents);
   }, [config]);
