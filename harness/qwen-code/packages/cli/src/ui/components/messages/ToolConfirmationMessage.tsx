@@ -29,6 +29,7 @@ export interface ToolConfirmationMessageProps {
   isFocused?: boolean;
   availableTerminalHeight?: number;
   terminalWidth: number;
+  compactMode?: boolean;
 }
 
 export const ToolConfirmationMessage: React.FC<
@@ -39,6 +40,7 @@ export const ToolConfirmationMessage: React.FC<
   isFocused = true,
   availableTerminalHeight,
   terminalWidth,
+  compactMode = false,
 }) => {
   const { onConfirm } = confirmationDetails;
   const childWidth = terminalWidth - 2; // 2 for padding
@@ -70,6 +72,40 @@ export const ToolConfirmationMessage: React.FC<
 
   const handleSelect = (item: ToolConfirmationOutcome) => handleConfirm(item);
 
+  // Compact mode: return simple 3-option display
+  if (compactMode) {
+    const compactOptions: Array<RadioSelectItem<ToolConfirmationOutcome>> = [
+      {
+        label: 'Yes, allow once',
+        value: ToolConfirmationOutcome.ProceedOnce,
+      },
+      {
+        label: 'Allow always',
+        value: ToolConfirmationOutcome.ProceedAlways,
+      },
+      {
+        label: 'No',
+        value: ToolConfirmationOutcome.Cancel,
+      },
+    ];
+
+    return (
+      <Box flexDirection="column">
+        <Box>
+          <Text wrap="truncate">Do you want to proceed?</Text>
+        </Box>
+        <Box>
+          <RadioButtonSelect
+            items={compactOptions}
+            onSelect={handleSelect}
+            isFocused={isFocused}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  // Original logic continues unchanged below
   let bodyContent: React.ReactNode | null = null; // Removed contextDisplay here
   let question: string;
 

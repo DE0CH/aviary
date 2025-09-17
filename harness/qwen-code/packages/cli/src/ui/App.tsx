@@ -723,8 +723,11 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
   );
 
   const { handleInput: vimHandleInput } = useVim(buffer, handleFinalSubmit);
-  const pendingHistoryItems = [...pendingSlashCommandHistoryItems];
-  pendingHistoryItems.push(...pendingGeminiHistoryItems);
+  const pendingHistoryItems = useMemo(() => {
+    const items = [...pendingSlashCommandHistoryItems];
+    items.push(...pendingGeminiHistoryItems);
+    return items.map((item, i) => ({ ...item, id: i }));
+  }, [pendingSlashCommandHistoryItems, pendingGeminiHistoryItems]);
 
   const { elapsedTime, currentLoadingPhrase } =
     useLoadingIndicator(streamingState);
@@ -1070,16 +1073,14 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
         </Static>
         <OverflowProvider>
           <Box ref={pendingHistoryItemRef} flexDirection="column">
-            {pendingHistoryItems.map((item, i) => (
+            {pendingHistoryItems.map((item) => (
               <HistoryItemDisplay
-                key={i}
+                key={item.id}
                 availableTerminalHeight={
                   constrainHeight ? availableTerminalHeight : undefined
                 }
                 terminalWidth={mainAreaWidth}
-                // TODO(taehykim): It seems like references to ids aren't necessary in
-                // HistoryItemDisplay. Refactor later. Use a fake id for now.
-                item={{ ...item, id: 0 }}
+                item={item}
                 isPending={true}
                 config={config}
                 isFocused={!isEditorDialogOpen}

@@ -35,7 +35,7 @@ interface HistoryItemDisplayProps {
   commands?: readonly SlashCommand[];
 }
 
-export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
+const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
   item,
   availableTerminalHeight,
   terminalWidth,
@@ -101,3 +101,7 @@ export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
     {item.type === 'summary' && <SummaryMessage summary={item.summary} />}
   </Box>
 );
+
+HistoryItemDisplayComponent.displayName = 'HistoryItemDisplay';
+
+export const HistoryItemDisplay = React.memo(HistoryItemDisplayComponent);
