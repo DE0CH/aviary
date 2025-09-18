@@ -14,7 +14,6 @@ const ajValidator = new AjvClass({ coerceTypes: true });
 const addFormatsFunc = (addFormats as any).default || addFormats;
 addFormatsFunc(ajValidator);
 
-
 /**
  * Simple utility to validate objects against JSON Schemas
  */

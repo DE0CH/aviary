@@ -419,6 +419,11 @@ export class ShellTool extends BaseDeclarativeTool<
             type: 'string',
             description: getCommandDescription(),
           },
+          is_background: {
+            type: 'boolean',
+            description:
+              'Whether to run the command in background. Default is false. Set to true for long-running processes like development servers, watchers, or daemons that should continue running without blocking further commands.',
+          },
           description: {
             type: 'string',
             description:
