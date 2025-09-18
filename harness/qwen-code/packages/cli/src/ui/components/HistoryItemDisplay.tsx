@@ -5,6 +5,7 @@
  */
 
 import type React from 'react';
+import { memo } from 'react';
 import type { HistoryItem } from '../types.js';
 import { UserMessage } from './messages/UserMessage.js';
 import { UserShellMessage } from './messages/UserShellMessage.js';
@@ -35,7 +36,7 @@ interface HistoryItemDisplayProps {
   commands?: readonly SlashCommand[];
 }
 
-export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
+const HistoryItemDisplayComponent: React.FC<HistoryItemDisplayProps> = ({
   item,
   availableTerminalHeight,
   terminalWidth,
@@ -101,3 +102,7 @@ export const HistoryItemDisplay: React.FC<HistoryItemDisplayProps> = ({
     {item.type === 'summary' && <SummaryMessage summary={item.summary} />}
   </Box>
 );
+
+HistoryItemDisplayComponent.displayName = 'HistoryItemDisplay';
+
+export const HistoryItemDisplay = memo(HistoryItemDisplayComponent);

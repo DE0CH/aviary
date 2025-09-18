@@ -667,7 +667,13 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
   );
 
   const pendingHistoryItems = useMemo(
-    () => [...pendingSlashCommandHistoryItems, ...pendingGeminiHistoryItems],
+    () =>
+      [...pendingSlashCommandHistoryItems, ...pendingGeminiHistoryItems].map(
+        (item, index) => ({
+          ...item,
+          id: index,
+        }),
+      ),
     [pendingSlashCommandHistoryItems, pendingGeminiHistoryItems],
   );
 
@@ -1121,16 +1127,14 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
         </Static>
         <OverflowProvider>
           <Box ref={pendingHistoryItemRef} flexDirection="column">
-            {pendingHistoryItems.map((item, i) => (
+            {pendingHistoryItems.map((item) => (
               <HistoryItemDisplay
-                key={i}
+                key={item.id}
                 availableTerminalHeight={
                   constrainHeight ? availableTerminalHeight : undefined
                 }
                 terminalWidth={mainAreaWidth}
-                // TODO(taehykim): It seems like references to ids aren't necessary in
-                // HistoryItemDisplay. Refactor later. Use a fake id for now.
-                item={{ ...item, id: 0 }}
+                item={item}
                 isPending={true}
                 config={config}
                 isFocused={!isEditorDialogOpen}

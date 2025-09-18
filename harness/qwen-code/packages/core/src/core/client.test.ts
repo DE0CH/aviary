@@ -226,6 +226,9 @@ describe('Gemini Client (client.ts)', () => {
       vertexai: false,
       authType: AuthType.USE_GEMINI,
     };
+    const mockSubagentManager = {
+      listSubagents: vi.fn().mockResolvedValue([]),
+    };
     const mockConfigObject = {
       getContentGeneratorConfig: vi
         .fn()
@@ -260,6 +263,7 @@ describe('Gemini Client (client.ts)', () => {
       getCliVersion: vi.fn().mockReturnValue('1.0.0'),
       getChatCompression: vi.fn().mockReturnValue(undefined),
       getSkipNextSpeakerCheck: vi.fn().mockReturnValue(false),
+      getSubagentManager: vi.fn().mockReturnValue(mockSubagentManager),
       getSkipLoopDetection: vi.fn().mockReturnValue(false),
     };
     const MockedConfig = vi.mocked(Config, true);

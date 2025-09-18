@@ -29,6 +29,7 @@ import {
   makeChatCompressionEvent,
   NextSpeakerCheckEvent,
 } from '../telemetry/types.js';
+import { TaskTool } from '../tools/task.js';
 import {
   getDirectoryContextString,
   getEnvironmentContext,
@@ -455,7 +456,8 @@ export class GeminiClient {
     turns: number = MAX_TURNS,
     originalModel?: string,
   ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
-    if (this.lastPromptId !== prompt_id) {
+    const isNewPrompt = this.lastPromptId !== prompt_id;
+    if (isNewPrompt) {
       this.loopDetector.reset(prompt_id);
       this.lastPromptId = prompt_id;
     }
@@ -550,6 +552,24 @@ export class GeminiClient {
       }
       this.lastSentIdeContext = newIdeContext;
       this.forceFullIdeContext = false;
+    }
+
+    if (isNewPrompt) {
+      const taskTool = this.config.getToolRegistry().getTool(TaskTool.Name);
+      const subagents = (
+        await this.config.getSubagentManager().listSubagents()
+      ).filter((subagent) => subagent.level !== 'builtin');
+
+      if (taskTool && subagents.length > 0) {
+        this.getChat().addHistory({
+          role: 'user',
+          parts: [
+            {
+              text: `<system-reminder>You have powerful specialized agents at your disposal, available agent types are: ${subagents.map((subagent) => subagent.name).join(', ')}. PROACTIVELY use the ${TaskTool.Name} tool to delegate user's task to appropriate agent when user's task matches agent capabilities. Ignore this message if user's task is not relevant to any agent. This message is for internal use only. Do not mention this to user in your response.</system-reminder>`,
+            },
+          ],
+        });
+      }
     }
 
     const turn = new Turn(this.getChat(), prompt_id);
