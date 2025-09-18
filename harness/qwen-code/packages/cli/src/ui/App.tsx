@@ -53,6 +53,17 @@ import { FolderTrustDialog } from './components/FolderTrustDialog.js';
 import { ShellConfirmationDialog } from './components/ShellConfirmationDialog.js';
 import { QuitConfirmationDialog } from './components/QuitConfirmationDialog.js';
 import { RadioButtonSelect } from './components/shared/RadioButtonSelect.js';
+import { ModelSelectionDialog } from './components/ModelSelectionDialog.js';
+import {
+  ModelSwitchDialog,
+  type VisionSwitchOutcome,
+} from './components/ModelSwitchDialog.js';
+import {
+  getOpenAIAvailableModelFromEnv,
+  getFilteredQwenModels,
+  type AvailableModel,
+} from './models/availableModels.js';
+import { processVisionSwitchOutcome } from './hooks/useVisionAutoSwitch.js';
 import {
   AgentCreationWizard,
   AgentsManagerDialog,
@@ -247,6 +258,20 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     onWorkspaceMigrationDialogOpen,
     onWorkspaceMigrationDialogClose,
   } = useWorkspaceMigration(settings);
+
+  // Model selection dialog states
+  const [isModelSelectionDialogOpen, setIsModelSelectionDialogOpen] =
+    useState(false);
+  const [isVisionSwitchDialogOpen, setIsVisionSwitchDialogOpen] =
+    useState(false);
+  const [visionSwitchResolver, setVisionSwitchResolver] = useState<{
+    resolve: (result: {
+      modelOverride?: string;
+      persistSessionModel?: string;
+      showGuidance?: boolean;
+    }) => void;
+    reject: () => void;
+  } | null>(null);
 
   useEffect(() => {
     const unsubscribe = ideContext.subscribeToIdeContext(setIdeContextState);
@@ -590,6 +615,75 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     openAuthDialog();
   }, [openAuthDialog, setAuthError]);
 
+  // Vision switch handler for auto-switch functionality
+  const handleVisionSwitchRequired = useCallback(
+    async (_query: unknown) =>
+      new Promise<{
+        modelOverride?: string;
+        persistSessionModel?: string;
+        showGuidance?: boolean;
+      }>((resolve, reject) => {
+        setVisionSwitchResolver({ resolve, reject });
+        setIsVisionSwitchDialogOpen(true);
+      }),
+    [],
+  );
+
+  const handleVisionSwitchSelect = useCallback(
+    (outcome: VisionSwitchOutcome) => {
+      setIsVisionSwitchDialogOpen(false);
+      if (visionSwitchResolver) {
+        const result = processVisionSwitchOutcome(outcome);
+        visionSwitchResolver.resolve(result);
+        setVisionSwitchResolver(null);
+      }
+    },
+    [visionSwitchResolver],
+  );
+
+  const handleModelSelectionOpen = useCallback(() => {
+    setIsModelSelectionDialogOpen(true);
+  }, []);
+
+  const handleModelSelectionClose = useCallback(() => {
+    setIsModelSelectionDialogOpen(false);
+  }, []);
+
+  const handleModelSelect = useCallback(
+    (modelId: string) => {
+      config.setModel(modelId);
+      setCurrentModel(modelId);
+      setIsModelSelectionDialogOpen(false);
+      addItem(
+        {
+          type: MessageType.INFO,
+          text: `Switched model to \`${modelId}\` for this session.`,
+        },
+        Date.now(),
+      );
+    },
+    [config, setCurrentModel, addItem],
+  );
+
+  const getAvailableModelsForCurrentAuth = useCallback((): AvailableModel[] => {
+    const contentGeneratorConfig = config.getContentGeneratorConfig();
+    if (!contentGeneratorConfig) return [];
+
+    const visionModelPreviewEnabled =
+      settings.merged.experimental?.visionModelPreview ?? false;
+
+    switch (contentGeneratorConfig.authType) {
+      case AuthType.QWEN_OAUTH:
+        return getFilteredQwenModels(visionModelPreviewEnabled);
+      case AuthType.USE_OPENAI: {
+        const openAIModel = getOpenAIAvailableModelFromEnv();
+        return openAIModel ? [openAIModel] : [];
+      }
+      default:
+        return [];
+    }
+  }, [config, settings.merged.experimental?.visionModelPreview]);
+
   // Core hooks and processors
   const {
     vimEnabled: vimModeEnabled,
@@ -620,6 +714,7 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     setQuittingMessages,
     openPrivacyNotice,
     openSettingsDialog,
+    handleModelSelectionOpen,
     openSubagentCreateDialog,
     openAgentsManagerDialog,
     toggleVimEnabled,
@@ -664,6 +759,8 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     setModelSwitchedFromQuotaError,
     refreshStatic,
     () => cancelHandlerRef.current(),
+    settings.merged.experimental?.visionModelPreview ?? false,
+    handleVisionSwitchRequired,
   );
 
   const pendingHistoryItems = useMemo(
@@ -1034,6 +1131,8 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
       !isAuthDialogOpen &&
       !isThemeDialogOpen &&
       !isEditorDialogOpen &&
+      !isModelSelectionDialogOpen &&
+      !isVisionSwitchDialogOpen &&
       !isSubagentCreateDialogOpen &&
       !showPrivacyNotice &&
       !showWelcomeBackDialog &&
@@ -1055,6 +1154,8 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     showWelcomeBackDialog,
     welcomeBackChoice,
     geminiClient,
+    isModelSelectionDialogOpen,
+    isVisionSwitchDialogOpen,
   ]);
 
   if (quittingMessages) {
@@ -1322,6 +1423,15 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
                 onExit={exitEditorDialog}
               />
             </Box>
+          ) : isModelSelectionDialogOpen ? (
+            <ModelSelectionDialog
+              availableModels={getAvailableModelsForCurrentAuth()}
+              currentModel={currentModel}
+              onSelect={handleModelSelect}
+              onCancel={handleModelSelectionClose}
+            />
+          ) : isVisionSwitchDialogOpen ? (
+            <ModelSwitchDialog onSelect={handleVisionSwitchSelect} />
           ) : showPrivacyNotice ? (
             <PrivacyNotice
               onExit={() => setShowPrivacyNotice(false)}

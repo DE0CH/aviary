@@ -180,9 +180,7 @@ export class QwenContentGenerator extends OpenAIContentGenerator {
   override async countTokens(
     request: CountTokensParameters,
   ): Promise<CountTokensResponse> {
-    return this.executeWithCredentialManagement(() =>
-      super.countTokens(request),
-    );
+    return super.countTokens(request);
   }
 
   /**

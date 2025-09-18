@@ -53,6 +53,7 @@ export const useSlashCommandProcessor = (
   setQuittingMessages: (message: HistoryItem[]) => void,
   openPrivacyNotice: () => void,
   openSettingsDialog: () => void,
+  openModelSelectionDialog: () => void,
   openSubagentCreateDialog: () => void,
   openAgentsManagerDialog: () => void,
   toggleVimEnabled: () => Promise<boolean>,
@@ -404,6 +405,9 @@ export const useSlashCommandProcessor = (
                     case 'settings':
                       openSettingsDialog();
                       return { type: 'handled' };
+                    case 'model':
+                      openModelSelectionDialog();
+                      return { type: 'handled' };
                     case 'subagent_create':
                       openSubagentCreateDialog();
                       return { type: 'handled' };
@@ -663,6 +667,7 @@ export const useSlashCommandProcessor = (
       setSessionShellAllowlist,
       setIsProcessing,
       setConfirmationRequest,
+      openModelSelectionDialog,
       session.stats,
     ],
   );

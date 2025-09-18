@@ -56,6 +56,12 @@ const MockedUserPromptEvent = vi.hoisted(() =>
 );
 const mockParseAndFormatApiError = vi.hoisted(() => vi.fn());
 
+// Vision auto-switch mocks (hoisted)
+const mockHandleVisionSwitch = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ shouldProceed: true }),
+);
+const mockRestoreOriginalModel = vi.hoisted(() => vi.fn());
+
 vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
   const actualCoreModule = (await importOriginal()) as any;
   return {
@@ -75,6 +81,13 @@ vi.mock('./useReactToolScheduler.js', async (importOriginal) => {
     useReactToolScheduler: vi.fn(),
   };
 });
+
+vi.mock('./useVisionAutoSwitch.js', () => ({
+  useVisionAutoSwitch: vi.fn(() => ({
+    handleVisionSwitch: mockHandleVisionSwitch,
+    restoreOriginalModel: mockRestoreOriginalModel,
+  })),
+}));
 
 vi.mock('./useKeypress.js', () => ({
   useKeypress: vi.fn(),
@@ -199,6 +212,7 @@ describe('useGeminiStream', () => {
       getContentGeneratorConfig: vi
         .fn()
         .mockReturnValue(contentGeneratorConfig),
+      getMaxSessionTurns: vi.fn(() => 50),
     } as unknown as Config;
     mockOnDebugMessage = vi.fn();
     mockHandleSlashCommand = vi.fn().mockResolvedValue(false);
@@ -1551,6 +1565,7 @@ describe('useGeminiStream', () => {
       expect.any(String), // Argument 3: The prompt_id string
     );
   });
+
   describe('Thought Reset', () => {
     it('should reset thought to null when starting a new prompt', async () => {
       // First, simulate a response with a thought
@@ -1898,6 +1913,168 @@ describe('useGeminiStream', () => {
         expect.any(AbortSignal),
         expect.any(String),
       );
+    });
+  });
+
+  // --- New tests focused on recent modifications ---
+  describe('Vision Auto Switch Integration', () => {
+    it('should call handleVisionSwitch and proceed to send when allowed', async () => {
+      mockHandleVisionSwitch.mockResolvedValueOnce({ shouldProceed: true });
+      mockSendMessageStream.mockReturnValue(
+        (async function* () {
+          yield { type: ServerGeminiEventType.Content, value: 'ok' };
+          yield { type: ServerGeminiEventType.Finished, value: 'STOP' };
+        })(),
+      );
+
+      const { result } = renderHook(() =>
+        useGeminiStream(
+          new MockedGeminiClientClass(mockConfig),
+          [],
+          mockAddItem,
+          mockConfig,
+          mockOnDebugMessage,
+          mockHandleSlashCommand,
+          false,
+          () => 'vscode' as EditorType,
+          () => {},
+          () => Promise.resolve(),
+          false,
+          () => {},
+          () => {},
+          () => {},
+        ),
+      );
+
+      await act(async () => {
+        await result.current.submitQuery('image prompt');
+      });
+
+      await waitFor(() => {
+        expect(mockHandleVisionSwitch).toHaveBeenCalled();
+        expect(mockSendMessageStream).toHaveBeenCalled();
+      });
+    });
+
+    it('should gate submission when handleVisionSwitch returns shouldProceed=false', async () => {
+      mockHandleVisionSwitch.mockResolvedValueOnce({ shouldProceed: false });
+
+      const { result } = renderHook(() =>
+        useGeminiStream(
+          new MockedGeminiClientClass(mockConfig),
+          [],
+          mockAddItem,
+          mockConfig,
+          mockOnDebugMessage,
+          mockHandleSlashCommand,
+          false,
+          () => 'vscode' as EditorType,
+          () => {},
+          () => Promise.resolve(),
+          false,
+          () => {},
+          () => {},
+          () => {},
+        ),
+      );
+
+      await act(async () => {
+        await result.current.submitQuery('vision-gated');
+      });
+
+      // No call to API, no restoreOriginalModel needed since no override occurred
+      expect(mockSendMessageStream).not.toHaveBeenCalled();
+      expect(mockRestoreOriginalModel).not.toHaveBeenCalled();
+
+      // Next call allowed (flag reset path)
+      mockHandleVisionSwitch.mockResolvedValueOnce({ shouldProceed: true });
+      mockSendMessageStream.mockReturnValue(
+        (async function* () {
+          yield { type: ServerGeminiEventType.Content, value: 'ok' };
+          yield { type: ServerGeminiEventType.Finished, value: 'STOP' };
+        })(),
+      );
+      await act(async () => {
+        await result.current.submitQuery('after-gate');
+      });
+      await waitFor(() => {
+        expect(mockSendMessageStream).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('Model restore on completion and errors', () => {
+    it('should restore model after successful stream completion', async () => {
+      mockSendMessageStream.mockReturnValue(
+        (async function* () {
+          yield { type: ServerGeminiEventType.Content, value: 'content' };
+          yield { type: ServerGeminiEventType.Finished, value: 'STOP' };
+        })(),
+      );
+
+      const { result } = renderHook(() =>
+        useGeminiStream(
+          new MockedGeminiClientClass(mockConfig),
+          [],
+          mockAddItem,
+          mockConfig,
+          mockOnDebugMessage,
+          mockHandleSlashCommand,
+          false,
+          () => 'vscode' as EditorType,
+          () => {},
+          () => Promise.resolve(),
+          false,
+          () => {},
+          () => {},
+          () => {},
+        ),
+      );
+
+      await act(async () => {
+        await result.current.submitQuery('restore-success');
+      });
+
+      await waitFor(() => {
+        expect(mockRestoreOriginalModel).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('should restore model when an error occurs during streaming', async () => {
+      const testError = new Error('stream failure');
+      mockSendMessageStream.mockReturnValue(
+        (async function* () {
+          yield { type: ServerGeminiEventType.Content, value: 'content' };
+          throw testError;
+        })(),
+      );
+
+      const { result } = renderHook(() =>
+        useGeminiStream(
+          new MockedGeminiClientClass(mockConfig),
+          [],
+          mockAddItem,
+          mockConfig,
+          mockOnDebugMessage,
+          mockHandleSlashCommand,
+          false,
+          () => 'vscode' as EditorType,
+          () => {},
+          () => Promise.resolve(),
+          false,
+          () => {},
+          () => {},
+          () => {},
+        ),
+      );
+
+      await act(async () => {
+        await result.current.submitQuery('restore-error');
+      });
+
+      await waitFor(() => {
+        expect(mockRestoreOriginalModel).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

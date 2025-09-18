@@ -500,7 +500,7 @@ export class GeminiChat {
         if (error instanceof Error && error.message) {
           if (isSchemaDepthError(error.message)) return false;
           if (error.message.includes('429')) return true;
-          if (error.message.match(/5\d{2}/)) return true;
+          if (error.message.match(/^5\d{2}/)) return true;
         }
         return false;
       },

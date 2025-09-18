@@ -79,6 +79,16 @@ export class DashScopeOpenAICompatibleProvider
       messages = this.addDashScopeCacheControl(messages, cacheTarget);
     }
 
+    if (request.model.startsWith('qwen-vl')) {
+      return {
+        ...request,
+        messages,
+        ...(this.buildMetadata(userPromptId) || {}),
+        /* @ts-expect-error dashscope exclusive */
+        vl_high_resolution_images: true,
+      };
+    }
+
     return {
       ...request, // Preserve all original parameters including sampling params
       messages,

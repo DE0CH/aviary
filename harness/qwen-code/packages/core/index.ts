@@ -19,3 +19,4 @@ export {
 } from './src/telemetry/types.js';
 export { makeFakeConfig } from './src/test-utils/config.js';
 export * from './src/utils/pathReader.js';
+export * from './src/utils/request-tokenizer/supportedImageFormats.js';
