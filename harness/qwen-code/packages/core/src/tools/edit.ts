@@ -24,6 +24,7 @@ import { ApprovalMode } from '../config/config.js';
 import { ensureCorrectEdit } from '../utils/editCorrector.js';
 import { DEFAULT_DIFF_OPTIONS, getDiffStat } from './diffOptions.js';
 import { ReadFileTool } from './read-file.js';
+import { ToolNames } from './tool-names.js';
 import type {
   ModifiableDeclarativeTool,
   ModifyContext,
@@ -461,7 +462,7 @@ export class EditTool
   extends BaseDeclarativeTool<EditToolParams, ToolResult>
   implements ModifiableDeclarativeTool<EditToolParams>
 {
-  static readonly Name = 'edit';
+  static readonly Name = ToolNames.EDIT;
   constructor(private readonly config: Config) {
     super(
       EditTool.Name,

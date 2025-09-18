@@ -23,7 +23,11 @@ import {
 } from 'vitest';
 import { Config, type ConfigParameters } from '../config/config.js';
 import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
-import { createContentGenerator } from '../core/contentGenerator.js';
+import {
+  createContentGenerator,
+  createContentGeneratorConfig,
+  AuthType,
+} from '../core/contentGenerator.js';
 import { GeminiChat } from '../core/geminiChat.js';
 import { executeToolCall } from '../core/nonInteractiveToolExecutor.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
@@ -56,8 +60,7 @@ async function createMockConfig(
   };
   const config = new Config(configParams);
   await config.initialize();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await config.refreshAuth('test-auth' as any);
+  await config.refreshAuth(AuthType.USE_GEMINI);
 
   // Mock ToolRegistry
   const mockToolRegistry = {
@@ -164,6 +167,10 @@ describe('subagent.ts', () => {
         getGenerativeModel: vi.fn(),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any);
+      vi.mocked(createContentGeneratorConfig).mockReturnValue({
+        model: DEFAULT_GEMINI_MODEL,
+        authType: undefined,
+      });
 
       mockSendMessageStream = vi.fn();
       // We mock the implementation of the constructor.

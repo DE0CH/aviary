@@ -138,13 +138,24 @@ export class GeminiClient {
     this.lastPromptId = this.config.getSessionId();
   }
 
-  async initialize(contentGeneratorConfig: ContentGeneratorConfig) {
+  async initialize(
+    contentGeneratorConfig: ContentGeneratorConfig,
+    extraHistory?: Content[],
+  ) {
     this.contentGenerator = await createContentGenerator(
       contentGeneratorConfig,
       this.config,
       this.config.getSessionId(),
     );
-    this.chat = await this.startChat();
+    /**
+     * Always take the model from contentGeneratorConfig to initialize,
+     * despite the `this.config.contentGeneratorConfig` is not updated yet because in
+     * `Config` it will not be updated until the initialization is successful.
+     */
+    this.chat = await this.startChat(
+      extraHistory || [],
+      contentGeneratorConfig.model,
+    );
   }
 
   getContentGenerator(): ContentGenerator {
@@ -217,6 +228,28 @@ export class GeminiClient {
     this.chat = await this.startChat();
   }
 
+  /**
+   * Reinitializes the chat with the current contentGeneratorConfig while preserving chat history.
+   * This creates a new chat object using the existing history and updated configuration.
+   * Should be called when configuration changes (model, auth, etc.) to ensure consistency.
+   */
+  async reinitialize(): Promise<void> {
+    if (!this.chat) {
+      return;
+    }
+
+    // Preserve the current chat history (excluding environment context)
+    const currentHistory = this.getHistory();
+    // Remove the initial environment context (first 2 messages: user env + model acknowledgment)
+    const userHistory = currentHistory.slice(2);
+
+    // Get current content generator config and reinitialize with preserved history
+    const contentGeneratorConfig = this.config.getContentGeneratorConfig();
+    if (contentGeneratorConfig) {
+      await this.initialize(contentGeneratorConfig, userHistory);
+    }
+  }
+
   async addDirectoryContext(): Promise<void> {
     if (!this.chat) {
       return;
@@ -228,7 +261,10 @@ export class GeminiClient {
     });
   }
 
-  async startChat(extraHistory?: Content[]): Promise<GeminiChat> {
+  async startChat(
+    extraHistory?: Content[],
+    model?: string,
+  ): Promise<GeminiChat> {
     this.forceFullIdeContext = true;
     this.hasFailedCompressionAttempt = false;
     const envParts = await getEnvironmentContext(this.config);
@@ -248,9 +284,13 @@ export class GeminiClient {
     ];
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
+      const systemInstruction = getCoreSystemPrompt(
+        userMemory,
+        {},
+        model || this.config.getModel(),
+      );
       const generateContentConfigWithThinking = isThinkingSupported(
-        this.config.getModel(),
+        model || this.config.getModel(),
       )
         ? {
             ...this.generateContentConfig,
@@ -490,7 +530,11 @@ export class GeminiClient {
       // Get all the content that would be sent in an API call
       const currentHistory = this.getChat().getHistory(true);
       const userMemory = this.config.getUserMemory();
-      const systemPrompt = getCoreSystemPrompt(userMemory);
+      const systemPrompt = getCoreSystemPrompt(
+        userMemory,
+        {},
+        this.config.getModel(),
+      );
       const environment = await getEnvironmentContext(this.config);
 
       // Create a mock request content to count total tokens
@@ -644,14 +688,18 @@ export class GeminiClient {
     model?: string,
     config: GenerateContentConfig = {},
   ): Promise<Record<string, unknown>> {
-    // Use current model from config instead of hardcoded Flash model
-    const modelToUse =
-      model || this.config.getModel() || DEFAULT_GEMINI_FLASH_MODEL;
+    /**
+     * TODO: ensure `model` consistency among GeminiClient, GeminiChat, and ContentGenerator
+     * `model` passed to generateContent is not respected as we always use contentGenerator
+     * We should ignore model for now because some calls use `DEFAULT_GEMINI_FLASH_MODEL`
+     * which is not available as `qwen3-coder-flash`
+     */
+    const modelToUse = this.config.getModel() || DEFAULT_GEMINI_FLASH_MODEL;
     try {
       const userMemory = this.config.getUserMemory();
       const finalSystemInstruction = config.systemInstruction
         ? getCustomSystemPrompt(config.systemInstruction, userMemory)
-        : getCoreSystemPrompt(userMemory);
+        : getCoreSystemPrompt(userMemory, {}, modelToUse);
 
       const requestConfig = {
         abortSignal,
@@ -742,7 +790,7 @@ export class GeminiClient {
       const userMemory = this.config.getUserMemory();
       const finalSystemInstruction = generationConfig.systemInstruction
         ? getCustomSystemPrompt(generationConfig.systemInstruction, userMemory)
-        : getCoreSystemPrompt(userMemory);
+        : getCoreSystemPrompt(userMemory, {}, this.config.getModel());
 
       const requestConfig: GenerateContentConfig = {
         abortSignal,

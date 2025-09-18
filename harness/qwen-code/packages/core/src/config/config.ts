@@ -521,6 +521,18 @@ export class Config {
     if (this.contentGeneratorConfig) {
       this.contentGeneratorConfig.model = newModel;
     }
+
+    // Reinitialize chat with updated configuration while preserving history
+    const geminiClient = this.getGeminiClient();
+    if (geminiClient && geminiClient.isInitialized()) {
+      // Use async operation but don't await to avoid blocking
+      geminiClient.reinitialize().catch((error) => {
+        console.error(
+          'Failed to reinitialize chat with updated config:',
+          error,
+        );
+      });
+    }
   }
 
   isInFallbackMode(): boolean {

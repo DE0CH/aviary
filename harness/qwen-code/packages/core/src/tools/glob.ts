@@ -9,6 +9,7 @@ import path from 'node:path';
 import { glob, escape } from 'glob';
 import type { ToolInvocation, ToolResult } from './tools.js';
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
+import { ToolNames } from './tool-names.js';
 import { shortenPath, makeRelative } from '../utils/paths.js';
 import type { Config } from '../config/config.js';
 import { ToolErrorType } from './tool-error.js';
@@ -252,7 +253,7 @@ class GlobToolInvocation extends BaseToolInvocation<
  * Implementation of the Glob tool logic
  */
 export class GlobTool extends BaseDeclarativeTool<GlobToolParams, ToolResult> {
-  static readonly Name = 'glob';
+  static readonly Name = ToolNames.GLOB;
 
   constructor(private config: Config) {
     super(

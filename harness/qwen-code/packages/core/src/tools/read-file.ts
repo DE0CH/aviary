@@ -8,6 +8,7 @@ import path from 'node:path';
 import { makeRelative, shortenPath } from '../utils/paths.js';
 import type { ToolInvocation, ToolLocation, ToolResult } from './tools.js';
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
+import { ToolNames } from './tool-names.js';
 
 import type { PartUnion } from '@google/genai';
 import {
@@ -136,7 +137,7 @@ export class ReadFileTool extends BaseDeclarativeTool<
   ReadFileToolParams,
   ToolResult
 > {
-  static readonly Name: string = 'read_file';
+  static readonly Name: string = ToolNames.READ_FILE;
 
   constructor(private config: Config) {
     super(

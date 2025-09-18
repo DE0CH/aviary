@@ -31,6 +31,7 @@ import {
   ensureCorrectFileContent,
 } from '../utils/editCorrector.js';
 import { DEFAULT_DIFF_OPTIONS, getDiffStat } from './diffOptions.js';
+import { ToolNames } from './tool-names.js';
 import type {
   ModifiableDeclarativeTool,
   ModifyContext,
@@ -403,7 +404,7 @@ export class WriteFileTool
   extends BaseDeclarativeTool<WriteFileToolParams, ToolResult>
   implements ModifiableDeclarativeTool<WriteFileToolParams>
 {
-  static readonly Name: string = 'write_file';
+  static readonly Name: string = ToolNames.WRITE_FILE;
 
   constructor(private readonly config: Config) {
     super(

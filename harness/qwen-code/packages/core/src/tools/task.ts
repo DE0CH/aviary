@@ -5,6 +5,7 @@
  */
 
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
+import { ToolNames } from './tool-names.js';
 import type {
   ToolResult,
   ToolResultDisplay,
@@ -46,7 +47,7 @@ export interface TaskParams {
  * for the model to choose from.
  */
 export class TaskTool extends BaseDeclarativeTool<TaskParams, ToolResult> {
-  static readonly Name: string = 'task';
+  static readonly Name: string = ToolNames.TASK;
 
   private subagentManager: SubagentManager;
   private availableSubagents: SubagentConfig[] = [];

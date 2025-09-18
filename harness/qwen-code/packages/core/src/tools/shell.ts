@@ -9,6 +9,7 @@ import path from 'node:path';
 import os, { EOL } from 'node:os';
 import crypto from 'node:crypto';
 import type { Config } from '../config/config.js';
+import { ToolNames } from './tool-names.js';
 import { ToolErrorType } from './tool-error.js';
 import type {
   ToolInvocation,
@@ -403,7 +404,7 @@ export class ShellTool extends BaseDeclarativeTool<
   ShellToolParams,
   ToolResult
 > {
-  static Name: string = 'run_shell_command';
+  static Name: string = ToolNames.SHELL;
   private allowlist: Set<string> = new Set();
 
   constructor(private readonly config: Config) {

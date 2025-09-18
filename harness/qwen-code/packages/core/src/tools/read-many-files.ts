@@ -6,6 +6,7 @@
 
 import type { ToolInvocation, ToolResult } from './tools.js';
 import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
+import { ToolNames } from './tool-names.js';
 import { getErrorMessage } from '../utils/errors.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -526,7 +527,7 @@ export class ReadManyFilesTool extends BaseDeclarativeTool<
   ReadManyFilesParams,
   ToolResult
 > {
-  static readonly Name: string = 'read_many_files';
+  static readonly Name: string = ToolNames.READ_MANY_FILES;
 
   constructor(private config: Config) {
     const parameterSchema = {
