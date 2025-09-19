@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.12
+
+- Added vision model support for Qwen-OAuth authentication.
+- Synced upstream `gemini-cli` to v0.3.4 with numerous improvements and bug fixes.
+- Enhanced subagent functionality with system reminders and improved user experience.
+- Added tool call type coercion for better compatibility.
+- Fixed arrow key navigation issues on Windows.
+- Fixed missing tool call chunks for OpenAI logging.
+- Fixed system prompt issues to avoid malformed tool calls.
+- Fixed terminal flicker when subagent is executing.
+- Fixed duplicate subagents configuration when running in home directory.
+- Fixed Esc key unable to cancel subagent dialog.
+- Added confirmation prompt for `/init` command when context file exists.
+- Added `skipLoopDetection` configuration option.
+- Fixed `is_background` parameter reset issues.
+- Enhanced Windows compatibility with multi-line paste handling.
+- Improved subagent documentation and branding consistency.
+- Fixed various linting errors and improved code quality.
+- Miscellaneous improvements and bug fixes.
+
 ## 0.0.11
 
 - Added subagents feature with file-based configuration system for specialized AI assistants.
