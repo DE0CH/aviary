@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.13
+
+- Added YOLO mode support for automatic vision model switching with CLI arguments and environment variables.
+- Fixed ripgrep lazy loading to resolve VS Code IDE companion startup issues.
+- Fixed authentication hang when selecting Qwen OAuth.
+- Added OpenAI and Qwen OAuth authentication support to Zed ACP integration.
+- Fixed output token limit for Qwen models.
+- Fixed Markdown list display issues on Windows.
+- Enhanced vision model instructions and documentation.
+- Improved authentication method compatibility across different IDE integrations.
+
 ## 0.0.12
 
 - Added vision model support for Qwen-OAuth authentication.
