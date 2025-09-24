@@ -82,6 +82,7 @@ export interface CliArgs {
   includeDirectories: string[] | undefined;
   tavilyApiKey: string | undefined;
   screenReader: boolean | undefined;
+  vlmSwitchMode: string | undefined;
 }
 
 export async function parseArguments(settings: Settings): Promise<CliArgs> {
@@ -248,6 +249,13 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           type: 'boolean',
           description: 'Enable screen reader mode for accessibility.',
           default: false,
+        })
+        .option('vlm-switch-mode', {
+          type: 'string',
+          choices: ['once', 'session', 'persist'],
+          description:
+            'Default behavior when images are detected in input. Values: once (one-time switch), session (switch for entire session), persist (continue with current model). Overrides settings files.',
+          default: process.env['VLM_SWITCH_MODE'],
         })
         .check((argv) => {
           if (argv.prompt && argv['promptInteractive']) {
@@ -524,6 +532,9 @@ export async function loadCliConfig(
     argv.screenReader !== undefined
       ? argv.screenReader
       : (settings.ui?.accessibility?.screenReader ?? false);
+
+  const vlmSwitchMode =
+    argv.vlmSwitchMode || settings.experimental?.vlmSwitchMode;
   return new Config({
     sessionId,
     embeddingModel: DEFAULT_GEMINI_EMBEDDING_MODEL,
@@ -630,6 +641,7 @@ export async function loadCliConfig(
     skipNextSpeakerCheck: settings.model?.skipNextSpeakerCheck,
     enablePromptCompletion: settings.general?.enablePromptCompletion ?? false,
     skipLoopDetection: settings.skipLoopDetection ?? false,
+    vlmSwitchMode,
   });
 }
 

@@ -72,6 +72,19 @@ async function createMockConfig(
   } as unknown as ToolRegistry;
 
   vi.spyOn(config, 'getToolRegistry').mockReturnValue(mockToolRegistry);
+
+  // Mock getContentGeneratorConfig to return a valid config
+  vi.spyOn(config, 'getContentGeneratorConfig').mockReturnValue({
+    model: DEFAULT_GEMINI_MODEL,
+    authType: AuthType.USE_GEMINI,
+  });
+
+  // Mock setModel method
+  vi.spyOn(config, 'setModel').mockResolvedValue();
+
+  // Mock getSessionId method
+  vi.spyOn(config, 'getSessionId').mockReturnValue('test-session');
+
   return { config, toolRegistry: mockToolRegistry };
 }
 

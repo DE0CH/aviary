@@ -820,6 +820,14 @@ function getToolCallExamples(model?: string): string {
     if (/qwen[^-]*-vl/i.test(model)) {
       return qwenVlToolCallExamples;
     }
+    // Match coder-model pattern (same as qwen3-coder)
+    if (/coder-model/i.test(model)) {
+      return qwenCoderToolCallExamples;
+    }
+    // Match vision-model pattern (same as qwen3-vl)
+    if (/vision-model/i.test(model)) {
+      return qwenVlToolCallExamples;
+    }
   }
 
   return generalToolCallExamples;

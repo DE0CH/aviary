@@ -111,6 +111,12 @@ const PATTERNS: Array<[RegExp, TokenCount]> = [
   // Commercial Qwen3-Coder-Flash: 1M token context
   [/^qwen3-coder-flash(-.*)?$/, LIMITS['1m']], // catches "qwen3-coder-flash" and date variants
 
+  // Generic coder-model: same as qwen3-coder-plus (1M token context)
+  [/^coder-model$/, LIMITS['1m']],
+
+  // Commercial Qwen3-Max-Preview: 256K token context
+  [/^qwen3-max-preview(-.*)?$/, LIMITS['256k']], // catches "qwen3-max-preview" and date variants
+
   // Open-source Qwen3-Coder variants: 256K native
   [/^qwen3-coder-.*$/, LIMITS['256k']],
   // Open-source Qwen3 2507 variants: 256K native
@@ -130,6 +136,9 @@ const PATTERNS: Array<[RegExp, TokenCount]> = [
 
   // Qwen Vision Models
   [/^qwen-vl-max.*$/, LIMITS['128k']],
+
+  // Generic vision-model: same as qwen-vl-max (128K token context)
+  [/^vision-model$/, LIMITS['128k']],
 
   // -------------------
   // ByteDance Seed-OSS (512K)
@@ -166,8 +175,20 @@ const OUTPUT_PATTERNS: Array<[RegExp, TokenCount]> = [
   // Qwen3-Coder-Plus: 65,536 max output tokens
   [/^qwen3-coder-plus(-.*)?$/, LIMITS['64k']],
 
+  // Generic coder-model: same as qwen3-coder-plus (64K max output tokens)
+  [/^coder-model$/, LIMITS['64k']],
+
+  // Qwen3-Max-Preview: 65,536 max output tokens
+  [/^qwen3-max-preview(-.*)?$/, LIMITS['64k']],
+
   // Qwen-VL-Max-Latest: 8,192 max output tokens
   [/^qwen-vl-max-latest$/, LIMITS['8k']],
+
+  // Generic vision-model: same as qwen-vl-max-latest (8K max output tokens)
+  [/^vision-model$/, LIMITS['8k']],
+
+  // Qwen3-VL-Plus: 8,192 max output tokens
+  [/^qwen3-vl-plus$/, LIMITS['8k']],
 ];
 
 /**

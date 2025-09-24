@@ -737,4 +737,85 @@ describe('setApprovalMode with folder trust', () => {
     expect(() => config.setApprovalMode(ApprovalMode.AUTO_EDIT)).not.toThrow();
     expect(() => config.setApprovalMode(ApprovalMode.DEFAULT)).not.toThrow();
   });
+
+  describe('Model Switch Logging', () => {
+    it('should log model switch when setModel is called with different model', async () => {
+      const config = new Config({
+        sessionId: 'test-model-switch',
+        targetDir: '.',
+        debugMode: false,
+        model: 'qwen3-coder-plus',
+        cwd: '.',
+      });
+
+      // Initialize the config to set up content generator
+      await config.initialize();
+
+      // Mock the logger's logModelSwitch method
+      const logModelSwitchSpy = vi.spyOn(config['logger']!, 'logModelSwitch');
+
+      // Change the model
+      await config.setModel('qwen-vl-max-latest', {
+        reason: 'vision_auto_switch',
+        context: 'Test model switch',
+      });
+
+      // Verify that logModelSwitch was called with correct parameters
+      expect(logModelSwitchSpy).toHaveBeenCalledWith({
+        fromModel: 'qwen3-coder-plus',
+        toModel: 'qwen-vl-max-latest',
+        reason: 'vision_auto_switch',
+        context: 'Test model switch',
+      });
+    });
+
+    it('should not log when setModel is called with same model', async () => {
+      const config = new Config({
+        sessionId: 'test-same-model',
+        targetDir: '.',
+        debugMode: false,
+        model: 'qwen3-coder-plus',
+        cwd: '.',
+      });
+
+      // Initialize the config to set up content generator
+      await config.initialize();
+
+      // Mock the logger's logModelSwitch method
+      const logModelSwitchSpy = vi.spyOn(config['logger']!, 'logModelSwitch');
+
+      // Set the same model
+      await config.setModel('qwen3-coder-plus');
+
+      // Verify that logModelSwitch was not called
+      expect(logModelSwitchSpy).not.toHaveBeenCalled();
+    });
+
+    it('should use default reason when no options provided', async () => {
+      const config = new Config({
+        sessionId: 'test-default-reason',
+        targetDir: '.',
+        debugMode: false,
+        model: 'qwen3-coder-plus',
+        cwd: '.',
+      });
+
+      // Initialize the config to set up content generator
+      await config.initialize();
+
+      // Mock the logger's logModelSwitch method
+      const logModelSwitchSpy = vi.spyOn(config['logger']!, 'logModelSwitch');
+
+      // Change the model without options
+      await config.setModel('qwen-vl-max-latest');
+
+      // Verify that logModelSwitch was called with default reason
+      expect(logModelSwitchSpy).toHaveBeenCalledWith({
+        fromModel: 'qwen3-coder-plus',
+        toModel: 'qwen-vl-max-latest',
+        reason: 'manual',
+        context: undefined,
+      });
+    });
+  });
 });
