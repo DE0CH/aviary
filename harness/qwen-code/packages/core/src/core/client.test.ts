@@ -239,6 +239,7 @@ describe('Gemini Client (client.ts)', () => {
     };
     const mockSubagentManager = {
       listSubagents: vi.fn().mockResolvedValue([]),
+      addChangeListener: vi.fn().mockReturnValue(() => {}),
     };
     mockConfigObject = {
       getContentGeneratorConfig: vi
