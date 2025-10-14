@@ -227,6 +227,12 @@ export class ContentGenerationPipeline {
         mergedResponse.usageMetadata = lastResponse.usageMetadata;
       }
 
+      // Copy other essential properties from the current response
+      mergedResponse.responseId = response.responseId;
+      mergedResponse.createTime = response.createTime;
+      mergedResponse.modelVersion = response.modelVersion;
+      mergedResponse.promptFeedback = response.promptFeedback;
+
       // Update the collected responses with the merged response
       collectedGeminiResponses[collectedGeminiResponses.length - 1] =
         mergedResponse;

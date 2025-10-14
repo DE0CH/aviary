@@ -349,6 +349,7 @@ class Session {
         function_name: fc.name ?? '',
         function_args: args,
         duration_ms: durationMs,
+        status: 'error',
         success: false,
         error: error.message,
         tool_type:
@@ -467,6 +468,7 @@ class Session {
         function_name: fc.name,
         function_args: args,
         duration_ms: durationMs,
+        status: 'success',
         success: true,
         prompt_id: promptId,
         tool_type:
