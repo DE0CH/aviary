@@ -771,6 +771,7 @@ export async function loadCliConfig(
     output: {
       format: (argv.outputFormat ?? settings.output?.format) as OutputFormat,
     },
+    webSearch: settings.webSearch,
   });
 }
 

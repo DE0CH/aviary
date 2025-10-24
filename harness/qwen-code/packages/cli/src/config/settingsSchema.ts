@@ -1055,6 +1055,25 @@ const SETTINGS_SCHEMA = {
     },
   },
 
+  webSearch: {
+    type: 'object',
+    label: 'Web Search',
+    category: 'Advanced',
+    requiresRestart: true,
+    default: undefined as
+      | {
+          provider: Array<{
+            type: 'tavily' | 'google' | 'dashscope';
+            apiKey?: string;
+            searchEngineId?: string;
+          }>;
+          default: string;
+        }
+      | undefined,
+    description: 'Configuration for web search providers.',
+    showInDialog: false,
+  },
+
   experimental: {
     type: 'object',
     label: 'Experimental',

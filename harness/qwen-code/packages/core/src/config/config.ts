@@ -56,7 +56,7 @@ import { TaskTool } from '../tools/task.js';
 import { TodoWriteTool } from '../tools/todoWrite.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
 import { WebFetchTool } from '../tools/web-fetch.js';
-import { WebSearchTool } from '../tools/web-search.js';
+import { WebSearchTool } from '../tools/web-search/index.js';
 import { WriteFileTool } from '../tools/write-file.js';
 
 // Other modules
@@ -261,6 +261,14 @@ export interface ConfigParameters {
   loadMemoryFromIncludeDirectories?: boolean;
   // Web search providers
   tavilyApiKey?: string;
+  webSearch?: {
+    provider: Array<{
+      type: 'tavily' | 'google' | 'dashscope';
+      apiKey?: string;
+      searchEngineId?: string;
+    }>;
+    default: string;
+  };
   chatCompression?: ChatCompressionSettings;
   interactive?: boolean;
   trustedFolder?: boolean;
@@ -349,6 +357,14 @@ export class Config {
   private readonly experimentalZedIntegration: boolean = false;
   private readonly loadMemoryFromIncludeDirectories: boolean = false;
   private readonly tavilyApiKey?: string;
+  private readonly webSearch?: {
+    provider: Array<{
+      type: 'tavily' | 'google' | 'dashscope';
+      apiKey?: string;
+      searchEngineId?: string;
+    }>;
+    default: string;
+  };
   private readonly chatCompression: ChatCompressionSettings | undefined;
   private readonly interactive: boolean;
   private readonly trustedFolder: boolean | undefined;
@@ -454,6 +470,7 @@ export class Config {
 
     // Web search
     this.tavilyApiKey = params.tavilyApiKey;
+    this.webSearch = params.webSearch;
     this.useRipgrep = params.useRipgrep ?? true;
     this.shouldUseNodePtyShell = params.shouldUseNodePtyShell ?? false;
     this.skipNextSpeakerCheck = params.skipNextSpeakerCheck ?? true;
@@ -891,6 +908,31 @@ export class Config {
     return this.tavilyApiKey;
   }
 
+  getWebSearchConfig():
+    | {
+        provider: Array<{
+          type: 'tavily' | 'google' | 'dashscope';
+          config: Record<string, unknown>;
+        }>;
+        default: string;
+      }
+    | undefined {
+    if (!this.webSearch) {
+      return undefined;
+    }
+
+    return {
+      provider: this.webSearch.provider.map((p) => ({
+        type: p.type,
+        config: {
+          apiKey: p.apiKey,
+          searchEngineId: p.searchEngineId,
+        },
+      })),
+      default: this.webSearch.default,
+    };
+  }
+
   getIdeMode(): boolean {
     return this.ideMode;
   }
@@ -1118,8 +1160,12 @@ export class Config {
     registerCoreTool(TodoWriteTool, this);
     registerCoreTool(ExitPlanModeTool, this);
     registerCoreTool(WebFetchTool, this);
-    // Conditionally register web search tool only if Tavily API key is set
-    if (this.getTavilyApiKey()) {
+    // Conditionally register web search tool if any web search provider is configured
+    // or if using qwen-oauth authentication
+    if (
+      this.getWebSearchConfig() ||
+      this.getAuthType() === AuthType.QWEN_OAUTH
+    ) {
       registerCoreTool(WebSearchTool, this);
     }
 
