@@ -5,7 +5,12 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import type { WebSearchResult, WebSearchResultItem } from '../types.js';
+import { WebSearchError } from '../errors.js';
+import type {
+  WebSearchResult,
+  WebSearchResultItem,
+  DashScopeProviderConfig,
+} from '../types.js';
 
 interface DashScopeSearchItem {
   _id: string;
@@ -51,29 +56,18 @@ interface DashScopeSearchResponse {
 }
 
 /**
- * Configuration for DashScope provider.
- */
-export interface DashScopeConfig {
-  apiKey: string;
-  uid: string;
-  appId: string;
-  maxResults?: number;
-  scene?: string;
-  timeout?: number;
-}
-
-/**
  * Web search provider using Alibaba Cloud DashScope API.
  */
 export class DashScopeProvider extends BaseWebSearchProvider {
   readonly name = 'DashScope';
 
-  constructor(private readonly config: DashScopeConfig) {
+  constructor(private readonly config: DashScopeProviderConfig) {
     super();
   }
 
   isAvailable(): boolean {
-    return !!(this.config.apiKey && this.config.uid && this.config.appId);
+    return true;
+    // return !!(this.config.apiKey && this.config.uid && this.config.appId);
   }
 
   protected async performSearch(
@@ -82,7 +76,7 @@ export class DashScopeProvider extends BaseWebSearchProvider {
   ): Promise<WebSearchResult> {
     const requestBody = {
       rid: '',
-      uid: this.config.uid,
+      uid: this.config.uid!,
       scene: this.config.scene || 'dolphin_search_inner_turbo',
       uq: query,
       fields: [],
@@ -91,7 +85,7 @@ export class DashScopeProvider extends BaseWebSearchProvider {
       customConfigInfo: {},
       headers: {
         __d_head_qto: this.config.timeout || 8000,
-        __d_head_app: this.config.appId,
+        __d_head_app: this.config.appId!,
       },
     };
 
@@ -101,7 +95,7 @@ export class DashScopeProvider extends BaseWebSearchProvider {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: this.config.apiKey,
+          Authorization: this.config.apiKey!,
         },
         body: JSON.stringify(requestBody),
         signal,
@@ -110,16 +104,18 @@ export class DashScopeProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(
-        `DashScope API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
+      throw new WebSearchError(
+        this.name,
+        `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
 
     const data = (await response.json()) as DashScopeSearchResponse;
 
     if (data.status !== 0) {
-      throw new Error(
-        `DashScope API error: ${data.message || 'Unknown error'}`,
+      throw new WebSearchError(
+        this.name,
+        `API error: ${data.message || 'Unknown error'}`,
       );
     }
 

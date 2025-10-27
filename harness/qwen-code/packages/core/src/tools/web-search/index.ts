@@ -13,16 +13,21 @@ import {
   type ToolInfoConfirmationDetails,
   ToolConfirmationOutcome,
 } from '../tools.js';
+import { ToolErrorType } from '../tool-error.js';
 
 import type { Config } from '../../config/config.js';
 import { ApprovalMode } from '../../config/config.js';
 import { getErrorMessage } from '../../utils/errors.js';
-import { WebSearchProviderFactory } from './provider-factory.js';
+import { buildContentWithSources, buildSummary } from './utils.js';
+import { TavilyProvider } from './providers/tavily-provider.js';
+import { GoogleProvider } from './providers/google-provider.js';
+import { DashScopeProvider } from './providers/dashscope-provider.js';
 import type {
   WebSearchToolParams,
   WebSearchToolResult,
   WebSearchProvider,
   WebSearchResultItem,
+  WebSearchProviderConfig,
 } from './types.js';
 
 class WebSearchToolInvocation extends BaseToolInvocation<
@@ -37,7 +42,6 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   override getDescription(): string {
-    // Try to determine which provider will be used
     const webSearchConfig = this.config.getWebSearchConfig();
     const provider =
       this.params.provider || webSearchConfig?.default || 'tavily';
@@ -64,6 +68,103 @@ class WebSearchToolInvocation extends BaseToolInvocation<
     return confirmationDetails;
   }
 
+  /**
+   * Create a provider instance from configuration.
+   */
+  private createProvider(config: WebSearchProviderConfig): WebSearchProvider {
+    switch (config.type) {
+      case 'tavily':
+        return new TavilyProvider(config);
+      case 'google':
+        return new GoogleProvider(config);
+      case 'dashscope':
+        return new DashScopeProvider(config);
+      default:
+        throw new Error('Unknown provider type');
+    }
+  }
+
+  /**
+   * Create all configured providers.
+   */
+  private createProviders(
+    configs: WebSearchProviderConfig[],
+  ): Map<string, WebSearchProvider> {
+    const providers = new Map<string, WebSearchProvider>();
+
+    for (const config of configs) {
+      try {
+        const provider = this.createProvider(config);
+        if (provider.isAvailable()) {
+          providers.set(config.type, provider);
+        }
+      } catch (error) {
+        console.warn(`Failed to create ${config.type} provider:`, error);
+      }
+    }
+
+    return providers;
+  }
+
+  /**
+   * Select the appropriate provider based on configuration and parameters.
+   */
+  private selectProvider(
+    providers: Map<string, WebSearchProvider>,
+    requestedProvider?: string,
+    defaultProvider?: string,
+  ): { provider: WebSearchProvider | null; error?: string } {
+    // Use requested provider if specified
+    if (requestedProvider) {
+      const provider = providers.get(requestedProvider);
+      if (!provider) {
+        const availableProviders = Array.from(providers.keys()).join(', ');
+        return {
+          provider: null,
+          error: `The specified provider "${requestedProvider}" is not available or not configured. Available providers: ${availableProviders}`,
+        };
+      }
+      return { provider };
+    }
+
+    // Use default provider if specified and available
+    if (defaultProvider && providers.has(defaultProvider)) {
+      const provider = providers.get(defaultProvider)!;
+      return { provider };
+    }
+
+    // Fallback to first available provider
+    const firstProvider = providers.values().next().value;
+    return { provider: firstProvider || null };
+  }
+
+  /**
+   * Format search results into a content string.
+   */
+  private formatSearchResults(searchResult: {
+    answer?: string;
+    results: WebSearchResultItem[];
+  }): {
+    content: string;
+    sources: Array<{ title: string; url: string }>;
+  } {
+    const sources = searchResult.results.map((r) => ({
+      title: r.title,
+      url: r.url,
+    }));
+
+    let content = searchResult.answer?.trim() || '';
+    if (!content) {
+      // Fallback: build a concise summary from top results
+      content = buildSummary(sources, 3);
+    }
+
+    // Add sources section
+    content = buildContentWithSources(content, sources);
+
+    return { content, sources };
+  }
+
   async execute(signal: AbortSignal): Promise<WebSearchToolResult> {
     const webSearchConfig = this.config.getWebSearchConfig();
     if (!webSearchConfig) {
@@ -75,37 +176,35 @@ class WebSearchToolInvocation extends BaseToolInvocation<
       };
     }
 
-    const providers = WebSearchProviderFactory.createProviders(
-      webSearchConfig.provider,
+    const providers = this.createProviders(webSearchConfig.provider);
+
+    const { provider: selectedProvider, error } = this.selectProvider(
+      providers,
+      this.params.provider,
+      webSearchConfig.default,
     );
 
-    // Determine which provider to use
-    let selectedProvider: WebSearchProvider | null = null;
-
-    if (this.params.provider) {
-      // Use the specified provider if available
-      const provider = providers.get(this.params.provider);
-      if (provider && provider.isAvailable()) {
-        selectedProvider = provider;
-      } else {
-        return {
-          llmContent: `The specified provider "${this.params.provider}" is not available or not configured. Available providers: ${Array.from(providers.keys()).join(', ')}`,
-          returnDisplay: `The WebSearch Provider "${this.params.provider}" not available.`,
-        };
-      }
-    } else {
-      // Use default provider
-      selectedProvider = WebSearchProviderFactory.getDefaultProvider(
-        providers,
-        webSearchConfig.default,
-      );
+    if (error) {
+      return {
+        llmContent: error,
+        returnDisplay: `Provider "${this.params.provider}" not available.`,
+        error: {
+          message: error,
+          type: ToolErrorType.INVALID_TOOL_PARAMS,
+        },
+      };
     }
 
     if (!selectedProvider) {
+      const errorMsg =
+        'Web search is disabled because no web search providers are available. Please check your configuration.';
       return {
-        llmContent:
-          'Web search is disabled because no web search providers are available. Please check your configuration.',
+        llmContent: errorMsg,
         returnDisplay: 'Web search disabled. No available providers.',
+        error: {
+          message: errorMsg,
+          type: ToolErrorType.EXECUTION_FAILED,
+        },
       };
     }
 
@@ -115,31 +214,7 @@ class WebSearchToolInvocation extends BaseToolInvocation<
         signal,
       );
 
-      const sources = searchResult.results.map((r: WebSearchResultItem) => ({
-        title: r.title,
-        url: r.url,
-      }));
-
-      const sourceListFormatted = sources.map(
-        (s: { title: string; url: string }, i: number) =>
-          `[${i + 1}] ${s.title || 'Untitled'} (${s.url})`,
-      );
-
-      let content = searchResult.answer?.trim() || '';
-      if (!content) {
-        // Fallback: build a concise summary from top results
-        content = sources
-          .slice(0, 3)
-          .map(
-            (s: { title: string; url: string }, i: number) =>
-              `${i + 1}. ${s.title} - ${s.url}`,
-          )
-          .join('\n');
-      }
-
-      if (sourceListFormatted.length > 0) {
-        content += `\n\nSources:\n${sourceListFormatted.join('\n')}`;
-      }
+      const { content, sources } = this.formatSearchResults(searchResult);
 
       if (!content.trim()) {
         return {
@@ -161,6 +236,10 @@ class WebSearchToolInvocation extends BaseToolInvocation<
       return {
         llmContent: `Error: ${errorMessage}`,
         returnDisplay: `Error performing web search.`,
+        error: {
+          message: errorMessage,
+          type: ToolErrorType.EXECUTION_FAILED,
+        },
       };
     }
   }

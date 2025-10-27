@@ -95,7 +95,7 @@ export interface WebSearchConfig {
   /**
    * List of available providers with their configurations.
    */
-  providers: WebSearchProviderConfig[];
+  provider: WebSearchProviderConfig[];
 
   /**
    * The default provider to use.
@@ -104,16 +104,47 @@ export interface WebSearchConfig {
 }
 
 /**
- * Base configuration for a web search provider.
+ * Base configuration for Tavily provider.
  */
-export interface WebSearchProviderConfig {
-  /**
-   * The type of provider.
-   */
-  type: 'tavily' | 'google' | 'dashscope';
-
-  /**
-   * Provider-specific configuration.
-   */
-  config?: Record<string, unknown>;
+export interface TavilyProviderConfig {
+  type: 'tavily';
+  apiKey?: string;
+  searchDepth?: 'basic' | 'advanced';
+  maxResults?: number;
+  includeAnswer?: boolean;
 }
+
+/**
+ * Base configuration for Google provider.
+ */
+export interface GoogleProviderConfig {
+  type: 'google';
+  apiKey?: string;
+  searchEngineId?: string;
+  maxResults?: number;
+  safeSearch?: 'off' | 'medium' | 'high';
+  language?: string;
+  country?: string;
+}
+
+/**
+ * Base configuration for DashScope provider.
+ */
+export interface DashScopeProviderConfig {
+  type: 'dashscope';
+  apiKey?: string;
+  uid?: string;
+  appId?: string;
+  maxResults?: number;
+  scene?: string;
+  timeout?: number;
+}
+
+/**
+ * Discriminated union type for web search provider configurations.
+ * This ensures type safety when working with different provider configs.
+ */
+export type WebSearchProviderConfig =
+  | TavilyProviderConfig
+  | GoogleProviderConfig
+  | DashScopeProviderConfig;

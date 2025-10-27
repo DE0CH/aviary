@@ -908,29 +908,8 @@ export class Config {
     return this.tavilyApiKey;
   }
 
-  getWebSearchConfig():
-    | {
-        provider: Array<{
-          type: 'tavily' | 'google' | 'dashscope';
-          config: Record<string, unknown>;
-        }>;
-        default: string;
-      }
-    | undefined {
-    if (!this.webSearch) {
-      return undefined;
-    }
-
-    return {
-      provider: this.webSearch.provider.map((p) => ({
-        type: p.type,
-        config: {
-          apiKey: p.apiKey,
-          searchEngineId: p.searchEngineId,
-        },
-      })),
-      default: this.webSearch.default,
-    };
+  getWebSearchConfig() {
+    return this.webSearch;
   }
 
   getIdeMode(): boolean {

@@ -5,7 +5,12 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import type { WebSearchResult, WebSearchResultItem } from '../types.js';
+import { WebSearchError } from '../errors.js';
+import type {
+  WebSearchResult,
+  WebSearchResultItem,
+  GoogleProviderConfig,
+} from '../types.js';
 
 interface GoogleSearchItem {
   title: string;
@@ -24,24 +29,12 @@ interface GoogleSearchResponse {
 }
 
 /**
- * Configuration for Google provider.
- */
-export interface GoogleConfig {
-  apiKey: string;
-  searchEngineId: string;
-  maxResults?: number;
-  safeSearch?: 'off' | 'medium' | 'high';
-  language?: string;
-  country?: string;
-}
-
-/**
  * Web search provider using Google Custom Search API.
  */
 export class GoogleProvider extends BaseWebSearchProvider {
   readonly name = 'Google';
 
-  constructor(private readonly config: GoogleConfig) {
+  constructor(private readonly config: GoogleProviderConfig) {
     super();
   }
 
@@ -54,8 +47,8 @@ export class GoogleProvider extends BaseWebSearchProvider {
     signal: AbortSignal,
   ): Promise<WebSearchResult> {
     const params = new URLSearchParams({
-      key: this.config.apiKey,
-      cx: this.config.searchEngineId,
+      key: this.config.apiKey!,
+      cx: this.config.searchEngineId!,
       q: query,
       num: String(this.config.maxResults || 10),
       safe: this.config.safeSearch || 'medium',
@@ -78,8 +71,9 @@ export class GoogleProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(
-        `Google Search API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
+      throw new WebSearchError(
+        this.name,
+        `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
 

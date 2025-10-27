@@ -5,7 +5,12 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import type { WebSearchResult, WebSearchResultItem } from '../types.js';
+import { WebSearchError } from '../errors.js';
+import type {
+  WebSearchResult,
+  WebSearchResultItem,
+  TavilyProviderConfig,
+} from '../types.js';
 
 interface TavilyResultItem {
   title: string;
@@ -22,22 +27,12 @@ interface TavilySearchResponse {
 }
 
 /**
- * Configuration for Tavily provider.
- */
-export interface TavilyConfig {
-  apiKey: string;
-  searchDepth?: 'basic' | 'advanced';
-  maxResults?: number;
-  includeAnswer?: boolean;
-}
-
-/**
  * Web search provider using Tavily API.
  */
 export class TavilyProvider extends BaseWebSearchProvider {
   readonly name = 'Tavily';
 
-  constructor(private readonly config: TavilyConfig) {
+  constructor(private readonly config: TavilyProviderConfig) {
     super();
   }
 
@@ -66,8 +61,9 @@ export class TavilyProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(
-        `Tavily API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
+      throw new WebSearchError(
+        this.name,
+        `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
 
