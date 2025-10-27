@@ -167,7 +167,11 @@ jobs:
           RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
         run: |-
           git add package.json package-lock.json packages/*/package.json
-          git commit -m "chore(release): ${RELEASE_TAG}"
+          if git diff --staged --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore(release): ${RELEASE_TAG}"
+          fi
           if [[ "${IS_DRY_RUN}" == "false" ]]; then
             echo "Pushing release branch to remote..."
             git push --set-upstream origin "${BRANCH_NAME}" --follow-tags
