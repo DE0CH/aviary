@@ -4,12 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { promises as fs } from 'node:fs';
+import * as os from 'os';
+import * as path from 'path';
 import { BaseWebSearchProvider } from '../base-provider.js';
 import type {
   WebSearchResult,
   WebSearchResultItem,
   DashScopeProviderConfig,
 } from '../types.js';
+import type { QwenCredentials } from '../../../qwen/qwenOAuth2.js';
 
 interface DashScopeSearchItem {
   _id: string;
@@ -54,6 +58,30 @@ interface DashScopeSearchResponse {
   success: boolean;
 }
 
+// File System Configuration
+const QWEN_DIR = '.qwen';
+const QWEN_CREDENTIAL_FILENAME = 'oauth_creds.json';
+
+/**
+ * Get the path to the cached OAuth credentials file.
+ */
+function getQwenCachedCredentialPath(): string {
+  return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME);
+}
+
+/**
+ * Load cached Qwen OAuth credentials from disk.
+ */
+async function loadQwenCredentials(): Promise<QwenCredentials | null> {
+  try {
+    const keyFile = getQwenCachedCredentialPath();
+    const creds = await fs.readFile(keyFile, 'utf-8');
+    return JSON.parse(creds) as QwenCredentials;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Web search provider using Alibaba Cloud DashScope API.
  */
@@ -69,32 +97,49 @@ export class DashScopeProvider extends BaseWebSearchProvider {
     // return !!(this.config.apiKey && this.config.uid && this.config.appId);
   }
 
+  /**
+   * Get the access token for authentication.
+   * Tries OAuth credentials first, falls back to apiKey if OAuth is not available.
+   */
+  private async getAccessToken(): Promise<string | null> {
+    // Try to load OAuth credentials first
+    const credentials = await loadQwenCredentials();
+    if (credentials?.access_token) {
+      // Check if token is not expired
+      if (credentials.expiry_date && credentials.expiry_date > Date.now()) {
+        return credentials.access_token;
+      }
+    }
+
+    // Fallback to apiKey from config if OAuth is not available
+    return this.config.apiKey || null;
+  }
+
   protected async performSearch(
     query: string,
     signal: AbortSignal,
   ): Promise<WebSearchResult> {
+    // Get access token from OAuth credentials or fallback to apiKey
+    const accessToken = await this.getAccessToken();
+    if (!accessToken) {
+      throw new Error(
+        'No access token available. Please authenticate using OAuth',
+      );
+    }
+
     const requestBody = {
-      rid: '',
-      uid: this.config.uid!,
-      scene: this.config.scene || 'dolphin_search_inner_turbo',
       uq: query,
-      fields: [],
       page: 1,
       rows: this.config.maxResults || 10,
-      customConfigInfo: {},
-      headers: {
-        __d_head_qto: this.config.timeout || 8000,
-        __d_head_app: this.config.appId!,
-      },
     };
 
     const response = await fetch(
-      'https://dashscope.aliyuncs.com/api/v1/indices/plugin/web_search',
+      'https://pre-portal.qwen.ai/api/v1/indices/plugin/web_search',
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: this.config.apiKey!,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify(requestBody),
         signal,
