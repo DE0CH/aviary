@@ -5,7 +5,6 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import { WebSearchError } from '../errors.js';
 import type {
   WebSearchResult,
   WebSearchResultItem,
@@ -104,8 +103,7 @@ export class DashScopeProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new WebSearchError(
-        this.name,
+      throw new Error(
         `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
@@ -113,10 +111,7 @@ export class DashScopeProvider extends BaseWebSearchProvider {
     const data = (await response.json()) as DashScopeSearchResponse;
 
     if (data.status !== 0) {
-      throw new WebSearchError(
-        this.name,
-        `API error: ${data.message || 'Unknown error'}`,
-      );
+      throw new Error(`API error: ${data.message || 'Unknown error'}`);
     }
 
     const results: WebSearchResultItem[] = (data.data?.docs || []).map(
@@ -129,6 +124,9 @@ export class DashScopeProvider extends BaseWebSearchProvider {
       }),
     );
 
-    return this.formatResults(results, query, undefined);
+    return {
+      query,
+      results,
+    };
   }
 }

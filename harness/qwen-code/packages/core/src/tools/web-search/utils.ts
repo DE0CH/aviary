@@ -9,19 +9,6 @@
  */
 
 /**
- * Format sources into a numbered list with titles and URLs.
- * @param sources Array of source objects with title and url
- * @returns Formatted source list string
- */
-export function formatSources(
-  sources: Array<{ title: string; url: string }>,
-): string {
-  return sources
-    .map((s, i) => `[${i + 1}] ${s.title || 'Untitled'} (${s.url})`)
-    .join('\n');
-}
-
-/**
  * Build content string with appended sources section.
  * @param content Main content text
  * @param sources Array of source objects
@@ -32,7 +19,10 @@ export function buildContentWithSources(
   sources: Array<{ title: string; url: string }>,
 ): string {
   if (!sources.length) return content;
-  return `${content}\n\nSources:\n${formatSources(sources)}`;
+  const sourceList = sources
+    .map((s, i) => `[${i + 1}] ${s.title || 'Untitled'} (${s.url})`)
+    .join('\n');
+  return `${content}\n\nSources:\n${sourceList}`;
 }
 
 /**

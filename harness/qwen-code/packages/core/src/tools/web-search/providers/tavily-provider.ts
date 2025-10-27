@@ -5,7 +5,6 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import { WebSearchError } from '../errors.js';
 import type {
   WebSearchResult,
   WebSearchResultItem,
@@ -61,8 +60,7 @@ export class TavilyProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new WebSearchError(
-        this.name,
+      throw new Error(
         `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
@@ -77,6 +75,10 @@ export class TavilyProvider extends BaseWebSearchProvider {
       publishedDate: r.published_date,
     }));
 
-    return this.formatResults(results, query, data.answer?.trim());
+    return {
+      query,
+      answer: data.answer?.trim(),
+      results,
+    };
   }
 }

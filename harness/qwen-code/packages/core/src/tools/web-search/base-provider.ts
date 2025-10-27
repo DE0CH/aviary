@@ -4,16 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  WebSearchProvider,
-  WebSearchResult,
-  WebSearchResultItem,
-} from './types.js';
-import { WebSearchError } from './errors.js';
+import type { WebSearchProvider, WebSearchResult } from './types.js';
 
 /**
  * Base implementation for web search providers.
- * Provides common functionality for error handling and result formatting.
+ * Provides common functionality for error handling.
  */
 export abstract class BaseWebSearchProvider implements WebSearchProvider {
   abstract readonly name: string;
@@ -42,38 +37,22 @@ export abstract class BaseWebSearchProvider implements WebSearchProvider {
    */
   async search(query: string, signal: AbortSignal): Promise<WebSearchResult> {
     if (!this.isAvailable()) {
-      throw new WebSearchError(
-        this.name,
-        'Provider is not available. Please check your configuration.',
+      throw new Error(
+        `[${this.name}] Provider is not available. Please check your configuration.`,
       );
     }
 
     try {
       return await this.performSearch(query, signal);
     } catch (error: unknown) {
-      if (error instanceof WebSearchError) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith(`[${this.name}]`)
+      ) {
         throw error;
       }
-      throw new WebSearchError(this.name, 'Search failed', error);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`[${this.name}] Search failed: ${message}`);
     }
-  }
-
-  /**
-   * Format search results into a consistent format.
-   * @param results Raw results from the provider
-   * @param query The original search query
-   * @param answer Optional answer from the provider
-   * @returns Formatted search results
-   */
-  protected formatResults(
-    results: WebSearchResultItem[],
-    query: string,
-    answer?: string,
-  ): WebSearchResult {
-    return {
-      query,
-      answer,
-      results,
-    };
   }
 }

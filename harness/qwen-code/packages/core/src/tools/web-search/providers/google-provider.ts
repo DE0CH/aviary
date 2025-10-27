@@ -5,7 +5,6 @@
  */
 
 import { BaseWebSearchProvider } from '../base-provider.js';
-import { WebSearchError } from '../errors.js';
 import type {
   WebSearchResult,
   WebSearchResultItem,
@@ -71,8 +70,7 @@ export class GoogleProvider extends BaseWebSearchProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new WebSearchError(
-        this.name,
+      throw new Error(
         `API error: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''}`,
       );
     }
@@ -85,6 +83,9 @@ export class GoogleProvider extends BaseWebSearchProvider {
       content: item.snippet,
     }));
 
-    return this.formatResults(results, query, undefined);
+    return {
+      query,
+      results,
+    };
   }
 }
