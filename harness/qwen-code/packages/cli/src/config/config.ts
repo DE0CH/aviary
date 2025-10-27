@@ -43,6 +43,7 @@ import { mcpCommand } from '../commands/mcp.js';
 
 import { isWorkspaceTrusted } from './trustedFolders.js';
 import type { ExtensionEnablementManager } from './extensions/extensionEnablement.js';
+import { buildWebSearchConfig } from './webSearch.js';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -117,6 +118,9 @@ export interface CliArgs {
   proxy: string | undefined;
   includeDirectories: string[] | undefined;
   tavilyApiKey: string | undefined;
+  googleApiKey: string | undefined;
+  googleSearchEngineId: string | undefined;
+  webSearchDefault: string | undefined;
   screenReader: boolean | undefined;
   vlmSwitchMode: string | undefined;
   useSmartEdit: boolean | undefined;
@@ -325,7 +329,20 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         })
         .option('tavily-api-key', {
           type: 'string',
-          description: 'Tavily API key for web search functionality',
+          description: 'Tavily API key for web search',
+        })
+        .option('google-api-key', {
+          type: 'string',
+          description: 'Google Custom Search API key',
+        })
+        .option('google-search-engine-id', {
+          type: 'string',
+          description: 'Google Custom Search Engine ID',
+        })
+        .option('web-search-default', {
+          type: 'string',
+          description:
+            'Default web search provider (dashscope, tavily, google)',
         })
         .option('screen-reader', {
           type: 'boolean',
@@ -747,10 +764,7 @@ export async function loadCliConfig(
           : argv.openaiLogging) ?? false,
     },
     cliVersion: await getCliVersion(),
-    tavilyApiKey:
-      argv.tavilyApiKey ||
-      settings.advanced?.tavilyApiKey ||
-      process.env['TAVILY_API_KEY'],
+    webSearch: buildWebSearchConfig(argv, settings),
     summarizeToolOutput: settings.model?.summarizeToolOutput,
     ideMode,
     chatCompression: settings.model?.chatCompression,
@@ -771,7 +785,6 @@ export async function loadCliConfig(
     output: {
       format: (argv.outputFormat ?? settings.output?.format) as OutputFormat,
     },
-    webSearch: settings.webSearch,
   });
 }
 

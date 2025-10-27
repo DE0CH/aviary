@@ -108,34 +108,36 @@ class WebSearchToolInvocation extends BaseToolInvocation<
 
   /**
    * Select the appropriate provider based on configuration and parameters.
+   * Throws error if provider not found.
    */
   private selectProvider(
     providers: Map<string, WebSearchProvider>,
     requestedProvider?: string,
     defaultProvider?: string,
-  ): { provider: WebSearchProvider | null; error?: string } {
+  ): WebSearchProvider {
     // Use requested provider if specified
     if (requestedProvider) {
       const provider = providers.get(requestedProvider);
       if (!provider) {
-        const availableProviders = Array.from(providers.keys()).join(', ');
-        return {
-          provider: null,
-          error: `The specified provider "${requestedProvider}" is not available or not configured. Available providers: ${availableProviders}`,
-        };
+        const available = Array.from(providers.keys()).join(', ');
+        throw new Error(
+          `The specified provider "${requestedProvider}" is not available. Available: ${available}`,
+        );
       }
-      return { provider };
+      return provider;
     }
 
     // Use default provider if specified and available
     if (defaultProvider && providers.has(defaultProvider)) {
-      const provider = providers.get(defaultProvider)!;
-      return { provider };
+      return providers.get(defaultProvider)!;
     }
 
     // Fallback to first available provider
     const firstProvider = providers.values().next().value;
-    return { provider: firstProvider || null };
+    if (!firstProvider) {
+      throw new Error('No web search providers are available.');
+    }
+    return firstProvider;
   }
 
   /**
@@ -166,76 +168,55 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   async execute(signal: AbortSignal): Promise<WebSearchToolResult> {
+    // Guard: Check configuration exists
     const webSearchConfig = this.config.getWebSearchConfig();
     if (!webSearchConfig) {
+      const message =
+        'Web search is disabled. Please configure web search providers in settings.json.';
       return {
-        llmContent:
-          'Web search is disabled because no web search configuration is available. Please configure web search providers in your settings.json.',
+        llmContent: message,
         returnDisplay:
-          'Web search disabled. Configure web search providers to enable search.',
-      };
-    }
-
-    const providers = this.createProviders(webSearchConfig.provider);
-
-    const { provider: selectedProvider, error } = this.selectProvider(
-      providers,
-      this.params.provider,
-      webSearchConfig.default,
-    );
-
-    if (error) {
-      return {
-        llmContent: error,
-        returnDisplay: `Provider "${this.params.provider}" not available.`,
+          'Web search disabled. Configure providers to enable search.',
         error: {
-          message: error,
-          type: ToolErrorType.INVALID_TOOL_PARAMS,
-        },
-      };
-    }
-
-    if (!selectedProvider) {
-      const errorMsg =
-        'Web search is disabled because no web search providers are available. Please check your configuration.';
-      return {
-        llmContent: errorMsg,
-        returnDisplay: 'Web search disabled. No available providers.',
-        error: {
-          message: errorMsg,
+          message,
           type: ToolErrorType.EXECUTION_FAILED,
         },
       };
     }
 
     try {
-      const searchResult = await selectedProvider.search(
-        this.params.query,
-        signal,
+      // Create and select provider
+      const providers = this.createProviders(webSearchConfig.provider);
+      const provider = this.selectProvider(
+        providers,
+        this.params.provider,
+        webSearchConfig.default,
       );
 
+      // Perform search
+      const searchResult = await provider.search(this.params.query, signal);
       const { content, sources } = this.formatSearchResults(searchResult);
 
+      // Guard: Check if we got results
       if (!content.trim()) {
         return {
-          llmContent: `No search results or information found for query: "${this.params.query}" (searched via ${selectedProvider.name})`,
+          llmContent: `No search results found for query: "${this.params.query}" (via ${provider.name})`,
           returnDisplay: `No information found for "${this.params.query}".`,
         };
       }
 
+      // Success result
       return {
-        llmContent: `Web search results for "${this.params.query}" (via ${selectedProvider.name}):\n\n${content}`,
+        llmContent: `Web search results for "${this.params.query}" (via ${provider.name}):\n\n${content}`,
         returnDisplay: `Search results for "${this.params.query}".`,
         sources,
       };
     } catch (error: unknown) {
-      const errorMessage = `Error during web search for query "${this.params.query}": ${getErrorMessage(
-        error,
-      )}`;
+      const errorMessage = `Error during web search: ${getErrorMessage(error)}`;
       console.error(errorMessage, error);
       return {
-        llmContent: `Error: ${errorMessage}`,
-        returnDisplay: `Error performing web search.`,
+        llmContent: errorMessage,
+        returnDisplay: 'Error performing web search.',
         error: {
           message: errorMessage,
           type: ToolErrorType.EXECUTION_FAILED,

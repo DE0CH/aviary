@@ -260,7 +260,6 @@ export interface ConfigParameters {
   cliVersion?: string;
   loadMemoryFromIncludeDirectories?: boolean;
   // Web search providers
-  tavilyApiKey?: string;
   webSearch?: {
     provider: Array<{
       type: 'tavily' | 'google' | 'dashscope';
@@ -356,7 +355,6 @@ export class Config {
   private readonly cliVersion?: string;
   private readonly experimentalZedIntegration: boolean = false;
   private readonly loadMemoryFromIncludeDirectories: boolean = false;
-  private readonly tavilyApiKey?: string;
   private readonly webSearch?: {
     provider: Array<{
       type: 'tavily' | 'google' | 'dashscope';
@@ -469,7 +467,6 @@ export class Config {
     this.skipLoopDetection = params.skipLoopDetection ?? false;
 
     // Web search
-    this.tavilyApiKey = params.tavilyApiKey;
     this.webSearch = params.webSearch;
     this.useRipgrep = params.useRipgrep ?? true;
     this.shouldUseNodePtyShell = params.shouldUseNodePtyShell ?? false;
@@ -904,10 +901,6 @@ export class Config {
   }
 
   // Web search provider configuration
-  getTavilyApiKey(): string | undefined {
-    return this.tavilyApiKey;
-  }
-
   getWebSearchConfig() {
     return this.webSearch;
   }
