@@ -130,7 +130,7 @@ export function OpenAIKeyPrompt({
       }
 
       // Handle regular character input
-      if (key.sequence && !key.ctrl && !key.meta && !key.name) {
+      if (key.sequence && !key.ctrl && !key.meta) {
         // Filter control characters
         const cleanInput = key.sequence
           .split('')
