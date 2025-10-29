@@ -88,8 +88,9 @@ import {
   DEFAULT_FILE_FILTERING_OPTIONS,
   DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
 } from './constants.js';
-import { DEFAULT_QWEN_EMBEDDING_MODEL } from './models.js';
+import { DEFAULT_QWEN_EMBEDDING_MODEL, DEFAULT_QWEN_MODEL } from './models.js';
 import { Storage } from './storage.js';
+import { DEFAULT_DASHSCOPE_BASE_URL } from '../core/openaiContentGenerator/constants.js';
 
 // Re-export types
 export type { AnyToolInvocation, FileFilteringOptions, MCPOAuthConfig };
@@ -243,7 +244,7 @@ export interface ConfigParameters {
   fileDiscoveryService?: FileDiscoveryService;
   includeDirectories?: string[];
   bugCommand?: BugCommandSettings;
-  model: string;
+  model?: string;
   extensionContextFilePaths?: string[];
   maxSessionTurns?: number;
   sessionTokenLimit?: number;
@@ -289,7 +290,7 @@ export class Config {
   private fileSystemService: FileSystemService;
   private contentGeneratorConfig!: ContentGeneratorConfig;
   private contentGenerator!: ContentGenerator;
-  private readonly _generationConfig: ContentGeneratorConfig;
+  private _generationConfig: Partial<ContentGeneratorConfig>;
   private readonly embeddingModel: string;
   private readonly sandbox: SandboxConfig | undefined;
   private readonly targetDir: string;
@@ -440,8 +441,10 @@ export class Config {
     this._generationConfig = {
       model: params.model,
       ...(params.generationConfig || {}),
+      baseUrl: params.generationConfig?.baseUrl || DEFAULT_DASHSCOPE_BASE_URL,
     };
-    this.contentGeneratorConfig = this._generationConfig;
+    this.contentGeneratorConfig = this
+      ._generationConfig as ContentGeneratorConfig;
     this.cliVersion = params.cliVersion;
 
     this.loadMemoryFromIncludeDirectories =
@@ -520,6 +523,26 @@ export class Config {
     return this.contentGenerator;
   }
 
+  /**
+   * Updates the credentials in the generation config.
+   * This is needed when credentials are set after Config construction.
+   */
+  updateCredentials(credentials: {
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+  }): void {
+    if (credentials.apiKey) {
+      this._generationConfig.apiKey = credentials.apiKey;
+    }
+    if (credentials.baseUrl) {
+      this._generationConfig.baseUrl = credentials.baseUrl;
+    }
+    if (credentials.model) {
+      this._generationConfig.model = credentials.model;
+    }
+  }
+
   async refreshAuth(authMethod: AuthType) {
     // Vertex and Genai have incompatible encryption and sending history with
     // throughtSignature from Genai to Vertex will fail, we need to strip them
@@ -587,7 +610,7 @@ export class Config {
   }
 
   getModel(): string {
-    return this.contentGeneratorConfig.model;
+    return this.contentGeneratorConfig?.model || DEFAULT_QWEN_MODEL;
   }
 
   async setModel(

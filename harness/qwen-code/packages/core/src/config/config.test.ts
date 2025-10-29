@@ -16,6 +16,7 @@ import {
   QwenLogger,
 } from '../telemetry/index.js';
 import type { ContentGeneratorConfig } from '../core/contentGenerator.js';
+import { DEFAULT_DASHSCOPE_BASE_URL } from '../core/openaiContentGenerator/constants.js';
 import {
   AuthType,
   createContentGeneratorConfig,
@@ -250,6 +251,7 @@ describe('Server Config (config.ts)', () => {
         authType,
         {
           model: MODEL,
+          baseUrl: DEFAULT_DASHSCOPE_BASE_URL,
         },
       );
       // Verify that contentGeneratorConfig is updated
