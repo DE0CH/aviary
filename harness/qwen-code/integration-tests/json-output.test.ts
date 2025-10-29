@@ -36,10 +36,10 @@ describe('JSON output', () => {
   });
 
   it('should return a JSON error for enforced auth mismatch before running', async () => {
-    process.env['QWEN_OAUTH'] = 'true';
+    process.env['OPENAI_API_KEY'] = 'test-key';
     await rig.setup('json-output-auth-mismatch', {
       settings: {
-        security: { auth: { enforcedType: 'openai' } },
+        security: { auth: { enforcedType: 'qwen-oauth' } },
       },
     });
 
@@ -50,7 +50,7 @@ describe('JSON output', () => {
     } catch (e) {
       thrown = e as Error;
     } finally {
-      delete process.env['QWEN_OAUTH'];
+      delete process.env['OPENAI_API_KEY'];
     }
 
     expect(thrown).toBeDefined();
@@ -79,7 +79,9 @@ describe('JSON output', () => {
     expect(payload.error).toBeDefined();
     expect(payload.error.type).toBe('Error');
     expect(payload.error.code).toBe(1);
-    expect(payload.error.message).toContain('configured auth type is openai');
-    expect(payload.error.message).toContain('current auth type is qwen-oauth');
+    expect(payload.error.message).toContain(
+      'configured auth type is qwen-oauth',
+    );
+    expect(payload.error.message).toContain('current auth type is openai');
   });
 });
