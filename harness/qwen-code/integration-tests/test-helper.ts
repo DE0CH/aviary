@@ -9,7 +9,6 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from 'node:process';
-import { DEFAULT_QWEN_MODEL } from '../packages/core/src/config/models.js';
 import fs from 'node:fs';
 import { EOL } from 'node:os';
 import * as pty from '@lydell/node-pty';
@@ -148,7 +147,7 @@ export class TestRig {
   _interactiveOutput = '';
 
   constructor() {
-    this.bundlePath = join(__dirname, '..', 'bundle/gemini.js');
+    this.bundlePath = join(__dirname, '..', 'dist/cli.js');
     this.testDir = null;
   }
 
@@ -182,7 +181,6 @@ export class TestRig {
         otlpEndpoint: '',
         outfile: telemetryPath,
       },
-      model: DEFAULT_QWEN_MODEL,
       sandbox: env.GEMINI_SANDBOX !== 'false' ? env.GEMINI_SANDBOX : false,
       ...options.settings, // Allow tests to override/add settings
     };
