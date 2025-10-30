@@ -18,7 +18,7 @@ import { ToolErrorType } from '../tool-error.js';
 import type { Config } from '../../config/config.js';
 import { ApprovalMode } from '../../config/config.js';
 import { getErrorMessage } from '../../utils/errors.js';
-import { buildContentWithSources, buildSummary } from './utils.js';
+import { buildContentWithSources } from './utils.js';
 import { TavilyProvider } from './providers/tavily-provider.js';
 import { GoogleProvider } from './providers/google-provider.js';
 import { DashScopeProvider } from './providers/dashscope-provider.js';
@@ -156,13 +156,46 @@ class WebSearchToolInvocation extends BaseToolInvocation<
     }));
 
     let content = searchResult.answer?.trim() || '';
-    if (!content) {
-      // Fallback: build a concise summary from top results
-      content = buildSummary(sources, 3);
-    }
 
-    // Add sources section
-    content = buildContentWithSources(content, sources);
+    if (!content) {
+      // Fallback: Build an informative summary with title + snippet + source link
+      // This provides enough context for the LLM while keeping token usage efficient
+      content = searchResult.results
+        .slice(0, 5) // Top 5 results
+        .map((r, i) => {
+          const parts = [`${i + 1}. **${r.title}**`];
+
+          // Include snippet/content if available
+          if (r.content?.trim()) {
+            parts.push(`   ${r.content.trim()}`);
+          }
+
+          // Always include the source URL
+          parts.push(`   Source: ${r.url}`);
+
+          // Optionally include relevance score if available
+          if (r.score !== undefined) {
+            parts.push(`   Relevance: ${(r.score * 100).toFixed(0)}%`);
+          }
+
+          // Optionally include publish date if available
+          if (r.publishedDate) {
+            parts.push(`   Published: ${r.publishedDate}`);
+          }
+
+          return parts.join('\n');
+        })
+        .join('\n\n');
+
+      // Add a note about using web_fetch for detailed content
+      if (content) {
+        content +=
+          '\n\n*Note: For detailed content from any source above, use the web_fetch tool with the URL.*';
+      }
+    } else {
+      // When answer is available, append sources section
+      content = buildContentWithSources(content, sources);
+    }
 
     return { content, sources };
   }
