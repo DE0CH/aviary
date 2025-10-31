@@ -91,6 +91,20 @@ qwen --web-search-default tavily
 
 **Important:** This configuration is deprecated and will be removed in a future version. Please migrate to the new `webSearch` configuration format shown above. The old configuration will automatically configure Tavily as a provider, but we strongly recommend updating your configuration.
 
+## Disabling Web Search
+
+If you want to disable the web search functionality, you can exclude the `web_search` tool in your `settings.json`:
+
+```json
+{
+  "tools": {
+    "exclude": ["web_search"]
+  }
+}
+```
+
+**Note:** This setting requires a restart of Qwen Code to take effect. Once disabled, the `web_search` tool will not be available to the model, even if web search providers are configured.
+
 ## Usage Examples
 
 ### Basic search (using default provider)
