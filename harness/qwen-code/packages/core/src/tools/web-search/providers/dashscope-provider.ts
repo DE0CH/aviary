@@ -98,29 +98,53 @@ export class DashScopeProvider extends BaseWebSearchProvider {
   }
 
   /**
-   * Get the access token for authentication.
+   * Get the access token and API endpoint for authentication and web search.
    * Tries OAuth credentials first, falls back to apiKey if OAuth is not available.
+   * Returns both token and endpoint to avoid loading credentials multiple times.
    */
-  private async getAccessToken(): Promise<string | null> {
-    // Try to load OAuth credentials first
+  private async getAuthConfig(): Promise<{
+    accessToken: string | null;
+    apiEndpoint: string;
+  }> {
+    // Load credentials once
     const credentials = await loadQwenCredentials();
+
+    // Get access token: try OAuth credentials first, fallback to apiKey
+    let accessToken: string | null = null;
     if (credentials?.access_token) {
       // Check if token is not expired
       if (credentials.expiry_date && credentials.expiry_date > Date.now()) {
-        return credentials.access_token;
+        accessToken = credentials.access_token;
       }
     }
+    if (!accessToken) {
+      accessToken = this.config.apiKey || null;
+    }
 
-    // Fallback to apiKey from config if OAuth is not available
-    return this.config.apiKey || null;
+    // Get API endpoint: use resource_url from credentials
+    if (!credentials?.resource_url) {
+      throw new Error(
+        'No resource_url found in credentials. Please authenticate using OAuth',
+      );
+    }
+
+    // Normalize the URL: add protocol if missing
+    const baseUrl = credentials.resource_url.startsWith('http')
+      ? credentials.resource_url
+      : `https://${credentials.resource_url}`;
+    // Remove trailing slash if present
+    const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+    const apiEndpoint = `${normalizedBaseUrl}/api/v1/indices/plugin/web_search`;
+
+    return { accessToken, apiEndpoint };
   }
 
   protected async performSearch(
     query: string,
     signal: AbortSignal,
   ): Promise<WebSearchResult> {
-    // Get access token from OAuth credentials or fallback to apiKey
-    const accessToken = await this.getAccessToken();
+    // Get access token and API endpoint (loads credentials once)
+    const { accessToken, apiEndpoint } = await this.getAuthConfig();
     if (!accessToken) {
       throw new Error(
         'No access token available. Please authenticate using OAuth',
@@ -133,18 +157,15 @@ export class DashScopeProvider extends BaseWebSearchProvider {
       rows: this.config.maxResults || 10,
     };
 
-    const response = await fetch(
-      'https://pre-portal.qwen.ai/api/v1/indices/plugin/web_search',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify(requestBody),
-        signal,
+    const response = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
       },
-    );
+      body: JSON.stringify(requestBody),
+      signal,
+    });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
