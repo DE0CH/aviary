@@ -138,6 +138,12 @@ export interface DashScopeProviderConfig {
   maxResults?: number;
   scene?: string;
   timeout?: number;
+  /**
+   * Optional auth type to determine provider availability.
+   * If set to 'qwen-oauth', the provider will be available.
+   * If set to other values or undefined, the provider will check auth type dynamically.
+   */
+  authType?: string;
 }
 
 /**

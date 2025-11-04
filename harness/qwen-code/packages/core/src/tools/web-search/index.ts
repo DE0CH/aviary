@@ -17,6 +17,7 @@ import { ToolErrorType } from '../tool-error.js';
 
 import type { Config } from '../../config/config.js';
 import { ApprovalMode } from '../../config/config.js';
+import { AuthType } from '../../core/contentGenerator.js';
 import { getErrorMessage } from '../../utils/errors.js';
 import { buildContentWithSources } from './utils.js';
 import { TavilyProvider } from './providers/tavily-provider.js';
@@ -28,6 +29,7 @@ import type {
   WebSearchProvider,
   WebSearchResultItem,
   WebSearchProviderConfig,
+  DashScopeProviderConfig,
 } from './types.js';
 
 class WebSearchToolInvocation extends BaseToolInvocation<
@@ -43,8 +45,15 @@ class WebSearchToolInvocation extends BaseToolInvocation<
 
   override getDescription(): string {
     const webSearchConfig = this.config.getWebSearchConfig();
-    const provider =
-      this.params.provider || webSearchConfig?.default || 'tavily';
+    const authType = this.config.getAuthType();
+    let defaultProvider = webSearchConfig?.default;
+
+    // If auth type is QWEN_OAUTH, prefer dashscope as default
+    if (authType === AuthType.QWEN_OAUTH && !defaultProvider) {
+      defaultProvider = 'dashscope';
+    }
+
+    const provider = this.params.provider || defaultProvider;
     return ` (Searching the web via ${provider})`;
   }
 
@@ -77,8 +86,15 @@ class WebSearchToolInvocation extends BaseToolInvocation<
         return new TavilyProvider(config);
       case 'google':
         return new GoogleProvider(config);
-      case 'dashscope':
-        return new DashScopeProvider(config);
+      case 'dashscope': {
+        // Pass auth type to DashScope provider for availability check
+        const authType = this.config.getAuthType();
+        const dashscopeConfig: DashScopeProviderConfig = {
+          ...config,
+          authType: authType as string | undefined,
+        };
+        return new DashScopeProvider(dashscopeConfig);
+      }
       default:
         throw new Error('Unknown provider type');
     }
@@ -284,7 +300,7 @@ export class WebSearchTool extends BaseDeclarativeTool<
           provider: {
             type: 'string',
             description:
-              'Optional provider to use for the search (e.g., "tavily", "google", "dashscope"). If not specified, the default provider will be used.',
+              'Optional provider to use for the search (e.g., "tavily", "google", "dashscope"). IMPORTANT: Only specify this parameter if you explicitly know which provider to use. Otherwise, omit this parameter entirely and let the system automatically select the appropriate provider based on availability and configuration. The system will choose the best available provider automatically.',
           },
         },
         required: ['query'],
