@@ -114,6 +114,7 @@ export interface CliArgs {
   openaiLogging: boolean | undefined;
   openaiApiKey: string | undefined;
   openaiBaseUrl: string | undefined;
+  openaiLoggingDir: string | undefined;
   proxy: string | undefined;
   includeDirectories: string[] | undefined;
   tavilyApiKey: string | undefined;
@@ -316,6 +317,11 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           type: 'boolean',
           description:
             'Enable logging of OpenAI API calls for debugging and analysis',
+        })
+        .option('openai-logging-dir', {
+          type: 'string',
+          description:
+            'Custom directory path for OpenAI API logs. Overrides settings files.',
         })
         .option('openai-api-key', {
           type: 'string',
@@ -764,6 +770,8 @@ export async function loadCliConfig(
         (typeof argv.openaiLogging === 'undefined'
           ? settings.model?.enableOpenAILogging
           : argv.openaiLogging) ?? false,
+      openAILoggingDir:
+        argv.openaiLoggingDir || settings.model?.openAILoggingDir,
     },
     cliVersion: await getCliVersion(),
     webSearch: buildWebSearchConfig(

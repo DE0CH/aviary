@@ -327,6 +327,7 @@ describe('gemini.tsx main function kitty protocol', () => {
       openaiLogging: undefined,
       openaiApiKey: undefined,
       openaiBaseUrl: undefined,
+      openaiLoggingDir: undefined,
       proxy: undefined,
       includeDirectories: undefined,
       tavilyApiKey: undefined,

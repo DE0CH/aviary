@@ -558,6 +558,16 @@ const SETTINGS_SCHEMA = {
         description: 'Enable OpenAI logging.',
         showInDialog: true,
       },
+      openAILoggingDir: {
+        type: 'string',
+        label: 'OpenAI Logging Directory',
+        category: 'Model',
+        requiresRestart: false,
+        default: undefined as string | undefined,
+        description:
+          'Custom directory path for OpenAI API logs. If not specified, defaults to logs/openai in the current working directory.',
+        showInDialog: true,
+      },
       generationConfig: {
         type: 'object',
         label: 'Generation Configuration',
