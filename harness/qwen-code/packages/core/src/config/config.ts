@@ -1166,12 +1166,10 @@ export class Config {
     registerCoreTool(TodoWriteTool, this);
     registerCoreTool(ExitPlanModeTool, this);
     registerCoreTool(WebFetchTool, this);
-    // Conditionally register web search tool if any web search provider is configured
-    // or if using qwen-oauth authentication
-    if (
-      this.getWebSearchConfig() ||
-      this.getAuthType() === AuthType.QWEN_OAUTH
-    ) {
+    // Conditionally register web search tool if web search provider is configured
+    // buildWebSearchConfig ensures qwen-oauth users get dashscope provider, so
+    // if tool is registered, config must exist
+    if (this.getWebSearchConfig()) {
       registerCoreTool(WebSearchTool, this);
     }
 

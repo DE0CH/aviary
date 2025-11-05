@@ -17,7 +17,6 @@ import { ToolErrorType } from '../tool-error.js';
 
 import type { Config } from '../../config/config.js';
 import { ApprovalMode } from '../../config/config.js';
-import { AuthType } from '../../core/contentGenerator.js';
 import { getErrorMessage } from '../../utils/errors.js';
 import { buildContentWithSources } from './utils.js';
 import { TavilyProvider } from './providers/tavily-provider.js';
@@ -44,16 +43,9 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   override getDescription(): string {
-    const webSearchConfig = this.config.getWebSearchConfig();
-    const authType = this.config.getAuthType();
-    let defaultProvider = webSearchConfig?.default;
-
-    // If auth type is QWEN_OAUTH, prefer dashscope as default
-    if (authType === AuthType.QWEN_OAUTH && !defaultProvider) {
-      defaultProvider = 'dashscope';
-    }
-
-    const provider = this.params.provider || defaultProvider;
+    // If tool is registered, config must exist with a default provider
+    const webSearchConfig = this.config.getWebSearchConfig()!;
+    const provider = this.params.provider || webSearchConfig.default;
     return ` (Searching the web via ${provider})`;
   }
 
@@ -217,21 +209,8 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   async execute(signal: AbortSignal): Promise<WebSearchToolResult> {
-    // Guard: Check configuration exists
-    const webSearchConfig = this.config.getWebSearchConfig();
-    if (!webSearchConfig) {
-      const message =
-        'Web search is disabled. Please configure web search providers in settings.json.';
-      return {
-        llmContent: message,
-        returnDisplay:
-          'Web search disabled. Configure providers to enable search.',
-        error: {
-          message,
-          type: ToolErrorType.EXECUTION_FAILED,
-        },
-      };
-    }
+    // If tool is registered, config must exist with providers and default
+    const webSearchConfig = this.config.getWebSearchConfig()!;
 
     try {
       // Create and select provider

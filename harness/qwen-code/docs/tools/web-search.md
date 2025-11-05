@@ -8,7 +8,7 @@ Use `web_search` to perform a web search and get information from the internet. 
 
 ### Supported Providers
 
-1. **DashScope** (Official, Free) - Default provider, always available when using Qwen OAuth authentication (200 requests/minute, 2000 requests/day)
+1. **DashScope** (Official, Free) - Automatically available for Qwen OAuth users (200 requests/minute, 2000 requests/day)
 2. **Tavily** - High-quality search API with built-in answer generation
 3. **Google Custom Search** - Google's Custom Search JSON API
 
@@ -46,8 +46,9 @@ Add to your `settings.json`:
 **Notes:**
 
 - DashScope doesn't require an API key (official, free service)
-- Only configure the providers you want to use
-- Set `default` to specify which provider to use by default
+- **Qwen OAuth users:** DashScope is automatically added to your provider list, even if not explicitly configured
+- Configure additional providers (Tavily, Google) if you want to use them alongside DashScope
+- Set `default` to specify which provider to use by default (if not set, priority order: Tavily > Google > DashScope)
 
 ### Method 2: Environment Variables
 
@@ -132,10 +133,11 @@ web_search(query="best practices for React 19", provider="dashscope")
 ### DashScope (Official)
 
 - **Cost:** Free
-- **Authentication:** Automatically available with Qwen OAuth
-- **Configuration:** No API key required
+- **Authentication:** Automatically available when using Qwen OAuth authentication
+- **Configuration:** No API key required, automatically added to provider list for Qwen OAuth users
 - **Quota:** 200 requests/minute, 2000 requests/day
-- **Best for:** General queries, always available
+- **Best for:** General queries, always available as fallback for Qwen OAuth users
+- **Auto-registration:** If you're using Qwen OAuth, DashScope is automatically added to your provider list even if you don't configure it explicitly
 
 ### Tavily
 
@@ -158,14 +160,18 @@ web_search(query="best practices for React 19", provider="dashscope")
 - **Response format:** Returns a concise answer with numbered source citations
 - **Citations:** Source links are appended as a numbered list: [1], [2], etc.
 - **Multiple providers:** If one provider fails, manually specify another using the `provider` parameter
-- **DashScope availability:** Always available when authenticated with Qwen OAuth, no configuration needed
+- **DashScope availability:** Automatically available for Qwen OAuth users, no configuration needed
+- **Default provider selection:** The system automatically selects a default provider based on availability:
+  1. Your explicit `default` configuration (highest priority)
+  2. CLI argument `--web-search-default`
+  3. First available provider by priority: Tavily > Google > DashScope
 
 ## Troubleshooting
 
 **Tool not available?**
 
-- Check if at least one provider is configured
-- For DashScope: Ensure you're authenticated with Qwen OAuth
+- **For Qwen OAuth users:** The tool is automatically registered with DashScope provider, no configuration needed
+- **For other authentication types:** Ensure at least one provider (Tavily or Google) is configured
 - For Tavily/Google: Verify your API keys are correct
 
 **Provider-specific errors?**

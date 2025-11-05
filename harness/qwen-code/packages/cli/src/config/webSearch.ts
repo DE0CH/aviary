@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { AuthType } from '@qwen-code/qwen-code-core';
 import type { WebSearchProviderConfig } from '@qwen-code/qwen-code-core';
 import type { Settings } from './settings.js';
 
@@ -33,56 +34,85 @@ export interface WebSearchConfig {
  *
  * @param argv - Command line arguments
  * @param settings - User settings from settings.json
+ * @param authType - Authentication type (e.g., 'qwen-oauth')
  * @returns WebSearch configuration or undefined if no providers available
  */
 export function buildWebSearchConfig(
   argv: WebSearchCliArgs,
   settings: Settings,
+  authType?: string,
 ): WebSearchConfig | undefined {
-  // Priority 1: Use settings.json webSearch config if present
+  const isQwenOAuth = authType === AuthType.QWEN_OAUTH;
+
+  // Step 1: Collect providers from settings or command line/env
+  let providers: WebSearchProviderConfig[] = [];
+  let userDefault: string | undefined;
+
   if (settings.webSearch) {
-    return settings.webSearch;
+    // Use providers from settings.json
+    providers = [...settings.webSearch.provider];
+    userDefault = settings.webSearch.default;
+  } else {
+    // Build providers from command line args and environment variables
+    const tavilyKey =
+      argv.tavilyApiKey ||
+      settings.advanced?.tavilyApiKey ||
+      process.env['TAVILY_API_KEY'];
+    if (tavilyKey) {
+      providers.push({
+        type: 'tavily',
+        apiKey: tavilyKey,
+      } as WebSearchProviderConfig);
+    }
+
+    const googleKey = argv.googleApiKey || process.env['GOOGLE_API_KEY'];
+    const googleEngineId =
+      argv.googleSearchEngineId || process.env['GOOGLE_SEARCH_ENGINE_ID'];
+    if (googleKey && googleEngineId) {
+      providers.push({
+        type: 'google',
+        apiKey: googleKey,
+        searchEngineId: googleEngineId,
+      } as WebSearchProviderConfig);
+    }
   }
 
-  // Priority 2: Build from command line args and environment variables
-  const providers: WebSearchProviderConfig[] = [];
-
-  // DashScope is always available (official, free)
-  providers.push({ type: 'dashscope' } as WebSearchProviderConfig);
-
-  // Tavily from args/env/legacy settings
-  const tavilyKey =
-    argv.tavilyApiKey ||
-    settings.advanced?.tavilyApiKey ||
-    process.env['TAVILY_API_KEY'];
-  if (tavilyKey) {
-    providers.push({
-      type: 'tavily',
-      apiKey: tavilyKey,
-    } as WebSearchProviderConfig);
+  // Step 2: Ensure dashscope is available for qwen-oauth users
+  if (isQwenOAuth) {
+    const hasDashscope = providers.some((p) => p.type === 'dashscope');
+    if (!hasDashscope) {
+      providers.push({ type: 'dashscope' } as WebSearchProviderConfig);
+    }
   }
 
-  // Google from args/env
-  const googleKey = argv.googleApiKey || process.env['GOOGLE_API_KEY'];
-  const googleEngineId =
-    argv.googleSearchEngineId || process.env['GOOGLE_SEARCH_ENGINE_ID'];
-  if (googleKey && googleEngineId) {
-    providers.push({
-      type: 'google',
-      apiKey: googleKey,
-      searchEngineId: googleEngineId,
-    } as WebSearchProviderConfig);
-  }
-
-  // If no providers configured, return undefined
+  // Step 3: If no providers available, return undefined
   if (providers.length === 0) {
     return undefined;
   }
 
-  // Determine default provider
-  // Priority: CLI arg > has Tavily key > DashScope (fallback)
-  const defaultProvider =
-    argv.webSearchDefault || (tavilyKey ? 'tavily' : 'dashscope');
+  // Step 4: Determine default provider
+  // Priority: user explicit config > CLI arg > first available provider (tavily > google > dashscope)
+  const providerPriority: Array<'tavily' | 'google' | 'dashscope'> = [
+    'tavily',
+    'google',
+    'dashscope',
+  ];
+
+  // Determine default provider based on availability
+  let defaultProvider = userDefault || argv.webSearchDefault;
+  if (!defaultProvider) {
+    // Find first available provider by priority order
+    for (const providerType of providerPriority) {
+      if (providers.some((p) => p.type === providerType)) {
+        defaultProvider = providerType;
+        break;
+      }
+    }
+    // Fallback to first available provider if none found in priority list
+    if (!defaultProvider) {
+      defaultProvider = providers[0]?.type || 'dashscope';
+    }
+  }
 
   return {
     provider: providers,

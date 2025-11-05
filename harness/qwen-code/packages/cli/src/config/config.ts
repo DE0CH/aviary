@@ -766,7 +766,11 @@ export async function loadCliConfig(
           : argv.openaiLogging) ?? false,
     },
     cliVersion: await getCliVersion(),
-    webSearch: buildWebSearchConfig(argv, settings),
+    webSearch: buildWebSearchConfig(
+      argv,
+      settings,
+      settings.security?.auth?.selectedType,
+    ),
     summarizeToolOutput: settings.model?.summarizeToolOutput,
     ideMode,
     chatCompression: settings.model?.chatCompression,
