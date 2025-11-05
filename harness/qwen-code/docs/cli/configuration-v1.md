@@ -309,7 +309,8 @@ If you are experiencing performance issues with file searching (e.g., with `@` c
     ```
 
 - **`tavilyApiKey`** (string):
-  - **Description:** API key for Tavily web search service. Required to enable the `web_search` tool functionality. If not configured, the web search tool will be disabled and skipped.
+  - **Description:** API key for Tavily web search service. Used to enable the `web_search` tool functionality.
+  - **Note:** This is a legacy configuration format. For Qwen OAuth users, DashScope provider is automatically available without any configuration. For other authentication types, configure Tavily or Google providers using the new `webSearch` configuration format.
   - **Default:** `undefined` (web search disabled)
   - **Example:** `"tavilyApiKey": "tvly-your-api-key-here"`
 - **`chatCompression`** (object):
@@ -465,8 +466,8 @@ The CLI automatically loads environment variables from an `.env` file. The loadi
   - This is useful for development and testing.
 - **`TAVILY_API_KEY`**:
   - Your API key for the Tavily web search service.
-  - Required to enable the `web_search` tool functionality.
-  - If not configured, the web search tool will be disabled and skipped.
+  - Used to enable the `web_search` tool functionality.
+  - **Note:** For Qwen OAuth users, DashScope provider is automatically available without any configuration. For other authentication types, configure Tavily or Google providers to enable web search.
   - Example: `export TAVILY_API_KEY="tvly-your-api-key-here"`
 
 ## Command-Line Arguments
