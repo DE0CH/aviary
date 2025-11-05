@@ -272,5 +272,41 @@ describe('WebSearchTool', () => {
       expect(result.error?.message).toContain('Web search is disabled');
       expect(result.llmContent).toContain('Web search is disabled');
     });
+
+    it('should return descriptive message in getDescription when web search is not configured', () => {
+      (
+        mockConfig.getWebSearchConfig as ReturnType<typeof vi.fn>
+      ).mockReturnValue(null);
+
+      const tool = new WebSearchTool(mockConfig);
+      const invocation = tool.build({ query: 'test query' });
+      const description = invocation.getDescription();
+
+      expect(description).toBe(
+        ' (Web search is disabled - configure a provider in settings.json)',
+      );
+    });
+
+    it('should return provider name in getDescription when web search is configured', () => {
+      const webSearchConfig: WebSearchConfig = {
+        provider: [
+          {
+            type: 'tavily',
+            apiKey: 'test-key',
+          },
+        ],
+        default: 'tavily',
+      };
+
+      (
+        mockConfig.getWebSearchConfig as ReturnType<typeof vi.fn>
+      ).mockReturnValue(webSearchConfig);
+
+      const tool = new WebSearchTool(mockConfig);
+      const invocation = tool.build({ query: 'test query' });
+      const description = invocation.getDescription();
+
+      expect(description).toBe(' (Searching the web via tavily)');
+    });
   });
 });

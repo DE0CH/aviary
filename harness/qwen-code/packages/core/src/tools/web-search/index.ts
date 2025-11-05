@@ -43,8 +43,10 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   override getDescription(): string {
-    // If tool is registered, config must exist with a default provider
-    const webSearchConfig = this.config.getWebSearchConfig()!;
+    const webSearchConfig = this.config.getWebSearchConfig();
+    if (!webSearchConfig) {
+      return ' (Web search is disabled - configure a provider in settings.json)';
+    }
     const provider = this.params.provider || webSearchConfig.default;
     return ` (Searching the web via ${provider})`;
   }
@@ -209,8 +211,19 @@ class WebSearchToolInvocation extends BaseToolInvocation<
   }
 
   async execute(signal: AbortSignal): Promise<WebSearchToolResult> {
-    // If tool is registered, config must exist with providers and default
-    const webSearchConfig = this.config.getWebSearchConfig()!;
+    // Check if web search is configured
+    const webSearchConfig = this.config.getWebSearchConfig();
+    if (!webSearchConfig) {
+      return {
+        llmContent:
+          'Web search is disabled. Please configure a web search provider in your settings.',
+        returnDisplay: 'Web search is disabled.',
+        error: {
+          message: 'Web search is disabled',
+          type: ToolErrorType.EXECUTION_FAILED,
+        },
+      };
+    }
 
     try {
       // Create and select provider
