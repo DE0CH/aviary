@@ -541,6 +541,9 @@ Arguments passed directly when running the CLI can override other configurations
   - Displays the version of the CLI.
 - **`--openai-logging`**:
   - Enables logging of OpenAI API calls for debugging and analysis. This flag overrides the `enableOpenAILogging` setting in `settings.json`.
+- **`--openai-logging-dir <directory>`**:
+  - Sets a custom directory path for OpenAI API logs. This flag overrides the `openAILoggingDir` setting in `settings.json`. Supports absolute paths, relative paths, and `~` expansion.
+  - **Example:** `qwen --openai-logging-dir "~/qwen-logs" --openai-logging`
 - **`--tavily-api-key <api_key>`**:
   - Sets the Tavily API key for web search functionality for this session.
   - Example: `qwen --tavily-api-key tvly-your-api-key-here`
