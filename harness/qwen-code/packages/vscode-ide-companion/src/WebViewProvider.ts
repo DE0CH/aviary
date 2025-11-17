@@ -78,6 +78,13 @@ export class WebViewProvider {
       },
     );
 
+    // Set panel icon to Qwen logo
+    this.panel.iconPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      'assets',
+      'icon.png',
+    );
+
     this.panel.webview.html = this.getWebviewContent();
 
     // Handle messages from WebView

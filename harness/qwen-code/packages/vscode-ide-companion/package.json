@@ -58,7 +58,7 @@
       {
         "command": "qwenCode.openChat",
         "title": "Qwen Code: Open Chat",
-        "icon": "$(comment-discussion)"
+        "icon": "./assets/icon.png"
       }
     ],
     "configuration": {
