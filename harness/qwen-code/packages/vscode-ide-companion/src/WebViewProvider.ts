@@ -21,6 +21,7 @@ export class WebViewProvider {
   private currentConversationId: string | null = null;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
+  private currentStreamContent = ''; // Track streaming content for saving
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -32,9 +33,20 @@ export class WebViewProvider {
 
     // Setup agent callbacks
     this.agentManager.onStreamChunk((chunk: string) => {
+      this.currentStreamContent += chunk;
       this.sendMessageToWebView({
         type: 'streamChunk',
         data: { chunk },
+      });
+    });
+
+    this.agentManager.onToolCall((update) => {
+      this.sendMessageToWebView({
+        type: 'toolCall',
+        data: {
+          type: 'tool_call',
+          ...(update as unknown as Record<string, unknown>),
+        },
       });
     });
 
@@ -132,10 +144,8 @@ export class WebViewProvider {
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
 
-          // 显示成功通知
-          vscode.window.showInformationMessage(
-            '✅ Qwen Code connected successfully!',
-          );
+          // Load messages from the current Qwen session
+          await this.loadCurrentSessionMessages();
         } catch (error) {
           console.error('[WebViewProvider] Agent connection error:', error);
           // Clear auth cache on error
@@ -143,58 +153,99 @@ export class WebViewProvider {
           vscode.window.showWarningMessage(
             `Failed to connect to Qwen CLI: ${error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
           );
+          // Fallback to empty conversation
+          await this.initializeEmptyConversation();
         }
       } else {
         console.log('[WebViewProvider] Qwen agent is disabled in settings');
+        // Fallback to ConversationStore
+        await this.initializeEmptyConversation();
       }
     } else {
       console.log(
         '[WebViewProvider] Agent already initialized, reusing existing connection',
       );
+      // Reload current session messages
+      await this.loadCurrentSessionMessages();
     }
+  }
 
-    // Load or create conversation (always do this, even if agent fails)
+  private async loadCurrentSessionMessages(): Promise<void> {
     try {
-      console.log('[WebViewProvider] Loading conversations...');
-      const conversations = await this.conversationStore.getAllConversations();
-      console.log(
-        '[WebViewProvider] Found conversations:',
-        conversations.length,
-      );
+      // Get the current active session ID
+      const currentSessionId = this.agentManager.currentSessionId;
 
-      if (conversations.length > 0) {
-        const lastConv = conversations[conversations.length - 1];
-        this.currentConversationId = lastConv.id;
+      if (!currentSessionId) {
+        console.log('[WebViewProvider] No active session, initializing empty');
+        await this.initializeEmptyConversation();
+        return;
+      }
+
+      console.log(
+        '[WebViewProvider] Loading messages from current session:',
+        currentSessionId,
+      );
+      const messages =
+        await this.agentManager.getSessionMessages(currentSessionId);
+
+      // Set current conversation ID to the session ID
+      this.currentConversationId = currentSessionId;
+
+      if (messages.length > 0) {
         console.log(
-          '[WebViewProvider] Loaded existing conversation:',
-          this.currentConversationId,
+          '[WebViewProvider] Loaded',
+          messages.length,
+          'messages from current Qwen session',
         );
         this.sendMessageToWebView({
           type: 'conversationLoaded',
-          data: lastConv,
+          data: { id: currentSessionId, messages },
         });
       } else {
-        console.log('[WebViewProvider] Creating new conversation...');
-        const newConv = await this.conversationStore.createConversation();
-        this.currentConversationId = newConv.id;
+        // Session exists but has no messages - show empty conversation
         console.log(
-          '[WebViewProvider] Created new conversation:',
-          this.currentConversationId,
+          '[WebViewProvider] Current session has no messages, showing empty conversation',
         );
         this.sendMessageToWebView({
           type: 'conversationLoaded',
-          data: newConv,
+          data: { id: currentSessionId, messages: [] },
         });
       }
-      console.log('[WebViewProvider] Initialization complete');
-    } catch (convError) {
+    } catch (error) {
       console.error(
-        '[WebViewProvider] Failed to create conversation:',
-        convError,
+        '[WebViewProvider] Failed to load session messages:',
+        error,
       );
       vscode.window.showErrorMessage(
-        `Failed to initialize conversation: ${convError}`,
+        `Failed to load session messages: ${error}`,
       );
+      await this.initializeEmptyConversation();
+    }
+  }
+
+  private async initializeEmptyConversation(): Promise<void> {
+    try {
+      console.log('[WebViewProvider] Initializing empty conversation');
+      const newConv = await this.conversationStore.createConversation();
+      this.currentConversationId = newConv.id;
+      this.sendMessageToWebView({
+        type: 'conversationLoaded',
+        data: newConv,
+      });
+      console.log(
+        '[WebViewProvider] Empty conversation initialized:',
+        this.currentConversationId,
+      );
+    } catch (error) {
+      console.error(
+        '[WebViewProvider] Failed to initialize conversation:',
+        error,
+      );
+      // Send empty state to WebView as fallback
+      this.sendMessageToWebView({
+        type: 'conversationLoaded',
+        data: { id: 'temp', messages: [] },
+      });
     }
   }
 
@@ -258,7 +309,13 @@ export class WebViewProvider {
     console.log('[WebViewProvider] handleSendMessage called with:', text);
 
     if (!this.currentConversationId) {
-      console.error('[WebViewProvider] No current conversation ID');
+      const errorMsg = 'No active conversation. Please restart the extension.';
+      console.error('[WebViewProvider]', errorMsg);
+      vscode.window.showErrorMessage(errorMsg);
+      this.sendMessageToWebView({
+        type: 'error',
+        data: { message: errorMsg },
+      });
       return;
     }
 
@@ -299,6 +356,9 @@ export class WebViewProvider {
 
     // Send to agent
     try {
+      // Reset stream content
+      this.currentStreamContent = '';
+
       // Create placeholder for assistant message
       this.sendMessageToWebView({
         type: 'streamStart',
@@ -310,7 +370,20 @@ export class WebViewProvider {
       await this.agentManager.sendMessage(text);
       console.log('[WebViewProvider] Agent manager send complete');
 
-      // Stream is complete
+      // Stream is complete - save assistant message
+      if (this.currentStreamContent && this.currentConversationId) {
+        const assistantMessage: ChatMessage = {
+          role: 'assistant',
+          content: this.currentStreamContent,
+          timestamp: Date.now(),
+        };
+        await this.conversationStore.addMessage(
+          this.currentConversationId,
+          assistantMessage,
+        );
+        console.log('[WebViewProvider] Assistant message saved to store');
+      }
+
       this.sendMessageToWebView({
         type: 'streamEnd',
         data: { timestamp: Date.now() },
@@ -386,8 +459,6 @@ export class WebViewProvider {
         type: 'conversationCleared',
         data: {},
       });
-
-      vscode.window.showInformationMessage('✅ New Qwen session created!');
     } catch (error) {
       console.error('[WebViewProvider] Failed to create new session:', error);
       this.sendMessageToWebView({
@@ -401,6 +472,10 @@ export class WebViewProvider {
     try {
       console.log('[WebViewProvider] Switching to Qwen session:', sessionId);
 
+      // Set current conversation ID so we can send messages
+      this.currentConversationId = sessionId;
+      console.log('[WebViewProvider] Set currentConversationId to:', sessionId);
+
       // Get session messages from local files
       const messages = await this.agentManager.getSessionMessages(sessionId);
       console.log(
@@ -411,10 +486,26 @@ export class WebViewProvider {
       // Try to switch session in ACP (may fail if not supported)
       try {
         await this.agentManager.switchToSession(sessionId);
+        console.log('[WebViewProvider] Session switched successfully in ACP');
       } catch (_switchError) {
         console.log(
-          '[WebViewProvider] session/switch not supported, but loaded messages anyway',
+          '[WebViewProvider] session/switch not supported or failed, creating new session',
         );
+        // If switch fails, create a new session to continue conversation
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+        try {
+          await this.agentManager.createNewSession(workingDir);
+          console.log('[WebViewProvider] Created new session as fallback');
+        } catch (newSessionError) {
+          console.error(
+            '[WebViewProvider] Failed to create new session:',
+            newSessionError,
+          );
+          vscode.window.showWarningMessage(
+            'Could not switch to session. Created new session instead.',
+          );
+        }
       }
 
       // Send messages to WebView
@@ -422,16 +513,13 @@ export class WebViewProvider {
         type: 'qwenSessionSwitched',
         data: { sessionId, messages },
       });
-
-      vscode.window.showInformationMessage(
-        `Loaded Qwen session with ${messages.length} messages`,
-      );
     } catch (error) {
       console.error('[WebViewProvider] Failed to switch session:', error);
       this.sendMessageToWebView({
         type: 'error',
         data: { message: `Failed to switch session: ${error}` },
       });
+      vscode.window.showErrorMessage(`Failed to switch session: ${error}`);
     }
   }
 

@@ -539,4 +539,8 @@ export class AcpConnection {
   get hasActiveSession(): boolean {
     return this.sessionId !== null;
   }
+
+  get currentSessionId(): string | null {
+    return this.sessionId;
+  }
 }
