@@ -5,6 +5,7 @@
     "target": "ES2022",
     "lib": ["ES2022", "dom"],
     "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "sourceMap": true,
     "strict": true /* enable all strict type-checking options */
     /* Additional Checks */

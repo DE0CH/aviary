@@ -59,6 +59,10 @@
         "command": "qwenCode.openChat",
         "title": "Qwen Code: Open Chat",
         "icon": "./assets/icon.png"
+      },
+      {
+        "command": "qwenCode.clearAuthCache",
+        "title": "Qwen Code: Clear Authentication Cache"
       }
     ],
     "configuration": {

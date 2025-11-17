@@ -14,6 +14,7 @@ import {
   QwenSessionReader,
   type QwenSession,
 } from '../services/QwenSessionReader.js';
+import type { AuthStateManager } from '../auth/AuthStateManager.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -57,7 +58,10 @@ export class QwenAgentManager {
     };
   }
 
-  async connect(workingDir: string): Promise<void> {
+  async connect(
+    workingDir: string,
+    authStateManager?: AuthStateManager,
+  ): Promise<void> {
     this.currentWorkingDir = workingDir;
     const config = vscode.workspace.getConfiguration('qwenCode');
     const cliPath = config.get<string>('qwen.cliPath', 'qwen');
@@ -87,7 +91,23 @@ export class QwenAgentManager {
     // Determine auth method based on configuration
     const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
 
-    // Since session/list is not supported, try to get sessions from local files
+    // Check if we have valid cached authentication
+    let needsAuth = true;
+    if (authStateManager) {
+      const hasValidAuth = await authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
+      );
+      if (hasValidAuth) {
+        console.log('[QwenAgentManager] Using cached authentication');
+        needsAuth = false;
+      }
+    }
+
+    // Try to restore existing session or create new one
+    let sessionRestored = false;
+
+    // Try to get sessions from local files
     console.log('[QwenAgentManager] Reading local session files...');
     try {
       const sessions = await this.sessionReader.getAllSessions(workingDir);
@@ -107,31 +127,145 @@ export class QwenAgentManager {
             '[QwenAgentManager] Restored session:',
             lastSession.sessionId,
           );
-        } catch (_switchError) {
+          sessionRestored = true;
+          // If session restored successfully, we don't need to authenticate
+          needsAuth = false;
+        } catch (switchError) {
           console.log(
-            '[QwenAgentManager] session/switch not supported, creating new session',
+            '[QwenAgentManager] session/switch not supported or failed:',
+            switchError instanceof Error
+              ? switchError.message
+              : String(switchError),
           );
-          await this.connection.authenticate(authMethod);
-          await this.connection.newSession(workingDir);
+          // Will create new session below
         }
       } else {
-        // No sessions, authenticate and create a new one
-        console.log(
-          '[QwenAgentManager] No existing sessions, creating new session',
-        );
-        await this.connection.authenticate(authMethod);
-        await this.connection.newSession(workingDir);
+        console.log('[QwenAgentManager] No existing sessions found');
       }
     } catch (error) {
-      // If reading local sessions fails, fall back to creating new session
+      // If reading local sessions fails, log and continue
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       console.log(
-        '[QwenAgentManager] Failed to read local sessions, creating new session:',
+        '[QwenAgentManager] Failed to read local sessions:',
         errorMessage,
       );
-      await this.connection.authenticate(authMethod);
-      await this.connection.newSession(workingDir);
+      // Will create new session below
+    }
+
+    // Create new session if we couldn't restore one
+    if (!sessionRestored) {
+      console.log('[QwenAgentManager] Creating new session...');
+
+      // Authenticate only if needed (not cached or session restore failed)
+      if (needsAuth) {
+        await this.authenticateWithRetry(authMethod, 3);
+        // Save successful auth to cache
+        if (authStateManager) {
+          await authStateManager.saveAuthState(workingDir, authMethod);
+        }
+      }
+
+      // Try to create session
+      try {
+        await this.newSessionWithRetry(workingDir, 3);
+        console.log('[QwenAgentManager] New session created successfully');
+      } catch (sessionError) {
+        // If we used cached auth but session creation failed,
+        // the cached auth might be invalid (token expired on server)
+        // Clear cache and retry with fresh authentication
+        if (!needsAuth && authStateManager) {
+          console.log(
+            '[QwenAgentManager] Session creation failed with cached auth, clearing cache and re-authenticating...',
+          );
+          await authStateManager.clearAuthState();
+
+          // Retry with fresh authentication
+          await this.authenticateWithRetry(authMethod, 3);
+          await authStateManager.saveAuthState(workingDir, authMethod);
+          await this.newSessionWithRetry(workingDir, 3);
+          console.log(
+            '[QwenAgentManager] Successfully authenticated and created session after cache invalidation',
+          );
+        } else {
+          // If we already tried with fresh auth, or no auth manager, just throw
+          throw sessionError;
+        }
+      }
+    }
+  }
+
+  /**
+   * Authenticate with retry logic
+   */
+  private async authenticateWithRetry(
+    authMethod: string,
+    maxRetries: number,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `[QwenAgentManager] Authenticating (attempt ${attempt}/${maxRetries})...`,
+        );
+        await this.connection.authenticate(authMethod);
+        console.log('[QwenAgentManager] Authentication successful');
+        return;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        console.error(
+          `[QwenAgentManager] Authentication attempt ${attempt} failed:`,
+          errorMessage,
+        );
+
+        if (attempt === maxRetries) {
+          throw new Error(
+            `Authentication failed after ${maxRetries} attempts: ${errorMessage}`,
+          );
+        }
+
+        // Wait before retrying (exponential backoff)
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`[QwenAgentManager] Retrying in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  /**
+   * Create new session with retry logic
+   */
+  private async newSessionWithRetry(
+    workingDir: string,
+    maxRetries: number,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `[QwenAgentManager] Creating session (attempt ${attempt}/${maxRetries})...`,
+        );
+        await this.connection.newSession(workingDir);
+        console.log('[QwenAgentManager] Session created successfully');
+        return;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        console.error(
+          `[QwenAgentManager] Session creation attempt ${attempt} failed:`,
+          errorMessage,
+        );
+
+        if (attempt === maxRetries) {
+          throw new Error(
+            `Session creation failed after ${maxRetries} attempts: ${errorMessage}`,
+          );
+        }
+
+        // Wait before retrying
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`[QwenAgentManager] Retrying in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 

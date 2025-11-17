@@ -90,6 +90,7 @@ async function main() {
     outfile: 'dist/webview.js',
     logLevel: 'silent',
     plugins: [cssInjectPlugin, esbuildProblemMatcherPlugin],
+    jsx: 'automatic', // Use new JSX transform (React 17+)
     define: {
       'process.env.NODE_ENV': production ? '"production"' : '"development"',
     },

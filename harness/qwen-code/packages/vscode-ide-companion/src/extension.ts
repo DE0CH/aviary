@@ -15,6 +15,7 @@ import {
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { WebViewProvider } from './WebViewProvider.js';
+import { AuthStateManager } from './auth/AuthStateManager.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
 const INFO_MESSAGE_SHOWN_KEY = 'qwenCodeInfoMessageShown';
@@ -33,6 +34,7 @@ const HIDE_INSTALLATION_GREETING_IDES: ReadonlySet<IdeInfo['name']> = new Set([
 let ideServer: IDEServer;
 let logger: vscode.OutputChannel;
 let webViewProvider: WebViewProvider;
+let authStateManager: AuthStateManager;
 
 let log: (message: string) => void = () => {};
 
@@ -112,6 +114,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const diffContentProvider = new DiffContentProvider();
   const diffManager = new DiffManager(log, diffContentProvider);
 
+  // Initialize Auth State Manager
+  authStateManager = new AuthStateManager(context);
+
   // Initialize WebView Provider
   webViewProvider = new WebViewProvider(context, context.extensionUri);
 
@@ -139,6 +144,13 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('qwenCode.openChat', () => {
       webViewProvider.show();
+    }),
+    vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
+      await authStateManager.clearAuthState();
+      vscode.window.showInformationMessage(
+        'Qwen Code authentication cache cleared. You will need to login again on next connection.',
+      );
+      log('Auth cache cleared by user');
     }),
   );
 

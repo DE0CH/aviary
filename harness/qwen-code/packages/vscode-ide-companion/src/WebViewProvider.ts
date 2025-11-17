@@ -11,11 +11,13 @@ import {
 } from './agents/QwenAgentManager.js';
 import { ConversationStore } from './storage/ConversationStore.js';
 import type { AcpPermissionRequest } from './shared/acpTypes.js';
+import { AuthStateManager } from './auth/AuthStateManager.js';
 
 export class WebViewProvider {
   private panel: vscode.WebviewPanel | null = null;
   private agentManager: QwenAgentManager;
   private conversationStore: ConversationStore;
+  private authStateManager: AuthStateManager;
   private currentConversationId: string | null = null;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
@@ -26,6 +28,7 @@ export class WebViewProvider {
   ) {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
+    this.authStateManager = new AuthStateManager(context);
 
     // Setup agent callbacks
     this.agentManager.onStreamChunk((chunk: string) => {
@@ -122,7 +125,10 @@ export class WebViewProvider {
       if (qwenEnabled) {
         try {
           console.log('[WebViewProvider] Connecting to agent...');
-          await this.agentManager.connect(workingDir);
+          const authInfo = await this.authStateManager.getAuthInfo();
+          console.log('[WebViewProvider] Auth cache status:', authInfo);
+
+          await this.agentManager.connect(workingDir, this.authStateManager);
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
 
@@ -132,6 +138,8 @@ export class WebViewProvider {
           );
         } catch (error) {
           console.error('[WebViewProvider] Agent connection error:', error);
+          // Clear auth cache on error
+          await this.authStateManager.clearAuthState();
           vscode.window.showWarningMessage(
             `Failed to connect to Qwen CLI: ${error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
           );
