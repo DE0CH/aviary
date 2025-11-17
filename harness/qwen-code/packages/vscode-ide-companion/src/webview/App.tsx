@@ -19,6 +19,10 @@ export const App: React.FC = () => {
     Array<Record<string, unknown>>
   >([]);
   const [showSessionSelector, setShowSessionSelector] = useState(false);
+  const [permissionRequest, setPermissionRequest] = useState<{
+    options: Array<{ name: string; kind: string; optionId: string }>;
+    toolCall: { title?: string };
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const handlePermissionRequest = React.useCallback(
@@ -26,19 +30,21 @@ export const App: React.FC = () => {
       options: Array<{ name: string; kind: string; optionId: string }>;
       toolCall: { title?: string };
     }) => {
-      const optionNames = request.options.map((opt) => opt.name).join(', ');
-      const confirmed = window.confirm(
-        `Tool permission request:\n${request.toolCall.title || 'Tool Call'}\n\nOptions: ${optionNames}\n\nAllow?`,
-      );
+      console.log('[WebView] Permission request received:', request);
+      // Show custom modal instead of window.confirm()
+      setPermissionRequest(request);
+    },
+    [],
+  );
 
-      const selectedOption = confirmed
-        ? request.options.find((opt) => opt.kind === 'allow_once')
-        : request.options.find((opt) => opt.kind === 'reject_once');
-
+  const handlePermissionResponse = React.useCallback(
+    (optionId: string) => {
+      console.log('[WebView] Sending permission response:', optionId);
       vscode.postMessage({
         type: 'permissionResponse',
-        data: { optionId: selectedOption?.optionId || 'reject_once' },
+        data: { optionId },
       });
+      setPermissionRequest(null);
     },
     [vscode],
   );
@@ -243,6 +249,45 @@ export const App: React.FC = () => {
             </div>
           </div>
         ))}
+
+        {/* Claude-style Inline Permission Request */}
+        {permissionRequest && (
+          <div className="permission-request-inline">
+            <div className="permission-card">
+              <div className="permission-card-header">
+                <div className="permission-icon-wrapper">
+                  <span className="permission-icon">🔧</span>
+                </div>
+                <div className="permission-info">
+                  <div className="permission-tool-title">
+                    {permissionRequest.toolCall.title || 'Tool Request'}
+                  </div>
+                  <div className="permission-subtitle">
+                    Waiting for your approval
+                  </div>
+                </div>
+              </div>
+
+              <div className="permission-actions-row">
+                {permissionRequest.options.map((option) => {
+                  const isAllow = option.kind.includes('allow');
+                  const isAlways = option.kind.includes('always');
+
+                  return (
+                    <button
+                      key={option.optionId}
+                      onClick={() => handlePermissionResponse(option.optionId)}
+                      className={`permission-btn-inline ${isAllow ? 'allow' : 'reject'} ${isAlways ? 'always' : ''}`}
+                    >
+                      {isAlways && <span className="always-badge">⚡</span>}
+                      {option.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {isStreaming && currentStreamContent && (
           <div className="message assistant streaming">

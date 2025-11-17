@@ -286,7 +286,23 @@ export class AcpConnection {
             params as AcpPermissionRequest,
           );
           break;
+        case 'fs/read_text_file':
+          result = await this.handleReadTextFile(
+            params as {
+              path: string;
+              sessionId: string;
+              line: number | null;
+              limit: number | null;
+            },
+          );
+          break;
+        case 'fs/write_text_file':
+          result = await this.handleWriteTextFile(
+            params as { path: string; content: string; sessionId: string },
+          );
+          break;
         default:
+          console.warn(`[ACP] Unhandled method: ${method}`);
           break;
       }
 
@@ -317,12 +333,19 @@ export class AcpConnection {
     try {
       const response = await this.onPermissionRequest(params);
       const optionId = response.optionId;
-      const outcome = optionId.includes('reject') ? 'rejected' : 'selected';
+
+      // Handle cancel, reject, or allow
+      let outcome: string;
+      if (optionId.includes('reject') || optionId === 'cancel') {
+        outcome = 'rejected';
+      } else {
+        outcome = 'selected';
+      }
 
       return {
         outcome: {
           outcome,
-          optionId,
+          optionId: optionId === 'cancel' ? 'reject_once' : optionId,
         },
       };
     } catch (_error) {
@@ -332,6 +355,83 @@ export class AcpConnection {
           optionId: 'reject_once',
         },
       };
+    }
+  }
+
+  private async handleReadTextFile(params: {
+    path: string;
+    sessionId: string;
+    line: number | null;
+    limit: number | null;
+  }): Promise<{ content: string }> {
+    const fs = await import('fs/promises');
+
+    console.log(`[ACP] fs/read_text_file request received for: ${params.path}`);
+    console.log(`[ACP] Parameters:`, {
+      line: params.line,
+      limit: params.limit,
+      sessionId: params.sessionId,
+    });
+
+    try {
+      const content = await fs.readFile(params.path, 'utf-8');
+      console.log(
+        `[ACP] Successfully read file: ${params.path} (${content.length} bytes)`,
+      );
+
+      // Handle line offset and limit if specified
+      if (params.line !== null || params.limit !== null) {
+        const lines = content.split('\n');
+        const startLine = params.line || 0;
+        const endLine = params.limit ? startLine + params.limit : lines.length;
+        const selectedLines = lines.slice(startLine, endLine);
+        const result = { content: selectedLines.join('\n') };
+        console.log(`[ACP] Returning ${selectedLines.length} lines`);
+        return result;
+      }
+
+      const result = { content };
+      console.log(`[ACP] Returning full file content`);
+      return result;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[ACP] Failed to read file ${params.path}:`, errorMsg);
+
+      // Throw a proper error that will be caught by handleIncomingRequest
+      throw new Error(`Failed to read file '${params.path}': ${errorMsg}`);
+    }
+  }
+
+  private async handleWriteTextFile(params: {
+    path: string;
+    content: string;
+    sessionId: string;
+  }): Promise<null> {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    console.log(
+      `[ACP] fs/write_text_file request received for: ${params.path}`,
+    );
+    console.log(`[ACP] Content size: ${params.content.length} bytes`);
+
+    try {
+      // Ensure directory exists
+      const dirName = path.dirname(params.path);
+      console.log(`[ACP] Ensuring directory exists: ${dirName}`);
+      await fs.mkdir(dirName, { recursive: true });
+
+      // Write file
+      await fs.writeFile(params.path, params.content, 'utf-8');
+
+      console.log(`[ACP] Successfully wrote file: ${params.path}`);
+      return null;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[ACP] Failed to write file ${params.path}:`, errorMsg);
+
+      // Throw a proper error that will be caught by handleIncomingRequest
+      throw new Error(`Failed to write file '${params.path}': ${errorMsg}`);
     }
   }
 
