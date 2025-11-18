@@ -38,17 +38,36 @@ export interface BaseSessionUpdate {
   sessionId: string;
 }
 
+// Content block type
+export interface ContentBlock {
+  type: 'text' | 'image';
+  text?: string;
+  data?: string;
+  mimeType?: string;
+  uri?: string;
+}
+
+// User message chunk update
+export interface UserMessageChunkUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'user_message_chunk';
+    content: ContentBlock;
+  };
+}
+
 // Agent message chunk update
 export interface AgentMessageChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'agent_message_chunk';
-    content: {
-      type: 'text' | 'image';
-      text?: string;
-      data?: string;
-      mimeType?: string;
-      uri?: string;
-    };
+    content: ContentBlock;
+  };
+}
+
+// Agent thought chunk update
+export interface AgentThoughtChunkUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'agent_thought_chunk';
+    content: ContentBlock;
   };
 }
 
@@ -59,7 +78,16 @@ export interface ToolCallUpdate extends BaseSessionUpdate {
     toolCallId: string;
     status: 'pending' | 'in_progress' | 'completed' | 'failed';
     title: string;
-    kind: 'read' | 'edit' | 'execute';
+    kind:
+      | 'read'
+      | 'edit'
+      | 'execute'
+      | 'delete'
+      | 'move'
+      | 'search'
+      | 'fetch'
+      | 'think'
+      | 'other';
     rawInput?: unknown;
     content?: Array<{
       type: 'content' | 'diff';
@@ -71,11 +99,59 @@ export interface ToolCallUpdate extends BaseSessionUpdate {
       oldText?: string | null;
       newText?: string;
     }>;
+    locations?: Array<{
+      path: string;
+      line?: number | null;
+    }>;
+  };
+}
+
+// Tool call status update
+export interface ToolCallStatusUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'tool_call_update';
+    toolCallId: string;
+    status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+    title?: string;
+    kind?: string;
+    rawInput?: unknown;
+    content?: Array<{
+      type: 'content' | 'diff';
+      content?: {
+        type: 'text';
+        text: string;
+      };
+      path?: string;
+      oldText?: string | null;
+      newText?: string;
+    }>;
+    locations?: Array<{
+      path: string;
+      line?: number | null;
+    }>;
+  };
+}
+
+// Plan update
+export interface PlanUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'plan';
+    entries: Array<{
+      content: string;
+      priority: 'high' | 'medium' | 'low';
+      status: 'pending' | 'in_progress' | 'completed';
+    }>;
   };
 }
 
 // Union type for all session updates
-export type AcpSessionUpdate = AgentMessageChunkUpdate | ToolCallUpdate;
+export type AcpSessionUpdate =
+  | UserMessageChunkUpdate
+  | AgentMessageChunkUpdate
+  | AgentThoughtChunkUpdate
+  | ToolCallUpdate
+  | ToolCallStatusUpdate
+  | PlanUpdate;
 
 // Permission request
 export interface AcpPermissionRequest {

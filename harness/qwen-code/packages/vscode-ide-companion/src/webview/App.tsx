@@ -6,12 +6,48 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
-import type { ChatMessage } from '../agents/QwenAgentManager.js';
 import type { Conversation } from '../storage/ConversationStore.js';
+import {
+  PermissionRequest,
+  type PermissionOption,
+  type ToolCall as PermissionToolCall,
+} from './components/PermissionRequest.js';
+import { ToolCall, type ToolCallData } from './components/ToolCall.js';
+
+interface ToolCallUpdate {
+  type: 'tool_call' | 'tool_call_update';
+  toolCallId: string;
+  kind?: string;
+  title?: string;
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+  rawInput?: unknown;
+  content?: Array<{
+    type: 'content' | 'diff';
+    content?: {
+      type: string;
+      text?: string;
+      [key: string]: unknown;
+    };
+    path?: string;
+    oldText?: string | null;
+    newText?: string;
+    [key: string]: unknown;
+  }>;
+  locations?: Array<{
+    path: string;
+    line?: number | null;
+  }>;
+}
+
+interface TextMessage {
+  role: 'user' | 'assistant' | 'thinking';
+  content: string;
+  timestamp: number;
+}
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<TextMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStreamContent, setCurrentStreamContent] = useState('');
@@ -19,29 +55,87 @@ export const App: React.FC = () => {
     Array<Record<string, unknown>>
   >([]);
   const [showSessionSelector, setShowSessionSelector] = useState(false);
+  const [permissionRequest, setPermissionRequest] = useState<{
+    options: PermissionOption[];
+    toolCall: PermissionToolCall;
+  } | null>(null);
+  const [toolCalls, setToolCalls] = useState<Map<string, ToolCallData>>(
+    new Map(),
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const handlePermissionRequest = React.useCallback(
     (request: {
-      options: Array<{ name: string; kind: string; optionId: string }>;
-      toolCall: { title?: string };
+      options: PermissionOption[];
+      toolCall: PermissionToolCall;
     }) => {
-      const optionNames = request.options.map((opt) => opt.name).join(', ');
-      const confirmed = window.confirm(
-        `Tool permission request:\n${request.toolCall.title || 'Tool Call'}\n\nOptions: ${optionNames}\n\nAllow?`,
-      );
+      console.log('[WebView] Permission request received:', request);
+      setPermissionRequest(request);
+    },
+    [],
+  );
 
-      const selectedOption = confirmed
-        ? request.options.find((opt) => opt.kind === 'allow_once')
-        : request.options.find((opt) => opt.kind === 'reject_once');
-
+  const handlePermissionResponse = React.useCallback(
+    (optionId: string) => {
+      console.log('[WebView] Sending permission response:', optionId);
       vscode.postMessage({
         type: 'permissionResponse',
-        data: { optionId: selectedOption?.optionId || 'reject_once' },
+        data: { optionId },
       });
+      setPermissionRequest(null);
     },
     [vscode],
   );
+
+  const handleToolCallUpdate = React.useCallback((update: ToolCallUpdate) => {
+    setToolCalls((prev) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(update.toolCallId);
+
+      if (update.type === 'tool_call') {
+        // New tool call - cast content to proper type
+        const content = update.content?.map((item) => ({
+          type: item.type as 'content' | 'diff',
+          content: item.content,
+          path: item.path,
+          oldText: item.oldText,
+          newText: item.newText,
+        }));
+
+        newMap.set(update.toolCallId, {
+          toolCallId: update.toolCallId,
+          kind: update.kind || 'other',
+          title: update.title || 'Tool Call',
+          status: update.status || 'pending',
+          rawInput: update.rawInput as string | object | undefined,
+          content,
+          locations: update.locations,
+        });
+      } else if (update.type === 'tool_call_update' && existing) {
+        // Update existing tool call
+        const updatedContent = update.content
+          ? update.content.map((item) => ({
+              type: item.type as 'content' | 'diff',
+              content: item.content,
+              path: item.path,
+              oldText: item.oldText,
+              newText: item.newText,
+            }))
+          : undefined;
+
+        newMap.set(update.toolCallId, {
+          ...existing,
+          ...(update.kind && { kind: update.kind }),
+          ...(update.title && { title: update.title }),
+          ...(update.status && { status: update.status }),
+          ...(updatedContent && { content: updatedContent }),
+          ...(update.locations && { locations: update.locations }),
+        });
+      }
+
+      return newMap;
+    });
+  }, []);
 
   useEffect(() => {
     // Listen for messages from extension
@@ -56,7 +150,7 @@ export const App: React.FC = () => {
         }
 
         case 'message': {
-          const newMessage = message.data as ChatMessage;
+          const newMessage = message.data as TextMessage;
           setMessages((prev) => [...prev, newMessage]);
           break;
         }
@@ -66,14 +160,21 @@ export const App: React.FC = () => {
           setCurrentStreamContent('');
           break;
 
-        case 'streamChunk':
-          setCurrentStreamContent((prev) => prev + message.data.chunk);
+        case 'streamChunk': {
+          const chunkData = message.data;
+          if (chunkData.role === 'thinking') {
+            // Handle thinking chunks separately if needed
+            setCurrentStreamContent((prev) => prev + chunkData.chunk);
+          } else {
+            setCurrentStreamContent((prev) => prev + chunkData.chunk);
+          }
           break;
+        }
 
         case 'streamEnd':
           // Finalize the streamed message
           if (currentStreamContent) {
-            const assistantMessage: ChatMessage = {
+            const assistantMessage: TextMessage = {
               role: 'assistant',
               content: currentStreamContent,
               timestamp: Date.now(),
@@ -94,6 +195,12 @@ export const App: React.FC = () => {
           handlePermissionRequest(message.data);
           break;
 
+        case 'toolCall':
+        case 'toolCallUpdate':
+          // Handle tool call updates
+          handleToolCallUpdate(message.data);
+          break;
+
         case 'qwenSessionList':
           setQwenSessions(message.data.sessions || []);
           break;
@@ -107,11 +214,13 @@ export const App: React.FC = () => {
             setMessages([]);
           }
           setCurrentStreamContent('');
+          setToolCalls(new Map());
           break;
 
         case 'conversationCleared':
           setMessages([]);
           setCurrentStreamContent('');
+          setToolCalls(new Map());
           break;
 
         default:
@@ -121,7 +230,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [currentStreamContent, handlePermissionRequest]);
+  }, [currentStreamContent, handlePermissionRequest, handleToolCallUpdate]);
 
   useEffect(() => {
     // Auto-scroll to bottom when messages change
@@ -243,6 +352,20 @@ export const App: React.FC = () => {
             </div>
           </div>
         ))}
+
+        {/* Tool Calls */}
+        {Array.from(toolCalls.values()).map((toolCall) => (
+          <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
+        ))}
+
+        {/* Permission Request */}
+        {permissionRequest && (
+          <PermissionRequest
+            options={permissionRequest.options}
+            toolCall={permissionRequest.toolCall}
+            onResponse={handlePermissionResponse}
+          />
+        )}
 
         {isStreaming && currentStreamContent && (
           <div className="message assistant streaming">

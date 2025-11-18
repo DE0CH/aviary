@@ -22,11 +22,22 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+interface ToolCallUpdateData {
+  toolCallId: string;
+  kind?: string;
+  title?: string;
+  status?: string;
+  rawInput?: unknown;
+  content?: Array<Record<string, unknown>>;
+  locations?: Array<{ path: string; line?: number | null }>;
+}
+
 export class QwenAgentManager {
   private connection: AcpConnection;
   private sessionReader: QwenSessionReader;
   private onMessageCallback?: (message: ChatMessage) => void;
   private onStreamChunkCallback?: (chunk: string) => void;
+  private onToolCallCallback?: (update: ToolCallUpdateData) => void;
   private onPermissionRequestCallback?: (
     request: AcpPermissionRequest,
   ) => Promise<string>;
@@ -373,19 +384,91 @@ export class QwenAgentManager {
   private handleSessionUpdate(data: AcpSessionUpdate): void {
     const update = data.update;
 
-    if (update.sessionUpdate === 'agent_message_chunk') {
-      if (update.content?.text && this.onStreamChunkCallback) {
-        this.onStreamChunkCallback(update.content.text);
-      }
-    } else if (update.sessionUpdate === 'tool_call') {
-      // Handle tool call updates
-      const toolCall = update as { title?: string; status?: string };
-      const title = toolCall.title || 'Tool Call';
-      const status = toolCall.status || 'pending';
+    switch (update.sessionUpdate) {
+      case 'user_message_chunk':
+        // Handle user message chunks if needed
+        if (update.content?.text && this.onStreamChunkCallback) {
+          this.onStreamChunkCallback(update.content.text);
+        }
+        break;
 
-      if (this.onStreamChunkCallback) {
-        this.onStreamChunkCallback(`\n🔧 ${title} [${status}]\n`);
+      case 'agent_message_chunk':
+        // Handle assistant message chunks
+        if (update.content?.text && this.onStreamChunkCallback) {
+          this.onStreamChunkCallback(update.content.text);
+        }
+        break;
+
+      case 'agent_thought_chunk':
+        // Handle thinking chunks - could be displayed differently in UI
+        if (update.content?.text && this.onStreamChunkCallback) {
+          this.onStreamChunkCallback(update.content.text);
+        }
+        break;
+
+      case 'tool_call': {
+        // Handle new tool call
+        if (this.onToolCallCallback && 'toolCallId' in update) {
+          this.onToolCallCallback({
+            toolCallId: update.toolCallId as string,
+            kind: (update.kind as string) || undefined,
+            title: (update.title as string) || undefined,
+            status: (update.status as string) || undefined,
+            rawInput: update.rawInput,
+            content: update.content as
+              | Array<Record<string, unknown>>
+              | undefined,
+            locations: update.locations as
+              | Array<{ path: string; line?: number | null }>
+              | undefined,
+          });
+        }
+        break;
       }
+
+      case 'tool_call_update': {
+        // Handle tool call status update
+        if (this.onToolCallCallback && 'toolCallId' in update) {
+          this.onToolCallCallback({
+            toolCallId: update.toolCallId as string,
+            kind: (update.kind as string) || undefined,
+            title: (update.title as string) || undefined,
+            status: (update.status as string) || undefined,
+            rawInput: update.rawInput,
+            content: update.content as
+              | Array<Record<string, unknown>>
+              | undefined,
+            locations: update.locations as
+              | Array<{ path: string; line?: number | null }>
+              | undefined,
+          });
+        }
+        break;
+      }
+
+      case 'plan': {
+        // Handle plan updates - could be displayed as a task list
+        if ('entries' in update && this.onStreamChunkCallback) {
+          const entries = update.entries as Array<{
+            content: string;
+            priority: string;
+            status: string;
+          }>;
+          const planText =
+            '\n📋 Plan:\n' +
+            entries
+              .map(
+                (entry, i) => `${i + 1}. [${entry.priority}] ${entry.content}`,
+              )
+              .join('\n');
+          this.onStreamChunkCallback(planText);
+        }
+        break;
+      }
+
+      default:
+        console.log('[QwenAgentManager] Unhandled session update type');
+        break;
     }
   }
 
@@ -395,6 +478,10 @@ export class QwenAgentManager {
 
   onStreamChunk(callback: (chunk: string) => void): void {
     this.onStreamChunkCallback = callback;
+  }
+
+  onToolCall(callback: (update: ToolCallUpdateData) => void): void {
+    this.onToolCallCallback = callback;
   }
 
   onPermissionRequest(
@@ -409,5 +496,9 @@ export class QwenAgentManager {
 
   get isConnected(): boolean {
     return this.connection.isConnected;
+  }
+
+  get currentSessionId(): string | null {
+    return this.connection.currentSessionId;
   }
 }
