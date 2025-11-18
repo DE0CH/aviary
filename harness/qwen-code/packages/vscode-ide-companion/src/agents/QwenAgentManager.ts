@@ -62,6 +62,12 @@ export class QwenAgentManager {
     workingDir: string,
     authStateManager?: AuthStateManager,
   ): Promise<void> {
+    const connectId = Date.now();
+    console.log(`\n========================================`);
+    console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
+    console.log(`[QwenAgentManager] Call stack:\n${new Error().stack}`);
+    console.log(`========================================\n`);
+
     this.currentWorkingDir = workingDir;
     const config = vscode.workspace.getConfiguration('qwenCode');
     const cliPath = config.get<string>('qwen.cliPath', 'qwen');
@@ -156,43 +162,54 @@ export class QwenAgentManager {
     // Create new session if we couldn't restore one
     if (!sessionRestored) {
       console.log('[QwenAgentManager] Creating new session...');
+      console.log(
+        `[QwenAgentManager] ⚠️ WORKAROUND: Skipping explicit authenticate() call`,
+      );
+      console.log(
+        `[QwenAgentManager] ⚠️ Reason: newSession() internally calls refreshAuth(), which triggers device flow`,
+      );
+      console.log(
+        `[QwenAgentManager] ⚠️ Calling authenticate() first causes double authentication`,
+      );
 
-      // Authenticate only if needed (not cached or session restore failed)
-      if (needsAuth) {
-        await this.authenticateWithRetry(authMethod, 3);
-        // Save successful auth to cache
-        if (authStateManager) {
-          await authStateManager.saveAuthState(workingDir, authMethod);
-        }
-      }
+      // WORKAROUND: Skip explicit authenticate() call
+      // The newSession() method will internally call config.refreshAuth(),
+      // which will trigger device flow if no valid token exists.
+      // Calling authenticate() first causes a duplicate OAuth flow due to a bug in Qwen CLI
+      // where authenticate() doesn't properly save refresh token for newSession() to use.
 
-      // Try to create session
+      // Try to create session (which will trigger auth internally if needed)
       try {
+        console.log(
+          `\n🔐 [AUTO AUTH] newSession will handle authentication automatically\n`,
+        );
         await this.newSessionWithRetry(workingDir, 3);
         console.log('[QwenAgentManager] New session created successfully');
-      } catch (sessionError) {
-        // If we used cached auth but session creation failed,
-        // the cached auth might be invalid (token expired on server)
-        // Clear cache and retry with fresh authentication
-        if (!needsAuth && authStateManager) {
-          console.log(
-            '[QwenAgentManager] Session creation failed with cached auth, clearing cache and re-authenticating...',
-          );
-          await authStateManager.clearAuthState();
 
-          // Retry with fresh authentication
-          await this.authenticateWithRetry(authMethod, 3);
-          await authStateManager.saveAuthState(workingDir, authMethod);
-          await this.newSessionWithRetry(workingDir, 3);
+        // Save auth state after successful session creation
+        if (authStateManager) {
           console.log(
-            '[QwenAgentManager] Successfully authenticated and created session after cache invalidation',
+            '[QwenAgentManager] Saving auth state after successful session creation',
           );
-        } else {
-          // If we already tried with fresh auth, or no auth manager, just throw
-          throw sessionError;
+          await authStateManager.saveAuthState(workingDir, authMethod);
         }
+      } catch (sessionError) {
+        console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
+        console.log(`[QwenAgentManager] Error details:`, sessionError);
+
+        // If session creation failed, clear cache and let user retry
+        if (authStateManager) {
+          console.log('[QwenAgentManager] Clearing auth cache due to failure');
+          await authStateManager.clearAuthState();
+        }
+
+        throw sessionError;
       }
     }
+
+    console.log(`\n========================================`);
+    console.log(`[QwenAgentManager] ✅ CONNECT() COMPLETED SUCCESSFULLY`);
+    console.log(`========================================\n`);
   }
 
   /**
@@ -202,19 +219,31 @@ export class QwenAgentManager {
     authMethod: string,
     maxRetries: number,
   ): Promise<void> {
+    const timestamp = new Date().toISOString();
+    const callStack = new Error().stack;
+    console.log(
+      `[QwenAgentManager] 🔐 AUTHENTICATION CALL STARTED at ${timestamp}`,
+    );
+    console.log(
+      `[QwenAgentManager] Auth method: ${authMethod}, Max retries: ${maxRetries}`,
+    );
+    console.log(`[QwenAgentManager] Call stack:\n${callStack}`);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(
-          `[QwenAgentManager] Authenticating (attempt ${attempt}/${maxRetries})...`,
+          `[QwenAgentManager] 📝 Authenticating (attempt ${attempt}/${maxRetries})...`,
         );
         await this.connection.authenticate(authMethod);
-        console.log('[QwenAgentManager] Authentication successful');
+        console.log(
+          `[QwenAgentManager] ✅ Authentication successful on attempt ${attempt}`,
+        );
         return;
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         console.error(
-          `[QwenAgentManager] Authentication attempt ${attempt} failed:`,
+          `[QwenAgentManager] ❌ Authentication attempt ${attempt} failed:`,
           errorMessage,
         );
 
@@ -226,7 +255,9 @@ export class QwenAgentManager {
 
         // Wait before retrying (exponential backoff)
         const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`[QwenAgentManager] Retrying in ${delay}ms...`);
+        console.log(
+          `[QwenAgentManager] ⏳ Retrying in ${delay}ms... (${maxRetries - attempt} retries remaining)`,
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }

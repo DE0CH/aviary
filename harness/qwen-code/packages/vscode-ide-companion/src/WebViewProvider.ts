@@ -459,6 +459,17 @@ export class WebViewProvider {
 </html>`;
   }
 
+  /**
+   * Reset agent initialization state
+   * Call this when auth cache is cleared to force re-authentication
+   */
+  resetAgentState(): void {
+    console.log('[WebViewProvider] Resetting agent state');
+    this.agentInitialized = false;
+    // Disconnect existing connection
+    this.agentManager.disconnect();
+  }
+
   dispose(): void {
     this.panel?.dispose();
     this.agentManager.disconnect();

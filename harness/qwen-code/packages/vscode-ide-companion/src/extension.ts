@@ -147,6 +147,12 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
       await authStateManager.clearAuthState();
+
+      // Reset WebView agent state to force re-authentication
+      if (webViewProvider) {
+        webViewProvider.resetAgentState();
+      }
+
       vscode.window.showInformationMessage(
         'Qwen Code authentication cache cleared. You will need to login again on next connection.',
       );
