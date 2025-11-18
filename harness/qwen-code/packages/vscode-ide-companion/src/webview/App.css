@@ -3,18 +3,18 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * Styles inspired by Claude Code's UI design
+ * Styles inspired by Claude Code's UI design, adapted for Qwen
  */
 
 /* ===========================
    CSS Variables (Root Level)
    =========================== */
 :root {
-  /* Colors from Claude Code */
-  --app-claude-orange: #d97757;
-  --app-claude-clay-button-orange: #c6613f;
-  --app-claude-ivory: #faf9f5;
-  --app-claude-slate: #141413;
+  /* Qwen Brand Colors */
+  --app-qwen-orange: #615fff;
+  --app-qwen-clay-button-orange: #4f46e5;
+  --app-qwen-ivory: #f5f5ff;
+  --app-qwen-slate: #141420;
 
   /* Spacing */
   --app-spacing-small: 4px;
@@ -109,6 +109,7 @@ body {
   color: var(--app-primary-foreground);
   overflow: hidden;
   font-size: var(--vscode-chat-font-size, 13px);
+  padding: 0;
 }
 
 button {
@@ -338,8 +339,8 @@ button {
    =========================== */
 .input-form {
   display: flex;
-  gap: var(--app-spacing-medium);
-  padding: 16px;
+  /* gap: var(--app-spacing-medium); */
+  /* padding: 16px; */
   background-color: var(--app-primary-background);
   border-top: 1px solid var(--app-primary-border-color);
 }
@@ -358,7 +359,7 @@ button {
 }
 
 .input-field:focus {
-  border-color: var(--app-claude-orange);
+  border-color: var(--app-qwen-orange);
 }
 
 .input-field:disabled {
@@ -372,8 +373,8 @@ button {
 
 .send-button {
   padding: 10px 20px;
-  background-color: var(--app-claude-clay-button-orange);
-  color: var(--app-claude-ivory);
+  background-color: var(--app-qwen-clay-button-orange);
+  color: var(--app-qwen-ivory);
   border: none;
   border-radius: var(--corner-radius-small);
   font-size: var(--vscode-chat-font-size, 13px);
@@ -630,7 +631,7 @@ button {
 }
 
 .banner-link {
-  color: var(--app-claude-orange);
+  color: var(--app-qwen-orange);
   text-decoration: none;
   cursor: pointer;
 }
@@ -670,7 +671,7 @@ button {
 /* Outer container (.Me) */
 .input-form-container {
   background-color: var(--app-primary-background);
-  padding: 16px;
+  padding: 4px 16px 16px;
 }
 
 /* Inner wrapper */
@@ -699,8 +700,7 @@ button {
 
 /* Input wrapper (.fo) */
 .input-wrapper {
-  /* padding: 16px; */
-  padding-bottom: 0;
+  /* padding: 12px 12px 0; */
 }
 
 /* Contenteditable input field (.d) */
@@ -708,7 +708,7 @@ button {
   width: 100%;
   min-height: 40px;
   max-height: 200px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background-color: transparent;
   color: var(--app-input-foreground);
   border: none;
@@ -739,8 +739,7 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 12px 16px;
-  padding-top: 8px;
+  /* padding: 8px 12px 12px; */
 }
 
 /* Edit mode button (.l) */

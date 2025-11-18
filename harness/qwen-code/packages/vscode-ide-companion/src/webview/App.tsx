@@ -526,7 +526,7 @@ export const App: React.FC = () => {
                 role="textbox"
                 aria-label="Message input"
                 aria-multiline="true"
-                data-placeholder="Ask Claude to edit…"
+                data-placeholder="Ask qwen to edit…"
                 onInput={(e) => {
                   const target = e.target as HTMLDivElement;
                   setInputText(target.textContent || '');
@@ -544,7 +544,7 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 className="action-button edit-mode-button"
-                title="Claude will ask before each edit. Click to switch modes."
+                title="Qwen will ask before each edit. Click to switch modes."
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
