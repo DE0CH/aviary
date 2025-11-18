@@ -2,17 +2,99 @@
  * @license
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Styles inspired by Claude Code's UI design
  */
 
+/* ===========================
+   CSS Variables (Root Level)
+   =========================== */
 :root {
-  --vscode-font-family: var(--vscode-font-family);
-  --vscode-editor-background: var(--vscode-editor-background);
-  --vscode-editor-foreground: var(--vscode-editor-foreground);
-  --vscode-input-background: var(--vscode-input-background);
-  --vscode-input-foreground: var(--vscode-input-foreground);
-  --vscode-button-background: var(--vscode-button-background);
-  --vscode-button-foreground: var(--vscode-button-foreground);
-  --vscode-button-hoverBackground: var(--vscode-button-hoverBackground);
+  /* Colors from Claude Code */
+  --app-claude-orange: #d97757;
+  --app-claude-clay-button-orange: #c6613f;
+  --app-claude-ivory: #faf9f5;
+  --app-claude-slate: #141413;
+
+  /* Spacing */
+  --app-spacing-small: 4px;
+  --app-spacing-medium: 8px;
+  --app-spacing-large: 12px;
+  --app-spacing-xlarge: 16px;
+
+  /* Border Radius */
+  --corner-radius-small: 4px;
+  --corner-radius-medium: 6px;
+  --corner-radius-large: 8px;
+
+  /* Typography */
+  --app-monospace-font-family: var(--vscode-editor-font-family, monospace);
+  --app-monospace-font-size: var(--vscode-editor-font-size, 12px);
+
+  /* Foreground & Background */
+  --app-primary-foreground: var(--vscode-foreground);
+  --app-primary-background: var(--vscode-sideBar-background);
+  --app-primary-border-color: var(--vscode-sideBarActivityBarTop-border);
+  --app-secondary-foreground: var(--vscode-descriptionForeground);
+
+  /* Input Colors */
+  --app-input-foreground: var(--vscode-input-foreground);
+  --app-input-background: var(--vscode-input-background);
+  --app-input-border: var(--vscode-inlineChatInput-border);
+  --app-input-active-border: var(--vscode-inputOption-activeBorder);
+  --app-input-placeholder-foreground: var(--vscode-input-placeholderForeground);
+  --app-input-secondary-background: var(--vscode-menu-background);
+
+  /* List Styles */
+  --app-list-hover-background: var(--vscode-list-hoverBackground);
+  --app-list-active-background: var(--vscode-list-activeSelectionBackground);
+  --app-list-active-foreground: var(--vscode-list-activeSelectionForeground);
+
+  /* Buttons */
+  --app-ghost-button-hover-background: var(--vscode-toolbar-hoverBackground);
+  --app-button-foreground: var(--vscode-button-foreground);
+  --app-button-background: var(--vscode-button-background);
+  --app-button-hover-background: var(--vscode-button-hoverBackground);
+
+  /* Border Transparency */
+  --app-transparent-inner-border: rgba(255, 255, 255, 0.1);
+
+  /* Header (from Claude Code) */
+  --app-header-background: var(--vscode-sideBar-background);
+
+  /* List Styles (from Claude Code) */
+  --app-list-padding: 0px;
+  --app-list-item-padding: 4px 8px;
+  --app-list-border-color: transparent;
+  --app-list-border-radius: 4px;
+  --app-list-gap: 2px;
+
+  /* Menu Colors (from Claude Code) */
+  --app-menu-background: var(--vscode-menu-background);
+  --app-menu-border: var(--vscode-menu-border);
+  --app-menu-foreground: var(--vscode-menu-foreground);
+  --app-menu-selection-background: var(--vscode-menu-selectionBackground);
+  --app-menu-selection-foreground: var(--vscode-menu-selectionForeground);
+
+  /* Modal */
+  --app-modal-background: rgba(0, 0, 0, 0.75);
+
+  /* Widget */
+  --app-widget-border: var(--vscode-editorWidget-border);
+  --app-widget-shadow: var(--vscode-widget-shadow);
+
+  /* Ghost Button (from Claude Code) */
+  --app-ghost-button-hover-background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Light Theme Overrides */
+.vscode-light {
+  --app-transparent-inner-border: rgba(0, 0, 0, 0.07);
+}
+
+/* Icon SVG styles */
+.icon-svg {
+  display: block;
 }
 
 * {
@@ -22,35 +104,131 @@
 }
 
 body {
-  font-family: var(--vscode-font-family);
-  background-color: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-chat-font-family, var(--vscode-font-family));
+  background-color: var(--app-primary-background);
+  color: var(--app-primary-foreground);
   overflow: hidden;
+  font-size: var(--vscode-chat-font-size, 13px);
 }
 
+button {
+  color: var(--app-primary-foreground);
+  font-family: var(--vscode-chat-font-family);
+  font-size: var(--vscode-chat-font-size, 13px);
+}
+
+/* ===========================
+   Main Chat Container
+   =========================== */
 .chat-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100%;
+  background-color: var(--app-primary-background);
+  color: var(--app-primary-foreground);
 }
 
+/* ===========================
+   Header Styles (from Claude Code .he)
+   =========================== */
+.chat-header {
+  display: flex;
+  border-bottom: 1px solid var(--app-primary-border-color);
+  padding: 6px 10px;
+  gap: 4px;
+  background-color: var(--app-header-background);
+  justify-content: flex-start;
+  user-select: none;
+}
+
+/* Session Selector Dropdown - styled as button (from Claude Code .E) */
+.session-selector-dropdown {
+  flex: 1;
+  max-width: 300px;
+  display: flex;
+}
+
+.session-selector-dropdown select {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--app-primary-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+  max-width: 300px;
+  overflow: hidden;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-selector-dropdown select:hover,
+.session-selector-dropdown select:focus {
+  background: var(--app-ghost-button-hover-background);
+}
+
+/* New Session Button (from Claude Code .j) */
+.new-session-header-button {
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  width: 24px;
+  height: 24px;
+  color: var(--app-primary-foreground);
+}
+
+.new-session-header-button:hover,
+.new-session-header-button:focus {
+  background: var(--app-ghost-button-hover-background);
+}
+
+/* ===========================
+   Messages Container
+   =========================== */
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  overflow-x: hidden;
+  padding: 20px 20px 40px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--app-spacing-medium);
+  background-color: var(--app-primary-background);
+  position: relative;
+  min-width: 0;
 }
 
+.messages-container:focus {
+  outline: none;
+}
+
+/* ===========================
+   Message Styles
+   =========================== */
 .message {
+  color: var(--app-primary-foreground);
   display: flex;
+  gap: 0;
+  align-items: flex-start;
+  padding: var(--app-spacing-medium) 0;
   flex-direction: column;
-  gap: 4px;
-  max-width: 80%;
-  padding: 12px 16px;
-  border-radius: 8px;
+  position: relative;
   animation: fadeIn 0.2s ease-in;
 }
 
@@ -66,16 +244,29 @@ body {
 }
 
 .message.user {
-  align-self: flex-end;
-  background-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  align-items: flex-end;
+  text-align: right;
 }
 
 .message.assistant {
-  align-self: flex-start;
-  background-color: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: flex-start;
+  text-align: left;
+}
+
+.message-content {
+  display: inline-block;
+  margin: 4px 0;
+  position: relative;
+  white-space: pre-wrap;
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-medium);
+  background-color: var(--app-input-background);
+  padding: 4px 6px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  user-select: text;
+  line-height: 1.5;
 }
 
 .message.streaming {
@@ -90,8 +281,7 @@ body {
 }
 
 @keyframes pulse {
-  0%,
-  100% {
+  0%, 100% {
     opacity: 1;
   }
   50% {
@@ -99,69 +289,33 @@ body {
   }
 }
 
-.message-content {
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  line-height: 1.5;
+/* Thinking message styles */
+.message.thinking {
+  background-color: rgba(100, 100, 255, 0.1);
+  border: 1px solid rgba(100, 100, 255, 0.3);
+  border-radius: var(--corner-radius-medium);
+  padding: var(--app-spacing-medium);
 }
 
-.message-timestamp {
-  font-size: 11px;
-  opacity: 0.6;
-  align-self: flex-end;
-}
-
-.input-form {
+.thinking-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(150, 150, 255, 1);
+  margin-bottom: var(--app-spacing-medium);
   display: flex;
-  gap: 8px;
-  padding: 16px;
-  background-color: var(--vscode-editor-background);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  align-items: center;
+  gap: 6px;
 }
 
-.input-field {
-  flex: 1;
-  padding: 10px 12px;
-  background-color: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  font-size: 14px;
-  font-family: var(--vscode-font-family);
-  outline: none;
+.thought-content {
+  font-style: italic;
+  opacity: 0.9;
+  color: rgba(200, 200, 255, 0.9);
 }
 
-.input-field:focus {
-  border-color: var(--vscode-button-background);
-}
-
-.input-field:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.send-button {
-  padding: 10px 20px;
-  background-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.send-button:hover:not(:disabled) {
-  background-color: var(--vscode-button-hoverBackground);
-}
-
-.send-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Scrollbar styling */
+/* ===========================
+   Scrollbar Styling
+   =========================== */
 .messages-container::-webkit-scrollbar {
   width: 8px;
 }
@@ -172,44 +326,88 @@ body {
 
 .messages-container::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+  border-radius: var(--corner-radius-small);
 }
 
 .messages-container::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 
-/* Session selector styles */
-.chat-header {
+/* ===========================
+   Input Form Styles
+   =========================== */
+.input-form {
   display: flex;
-  justify-content: flex-end;
-  padding: 12px 16px;
-  background-color: var(--vscode-editor-background);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: var(--app-spacing-medium);
+  padding: 16px;
+  background-color: var(--app-primary-background);
+  border-top: 1px solid var(--app-primary-border-color);
 }
 
-.session-button {
-  padding: 6px 12px;
-  background-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+.input-field {
+  flex: 1;
+  padding: 10px 12px;
+  background-color: var(--app-input-background);
+  color: var(--app-input-foreground);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  outline: none;
+  line-height: 1.5;
+}
+
+.input-field:focus {
+  border-color: var(--app-claude-orange);
+}
+
+.input-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-field::placeholder {
+  color: var(--app-input-placeholder-foreground);
+}
+
+.send-button {
+  padding: 10px 20px;
+  background-color: var(--app-claude-clay-button-orange);
+  color: var(--app-claude-ivory);
   border: none;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--corner-radius-small);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: filter 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.session-button:hover {
-  background-color: var(--vscode-button-hoverBackground);
+.send-button:hover:not(:disabled) {
+  filter: brightness(1.1);
 }
 
+.send-button:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===========================
+   Session Selector Modal (from Claude Code .Wt)
+   =========================== */
 .session-selector-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: var(--app-modal-background, rgba(0, 0, 0, 0.75));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -218,15 +416,19 @@ body {
 }
 
 .session-selector {
-  background-color: var(--vscode-editor-background);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  width: 80%;
-  max-width: 500px;
-  max-height: 70vh;
+  position: fixed;
+  background: var(--app-menu-background, var(--app-primary-background));
+  border: 1px solid var(--app-menu-border, var(--app-primary-border-color));
+  border-radius: var(--corner-radius-small);
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(500px, 50vh);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
+  outline: none;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
 }
 
 .session-selector-header {
@@ -234,598 +436,332 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--app-primary-border-color);
 }
 
 .session-selector-header h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 500;
+  color: var(--app-primary-foreground);
 }
 
 .session-selector-header button {
   background: none;
   border: none;
-  color: var(--vscode-editor-foreground);
+  color: var(--app-primary-foreground);
   font-size: 20px;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--corner-radius-small);
   transition: background-color 0.2s;
 }
 
 .session-selector-header button:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--app-ghost-button-hover-background);
 }
 
 .session-selector-actions {
   padding: 12px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--app-primary-border-color);
 }
 
 .new-session-button {
   width: 100%;
   padding: 8px 16px;
-  background-color: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background-color: var(--app-button-background);
+  color: var(--app-button-foreground);
   border: none;
-  border-radius: 4px;
-  font-size: 14px;
+  border-radius: var(--corner-radius-small);
+  font-size: var(--vscode-chat-font-size, 13px);
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
 .new-session-button:hover {
-  background-color: var(--vscode-button-hoverBackground);
+  background-color: var(--app-button-hover-background);
 }
 
+/* Session List (from Claude Code .It, .St, .s) */
 .session-list {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 8px;
+  user-select: none;
 }
 
 .no-sessions {
   text-align: center;
   padding: 40px 20px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--app-secondary-foreground);
 }
 
+/* Session Item (from Claude Code .s) */
 .session-item {
-  padding: 12px 16px;
-  margin-bottom: 8px;
-  background-color: var(--vscode-input-background);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  padding: var(--app-list-item-padding);
+  margin-bottom: var(--app-spacing-medium);
+  background: transparent;
+  border: 1px solid var(--app-input-border);
   border-radius: 6px;
   cursor: pointer;
+  text-align: left;
+  width: 100%;
+  flex-direction: column;
   transition: all 0.2s;
 }
 
 .session-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  border-color: var(--vscode-button-background);
+  background: var(--app-list-hover-background);
+  border-color: var(--app-input-active-border);
 }
 
 .session-title {
-  font-size: 14px;
+  font-size: var(--vscode-chat-font-size, 13px);
   font-weight: 500;
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--app-primary-foreground);
+  width: 100%;
 }
 
 .session-meta {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  opacity: 0.7;
+  color: var(--app-secondary-foreground);
   margin-bottom: 4px;
+  width: 100%;
 }
 
-.session-time {
-  color: var(--vscode-descriptionForeground);
-}
-
+.session-time,
 .session-count {
-  color: var(--vscode-descriptionForeground);
+  color: var(--app-secondary-foreground);
 }
 
 .session-id {
-  font-size: 12px;
+  font-size: 11px;
   opacity: 0.6;
-  font-family: monospace;
+  font-family: var(--app-monospace-font-family);
+  color: var(--app-secondary-foreground);
 }
 
-/* Permission Request Component Styles */
-.permission-request-card {
-  margin: 16px 0;
-  animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.permission-card-body {
-  background: linear-gradient(
-    135deg,
-    rgba(79, 134, 247, 0.08) 0%,
-    rgba(79, 134, 247, 0.03) 100%
-  );
-  border: 1.5px solid rgba(79, 134, 247, 0.3);
-  border-radius: 10px;
-  padding: 16px;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.permission-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.permission-icon-wrapper {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(79, 134, 247, 0.2), rgba(79, 134, 247, 0.1));
+/* ===========================
+   Claude Code Style Header Buttons
+   =========================== */
+.header-conversations-button {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-primary-foreground);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  outline: none;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-weight: 500;
+  transition: background-color 0.2s;
 }
 
-.permission-icon {
-  font-size: 20px;
+.header-conversations-button:hover,
+.header-conversations-button:focus {
+  background-color: var(--app-ghost-button-hover-background);
 }
 
-.permission-info {
+.button-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.button-text {
+  font-size: var(--vscode-chat-font-size, 13px);
+}
+
+.dropdown-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.header-spacer {
   flex: 1;
 }
 
-.permission-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--vscode-editor-foreground);
-  margin-bottom: 2px;
+/* ===========================
+   Claude Code Style Input Form (.Me > .u)
+   =========================== */
+/* Outer container (.Me) */
+.input-form-container {
+  border-top: 1px solid var(--app-primary-border-color);
+  background-color: var(--app-primary-background);
 }
 
-.permission-subtitle {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.permission-command-section {
-  margin-bottom: 12px;
-}
-
-.permission-command-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 4px;
-}
-
-.permission-command-code {
+/* Inner wrapper */
+.input-form-wrapper {
   display: block;
-  background: rgba(0, 0, 0, 0.2);
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: 'Courier New', monospace;
-  color: var(--vscode-editor-foreground);
-  overflow-x: auto;
-  word-break: break-all;
 }
 
-.permission-locations-section {
-  margin-bottom: 12px;
+/* Form (.u) */
+.input-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  position: relative;
 }
 
-.permission-locations-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 6px;
+/* Banner/Warning area (.Wr) */
+.input-banner {
+  /* Empty for now, can be used for warnings/banners */
 }
 
-.permission-location-item {
+/* Input wrapper (.fo) */
+.input-wrapper {
+  padding: 16px;
+  padding-bottom: 0;
+}
+
+/* Contenteditable input field (.d) */
+.input-field-editable {
+  width: 100%;
+  min-height: 40px;
+  max-height: 200px;
+  padding: 10px 12px;
+  background-color: var(--app-input-background);
+  color: var(--app-input-foreground);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-medium);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  outline: none;
+  line-height: 1.5;
+  overflow-y: auto;
+  overflow-x: hidden;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  transition: border-color 0.2s;
+}
+
+.input-field-editable:focus {
+  border-color: var(--app-input-active-border);
+}
+
+.input-field-editable:empty:before {
+  content: attr(data-placeholder);
+  color: var(--app-input-placeholder-foreground);
+  pointer-events: none;
+  position: absolute;
+}
+
+/* Actions row (.ri) */
+.input-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 4px;
-  margin-bottom: 4px;
-  font-size: 12px;
+  padding: 12px 16px;
+  padding-top: 8px;
 }
 
-.permission-location-icon {
-  font-size: 14px;
-}
-
-.permission-location-path {
-  flex: 1;
-  font-family: 'Courier New', monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.permission-location-line {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 11px;
-}
-
-.permission-options-section {
-  margin-top: 16px;
-}
-
-.permission-options-label {
-  font-size: 12px;
-  margin-bottom: 8px;
-  color: var(--vscode-editor-foreground);
-}
-
-.permission-options-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.permission-option {
+/* Edit mode button (.l) */
+.action-button {
   display: flex;
   align-items: center;
-  padding: 10px 16px;
-  border: 1.5px solid transparent;
-  border-radius: 6px;
+  gap: 6px;
+  padding: 6px 10px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-primary-foreground);
   cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.15s;
+  white-space: nowrap;
 }
 
-.permission-option input[type="radio"] {
-  margin-right: 10px;
-  cursor: pointer;
+.action-button:hover {
+  background-color: var(--app-ghost-button-hover-background);
 }
 
-.permission-radio {
+.action-button svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* Divider (.ii) */
+.action-divider {
+  width: 1px;
+  height: 24px;
+  background-color: var(--app-transparent-inner-border);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* Icon buttons (.H) */
+.action-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-secondary-foreground);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.action-icon-button:hover {
+  background-color: var(--app-ghost-button-hover-background);
+  color: var(--app-primary-foreground);
+}
+
+.action-icon-button svg {
   width: 16px;
   height: 16px;
 }
 
-.permission-option-content {
+/* Send button (.r) */
+.send-button-icon {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.permission-always-badge {
-  font-size: 14px;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.permission-option.allow {
-  background: linear-gradient(135deg, rgba(46, 160, 67, 0.15), rgba(46, 160, 67, 0.08));
-  border-color: rgba(46, 160, 67, 0.3);
-}
-
-.permission-option.allow.selected {
-  background: linear-gradient(135deg, rgba(46, 160, 67, 0.25), rgba(46, 160, 67, 0.15));
-  border-color: rgba(46, 160, 67, 0.5);
-  box-shadow: 0 2px 8px rgba(46, 160, 67, 0.2);
-}
-
-.permission-option.reject {
-  background: linear-gradient(135deg, rgba(200, 40, 40, 0.15), rgba(200, 40, 40, 0.08));
-  border-color: rgba(200, 40, 40, 0.3);
-}
-
-.permission-option.reject.selected {
-  background: linear-gradient(135deg, rgba(200, 40, 40, 0.25), rgba(200, 40, 40, 0.15));
-  border-color: rgba(200, 40, 40, 0.5);
-  box-shadow: 0 2px 8px rgba(200, 40, 40, 0.2);
-}
-
-.permission-option.always {
-  border-style: dashed;
-}
-
-.permission-option:hover {
-  transform: translateY(-1px);
-}
-
-.permission-actions {
-  display: flex;
-  justify-content: flex-start;
-  padding-left: 26px;
-}
-
-.permission-confirm-button {
-  padding: 8px 20px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-primary-foreground);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.15s;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
-.permission-confirm-button:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+.send-button-icon:hover:not(:disabled) {
+  background-color: var(--app-ghost-button-hover-background);
 }
 
-.permission-confirm-button:disabled {
-  opacity: 0.5;
+.send-button-icon:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-.permission-no-options {
-  padding: 12px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 12px;
-}
-
-.permission-success {
-  margin-top: 12px;
-  padding: 10px 16px;
-  background: rgba(46, 160, 67, 0.15);
-  border: 1px solid rgba(46, 160, 67, 0.4);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.permission-success-icon {
-  font-size: 16px;
-  color: #4ec9b0;
-}
-
-.permission-success-text {
-  font-size: 13px;
-  color: #4ec9b0;
-}
-
-/* Tool Call Component Styles */
-.tool-call-card {
-  margin: 12px 0;
-  padding: 12px 16px;
-  background: var(--vscode-input-background);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  animation: fadeIn 0.2s ease-in;
-}
-
-.tool-call-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.tool-call-kind-icon {
-  font-size: 18px;
-}
-
-.tool-call-title {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--vscode-editor-foreground);
-}
-
-.tool-call-status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.status-icon {
-  font-size: 12px;
-}
-
-.status-pending {
-  background: rgba(79, 134, 247, 0.2);
-  color: #79b8ff;
-}
-
-.status-in-progress {
-  background: rgba(255, 165, 0, 0.2);
-  color: #ffab70;
-}
-
-.status-completed {
-  background: rgba(46, 160, 67, 0.2);
-  color: #4ec9b0;
-}
-
-.status-failed {
-  background: rgba(200, 40, 40, 0.2);
-  color: #f48771;
-}
-
-.status-unknown {
-  background: rgba(128, 128, 128, 0.2);
-  color: #888;
-}
-
-.tool-call-raw-input {
-  margin-bottom: 12px;
-}
-
-.raw-input-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 4px;
-}
-
-.raw-input-content {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-family: 'Courier New', monospace;
-  overflow-x: auto;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.tool-call-locations {
-  margin-bottom: 12px;
-}
-
-.locations-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 6px;
-}
-
-.location-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 4px;
-  margin-bottom: 4px;
-  font-size: 12px;
-}
-
-.location-icon {
-  font-size: 14px;
-}
-
-.location-path {
-  flex: 1;
-  font-family: 'Courier New', monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.location-line {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 11px;
-}
-
-.tool-call-content-list {
-  margin-top: 12px;
-}
-
-.tool-call-diff {
-  margin-top: 8px;
-}
-
-.diff-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: rgba(79, 134, 247, 0.15);
-  border-radius: 4px 4px 0 0;
-  border: 1px solid rgba(79, 134, 247, 0.3);
-  border-bottom: none;
-}
-
-.diff-icon {
-  font-size: 14px;
-}
-
-.diff-filename {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Courier New', monospace;
-}
-
-.diff-content {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 8px;
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(79, 134, 247, 0.3);
-  border-radius: 0 0 4px 4px;
-}
-
-.diff-side {
-  min-width: 0;
-}
-
-.diff-side-label {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.6);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.diff-code {
-  background: rgba(0, 0, 0, 0.3);
-  padding: 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: 'Courier New', monospace;
-  overflow-x: auto;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.diff-arrow {
-  display: flex;
-  align-items: center;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 16px;
-  padding: 0 4px;
-}
-
-.tool-call-content {
-  margin-top: 8px;
-}
-
-.content-text {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 10px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.tool-call-footer {
-  margin-top: 12px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.tool-call-id {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.5);
-  font-family: 'Courier New', monospace;
+.send-button-icon svg {
+  width: 20px;
+  height: 20px;
 }
 

@@ -1,7 +1,13 @@
 /**
  * @license
- * Copyright 2025 Qwen Team
+ * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * ACP Types for VSCode Extension
+ *
+ * This file provides types for ACP protocol communication.
  */
 
 // ACP JSON-RPC Protocol Types
@@ -20,6 +26,9 @@ export interface AcpResponse {
   jsonrpc: typeof JSONRPC_VERSION;
   id: number;
   result?: unknown;
+  capabilities?: {
+    [key: string]: unknown;
+  };
   error?: {
     code: number;
     message: string;
@@ -38,7 +47,7 @@ export interface BaseSessionUpdate {
   sessionId: string;
 }
 
-// Content block type
+// Content block type (simplified version, use schema.ContentBlock for validation)
 export interface ContentBlock {
   type: 'text' | 'image';
   text?: string;
@@ -153,7 +162,7 @@ export type AcpSessionUpdate =
   | ToolCallStatusUpdate
   | PlanUpdate;
 
-// Permission request
+// Permission request (simplified version, use schema.RequestPermissionRequest for validation)
 export interface AcpPermissionRequest {
   sessionId: string;
   options: Array<{

@@ -1,0 +1,115 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * PlanDisplay.css - Styles for the task plan component
+ */
+
+.plan-display {
+  background-color: rgba(100, 150, 255, 0.05);
+  border: 1px solid rgba(100, 150, 255, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 8px 0;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.plan-icon {
+  font-size: 18px;
+}
+
+.plan-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(150, 180, 255, 1);
+}
+
+.plan-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-entry {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background-color: var(--vscode-input-background);
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.plan-entry[data-priority="high"] {
+  border-left-color: #ff6b6b;
+}
+
+.plan-entry[data-priority="medium"] {
+  border-left-color: #ffd93d;
+}
+
+.plan-entry[data-priority="low"] {
+  border-left-color: #6bcf7f;
+}
+
+.plan-entry.completed {
+  opacity: 0.6;
+}
+
+.plan-entry.completed .plan-entry-content {
+  text-decoration: line-through;
+}
+
+.plan-entry.in_progress {
+  background-color: rgba(100, 150, 255, 0.1);
+  border-left-width: 4px;
+}
+
+.plan-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.plan-entry-status,
+.plan-entry-priority {
+  font-size: 14px;
+}
+
+.plan-entry-index {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  min-width: 20px;
+}
+
+.plan-entry-content {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

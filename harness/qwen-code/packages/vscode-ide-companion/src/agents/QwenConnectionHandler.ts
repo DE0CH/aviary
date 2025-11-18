@@ -1,0 +1,210 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Qwen连接处理器
+ *
+ * 负责Qwen Agent的连接建立、认证和会话创建
+ */
+
+import * as vscode from 'vscode';
+import type { AcpConnection } from '../acp/AcpConnection.js';
+import type { QwenSessionReader } from '../services/QwenSessionReader.js';
+import type { AuthStateManager } from '../auth/AuthStateManager.js';
+
+/**
+ * Qwen连接处理器类
+ * 处理连接、认证和会话初始化
+ */
+export class QwenConnectionHandler {
+  /**
+   * 连接到Qwen服务并建立会话
+   *
+   * @param connection - ACP连接实例
+   * @param sessionReader - 会话读取器实例
+   * @param workingDir - 工作目录
+   * @param authStateManager - 认证状态管理器（可选）
+   */
+  async connect(
+    connection: AcpConnection,
+    sessionReader: QwenSessionReader,
+    workingDir: string,
+    authStateManager?: AuthStateManager,
+  ): Promise<void> {
+    const connectId = Date.now();
+    console.log(`\n========================================`);
+    console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
+    console.log(`[QwenAgentManager] Call stack:\n${new Error().stack}`);
+    console.log(`========================================\n`);
+
+    const config = vscode.workspace.getConfiguration('qwenCode');
+    const cliPath = config.get<string>('qwen.cliPath', 'qwen');
+    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+    const openaiBaseUrl = config.get<string>('qwen.openaiBaseUrl', '');
+    const model = config.get<string>('qwen.model', '');
+    const proxy = config.get<string>('qwen.proxy', '');
+
+    // 构建额外的CLI参数
+    const extraArgs: string[] = [];
+    if (openaiApiKey) {
+      extraArgs.push('--openai-api-key', openaiApiKey);
+    }
+    if (openaiBaseUrl) {
+      extraArgs.push('--openai-base-url', openaiBaseUrl);
+    }
+    if (model) {
+      extraArgs.push('--model', model);
+    }
+    if (proxy) {
+      extraArgs.push('--proxy', proxy);
+      console.log('[QwenAgentManager] Using proxy:', proxy);
+    }
+
+    await connection.connect('qwen', cliPath, workingDir, extraArgs);
+
+    // 确定认证方法
+    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+    // 检查是否有有效的缓存认证
+    if (authStateManager) {
+      const hasValidAuth = await authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
+      );
+      if (hasValidAuth) {
+        console.log('[QwenAgentManager] Using cached authentication');
+      }
+    }
+
+    // 尝试恢复现有会话或创建新会话
+    let sessionRestored = false;
+
+    // 尝试从本地文件获取会话
+    console.log('[QwenAgentManager] Reading local session files...');
+    try {
+      const sessions = await sessionReader.getAllSessions(workingDir);
+
+      if (sessions.length > 0) {
+        console.log(
+          '[QwenAgentManager] Found existing sessions:',
+          sessions.length,
+        );
+        const lastSession = sessions[0]; // 已按lastUpdated排序
+
+        try {
+          await connection.switchSession(lastSession.sessionId);
+          console.log(
+            '[QwenAgentManager] Restored session:',
+            lastSession.sessionId,
+          );
+          sessionRestored = true;
+        } catch (switchError) {
+          console.log(
+            '[QwenAgentManager] session/switch not supported or failed:',
+            switchError instanceof Error
+              ? switchError.message
+              : String(switchError),
+          );
+        }
+      } else {
+        console.log('[QwenAgentManager] No existing sessions found');
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.log(
+        '[QwenAgentManager] Failed to read local sessions:',
+        errorMessage,
+      );
+    }
+
+    // 如果无法恢复会话则创建新会话
+    if (!sessionRestored) {
+      console.log('[QwenAgentManager] Creating new session...');
+      console.log(
+        `[QwenAgentManager] ⚠️ WORKAROUND: Skipping explicit authenticate() call`,
+      );
+      console.log(
+        `[QwenAgentManager] ⚠️ Reason: newSession() internally calls refreshAuth(), which triggers device flow`,
+      );
+      console.log(
+        `[QwenAgentManager] ⚠️ Calling authenticate() first causes double authentication`,
+      );
+
+      try {
+        console.log(
+          `\n🔐 [AUTO AUTH] newSession will handle authentication automatically\n`,
+        );
+        await this.newSessionWithRetry(connection, workingDir, 3);
+        console.log('[QwenAgentManager] New session created successfully');
+
+        // 保存认证状态
+        if (authStateManager) {
+          console.log(
+            '[QwenAgentManager] Saving auth state after successful session creation',
+          );
+          await authStateManager.saveAuthState(workingDir, authMethod);
+        }
+      } catch (sessionError) {
+        console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
+        console.log(`[QwenAgentManager] Error details:`, sessionError);
+
+        // 清除缓存
+        if (authStateManager) {
+          console.log('[QwenAgentManager] Clearing auth cache due to failure');
+          await authStateManager.clearAuthState();
+        }
+
+        throw sessionError;
+      }
+    }
+
+    console.log(`\n========================================`);
+    console.log(`[QwenAgentManager] ✅ CONNECT() COMPLETED SUCCESSFULLY`);
+    console.log(`========================================\n`);
+  }
+
+  /**
+   * 创建新会话（带重试）
+   *
+   * @param connection - ACP连接实例
+   * @param workingDir - 工作目录
+   * @param maxRetries - 最大重试次数
+   */
+  private async newSessionWithRetry(
+    connection: AcpConnection,
+    workingDir: string,
+    maxRetries: number,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `[QwenAgentManager] Creating session (attempt ${attempt}/${maxRetries})...`,
+        );
+        await connection.newSession(workingDir);
+        console.log('[QwenAgentManager] Session created successfully');
+        return;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        console.error(
+          `[QwenAgentManager] Session creation attempt ${attempt} failed:`,
+          errorMessage,
+        );
+
+        if (attempt === maxRetries) {
+          throw new Error(
+            `Session creation failed after ${maxRetries} attempts: ${errorMessage}`,
+          );
+        }
+
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`[QwenAgentManager] Retrying in ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+}

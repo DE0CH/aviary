@@ -1,0 +1,229 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Styles extracted from Claude Code extension (v2.0.43)
+ * Path: /Users/jinjing/Downloads/Anthropic.claude-code-2.0.43/extension/webview/index.css
+ */
+
+/* ===========================
+   Header Styles (from Claude Code .he)
+   =========================== */
+.chat-header {
+  display: flex;
+  border-bottom: 1px solid var(--app-primary-border-color);
+  padding: 6px 10px;
+  gap: 4px;
+  background-color: var(--app-header-background);
+  justify-content: flex-start;
+  user-select: none;
+}
+
+/* ===========================
+   Session Selector Button (from Claude Code .E)
+   =========================== */
+.session-selector-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+  max-width: 300px;
+  overflow: hidden;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+}
+
+.session-selector-button:focus,
+.session-selector-button:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+/* Session Selector Button Internal Elements */
+.session-selector-button-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 300px;
+  overflow: hidden;
+}
+
+.session-selector-button-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.session-selector-button-icon {
+  flex-shrink: 0;
+}
+
+.session-selector-button-icon svg {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+}
+
+/* ===========================
+   Icon Button (from Claude Code .j)
+   =========================== */
+.icon-button {
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  width: 24px;
+  height: 24px;
+}
+
+.icon-button:focus,
+.icon-button:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+/* ===========================
+   Session Selector Modal (from Claude Code .Wt)
+   =========================== */
+.session-selector-modal {
+  position: fixed;
+  background: var(--app-menu-background);
+  border: 1px solid var(--app-menu-border);
+  border-radius: var(--corner-radius-small);
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(500px, 50vh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
+  outline: none;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+}
+
+/* Modal Content Area (from Claude Code .It) */
+.session-selector-modal-content {
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  user-select: none;
+}
+
+/* Group Header (from Claude Code .te) */
+.session-group-header {
+  padding: 4px 8px;
+  color: var(--app-primary-foreground);
+  opacity: 0.5;
+  font-size: 0.9em;
+}
+
+.session-group-header:not(:first-child) {
+  margin-top: 8px;
+}
+
+/* Session List Container (from Claude Code .St) */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--app-list-padding);
+  gap: var(--app-list-gap);
+}
+
+/* Session List Item (from Claude Code .s and .s.U) */
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: var(--app-list-item-padding);
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.session-item:hover,
+.session-item.hovering {
+  background: var(--app-list-hover-background);
+}
+
+.session-item.active {
+  background: var(--app-list-active-background);
+  color: var(--app-list-active-foreground);
+}
+
+/* Session Item Check Icon (from Claude Code .ne) */
+.session-item-check {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  visibility: hidden;
+}
+
+.session-item.active .session-item-check {
+  visibility: visible;
+}
+
+/* Session Item Label (from Claude Code .ae) */
+.session-item-label {
+  flex: 1;
+  color: var(--app-primary-foreground);
+  font-size: 1em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item.active .session-item-label {
+  font-weight: 600;
+  color: var(--app-list-active-foreground);
+}
+
+/* Session Item Meta Info (from Claude Code .Et) */
+.session-item-meta {
+  opacity: 0.5;
+  font-size: 0.9em;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+/* ===========================
+   CSS Variables (from Claude Code root styles)
+   =========================== */
+:root {
+  /* Header */
+  --app-header-background: var(--vscode-sideBar-background);
+
+  /* List Styles */
+  --app-list-padding: 0px;
+  --app-list-item-padding: 4px 8px;
+  --app-list-border-color: transparent;
+  --app-list-border-radius: 4px;
+  --app-list-hover-background: var(--vscode-list-hoverBackground);
+  --app-list-active-background: var(--vscode-list-activeSelectionBackground);
+  --app-list-active-foreground: var(--vscode-list-activeSelectionForeground);
+  --app-list-gap: 2px;
+
+  /* Menu Styles */
+  --app-menu-background: var(--vscode-menu-background);
+  --app-menu-border: var(--vscode-menu-border);
+  --app-menu-foreground: var(--vscode-menu-foreground);
+  --app-menu-selection-background: var(--vscode-menu-selectionBackground);
+  --app-menu-selection-foreground: var(--vscode-menu-selectionForeground);
+}

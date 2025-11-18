@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Qwen Team
+ * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,36 +8,71 @@ import { JSONRPC_VERSION } from '../shared/acpTypes.js';
 import type {
   AcpBackend,
   AcpMessage,
-  AcpNotification,
   AcpPermissionRequest,
-  AcpRequest,
   AcpResponse,
   AcpSessionUpdate,
 } from '../shared/acpTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { spawn } from 'child_process';
+import type { PendingRequest, AcpConnectionCallbacks } from './AcpTypes.js';
+import { AcpMessageHandler } from './AcpMessageHandler.js';
+import { AcpSessionManager } from './AcpSessionManager.js';
 
-interface PendingRequest<T = unknown> {
-  resolve: (value: T) => void;
-  reject: (error: Error) => void;
-  timeoutId?: NodeJS.Timeout;
-  method: string;
-}
-
+/**
+ * ACP Connection Handler for VSCode Extension
+ *
+ * This class implements the client side of the ACP (Agent Communication Protocol).
+ *
+ * Implementation Status:
+ *
+ * Client Methods (Methods this class implements, called by CLI):
+ * ✅ session/update - Handle session updates via onSessionUpdate callback
+ * ✅ session/request_permission - Request user permission for tool execution
+ * ✅ fs/read_text_file - Read file from workspace
+ * ✅ fs/write_text_file - Write file to workspace
+ *
+ * Agent Methods (Methods CLI implements, called by this class):
+ * ✅ initialize - Initialize ACP protocol connection
+ * ✅ authenticate - Authenticate with selected auth method
+ * ✅ session/new - Create new chat session
+ * ✅ session/prompt - Send user message to agent
+ * ✅ session/cancel - Cancel current generation
+ * ✅ session/load - Load previous session
+ *
+ * Custom Methods (Not in standard ACP):
+ * ⚠️  session/list - List available sessions (custom extension)
+ * ⚠️  session/switch - Switch to different session (custom extension)
+ */
 export class AcpConnection {
   private child: ChildProcess | null = null;
   private pendingRequests = new Map<number, PendingRequest<unknown>>();
-  private nextRequestId = 0;
-  private sessionId: string | null = null;
-  private isInitialized = false;
+  private nextRequestId = { value: 0 };
   private backend: AcpBackend | null = null;
 
+  // 模块实例
+  private messageHandler: AcpMessageHandler;
+  private sessionManager: AcpSessionManager;
+
+  // 回调函数
   onSessionUpdate: (data: AcpSessionUpdate) => void = () => {};
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
   }> = () => Promise.resolve({ optionId: 'allow' });
   onEndTurn: () => void = () => {};
 
+  constructor() {
+    this.messageHandler = new AcpMessageHandler();
+    this.sessionManager = new AcpSessionManager();
+  }
+
+  /**
+   * 连接到ACP后端
+   *
+   * @param backend - 后端类型
+   * @param cliPath - CLI路径
+   * @param workingDir - 工作目录
+   * @param extraArgs - 额外的命令行参数
+   */
   async connect(
     backend: AcpBackend,
     cliPath: string,
@@ -53,8 +88,8 @@ export class AcpConnection {
     const isWindows = process.platform === 'win32';
     const env = { ...process.env };
 
-    // If proxy is configured in extraArgs, also set it as environment variables
-    // This ensures token refresh requests also use the proxy
+    // 如果在extraArgs中配置了代理，也将其设置为环境变量
+    // 这确保token刷新请求也使用代理
     const proxyArg = extraArgs.find(
       (arg, i) => arg === '--proxy' && i + 1 < extraArgs.length,
     );
@@ -63,18 +98,10 @@ export class AcpConnection {
       const proxyUrl = extraArgs[proxyIndex + 1];
       console.log('[ACP] Setting proxy environment variables:', proxyUrl);
 
-      // Set standard proxy env vars
       env.HTTP_PROXY = proxyUrl;
       env.HTTPS_PROXY = proxyUrl;
       env.http_proxy = proxyUrl;
       env.https_proxy = proxyUrl;
-
-      // For Node.js fetch (undici), we need to use NODE_OPTIONS with a custom agent
-      // Or use the global-agent package, but for now we'll rely on the --proxy flag
-      // and hope the CLI handles it properly for all requests
-
-      // Alternative: disable TLS verification for proxy (not recommended for production)
-      // env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     }
 
     let spawnCommand: string;
@@ -102,13 +129,16 @@ export class AcpConnection {
     await this.setupChildProcessHandlers(backend);
   }
 
+  /**
+   * 设置子进程处理器
+   *
+   * @param backend - 后端名称
+   */
   private async setupChildProcessHandlers(backend: string): Promise<void> {
     let spawnError: Error | null = null;
 
     this.child!.stderr?.on('data', (data) => {
       const message = data.toString();
-      // Many CLIs output informational messages to stderr, so use console.log instead of console.error
-      // Only treat it as error if it contains actual error keywords
       if (
         message.toLowerCase().includes('error') &&
         !message.includes('Loaded cached')
@@ -129,7 +159,7 @@ export class AcpConnection {
       );
     });
 
-    // Wait for process to start
+    // 等待进程启动
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     if (spawnError) {
@@ -140,7 +170,7 @@ export class AcpConnection {
       throw new Error(`${backend} ACP process failed to start`);
     }
 
-    // Handle messages from ACP server
+    // 处理来自ACP服务器的消息
     let buffer = '';
     this.child.stdout?.on('data', (data) => {
       buffer += data.toString();
@@ -153,373 +183,161 @@ export class AcpConnection {
             const message = JSON.parse(line) as AcpMessage;
             this.handleMessage(message);
           } catch (_error) {
-            // Ignore non-JSON lines
+            // 忽略非JSON行
           }
         }
       }
     });
 
-    // Initialize protocol
-    await this.initialize();
+    // 初始化协议
+    await this.sessionManager.initialize(
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
   }
 
-  private sendRequest<T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-  ): Promise<T> {
-    const id = this.nextRequestId++;
-    const message: AcpRequest = {
-      jsonrpc: JSONRPC_VERSION,
-      id,
-      method,
-      ...(params && { params }),
-    };
-
-    return new Promise((resolve, reject) => {
-      const timeoutDuration = method === 'session/prompt' ? 120000 : 60000;
-
-      const timeoutId = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`Request ${method} timed out`));
-      }, timeoutDuration);
-
-      const pendingRequest: PendingRequest<T> = {
-        resolve: (value: T) => {
-          clearTimeout(timeoutId);
-          resolve(value);
-        },
-        reject: (error: Error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        },
-        timeoutId,
-        method,
-      };
-
-      this.pendingRequests.set(id, pendingRequest as PendingRequest<unknown>);
-      this.sendMessage(message);
-    });
-  }
-
-  private sendMessage(message: AcpRequest | AcpNotification): void {
-    if (this.child?.stdin) {
-      const jsonString = JSON.stringify(message);
-      const lineEnding = process.platform === 'win32' ? '\r\n' : '\n';
-      this.child.stdin.write(jsonString + lineEnding);
-    }
-  }
-
-  private sendResponseMessage(response: AcpResponse): void {
-    if (this.child?.stdin) {
-      const jsonString = JSON.stringify(response);
-      const lineEnding = process.platform === 'win32' ? '\r\n' : '\n';
-      this.child.stdin.write(jsonString + lineEnding);
-    }
-  }
-
+  /**
+   * 处理接收到的消息
+   *
+   * @param message - ACP消息
+   */
   private handleMessage(message: AcpMessage): void {
-    try {
-      if ('method' in message) {
-        // Request or notification
-        this.handleIncomingRequest(message).catch(() => {});
-      } else if (
-        'id' in message &&
-        typeof message.id === 'number' &&
-        this.pendingRequests.has(message.id)
-      ) {
-        // Response
-        const pendingRequest = this.pendingRequests.get(message.id)!;
-        const { resolve, reject, method } = pendingRequest;
-        this.pendingRequests.delete(message.id);
-
-        if ('result' in message) {
-          console.log(
-            `[ACP] Response for ${method}:`,
-            JSON.stringify(message.result).substring(0, 200),
-          );
-          if (
-            message.result &&
-            typeof message.result === 'object' &&
-            'stopReason' in message.result &&
-            message.result.stopReason === 'end_turn'
-          ) {
-            this.onEndTurn();
-          }
-          resolve(message.result);
-        } else if ('error' in message) {
-          const errorCode = message.error?.code || 'unknown';
-          const errorMsg = message.error?.message || 'Unknown ACP error';
-          const errorData = message.error?.data
-            ? JSON.stringify(message.error.data)
-            : '';
-          console.error(`[ACP] Error response for ${method}:`, {
-            code: errorCode,
-            message: errorMsg,
-            data: errorData,
-          });
-          reject(
-            new Error(
-              `${errorMsg} (code: ${errorCode})${errorData ? '\nData: ' + errorData : ''}`,
-            ),
-          );
-        }
-      }
-    } catch (error) {
-      console.error('[ACP] Error handling message:', error);
-    }
-  }
-
-  private async handleIncomingRequest(
-    message: AcpRequest | AcpNotification,
-  ): Promise<void> {
-    const { method, params } = message;
-
-    try {
-      let result = null;
-
-      switch (method) {
-        case 'session/update':
-          this.onSessionUpdate(params as AcpSessionUpdate);
-          break;
-        case 'session/request_permission':
-          result = await this.handlePermissionRequest(
-            params as AcpPermissionRequest,
-          );
-          break;
-        case 'fs/read_text_file':
-          result = await this.handleReadTextFile(
-            params as {
-              path: string;
-              sessionId: string;
-              line: number | null;
-              limit: number | null;
-            },
-          );
-          break;
-        case 'fs/write_text_file':
-          result = await this.handleWriteTextFile(
-            params as { path: string; content: string; sessionId: string },
-          );
-          break;
-        default:
-          console.warn(`[ACP] Unhandled method: ${method}`);
-          break;
-      }
-
-      if ('id' in message && typeof message.id === 'number') {
-        this.sendResponseMessage({
-          jsonrpc: JSONRPC_VERSION,
-          id: message.id,
-          result,
-        });
-      }
-    } catch (error) {
-      if ('id' in message && typeof message.id === 'number') {
-        this.sendResponseMessage({
-          jsonrpc: JSONRPC_VERSION,
-          id: message.id,
-          error: {
-            code: -32603,
-            message: error instanceof Error ? error.message : String(error),
-          },
-        });
-      }
-    }
-  }
-
-  private async handlePermissionRequest(params: AcpPermissionRequest): Promise<{
-    outcome: { outcome: string; optionId: string };
-  }> {
-    try {
-      const response = await this.onPermissionRequest(params);
-      const optionId = response.optionId;
-
-      // Handle cancel, reject, or allow
-      let outcome: string;
-      if (optionId.includes('reject') || optionId === 'cancel') {
-        outcome = 'rejected';
-      } else {
-        outcome = 'selected';
-      }
-
-      return {
-        outcome: {
-          outcome,
-          optionId: optionId === 'cancel' ? 'reject_once' : optionId,
-        },
-      };
-    } catch (_error) {
-      return {
-        outcome: {
-          outcome: 'rejected',
-          optionId: 'reject_once',
-        },
-      };
-    }
-  }
-
-  private async handleReadTextFile(params: {
-    path: string;
-    sessionId: string;
-    line: number | null;
-    limit: number | null;
-  }): Promise<{ content: string }> {
-    const fs = await import('fs/promises');
-
-    console.log(`[ACP] fs/read_text_file request received for: ${params.path}`);
-    console.log(`[ACP] Parameters:`, {
-      line: params.line,
-      limit: params.limit,
-      sessionId: params.sessionId,
-    });
-
-    try {
-      const content = await fs.readFile(params.path, 'utf-8');
-      console.log(
-        `[ACP] Successfully read file: ${params.path} (${content.length} bytes)`,
-      );
-
-      // Handle line offset and limit if specified
-      if (params.line !== null || params.limit !== null) {
-        const lines = content.split('\n');
-        const startLine = params.line || 0;
-        const endLine = params.limit ? startLine + params.limit : lines.length;
-        const selectedLines = lines.slice(startLine, endLine);
-        const result = { content: selectedLines.join('\n') };
-        console.log(`[ACP] Returning ${selectedLines.length} lines`);
-        return result;
-      }
-
-      const result = { content };
-      console.log(`[ACP] Returning full file content`);
-      return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[ACP] Failed to read file ${params.path}:`, errorMsg);
-
-      // Throw a proper error that will be caught by handleIncomingRequest
-      throw new Error(`Failed to read file '${params.path}': ${errorMsg}`);
-    }
-  }
-
-  private async handleWriteTextFile(params: {
-    path: string;
-    content: string;
-    sessionId: string;
-  }): Promise<null> {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-
-    console.log(
-      `[ACP] fs/write_text_file request received for: ${params.path}`,
-    );
-    console.log(`[ACP] Content size: ${params.content.length} bytes`);
-
-    try {
-      // Ensure directory exists
-      const dirName = path.dirname(params.path);
-      console.log(`[ACP] Ensuring directory exists: ${dirName}`);
-      await fs.mkdir(dirName, { recursive: true });
-
-      // Write file
-      await fs.writeFile(params.path, params.content, 'utf-8');
-
-      console.log(`[ACP] Successfully wrote file: ${params.path}`);
-      return null;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[ACP] Failed to write file ${params.path}:`, errorMsg);
-
-      // Throw a proper error that will be caught by handleIncomingRequest
-      throw new Error(`Failed to write file '${params.path}': ${errorMsg}`);
-    }
-  }
-
-  private async initialize(): Promise<AcpResponse> {
-    const initializeParams = {
-      protocolVersion: 1,
-      clientCapabilities: {
-        fs: {
-          readTextFile: true,
-          writeTextFile: true,
-        },
-      },
+    const callbacks: AcpConnectionCallbacks = {
+      onSessionUpdate: this.onSessionUpdate,
+      onPermissionRequest: this.onPermissionRequest,
+      onEndTurn: this.onEndTurn,
     };
 
-    console.log('[ACP] Sending initialize request...');
-    const response = await this.sendRequest<AcpResponse>(
-      'initialize',
-      initializeParams,
-    );
-    this.isInitialized = true;
-    console.log('[ACP] Initialize successful');
-    return response;
-  }
-
-  async authenticate(methodId?: string): Promise<AcpResponse> {
-    // New version requires methodId to be provided
-    const authMethodId = methodId || 'default';
-    console.log(
-      '[ACP] Sending authenticate request with methodId:',
-      authMethodId,
-    );
-    const response = await this.sendRequest<AcpResponse>('authenticate', {
-      methodId: authMethodId,
-    });
-    console.log('[ACP] Authenticate successful');
-    return response;
-  }
-
-  async newSession(cwd: string = process.cwd()): Promise<AcpResponse> {
-    console.log('[ACP] Sending session/new request with cwd:', cwd);
-    const response = await this.sendRequest<
-      AcpResponse & { sessionId?: string }
-    >('session/new', {
-      cwd,
-      mcpServers: [],
-    });
-
-    this.sessionId = response.sessionId || null;
-    console.log('[ACP] Session created with ID:', this.sessionId);
-    return response;
-  }
-
-  async sendPrompt(prompt: string): Promise<AcpResponse> {
-    if (!this.sessionId) {
-      throw new Error('No active ACP session');
-    }
-
-    return await this.sendRequest('session/prompt', {
-      sessionId: this.sessionId,
-      prompt: [{ type: 'text', text: prompt }],
-    });
-  }
-
-  async listSessions(): Promise<AcpResponse> {
-    console.log('[ACP] Requesting session list...');
-    try {
-      const response = await this.sendRequest<AcpResponse>('session/list', {});
-      console.log(
-        '[ACP] Session list response:',
-        JSON.stringify(response).substring(0, 200),
+    // 处理消息
+    if ('method' in message) {
+      // 请求或通知
+      this.messageHandler
+        .handleIncomingRequest(message, callbacks)
+        .then((result) => {
+          if ('id' in message && typeof message.id === 'number') {
+            this.messageHandler.sendResponseMessage(this.child, {
+              jsonrpc: JSONRPC_VERSION,
+              id: message.id,
+              result,
+            });
+          }
+        })
+        .catch((error) => {
+          if ('id' in message && typeof message.id === 'number') {
+            this.messageHandler.sendResponseMessage(this.child, {
+              jsonrpc: JSONRPC_VERSION,
+              id: message.id,
+              error: {
+                code: -32603,
+                message: error instanceof Error ? error.message : String(error),
+              },
+            });
+          }
+        });
+    } else {
+      // 响应
+      this.messageHandler.handleMessage(
+        message,
+        this.pendingRequests,
+        callbacks,
       );
-      return response;
-    } catch (error) {
-      console.error('[ACP] Failed to get session list:', error);
-      throw error;
     }
   }
 
-  async switchSession(sessionId: string): Promise<AcpResponse> {
-    console.log('[ACP] Switching to session:', sessionId);
-    this.sessionId = sessionId;
-    const response = await this.sendRequest<AcpResponse>('session/switch', {
-      sessionId,
-    });
-    console.log('[ACP] Session switched successfully');
-    return response;
+  /**
+   * 认证
+   *
+   * @param methodId - 认证方法ID
+   * @returns 认证响应
+   */
+  async authenticate(methodId?: string): Promise<AcpResponse> {
+    return this.sessionManager.authenticate(
+      methodId,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
   }
 
+  /**
+   * 创建新会话
+   *
+   * @param cwd - 工作目录
+   * @returns 新会话响应
+   */
+  async newSession(cwd: string = process.cwd()): Promise<AcpResponse> {
+    return this.sessionManager.newSession(
+      cwd,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
+  }
+
+  /**
+   * 发送提示消息
+   *
+   * @param prompt - 提示内容
+   * @returns 响应
+   */
+  async sendPrompt(prompt: string): Promise<AcpResponse> {
+    return this.sessionManager.sendPrompt(
+      prompt,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
+  }
+
+  /**
+   * 加载已有会话
+   *
+   * @param sessionId - 会话ID
+   * @returns 加载响应
+   */
+  async loadSession(sessionId: string): Promise<AcpResponse> {
+    return this.sessionManager.loadSession(
+      sessionId,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
+  }
+
+  /**
+   * 获取会话列表
+   *
+   * @returns 会话列表响应
+   */
+  async listSessions(): Promise<AcpResponse> {
+    return this.sessionManager.listSessions(
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
+  }
+
+  /**
+   * 切换到指定会话
+   *
+   * @param sessionId - 会话ID
+   * @returns 切换响应
+   */
+  async switchSession(sessionId: string): Promise<AcpResponse> {
+    return this.sessionManager.switchSession(sessionId, this.nextRequestId);
+  }
+
+  /**
+   * 取消当前会话的提示生成
+   */
+  async cancelSession(): Promise<void> {
+    await this.sessionManager.cancelSession(this.child);
+  }
+
+  /**
+   * 断开连接
+   */
   disconnect(): void {
     if (this.child) {
       this.child.kill();
@@ -527,20 +345,28 @@ export class AcpConnection {
     }
 
     this.pendingRequests.clear();
-    this.sessionId = null;
-    this.isInitialized = false;
+    this.sessionManager.reset();
     this.backend = null;
   }
 
+  /**
+   * 检查是否已连接
+   */
   get isConnected(): boolean {
     return this.child !== null && !this.child.killed;
   }
 
+  /**
+   * 检查是否有活动会话
+   */
   get hasActiveSession(): boolean {
-    return this.sessionId !== null;
+    return this.sessionManager.getCurrentSessionId() !== null;
   }
 
+  /**
+   * 获取当前会话ID
+   */
   get currentSessionId(): string | null {
-    return this.sessionId;
+    return this.sessionManager.getCurrentSessionId();
   }
 }

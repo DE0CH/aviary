@@ -19,6 +19,65 @@ To use this extension, you'll need:
 - VS Code version 1.101.0 or newer
 - Qwen Code (installed separately) running within the VS Code integrated terminal
 
+# Development and Debugging
+
+To debug and develop this extension locally:
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/QwenLM/qwen-code.git
+   cd qwen-code
+   ```
+
+2. **Install dependencies**
+
+   ```bash
+   npm install
+   # or if using pnpm
+   pnpm install
+   ```
+
+3. **Open the extension in VS Code**
+
+   ```bash
+   cd packages/vscode-ide-companion
+   code .
+   ```
+
+4. **Start debugging**
+   - Press `F5` or click "Run and Debug" from the sidebar
+   - Select "Run Extension" from the debug configuration dropdown
+   - This will open a new "Extension Development Host" window with the extension loaded
+
+5. **Make changes and reload**
+   - Edit the source code in the original VS Code window
+   - To see your changes, reload the Extension Development Host window by:
+     - Pressing `Ctrl+R` (Windows/Linux) or `Cmd+R` (macOS)
+     - Or clicking the "Reload" button in the debug toolbar
+
+6. **View logs and debug output**
+   - Open the Debug Console in the original VS Code window to see extension logs
+   - In the Extension Development Host window, open Developer Tools with `Help > Toggle Developer Tools` to see webview logs
+
+## Build for Production
+
+To build the extension for distribution:
+
+```bash
+npm run compile
+# or
+pnpm run compile
+```
+
+To package the extension as a VSIX file:
+
+```bash
+npx vsce package
+# or
+pnpm vsce package
+```
+
 # Terms of Service and Privacy Notice
 
 By installing this extension, you agree to the [Terms of Service](https://github.com/QwenLM/qwen-code/blob/main/docs/tos-privacy.md).

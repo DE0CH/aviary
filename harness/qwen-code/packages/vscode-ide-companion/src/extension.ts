@@ -120,6 +120,36 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize WebView Provider
   webViewProvider = new WebViewProvider(context, context.extensionUri);
 
+  // Register WebView panel serializer for persistence across reloads
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer('qwenCode.chat', {
+      async deserializeWebviewPanel(
+        webviewPanel: vscode.WebviewPanel,
+        state: unknown,
+      ) {
+        console.log(
+          '[Extension] Deserializing WebView panel with state:',
+          state,
+        );
+
+        // Restore the WebView provider with the existing panel
+        webViewProvider.restorePanel(webviewPanel);
+
+        // Restore state if available
+        if (state && typeof state === 'object') {
+          webViewProvider.restoreState(
+            state as {
+              conversationId: string | null;
+              agentInitialized: boolean;
+            },
+          );
+        }
+
+        log('WebView panel restored from serialization');
+      },
+    }),
+  );
+
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.uri.scheme === DIFF_SCHEME) {

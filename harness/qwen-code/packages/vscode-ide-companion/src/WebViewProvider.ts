@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Qwen Team
+ * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,13 @@ import {
 } from './agents/QwenAgentManager.js';
 import { ConversationStore } from './storage/ConversationStore.js';
 import type { AcpPermissionRequest } from './shared/acpTypes.js';
-import { AuthStateManager } from './auth/AuthStateManager.js';
 import { CliDetector } from './utils/CliDetector.js';
+import { AuthStateManager } from './auth/AuthStateManager.js';
 
 export class WebViewProvider {
   private panel: vscode.WebviewPanel | null = null;
+  // Track the Webview tab (avoid pin/lock; use for reveal/visibility bookkeeping)
+  private panelTab: vscode.Tab | null = null;
   private agentManager: QwenAgentManager;
   private conversationStore: ConversationStore;
   private authStateManager: AuthStateManager;
@@ -25,7 +27,7 @@ export class WebViewProvider {
   private currentStreamContent = ''; // Track streaming content for saving
 
   constructor(
-    private context: vscode.ExtensionContext,
+    context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
   ) {
     this.agentManager = new QwenAgentManager();
@@ -41,6 +43,17 @@ export class WebViewProvider {
       });
     });
 
+    // Setup thought chunk handler
+    this.agentManager.onThoughtChunk((chunk: string) => {
+      this.currentStreamContent += chunk;
+      this.sendMessageToWebView({
+        type: 'thoughtChunk',
+        data: { chunk },
+      });
+    });
+
+    // Note: Tool call updates are handled in handleSessionUpdate within QwenAgentManager
+    // and sent via onStreamChunk callback
     this.agentManager.onToolCall((update) => {
       this.sendMessageToWebView({
         type: 'toolCall',
@@ -48,6 +61,14 @@ export class WebViewProvider {
           type: 'tool_call',
           ...(update as unknown as Record<string, unknown>),
         },
+      });
+    });
+
+    // Setup plan handler
+    this.agentManager.onPlan((entries) => {
+      this.sendMessageToWebView({
+        type: 'plan',
+        data: { entries },
       });
     });
 
@@ -78,21 +99,61 @@ export class WebViewProvider {
   }
 
   async show(): Promise<void> {
+    // Track if we're creating a new panel in a new column
+    let startedInNewColumn = false;
+
     if (this.panel) {
-      this.panel.reveal();
+      // Reveal the existing panel via Tab API (Claude-style), fallback to panel.reveal
+      this.revealPanelTab(true);
+      this.capturePanelTab();
       return;
     }
+
+    // Mark that we're creating a new panel
+    startedInNewColumn = true;
 
     this.panel = vscode.window.createWebviewPanel(
       'qwenCode.chat',
       'Qwen Code Chat',
-      vscode.ViewColumn.One,
+      {
+        viewColumn: vscode.ViewColumn.Beside, // Open on right side of active editor
+        preserveFocus: true, // Don't steal focus from editor
+      },
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist')],
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.extensionUri, 'dist'),
+          vscode.Uri.joinPath(this.extensionUri, 'assets'),
+        ],
       },
     );
+
+    // Capture the Tab that corresponds to our WebviewPanel (Claude-style)
+    this.capturePanelTab();
+
+    // Auto-lock editor group when opened in new column (Claude Code style)
+    if (startedInNewColumn) {
+      console.log(
+        '[WebViewProvider] Auto-locking editor group for Qwen Code chat',
+      );
+      try {
+        // Reveal panel without preserving focus to make it the active group
+        // This ensures the lock command targets the correct editor group
+        this.revealPanelTab(false);
+
+        await vscode.commands.executeCommand(
+          'workbench.action.lockEditorGroup',
+        );
+        console.log('[WebViewProvider] Editor group locked successfully');
+      } catch (error) {
+        console.warn('[WebViewProvider] Failed to lock editor group:', error);
+        // Non-fatal error, continue anyway
+      }
+    } else {
+      // For existing panel, reveal with preserving focus
+      this.revealPanelTab(true);
+    }
 
     // Set panel icon to Qwen logo
     this.panel.iconPath = vscode.Uri.joinPath(
@@ -107,6 +168,17 @@ export class WebViewProvider {
     this.panel.webview.onDidReceiveMessage(
       async (message) => {
         await this.handleWebViewMessage(message);
+      },
+      null,
+      this.disposables,
+    );
+
+    // Listen for view state changes (no pin/lock; just keep tab reference fresh)
+    this.panel.onDidChangeViewState(
+      () => {
+        if (this.panel && this.panel.visible) {
+          this.capturePanelTab();
+        }
       },
       null,
       this.disposables,
@@ -229,45 +301,28 @@ export class WebViewProvider {
 
   private async loadCurrentSessionMessages(): Promise<void> {
     try {
-      // Get the current active session ID
-      const currentSessionId = this.agentManager.currentSessionId;
-
-      if (!currentSessionId) {
-        console.log('[WebViewProvider] No active session, initializing empty');
-        await this.initializeEmptyConversation();
-        return;
-      }
-
       console.log(
-        '[WebViewProvider] Loading messages from current session:',
-        currentSessionId,
+        '[WebViewProvider] Initializing with empty conversation and creating ACP session',
       );
-      const messages =
-        await this.agentManager.getSessionMessages(currentSessionId);
 
-      // Set current conversation ID to the session ID
-      this.currentConversationId = currentSessionId;
+      // Create a new ACP session so user can send messages immediately
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-      if (messages.length > 0) {
-        console.log(
-          '[WebViewProvider] Loaded',
-          messages.length,
-          'messages from current Qwen session',
+      try {
+        await this.agentManager.createNewSession(workingDir);
+        console.log('[WebViewProvider] ACP session created successfully');
+      } catch (sessionError) {
+        console.error(
+          '[WebViewProvider] Failed to create ACP session:',
+          sessionError,
         );
-        this.sendMessageToWebView({
-          type: 'conversationLoaded',
-          data: { id: currentSessionId, messages },
-        });
-      } else {
-        // Session exists but has no messages - show empty conversation
-        console.log(
-          '[WebViewProvider] Current session has no messages, showing empty conversation',
+        vscode.window.showWarningMessage(
+          `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
         );
-        this.sendMessageToWebView({
-          type: 'conversationLoaded',
-          data: { id: currentSessionId, messages: [] },
-        });
       }
+
+      await this.initializeEmptyConversation();
     } catch (error) {
       console.error(
         '[WebViewProvider] Failed to load session messages:',
@@ -472,6 +527,10 @@ export class WebViewProvider {
         await this.checkCliInstallation();
         break;
 
+      case 'cancelPrompt':
+        await this.handleCancelPrompt();
+        break;
+
       default:
         console.warn('[WebViewProvider] Unknown message type:', message.type);
         break;
@@ -481,8 +540,31 @@ export class WebViewProvider {
   private async handleSendMessage(text: string): Promise<void> {
     console.log('[WebViewProvider] handleSendMessage called with:', text);
 
+    // Ensure we have an active conversation - create one if needed
     if (!this.currentConversationId) {
-      const errorMsg = 'No active conversation. Please restart the extension.';
+      console.log('[WebViewProvider] No active conversation, creating one...');
+      try {
+        await this.initializeEmptyConversation();
+        console.log(
+          '[WebViewProvider] Created conversation:',
+          this.currentConversationId,
+        );
+      } catch (error) {
+        const errorMsg = `Failed to create conversation: ${error}`;
+        console.error('[WebViewProvider]', errorMsg);
+        vscode.window.showErrorMessage(errorMsg);
+        this.sendMessageToWebView({
+          type: 'error',
+          data: { message: errorMsg },
+        });
+        return;
+      }
+    }
+
+    // Double check after creation attempt
+    if (!this.currentConversationId) {
+      const errorMsg =
+        'Failed to create conversation. Please restart the extension.';
       console.error('[WebViewProvider]', errorMsg);
       vscode.window.showErrorMessage(errorMsg);
       this.sendMessageToWebView({
@@ -656,6 +738,18 @@ export class WebViewProvider {
         messages.length,
       );
 
+      // Get session details for the header
+      let sessionDetails = null;
+      try {
+        const allSessions = await this.agentManager.getSessionList();
+        sessionDetails = allSessions.find(
+          (s: { id?: string; sessionId?: string }) =>
+            s.id === sessionId || s.sessionId === sessionId,
+        );
+      } catch (err) {
+        console.log('[WebViewProvider] Could not get session details:', err);
+      }
+
       // Try to switch session in ACP (may fail if not supported)
       try {
         await this.agentManager.switchToSession(sessionId);
@@ -681,10 +775,10 @@ export class WebViewProvider {
         }
       }
 
-      // Send messages to WebView
+      // Send messages and session details to WebView
       this.sendMessageToWebView({
         type: 'qwenSessionSwitched',
-        data: { sessionId, messages },
+        data: { sessionId, messages, session: sessionDetails },
       });
     } catch (error) {
       console.error('[WebViewProvider] Failed to switch session:', error);
@@ -693,6 +787,36 @@ export class WebViewProvider {
         data: { message: `Failed to switch session: ${error}` },
       });
       vscode.window.showErrorMessage(`Failed to switch session: ${error}`);
+    }
+  }
+
+  /**
+   * Handle cancel prompt request from WebView
+   * Cancels the current AI response generation
+   */
+  private async handleCancelPrompt(): Promise<void> {
+    try {
+      console.log('[WebViewProvider] Cancel prompt requested');
+
+      if (!this.agentManager.isConnected) {
+        console.warn('[WebViewProvider] Agent not connected, cannot cancel');
+        return;
+      }
+
+      await this.agentManager.cancelCurrentPrompt();
+
+      this.sendMessageToWebView({
+        type: 'promptCancelled',
+        data: { timestamp: Date.now() },
+      });
+
+      console.log('[WebViewProvider] Prompt cancelled successfully');
+    } catch (error) {
+      console.error('[WebViewProvider] Failed to cancel prompt:', error);
+      this.sendMessageToWebView({
+        type: 'error',
+        data: { message: `Failed to cancel: ${error}` },
+      });
     }
   }
 
@@ -705,16 +829,21 @@ export class WebViewProvider {
       vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'),
     );
 
+    const iconUri = this.panel!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'assets', 'icon.png'),
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${this.panel!.webview.cspSource}; style-src ${this.panel!.webview.cspSource} 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.panel!.webview.cspSource}; script-src ${this.panel!.webview.cspSource}; style-src ${this.panel!.webview.cspSource} 'unsafe-inline';">
   <title>Qwen Code Chat</title>
 </head>
 <body>
   <div id="root"></div>
+  <script>window.ICON_URI = "${iconUri}";</script>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -729,6 +858,130 @@ export class WebViewProvider {
     this.agentInitialized = false;
     // Disconnect existing connection
     this.agentManager.disconnect();
+  }
+
+  /**
+   * Capture the VS Code Tab that corresponds to our WebviewPanel.
+   * We do not pin or lock the editor group, mirroring Claude's approach.
+   * Instead, we:
+   *  - open beside the active editor
+   *  - preserve focus to keep typing in the current file
+   *  - keep a Tab reference for reveal/visibility bookkeeping if needed
+   */
+  private capturePanelTab(): void {
+    if (!this.panel) {
+      return;
+    }
+
+    // Defer slightly so the tab model is updated after create/reveal
+    setTimeout(() => {
+      const allTabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+      const match = allTabs.find((t) => {
+        // Type guard for webview tab input
+        const input: unknown = (t as { input?: unknown }).input;
+        const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
+          !!inp && typeof inp === 'object' && 'viewType' in inp;
+        const isWebview = isWebviewInput(input);
+        const sameViewType = isWebview && input.viewType === 'qwenCode.chat';
+        const sameLabel = t.label === this.panel!.title;
+        return !!(sameViewType || sameLabel);
+      });
+      this.panelTab = match ?? null;
+    }, 50);
+  }
+
+  /**
+   * Reveal the WebView panel (optionally preserving focus)
+   * We track the tab for bookkeeping, but use panel.reveal for actual reveal
+   */
+  private revealPanelTab(preserveFocus: boolean = true): void {
+    if (this.panel) {
+      this.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
+    }
+  }
+
+  /**
+   * Restore an existing WebView panel (called during VSCode restart)
+   * This sets up the panel with all event listeners
+   */
+  restorePanel(panel: vscode.WebviewPanel): void {
+    console.log('[WebViewProvider] Restoring WebView panel');
+    this.panel = panel;
+
+    // Set panel icon to Qwen logo
+    this.panel.iconPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      'assets',
+      'icon.png',
+    );
+
+    // Set webview HTML
+    this.panel.webview.html = this.getWebviewContent();
+
+    // Handle messages from WebView
+    this.panel.webview.onDidReceiveMessage(
+      async (message) => {
+        await this.handleWebViewMessage(message);
+      },
+      null,
+      this.disposables,
+    );
+
+    // Listen for view state changes (track the tab only)
+    this.panel.onDidChangeViewState(
+      () => {
+        if (this.panel && this.panel.visible) {
+          this.capturePanelTab();
+        }
+      },
+      null,
+      this.disposables,
+    );
+
+    this.panel.onDidDispose(
+      () => {
+        this.panel = null;
+        this.disposables.forEach((d) => d.dispose());
+      },
+      null,
+      this.disposables,
+    );
+
+    // Track the tab reference on restore
+    this.capturePanelTab();
+
+    console.log('[WebViewProvider] Panel restored successfully');
+  }
+
+  /**
+   * Get the current state for serialization
+   * This is used when VSCode restarts to restore the WebView
+   */
+  getState(): {
+    conversationId: string | null;
+    agentInitialized: boolean;
+  } {
+    return {
+      conversationId: this.currentConversationId,
+      agentInitialized: this.agentInitialized,
+    };
+  }
+
+  /**
+   * Restore state after VSCode restart
+   */
+  restoreState(state: {
+    conversationId: string | null;
+    agentInitialized: boolean;
+  }): void {
+    console.log('[WebViewProvider] Restoring state:', state);
+    this.currentConversationId = state.conversationId;
+    this.agentInitialized = state.agentInitialized;
+
+    // Reload content after restore
+    if (this.panel) {
+      this.panel.webview.html = this.getWebviewContent();
+    }
   }
 
   dispose(): void {

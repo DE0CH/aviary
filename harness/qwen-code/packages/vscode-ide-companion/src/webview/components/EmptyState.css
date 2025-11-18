@@ -1,0 +1,119 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px 20px;
+}
+
+.empty-state-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  max-width: 600px;
+  width: 100%;
+}
+
+.empty-state-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.empty-state-logo-image {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+}
+
+.empty-state-text {
+  text-align: center;
+}
+
+.empty-state-title {
+  font-size: 15px;
+  color: var(--app-primary-foreground);
+  line-height: 1.5;
+  font-weight: 400;
+  max-width: 400px;
+}
+
+/* Banner Styles */
+.empty-state-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: var(--app-input-secondary-background);
+  border: 1px solid var(--app-primary-border-color);
+  border-radius: var(--corner-radius-medium);
+  width: 100%;
+  max-width: 500px;
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: var(--app-primary-foreground);
+}
+
+.banner-content label {
+  font-size: 13px;
+  color: var(--app-primary-foreground);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.banner-link {
+  color: var(--app-claude-orange);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.banner-link:hover {
+  text-decoration: underline;
+}
+
+.banner-close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--corner-radius-small);
+  color: var(--app-primary-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.banner-close:hover {
+  background-color: var(--app-ghost-button-hover-background);
+}
+
+.banner-close svg {
+  width: 10px;
+  height: 10px;
+}
