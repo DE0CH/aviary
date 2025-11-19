@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -770,8 +770,20 @@ export class WebViewProvider {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
         try {
-          await this.agentManager.createNewSession(workingDir);
-          console.log('[WebViewProvider] Created new session as fallback');
+          const newSessionId =
+            await this.agentManager.createNewSession(workingDir);
+          console.log(
+            '[WebViewProvider] Created new session as fallback:',
+            newSessionId,
+          );
+          if (newSessionId) {
+            // Update to the new session ID so messages can be sent
+            this.currentConversationId = newSessionId;
+            console.log(
+              '[WebViewProvider] Updated currentConversationId to new session:',
+              newSessionId,
+            );
+          }
         } catch (newSessionError) {
           console.error(
             '[WebViewProvider] Failed to create new session:',

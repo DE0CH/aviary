@@ -95,9 +95,9 @@
 }
 
 /* ===========================
-   Session Selector Modal (from Claude Code .Wt)
+   Session Dropdown (from Claude Code .St/.Wt)
    =========================== */
-.session-selector-modal {
+.session-dropdown {
   position: fixed;
   background: var(--app-menu-background);
   border: 1px solid var(--app-menu-border);
@@ -113,100 +113,144 @@
   font-family: var(--vscode-chat-font-family);
 }
 
-/* Modal Content Area (from Claude Code .It) */
-.session-selector-modal-content {
+/* ===========================
+   Search Box Container (from Claude Code .Lt)
+   =========================== */
+.session-search {
   padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--app-menu-border);
+}
+
+.session-search svg,
+.session-search-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  color: var(--app-primary-foreground);
+}
+
+/* Search Input (from Claude Code .U) */
+.session-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--app-menu-foreground);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  padding: 0;
+}
+
+.session-search-input::placeholder {
+  color: var(--app-input-placeholder-foreground);
+  opacity: 0.6;
+}
+
+/* Session List Content Area (from Claude Code .jt/.It) */
+.session-list-content {
   overflow-y: auto;
   flex: 1;
   user-select: none;
+  padding: 8px;
 }
 
-/* Group Header (from Claude Code .te) */
-.session-group-header {
+/* Group Label (from Claude Code .ae) */
+.session-group-label {
   padding: 4px 8px;
   color: var(--app-primary-foreground);
   opacity: 0.5;
   font-size: 0.9em;
+  font-weight: 500;
 }
 
-.session-group-header:not(:first-child) {
+.session-group-label:not(:first-child) {
   margin-top: 8px;
 }
 
-/* Session List Container (from Claude Code .St) */
-.session-list {
+/* Session Group Container (from Claude Code .At) */
+.session-group {
   display: flex;
   flex-direction: column;
-  padding: var(--app-list-padding);
-  gap: var(--app-list-gap);
+  gap: 2px;
 }
 
-/* Session List Item (from Claude Code .s and .s.U) */
+/* Session Item Button (from Claude Code .s) */
 .session-item {
   display: flex;
   align-items: center;
-  padding: var(--app-list-item-padding);
   justify-content: space-between;
+  padding: 6px 8px;
   background: transparent;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   text-align: left;
   width: 100%;
-  font-size: inherit;
-  font-family: inherit;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  color: var(--app-primary-foreground);
+  transition: background 0.1s ease;
 }
 
-.session-item:hover,
-.session-item.hovering {
+.session-item:hover {
   background: var(--app-list-hover-background);
 }
 
+/* Active Session (from Claude Code .N) */
 .session-item.active {
   background: var(--app-list-active-background);
   color: var(--app-list-active-foreground);
+  font-weight: 600;
 }
 
-/* Session Item Check Icon (from Claude Code .ne) */
-.session-item-check {
-  width: 16px;
-  height: 16px;
-  margin-right: 8px;
-  flex-shrink: 0;
-  visibility: hidden;
-}
-
-.session-item.active .session-item-check {
-  visibility: visible;
-}
-
-/* Session Item Label (from Claude Code .ae) */
-.session-item-label {
+/* Session Title (from Claude Code .ce) */
+.session-item-title {
   flex: 1;
-  color: var(--app-primary-foreground);
-  font-size: 1em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.session-item.active .session-item-label {
-  font-weight: 600;
-  color: var(--app-list-active-foreground);
-}
-
-/* Session Item Meta Info (from Claude Code .Et) */
-.session-item-meta {
-  opacity: 0.5;
+/* Session Time (from Claude Code .Dt) */
+.session-item-time {
+  opacity: 0.6;
   font-size: 0.9em;
   flex-shrink: 0;
   margin-left: 12px;
+}
+
+/* Backdrop for dropdown */
+.session-selector-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+  background: transparent;
 }
 
 /* ===========================
    CSS Variables (from Claude Code root styles)
    =========================== */
 :root {
+  /* Colors */
+  --app-primary-foreground: var(--vscode-foreground);
+  --app-secondary-foreground: var(--vscode-descriptionForeground);
+  --app-primary-border-color: var(--vscode-panel-border);
+  --app-input-placeholder-foreground: var(--vscode-input-placeholderForeground);
+
+  /* Buttons */
+  --app-ghost-button-hover-background: var(--vscode-toolbar-hoverBackground);
+
+  /* Border Radius */
+  --corner-radius-small: 6px;
+
   /* Header */
   --app-header-background: var(--vscode-sideBar-background);
 

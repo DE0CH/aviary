@@ -11,7 +11,7 @@
  */
 
 import type { AcpSessionUpdate } from '../shared/acpTypes.js';
-import type { QwenAgentCallbacks } from './QwenTypes.js';
+import type { QwenAgentCallbacks } from './qwenTypes.js';
 
 /**
  * Qwen会话更新处理器类

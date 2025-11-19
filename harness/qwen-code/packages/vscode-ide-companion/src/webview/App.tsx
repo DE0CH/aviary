@@ -57,6 +57,7 @@ export const App: React.FC = () => {
   >([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [showSessionSelector, setShowSessionSelector] = useState(false);
+  const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [permissionRequest, setPermissionRequest] = useState<{
     options: PermissionOption[];
     toolCall: PermissionToolCall;
@@ -67,13 +68,13 @@ export const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputFieldRef = useRef<HTMLDivElement>(null);
   const [showBanner, setShowBanner] = useState(true);
+  const currentStreamContentRef = useRef<string>('');
 
   const handlePermissionRequest = React.useCallback(
     (request: {
       options: PermissionOption[];
       toolCall: PermissionToolCall;
     }) => {
-      console.log('[WebView] Permission request received:', request);
       setPermissionRequest(request);
     },
     [],
@@ -81,7 +82,6 @@ export const App: React.FC = () => {
 
   const handlePermissionResponse = React.useCallback(
     (optionId: string) => {
-      console.log('[WebView] Sending permission response:', optionId);
       vscode.postMessage({
         type: 'permissionResponse',
         data: { optionId },
@@ -162,35 +162,44 @@ export const App: React.FC = () => {
         case 'streamStart':
           setIsStreaming(true);
           setCurrentStreamContent('');
+          currentStreamContentRef.current = '';
           break;
 
         case 'streamChunk': {
           const chunkData = message.data;
           if (chunkData.role === 'thinking') {
             // Handle thinking chunks separately if needed
-            setCurrentStreamContent((prev) => prev + chunkData.chunk);
+            setCurrentStreamContent((prev) => {
+              const newContent = prev + chunkData.chunk;
+              currentStreamContentRef.current = newContent;
+              return newContent;
+            });
           } else {
-            setCurrentStreamContent((prev) => prev + chunkData.chunk);
+            setCurrentStreamContent((prev) => {
+              const newContent = prev + chunkData.chunk;
+              currentStreamContentRef.current = newContent;
+              return newContent;
+            });
           }
           break;
         }
 
         case 'streamEnd':
           // Finalize the streamed message
-          if (currentStreamContent) {
+          if (currentStreamContentRef.current) {
             const assistantMessage: TextMessage = {
               role: 'assistant',
-              content: currentStreamContent,
+              content: currentStreamContentRef.current,
               timestamp: Date.now(),
             };
             setMessages((prev) => [...prev, assistantMessage]);
           }
           setIsStreaming(false);
           setCurrentStreamContent('');
+          currentStreamContentRef.current = '';
           break;
 
         case 'error':
-          console.error('Error from extension:', message.data.message);
           setIsStreaming(false);
           break;
 
@@ -220,15 +229,25 @@ export const App: React.FC = () => {
         }
 
         case 'qwenSessionSwitched':
+          console.log('[App] Session switched:', message.data);
           setShowSessionSelector(false);
           // Update current session ID
           if (message.data.sessionId) {
             setCurrentSessionId(message.data.sessionId as string);
+            console.log(
+              '[App] Current session ID updated to:',
+              message.data.sessionId,
+            );
           }
           // Load messages from the session
           if (message.data.messages) {
+            console.log(
+              '[App] Loading messages:',
+              message.data.messages.length,
+            );
             setMessages(message.data.messages);
           } else {
+            console.log('[App] No messages in session, clearing');
             setMessages([]);
           }
           setCurrentStreamContent('');
@@ -248,12 +267,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [
-    currentStreamContent,
-    currentSessionId,
-    handlePermissionRequest,
-    handleToolCallUpdate,
-  ]);
+  }, [currentSessionId, handlePermissionRequest, handleToolCallUpdate]);
 
   useEffect(() => {
     // Auto-scroll to bottom when messages change
@@ -269,11 +283,9 @@ export const App: React.FC = () => {
     e.preventDefault();
 
     if (!inputText.trim() || isStreaming) {
-      console.log('Submit blocked:', { inputText, isStreaming });
       return;
     }
 
-    console.log('Sending message:', inputText);
     vscode.postMessage({
       type: 'sendMessage',
       data: { text: inputText },
@@ -300,17 +312,114 @@ export const App: React.FC = () => {
     setCurrentStreamContent('');
   };
 
+  // Time ago formatter (matching Claude Code)
+  const getTimeAgo = (timestamp: string): string => {
+    if (!timestamp) {
+      return '';
+    }
+    const now = new Date().getTime();
+    const then = new Date(timestamp).getTime();
+    const diffMs = now - then;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) {
+      return 'now';
+    }
+    if (diffMins < 60) {
+      return `${diffMins}m`;
+    }
+    if (diffHours < 24) {
+      return `${diffHours}h`;
+    }
+    if (diffDays === 1) {
+      return 'Yesterday';
+    }
+    if (diffDays < 7) {
+      return `${diffDays}d`;
+    }
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  // Group sessions by date (matching Claude Code)
+  const groupSessionsByDate = (
+    sessions: Array<Record<string, unknown>>,
+  ): Array<{ label: string; sessions: Array<Record<string, unknown>> }> => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const groups: {
+      [key: string]: Array<Record<string, unknown>>;
+    } = {
+      Today: [],
+      Yesterday: [],
+      'This Week': [],
+      Older: [],
+    };
+
+    sessions.forEach((session) => {
+      const timestamp =
+        (session.lastUpdated as string) || (session.startTime as string) || '';
+      if (!timestamp) {
+        groups['Older'].push(session);
+        return;
+      }
+
+      const sessionDate = new Date(timestamp);
+      const sessionDay = new Date(
+        sessionDate.getFullYear(),
+        sessionDate.getMonth(),
+        sessionDate.getDate(),
+      );
+
+      if (sessionDay.getTime() === today.getTime()) {
+        groups['Today'].push(session);
+      } else if (sessionDay.getTime() === yesterday.getTime()) {
+        groups['Yesterday'].push(session);
+      } else if (sessionDay.getTime() > today.getTime() - 7 * 86400000) {
+        groups['This Week'].push(session);
+      } else {
+        groups['Older'].push(session);
+      }
+    });
+
+    return Object.entries(groups)
+      .filter(([, sessions]) => sessions.length > 0)
+      .map(([label, sessions]) => ({ label, sessions }));
+  };
+
+  // Filter sessions by search query
+  const filteredSessions = React.useMemo(() => {
+    if (!sessionSearchQuery.trim()) {
+      return qwenSessions;
+    }
+    const query = sessionSearchQuery.toLowerCase();
+    return qwenSessions.filter((session) => {
+      const title = (
+        (session.title as string) ||
+        (session.name as string) ||
+        ''
+      ).toLowerCase();
+      return title.includes(query);
+    });
+  }, [qwenSessions, sessionSearchQuery]);
+
   const handleSwitchSession = (sessionId: string) => {
     if (sessionId === currentSessionId) {
+      console.log('[App] Already on this session, ignoring');
+      setShowSessionSelector(false);
       return;
     }
 
+    console.log('[App] Switching to session:', sessionId);
     vscode.postMessage({
       type: 'switchQwenSession',
       data: { sessionId },
     });
-    setCurrentSessionId(sessionId);
-    setShowSessionSelector(false);
+    // Don't set currentSessionId or close selector here - wait for qwenSessionSwitched response
   };
 
   // Check if there are any messages or active content
@@ -323,64 +432,103 @@ export const App: React.FC = () => {
   return (
     <div className="chat-container">
       {showSessionSelector && (
-        <div className="session-selector-overlay">
-          <div className="session-selector">
-            <div className="session-selector-header">
-              <h3>Past Conversations</h3>
-              <button onClick={() => setShowSessionSelector(false)}>✕</button>
-            </div>
-            <div className="session-selector-actions">
-              <button
-                className="new-session-button"
-                onClick={handleNewQwenSession}
+        <>
+          <div
+            className="session-selector-backdrop"
+            onClick={() => setShowSessionSelector(false)}
+          />
+          <div
+            className="session-dropdown"
+            tabIndex={-1}
+            style={{
+              top: '34px',
+              left: '10px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Search Box */}
+            <div className="session-search">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+                data-slot="icon"
+                className="session-search-icon"
               >
-                ➕ New Session
-              </button>
+                <path
+                  fillRule="evenodd"
+                  d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z"
+                  clipRule="evenodd"
+                ></path>
+              </svg>
+              <input
+                type="text"
+                className="session-search-input"
+                placeholder="Search sessions…"
+                value={sessionSearchQuery}
+                onChange={(e) => setSessionSearchQuery(e.target.value)}
+              />
             </div>
-            <div className="session-list">
-              {qwenSessions.length === 0 ? (
-                <p className="no-sessions">No sessions available</p>
-              ) : (
-                qwenSessions.map((session) => {
-                  const sessionId =
-                    (session.id as string) ||
-                    (session.sessionId as string) ||
-                    '';
-                  const title =
-                    (session.title as string) ||
-                    (session.name as string) ||
-                    'Untitled Session';
-                  const lastUpdated =
-                    (session.lastUpdated as string) ||
-                    (session.startTime as string) ||
-                    '';
-                  const messageCount = (session.messageCount as number) || 0;
 
-                  return (
-                    <div
-                      key={sessionId}
-                      className="session-item"
-                      onClick={() => handleSwitchSession(sessionId)}
-                    >
-                      <div className="session-title">{title}</div>
-                      <div className="session-meta">
-                        <span className="session-time">
-                          {new Date(lastUpdated).toLocaleString()}
-                        </span>
-                        <span className="session-count">
-                          {messageCount} messages
-                        </span>
-                      </div>
-                      <div className="session-id">
-                        {sessionId.substring(0, 8)}...
-                      </div>
+            {/* Session List with Grouping */}
+            <div className="session-list-content">
+              {filteredSessions.length === 0 ? (
+                <div
+                  style={{
+                    padding: '20px',
+                    textAlign: 'center',
+                    color: 'var(--app-secondary-foreground)',
+                  }}
+                >
+                  {sessionSearchQuery
+                    ? 'No matching sessions'
+                    : 'No sessions available'}
+                </div>
+              ) : (
+                groupSessionsByDate(filteredSessions).map((group) => (
+                  <React.Fragment key={group.label}>
+                    <div className="session-group-label">{group.label}</div>
+                    <div className="session-group">
+                      {group.sessions.map((session) => {
+                        const sessionId =
+                          (session.id as string) ||
+                          (session.sessionId as string) ||
+                          '';
+                        const title =
+                          (session.title as string) ||
+                          (session.name as string) ||
+                          'Untitled';
+                        const lastUpdated =
+                          (session.lastUpdated as string) ||
+                          (session.startTime as string) ||
+                          '';
+                        const isActive = sessionId === currentSessionId;
+
+                        return (
+                          <button
+                            key={sessionId}
+                            className={`session-item ${isActive ? 'active' : ''}`}
+                            onClick={() => {
+                              handleSwitchSession(sessionId);
+                              setShowSessionSelector(false);
+                              setSessionSearchQuery('');
+                            }}
+                          >
+                            <span className="session-item-title">{title}</span>
+                            <span className="session-item-time">
+                              {getTimeAgo(lastUpdated)}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
-                  );
-                })
+                  </React.Fragment>
+                ))
               )}
             </div>
           </div>
-        </div>
+        </>
       )}
 
       <div className="chat-header">

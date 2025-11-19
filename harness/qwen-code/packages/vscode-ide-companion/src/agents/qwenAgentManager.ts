@@ -19,7 +19,7 @@ import type {
   PlanEntry,
   ToolCallUpdateData,
   QwenAgentCallbacks,
-} from './QwenTypes.js';
+} from './qwenTypes.js';
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 
@@ -163,10 +163,17 @@ export class QwenAgentManager {
    * 创建新会话
    *
    * @param workingDir - 工作目录
+   * @returns 新创建的 session ID
    */
-  async createNewSession(workingDir: string): Promise<void> {
+  async createNewSession(workingDir: string): Promise<string | null> {
     console.log('[QwenAgentManager] Creating new session...');
     await this.connection.newSession(workingDir);
+    const newSessionId = this.connection.currentSessionId;
+    console.log(
+      '[QwenAgentManager] New session created with ID:',
+      newSessionId,
+    );
+    return newSessionId;
   }
 
   /**
