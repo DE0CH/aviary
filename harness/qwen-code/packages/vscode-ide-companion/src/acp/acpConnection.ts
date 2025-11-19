@@ -193,11 +193,13 @@ export class AcpConnection {
     });
 
     // 初始化协议
-    await this.sessionManager.initialize(
+    const res = await this.sessionManager.initialize(
       this.child,
       this.pendingRequests,
       this.nextRequestId,
     );
+
+    console.log('[ACP] Initialization response:', res);
   }
 
   /**

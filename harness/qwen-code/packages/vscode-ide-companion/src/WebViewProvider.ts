@@ -754,34 +754,53 @@ export class WebViewProvider {
         console.log('[WebViewProvider] Could not get session details:', err);
       }
 
-      // IMPORTANT: CLI doesn't support loading old sessions
-      // So we always create a NEW ACP session for continuation
+      // TESTING: Try to load session via ACP first, fallback to creating new session
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
       try {
-        const newAcpSessionId =
-          await this.agentManager.createNewSession(workingDir);
+        console.log('[WebViewProvider] Testing session/load via ACP...');
+        const loadResponse =
+          await this.agentManager.loadSessionViaAcp(sessionId);
+        console.log('[WebViewProvider] session/load succeeded:', loadResponse);
+
+        // If load succeeded, use the loaded session
+        this.currentConversationId = sessionId;
         console.log(
-          '[WebViewProvider] Created new ACP session for conversation:',
-          newAcpSessionId,
+          '[WebViewProvider] Set currentConversationId to loaded session:',
+          sessionId,
+        );
+      } catch (_loadError) {
+        console.log(
+          '[WebViewProvider] session/load not supported, creating new session',
         );
 
-        // Use the NEW ACP session ID for sending messages to CLI
-        this.currentConversationId = newAcpSessionId;
-        console.log(
-          '[WebViewProvider] Set currentConversationId (ACP) to:',
-          newAcpSessionId,
-        );
-      } catch (createError) {
-        console.error(
-          '[WebViewProvider] Failed to create new ACP session:',
-          createError,
-        );
-        vscode.window.showWarningMessage(
-          'Could not switch to session. Created new session instead.',
-        );
-        throw createError;
+        // Fallback: CLI doesn't support loading old sessions
+        // So we create a NEW ACP session for continuation
+        try {
+          const newAcpSessionId =
+            await this.agentManager.createNewSession(workingDir);
+          console.log(
+            '[WebViewProvider] Created new ACP session for conversation:',
+            newAcpSessionId,
+          );
+
+          // Use the NEW ACP session ID for sending messages to CLI
+          this.currentConversationId = newAcpSessionId;
+          console.log(
+            '[WebViewProvider] Set currentConversationId (ACP) to:',
+            newAcpSessionId,
+          );
+        } catch (createError) {
+          console.error(
+            '[WebViewProvider] Failed to create new ACP session:',
+            createError,
+          );
+          vscode.window.showWarningMessage(
+            'Could not switch to session. Created new session instead.',
+          );
+          throw createError;
+        }
       }
 
       // Send messages and session details to WebView

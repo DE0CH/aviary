@@ -127,7 +127,7 @@ export class QwenAgentManager {
   }
 
   /**
-   * 获取会话消息
+   * 获取会话消息（从磁盘读取）
    *
    * @param sessionId - 会话ID
    * @returns 消息列表
@@ -156,6 +156,28 @@ export class QwenAgentManager {
         error,
       );
       return [];
+    }
+  }
+
+  /**
+   * 尝试通过 ACP session/load 方法加载会话
+   * 这是一个测试方法，用于验证 CLI 是否支持 session/load
+   *
+   * @param sessionId - 会话ID
+   * @returns 加载响应或错误
+   */
+  async loadSessionViaAcp(sessionId: string): Promise<unknown> {
+    try {
+      console.log(
+        '[QwenAgentManager] Testing session/load via ACP for:',
+        sessionId,
+      );
+      const response = await this.connection.loadSession(sessionId);
+      console.log('[QwenAgentManager] Session load response:', response);
+      return response;
+    } catch (error) {
+      console.error('[QwenAgentManager] Session load via ACP failed:', error);
+      throw error;
     }
   }
 
