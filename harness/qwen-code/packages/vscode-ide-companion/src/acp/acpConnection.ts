@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,9 +14,12 @@ import type {
 } from '../shared/acpTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { spawn } from 'child_process';
-import type { PendingRequest, AcpConnectionCallbacks } from './AcpTypes.js';
-import { AcpMessageHandler } from './AcpMessageHandler.js';
-import { AcpSessionManager } from './AcpSessionManager.js';
+import type {
+  PendingRequest,
+  AcpConnectionCallbacks,
+} from './connectionTypes.js';
+import { AcpMessageHandler } from './acpMessageHandler.js';
+import { AcpSessionManager } from './acpSessionManager.js';
 
 /**
  * ACP Connection Handler for VSCode Extension

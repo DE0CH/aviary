@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
-import type { Conversation } from '../storage/ConversationStore.js';
+import type { Conversation } from '../storage/conversationStore.js';
 import {
   PermissionRequest,
   type PermissionOption,

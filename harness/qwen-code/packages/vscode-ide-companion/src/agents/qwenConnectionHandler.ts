@@ -11,9 +11,9 @@
  */
 
 import * as vscode from 'vscode';
-import type { AcpConnection } from '../acp/AcpConnection.js';
-import type { QwenSessionReader } from '../services/QwenSessionReader.js';
-import type { AuthStateManager } from '../auth/AuthStateManager.js';
+import type { AcpConnection } from '../acp/acpConnection.js';
+import type { QwenSessionReader } from '../services/qwenSessionReader.js';
+import type { AuthStateManager } from '../auth/authStateManager.js';
 
 /**
  * Qwen连接处理器类

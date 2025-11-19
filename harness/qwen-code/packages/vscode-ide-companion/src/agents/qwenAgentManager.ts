@@ -1,10 +1,10 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AcpConnection } from '../acp/AcpConnection.js';
+import { AcpConnection } from '../acp/acpConnection.js';
 import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
@@ -12,16 +12,16 @@ import type {
 import {
   QwenSessionReader,
   type QwenSession,
-} from '../services/QwenSessionReader.js';
-import type { AuthStateManager } from '../auth/AuthStateManager.js';
+} from '../services/qwenSessionReader.js';
+import type { AuthStateManager } from '../auth/authStateManager.js';
 import type {
   ChatMessage,
   PlanEntry,
   ToolCallUpdateData,
   QwenAgentCallbacks,
 } from './QwenTypes.js';
-import { QwenConnectionHandler } from './QwenConnectionHandler.js';
-import { QwenSessionUpdateHandler } from './QwenSessionUpdateHandler.js';
+import { QwenConnectionHandler } from './qwenConnectionHandler.js';
+import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 
 // 重新导出类型以保持向后兼容
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };

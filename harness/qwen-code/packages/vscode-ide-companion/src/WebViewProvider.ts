@@ -8,11 +8,11 @@ import * as vscode from 'vscode';
 import {
   QwenAgentManager,
   type ChatMessage,
-} from './agents/QwenAgentManager.js';
-import { ConversationStore } from './storage/ConversationStore.js';
+} from './agents/qwenAgentManager.js';
+import { ConversationStore } from './storage/conversationStore.js';
 import type { AcpPermissionRequest } from './shared/acpTypes.js';
-import { CliDetector } from './utils/CliDetector.js';
-import { AuthStateManager } from './auth/AuthStateManager.js';
+import { CliDetector } from './utils/cliDetector.js';
+import { AuthStateManager } from './auth/authStateManager.js';
 
 export class WebViewProvider {
   private panel: vscode.WebviewPanel | null = null;

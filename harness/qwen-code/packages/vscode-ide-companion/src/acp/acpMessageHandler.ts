@@ -19,8 +19,11 @@ import type {
   AcpPermissionRequest,
 } from '../shared/acpTypes.js';
 import { CLIENT_METHODS } from './schema.js';
-import type { PendingRequest, AcpConnectionCallbacks } from './AcpTypes.js';
-import { AcpFileHandler } from './AcpFileHandler.js';
+import type {
+  PendingRequest,
+  AcpConnectionCallbacks,
+} from './connectionTypes.js';
+import { AcpFileHandler } from './acpFileHandler.js';
 import type { ChildProcess } from 'child_process';
 
 /**

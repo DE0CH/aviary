@@ -17,7 +17,7 @@ import type {
   AcpResponse,
 } from '../shared/acpTypes.js';
 import { AGENT_METHODS, CUSTOM_METHODS } from './schema.js';
-import type { PendingRequest } from './AcpTypes.js';
+import type { PendingRequest } from './connectionTypes.js';
 import type { ChildProcess } from 'child_process';
 
 /**
