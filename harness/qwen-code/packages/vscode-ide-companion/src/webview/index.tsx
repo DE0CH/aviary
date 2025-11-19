@@ -6,7 +6,7 @@
 
 import ReactDOM from 'react-dom/client';
 import { App } from './App.js';
-import './App.css';
+import './App.scss';
 import './ClaudeCodeStyles.css';
 
 const container = document.getElementById('root');

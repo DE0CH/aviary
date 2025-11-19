@@ -190,13 +190,15 @@ export const App: React.FC = () => {
   const [messages, setMessages] = useState<TextMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [_isWaitingForResponse, setIsWaitingForResponse] = useState(false);
-  const [_loadingMessage, setLoadingMessage] = useState('');
+  const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
   const [currentStreamContent, setCurrentStreamContent] = useState('');
   const [qwenSessions, setQwenSessions] = useState<
     Array<Record<string, unknown>>
   >([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionTitle, setCurrentSessionTitle] =
+    useState<string>('Past Conversations');
   const [showSessionSelector, setShowSessionSelector] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [permissionRequest, setPermissionRequest] = useState<{
@@ -336,6 +338,18 @@ export const App: React.FC = () => {
           break;
         }
 
+        case 'thoughtChunk': {
+          const chunkData = message.data;
+          // Handle thought chunks for AI thinking display
+          const thinkingMessage: TextMessage = {
+            role: 'thinking',
+            content: chunkData.content || chunkData.chunk || '',
+            timestamp: Date.now(),
+          };
+          setMessages((prev) => [...prev, thinkingMessage]);
+          break;
+        }
+
         case 'streamEnd':
           // Finalize the streamed message
           if (currentStreamContentRef.current) {
@@ -347,12 +361,14 @@ export const App: React.FC = () => {
             setMessages((prev) => [...prev, assistantMessage]);
           }
           setIsStreaming(false);
+          setIsWaitingForResponse(false); // Clear waiting state
           setCurrentStreamContent('');
           currentStreamContentRef.current = '';
           break;
 
         case 'error':
           setIsStreaming(false);
+          setIsWaitingForResponse(false);
           break;
 
         case 'permissionRequest':
@@ -371,10 +387,30 @@ export const App: React.FC = () => {
           setQwenSessions(sessions);
           // If no current session is selected and there are sessions, select the first one
           if (!currentSessionId && sessions.length > 0) {
+            const firstSession = sessions[0];
             const firstSessionId =
-              (sessions[0].id as string) || (sessions[0].sessionId as string);
+              (firstSession.id as string) || (firstSession.sessionId as string);
+            const firstSessionTitle =
+              (firstSession.title as string) ||
+              (firstSession.name as string) ||
+              'Past Conversations';
             if (firstSessionId) {
               setCurrentSessionId(firstSessionId);
+              setCurrentSessionTitle(firstSessionTitle);
+            }
+          } else if (currentSessionId && sessions.length > 0) {
+            // Update title for the current session if it exists in the list
+            const currentSession = sessions.find(
+              (s: Record<string, unknown>) =>
+                (s.id as string) === currentSessionId ||
+                (s.sessionId as string) === currentSessionId,
+            );
+            if (currentSession) {
+              const title =
+                (currentSession.title as string) ||
+                (currentSession.name as string) ||
+                'Past Conversations';
+              setCurrentSessionTitle(title);
             }
           }
           break;
@@ -390,6 +426,14 @@ export const App: React.FC = () => {
               '[App] Current session ID updated to:',
               message.data.sessionId,
             );
+          }
+          // Update current session title
+          if (message.data.title || message.data.name) {
+            const title =
+              (message.data.title as string) ||
+              (message.data.name as string) ||
+              'Past Conversations';
+            setCurrentSessionTitle(title);
           }
           // Load messages from the session
           if (message.data.messages) {
@@ -463,6 +507,7 @@ export const App: React.FC = () => {
     vscode.postMessage({ type: 'newQwenSession', data: {} });
     setShowSessionSelector(false);
     setCurrentSessionId(null);
+    setCurrentSessionTitle('Past Conversations'); // Reset title to default
     // Clear messages in UI
     setMessages([]);
     setCurrentStreamContent('');
@@ -694,7 +739,7 @@ export const App: React.FC = () => {
           title="Past conversations"
         >
           <span className="button-content">
-            <span className="button-text">Past Conversations</span>
+            <span className="button-text">{currentSessionTitle}</span>
             <svg
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 20 20"
@@ -734,14 +779,31 @@ export const App: React.FC = () => {
           <EmptyState />
         ) : (
           <>
-            {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.role}`}>
-                <div className="message-content">{msg.content}</div>
-                <div className="message-timestamp">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
+            {messages.map((msg, index) => {
+              // Special styling for thinking messages (Claude Code style)
+              const messageClass =
+                msg.role === 'thinking'
+                  ? 'message assistant thinking-message'
+                  : `message ${msg.role}`;
+
+              return (
+                <div key={index} className={messageClass}>
+                  <div className="message-content">
+                    {msg.role === 'thinking' && (
+                      <span className="thinking-indicator">
+                        <span className="thinking-dot"></span>
+                        <span className="thinking-dot"></span>
+                        <span className="thinking-dot"></span>
+                      </span>
+                    )}
+                    {msg.content}
+                  </div>
+                  <div className="message-timestamp">
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {/* Tool Calls */}
             {Array.from(toolCalls.values()).map((toolCall) => (
@@ -755,6 +817,20 @@ export const App: React.FC = () => {
                 toolCall={permissionRequest.toolCall}
                 onResponse={handlePermissionResponse}
               />
+            )}
+
+            {/* Loading/Waiting Message - in message list */}
+            {isWaitingForResponse && loadingMessage && (
+              <div className="message assistant waiting-message">
+                <div className="message-content">
+                  <span className="typing-indicator">
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                  </span>
+                  <span className="loading-text">{loadingMessage}</span>
+                </div>
+              </div>
             )}
 
             {isStreaming && currentStreamContent && (
@@ -830,7 +906,7 @@ export const App: React.FC = () => {
                 role="textbox"
                 aria-label="Message input"
                 aria-multiline="true"
-                data-placeholder="Ask qwen to edit…"
+                data-placeholder="Ask Qwen Code …"
                 onInput={(e) => {
                   const target = e.target as HTMLDivElement;
                   setInputText(target.textContent || '');

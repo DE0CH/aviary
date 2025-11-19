@@ -298,6 +298,22 @@ button {
   padding: var(--app-spacing-medium);
 }
 
+.thinking-message {
+  background-color: var(--app-list-hover-background, rgba(100, 100, 255, 0.1));
+  opacity: 0.8;
+  font-style: italic;
+  position: relative;
+  padding-left: 24px;
+}
+
+.thinking-message::before {
+  content: "💭";
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .thinking-label {
   font-size: 12px;
   font-weight: 600;
@@ -312,6 +328,70 @@ button {
   font-style: italic;
   opacity: 0.9;
   color: rgba(200, 200, 255, 0.9);
+}
+
+/* Waiting message styles - similar to Claude Code thinking state */
+.message.waiting-message {
+  opacity: 0.85;
+}
+
+.waiting-message .message-content {
+  background-color: transparent;
+  border: none;
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Typing indicator for loading messages */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0;
+  gap: 4px;
+}
+
+.typing-dot, .thinking-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--app-secondary-foreground);
+  border-radius: 50%;
+  margin-right: 0;
+  opacity: 0.6;
+  animation: typingPulse 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1),
+.thinking-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-dot:nth-child(2),
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3),
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typingPulse {
+  0%, 60%, 100% {
+    transform: scale(0.7);
+    opacity: 0.6;
+  }
+  30% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.loading-text {
+  opacity: 0.7;
+  font-style: italic;
+  color: var(--app-secondary-foreground);
 }
 
 /* ===========================

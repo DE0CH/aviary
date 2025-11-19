@@ -37,9 +37,27 @@ const esbuildProblemMatcherPlugin = {
 const cssInjectPlugin = {
   name: 'css-inject',
   setup(build) {
+    // Handle CSS files
     build.onLoad({ filter: /\.css$/ }, async (args) => {
       const fs = await import('fs');
       const css = await fs.promises.readFile(args.path, 'utf8');
+      return {
+        contents: `
+          const style = document.createElement('style');
+          style.textContent = ${JSON.stringify(css)};
+          document.head.appendChild(style);
+        `,
+        loader: 'js',
+      };
+    });
+
+    // Handle SCSS files
+    build.onLoad({ filter: /\.scss$/ }, async (args) => {
+      const sass = await import('sass');
+      const result = sass.compile(args.path, {
+        loadPaths: [args.path.substring(0, args.path.lastIndexOf('/'))],
+      });
+      const css = result.css;
       return {
         contents: `
           const style = document.createElement('style');
