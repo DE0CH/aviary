@@ -8,10 +8,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
 import type { Conversation } from '../storage/conversationStore.js';
 import {
-  PermissionRequest,
   type PermissionOption,
   type ToolCall as PermissionToolCall,
 } from './components/PermissionRequest.js';
+import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall, type ToolCallData } from './components/ToolCall.js';
 import { EmptyState } from './components/EmptyState.js';
 
@@ -624,11 +624,7 @@ export const App: React.FC = () => {
   };
 
   // Check if there are any messages or active content
-  const hasContent =
-    messages.length > 0 ||
-    isStreaming ||
-    toolCalls.size > 0 ||
-    permissionRequest !== null;
+  const hasContent = messages.length > 0 || isStreaming || toolCalls.size > 0;
 
   return (
     <div className="chat-container">
@@ -809,15 +805,6 @@ export const App: React.FC = () => {
             {Array.from(toolCalls.values()).map((toolCall) => (
               <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
             ))}
-
-            {/* Permission Request */}
-            {permissionRequest && (
-              <PermissionRequest
-                options={permissionRequest.options}
-                toolCall={permissionRequest.toolCall}
-                onResponse={handlePermissionResponse}
-              />
-            )}
 
             {/* Loading/Waiting Message - in message list */}
             {isWaitingForResponse && loadingMessage && (
@@ -1003,6 +990,17 @@ export const App: React.FC = () => {
           </form>
         </div>
       </div>
+
+      {/* Permission Drawer - Cursor style */}
+      {permissionRequest && (
+        <PermissionDrawer
+          isOpen={!!permissionRequest}
+          options={permissionRequest.options}
+          toolCall={permissionRequest.toolCall}
+          onResponse={handlePermissionResponse}
+          onClose={() => setPermissionRequest(null)}
+        />
+      )}
     </div>
   );
 };

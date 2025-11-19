@@ -150,7 +150,7 @@ export const PermissionRequest: React.FC<PermissionRequestProps> = ({
             <div className="permission-options-label">Choose an action:</div>
             <div className="permission-options-list">
               {options && options.length > 0 ? (
-                options.map((option) => {
+                options.map((option, index) => {
                   const isSelected = selected === option.optionId;
                   const isAllow = option.kind.includes('allow');
                   const isAlways = option.kind.includes('always');
@@ -171,6 +171,9 @@ export const PermissionRequest: React.FC<PermissionRequestProps> = ({
                         className="permission-radio"
                       />
                       <span className="permission-option-content">
+                        <span className="permission-option-number">
+                          {index + 1}
+                        </span>
                         {isAlways && (
                           <span className="permission-always-badge">⚡</span>
                         )}

@@ -18,6 +18,15 @@ export const formatValue = (value: unknown): string => {
   if (typeof value === 'string') {
     return value;
   }
+  // Handle Error objects specially
+  if (value instanceof Error) {
+    return value.message || value.toString();
+  }
+  // Handle error-like objects with message property
+  if (typeof value === 'object' && value !== null && 'message' in value) {
+    const errorObj = value as { message?: string; stack?: string };
+    return errorObj.message || String(value);
+  }
   if (typeof value === 'object') {
     try {
       return JSON.stringify(value, null, 2);
@@ -84,10 +93,34 @@ export const groupContent = (content?: ToolCallContent[]): GroupedContent => {
 
       // Handle error content
       if (contentObj.type === 'error' || 'error' in contentObj) {
-        const errorMsg =
-          formatValue(contentObj.error) ||
-          formatValue(contentObj.text) ||
-          'An error occurred';
+        // Try to extract meaningful error message
+        let errorMsg = '';
+
+        // Check if error is a string
+        if (typeof contentObj.error === 'string') {
+          errorMsg = contentObj.error;
+        }
+        // Check if error has a message property
+        else if (
+          contentObj.error &&
+          typeof contentObj.error === 'object' &&
+          'message' in contentObj.error
+        ) {
+          errorMsg = (contentObj.error as { message: string }).message;
+        }
+        // Try text field
+        else if (contentObj.text) {
+          errorMsg = formatValue(contentObj.text);
+        }
+        // Format the error object itself
+        else if (contentObj.error) {
+          errorMsg = formatValue(contentObj.error);
+        }
+        // Fallback
+        else {
+          errorMsg = 'An error occurred';
+        }
+
         errors.push(errorMsg);
       }
       // Handle text content

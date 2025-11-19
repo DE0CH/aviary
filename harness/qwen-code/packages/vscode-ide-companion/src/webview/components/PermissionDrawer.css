@@ -1,0 +1,156 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Permission Drawer - Bottom sheet style for permission requests
+ */
+
+/* Backdrop overlay */
+.permission-drawer-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  z-index: 998;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+/* Drawer container - bottom sheet style */
+.permission-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 70vh;
+  background-color: var(--app-primary-background);
+  border-top: 1px solid var(--app-primary-border-color);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
+  animation: slideUpFromBottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUpFromBottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Drawer header */
+.permission-drawer-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--app-primary-border-color);
+  background-color: var(--app-header-background);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  flex-shrink: 0;
+}
+
+.permission-drawer-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-primary-foreground);
+  margin: 0;
+}
+
+.permission-drawer-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--app-secondary-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.permission-drawer-close:hover {
+  background-color: var(--app-ghost-button-hover-background);
+  color: var(--app-primary-foreground);
+}
+
+/* Drawer content */
+.permission-drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  min-height: 0;
+}
+
+/* Override permission card styles when in drawer */
+.permission-drawer-content .permission-request-card {
+  border: none;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.permission-drawer-content .permission-card-body {
+  padding: 0;
+}
+
+/* Scrollbar for drawer content */
+.permission-drawer-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.permission-drawer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.permission-drawer-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.permission-drawer-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Add a drag handle indicator at the top */
+.permission-drawer-header::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  background-color: var(--app-secondary-foreground);
+  opacity: 0.3;
+  border-radius: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .permission-drawer {
+    max-height: 85vh;
+  }
+}
+
