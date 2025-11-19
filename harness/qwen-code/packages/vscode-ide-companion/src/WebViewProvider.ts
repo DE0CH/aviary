@@ -735,10 +735,6 @@ export class WebViewProvider {
     try {
       console.log('[WebViewProvider] Switching to Qwen session:', sessionId);
 
-      // Set current conversation ID so we can send messages
-      this.currentConversationId = sessionId;
-      console.log('[WebViewProvider] Set currentConversationId to:', sessionId);
-
       // Get session messages from local files
       const messages = await this.agentManager.getSessionMessages(sessionId);
       console.log(
@@ -758,44 +754,38 @@ export class WebViewProvider {
         console.log('[WebViewProvider] Could not get session details:', err);
       }
 
-      // Try to switch session in ACP (may fail if not supported)
+      // IMPORTANT: CLI doesn't support loading old sessions
+      // So we always create a NEW ACP session for continuation
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+
       try {
-        await this.agentManager.switchToSession(sessionId);
-        console.log('[WebViewProvider] Session switched successfully in ACP');
-      } catch (_switchError) {
+        const newAcpSessionId =
+          await this.agentManager.createNewSession(workingDir);
         console.log(
-          '[WebViewProvider] session/switch not supported or failed, creating new session',
+          '[WebViewProvider] Created new ACP session for conversation:',
+          newAcpSessionId,
         );
-        // If switch fails, create a new session to continue conversation
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-        try {
-          const newSessionId =
-            await this.agentManager.createNewSession(workingDir);
-          console.log(
-            '[WebViewProvider] Created new session as fallback:',
-            newSessionId,
-          );
-          if (newSessionId) {
-            // Update to the new session ID so messages can be sent
-            this.currentConversationId = newSessionId;
-            console.log(
-              '[WebViewProvider] Updated currentConversationId to new session:',
-              newSessionId,
-            );
-          }
-        } catch (newSessionError) {
-          console.error(
-            '[WebViewProvider] Failed to create new session:',
-            newSessionError,
-          );
-          vscode.window.showWarningMessage(
-            'Could not switch to session. Created new session instead.',
-          );
-        }
+
+        // Use the NEW ACP session ID for sending messages to CLI
+        this.currentConversationId = newAcpSessionId;
+        console.log(
+          '[WebViewProvider] Set currentConversationId (ACP) to:',
+          newAcpSessionId,
+        );
+      } catch (createError) {
+        console.error(
+          '[WebViewProvider] Failed to create new ACP session:',
+          createError,
+        );
+        vscode.window.showWarningMessage(
+          'Could not switch to session. Created new session instead.',
+        );
+        throw createError;
       }
 
       // Send messages and session details to WebView
+      // The historical messages are display-only, not sent to CLI
       this.sendMessageToWebView({
         type: 'qwenSessionSwitched',
         data: { sessionId, messages, session: sessionDetails },

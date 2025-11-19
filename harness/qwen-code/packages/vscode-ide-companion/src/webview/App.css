@@ -206,7 +206,7 @@ button {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px 20px 40px;
+  padding: 20px 20px 120px;
   display: flex;
   flex-direction: column;
   gap: var(--app-spacing-medium);
@@ -684,5 +684,332 @@ button {
 .send-button-icon svg {
   width: 20px;
   height: 20px;
+}
+
+/* ===========================
+   Tool Call Card Styles (Grid Layout)
+   =========================== */
+.tool-call-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--app-spacing-medium);
+  background: var(--app-input-background);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-medium);
+  padding: var(--app-spacing-large);
+  margin: var(--app-spacing-medium) 0;
+  animation: fadeIn 0.2s ease-in;
+  align-items: start;
+}
+
+.tool-call-icon {
+  font-size: 20px;
+  grid-row: 1;
+  padding-top: 2px;
+}
+
+.tool-call-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-spacing-medium);
+  min-width: 0;
+}
+
+.tool-call-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--app-spacing-medium);
+  min-width: 0;
+}
+
+.tool-call-label {
+  font-size: 12px;
+  color: var(--app-secondary-foreground);
+  font-weight: 500;
+  padding-top: 2px;
+}
+
+.tool-call-value {
+  color: var(--app-primary-foreground);
+  min-width: 0;
+  word-break: break-word;
+}
+
+.tool-call-status-indicator {
+  display: inline-block;
+  font-weight: 500;
+  position: relative;
+}
+
+.tool-call-status-indicator::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.tool-call-status-indicator.pending::before {
+  background: #ffc107;
+}
+
+.tool-call-status-indicator.in_progress::before {
+  background: #2196f3;
+}
+
+.tool-call-status-indicator.completed::before {
+  background: #4caf50;
+}
+
+.tool-call-status-indicator.failed::before {
+  background: #f44336;
+}
+
+.code-block {
+  font-family: var(--app-monospace-font-family);
+  font-size: var(--app-monospace-font-size);
+  background: var(--app-primary-background);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  padding: var(--app-spacing-medium);
+  overflow-x: auto;
+  margin: 4px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* ===========================
+   Permission Request Card Styles
+   =========================== */
+.permission-request-card {
+  background: var(--app-input-background);
+  border: 1px solid var(--app-qwen-orange);
+  border-radius: var(--corner-radius-medium);
+  margin: var(--app-spacing-medium) 0;
+  margin-bottom: var(--app-spacing-xlarge);
+  overflow: visible;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.permission-card-body {
+  padding: var(--app-spacing-large);
+  min-height: fit-content;
+  height: auto;
+}
+
+.permission-header {
+  display: flex;
+  align-items: center;
+  gap: var(--app-spacing-large);
+  margin-bottom: var(--app-spacing-large);
+}
+
+.permission-icon-wrapper {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(97, 95, 255, 0.1);
+  border-radius: var(--corner-radius-medium);
+  flex-shrink: 0;
+}
+
+.permission-icon {
+  font-size: 20px;
+}
+
+.permission-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.permission-title {
+  font-weight: 600;
+  color: var(--app-primary-foreground);
+  margin-bottom: 2px;
+}
+
+.permission-subtitle {
+  font-size: 12px;
+  color: var(--app-secondary-foreground);
+}
+
+.permission-command-section {
+  margin-bottom: var(--app-spacing-large);
+}
+
+.permission-command-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-secondary-foreground);
+  margin-bottom: var(--app-spacing-small);
+  text-transform: uppercase;
+}
+
+.permission-command-code {
+  display: block;
+  font-family: var(--app-monospace-font-family);
+  font-size: var(--app-monospace-font-size);
+  color: var(--app-primary-foreground);
+  background: var(--app-primary-background);
+  padding: var(--app-spacing-medium);
+  border-radius: var(--corner-radius-small);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.permission-locations-section {
+  margin-bottom: var(--app-spacing-large);
+}
+
+.permission-locations-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-secondary-foreground);
+  margin-bottom: var(--app-spacing-small);
+  text-transform: uppercase;
+}
+
+.permission-location-item {
+  display: flex;
+  align-items: center;
+  gap: var(--app-spacing-small);
+  padding: var(--app-spacing-small) 0;
+  font-size: 12px;
+}
+
+.permission-location-icon {
+  flex-shrink: 0;
+}
+
+.permission-location-path {
+  color: var(--app-primary-foreground);
+  font-family: var(--app-monospace-font-family);
+}
+
+.permission-location-line {
+  color: var(--app-secondary-foreground);
+}
+
+.permission-options-section {
+  margin-top: var(--app-spacing-large);
+}
+
+.permission-options-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--app-primary-foreground);
+  margin-bottom: var(--app-spacing-medium);
+}
+
+.permission-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-spacing-small);
+}
+
+.permission-option {
+  display: flex;
+  align-items: center;
+  gap: var(--app-spacing-medium);
+  padding: var(--app-spacing-medium) var(--app-spacing-large);
+  background: var(--app-primary-background);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.permission-option:hover {
+  background: var(--app-list-hover-background);
+  border-color: var(--app-input-active-border);
+}
+
+.permission-option.selected {
+  border-color: var(--app-qwen-orange);
+  background: rgba(97, 95, 255, 0.1);
+}
+
+.permission-option.allow {
+  /* Allow options */
+}
+
+.permission-option.reject {
+  /* Reject options */
+}
+
+.permission-radio {
+  flex-shrink: 0;
+}
+
+.permission-option-content {
+  display: flex;
+  align-items: center;
+  gap: var(--app-spacing-small);
+  flex: 1;
+}
+
+.permission-always-badge {
+  font-size: 12px;
+}
+
+.permission-no-options {
+  text-align: center;
+  padding: var(--app-spacing-large);
+  color: var(--app-secondary-foreground);
+}
+
+.permission-actions {
+  margin-top: var(--app-spacing-large);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.permission-confirm-button {
+  padding: var(--app-spacing-medium) var(--app-spacing-xlarge);
+  background: var(--app-qwen-clay-button-orange);
+  color: var(--app-qwen-ivory);
+  border: none;
+  border-radius: var(--corner-radius-small);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.permission-confirm-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.permission-confirm-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.permission-success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--app-spacing-medium);
+  padding: var(--app-spacing-large);
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: var(--corner-radius-small);
+  margin-top: var(--app-spacing-large);
+}
+
+.permission-success-icon {
+  color: #4caf50;
+  font-weight: bold;
+}
+
+.permission-success-text {
+  color: #4caf50;
+  font-size: 13px;
 }
 

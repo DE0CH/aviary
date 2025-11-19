@@ -270,4 +270,135 @@
   --app-menu-foreground: var(--vscode-menu-foreground);
   --app-menu-selection-background: var(--vscode-menu-selectionBackground);
   --app-menu-selection-foreground: var(--vscode-menu-selectionForeground);
+
+  /* Tool Call Styles */
+  --app-tool-background: var(--vscode-editor-background);
+  --app-code-background: var(--vscode-textCodeBlock-background);
+}
+
+/* ===========================
+   Tool Call Card (from Claude Code .Ne)
+   =========================== */
+.tool-call-card {
+  border: 0.5px solid var(--app-input-border);
+  border-radius: 5px;
+  background: var(--app-tool-background);
+  margin: 8px 0;
+  max-width: 100%;
+  font-size: 1em;
+  align-items: start;
+}
+
+/* Tool Call Grid Layout (from Claude Code .Ke) */
+.tool-call-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+}
+
+/* Tool Call Row (from Claude Code .no) */
+.tool-call-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  border-top: 0.5px solid var(--app-input-border);
+  padding: 4px;
+}
+
+.tool-call-row:first-child {
+  border-top: none;
+}
+
+/* Tool Call Label (from Claude Code .Je) */
+.tool-call-label {
+  grid-column: 1;
+  color: var(--app-secondary-foreground);
+  text-align: left;
+  opacity: 0.5;
+  padding: 4px 8px 4px 4px;
+  font-family: var(--app-monospace-font-family);
+  font-size: 0.85em;
+}
+
+/* Tool Call Value (from Claude Code .m) */
+.tool-call-value {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 4px;
+}
+
+.tool-call-value:not(.expanded) {
+  max-height: 60px;
+  mask-image: linear-gradient(to bottom, var(--app-primary-background) 40px, transparent 60px);
+  overflow: hidden;
+}
+
+.tool-call-value pre {
+  margin-block: 0;
+  overflow: hidden;
+  font-family: var(--app-monospace-font-family);
+  font-size: 0.85em;
+}
+
+.tool-call-value code {
+  margin: 0;
+  padding: 0;
+  font-family: var(--app-monospace-font-family);
+  font-size: 0.85em;
+}
+
+/* Tool Call Icon (from Claude Code .to) */
+.tool-call-icon {
+  margin: 8px;
+  opacity: 0.5;
+}
+
+/* Code Block (from Claude Code ._e) */
+.code-block {
+  background-color: var(--app-code-background);
+  white-space: pre;
+  overflow-x: auto;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 4px;
+  font-family: var(--app-monospace-font-family);
+  font-size: 0.85em;
+}
+
+/* Status indicators for tool calls */
+.tool-call-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-call-status-indicator::before {
+  content: "●";
+  font-size: 10px;
+}
+
+.tool-call-status-indicator.pending::before {
+  color: var(--app-secondary-foreground);
+}
+
+.tool-call-status-indicator.in-progress::before {
+  color: #e1c08d;
+  animation: blink 1s linear infinite;
+}
+
+.tool-call-status-indicator.completed::before {
+  color: #74c991;
+}
+
+.tool-call-status-indicator.failed::before {
+  color: #c74e39;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
