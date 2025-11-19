@@ -194,6 +194,20 @@ export class WebViewProvider {
       this.disposables,
     );
 
+    // Listen for active editor changes and notify WebView
+    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
+      (editor) => {
+        const fileName = editor?.document.uri.fsPath
+          ? this.getFileName(editor.document.uri.fsPath)
+          : null;
+        this.sendMessageToWebView({
+          type: 'activeEditorChanged',
+          data: { fileName },
+        });
+      },
+    );
+    this.disposables.push(editorChangeDisposable);
+
     // Initialize agent connection only once
     if (!this.agentInitialized) {
       await this.initializeAgentConnection();
@@ -481,7 +495,7 @@ export class WebViewProvider {
 
   private async handleWebViewMessage(message: {
     type: string;
-    data?: { text?: string; id?: string; sessionId?: string };
+    data?: { text?: string; id?: string; sessionId?: string; path?: string };
   }): Promise<void> {
     console.log('[WebViewProvider] Received message from webview:', message);
     const self = this as {
@@ -525,6 +539,19 @@ export class WebViewProvider {
         await this.handleGetQwenSessions();
         break;
 
+      case 'getActiveEditor': {
+        // 发送当前激活编辑器的文件名给 WebView
+        const editor = vscode.window.activeTextEditor;
+        const fileName = editor?.document.uri.fsPath
+          ? this.getFileName(editor.document.uri.fsPath)
+          : null;
+        this.sendMessageToWebView({
+          type: 'activeEditorChanged',
+          data: { fileName },
+        });
+        break;
+      }
+
       case 'switchQwenSession':
         await this.handleSwitchQwenSession(message.data?.sessionId || '');
         break;
@@ -537,6 +564,16 @@ export class WebViewProvider {
 
       case 'cancelPrompt':
         await this.handleCancelPrompt();
+        break;
+
+      case 'openFile':
+        await this.handleOpenFile(message.data?.path);
+        break;
+
+      case 'openDiff':
+        await this.handleOpenDiff(
+          message.data as { path?: string; oldText?: string; newText?: string },
+        );
         break;
 
       default:
@@ -849,8 +886,161 @@ export class WebViewProvider {
     }
   }
 
+  /**
+   * Handle open file request from WebView
+   * Opens a file in VS Code editor, optionally at a specific line
+   */
+  private async handleOpenFile(filePath?: string): Promise<void> {
+    try {
+      if (!filePath) {
+        console.warn('[WebViewProvider] No file path provided');
+        return;
+      }
+
+      console.log('[WebViewProvider] Opening file:', filePath);
+
+      // Parse file path and line number (format: path/to/file.ts:123)
+      const match = filePath.match(/^(.+?)(?::(\d+))?$/);
+      if (!match) {
+        console.warn('[WebViewProvider] Invalid file path format:', filePath);
+        return;
+      }
+
+      const [, path, lineStr] = match;
+      const lineNumber = lineStr ? parseInt(lineStr, 10) - 1 : 0; // VS Code uses 0-based line numbers
+
+      // Convert to absolute path if relative
+      let absolutePath = path;
+      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
+        // Relative path - resolve against workspace
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
+        }
+      }
+
+      // Open the document
+      const uri = vscode.Uri.file(absolutePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document, {
+        preview: false,
+        preserveFocus: false,
+      });
+
+      // Navigate to line if specified
+      if (lineStr) {
+        const position = new vscode.Position(lineNumber, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter,
+        );
+      }
+
+      console.log('[WebViewProvider] File opened successfully:', absolutePath);
+    } catch (error) {
+      console.error('[WebViewProvider] Failed to open file:', error);
+      vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+    }
+  }
+
+  /**
+   * Handle open diff request from WebView
+   * Opens VS Code's diff viewer to compare old and new file contents
+   */
+  private async handleOpenDiff(data?: {
+    path?: string;
+    oldText?: string;
+    newText?: string;
+  }): Promise<void> {
+    try {
+      if (!data || !data.path) {
+        console.warn('[WebViewProvider] No file path provided for diff');
+        return;
+      }
+
+      const { path, oldText = '', newText = '' } = data;
+      console.log('[WebViewProvider] Opening diff for:', path);
+
+      // Convert to absolute path if relative
+      let absolutePath = path;
+      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
+        }
+      }
+
+      // Get the file name for display
+      const fileName = this.getFileName(absolutePath);
+
+      // Create URIs for old and new content
+      // Use untitled scheme for old content (before changes)
+      const oldUri = vscode.Uri.parse(`untitled:${absolutePath}.old`).with({
+        scheme: 'untitled',
+      });
+
+      // Use the actual file URI for new content
+      const newUri = vscode.Uri.file(absolutePath);
+
+      // Create a TextDocument for the old content using an in-memory document
+      const _oldDocument = await vscode.workspace.openTextDocument(
+        oldUri.with({ scheme: 'untitled' }),
+      );
+
+      // Write old content to the document
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(
+        oldUri.with({ scheme: 'untitled' }),
+        new vscode.Position(0, 0),
+        oldText,
+      );
+      await vscode.workspace.applyEdit(edit);
+
+      // Check if new file exists, if not create it with new content
+      try {
+        await vscode.workspace.fs.stat(newUri);
+      } catch {
+        // File doesn't exist, create it
+        const encoder = new TextEncoder();
+        await vscode.workspace.fs.writeFile(newUri, encoder.encode(newText));
+      }
+
+      // Open diff view
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        oldUri.with({ scheme: 'untitled' }),
+        newUri,
+        `${fileName} (Before ↔ After)`,
+        {
+          preview: false,
+          preserveFocus: false,
+        },
+      );
+
+      console.log('[WebViewProvider] Diff opened successfully');
+    } catch (error) {
+      console.error('[WebViewProvider] Failed to open diff:', error);
+      vscode.window.showErrorMessage(`Failed to open diff: ${error}`);
+    }
+  }
+
   private sendMessageToWebView(message: unknown): void {
     this.panel?.webview.postMessage(message);
+  }
+
+  /**
+   * 从完整路径中提取文件名
+   * @param fsPath 文件的完整路径
+   * @returns 文件名（不含路径）
+   */
+  private getFileName(fsPath: string): string {
+    // 使用 path.basename 的逻辑：找到最后一个路径分隔符后的部分
+    const lastSlash = Math.max(
+      fsPath.lastIndexOf('/'),
+      fsPath.lastIndexOf('\\'),
+    );
+    return lastSlash >= 0 ? fsPath.substring(lastSlash + 1) : fsPath;
   }
 
   private getWebviewContent(): string {

@@ -14,8 +14,8 @@ import {
   StatusIndicator,
   CodeBlock,
   LocationsList,
-  DiffDisplay,
 } from './shared/LayoutComponents.js';
+import { DiffDisplay } from './shared/DiffDisplay.js';
 import {
   formatValue,
   safeTitle,

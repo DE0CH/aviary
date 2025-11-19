@@ -1,0 +1,61 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * MessageContent styles
+ */
+
+/* Code block styles */
+.message-code-block {
+  background-color: var(--app-code-background, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--app-primary-border-color);
+  border-radius: var(--corner-radius-small, 4px);
+  padding: 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.message-code-block code {
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  color: var(--app-primary-foreground);
+}
+
+/* Inline code styles */
+.message-inline-code {
+  background-color: var(--app-code-background, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--app-primary-border-color);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace);
+  font-size: 0.9em;
+  color: var(--app-primary-foreground);
+  white-space: nowrap;
+}
+
+/* File path link styles */
+.message-file-path {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace);
+  font-size: 0.95em;
+  color: var(--app-link-foreground, #007ACC);
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.message-file-path:hover {
+  color: var(--app-link-active-foreground, #005A9E);
+  text-decoration: underline;
+}
+
+.message-file-path:active {
+  color: var(--app-link-active-foreground, #005A9E);
+}

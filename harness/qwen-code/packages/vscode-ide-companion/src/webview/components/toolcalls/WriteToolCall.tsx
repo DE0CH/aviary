@@ -14,9 +14,10 @@ import {
   StatusIndicator,
   CodeBlock,
   LocationsList,
-  DiffDisplay,
 } from './shared/LayoutComponents.js';
+import { DiffDisplay } from './shared/DiffDisplay.js';
 import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { useVSCode } from '../../hooks/useVSCode.js';
 
 /**
  * Specialized component for Write/Edit tool calls
@@ -26,9 +27,23 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { kind, title, status, rawInput, content, locations } = toolCall;
   const titleText = safeTitle(title);
   const isEdit = kind.toLowerCase() === 'edit';
+  const vscode = useVSCode();
 
   // Group content by type
   const { textOutputs, errors, diffs, otherData } = groupContent(content);
+
+  const handleOpenDiff = (
+    path: string | undefined,
+    oldText: string | null | undefined,
+    newText: string | undefined,
+  ) => {
+    if (path) {
+      vscode.postMessage({
+        type: 'openDiff',
+        data: { path, oldText: oldText || '', newText: newText || '' },
+      });
+    }
+  };
 
   return (
     <ToolCallCard icon="✏️">
@@ -59,6 +74,9 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
               path={item.path}
               oldText={item.oldText}
               newText={item.newText}
+              onOpenDiff={() =>
+                handleOpenDiff(item.path, item.oldText, item.newText)
+              }
             />
           </ToolCallRow>
         ),

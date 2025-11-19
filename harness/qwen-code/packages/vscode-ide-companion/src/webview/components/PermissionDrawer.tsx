@@ -39,7 +39,9 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   // Close drawer on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
+      if (!isOpen) {
+        return;
+      }
 
       // Close on Escape
       if (e.key === 'Escape' && onClose) {

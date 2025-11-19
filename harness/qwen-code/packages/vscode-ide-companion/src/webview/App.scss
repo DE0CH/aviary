@@ -15,6 +15,7 @@
   --app-qwen-clay-button-orange: #4f46e5;
   --app-qwen-ivory: #f5f5ff;
   --app-qwen-slate: #141420;
+  --app-qwen-green: #6bcf7f;
 
   /* Spacing */
   --app-spacing-small: 4px;
@@ -44,6 +45,11 @@
   --app-input-active-border: var(--vscode-inputOption-activeBorder);
   --app-input-placeholder-foreground: var(--vscode-input-placeholderForeground);
   --app-input-secondary-background: var(--vscode-menu-background);
+
+  /* Code Highlighting */
+  --app-code-background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.05));
+  --app-link-foreground: var(--vscode-textLink-foreground, #007ACC);
+  --app-link-active-foreground: var(--vscode-textLink-activeForeground, #005A9E);
 
   /* List Styles */
   --app-list-hover-background: var(--vscode-list-hoverBackground);
@@ -192,6 +198,11 @@ button {
   width: 24px;
   height: 24px;
   color: var(--app-primary-foreground);
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .new-session-header-button:hover,
@@ -607,52 +618,72 @@ button {
   display: block;
 }
 
-/* Form (.u) - The actual input form with border and shadow */
+/* Input Form Container - matches Claude Code style */
 .input-form {
-  background: var(--app-input-background);
+  background: var(--app-input-secondary-background, var(--app-input-background));
   border: 1px solid var(--app-input-border);
   border-radius: var(--corner-radius-large);
   color: var(--app-input-foreground);
   display: flex;
   flex-direction: column;
-  max-width: 680px;
-  margin: 0 auto;
+  // max-width: 680px;
+  // margin: 0 auto;
   position: relative;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* Banner/Warning area (.Wr) */
+/* Inner background layer - creates depth effect */
+.input-form-background {
+  background: var(--app-input-background);
+  position: absolute;
+  border-radius: var(--corner-radius-large);
+  inset: 0;
+  z-index: 0;
+}
+
+.input-form:focus-within {
+  border-color: var(--app-qwen-orange);
+  box-shadow: 0 0 0 1px var(--app-qwen-orange), 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Banner area - for warnings/messages */
 .input-banner {
   /* Empty for now, can be used for warnings/banners */
 }
 
-/* Input wrapper (.fo) */
+/* Input wrapper - contains the contenteditable field */
 .input-wrapper {
-  /* padding: 12px 12px 0; */
+  position: relative;
+  display: flex;
+  z-index: 1;
 }
 
-/* Contenteditable input field (.d) */
+/* Contenteditable input field - matches Claude Code */
 .input-field-editable {
-  width: 100%;
-  min-height: 40px;
+  padding: 10px 14px;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.5;
+  overflow-y: auto;
+  position: relative;
+  flex: 1;
+  align-self: stretch;
+  user-select: text;
+  min-height: 1.5em;
   max-height: 200px;
-  padding: 8px 10px;
   background-color: transparent;
   color: var(--app-input-foreground);
   border: none;
   border-radius: 0;
   font-size: var(--vscode-chat-font-size, 13px);
-  font-family: var(--vscode-chat-font-family);
-  outline: none;
-  line-height: 1.5;
-  overflow-y: auto;
   overflow-x: hidden;
   word-wrap: break-word;
   white-space: pre-wrap;
 }
 
 .input-field-editable:focus {
-  /* No border change needed since we don't have a border */
+  outline: none;
 }
 
 .input-field-editable:empty:before {
@@ -662,12 +693,22 @@ button {
   position: absolute;
 }
 
-/* Actions row (.ri) */
+.input-field-editable:disabled,
+.input-field-editable[contenteditable='false'] {
+  color: #999;
+  cursor: not-allowed;
+}
+
+/* Actions row - matches Claude Code */
 .input-actions {
   display: flex;
   align-items: center;
+  padding: 5px;
+  color: var(--app-secondary-foreground);
   gap: 6px;
-  /* padding: 8px 12px 12px; */
+  min-width: 0;
+  border-top: 0.5px solid var(--app-input-border);
+  z-index: 1;
 }
 
 /* Edit mode button (.l) */
@@ -682,8 +723,8 @@ button {
   border-radius: var(--corner-radius-small);
   color: var(--app-primary-foreground);
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  // font-weight: 500;
   transition: background-color 0.15s;
   white-space: nowrap;
 }
@@ -729,9 +770,56 @@ button {
   color: var(--app-primary-foreground);
 }
 
+.action-icon-button.active {
+  background-color: var(--app-qwen-clay-button-orange);
+  color: var(--app-qwen-ivory);
+}
+
+.action-icon-button.active svg {
+  stroke: var(--app-qwen-ivory);
+  fill: var(--app-qwen-ivory);
+}
+
 .action-icon-button svg {
   width: 16px;
   height: 16px;
+}
+
+/* Spacer to push file indicator to the right */
+.input-actions-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Active file indicator - shows current file selection (.vo in Claude Code) */
+.active-file-indicator {
+  font-size: 0.85em;
+  font-family: inherit;
+  color: var(--app-primary-foreground);
+  opacity: 0.6;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: default;
+  text-align: right;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 2px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.active-file-indicator:hover {
+  opacity: 1;
+}
+
+/* Hide file indicator on very small screens */
+@media screen and (max-width: 330px) {
+  .active-file-indicator {
+    display: none;
+  }
 }
 
 /* Send button (.r) */
@@ -742,18 +830,18 @@ button {
   width: 32px;
   height: 32px;
   padding: 0;
-  background: transparent;
+  background: var(--app-qwen-clay-button-orange);
   border: 1px solid transparent;
   border-radius: var(--corner-radius-small);
-  color: var(--app-primary-foreground);
+  color: var(--app-qwen-ivory);
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color 0.15s, filter 0.15s;
   margin-left: auto;
   flex-shrink: 0;
 }
 
 .send-button-icon:hover:not(:disabled) {
-  background-color: var(--app-ghost-button-hover-background);
+  filter: brightness(1.1);
 }
 
 .send-button-icon:disabled {
@@ -860,6 +948,80 @@ button {
   word-break: break-word;
   max-height: 300px;
   overflow-y: auto;
+}
+
+/* ===========================
+   Diff Display Styles
+   =========================== */
+.diff-display-container {
+  margin: 8px 0;
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-medium);
+  overflow: hidden;
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--app-input-secondary-background);
+  border-bottom: 1px solid var(--app-input-border);
+}
+
+.diff-file-path {
+  font-family: var(--app-monospace-font-family);
+  font-size: 13px;
+  color: var(--app-primary-foreground);
+}
+
+.open-diff-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  color: var(--app-primary-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.15s;
+}
+
+.open-diff-button:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+.open-diff-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.diff-section {
+  margin: 0;
+}
+
+.diff-label {
+  padding: 8px 12px;
+  background: var(--app-primary-background);
+  border-bottom: 1px solid var(--app-input-border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-secondary-foreground);
+  text-transform: uppercase;
+}
+
+.diff-section .code-block {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  max-height: none; /* Remove height limit for diffs */
+  overflow-y: visible;
+}
+
+.diff-section .code-content {
+  display: block;
 }
 
 /* ===========================

@@ -14,6 +14,8 @@ import {
 import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall, type ToolCallData } from './components/ToolCall.js';
 import { EmptyState } from './components/EmptyState.js';
+import { PlanDisplay, type PlanEntry } from './components/PlanDisplay.js';
+import { MessageContent } from './components/MessageContent.js';
 
 interface ToolCallUpdate {
   type: 'tool_call' | 'tool_call_update';
@@ -185,6 +187,8 @@ const getRandomLoadingMessage = () =>
     Math.floor(Math.random() * WITTY_LOADING_PHRASES.length)
   ];
 
+type EditMode = 'ask' | 'auto' | 'plan';
+
 export const App: React.FC = () => {
   const vscode = useVSCode();
   const [messages, setMessages] = useState<TextMessage[]>([]);
@@ -208,10 +212,14 @@ export const App: React.FC = () => {
   const [toolCalls, setToolCalls] = useState<Map<string, ToolCallData>>(
     new Map(),
   );
+  const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputFieldRef = useRef<HTMLDivElement>(null);
   const [showBanner, setShowBanner] = useState(true);
   const currentStreamContentRef = useRef<string>('');
+  const [editMode, setEditMode] = useState<EditMode>('ask');
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [activeFileName, setActiveFileName] = useState<string | null>(null);
 
   const handlePermissionRequest = React.useCallback(
     (request: {
@@ -376,6 +384,14 @@ export const App: React.FC = () => {
           handlePermissionRequest(message.data);
           break;
 
+        case 'plan':
+          // Update plan entries
+          console.log('[App] Plan received:', message.data);
+          if (message.data.entries && Array.isArray(message.data.entries)) {
+            setPlanEntries(message.data.entries as PlanEntry[]);
+          }
+          break;
+
         case 'toolCall':
         case 'toolCallUpdate':
           // Handle tool call updates
@@ -448,6 +464,7 @@ export const App: React.FC = () => {
           }
           setCurrentStreamContent('');
           setToolCalls(new Map());
+          setPlanEntries([]); // Clear plan entries when switching sessions
           break;
 
         case 'conversationCleared':
@@ -455,6 +472,13 @@ export const App: React.FC = () => {
           setCurrentStreamContent('');
           setToolCalls(new Map());
           break;
+
+        case 'activeEditorChanged': {
+          // 从扩展接收当前激活编辑器的文件名
+          const fileName = message.data?.fileName as string | null;
+          setActiveFileName(fileName);
+          break;
+        }
 
         default:
           break;
@@ -474,6 +498,90 @@ export const App: React.FC = () => {
   useEffect(() => {
     vscode.postMessage({ type: 'getQwenSessions', data: {} });
   }, [vscode]);
+
+  // Request current active editor on component mount
+  useEffect(() => {
+    vscode.postMessage({ type: 'getActiveEditor', data: {} });
+  }, [vscode]);
+
+  // Toggle edit mode: ask → auto → plan → ask
+  const handleToggleEditMode = () => {
+    setEditMode((prev) => {
+      if (prev === 'ask') {
+        return 'auto';
+      }
+      if (prev === 'auto') {
+        return 'plan';
+      }
+      return 'ask';
+    });
+  };
+
+  // Toggle thinking on/off
+  const handleToggleThinking = () => {
+    setThinkingEnabled((prev) => !prev);
+  };
+
+  // Get edit mode display info
+  const getEditModeInfo = () => {
+    switch (editMode) {
+      case 'ask':
+        return {
+          text: 'Ask before edits',
+          title: 'Qwen will ask before each edit. Click to switch modes.',
+          icon: (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                fillRule="evenodd"
+                d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
+                clipRule="evenodd"
+              ></path>
+            </svg>
+          ),
+        };
+      case 'auto':
+        return {
+          text: 'Edit automatically',
+          title: 'Qwen will edit files automatically. Click to switch modes.',
+          icon: (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M2.53 3.956A1 1 0 0 0 1 4.804v6.392a1 1 0 0 0 1.53.848l5.113-3.196c.16-.1.279-.233.357-.383v2.73a1 1 0 0 0 1.53.849l5.113-3.196a1 1 0 0 0 0-1.696L9.53 3.956A1 1 0 0 0 8 4.804v2.731a.992.992 0 0 0-.357-.383L2.53 3.956Z"></path>
+            </svg>
+          ),
+        };
+      case 'plan':
+        return {
+          text: 'Plan mode',
+          title: 'Qwen will plan before executing. Click to switch modes.',
+          icon: (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M4.5 2a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5h-1ZM10.5 2a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5h-1Z"></path>
+            </svg>
+          ),
+        };
+      default:
+        return {
+          text: 'Unknown mode',
+          title: 'Unknown edit mode',
+          icon: null,
+        };
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -511,6 +619,8 @@ export const App: React.FC = () => {
     // Clear messages in UI
     setMessages([]);
     setCurrentStreamContent('');
+    setPlanEntries([]); // Clear plan entries
+    setToolCalls(new Map()); // Clear tool calls
   };
 
   // Time ago formatter (matching Claude Code)
@@ -624,7 +734,11 @@ export const App: React.FC = () => {
   };
 
   // Check if there are any messages or active content
-  const hasContent = messages.length > 0 || isStreaming || toolCalls.size > 0;
+  const hasContent =
+    messages.length > 0 ||
+    isStreaming ||
+    toolCalls.size > 0 ||
+    planEntries.length > 0;
 
   return (
     <div className="chat-container">
@@ -792,7 +906,15 @@ export const App: React.FC = () => {
                         <span className="thinking-dot"></span>
                       </span>
                     )}
-                    {msg.content}
+                    <MessageContent
+                      content={msg.content}
+                      onFileClick={(path) => {
+                        vscode.postMessage({
+                          type: 'openFile',
+                          data: { path },
+                        });
+                      }}
+                    />
                   </div>
                   <div className="message-timestamp">
                     {new Date(msg.timestamp).toLocaleTimeString()}
@@ -805,6 +927,9 @@ export const App: React.FC = () => {
             {Array.from(toolCalls.values()).map((toolCall) => (
               <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
             ))}
+
+            {/* Plan Display - shows task list when available */}
+            {planEntries.length > 0 && <PlanDisplay entries={planEntries} />}
 
             {/* Loading/Waiting Message - in message list */}
             {isWaitingForResponse && loadingMessage && (
@@ -822,7 +947,17 @@ export const App: React.FC = () => {
 
             {isStreaming && currentStreamContent && (
               <div className="message assistant streaming">
-                <div className="message-content">{currentStreamContent}</div>
+                <div className="message-content">
+                  <MessageContent
+                    content={currentStreamContent}
+                    onFileClick={(path) => {
+                      vscode.postMessage({
+                        type: 'openFile',
+                        data: { path },
+                      });
+                    }}
+                  />
+                </div>
                 <div className="streaming-indicator">●</div>
               </div>
             )}
@@ -884,6 +1019,7 @@ export const App: React.FC = () => {
       <div className="input-form-container">
         <div className="input-form-wrapper">
           <form className="input-form" onSubmit={handleSubmit}>
+            <div className="input-form-background"></div>
             <div className="input-banner"></div>
             <div className="input-wrapper">
               <div
@@ -911,27 +1047,18 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 className="action-button edit-mode-button"
-                title="Qwen will ask before each edit. Click to switch modes."
+                title={getEditModeInfo().title}
+                onClick={handleToggleEditMode}
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M11.013 2.513a1.75 1.75 0 0 1 2.475 2.474L6.226 12.25a2.751 2.751 0 0 1-.892.596l-2.047.848a.75.75 0 0 1-.98-.98l.848-2.047a2.75 2.75 0 0 1 .596-.892l7.262-7.261Z"
-                    clipRule="evenodd"
-                  ></path>
-                </svg>
-                <span>Ask before edits</span>
+                {getEditModeInfo().icon}
+                <span>{getEditModeInfo().text}</span>
               </button>
               <div className="action-divider"></div>
               <button
                 type="button"
-                className="action-icon-button thinking-button"
-                title="Thinking off"
+                className={`action-icon-button thinking-button ${thinkingEnabled ? 'active' : ''}`}
+                title={thinkingEnabled ? 'Thinking on' : 'Thinking off'}
+                onClick={handleToggleThinking}
               >
                 <svg
                   width="16"
@@ -968,6 +1095,15 @@ export const App: React.FC = () => {
                   ></path>
                 </svg>
               </button>
+              <div className="input-actions-spacer"></div>
+              {activeFileName && (
+                <span
+                  className="active-file-indicator"
+                  title={`Showing Qwen Code your current file selection: ${activeFileName}`}
+                >
+                  {activeFileName}
+                </span>
+              )}
               <button
                 type="submit"
                 className="send-button-icon"
