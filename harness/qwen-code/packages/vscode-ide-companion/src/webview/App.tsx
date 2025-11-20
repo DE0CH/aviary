@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
 import type { Conversation } from '../storage/conversationStore.js';
 import {
@@ -13,9 +13,15 @@ import {
 } from './components/PermissionRequest.js';
 import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall, type ToolCallData } from './components/ToolCall.js';
+import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 import { EmptyState } from './components/EmptyState.js';
 import { PlanDisplay, type PlanEntry } from './components/PlanDisplay.js';
 import { MessageContent } from './components/MessageContent.js';
+import {
+  CompletionMenu,
+  type CompletionItem,
+} from './components/CompletionMenu.js';
+import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 
 interface ToolCallUpdate {
   type: 'tool_call' | 'tool_call_update';
@@ -222,6 +228,121 @@ export const App: React.FC = () => {
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
 
+  // Workspace files cache
+  const [workspaceFiles, setWorkspaceFiles] = useState<
+    Array<{
+      id: string;
+      label: string;
+      description: string;
+      path: string;
+    }>
+  >([]);
+
+  // File reference map: @filename -> full path
+  const fileReferenceMap = useRef<Map<string, string>>(new Map());
+
+  // Request workspace files on mount or when @ is first triggered
+  const hasRequestedFilesRef = useRef(false);
+
+  // Debounce timer for search requests
+  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Get completion items based on trigger character
+  const getCompletionItems = useCallback(
+    async (trigger: '@' | '/', query: string): Promise<CompletionItem[]> => {
+      if (trigger === '@') {
+        // Request workspace files on first @ trigger
+        if (!hasRequestedFilesRef.current) {
+          hasRequestedFilesRef.current = true;
+          vscode.postMessage({
+            type: 'getWorkspaceFiles',
+            data: {},
+          });
+        }
+
+        // Convert workspace files to completion items
+        const fileIcon = (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <path d="M9 2H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7l-5-5zm3 7V3.5L10.5 2H10v3a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V2H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1zM6 3h3v2H6V3z" />
+          </svg>
+        );
+
+        // Convert all files to items
+        const allItems: CompletionItem[] = workspaceFiles.map((file) => ({
+          id: file.id,
+          label: file.label,
+          description: file.description,
+          type: 'file' as const,
+          icon: fileIcon,
+          value: file.path,
+        }));
+
+        // If query provided, filter locally AND request from backend (debounced)
+        if (query && query.length >= 1) {
+          // Clear previous search timer
+          if (searchTimerRef.current) {
+            clearTimeout(searchTimerRef.current);
+          }
+
+          // Debounce backend search request (300ms)
+          searchTimerRef.current = setTimeout(() => {
+            vscode.postMessage({
+              type: 'getWorkspaceFiles',
+              data: { query },
+            });
+          }, 300);
+
+          // Filter locally for immediate feedback
+          const lowerQuery = query.toLowerCase();
+          const filtered = allItems.filter(
+            (item) =>
+              item.label.toLowerCase().includes(lowerQuery) ||
+              (item.description &&
+                item.description.toLowerCase().includes(lowerQuery)),
+          );
+
+          return filtered;
+        }
+
+        return allItems;
+      } else {
+        // Slash commands - only /login for now
+        const commands: CompletionItem[] = [
+          {
+            id: 'login',
+            label: '/login',
+            description: 'Login to Qwen Code',
+            type: 'command',
+            icon: (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM12.735 14c.618 0 1.093-.561.872-1.139a6.002 6.002 0 0 0-11.215 0c-.22.578.254 1.139.872 1.139h9.47Z" />
+              </svg>
+            ),
+          },
+        ];
+
+        return commands.filter((cmd) =>
+          cmd.label.toLowerCase().includes(query.toLowerCase()),
+        );
+      }
+    },
+    [vscode, workspaceFiles],
+  );
+
+  // Use completion trigger hook
+  const completion = useCompletionTrigger(inputFieldRef, getCompletionItems);
+
+  // Don't auto-refresh completion menu when workspace files update
+  // This was causing flickering. User can re-type to get fresh results.
+
   const handlePermissionRequest = React.useCallback(
     (request: {
       options: PermissionOption[];
@@ -243,6 +364,181 @@ export const App: React.FC = () => {
     [vscode],
   );
 
+  // Handle completion item selection
+  const handleCompletionSelect = useCallback(
+    (item: CompletionItem) => {
+      if (!inputFieldRef.current) {
+        return;
+      }
+
+      const inputElement = inputFieldRef.current;
+      const currentText = inputElement.textContent || '';
+
+      if (item.type === 'file') {
+        // Store file reference mapping
+        const filePath = (item.value as string) || item.label;
+        fileReferenceMap.current.set(item.label, filePath);
+
+        console.log('[handleCompletionSelect] Current text:', currentText);
+        console.log('[handleCompletionSelect] Selected file:', item.label);
+
+        // Find the @ position in current text
+        const atPos = currentText.lastIndexOf('@');
+
+        if (atPos !== -1) {
+          // Find the end of the query (could be at cursor or at next space/end)
+          const textAfterAt = currentText.substring(atPos + 1);
+          const spaceIndex = textAfterAt.search(/[\s\n]/);
+          const queryEnd =
+            spaceIndex === -1 ? currentText.length : atPos + 1 + spaceIndex;
+
+          // Replace from @ to end of query with @filename
+          const textBefore = currentText.substring(0, atPos);
+          const textAfter = currentText.substring(queryEnd);
+          const newText = `${textBefore}@${item.label} ${textAfter}`;
+
+          console.log('[handleCompletionSelect] New text:', newText);
+
+          // Update the input
+          inputElement.textContent = newText;
+          setInputText(newText);
+
+          // Set cursor after the inserted filename (after the space)
+          const newCursorPos = atPos + item.label.length + 2; // +1 for @, +1 for space
+
+          // Wait for DOM to update, then set cursor
+          setTimeout(() => {
+            const textNode = inputElement.firstChild;
+            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+              const selection = window.getSelection();
+              if (selection) {
+                const range = document.createRange();
+                try {
+                  range.setStart(
+                    textNode,
+                    Math.min(newCursorPos, newText.length),
+                  );
+                  range.collapse(true);
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+                } catch (e) {
+                  console.error(
+                    '[handleCompletionSelect] Error setting cursor:',
+                    e,
+                  );
+                  // Fallback: move cursor to end
+                  range.selectNodeContents(inputElement);
+                  range.collapse(false);
+                  selection.removeAllRanges();
+                  selection.addRange(range);
+                }
+              }
+            }
+            inputElement.focus();
+          }, 10);
+        }
+      } else if (item.type === 'command') {
+        // Replace entire input with command
+        inputElement.textContent = item.label + ' ';
+        setInputText(item.label + ' ');
+
+        // Move cursor to end
+        setTimeout(() => {
+          const range = document.createRange();
+          const sel = window.getSelection();
+          if (inputElement.firstChild) {
+            range.setStart(inputElement.firstChild, (item.label + ' ').length);
+            range.collapse(true);
+          } else {
+            range.selectNodeContents(inputElement);
+            range.collapse(false);
+          }
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          inputElement.focus();
+        }, 10);
+      }
+
+      // Close completion
+      completion.closeCompletion();
+    },
+    [completion],
+  );
+
+  // Handle attach context button click (Cmd/Ctrl + /)
+  const handleAttachContextClick = useCallback(async () => {
+    if (inputFieldRef.current) {
+      // Focus the input first
+      inputFieldRef.current.focus();
+
+      // Insert @ at the end of current text
+      const currentText = inputFieldRef.current.textContent || '';
+      const newText = currentText ? `${currentText} @` : '@';
+      inputFieldRef.current.textContent = newText;
+      setInputText(newText);
+
+      // Move cursor to end
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.selectNodeContents(inputFieldRef.current);
+      range.collapse(false);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+
+      // Wait for DOM to update before getting position and opening menu
+      requestAnimationFrame(async () => {
+        if (!inputFieldRef.current) {
+          return;
+        }
+
+        // Get cursor position for menu placement
+        let position = { top: 0, left: 0 };
+        const selection = window.getSelection();
+
+        if (selection && selection.rangeCount > 0) {
+          try {
+            const currentRange = selection.getRangeAt(0);
+            const rangeRect = currentRange.getBoundingClientRect();
+            if (rangeRect.top > 0 && rangeRect.left > 0) {
+              position = {
+                top: rangeRect.top,
+                left: rangeRect.left,
+              };
+            } else {
+              const inputRect = inputFieldRef.current.getBoundingClientRect();
+              position = { top: inputRect.top, left: inputRect.left };
+            }
+          } catch (error) {
+            console.error('[App] Error getting cursor position:', error);
+            const inputRect = inputFieldRef.current.getBoundingClientRect();
+            position = { top: inputRect.top, left: inputRect.left };
+          }
+        } else {
+          const inputRect = inputFieldRef.current.getBoundingClientRect();
+          position = { top: inputRect.top, left: inputRect.left };
+        }
+
+        // Open completion menu with @ trigger
+        await completion.openCompletion('@', '', position);
+      });
+    }
+  }, [completion]);
+
+  // Handle keyboard shortcut for attach context (Cmd/Ctrl + /)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl + / for attach context
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+        e.preventDefault();
+        handleAttachContextClick();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleAttachContextClick]);
+
+  // Handle removing context attachment
   const handleToolCallUpdate = React.useCallback((update: ToolCallUpdate) => {
     setToolCalls((prev) => {
       const newMap = new Map(prev);
@@ -467,10 +763,68 @@ export const App: React.FC = () => {
           setCurrentSessionTitle('Past Conversations');
           break;
 
+        case 'sessionTitleUpdated': {
+          // Update session title when first message is sent
+          const sessionId = message.data?.sessionId as string;
+          const title = message.data?.title as string;
+          if (sessionId && title) {
+            console.log('[App] Session title updated:', title);
+            setCurrentSessionId(sessionId);
+            setCurrentSessionTitle(title);
+          }
+          break;
+        }
+
         case 'activeEditorChanged': {
           // 从扩展接收当前激活编辑器的文件名
           const fileName = message.data?.fileName as string | null;
           setActiveFileName(fileName);
+          break;
+        }
+
+        case 'fileAttached': {
+          // Handle file attachment from VSCode - insert as @mention
+          const attachment = message.data as {
+            id: string;
+            type: string;
+            name: string;
+            value: string;
+          };
+
+          // Store file reference
+          fileReferenceMap.current.set(attachment.name, attachment.value);
+
+          // Insert @filename into input
+          if (inputFieldRef.current) {
+            const currentText = inputFieldRef.current.textContent || '';
+            const newText = currentText
+              ? `${currentText} @${attachment.name} `
+              : `@${attachment.name} `;
+            inputFieldRef.current.textContent = newText;
+            setInputText(newText);
+
+            // Move cursor to end
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(inputFieldRef.current);
+            range.collapse(false);
+            sel?.removeAllRanges();
+            sel?.addRange(range);
+          }
+          break;
+        }
+
+        case 'workspaceFiles': {
+          // Handle workspace files list from VSCode
+          const files = message.data?.files as Array<{
+            id: string;
+            label: string;
+            description: string;
+            path: string;
+          }>;
+          if (files) {
+            setWorkspaceFiles(files);
+          }
           break;
         }
 
@@ -588,16 +942,38 @@ export const App: React.FC = () => {
     setIsWaitingForResponse(true);
     setLoadingMessage(getRandomLoadingMessage());
 
+    // Parse @file references from input text
+    const context: Array<{ type: string; name: string; value: string }> = [];
+    const fileRefPattern = /@([^\s]+)/g;
+    let match;
+
+    while ((match = fileRefPattern.exec(inputText)) !== null) {
+      const fileName = match[1];
+      const filePath = fileReferenceMap.current.get(fileName);
+
+      if (filePath) {
+        context.push({
+          type: 'file',
+          name: fileName,
+          value: filePath,
+        });
+      }
+    }
+
     vscode.postMessage({
       type: 'sendMessage',
-      data: { text: inputText },
+      data: {
+        text: inputText,
+        context: context.length > 0 ? context : undefined,
+      },
     });
 
-    // Clear input field
+    // Clear input field and file reference map
     setInputText('');
     if (inputFieldRef.current) {
       inputFieldRef.current.textContent = '';
     }
+    fileReferenceMap.current.clear();
   };
 
   const handleLoadQwenSessions = () => {
@@ -911,10 +1287,12 @@ export const App: React.FC = () => {
               );
             })}
 
-            {/* Tool Calls */}
-            {Array.from(toolCalls.values()).map((toolCall) => (
-              <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
-            ))}
+            {/* Tool Calls - only show those with actual output */}
+            {Array.from(toolCalls.values())
+              .filter((toolCall) => hasToolCallOutput(toolCall))
+              .map((toolCall) => (
+                <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
+              ))}
 
             {/* Plan Display - shows task list when available */}
             {planEntries.length > 0 && <PlanDisplay entries={planEntries} />}
@@ -1006,6 +1384,8 @@ export const App: React.FC = () => {
 
       <div className="input-form-container">
         <div className="input-form-wrapper">
+          {/* Context Pills - Removed: now using inline @mentions in input */}
+
           <form className="input-form" onSubmit={handleSubmit}>
             <div className="input-form-background"></div>
             <div className="input-banner"></div>
@@ -1031,6 +1411,10 @@ export const App: React.FC = () => {
                 onKeyDown={(e) => {
                   // 如果正在进行中文输入法输入（拼音输入），不处理回车键
                   if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+                    // 如果 CompletionMenu 打开，让它处理 Enter 键（选中文件）
+                    if (completion.isOpen) {
+                      return;
+                    }
                     e.preventDefault();
                     handleSubmit(e);
                   }
@@ -1078,6 +1462,8 @@ export const App: React.FC = () => {
                 </button>
               )}
               <div className="action-divider"></div>
+              {/* Spacer 将右侧按钮推到右边 */}
+              <div className="input-actions-spacer"></div>
               <button
                 type="button"
                 className={`action-icon-button thinking-button ${thinkingEnabled ? 'active' : ''}`}
@@ -1105,6 +1491,54 @@ export const App: React.FC = () => {
                 type="button"
                 className="action-icon-button command-button"
                 title="Show command menu (/)"
+                onClick={async () => {
+                  if (inputFieldRef.current) {
+                    // Focus the input first to ensure cursor is in the right place
+                    inputFieldRef.current.focus();
+
+                    // Get cursor position for menu placement
+                    const selection = window.getSelection();
+                    let position = { top: 0, left: 0 };
+
+                    // Try to get precise cursor position
+                    if (selection && selection.rangeCount > 0) {
+                      try {
+                        const range = selection.getRangeAt(0);
+                        const rangeRect = range.getBoundingClientRect();
+                        if (rangeRect.top > 0 && rangeRect.left > 0) {
+                          position = {
+                            top: rangeRect.top,
+                            left: rangeRect.left,
+                          };
+                        } else {
+                          // Fallback to input element position
+                          const inputRect =
+                            inputFieldRef.current.getBoundingClientRect();
+                          position = {
+                            top: inputRect.top,
+                            left: inputRect.left,
+                          };
+                        }
+                      } catch (error) {
+                        console.error(
+                          '[App] Error getting cursor position:',
+                          error,
+                        );
+                        const inputRect =
+                          inputFieldRef.current.getBoundingClientRect();
+                        position = { top: inputRect.top, left: inputRect.left };
+                      }
+                    } else {
+                      // No selection, use input element position
+                      const inputRect =
+                        inputFieldRef.current.getBoundingClientRect();
+                      position = { top: inputRect.top, left: inputRect.left };
+                    }
+
+                    // Open completion menu with / commands
+                    await completion.openCompletion('/', '', position);
+                  }
+                }}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -1119,7 +1553,26 @@ export const App: React.FC = () => {
                   ></path>
                 </svg>
               </button>
-              <div className="input-actions-spacer"></div>
+              <button
+                type="button"
+                className="action-icon-button attach-button"
+                title="Attach context (Cmd/Ctrl + /)"
+                onClick={handleAttachContextClick}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M15.621 4.379a3 3 0 0 0-4.242 0l-7 7a3 3 0 0 0 4.241 4.243h.001l.497-.5a.75.75 0 0 1 1.064 1.057l-.498.501-.002.002a4.5 4.5 0 0 1-6.364-6.364l7-7a4.5 4.5 0 0 1 6.368 6.36l-3.455 3.553A2.625 2.625 0 1 1 9.52 9.52l3.45-3.451a.75.75 0 1 1 1.061 1.06l-3.45 3.451a1.125 1.125 0 0 0 1.587 1.595l3.454-3.553a3 3 0 0 0 0-4.242Z"
+                    clipRule="evenodd"
+                  ></path>
+                </svg>
+              </button>
+
               <button
                 type="submit"
                 className="send-button-icon"
@@ -1151,6 +1604,16 @@ export const App: React.FC = () => {
           toolCall={permissionRequest.toolCall}
           onResponse={handlePermissionResponse}
           onClose={() => setPermissionRequest(null)}
+        />
+      )}
+
+      {/* Completion Menu for @ and / */}
+      {completion.isOpen && completion.items.length > 0 && (
+        <CompletionMenu
+          items={completion.items}
+          position={completion.position}
+          onSelect={handleCompletionSelect}
+          onClose={completion.closeCompletion}
         />
       )}
     </div>

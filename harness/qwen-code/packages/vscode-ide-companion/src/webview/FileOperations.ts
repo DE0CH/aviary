@@ -13,8 +13,8 @@ import { getFileName } from '../utils/webviewUtils.js';
  */
 export class FileOperations {
   /**
-   * 打开文件并可选跳转到指定行
-   * @param filePath 文件路径，可以包含行号（格式：path/to/file.ts:123）
+   * 打开文件并可选跳转到指定行和列
+   * @param filePath 文件路径，可以包含行号和列号（格式：path/to/file.ts:123 或 path/to/file.ts:123:45）
    */
   static async openFile(filePath?: string): Promise<void> {
     try {
@@ -25,15 +25,17 @@ export class FileOperations {
 
       console.log('[FileOperations] Opening file:', filePath);
 
-      // Parse file path and line number (format: path/to/file.ts:123)
-      const match = filePath.match(/^(.+?)(?::(\d+))?$/);
+      // Parse file path, line number, and column number
+      // Formats: path/to/file.ts, path/to/file.ts:123, path/to/file.ts:123:45
+      const match = filePath.match(/^(.+?)(?::(\d+))?(?::(\d+))?$/);
       if (!match) {
         console.warn('[FileOperations] Invalid file path format:', filePath);
         return;
       }
 
-      const [, path, lineStr] = match;
+      const [, path, lineStr, columnStr] = match;
       const lineNumber = lineStr ? parseInt(lineStr, 10) - 1 : 0; // VS Code uses 0-based line numbers
+      const columnNumber = columnStr ? parseInt(columnStr, 10) - 1 : 0; // VS Code uses 0-based column numbers
 
       // Convert to absolute path if relative
       let absolutePath = path;
@@ -53,9 +55,9 @@ export class FileOperations {
         preserveFocus: false,
       });
 
-      // Navigate to line if specified
+      // Navigate to line and column if specified
       if (lineStr) {
-        const position = new vscode.Position(lineNumber, 0);
+        const position = new vscode.Position(lineNumber, columnNumber);
         editor.selection = new vscode.Selection(position, position);
         editor.revealRange(
           new vscode.Range(position, position),

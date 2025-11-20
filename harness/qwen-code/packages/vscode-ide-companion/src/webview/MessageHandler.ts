@@ -172,18 +172,29 @@ export class MessageHandler {
         break;
 
       case 'openDiff':
-        await FileOperations.openDiff(
-          data as {
-            path?: string;
-            oldText?: string;
-            newText?: string;
-          },
-        );
+        console.log('[MessageHandler] openDiff called with:', data);
+        await vscode.commands.executeCommand('qwenCode.showDiff', {
+          path: (data as { path?: string })?.path || '',
+          oldText: (data as { oldText?: string })?.oldText || '',
+          newText: (data as { newText?: string })?.newText || '',
+        });
         break;
 
       case 'openNewChatTab':
         // Create a new WebviewPanel (tab) in the same view column
         await vscode.commands.executeCommand('qwenCode.openNewChatTab');
+        break;
+
+      case 'attachFile':
+        await this.handleAttachFile();
+        break;
+
+      case 'showContextPicker':
+        await this.handleShowContextPicker();
+        break;
+
+      case 'getWorkspaceFiles':
+        await this.handleGetWorkspaceFiles(data?.query as string);
         break;
 
       default:
@@ -235,6 +246,35 @@ export class MessageHandler {
         data: { message: errorMsg },
       });
       return;
+    }
+
+    // Check if this is the first message by checking conversation messages
+    let isFirstMessage = false;
+    try {
+      const conversation = await this.conversationStore.getConversation(
+        this.currentConversationId,
+      );
+      // First message if conversation has no messages yet
+      isFirstMessage = !conversation || conversation.messages.length === 0;
+      console.log('[MessageHandler] Is first message:', isFirstMessage);
+    } catch (error) {
+      console.error('[MessageHandler] Failed to check conversation:', error);
+    }
+
+    // If this is the first message, generate and send session title
+    if (isFirstMessage) {
+      // Generate title from first message (max 50 characters)
+      const title = text.substring(0, 50) + (text.length > 50 ? '...' : '');
+      console.log('[MessageHandler] Generated session title:', title);
+
+      // Send title update to WebView
+      this.sendToWebView({
+        type: 'sessionTitleUpdated',
+        data: {
+          sessionId: this.currentConversationId,
+          title,
+        },
+      });
     }
 
     // Save user message
@@ -518,6 +558,233 @@ export class MessageHandler {
       this.sendToWebView({
         type: 'error',
         data: { message: `Failed to cancel: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 处理附加文件请求
+   * 打开文件选择器，将选中的文件信息发送回WebView
+   */
+  private async handleAttachFile(): Promise<void> {
+    try {
+      const uris = await vscode.window.showOpenDialog({
+        canSelectMany: false,
+        canSelectFiles: true,
+        canSelectFolders: false,
+        openLabel: 'Attach',
+      });
+
+      if (uris && uris.length > 0) {
+        const uri = uris[0];
+        const fileName = getFileName(uri.fsPath);
+
+        this.sendToWebView({
+          type: 'fileAttached',
+          data: {
+            id: `file-${Date.now()}`,
+            type: 'file',
+            name: fileName,
+            value: uri.fsPath,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('[MessageHandler] Failed to attach file:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to attach file: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 获取工作区文件列表
+   * 用于在 @ 触发时显示文件补全
+   * 优先显示最近使用的文件（打开的标签页）
+   */
+  private async handleGetWorkspaceFiles(query?: string): Promise<void> {
+    try {
+      const files: Array<{
+        id: string;
+        label: string;
+        description: string;
+        path: string;
+      }> = [];
+      const addedPaths = new Set<string>();
+
+      // Helper function to add a file
+      const addFile = (uri: vscode.Uri, isCurrentFile = false) => {
+        if (addedPaths.has(uri.fsPath)) {
+          return;
+        }
+
+        const fileName = getFileName(uri.fsPath);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+        const relativePath = workspaceFolder
+          ? vscode.workspace.asRelativePath(uri, false)
+          : uri.fsPath;
+
+        // Filter by query if provided
+        if (
+          query &&
+          !fileName.toLowerCase().includes(query.toLowerCase()) &&
+          !relativePath.toLowerCase().includes(query.toLowerCase())
+        ) {
+          return;
+        }
+
+        files.push({
+          id: isCurrentFile ? 'current-file' : uri.fsPath,
+          label: fileName,
+          description: relativePath,
+          path: uri.fsPath,
+        });
+        addedPaths.add(uri.fsPath);
+      };
+
+      // If query provided, search entire workspace
+      if (query) {
+        // Search workspace files matching the query
+        const uris = await vscode.workspace.findFiles(
+          `**/*${query}*`,
+          '**/node_modules/**',
+          50, // Allow more results for search
+        );
+
+        for (const uri of uris) {
+          addFile(uri);
+        }
+      } else {
+        // No query: show recently used files
+        // 1. Add current active file first
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+          addFile(activeEditor.document.uri, true);
+        }
+
+        // 2. Add all open tabs (recently used files)
+        const tabGroups = vscode.window.tabGroups.all;
+        for (const tabGroup of tabGroups) {
+          for (const tab of tabGroup.tabs) {
+            const input = tab.input as { uri?: vscode.Uri } | undefined;
+            if (input && input.uri instanceof vscode.Uri) {
+              addFile(input.uri);
+            }
+          }
+        }
+
+        // 3. If still not enough files (less than 10), add some workspace files
+        if (files.length < 10) {
+          const recentUris = await vscode.workspace.findFiles(
+            '**/*',
+            '**/node_modules/**',
+            20,
+          );
+
+          for (const uri of recentUris) {
+            if (files.length >= 20) {
+              break;
+            }
+            addFile(uri);
+          }
+        }
+      }
+
+      this.sendToWebView({
+        type: 'workspaceFiles',
+        data: { files },
+      });
+    } catch (error) {
+      console.error('[MessageHandler] Failed to get workspace files:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to get workspace files: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 处理显示上下文选择器请求
+   * 显示快速选择菜单，包含文件、符号等选项
+   * 参考 vscode-copilot-chat 的 AttachContextAction
+   */
+  private async handleShowContextPicker(): Promise<void> {
+    try {
+      const items: vscode.QuickPickItem[] = [];
+
+      // Add current file
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        const fileName = getFileName(activeEditor.document.uri.fsPath);
+        items.push({
+          label: `$(file) ${fileName}`,
+          description: 'Current file',
+          detail: activeEditor.document.uri.fsPath,
+        });
+      }
+
+      // Add file picker option
+      items.push({
+        label: '$(file) File...',
+        description: 'Choose a file to attach',
+      });
+
+      // Add workspace files option
+      items.push({
+        label: '$(search) Search files...',
+        description: 'Search workspace files',
+      });
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Attach context',
+        matchOnDescription: true,
+        matchOnDetail: true,
+      });
+
+      if (selected) {
+        if (selected.label.includes('Current file') && activeEditor) {
+          const fileName = getFileName(activeEditor.document.uri.fsPath);
+          this.sendToWebView({
+            type: 'fileAttached',
+            data: {
+              id: `file-${Date.now()}`,
+              type: 'file',
+              name: fileName,
+              value: activeEditor.document.uri.fsPath,
+            },
+          });
+        } else if (selected.label.includes('File...')) {
+          await this.handleAttachFile();
+        } else if (selected.label.includes('Search files')) {
+          // Open workspace file picker
+          const uri = await vscode.window.showOpenDialog({
+            defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+            canSelectMany: false,
+            canSelectFiles: true,
+            canSelectFolders: false,
+            openLabel: 'Attach',
+          });
+
+          if (uri && uri.length > 0) {
+            const fileName = getFileName(uri[0].fsPath);
+            this.sendToWebView({
+              type: 'fileAttached',
+              data: {
+                id: `file-${Date.now()}`,
+                type: 'file',
+                name: fileName,
+                value: uri[0].fsPath,
+              },
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[MessageHandler] Failed to show context picker:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to show context picker: ${error}` },
       });
     }
   }
