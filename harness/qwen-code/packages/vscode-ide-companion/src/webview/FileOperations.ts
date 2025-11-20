@@ -1,0 +1,153 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import * as vscode from 'vscode';
+import { getFileName } from '../utils/webviewUtils.js';
+
+/**
+ * 文件操作处理器
+ * 负责处理文件打开和 diff 查看功能
+ */
+export class FileOperations {
+  /**
+   * 打开文件并可选跳转到指定行
+   * @param filePath 文件路径，可以包含行号（格式：path/to/file.ts:123）
+   */
+  static async openFile(filePath?: string): Promise<void> {
+    try {
+      if (!filePath) {
+        console.warn('[FileOperations] No file path provided');
+        return;
+      }
+
+      console.log('[FileOperations] Opening file:', filePath);
+
+      // Parse file path and line number (format: path/to/file.ts:123)
+      const match = filePath.match(/^(.+?)(?::(\d+))?$/);
+      if (!match) {
+        console.warn('[FileOperations] Invalid file path format:', filePath);
+        return;
+      }
+
+      const [, path, lineStr] = match;
+      const lineNumber = lineStr ? parseInt(lineStr, 10) - 1 : 0; // VS Code uses 0-based line numbers
+
+      // Convert to absolute path if relative
+      let absolutePath = path;
+      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
+        // Relative path - resolve against workspace
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
+        }
+      }
+
+      // Open the document
+      const uri = vscode.Uri.file(absolutePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document, {
+        preview: false,
+        preserveFocus: false,
+      });
+
+      // Navigate to line if specified
+      if (lineStr) {
+        const position = new vscode.Position(lineNumber, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter,
+        );
+      }
+
+      console.log('[FileOperations] File opened successfully:', absolutePath);
+    } catch (error) {
+      console.error('[FileOperations] Failed to open file:', error);
+      vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+    }
+  }
+
+  /**
+   * 打开 diff 视图比较文件变更
+   * @param data Diff 数据，包含文件路径、旧内容和新内容
+   */
+  static async openDiff(data?: {
+    path?: string;
+    oldText?: string;
+    newText?: string;
+  }): Promise<void> {
+    try {
+      if (!data || !data.path) {
+        console.warn('[FileOperations] No file path provided for diff');
+        return;
+      }
+
+      const { path, oldText = '', newText = '' } = data;
+      console.log('[FileOperations] Opening diff for:', path);
+
+      // Convert to absolute path if relative
+      let absolutePath = path;
+      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
+        }
+      }
+
+      // Get the file name for display
+      const fileName = getFileName(absolutePath);
+
+      // Create URIs for old and new content
+      // Use untitled scheme for old content (before changes)
+      const oldUri = vscode.Uri.parse(`untitled:${absolutePath}.old`).with({
+        scheme: 'untitled',
+      });
+
+      // Use the actual file URI for new content
+      const newUri = vscode.Uri.file(absolutePath);
+
+      // Create a TextDocument for the old content using an in-memory document
+      const _oldDocument = await vscode.workspace.openTextDocument(
+        oldUri.with({ scheme: 'untitled' }),
+      );
+
+      // Write old content to the document
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(
+        oldUri.with({ scheme: 'untitled' }),
+        new vscode.Position(0, 0),
+        oldText,
+      );
+      await vscode.workspace.applyEdit(edit);
+
+      // Check if new file exists, if not create it with new content
+      try {
+        await vscode.workspace.fs.stat(newUri);
+      } catch {
+        // File doesn't exist, create it
+        const encoder = new TextEncoder();
+        await vscode.workspace.fs.writeFile(newUri, encoder.encode(newText));
+      }
+
+      // Open diff view
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        oldUri.with({ scheme: 'untitled' }),
+        newUri,
+        `${fileName} (Before ↔ After)`,
+        {
+          preview: false,
+          preserveFocus: false,
+        },
+      );
+
+      console.log('[FileOperations] Diff opened successfully');
+    } catch (error) {
+      console.error('[FileOperations] Failed to open diff:', error);
+      vscode.window.showErrorMessage(`Failed to open diff: ${error}`);
+    }
+  }
+}

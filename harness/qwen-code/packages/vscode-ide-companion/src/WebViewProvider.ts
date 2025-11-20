@@ -5,26 +5,25 @@
  */
 
 import * as vscode from 'vscode';
-import {
-  QwenAgentManager,
-  type ChatMessage,
-} from './agents/qwenAgentManager.js';
+import { QwenAgentManager } from './agents/qwenAgentManager.js';
 import { ConversationStore } from './storage/conversationStore.js';
 import type { AcpPermissionRequest } from './shared/acpTypes.js';
 import { CliDetector } from './utils/cliDetector.js';
 import { AuthStateManager } from './auth/authStateManager.js';
+import { PanelManager } from './webview/PanelManager.js';
+import { MessageHandler } from './webview/MessageHandler.js';
+import { WebViewContent } from './webview/WebViewContent.js';
+import { CliInstaller } from './webview/CliInstaller.js';
+import { getFileName } from './utils/webviewUtils.js';
 
 export class WebViewProvider {
-  private panel: vscode.WebviewPanel | null = null;
-  // Track the Webview tab (avoid pin/lock; use for reveal/visibility bookkeeping)
-  private panelTab: vscode.Tab | null = null;
+  private panelManager: PanelManager;
+  private messageHandler: MessageHandler;
   private agentManager: QwenAgentManager;
   private conversationStore: ConversationStore;
   private authStateManager: AuthStateManager;
-  private currentConversationId: string | null = null;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
-  private currentStreamContent = ''; // Track streaming content for saving
 
   constructor(
     context: vscode.ExtensionContext,
@@ -33,10 +32,20 @@ export class WebViewProvider {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
     this.authStateManager = new AuthStateManager(context);
+    this.panelManager = new PanelManager(extensionUri, () => {
+      // Panel dispose callback
+      this.disposables.forEach((d) => d.dispose());
+    });
+    this.messageHandler = new MessageHandler(
+      this.agentManager,
+      this.conversationStore,
+      null,
+      (message) => this.sendMessageToWebView(message),
+    );
 
     // Setup agent callbacks
     this.agentManager.onStreamChunk((chunk: string) => {
-      this.currentStreamContent += chunk;
+      this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'streamChunk',
         data: { chunk },
@@ -45,7 +54,7 @@ export class WebViewProvider {
 
     // Setup thought chunk handler
     this.agentManager.onThoughtChunk((chunk: string) => {
-      this.currentStreamContent += chunk;
+      this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'thoughtChunk',
         data: { chunk },
@@ -90,115 +99,66 @@ export class WebViewProvider {
               resolve(message.data.optionId);
             }
           };
-          // Store handler temporarily (in real implementation, use proper event system)
-          (this as { permissionHandler?: typeof handler }).permissionHandler =
-            handler;
+          // Store handler in message handler
+          this.messageHandler.setPermissionHandler(handler);
         });
       },
     );
   }
 
   async show(): Promise<void> {
-    // Track if we're creating a new panel in a new column
-    let startedInNewColumn = false;
+    const panel = this.panelManager.getPanel();
 
-    if (this.panel) {
-      // Reveal the existing panel via Tab API (Claude-style), fallback to panel.reveal
-      this.revealPanelTab(true);
-      this.capturePanelTab();
+    if (panel) {
+      // Reveal the existing panel
+      this.panelManager.revealPanel(true);
+      this.panelManager.captureTab();
       return;
     }
 
-    // Mark that we're creating a new panel
-    startedInNewColumn = true;
+    // Create new panel
+    const isNewPanel = this.panelManager.createPanel();
 
-    this.panel = vscode.window.createWebviewPanel(
-      'qwenCode.chat',
-      'Qwen Code Chat',
-      {
-        viewColumn: vscode.ViewColumn.Beside, // Open on right side of active editor
-        preserveFocus: true, // Don't steal focus from editor
-      },
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(this.extensionUri, 'dist'),
-          vscode.Uri.joinPath(this.extensionUri, 'assets'),
-        ],
-      },
-    );
-
-    // Capture the Tab that corresponds to our WebviewPanel (Claude-style)
-    this.capturePanelTab();
-
-    // Auto-lock editor group when opened in new column (Claude Code style)
-    if (startedInNewColumn) {
-      console.log(
-        '[WebViewProvider] Auto-locking editor group for Qwen Code chat',
-      );
-      try {
-        // Reveal panel without preserving focus to make it the active group
-        // This ensures the lock command targets the correct editor group
-        this.revealPanelTab(false);
-
-        await vscode.commands.executeCommand(
-          'workbench.action.lockEditorGroup',
-        );
-        console.log('[WebViewProvider] Editor group locked successfully');
-      } catch (error) {
-        console.warn('[WebViewProvider] Failed to lock editor group:', error);
-        // Non-fatal error, continue anyway
-      }
-    } else {
-      // For existing panel, reveal with preserving focus
-      this.revealPanelTab(true);
+    if (!isNewPanel) {
+      return; // Failed to create panel
     }
 
-    // Set panel icon to Qwen logo
-    this.panel.iconPath = vscode.Uri.joinPath(
+    const newPanel = this.panelManager.getPanel();
+    if (!newPanel) {
+      return;
+    }
+
+    // Capture the Tab that corresponds to our WebviewPanel
+    this.panelManager.captureTab();
+
+    // Auto-lock editor group when opened in new column
+    await this.panelManager.autoLockEditorGroup();
+
+    newPanel.webview.html = WebViewContent.generate(
+      newPanel,
       this.extensionUri,
-      'assets',
-      'icon.png',
     );
 
-    this.panel.webview.html = this.getWebviewContent();
-
     // Handle messages from WebView
-    this.panel.webview.onDidReceiveMessage(
-      async (message) => {
-        await this.handleWebViewMessage(message);
+    newPanel.webview.onDidReceiveMessage(
+      async (message: { type: string; data?: unknown }) => {
+        await this.messageHandler.route(message);
       },
       null,
       this.disposables,
     );
 
     // Listen for view state changes (no pin/lock; just keep tab reference fresh)
-    this.panel.onDidChangeViewState(
-      () => {
-        if (this.panel && this.panel.visible) {
-          this.capturePanelTab();
-        }
-      },
-      null,
-      this.disposables,
-    );
+    this.panelManager.registerViewStateChangeHandler(this.disposables);
 
-    this.panel.onDidDispose(
-      () => {
-        this.panel = null;
-        // Don't disconnect agent - keep it alive for next time
-        this.disposables.forEach((d) => d.dispose());
-      },
-      null,
-      this.disposables,
-    );
+    // Register panel dispose handler
+    this.panelManager.registerDisposeHandler(this.disposables);
 
     // Listen for active editor changes and notify WebView
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
       (editor) => {
         const fileName = editor?.document.uri.fsPath
-          ? this.getFileName(editor.document.uri.fsPath)
+          ? getFileName(editor.document.uri.fsPath)
           : null;
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
@@ -250,7 +210,7 @@ export class WebViewProvider {
         );
 
         // Show VSCode notification with installation option
-        await this.promptCliInstallation();
+        await CliInstaller.promptInstallation();
 
         // Initialize empty conversation (can still browse history)
         await this.initializeEmptyConversation();
@@ -290,37 +250,10 @@ export class WebViewProvider {
     }
   }
 
-  private async checkCliInstallation(): Promise<void> {
-    try {
-      const result = await CliDetector.detectQwenCli();
-
-      this.sendMessageToWebView({
-        type: 'cliDetectionResult',
-        data: {
-          isInstalled: result.isInstalled,
-          cliPath: result.cliPath,
-          version: result.version,
-          error: result.error,
-          installInstructions: result.isInstalled
-            ? undefined
-            : CliDetector.getInstallationInstructions(),
-        },
-      });
-
-      if (!result.isInstalled) {
-        console.log('[WebViewProvider] Qwen CLI not detected:', result.error);
-      } else {
-        console.log(
-          '[WebViewProvider] Qwen CLI detected:',
-          result.cliPath,
-          result.version,
-        );
-      }
-    } catch (error) {
-      console.error('[WebViewProvider] CLI detection error:', error);
-    }
-  }
-
+  /**
+   * Load messages from current Qwen session
+   * Creates a new ACP session for immediate message sending
+   */
   private async loadCurrentSessionMessages(): Promise<void> {
     try {
       console.log(
@@ -357,128 +290,22 @@ export class WebViewProvider {
     }
   }
 
-  private async promptCliInstallation(): Promise<void> {
-    const selection = await vscode.window.showWarningMessage(
-      'Qwen Code CLI is not installed. You can browse conversation history, but cannot send new messages.',
-      'Install Now',
-      'View Documentation',
-      'Remind Me Later',
-    );
-
-    if (selection === 'Install Now') {
-      await this.installQwenCli();
-    } else if (selection === 'View Documentation') {
-      vscode.env.openExternal(
-        vscode.Uri.parse('https://github.com/QwenLM/qwen-code#installation'),
-      );
-    }
-  }
-
-  private async installQwenCli(): Promise<void> {
-    try {
-      // Show progress notification
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'Installing Qwen Code CLI',
-          cancellable: false,
-        },
-        async (progress) => {
-          progress.report({
-            message: 'Running: npm install -g @qwen-code/qwen-code@latest',
-          });
-
-          const { exec } = await import('child_process');
-          const { promisify } = await import('util');
-          const execAsync = promisify(exec);
-
-          try {
-            const { stdout, stderr } = await execAsync(
-              'npm install -g @qwen-code/qwen-code@latest',
-              { timeout: 120000 }, // 2 minutes timeout
-            );
-
-            console.log('[WebViewProvider] Installation output:', stdout);
-            if (stderr) {
-              console.warn('[WebViewProvider] Installation stderr:', stderr);
-            }
-
-            // Clear cache and recheck
-            CliDetector.clearCache();
-            const detection = await CliDetector.detectQwenCli();
-
-            if (detection.isInstalled) {
-              vscode.window
-                .showInformationMessage(
-                  `✅ Qwen Code CLI installed successfully! Version: ${detection.version}`,
-                  'Reload Window',
-                )
-                .then((selection) => {
-                  if (selection === 'Reload Window') {
-                    vscode.commands.executeCommand(
-                      'workbench.action.reloadWindow',
-                    );
-                  }
-                });
-
-              // Update webview with new detection result
-              await this.checkCliInstallation();
-            } else {
-              throw new Error(
-                'Installation completed but CLI still not detected',
-              );
-            }
-          } catch (error) {
-            const errorMessage =
-              error instanceof Error ? error.message : String(error);
-            console.error(
-              '[WebViewProvider] Installation failed:',
-              errorMessage,
-            );
-
-            vscode.window
-              .showErrorMessage(
-                `Failed to install Qwen Code CLI: ${errorMessage}`,
-                'Try Manual Installation',
-                'View Documentation',
-              )
-              .then((selection) => {
-                if (selection === 'Try Manual Installation') {
-                  const terminal = vscode.window.createTerminal(
-                    'Qwen Code Installation',
-                  );
-                  terminal.show();
-                  terminal.sendText(
-                    'npm install -g @qwen-code/qwen-code@latest',
-                  );
-                } else if (selection === 'View Documentation') {
-                  vscode.env.openExternal(
-                    vscode.Uri.parse(
-                      'https://github.com/QwenLM/qwen-code#installation',
-                    ),
-                  );
-                }
-              });
-          }
-        },
-      );
-    } catch (error) {
-      console.error('[WebViewProvider] Install CLI error:', error);
-    }
-  }
-
+  /**
+   * Initialize an empty conversation
+   * Creates a new conversation and notifies WebView
+   */
   private async initializeEmptyConversation(): Promise<void> {
     try {
       console.log('[WebViewProvider] Initializing empty conversation');
       const newConv = await this.conversationStore.createConversation();
-      this.currentConversationId = newConv.id;
+      this.messageHandler.setCurrentConversationId(newConv.id);
       this.sendMessageToWebView({
         type: 'conversationLoaded',
         data: newConv,
       });
       console.log(
         '[WebViewProvider] Empty conversation initialized:',
-        this.currentConversationId,
+        this.messageHandler.getCurrentConversationId(),
       );
     } catch (error) {
       console.error(
@@ -493,577 +320,12 @@ export class WebViewProvider {
     }
   }
 
-  private async handleWebViewMessage(message: {
-    type: string;
-    data?: { text?: string; id?: string; sessionId?: string; path?: string };
-  }): Promise<void> {
-    console.log('[WebViewProvider] Received message from webview:', message);
-    const self = this as {
-      permissionHandler?: (msg: {
-        type: string;
-        data: { optionId: string };
-      }) => void;
-    };
-    switch (message.type) {
-      case 'sendMessage':
-        await this.handleSendMessage(message.data?.text || '');
-        break;
-
-      case 'permissionResponse':
-        // Forward to permission handler
-        if (self.permissionHandler) {
-          self.permissionHandler(
-            message as { type: string; data: { optionId: string } },
-          );
-          delete self.permissionHandler;
-        }
-        break;
-
-      case 'loadConversation':
-        await this.handleLoadConversation(message.data?.id || '');
-        break;
-
-      case 'newConversation':
-        await this.handleNewConversation();
-        break;
-
-      case 'newQwenSession':
-        await this.handleNewQwenSession();
-        break;
-
-      case 'deleteConversation':
-        await this.handleDeleteConversation(message.data?.id || '');
-        break;
-
-      case 'getQwenSessions':
-        await this.handleGetQwenSessions();
-        break;
-
-      case 'getActiveEditor': {
-        // 发送当前激活编辑器的文件名给 WebView
-        const editor = vscode.window.activeTextEditor;
-        const fileName = editor?.document.uri.fsPath
-          ? this.getFileName(editor.document.uri.fsPath)
-          : null;
-        this.sendMessageToWebView({
-          type: 'activeEditorChanged',
-          data: { fileName },
-        });
-        break;
-      }
-
-      case 'switchQwenSession':
-        await this.handleSwitchQwenSession(message.data?.sessionId || '');
-        break;
-
-      case 'recheckCli':
-        // Clear cache and recheck CLI installation
-        CliDetector.clearCache();
-        await this.checkCliInstallation();
-        break;
-
-      case 'cancelPrompt':
-        await this.handleCancelPrompt();
-        break;
-
-      case 'openFile':
-        await this.handleOpenFile(message.data?.path);
-        break;
-
-      case 'openDiff':
-        await this.handleOpenDiff(
-          message.data as { path?: string; oldText?: string; newText?: string },
-        );
-        break;
-
-      default:
-        console.warn('[WebViewProvider] Unknown message type:', message.type);
-        break;
-    }
-  }
-
-  private async handleSendMessage(text: string): Promise<void> {
-    console.log('[WebViewProvider] handleSendMessage called with:', text);
-
-    // Ensure we have an active conversation - create one if needed
-    if (!this.currentConversationId) {
-      console.log('[WebViewProvider] No active conversation, creating one...');
-      try {
-        await this.initializeEmptyConversation();
-        console.log(
-          '[WebViewProvider] Created conversation:',
-          this.currentConversationId,
-        );
-      } catch (error) {
-        const errorMsg = `Failed to create conversation: ${error}`;
-        console.error('[WebViewProvider]', errorMsg);
-        vscode.window.showErrorMessage(errorMsg);
-        this.sendMessageToWebView({
-          type: 'error',
-          data: { message: errorMsg },
-        });
-        return;
-      }
-    }
-
-    // Double check after creation attempt
-    if (!this.currentConversationId) {
-      const errorMsg =
-        'Failed to create conversation. Please restart the extension.';
-      console.error('[WebViewProvider]', errorMsg);
-      vscode.window.showErrorMessage(errorMsg);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: errorMsg },
-      });
-      return;
-    }
-
-    // Save user message
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: text,
-      timestamp: Date.now(),
-    };
-
-    await this.conversationStore.addMessage(
-      this.currentConversationId,
-      userMessage,
-    );
-    console.log('[WebViewProvider] User message saved to store');
-
-    // Send to WebView
-    this.sendMessageToWebView({
-      type: 'message',
-      data: userMessage,
-    });
-    console.log('[WebViewProvider] User message sent to webview');
-
-    // Check if agent is connected
-    if (!this.agentManager.isConnected) {
-      console.warn(
-        '[WebViewProvider] Agent is not connected, skipping AI response',
-      );
-      this.sendMessageToWebView({
-        type: 'error',
-        data: {
-          message:
-            'Agent is not connected. Enable Qwen in settings or configure API key.',
-        },
-      });
-      return;
-    }
-
-    // Send to agent
-    try {
-      // Reset stream content
-      this.currentStreamContent = '';
-
-      // Create placeholder for assistant message
-      this.sendMessageToWebView({
-        type: 'streamStart',
-        data: { timestamp: Date.now() },
-      });
-      console.log('[WebViewProvider] Stream start sent');
-
-      console.log('[WebViewProvider] Sending to agent manager...');
-      await this.agentManager.sendMessage(text);
-      console.log('[WebViewProvider] Agent manager send complete');
-
-      // Stream is complete - save assistant message
-      if (this.currentStreamContent && this.currentConversationId) {
-        const assistantMessage: ChatMessage = {
-          role: 'assistant',
-          content: this.currentStreamContent,
-          timestamp: Date.now(),
-        };
-        await this.conversationStore.addMessage(
-          this.currentConversationId,
-          assistantMessage,
-        );
-        console.log('[WebViewProvider] Assistant message saved to store');
-      }
-
-      this.sendMessageToWebView({
-        type: 'streamEnd',
-        data: { timestamp: Date.now() },
-      });
-      console.log('[WebViewProvider] Stream end sent');
-    } catch (error) {
-      console.error('[WebViewProvider] Error sending message:', error);
-      vscode.window.showErrorMessage(`Error sending message: ${error}`);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: String(error) },
-      });
-    }
-  }
-
-  private async handleLoadConversation(id: string): Promise<void> {
-    const conversation = await this.conversationStore.getConversation(id);
-    if (conversation) {
-      this.currentConversationId = id;
-      this.sendMessageToWebView({
-        type: 'conversationLoaded',
-        data: conversation,
-      });
-    }
-  }
-
-  private async handleNewConversation(): Promise<void> {
-    const newConv = await this.conversationStore.createConversation();
-    this.currentConversationId = newConv.id;
-    this.sendMessageToWebView({
-      type: 'conversationLoaded',
-      data: newConv,
-    });
-  }
-
-  private async handleDeleteConversation(id: string): Promise<void> {
-    await this.conversationStore.deleteConversation(id);
-    this.sendMessageToWebView({
-      type: 'conversationDeleted',
-      data: { id },
-    });
-  }
-
-  private async handleGetQwenSessions(): Promise<void> {
-    try {
-      console.log('[WebViewProvider] Getting Qwen sessions...');
-      const sessions = await this.agentManager.getSessionList();
-      console.log('[WebViewProvider] Retrieved sessions:', sessions.length);
-
-      this.sendMessageToWebView({
-        type: 'qwenSessionList',
-        data: { sessions },
-      });
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to get Qwen sessions:', error);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: `Failed to get sessions: ${error}` },
-      });
-    }
-  }
-
-  private async handleNewQwenSession(): Promise<void> {
-    try {
-      console.log('[WebViewProvider] Creating new Qwen session...');
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-
-      await this.agentManager.createNewSession(workingDir);
-
-      // Clear current conversation UI
-      this.sendMessageToWebView({
-        type: 'conversationCleared',
-        data: {},
-      });
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to create new session:', error);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: `Failed to create new session: ${error}` },
-      });
-    }
-  }
-
-  private async handleSwitchQwenSession(sessionId: string): Promise<void> {
-    try {
-      console.log('[WebViewProvider] Switching to Qwen session:', sessionId);
-
-      // Get session messages from local files
-      const messages = await this.agentManager.getSessionMessages(sessionId);
-      console.log(
-        '[WebViewProvider] Loaded messages from session:',
-        messages.length,
-      );
-
-      // Get session details for the header
-      let sessionDetails = null;
-      try {
-        const allSessions = await this.agentManager.getSessionList();
-        sessionDetails = allSessions.find(
-          (s: { id?: string; sessionId?: string }) =>
-            s.id === sessionId || s.sessionId === sessionId,
-        );
-      } catch (err) {
-        console.log('[WebViewProvider] Could not get session details:', err);
-      }
-
-      // TESTING: Try to load session via ACP first, fallback to creating new session
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-
-      try {
-        console.log('[WebViewProvider] Testing session/load via ACP...');
-        const loadResponse =
-          await this.agentManager.loadSessionViaAcp(sessionId);
-        console.log('[WebViewProvider] session/load succeeded:', loadResponse);
-
-        // If load succeeded, use the loaded session
-        this.currentConversationId = sessionId;
-        console.log(
-          '[WebViewProvider] Set currentConversationId to loaded session:',
-          sessionId,
-        );
-      } catch (_loadError) {
-        console.log(
-          '[WebViewProvider] session/load not supported, creating new session',
-        );
-
-        // Fallback: CLI doesn't support loading old sessions
-        // So we create a NEW ACP session for continuation
-        try {
-          const newAcpSessionId =
-            await this.agentManager.createNewSession(workingDir);
-          console.log(
-            '[WebViewProvider] Created new ACP session for conversation:',
-            newAcpSessionId,
-          );
-
-          // Use the NEW ACP session ID for sending messages to CLI
-          this.currentConversationId = newAcpSessionId;
-          console.log(
-            '[WebViewProvider] Set currentConversationId (ACP) to:',
-            newAcpSessionId,
-          );
-        } catch (createError) {
-          console.error(
-            '[WebViewProvider] Failed to create new ACP session:',
-            createError,
-          );
-          vscode.window.showWarningMessage(
-            'Could not switch to session. Created new session instead.',
-          );
-          throw createError;
-        }
-      }
-
-      // Send messages and session details to WebView
-      // The historical messages are display-only, not sent to CLI
-      this.sendMessageToWebView({
-        type: 'qwenSessionSwitched',
-        data: { sessionId, messages, session: sessionDetails },
-      });
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to switch session:', error);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: `Failed to switch session: ${error}` },
-      });
-      vscode.window.showErrorMessage(`Failed to switch session: ${error}`);
-    }
-  }
-
   /**
-   * Handle cancel prompt request from WebView
-   * Cancels the current AI response generation
+   * Send message to WebView
    */
-  private async handleCancelPrompt(): Promise<void> {
-    try {
-      console.log('[WebViewProvider] Cancel prompt requested');
-
-      if (!this.agentManager.isConnected) {
-        console.warn('[WebViewProvider] Agent not connected, cannot cancel');
-        return;
-      }
-
-      await this.agentManager.cancelCurrentPrompt();
-
-      this.sendMessageToWebView({
-        type: 'promptCancelled',
-        data: { timestamp: Date.now() },
-      });
-
-      console.log('[WebViewProvider] Prompt cancelled successfully');
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to cancel prompt:', error);
-      this.sendMessageToWebView({
-        type: 'error',
-        data: { message: `Failed to cancel: ${error}` },
-      });
-    }
-  }
-
-  /**
-   * Handle open file request from WebView
-   * Opens a file in VS Code editor, optionally at a specific line
-   */
-  private async handleOpenFile(filePath?: string): Promise<void> {
-    try {
-      if (!filePath) {
-        console.warn('[WebViewProvider] No file path provided');
-        return;
-      }
-
-      console.log('[WebViewProvider] Opening file:', filePath);
-
-      // Parse file path and line number (format: path/to/file.ts:123)
-      const match = filePath.match(/^(.+?)(?::(\d+))?$/);
-      if (!match) {
-        console.warn('[WebViewProvider] Invalid file path format:', filePath);
-        return;
-      }
-
-      const [, path, lineStr] = match;
-      const lineNumber = lineStr ? parseInt(lineStr, 10) - 1 : 0; // VS Code uses 0-based line numbers
-
-      // Convert to absolute path if relative
-      let absolutePath = path;
-      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
-        // Relative path - resolve against workspace
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (workspaceFolder) {
-          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
-        }
-      }
-
-      // Open the document
-      const uri = vscode.Uri.file(absolutePath);
-      const document = await vscode.workspace.openTextDocument(uri);
-      const editor = await vscode.window.showTextDocument(document, {
-        preview: false,
-        preserveFocus: false,
-      });
-
-      // Navigate to line if specified
-      if (lineStr) {
-        const position = new vscode.Position(lineNumber, 0);
-        editor.selection = new vscode.Selection(position, position);
-        editor.revealRange(
-          new vscode.Range(position, position),
-          vscode.TextEditorRevealType.InCenter,
-        );
-      }
-
-      console.log('[WebViewProvider] File opened successfully:', absolutePath);
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to open file:', error);
-      vscode.window.showErrorMessage(`Failed to open file: ${error}`);
-    }
-  }
-
-  /**
-   * Handle open diff request from WebView
-   * Opens VS Code's diff viewer to compare old and new file contents
-   */
-  private async handleOpenDiff(data?: {
-    path?: string;
-    oldText?: string;
-    newText?: string;
-  }): Promise<void> {
-    try {
-      if (!data || !data.path) {
-        console.warn('[WebViewProvider] No file path provided for diff');
-        return;
-      }
-
-      const { path, oldText = '', newText = '' } = data;
-      console.log('[WebViewProvider] Opening diff for:', path);
-
-      // Convert to absolute path if relative
-      let absolutePath = path;
-      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (workspaceFolder) {
-          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
-        }
-      }
-
-      // Get the file name for display
-      const fileName = this.getFileName(absolutePath);
-
-      // Create URIs for old and new content
-      // Use untitled scheme for old content (before changes)
-      const oldUri = vscode.Uri.parse(`untitled:${absolutePath}.old`).with({
-        scheme: 'untitled',
-      });
-
-      // Use the actual file URI for new content
-      const newUri = vscode.Uri.file(absolutePath);
-
-      // Create a TextDocument for the old content using an in-memory document
-      const _oldDocument = await vscode.workspace.openTextDocument(
-        oldUri.with({ scheme: 'untitled' }),
-      );
-
-      // Write old content to the document
-      const edit = new vscode.WorkspaceEdit();
-      edit.insert(
-        oldUri.with({ scheme: 'untitled' }),
-        new vscode.Position(0, 0),
-        oldText,
-      );
-      await vscode.workspace.applyEdit(edit);
-
-      // Check if new file exists, if not create it with new content
-      try {
-        await vscode.workspace.fs.stat(newUri);
-      } catch {
-        // File doesn't exist, create it
-        const encoder = new TextEncoder();
-        await vscode.workspace.fs.writeFile(newUri, encoder.encode(newText));
-      }
-
-      // Open diff view
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        oldUri.with({ scheme: 'untitled' }),
-        newUri,
-        `${fileName} (Before ↔ After)`,
-        {
-          preview: false,
-          preserveFocus: false,
-        },
-      );
-
-      console.log('[WebViewProvider] Diff opened successfully');
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to open diff:', error);
-      vscode.window.showErrorMessage(`Failed to open diff: ${error}`);
-    }
-  }
-
   private sendMessageToWebView(message: unknown): void {
-    this.panel?.webview.postMessage(message);
-  }
-
-  /**
-   * 从完整路径中提取文件名
-   * @param fsPath 文件的完整路径
-   * @returns 文件名（不含路径）
-   */
-  private getFileName(fsPath: string): string {
-    // 使用 path.basename 的逻辑：找到最后一个路径分隔符后的部分
-    const lastSlash = Math.max(
-      fsPath.lastIndexOf('/'),
-      fsPath.lastIndexOf('\\'),
-    );
-    return lastSlash >= 0 ? fsPath.substring(lastSlash + 1) : fsPath;
-  }
-
-  private getWebviewContent(): string {
-    const scriptUri = this.panel!.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'),
-    );
-
-    // Convert extension URI for webview access - this allows frontend to construct resource paths
-    const extensionUri = this.panel!.webview.asWebviewUri(this.extensionUri);
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${this.panel!.webview.cspSource}; script-src ${this.panel!.webview.cspSource}; style-src ${this.panel!.webview.cspSource} 'unsafe-inline';">
-  <title>Qwen Code Chat</title>
-</head>
-<body data-extension-uri="${extensionUri}">
-  <div id="root"></div>
-  <script src="${scriptUri}"></script>
-</body>
-</html>`;
+    const panel = this.panelManager.getPanel();
+    panel?.webview.postMessage(message);
   }
 
   /**
@@ -1078,94 +340,32 @@ export class WebViewProvider {
   }
 
   /**
-   * Capture the VS Code Tab that corresponds to our WebviewPanel.
-   * We do not pin or lock the editor group, mirroring Claude's approach.
-   * Instead, we:
-   *  - open beside the active editor
-   *  - preserve focus to keep typing in the current file
-   *  - keep a Tab reference for reveal/visibility bookkeeping if needed
-   */
-  private capturePanelTab(): void {
-    if (!this.panel) {
-      return;
-    }
-
-    // Defer slightly so the tab model is updated after create/reveal
-    setTimeout(() => {
-      const allTabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
-      const match = allTabs.find((t) => {
-        // Type guard for webview tab input
-        const input: unknown = (t as { input?: unknown }).input;
-        const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
-          !!inp && typeof inp === 'object' && 'viewType' in inp;
-        const isWebview = isWebviewInput(input);
-        const sameViewType = isWebview && input.viewType === 'qwenCode.chat';
-        const sameLabel = t.label === this.panel!.title;
-        return !!(sameViewType || sameLabel);
-      });
-      this.panelTab = match ?? null;
-    }, 50);
-  }
-
-  /**
-   * Reveal the WebView panel (optionally preserving focus)
-   * We track the tab for bookkeeping, but use panel.reveal for actual reveal
-   */
-  private revealPanelTab(preserveFocus: boolean = true): void {
-    if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
-    }
-  }
-
-  /**
    * Restore an existing WebView panel (called during VSCode restart)
    * This sets up the panel with all event listeners
    */
   restorePanel(panel: vscode.WebviewPanel): void {
     console.log('[WebViewProvider] Restoring WebView panel');
-    this.panel = panel;
+    this.panelManager.setPanel(panel);
 
-    // Set panel icon to Qwen logo
-    this.panel.iconPath = vscode.Uri.joinPath(
-      this.extensionUri,
-      'assets',
-      'icon.png',
-    );
-
-    // Set webview HTML
-    this.panel.webview.html = this.getWebviewContent();
+    panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
 
     // Handle messages from WebView
-    this.panel.webview.onDidReceiveMessage(
-      async (message) => {
-        await this.handleWebViewMessage(message);
+    panel.webview.onDidReceiveMessage(
+      async (message: { type: string; data?: unknown }) => {
+        await this.messageHandler.route(message);
       },
       null,
       this.disposables,
     );
 
-    // Listen for view state changes (track the tab only)
-    this.panel.onDidChangeViewState(
-      () => {
-        if (this.panel && this.panel.visible) {
-          this.capturePanelTab();
-        }
-      },
-      null,
-      this.disposables,
-    );
+    // Register view state change handler
+    this.panelManager.registerViewStateChangeHandler(this.disposables);
 
-    this.panel.onDidDispose(
-      () => {
-        this.panel = null;
-        this.disposables.forEach((d) => d.dispose());
-      },
-      null,
-      this.disposables,
-    );
+    // Register dispose handler
+    this.panelManager.registerDisposeHandler(this.disposables);
 
-    // Track the tab reference on restore
-    this.capturePanelTab();
+    // Capture the tab reference on restore
+    this.panelManager.captureTab();
 
     console.log('[WebViewProvider] Panel restored successfully');
 
@@ -1203,7 +403,7 @@ export class WebViewProvider {
     agentInitialized: boolean;
   } {
     return {
-      conversationId: this.currentConversationId,
+      conversationId: this.messageHandler.getCurrentConversationId(),
       agentInitialized: this.agentInitialized,
     };
   }
@@ -1216,17 +416,21 @@ export class WebViewProvider {
     agentInitialized: boolean;
   }): void {
     console.log('[WebViewProvider] Restoring state:', state);
-    this.currentConversationId = state.conversationId;
+    this.messageHandler.setCurrentConversationId(state.conversationId);
     this.agentInitialized = state.agentInitialized;
 
     // Reload content after restore
-    if (this.panel) {
-      this.panel.webview.html = this.getWebviewContent();
+    const panel = this.panelManager.getPanel();
+    if (panel) {
+      panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
     }
   }
 
+  /**
+   * Dispose the WebView provider and clean up resources
+   */
   dispose(): void {
-    this.panel?.dispose();
+    this.panelManager.dispose();
     this.agentManager.disconnect();
     this.disposables.forEach((d) => d.dispose());
   }

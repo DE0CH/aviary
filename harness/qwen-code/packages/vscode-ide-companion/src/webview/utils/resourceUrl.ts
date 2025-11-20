@@ -33,11 +33,35 @@ function getExtensionUri(): string | undefined {
 }
 
 /**
+ * 验证 URL 是否为安全的 VS Code webview 资源 URL
+ * 防止 XSS 攻击
+ *
+ * @param url - 待验证的 URL
+ * @returns 是否为安全的 URL
+ */
+function isValidWebviewUrl(url: string): boolean {
+  try {
+    // VS Code webview 资源 URL 的合法协议
+    const allowedProtocols = [
+      'vscode-webview-resource:',
+      'https-vscode-webview-resource:',
+      'vscode-file:',
+      'https:',
+    ];
+
+    // 检查是否以合法协议开头
+    return allowedProtocols.some((protocol) => url.startsWith(protocol));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Generate a resource URL for webview access
  * Similar to the pattern used in other VSCode extensions
  *
  * @param relativePath - Relative path from extension root (e.g., 'assets/icon.png')
- * @returns Full webview-accessible URL
+ * @returns Full webview-accessible URL (empty string if validation fails)
  *
  * @example
  * ```tsx
@@ -52,6 +76,15 @@ export function generateResourceUrl(relativePath: string): string {
     return '';
   }
 
+  // 验证 extensionUri 是否为安全的 URL
+  if (!isValidWebviewUrl(extensionUri)) {
+    console.error(
+      '[resourceUrl] Invalid extension URI - possible security risk:',
+      extensionUri,
+    );
+    return '';
+  }
+
   // Remove leading slash if present
   const cleanPath = relativePath.startsWith('/')
     ? relativePath.slice(1)
@@ -62,7 +95,15 @@ export function generateResourceUrl(relativePath: string): string {
     ? extensionUri
     : `${extensionUri}/`;
 
-  return `${baseUri}${cleanPath}`;
+  const fullUrl = `${baseUri}${cleanPath}`;
+
+  // 验证最终生成的 URL 是否安全
+  if (!isValidWebviewUrl(fullUrl)) {
+    console.error('[resourceUrl] Generated URL failed validation:', fullUrl);
+    return '';
+  }
+
+  return fullUrl;
 }
 
 /**
