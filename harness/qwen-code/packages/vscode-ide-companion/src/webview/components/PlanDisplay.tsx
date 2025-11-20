@@ -21,77 +21,67 @@ interface PlanDisplayProps {
  * PlanDisplay component - displays AI's task plan/todo list
  */
 export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
-  const getStatusIcon = (status: string, _index: number) => {
+  // 计算完成进度
+  const completedCount = entries.filter((e) => e.status === 'completed').length;
+  const totalCount = entries.length;
+
+  const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'in_progress':
-        return (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            className="plan-icon in-progress"
-          >
-            <rect
-              x="2"
-              y="2"
-              width="12"
-              height="12"
-              rx="2"
-              fill="var(--app-qwen-orange)"
-            />
-            <path
-              d="M7 4L7 12M10 8L4 8"
-              stroke="var(--app-qwen-ivory)"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        );
       case 'completed':
         return (
           <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
             fill="none"
             className="plan-icon completed"
           >
-            <rect
-              x="2"
-              y="2"
-              width="12"
-              height="12"
-              rx="2"
-              fill="var(--app-qwen-green, #6BCF7F)"
-            />
+            <circle cx="7" cy="7" r="6" fill="currentColor" opacity="0.2" />
             <path
-              d="M5 8L7 10L11 6"
-              stroke="var(--app-qwen-ivory)"
+              d="M4 7.5L6 9.5L10 4.5"
+              stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
         );
-      default:
+      case 'in_progress':
         return (
           <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            className="plan-icon in-progress"
+          >
+            <circle
+              cx="7"
+              cy="7"
+              r="5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            />
+          </svg>
+        );
+      default:
+        // pending
+        return (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
             fill="none"
             className="plan-icon pending"
           >
-            <rect
-              x="2.5"
-              y="2.5"
-              width="11"
-              height="11"
-              rx="2"
-              stroke="var(--app-secondary-foreground)"
+            <circle
+              cx="7"
+              cy="7"
+              r="5.5"
+              fill="none"
+              stroke="currentColor"
               strokeWidth="1"
-              fill="transparent"
             />
           </svg>
         );
@@ -101,41 +91,49 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
   return (
     <div className="plan-display">
       <div className="plan-header">
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 20 20"
-          fill="none"
-          className="plan-header-icon"
-        >
-          <rect
-            x="3"
-            y="3"
+        <div className="plan-progress-icons">
+          <svg
             width="14"
             height="14"
-            rx="2"
-            stroke="currentColor"
-            strokeWidth="1.5"
+            viewBox="0 0 14 14"
             fill="none"
-          />
-          <path
-            d="M3 7H17M7 3V7M13 3V7"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          />
-        </svg>
-        <span className="plan-title">Task Plan</span>
+            className="plan-progress-icon"
+          >
+            <circle
+              cx="7"
+              cy="7"
+              r="5.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+          </svg>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            className="plan-progress-icon"
+          >
+            <circle cx="7" cy="7" r="6" fill="currentColor" opacity="0.2" />
+            <path
+              d="M4 7.5L6 9.5L10 4.5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+        <span className="plan-title">
+          {completedCount} of {totalCount} Done
+        </span>
       </div>
       <div className="plan-entries">
         {entries.map((entry, index) => (
           <div key={index} className={`plan-entry ${entry.status}`}>
-            <div className="plan-entry-line"></div>
-            <div className="plan-entry-icon">
-              {getStatusIcon(entry.status, index)}
-            </div>
+            <div className="plan-entry-icon">{getStatusIcon(entry.status)}</div>
             <div className="plan-entry-content">
-              <span className="plan-entry-number">{index + 1}.</span>
               <span className="plan-entry-text">{entry.content}</span>
             </div>
           </div>

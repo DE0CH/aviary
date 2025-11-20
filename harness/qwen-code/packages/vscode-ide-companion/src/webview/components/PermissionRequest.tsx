@@ -117,10 +117,25 @@ export const PermissionRequest: React.FC<PermissionRequestProps> = ({
         {/* Show command if available */}
         {(toolCall.rawInput?.command || toolCall.title) && (
           <div className="permission-command-section">
-            <div className="permission-command-label">Command</div>
-            <code className="permission-command-code">
-              {toolCall.rawInput?.command || toolCall.title}
-            </code>
+            <div className="permission-command-header">
+              <div className="permission-command-status">
+                <span className="permission-command-dot">●</span>
+                <span className="permission-command-label">COMMAND</span>
+              </div>
+            </div>
+            <div className="permission-command-content">
+              <div className="permission-command-input-section">
+                <span className="permission-command-io-label">IN</span>
+                <code className="permission-command-code">
+                  {toolCall.rawInput?.command || toolCall.title}
+                </code>
+              </div>
+              {toolCall.rawInput?.description && (
+                <div className="permission-command-description">
+                  {toolCall.rawInput.description}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

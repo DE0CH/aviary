@@ -6,65 +6,54 @@
 
 /**
  * PlanDisplay.css - Styles for the task plan component
- * Simple, clean timeline-style design
+ * Clean checklist-style design matching Claude Code CLI
  */
 
 .plan-display {
-  background: var(--app-secondary-background);
-  border: 1px solid var(--app-transparent-inner-border);
-  border-radius: var(--corner-radius-medium);
-  padding: 16px;
-  margin: 12px 0;
-  animation: fadeIn 0.3s ease-in;
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  margin: 8px 0;
 }
 
 .plan-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  color: var(--app-primary-foreground);
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
-.plan-header-icon {
+.plan-progress-icons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.plan-progress-icon {
   flex-shrink: 0;
-  opacity: 0.8;
+  color: var(--app-secondary-foreground);
+  opacity: 0.6;
 }
 
 .plan-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--app-primary-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--app-secondary-foreground);
+  opacity: 0.8;
 }
 
 .plan-entries {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  position: relative;
+  gap: 1px;
 }
 
 .plan-entry {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 8px 0;
-  position: relative;
-}
-
-/* Vertical line on the left */
-.plan-entry-line {
-  position: absolute;
-  left: 7px;
-  top: 24px;
-  bottom: -8px;
-  width: 2px;
-  background: var(--app-qwen-clay-button-orange);
-  opacity: 0.3;
-}
-
-.plan-entry:last-child .plan-entry-line {
-  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  min-height: 20px;
 }
 
 /* Icon container */
@@ -73,60 +62,62 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  position: relative;
-  z-index: 1;
+  width: 14px;
+  height: 14px;
 }
 
 .plan-icon {
   display: block;
+  width: 14px;
+  height: 14px;
+}
+
+/* 不同状态的图标颜色 */
+.plan-icon.pending {
+  color: var(--app-secondary-foreground);
+  opacity: 0.35;
+}
+
+.plan-icon.in-progress {
+  color: var(--app-secondary-foreground);
+  opacity: 0.7;
+}
+
+.plan-icon.completed {
+  color: #4caf50; /* 绿色勾号 */
+  opacity: 0.8;
 }
 
 /* Content */
 .plan-entry-content {
   flex: 1;
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-height: 24px;
-  padding-top: 1px;
-}
-
-.plan-entry-number {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--app-secondary-foreground);
-  flex-shrink: 0;
-  min-width: 24px;
+  align-items: center;
 }
 
 .plan-entry-text {
   flex: 1;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--app-primary-foreground);
+  opacity: 0.85;
 }
 
 /* Status-specific styles */
 .plan-entry.completed .plan-entry-text {
-  opacity: 0.6;
+  opacity: 0.5;
   text-decoration: line-through;
 }
 
 .plan-entry.in_progress .plan-entry-text {
-  font-weight: 500;
-}
-
-.plan-entry.in_progress .plan-entry-number {
-  color: var(--app-qwen-orange);
-  font-weight: 600;
+  font-weight: 400;
+  opacity: 0.9;
 }
 
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
