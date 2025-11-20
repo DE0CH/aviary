@@ -38,25 +38,40 @@ To debug and develop this extension locally:
    pnpm install
    ```
 
-3. **Open the extension in VS Code**
+3. **Start debugging**
+
+   You have two options:
+
+   **Option A: Debug from Project Root (Recommended)**
+
+   ```bash
+   code .  # Open the project root in VS Code
+   ```
+   - Open the `packages/vscode-ide-companion/src/extension.ts` file
+   - Open Debug panel (`Ctrl+Shift+D` or `Cmd+Shift+D`)
+   - Select **"Launch Companion VS Code Extension"** from the debug dropdown
+   - Press `F5` to launch Extension Development Host
+
+   **Option B: Debug from Extension Directory**
 
    ```bash
    cd packages/vscode-ide-companion
-   code .
+   code .  # Open the extension directory in VS Code
    ```
+   - Open the `src/extension.ts` file
+   - Open Debug panel (`Ctrl+Shift+D` or `Cmd+Shift+D`)
+   - Select **"Run Extension"** from the debug dropdown
+   - Press `F5` to launch Extension Development Host
 
-4. **Start debugging**
-   - Press `F5` or click "Run and Debug" from the sidebar
-   - Select "Run Extension" from the debug configuration dropdown
-   - This will open a new "Extension Development Host" window with the extension loaded
+   > 💡 **Tip**: Option A is recommended if you need to debug both the extension and core packages together.
 
-5. **Make changes and reload**
+4. **Make changes and reload**
    - Edit the source code in the original VS Code window
    - To see your changes, reload the Extension Development Host window by:
      - Pressing `Ctrl+R` (Windows/Linux) or `Cmd+R` (macOS)
      - Or clicking the "Reload" button in the debug toolbar
 
-6. **View logs and debug output**
+5. **View logs and debug output**
    - Open the Debug Console in the original VS Code window to see extension logs
    - In the Extension Development Host window, open Developer Tools with `Help > Toggle Developer Tools` to see webview logs
 
