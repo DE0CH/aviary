@@ -220,6 +220,7 @@ export const App: React.FC = () => {
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
+  const [isComposing, setIsComposing] = useState(false);
 
   const handlePermissionRequest = React.useCallback(
     (request: {
@@ -401,20 +402,8 @@ export const App: React.FC = () => {
         case 'qwenSessionList': {
           const sessions = message.data.sessions || [];
           setQwenSessions(sessions);
-          // If no current session is selected and there are sessions, select the first one
-          if (!currentSessionId && sessions.length > 0) {
-            const firstSession = sessions[0];
-            const firstSessionId =
-              (firstSession.id as string) || (firstSession.sessionId as string);
-            const firstSessionTitle =
-              (firstSession.title as string) ||
-              (firstSession.name as string) ||
-              'Past Conversations';
-            if (firstSessionId) {
-              setCurrentSessionId(firstSessionId);
-              setCurrentSessionTitle(firstSessionTitle);
-            }
-          } else if (currentSessionId && sessions.length > 0) {
+          // Only update title if we have a current session selected
+          if (currentSessionId && sessions.length > 0) {
             // Update title for the current session if it exists in the list
             const currentSession = sessions.find(
               (s: Record<string, unknown>) =>
@@ -443,13 +432,15 @@ export const App: React.FC = () => {
               message.data.sessionId,
             );
           }
-          // Update current session title
-          if (message.data.title || message.data.name) {
+          // Update current session title from session object
+          if (message.data.session) {
+            const session = message.data.session as Record<string, unknown>;
             const title =
-              (message.data.title as string) ||
-              (message.data.name as string) ||
+              (session.title as string) ||
+              (session.name as string) ||
               'Past Conversations';
             setCurrentSessionTitle(title);
+            console.log('[App] Session title updated to:', title);
           }
           // Load messages from the session
           if (message.data.messages) {
@@ -471,6 +462,9 @@ export const App: React.FC = () => {
           setMessages([]);
           setCurrentStreamContent('');
           setToolCalls(new Map());
+          // Reset session ID and title when conversation is cleared (new session created)
+          setCurrentSessionId(null);
+          setCurrentSessionTitle('Past Conversations');
           break;
 
         case 'activeEditorChanged': {
@@ -1028,8 +1022,15 @@ export const App: React.FC = () => {
                   const target = e.target as HTMLDivElement;
                   setInputText(target.textContent || '');
                 }}
+                onCompositionStart={() => {
+                  setIsComposing(true);
+                }}
+                onCompositionEnd={() => {
+                  setIsComposing(false);
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  // 如果正在进行中文输入法输入（拼音输入），不处理回车键
+                  if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
                     e.preventDefault();
                     handleSubmit(e);
                   }

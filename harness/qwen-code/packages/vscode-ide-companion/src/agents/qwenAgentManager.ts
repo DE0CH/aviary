@@ -23,7 +23,6 @@ import type {
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 
-// 重新导出类型以保持向后兼容
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
 /**

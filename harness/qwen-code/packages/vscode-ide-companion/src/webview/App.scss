@@ -787,28 +787,15 @@ button {
   min-width: 0;
 }
 
-/* Active file indicator - shows current file selection (.vo in Claude Code) */
+/* Active file indicator - shows current file selection */
 .active-file-indicator {
-  font-size: 0.85em;
-  font-family: inherit;
-  color: var(--app-primary-foreground);
-  opacity: 0.6;
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  cursor: default;
-  text-align: right;
-  max-width: 50%;
+  // Inherits all styles from .action-button
+  // Only add specific overrides here if needed
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  border-radius: 2px;
   flex-shrink: 1;
   min-width: 0;
-}
-
-.active-file-indicator:hover {
-  opacity: 1;
 }
 
 /* Hide file indicator on very small screens */
