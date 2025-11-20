@@ -37,17 +37,65 @@ export class PanelManager {
    * 创建新的 WebView Panel
    * @returns 是否是新创建的 Panel
    */
-  createPanel(): boolean {
+  async createPanel(): Promise<boolean> {
     if (this.panel) {
       return false; // Panel already exists
     }
 
     // Find if there's already a Qwen Code webview tab open and get its view column
-    const existingQwenViewColumn = this.findExistingQwenCodeViewColumn();
+    const existingQwenInfo = this.findExistingQwenCodeGroup();
 
     // If we found an existing Qwen Code tab, open in the same view column
     // Otherwise, open beside the active editor
-    const targetViewColumn = existingQwenViewColumn ?? vscode.ViewColumn.Beside;
+    const targetViewColumn =
+      existingQwenInfo?.viewColumn ?? vscode.ViewColumn.Beside;
+    console.log('[PanelManager] existingQwenInfo', existingQwenInfo);
+    console.log('[PanelManager] targetViewColumn', targetViewColumn);
+
+    // If there's an existing Qwen Code group, ensure it's unlocked so we can add new tabs
+    // We try to unlock regardless of current state - if already unlocked, this is a no-op
+    if (existingQwenInfo?.group) {
+      console.log(
+        "[PanelManager] Found existing Qwen Code group, ensuring it's unlocked...",
+      );
+
+      try {
+        // We need to make the target group active first
+        // Find a Qwen Code tab in that group
+        const firstQwenTab = existingQwenInfo.group.tabs.find((tab) => {
+          const input: unknown = (tab as { input?: unknown }).input;
+          const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
+            !!inp && typeof inp === 'object' && 'viewType' in inp;
+          return (
+            isWebviewInput(input) &&
+            input.viewType === 'mainThreadWebview-qwenCode.chat'
+          );
+        });
+
+        if (firstQwenTab) {
+          // Make the group active by focusing on one of its tabs
+          const activeTabGroup = vscode.window.tabGroups.activeTabGroup;
+          if (activeTabGroup !== existingQwenInfo.group) {
+            // Switch to the target group
+            await vscode.commands.executeCommand(
+              'workbench.action.focusFirstEditorGroup',
+            );
+          }
+        }
+
+        // Try to unlock the group (will be no-op if already unlocked)
+        await vscode.commands.executeCommand(
+          'workbench.action.unlockEditorGroup',
+        );
+        console.log('[PanelManager] Unlock command executed');
+      } catch (error) {
+        console.warn(
+          '[PanelManager] Failed to unlock group, continuing anyway:',
+          error,
+        );
+        // Continue anyway - the group might not be locked
+      }
+    }
 
     this.panel = vscode.window.createWebviewPanel(
       'qwenCode.chat',
@@ -77,23 +125,33 @@ export class PanelManager {
   }
 
   /**
-   * 查找已存在的 Qwen Code webview 所在的 view column
-   * @returns 找到的 view column，如果没有则返回 undefined
+   * 查找已存在的 Qwen Code webview 所在的 group 和 view column
+   * @returns 找到的 group 和 view column，如果没有则返回 undefined
    */
-  private findExistingQwenCodeViewColumn(): vscode.ViewColumn | undefined {
-    const allTabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+  private findExistingQwenCodeGroup():
+    | { group: vscode.TabGroup; viewColumn: vscode.ViewColumn }
+    | undefined {
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input: unknown = (tab as { input?: unknown }).input;
+        const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
+          !!inp && typeof inp === 'object' && 'viewType' in inp;
 
-    for (const tab of allTabs) {
-      const input: unknown = (tab as { input?: unknown }).input;
-      const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
-        !!inp && typeof inp === 'object' && 'viewType' in inp;
-
-      if (isWebviewInput(input) && input.viewType === 'qwenCode.chat') {
-        // Found an existing Qwen Code tab, get its view column
-        const tabGroup = vscode.window.tabGroups.all.find((g) =>
-          g.tabs.includes(tab),
-        );
-        return tabGroup?.viewColumn;
+        if (
+          isWebviewInput(input) &&
+          input.viewType === 'mainThreadWebview-qwenCode.chat'
+        ) {
+          // Found an existing Qwen Code tab
+          console.log('[PanelManager] Found existing Qwen Code group:', {
+            viewColumn: group.viewColumn,
+            tabCount: group.tabs.length,
+            isActive: group.isActive,
+          });
+          return {
+            group,
+            viewColumn: group.viewColumn,
+          };
+        }
       }
     }
 
@@ -102,23 +160,30 @@ export class PanelManager {
 
   /**
    * 自动锁定编辑器组（仅在新创建 Panel 时调用）
+   * 注意：我们不再自动锁定 Qwen Code group，以允许用户创建多个 Qwen Code tab
    */
   async autoLockEditorGroup(): Promise<void> {
     if (!this.panel) {
       return;
     }
 
-    console.log('[PanelManager] Auto-locking editor group for Qwen Code chat');
-    try {
-      // Reveal panel without preserving focus to make it the active group
-      this.revealPanel(false);
+    // We don't auto-lock anymore to allow multiple Qwen Code tabs in the same group
+    console.log(
+      '[PanelManager] Skipping auto-lock to allow multiple Qwen Code tabs',
+    );
 
-      await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
-      console.log('[PanelManager] Editor group locked successfully');
-    } catch (error) {
-      console.warn('[PanelManager] Failed to lock editor group:', error);
-      // Non-fatal error, continue anyway
-    }
+    // If you want to enable auto-locking for the first tab, uncomment the following:
+    // const existingQwenInfo = this.findExistingQwenCodeGroup();
+    // if (!existingQwenInfo) {
+    //   console.log('[PanelManager] First Qwen Code tab, locking editor group');
+    //   try {
+    //     this.revealPanel(false);
+    //     await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
+    //     console.log('[PanelManager] Editor group locked successfully');
+    //   } catch (error) {
+    //     console.warn('[PanelManager] Failed to lock editor group:', error);
+    //   }
+    // }
   }
 
   /**

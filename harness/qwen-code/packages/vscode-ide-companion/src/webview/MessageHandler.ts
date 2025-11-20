@@ -141,6 +141,18 @@ export class MessageHandler {
         break;
       }
 
+      case 'focusActiveEditor': {
+        // 聚焦到当前激活的编辑器
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+          vscode.window.showTextDocument(activeEditor.document, {
+            viewColumn: activeEditor.viewColumn,
+            preserveFocus: false,
+          });
+        }
+        break;
+      }
+
       case 'switchQwenSession':
         await this.handleSwitchQwenSession((data?.sessionId as string) || '');
         break;

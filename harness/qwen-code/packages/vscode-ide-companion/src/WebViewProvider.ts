@@ -117,7 +117,7 @@ export class WebViewProvider {
     }
 
     // Create new panel
-    const isNewPanel = this.panelManager.createPanel();
+    const isNewPanel = await this.panelManager.createPanel();
 
     if (!isNewPanel) {
       return; // Failed to create panel
