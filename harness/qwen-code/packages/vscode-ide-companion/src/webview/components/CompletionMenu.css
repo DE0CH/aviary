@@ -1,0 +1,107 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.completion-menu {
+  position: fixed;
+  background: var(--vscode-quickInput-background, #252526);
+  border: 1px solid var(--vscode-quickInput-border, #454545);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  min-width: 300px;
+  max-width: 500px;
+  max-height: 400px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(-100%);
+  margin-top: -8px;
+}
+
+.completion-menu-items {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.completion-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+  border-bottom: 1px solid var(--vscode-quickInput-separator, transparent);
+}
+
+.completion-menu-item:last-child {
+  border-bottom: none;
+}
+
+.completion-menu-item:hover,
+.completion-menu-item.selected {
+  background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.completion-item-icon {
+  flex-shrink: 0;
+  margin-right: 10px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-symbolIcon-fileForeground, #cccccc);
+}
+
+.completion-item-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.completion-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.completion-item-label {
+  font-size: 13px;
+  color: var(--vscode-quickInput-foreground, #cccccc);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.completion-item-description {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Scrollbar styling */
+.completion-menu-items::-webkit-scrollbar {
+  width: 10px;
+}
+
+.completion-menu-items::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.completion-menu-items::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-background, #424242);
+  border-radius: 5px;
+}
+
+.completion-menu-items::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, #4f4f4f);
+}
