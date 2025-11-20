@@ -40,10 +40,6 @@ To debug and develop this extension locally:
 
 3. **Start debugging**
 
-   You have two options:
-
-   **Option A: Debug from Project Root (Recommended)**
-
    ```bash
    code .  # Open the project root in VS Code
    ```
@@ -51,19 +47,6 @@ To debug and develop this extension locally:
    - Open Debug panel (`Ctrl+Shift+D` or `Cmd+Shift+D`)
    - Select **"Launch Companion VS Code Extension"** from the debug dropdown
    - Press `F5` to launch Extension Development Host
-
-   **Option B: Debug from Extension Directory**
-
-   ```bash
-   cd packages/vscode-ide-companion
-   code .  # Open the extension directory in VS Code
-   ```
-   - Open the `src/extension.ts` file
-   - Open Debug panel (`Ctrl+Shift+D` or `Cmd+Shift+D`)
-   - Select **"Run Extension"** from the debug dropdown
-   - Press `F5` to launch Extension Development Host
-
-   > 💡 **Tip**: Option A is recommended if you need to debug both the extension and core packages together.
 
 4. **Make changes and reload**
    - Edit the source code in the original VS Code window
