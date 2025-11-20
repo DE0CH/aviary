@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useMemo } from 'react';
-
 export interface VSCodeAPI {
   postMessage: (message: unknown) => void;
   getState: () => unknown;
@@ -14,21 +12,43 @@ export interface VSCodeAPI {
 
 declare const acquireVsCodeApi: () => VSCodeAPI;
 
-export function useVSCode(): VSCodeAPI {
-  return useMemo(() => {
-    if (typeof acquireVsCodeApi !== 'undefined') {
-      return acquireVsCodeApi();
-    }
+/**
+ * 模块级别的 VS Code API 实例缓存
+ * acquireVsCodeApi() 只能调用一次，必须在模块级别缓存
+ */
+let vscodeApiInstance: VSCodeAPI | null = null;
 
-    // Fallback for development/testing
-    return {
-      postMessage: (message: unknown) => {
-        console.log('Mock postMessage:', message);
-      },
-      getState: () => ({}),
-      setState: (state: unknown) => {
-        console.log('Mock setState:', state);
-      },
-    };
-  }, []);
+/**
+ * 获取 VS Code API 实例
+ * 使用模块级别缓存确保 acquireVsCodeApi() 只被调用一次
+ */
+function getVSCodeAPI(): VSCodeAPI {
+  if (vscodeApiInstance) {
+    return vscodeApiInstance;
+  }
+
+  if (typeof acquireVsCodeApi !== 'undefined') {
+    vscodeApiInstance = acquireVsCodeApi();
+    return vscodeApiInstance;
+  }
+
+  // Fallback for development/testing
+  vscodeApiInstance = {
+    postMessage: (message: unknown) => {
+      console.log('Mock postMessage:', message);
+    },
+    getState: () => ({}),
+    setState: (state: unknown) => {
+      console.log('Mock setState:', state);
+    },
+  };
+  return vscodeApiInstance;
+}
+
+/**
+ * Hook to get VS Code API
+ * 多个组件可以安全地调用此 hook，API 实例会被复用
+ */
+export function useVSCode(): VSCodeAPI {
+  return getVSCodeAPI();
 }
