@@ -8,63 +8,82 @@
 
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
-import {
-  ToolCallCard,
-  ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
-} from './shared/LayoutComponents.js';
-import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { ToolCallCard, ToolCallRow } from './shared/LayoutComponents.js';
+import { safeTitle, groupContent } from './shared/utils.js';
 
 /**
  * Specialized component for Execute tool calls
  * Optimized for displaying command execution with stdout/stderr
+ * Shows command + output (if any) or error
  */
 export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { title, status, rawInput, content } = toolCall;
-  const titleText = safeTitle(title);
+  const { title, content } = toolCall;
+  const commandText = safeTitle(title);
 
   // Group content by type
-  const { textOutputs, errors, otherData } = groupContent(content);
+  const { textOutputs, errors } = groupContent(content);
 
-  return (
-    <ToolCallCard icon="⚡">
-      {/* Title row */}
-      <ToolCallRow label="Execute">
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
-
-      {/* Command */}
-      {rawInput && (
+  // Error case: show command + error
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="⚡">
         <ToolCallRow label="Command">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Standard output */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Output">
-          <CodeBlock>{textOutputs.join('\n')}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Standard error / Errors */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>
-            <CodeBlock>{errors.join('\n')}</CodeBlock>
+          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
+            {commandText}
           </div>
         </ToolCallRow>
-      )}
-
-      {/* Exit code or other execution details */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Details">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
+        <ToolCallRow label="Error">
+          <div
+            style={{
+              color: '#c74e39',
+              fontWeight: 500,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {errors.join('\n')}
+          </div>
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
+
+  // Success with output: show command + output (limited)
+  if (textOutputs.length > 0) {
+    const output = textOutputs.join('\n');
+    const truncatedOutput =
+      output.length > 500 ? output.substring(0, 500) + '...' : output;
+
+    return (
+      <ToolCallCard icon="⚡">
+        <ToolCallRow label="Command">
+          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
+            {commandText}
+          </div>
+        </ToolCallRow>
+        <ToolCallRow label="Output">
+          <div
+            style={{
+              fontFamily: 'var(--app-monospace-font-family)',
+              fontSize: '13px',
+              whiteSpace: 'pre-wrap',
+              opacity: 0.9,
+            }}
+          >
+            {truncatedOutput}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
+
+  // Success without output: show command only
+  return (
+    <ToolCallCard icon="⚡">
+      <ToolCallRow label="Executed">
+        <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
+          {commandText}
+        </div>
+      </ToolCallRow>
     </ToolCallCard>
   );
 };

@@ -8,63 +8,56 @@
 
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
-import {
-  ToolCallCard,
-  ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
-} from './shared/LayoutComponents.js';
-import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { ToolCallCard, ToolCallRow } from './shared/LayoutComponents.js';
+import { groupContent } from './shared/utils.js';
 
 /**
  * Specialized component for Think tool calls
  * Optimized for displaying AI reasoning and thought processes
+ * Minimal display: just show the thoughts (no context)
  */
 export const ThinkToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { title, status, rawInput, content } = toolCall;
-  const titleText = safeTitle(title);
+  const { content } = toolCall;
 
   // Group content by type
-  const { textOutputs, errors, otherData } = groupContent(content);
+  const { textOutputs, errors } = groupContent(content);
 
-  return (
-    <ToolCallCard icon="💭">
-      {/* Title row */}
-      <ToolCallRow label="Thinking">
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
-
-      {/* Thinking context/prompt */}
-      {rawInput && (
-        <ToolCallRow label="Context">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Thought content */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Thoughts">
-          <div style={{ fontStyle: 'italic', opacity: 0.95 }}>
-            {textOutputs.join('\n\n')}
+  // Error case (rare for thinking)
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="💭">
+        <ToolCallRow label="Error">
+          <div style={{ color: '#c74e39', fontWeight: 500 }}>
+            {errors.join('\n')}
           </div>
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
 
-      {/* Error handling */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>{errors.join('\n')}</div>
-        </ToolCallRow>
-      )}
+  // Show thoughts with label
+  if (textOutputs.length > 0) {
+    const thoughts = textOutputs.join('\n\n');
+    const truncatedThoughts =
+      thoughts.length > 500 ? thoughts.substring(0, 500) + '...' : thoughts;
 
-      {/* Other reasoning data */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Details">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
+    return (
+      <ToolCallCard icon="💭">
+        <ToolCallRow label="Thinking">
+          <div
+            style={{
+              fontStyle: 'italic',
+              opacity: 0.9,
+              lineHeight: 1.6,
+            }}
+          >
+            {truncatedThoughts}
+          </div>
         </ToolCallRow>
-      )}
-    </ToolCallCard>
-  );
+      </ToolCallCard>
+    );
+  }
+
+  // Empty thoughts
+  return null;
 };

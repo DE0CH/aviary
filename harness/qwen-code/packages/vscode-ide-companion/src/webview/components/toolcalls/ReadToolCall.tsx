@@ -11,66 +11,45 @@ import type { BaseToolCallProps } from './shared/types.js';
 import {
   ToolCallCard,
   ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
   LocationsList,
 } from './shared/LayoutComponents.js';
-import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { groupContent } from './shared/utils.js';
 
 /**
  * Specialized component for Read tool calls
  * Optimized for displaying file reading operations
+ * Minimal display: just show file name, hide content (too verbose)
  */
 export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { title, status, rawInput, content, locations } = toolCall;
-  const titleText = safeTitle(title);
+  const { content, locations } = toolCall;
 
   // Group content by type
-  const { textOutputs, errors, otherData } = groupContent(content);
+  const { errors } = groupContent(content);
 
-  return (
-    <ToolCallCard icon="📖">
-      {/* Title row */}
-      <ToolCallRow label="Read">
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
+  // Error case: show error with operation label
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="📖">
+        <ToolCallRow label="Read">
+          <div style={{ color: '#c74e39', fontWeight: 500 }}>
+            {errors.join('\n')}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
 
-      {/* File path(s) */}
-      {locations && locations.length > 0 && (
-        <ToolCallRow label="File">
+  // Success case: show which file was read
+  if (locations && locations.length > 0) {
+    return (
+      <ToolCallCard icon="📖">
+        <ToolCallRow label="Read">
           <LocationsList locations={locations} />
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
 
-      {/* Input parameters (e.g., line range, offset) */}
-      {rawInput && (
-        <ToolCallRow label="Options">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* File content output */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Content">
-          <CodeBlock>{textOutputs.join('\n')}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Error handling */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>{errors.join('\n')}</div>
-        </ToolCallRow>
-      )}
-
-      {/* Other data */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Details">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
-        </ToolCallRow>
-      )}
-    </ToolCallCard>
-  );
+  // No file info, don't show
+  return null;
 };

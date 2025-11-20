@@ -11,66 +11,56 @@ import type { BaseToolCallProps } from './shared/types.js';
 import {
   ToolCallCard,
   ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
   LocationsList,
 } from './shared/LayoutComponents.js';
-import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { safeTitle, groupContent } from './shared/utils.js';
 
 /**
  * Specialized component for Search tool calls
  * Optimized for displaying search operations and results
+ * Shows query + result count or file list
  */
 export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { title, status, rawInput, content, locations } = toolCall;
-  const titleText = safeTitle(title);
+  const { title, content, locations } = toolCall;
+  const queryText = safeTitle(title);
 
   // Group content by type
-  const { textOutputs, errors, otherData } = groupContent(content);
+  const { errors } = groupContent(content);
 
-  return (
-    <ToolCallCard icon="🔍">
-      {/* Title row */}
-      <ToolCallRow label="Search">
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
-
-      {/* Search query/pattern */}
-      {rawInput && (
-        <ToolCallRow label="Query">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
+  // Error case: show search query + error
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="🔍">
+        <ToolCallRow label="Search">
+          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
+            {queryText}
+          </div>
         </ToolCallRow>
-      )}
+        <ToolCallRow label="Error">
+          <div style={{ color: '#c74e39', fontWeight: 500 }}>
+            {errors.join('\n')}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
 
-      {/* Search results - files found */}
-      {locations && locations.length > 0 && (
-        <ToolCallRow label="Results">
+  // Success case with results: show search query + file list
+  if (locations && locations.length > 0) {
+    return (
+      <ToolCallCard icon="🔍">
+        <ToolCallRow label="Search">
+          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
+            {queryText}
+          </div>
+        </ToolCallRow>
+        <ToolCallRow label={`Found (${locations.length})`}>
           <LocationsList locations={locations} />
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
 
-      {/* Search output details */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Matches">
-          <CodeBlock>{textOutputs.join('\n')}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Error handling */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>{errors.join('\n')}</div>
-        </ToolCallRow>
-      )}
-
-      {/* Other search metadata */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Details">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
-        </ToolCallRow>
-      )}
-    </ToolCallCard>
-  );
+  // No results
+  return null;
 };

@@ -11,86 +11,114 @@ import type { BaseToolCallProps } from './shared/types.js';
 import {
   ToolCallCard,
   ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
   LocationsList,
 } from './shared/LayoutComponents.js';
 import { DiffDisplay } from './shared/DiffDisplay.js';
-import {
-  formatValue,
-  safeTitle,
-  getKindIcon,
-  groupContent,
-} from './shared/utils.js';
+import { safeTitle, groupContent } from './shared/utils.js';
+import { useVSCode } from '../../hooks/useVSCode.js';
 
 /**
  * Generic tool call component that can display any tool call type
  * Used as fallback for unknown tool call kinds
+ * Minimal display: show description and outcome
  */
 export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { kind, title, status, rawInput, content, locations } = toolCall;
-  const kindIcon = getKindIcon(kind);
-  const titleText = safeTitle(title);
+  const { kind, title, content, locations } = toolCall;
+  const operationText = safeTitle(title);
+  const vscode = useVSCode();
 
   // Group content by type
-  const { textOutputs, errors, diffs, otherData } = groupContent(content);
+  const { textOutputs, errors, diffs } = groupContent(content);
 
-  return (
-    <ToolCallCard icon={kindIcon}>
-      {/* Title row */}
-      <ToolCallRow label="Tool">
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
+  const handleOpenDiff = (
+    path: string | undefined,
+    oldText: string | null | undefined,
+    newText: string | undefined,
+  ) => {
+    if (path) {
+      vscode.postMessage({
+        type: 'openDiff',
+        data: { path, oldText: oldText || '', newText: newText || '' },
+      });
+    }
+  };
 
-      {/* Input row */}
-      {rawInput && (
-        <ToolCallRow label="Input">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
+  // Error case: show operation + error
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="🔧">
+        <ToolCallRow label={kind}>
+          <div>{operationText}</div>
         </ToolCallRow>
-      )}
+        <ToolCallRow label="Error">
+          <div style={{ color: '#c74e39', fontWeight: 500 }}>
+            {errors.join('\n')}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
 
-      {/* Locations row */}
-      {locations && locations.length > 0 && (
-        <ToolCallRow label="Files">
+  // Success with diff: show diff
+  if (diffs.length > 0) {
+    return (
+      <ToolCallCard icon="🔧">
+        {diffs.map(
+          (item: import('./shared/types.js').ToolCallContent, idx: number) => (
+            <div key={`diff-${idx}`} style={{ gridColumn: '1 / -1' }}>
+              <DiffDisplay
+                path={item.path}
+                oldText={item.oldText}
+                newText={item.newText}
+                onOpenDiff={() =>
+                  handleOpenDiff(item.path, item.oldText, item.newText)
+                }
+              />
+            </div>
+          ),
+        )}
+      </ToolCallCard>
+    );
+  }
+
+  // Success with output: show operation + output (truncated)
+  if (textOutputs.length > 0) {
+    const output = textOutputs.join('\n');
+    const truncatedOutput =
+      output.length > 300 ? output.substring(0, 300) + '...' : output;
+
+    return (
+      <ToolCallCard icon="🔧">
+        <ToolCallRow label={kind}>
+          <div>{operationText}</div>
+        </ToolCallRow>
+        <ToolCallRow label="Output">
+          <div
+            style={{
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'var(--app-monospace-font-family)',
+              fontSize: '13px',
+              opacity: 0.9,
+            }}
+          >
+            {truncatedOutput}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
+
+  // Success with files: show operation + file list
+  if (locations && locations.length > 0) {
+    return (
+      <ToolCallCard icon="🔧">
+        <ToolCallRow label={kind}>
           <LocationsList locations={locations} />
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
 
-      {/* Output row - combined text outputs */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Output">
-          <CodeBlock>{textOutputs.join('\n')}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Error row - combined errors */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>{errors.join('\n')}</div>
-        </ToolCallRow>
-      )}
-
-      {/* Diff rows */}
-      {diffs.map(
-        (item: import('./shared/types.js').ToolCallContent, idx: number) => (
-          <ToolCallRow key={`diff-${idx}`} label="Diff">
-            <DiffDisplay
-              path={item.path}
-              oldText={item.oldText}
-              newText={item.newText}
-            />
-          </ToolCallRow>
-        ),
-      )}
-
-      {/* Other data rows */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Data">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
-        </ToolCallRow>
-      )}
-    </ToolCallCard>
-  );
+  // No output
+  return null;
 };

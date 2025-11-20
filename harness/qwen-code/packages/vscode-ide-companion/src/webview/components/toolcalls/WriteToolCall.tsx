@@ -11,26 +11,24 @@ import type { BaseToolCallProps } from './shared/types.js';
 import {
   ToolCallCard,
   ToolCallRow,
-  StatusIndicator,
-  CodeBlock,
   LocationsList,
 } from './shared/LayoutComponents.js';
 import { DiffDisplay } from './shared/DiffDisplay.js';
-import { formatValue, safeTitle, groupContent } from './shared/utils.js';
+import { groupContent } from './shared/utils.js';
 import { useVSCode } from '../../hooks/useVSCode.js';
 
 /**
  * Specialized component for Write/Edit tool calls
  * Optimized for displaying file writing and editing operations with diffs
+ * Follows minimal display principle: only show what matters
  */
 export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { kind, title, status, rawInput, content, locations } = toolCall;
-  const titleText = safeTitle(title);
+  const { kind, status: _status, content, locations } = toolCall;
   const isEdit = kind.toLowerCase() === 'edit';
   const vscode = useVSCode();
 
   // Group content by type
-  const { textOutputs, errors, diffs, otherData } = groupContent(content);
+  const { errors, diffs } = groupContent(content);
 
   const handleOpenDiff = (
     path: string | undefined,
@@ -45,65 +43,52 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
   };
 
-  return (
-    <ToolCallCard icon="✏️">
-      {/* Title row */}
-      <ToolCallRow label={isEdit ? 'Edit' : 'Write'}>
-        <StatusIndicator status={status} text={titleText} />
-      </ToolCallRow>
+  // Error case: show error with operation label
+  if (errors.length > 0) {
+    return (
+      <ToolCallCard icon="✏️">
+        <ToolCallRow label={isEdit ? 'Edit' : 'Write'}>
+          <div style={{ color: '#c74e39', fontWeight: 500 }}>
+            {errors.join('\n')}
+          </div>
+        </ToolCallRow>
+      </ToolCallCard>
+    );
+  }
 
-      {/* File path(s) */}
-      {locations && locations.length > 0 && (
-        <ToolCallRow label="File">
+  // Success case with diff: show diff (already has file path)
+  if (diffs.length > 0) {
+    return (
+      <ToolCallCard icon="✏️">
+        {diffs.map(
+          (item: import('./shared/types.js').ToolCallContent, idx: number) => (
+            <div key={`diff-${idx}`} style={{ gridColumn: '1 / -1' }}>
+              <DiffDisplay
+                path={item.path}
+                oldText={item.oldText}
+                newText={item.newText}
+                onOpenDiff={() =>
+                  handleOpenDiff(item.path, item.oldText, item.newText)
+                }
+              />
+            </div>
+          ),
+        )}
+      </ToolCallCard>
+    );
+  }
+
+  // Success case without diff: show operation + file
+  if (locations && locations.length > 0) {
+    return (
+      <ToolCallCard icon="✏️">
+        <ToolCallRow label={isEdit ? 'Edited' : 'Created'}>
           <LocationsList locations={locations} />
         </ToolCallRow>
-      )}
+      </ToolCallCard>
+    );
+  }
 
-      {/* Input parameters (e.g., old_string, new_string for edits) */}
-      {rawInput && (
-        <ToolCallRow label="Changes">
-          <CodeBlock>{formatValue(rawInput)}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Diff display - most important for write/edit operations */}
-      {diffs.map(
-        (item: import('./shared/types.js').ToolCallContent, idx: number) => (
-          <ToolCallRow key={`diff-${idx}`} label="Diff">
-            <DiffDisplay
-              path={item.path}
-              oldText={item.oldText}
-              newText={item.newText}
-              onOpenDiff={() =>
-                handleOpenDiff(item.path, item.oldText, item.newText)
-              }
-            />
-          </ToolCallRow>
-        ),
-      )}
-
-      {/* Success message or output */}
-      {textOutputs.length > 0 && (
-        <ToolCallRow label="Result">
-          <CodeBlock>{textOutputs.join('\n')}</CodeBlock>
-        </ToolCallRow>
-      )}
-
-      {/* Error handling */}
-      {errors.length > 0 && (
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39' }}>{errors.join('\n')}</div>
-        </ToolCallRow>
-      )}
-
-      {/* Other data */}
-      {otherData.length > 0 && (
-        <ToolCallRow label="Details">
-          <CodeBlock>
-            {otherData.map((data: unknown) => formatValue(data)).join('\n\n')}
-          </CodeBlock>
-        </ToolCallRow>
-      )}
-    </ToolCallCard>
-  );
+  // No output, don't show anything
+  return null;
 };
