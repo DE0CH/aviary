@@ -1,0 +1,79 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.context-pills-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--vscode-input-background, #3c3c3c);
+  border-bottom: 1px solid var(--vscode-input-border, #454545);
+}
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 6px;
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #ffffff);
+  border-radius: 12px;
+  font-size: 12px;
+  max-width: 200px;
+  transition: background-color 0.1s ease;
+}
+
+.context-pill:hover {
+  background: var(--vscode-badge-background, #5a5a5a);
+}
+
+.context-pill-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.context-pill-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.context-pill-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.context-pill-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.1s ease;
+  flex-shrink: 0;
+}
+
+.context-pill-remove:hover {
+  opacity: 1;
+}
+
+.context-pill-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
