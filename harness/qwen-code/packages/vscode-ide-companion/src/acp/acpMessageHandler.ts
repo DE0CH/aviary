@@ -154,6 +154,10 @@ export class AcpMessageHandler {
 
     switch (method) {
       case CLIENT_METHODS.session_update:
+        console.log(
+          '[ACP] >>> Processing session_update:',
+          JSON.stringify(params).substring(0, 300),
+        );
         callbacks.onSessionUpdate(params as AcpSessionUpdate);
         break;
       case CLIENT_METHODS.session_request_permission:

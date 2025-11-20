@@ -40,6 +40,10 @@ export class QwenSessionUpdateHandler {
    */
   handleSessionUpdate(data: AcpSessionUpdate): void {
     const update = data.update;
+    console.log(
+      '[SessionUpdateHandler] Processing update type:',
+      update.sessionUpdate,
+    );
 
     switch (update.sessionUpdate) {
       case 'user_message_chunk':

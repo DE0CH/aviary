@@ -177,6 +177,30 @@ export async function activate(context: vscode.ExtensionContext) {
         diffManager.cancelDiff(docUri);
       }
     }),
+    vscode.commands.registerCommand(
+      'qwenCode.showDiff',
+      async (args: { path: string; oldText: string; newText: string }) => {
+        log(`[Command] showDiff called for: ${args.path}`);
+        try {
+          // Convert relative path to absolute if needed
+          let absolutePath = args.path;
+          if (!args.path.startsWith('/') && !args.path.match(/^[a-zA-Z]:/)) {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (workspaceFolder) {
+              absolutePath = vscode.Uri.joinPath(
+                workspaceFolder.uri,
+                args.path,
+              ).fsPath;
+            }
+          }
+
+          await diffManager.showDiff(absolutePath, args.oldText, args.newText);
+        } catch (error) {
+          log(`[Command] Error showing diff: ${error}`);
+          vscode.window.showErrorMessage(`Failed to show diff: ${error}`);
+        }
+      },
+    ),
     vscode.commands.registerCommand('qwenCode.openChat', () => {
       // Open or reveal the most recent chat tab
       if (webViewProviders.length > 0) {

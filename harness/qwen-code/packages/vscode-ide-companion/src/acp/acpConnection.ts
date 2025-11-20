@@ -184,9 +184,17 @@ export class AcpConnection {
         if (line.trim()) {
           try {
             const message = JSON.parse(line) as AcpMessage;
+            console.log(
+              '[ACP] <<< Received message:',
+              JSON.stringify(message).substring(0, 500),
+            );
             this.handleMessage(message);
           } catch (_error) {
             // 忽略非JSON行
+            console.log(
+              '[ACP] <<< Non-JSON line (ignored):',
+              line.substring(0, 200),
+            );
           }
         }
       }
