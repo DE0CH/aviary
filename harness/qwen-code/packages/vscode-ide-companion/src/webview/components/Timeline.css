@@ -1,0 +1,218 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Timeline.css - 时间线布局样式
+ * 统一展示消息、工具调用、输出等
+ */
+
+.timeline-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px 20px;
+}
+
+/* Timeline 项目 */
+.timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.timeline-item.last {
+  padding-bottom: 0;
+}
+
+/* 时间线连接线 - 暂时禁用 */
+/*
+.timeline-line {
+  position: absolute;
+  left: 9px;
+  top: 20px;
+  bottom: 0;
+  width: 2px;
+  background: var(--app-transparent-inner-border);
+  opacity: 0.3;
+}
+
+.timeline-item.last .timeline-line {
+  display: none;
+}
+*/
+
+/* 状态圆点 */
+.timeline-dot {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  z-index: 1;
+}
+
+.dot-inner {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+
+/* 不同类型的圆点颜色 */
+.timeline-dot.blue .dot-inner {
+  background-color: var(--vscode-terminal-ansiBlue, #4fc3f7);
+}
+
+.timeline-dot.gray .dot-inner {
+  background-color: var(--app-secondary-foreground);
+  opacity: 0.5;
+}
+
+.timeline-dot.green .dot-inner {
+  background-color: var(--app-qwen-green, #6BCF7F);
+}
+
+.timeline-dot.purple .dot-inner {
+  background-color: var(--vscode-terminal-ansiMagenta, #ba68c8);
+}
+
+/* 内容区域 */
+.timeline-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 标签 */
+.timeline-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--app-secondary-foreground);
+  opacity: 0.6;
+}
+
+/* 内容主体 */
+.timeline-body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--app-primary-foreground);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 折叠/展开按钮 */
+.timeline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--app-secondary-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  align-self: flex-start;
+}
+
+.timeline-toggle:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+.timeline-toggle-icon {
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+
+.timeline-toggle-text {
+  font-weight: 500;
+}
+
+/* 工具输出的特殊样式 */
+.timeline-item.tool-output .timeline-body {
+  background: var(--app-secondary-background);
+  border: 1px solid var(--app-transparent-inner-border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--vscode-editor-font-family, 'Monaco', 'Courier New', monospace);
+  font-size: 12px;
+  color: var(--app-secondary-foreground);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* 工具调用的特殊样式 */
+.timeline-item.tool-call .timeline-body {
+  background: var(--app-secondary-background);
+  border: 1px solid var(--app-transparent-inner-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+/* 用户消息样式 */
+.timeline-item.user-message .timeline-body {
+  background: var(--app-qwen-clay-button-orange);
+  border: 1px solid var(--app-transparent-inner-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+/* 助手消息样式 */
+.timeline-item.assistant-message .timeline-body {
+  /* 保持默认样式，不加背景 */
+}
+
+/* 思考消息样式 */
+.timeline-item.thinking .timeline-body {
+  color: var(--app-secondary-foreground);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* 滚动条样式 */
+.timeline-item.tool-output .timeline-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.timeline-item.tool-output .timeline-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.timeline-item.tool-output .timeline-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.timeline-item.tool-output .timeline-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 动画 */
+@keyframes timelineFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.timeline-item {
+  animation: timelineFadeIn 0.3s ease-out;
+}
