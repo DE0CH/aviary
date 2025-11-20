@@ -7,6 +7,7 @@
  */
 
 import type React from 'react';
+import { FileLink } from '../../shared/FileLink.js';
 
 /**
  * Props for ToolCallCard wrapper
@@ -20,11 +21,11 @@ interface ToolCallCardProps {
  * Main card wrapper with icon
  */
 export const ToolCallCard: React.FC<ToolCallCardProps> = ({
-  icon,
+  icon: _icon,
   children,
 }) => (
   <div className="tool-call-card">
-    <div className="tool-call-icon">{icon}</div>
+    {/* <div className="tool-call-icon">{icon}</div> */}
     <div className="tool-call-grid">{children}</div>
   </div>
 );
@@ -95,15 +96,12 @@ interface LocationsListProps {
 }
 
 /**
- * List of file locations
+ * List of file locations with clickable links
  */
 export const LocationsList: React.FC<LocationsListProps> = ({ locations }) => (
-  <>
+  <div className="locations-list">
     {locations.map((loc, idx) => (
-      <div key={idx}>
-        {loc.path}
-        {loc.line !== null && loc.line !== undefined && `:${loc.line}`}
-      </div>
+      <FileLink key={idx} path={loc.path} line={loc.line} showFullPath={true} />
     ))}
-  </>
+  </div>
 );

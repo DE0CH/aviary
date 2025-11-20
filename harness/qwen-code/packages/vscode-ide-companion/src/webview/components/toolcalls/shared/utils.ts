@@ -77,6 +77,41 @@ export const shouldShowToolCall = (kind: string): boolean =>
   !kind.includes('internal');
 
 /**
+ * Check if a tool call has actual output to display
+ * Returns false for tool calls that completed successfully but have no visible output
+ */
+export const hasToolCallOutput = (
+  toolCall: import('./types.js').ToolCallData,
+): boolean => {
+  // Always show failed tool calls (even without content)
+  if (toolCall.status === 'failed') {
+    return true;
+  }
+
+  // Show if there are locations (file paths)
+  if (toolCall.locations && toolCall.locations.length > 0) {
+    return true;
+  }
+
+  // Show if there is content
+  if (toolCall.content && toolCall.content.length > 0) {
+    const grouped = groupContent(toolCall.content);
+    // Has any meaningful content?
+    if (
+      grouped.textOutputs.length > 0 ||
+      grouped.errors.length > 0 ||
+      grouped.diffs.length > 0 ||
+      grouped.otherData.length > 0
+    ) {
+      return true;
+    }
+  }
+
+  // No output, don't show
+  return false;
+};
+
+/**
  * Group tool call content by type to avoid duplicate labels
  */
 export const groupContent = (content?: ToolCallContent[]): GroupedContent => {
