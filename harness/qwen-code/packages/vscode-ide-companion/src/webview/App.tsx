@@ -612,15 +612,9 @@ export const App: React.FC = () => {
   };
 
   const handleNewQwenSession = () => {
-    vscode.postMessage({ type: 'newQwenSession', data: {} });
+    // Send message to open a new chat tab
+    vscode.postMessage({ type: 'openNewChatTab', data: {} });
     setShowSessionSelector(false);
-    setCurrentSessionId(null);
-    setCurrentSessionTitle('Past Conversations'); // Reset title to default
-    // Clear messages in UI
-    setMessages([]);
-    setCurrentStreamContent('');
-    setPlanEntries([]); // Clear plan entries
-    setToolCalls(new Map()); // Clear tool calls
   };
 
   // Time ago formatter (matching Claude Code)
@@ -1053,6 +1047,14 @@ export const App: React.FC = () => {
                 {getEditModeInfo().icon}
                 <span>{getEditModeInfo().text}</span>
               </button>
+              {activeFileName && (
+                <span
+                  className="active-file-indicator"
+                  title={`Showing Qwen Code your current file selection: ${activeFileName}`}
+                >
+                  {activeFileName}
+                </span>
+              )}
               <div className="action-divider"></div>
               <button
                 type="button"
@@ -1096,14 +1098,6 @@ export const App: React.FC = () => {
                 </svg>
               </button>
               <div className="input-actions-spacer"></div>
-              {activeFileName && (
-                <span
-                  className="active-file-indicator"
-                  title={`Showing Qwen Code your current file selection: ${activeFileName}`}
-                >
-                  {activeFileName}
-                </span>
-              )}
               <button
                 type="submit"
                 className="send-button-icon"

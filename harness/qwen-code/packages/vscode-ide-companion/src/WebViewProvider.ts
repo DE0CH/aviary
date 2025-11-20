@@ -364,6 +364,20 @@ export class WebViewProvider {
     // Register dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
 
+    // Listen for active editor changes and notify WebView
+    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
+      (editor) => {
+        const fileName = editor?.document.uri.fsPath
+          ? getFileName(editor.document.uri.fsPath)
+          : null;
+        this.sendMessageToWebView({
+          type: 'activeEditorChanged',
+          data: { fileName },
+        });
+      },
+    );
+    this.disposables.push(editorChangeDisposable);
+
     // Capture the tab reference on restore
     this.panelManager.captureTab();
 

@@ -17,13 +17,11 @@ export const EmptyState: React.FC = () => {
       <div className="empty-state-content">
         {/* Qwen Logo */}
         <div className="empty-state-logo">
-          {iconUri && (
-            <img
-              src={iconUri}
-              alt="Qwen Logo"
-              className="empty-state-logo-image"
-            />
-          )}
+          <img
+            src={iconUri}
+            alt="Qwen Logo"
+            className="empty-state-logo-image"
+          />
           <div className="empty-state-text">
             <div className="empty-state-title">
               What to do first? Ask about this codebase or we can start writing

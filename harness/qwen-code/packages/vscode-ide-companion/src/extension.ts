@@ -189,17 +189,10 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand('qwenCode.openNewChatTab', () => {
-      // Check if there's already an open chat panel
-      if (webViewProviders.length > 0) {
-        const lastProvider = webViewProviders[webViewProviders.length - 1];
-        // Reveal the existing panel and create a new session within it
-        lastProvider.show();
-        lastProvider.createNewSession();
-      } else {
-        // Create first chat tab
-        const provider = createWebViewProvider();
-        provider.show();
-      }
+      // Always create a new WebviewPanel (tab) in the same view column
+      // The PanelManager will find existing Qwen Code tabs and open in the same column
+      const provider = createWebViewProvider();
+      provider.show();
     }),
     vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
       await authStateManager.clearAuthState();

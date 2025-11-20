@@ -170,8 +170,8 @@ export class MessageHandler {
         break;
 
       case 'openNewChatTab':
-        // Create a new session in the current panel instead of opening a new panel
-        await this.handleNewQwenSession();
+        // Create a new WebviewPanel (tab) in the same view column
+        await vscode.commands.executeCommand('qwenCode.openNewChatTab');
         break;
 
       default:

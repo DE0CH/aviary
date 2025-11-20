@@ -42,12 +42,19 @@ export class PanelManager {
       return false; // Panel already exists
     }
 
+    // Find if there's already a Qwen Code webview tab open and get its view column
+    const existingQwenViewColumn = this.findExistingQwenCodeViewColumn();
+
+    // If we found an existing Qwen Code tab, open in the same view column
+    // Otherwise, open beside the active editor
+    const targetViewColumn = existingQwenViewColumn ?? vscode.ViewColumn.Beside;
+
     this.panel = vscode.window.createWebviewPanel(
       'qwenCode.chat',
-      'Qwen Code Chat',
+      'Qwen Code',
       {
-        viewColumn: vscode.ViewColumn.Beside, // Open on right side of active editor
-        preserveFocus: true, // Don't steal focus from editor
+        viewColumn: targetViewColumn,
+        preserveFocus: false, // Focus the new tab
       },
       {
         enableScripts: true,
@@ -67,6 +74,30 @@ export class PanelManager {
     );
 
     return true; // New panel created
+  }
+
+  /**
+   * 查找已存在的 Qwen Code webview 所在的 view column
+   * @returns 找到的 view column，如果没有则返回 undefined
+   */
+  private findExistingQwenCodeViewColumn(): vscode.ViewColumn | undefined {
+    const allTabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+
+    for (const tab of allTabs) {
+      const input: unknown = (tab as { input?: unknown }).input;
+      const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
+        !!inp && typeof inp === 'object' && 'viewType' in inp;
+
+      if (isWebviewInput(input) && input.viewType === 'qwenCode.chat') {
+        // Found an existing Qwen Code tab, get its view column
+        const tabGroup = vscode.window.tabGroups.all.find((g) =>
+          g.tabs.includes(tab),
+        );
+        return tabGroup?.viewColumn;
+      }
+    }
+
+    return undefined;
   }
 
   /**
