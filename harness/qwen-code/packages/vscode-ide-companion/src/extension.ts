@@ -33,7 +33,7 @@ const HIDE_INSTALLATION_GREETING_IDES: ReadonlySet<IdeInfo['name']> = new Set([
 
 let ideServer: IDEServer;
 let logger: vscode.OutputChannel;
-let webViewProvider: WebViewProvider;
+let webViewProviders: WebViewProvider[] = []; // Track multiple chat tabs
 let authStateManager: AuthStateManager;
 
 let log: (message: string) => void = () => {};
@@ -117,8 +117,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize Auth State Manager
   authStateManager = new AuthStateManager(context);
 
-  // Initialize WebView Provider
-  webViewProvider = new WebViewProvider(context, context.extensionUri);
+  // Helper function to create a new WebView provider instance
+  const createWebViewProvider = (): WebViewProvider => {
+    const provider = new WebViewProvider(context, context.extensionUri);
+    webViewProviders.push(provider);
+    return provider;
+  };
 
   // Register WebView panel serializer for persistence across reloads
   context.subscriptions.push(
@@ -132,12 +136,13 @@ export async function activate(context: vscode.ExtensionContext) {
           state,
         );
 
-        // Restore the WebView provider with the existing panel
-        webViewProvider.restorePanel(webviewPanel);
+        // Create a new provider for the restored panel
+        const provider = createWebViewProvider();
+        provider.restorePanel(webviewPanel);
 
         // Restore state if available
         if (state && typeof state === 'object') {
-          webViewProvider.restoreState(
+          provider.restoreState(
             state as {
               conversationId: string | null;
               agentInitialized: boolean;
@@ -173,15 +178,36 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
     vscode.commands.registerCommand('qwenCode.openChat', () => {
-      webViewProvider.show();
+      // Open or reveal the most recent chat tab
+      if (webViewProviders.length > 0) {
+        const lastProvider = webViewProviders[webViewProviders.length - 1];
+        lastProvider.show();
+      } else {
+        // Create first chat tab
+        const provider = createWebViewProvider();
+        provider.show();
+      }
+    }),
+    vscode.commands.registerCommand('qwenCode.openNewChatTab', () => {
+      // Check if there's already an open chat panel
+      if (webViewProviders.length > 0) {
+        const lastProvider = webViewProviders[webViewProviders.length - 1];
+        // Reveal the existing panel and create a new session within it
+        lastProvider.show();
+        lastProvider.createNewSession();
+      } else {
+        // Create first chat tab
+        const provider = createWebViewProvider();
+        provider.show();
+      }
     }),
     vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
       await authStateManager.clearAuthState();
 
-      // Reset WebView agent state to force re-authentication
-      if (webViewProvider) {
-        webViewProvider.resetAgentState();
-      }
+      // Reset all WebView agent states to force re-authentication
+      webViewProviders.forEach((provider) => {
+        provider.resetAgentState();
+      });
 
       vscode.window.showInformationMessage(
         'Qwen Code authentication cache cleared. You will need to login again on next connection.',
@@ -260,9 +286,11 @@ export async function deactivate(): Promise<void> {
     if (ideServer) {
       await ideServer.stop();
     }
-    if (webViewProvider) {
-      webViewProvider.dispose();
-    }
+    // Dispose all WebView providers
+    webViewProviders.forEach((provider) => {
+      provider.dispose();
+    });
+    webViewProviders = [];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`Failed to stop IDE server during deactivation: ${message}`);

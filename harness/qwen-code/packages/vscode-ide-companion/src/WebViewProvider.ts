@@ -427,6 +427,32 @@ export class WebViewProvider {
   }
 
   /**
+   * Create a new session in the current panel
+   * This is called when the user clicks the "New Session" button
+   */
+  async createNewSession(): Promise<void> {
+    console.log('[WebViewProvider] Creating new session in current panel');
+    try {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+
+      // Create new Qwen session via agent manager
+      await this.agentManager.createNewSession(workingDir);
+
+      // Clear current conversation UI
+      this.sendMessageToWebView({
+        type: 'conversationCleared',
+        data: {},
+      });
+
+      console.log('[WebViewProvider] New session created successfully');
+    } catch (error) {
+      console.error('[WebViewProvider] Failed to create new session:', error);
+      vscode.window.showErrorMessage(`Failed to create new session: ${error}`);
+    }
+  }
+
+  /**
    * Dispose the WebView provider and clean up resources
    */
   dispose(): void {

@@ -169,6 +169,11 @@ export class MessageHandler {
         );
         break;
 
+      case 'openNewChatTab':
+        // Create a new session in the current panel instead of opening a new panel
+        await this.handleNewQwenSession();
+        break;
+
       default:
         console.warn('[MessageHandler] Unknown message type:', message.type);
         break;
