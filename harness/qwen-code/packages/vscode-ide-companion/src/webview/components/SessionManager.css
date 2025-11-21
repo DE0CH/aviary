@@ -1,0 +1,193 @@
+/* Session Manager Styles */
+.session-manager {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+}
+
+.session-manager-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid var(--app-primary-border-color);
+}
+
+.session-manager-header h3 {
+  margin: 0;
+  font-weight: 600;
+  color: var(--app-primary-foreground);
+}
+
+.session-manager-actions {
+  padding: 16px;
+  border-bottom: 1px solid var(--app-primary-border-color);
+}
+
+.session-manager-actions .secondary-button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: none;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-manager-actions .secondary-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.session-search {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--app-primary-border-color);
+}
+
+.session-search svg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  color: var(--app-primary-foreground);
+}
+
+.session-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--app-primary-foreground);
+  font-size: var(--vscode-chat-font-size, 13px);
+  font-family: var(--vscode-chat-font-family);
+  padding: 0;
+}
+
+.session-search input::placeholder {
+  color: var(--app-input-placeholder-foreground);
+  opacity: 0.6;
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.session-list-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  gap: 8px;
+  color: var(--app-secondary-foreground);
+}
+
+.session-list-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--app-secondary-foreground);
+  opacity: 0.6;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--app-primary-foreground);
+  transition: background 0.1s ease;
+  margin-bottom: 4px;
+}
+
+.session-item:hover {
+  background: var(--app-list-hover-background);
+}
+
+.session-item.active {
+  background: var(--app-list-active-background);
+  color: var(--app-list-active-foreground);
+}
+
+.session-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-item-name {
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 0.9em;
+  color: var(--app-secondary-foreground);
+}
+
+.session-item-date,
+.session-item-count {
+  white-space: nowrap;
+}
+
+.session-item-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: 12px;
+}
+
+.session-item-actions .icon-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+}
+
+.session-item-actions .icon-button:hover {
+  background: var(--app-ghost-button-hover-background);
+}
+
+.session-item-actions .icon-button svg {
+  width: 16px;
+  height: 16px;
+  color: var(--app-primary-foreground);
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

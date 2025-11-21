@@ -13,6 +13,7 @@ import {
   QwenSessionReader,
   type QwenSession,
 } from '../services/qwenSessionReader.js';
+import { QwenSessionManager } from '../services/qwenSessionManager.js';
 import type { AuthStateManager } from '../auth/authStateManager.js';
 import type {
   ChatMessage,
@@ -22,6 +23,7 @@ import type {
 } from './qwenTypes.js';
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
+import * as crypto from 'crypto';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -33,6 +35,7 @@ export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 export class QwenAgentManager {
   private connection: AcpConnection;
   private sessionReader: QwenSessionReader;
+  private sessionManager: QwenSessionManager;
   private connectionHandler: QwenConnectionHandler;
   private sessionUpdateHandler: QwenSessionUpdateHandler;
   private currentWorkingDir: string = process.cwd();
@@ -43,6 +46,7 @@ export class QwenAgentManager {
   constructor() {
     this.connection = new AcpConnection();
     this.sessionReader = new QwenSessionReader();
+    this.sessionManager = new QwenSessionManager();
     this.connectionHandler = new QwenConnectionHandler();
     this.sessionUpdateHandler = new QwenSessionUpdateHandler({});
 
@@ -159,6 +163,100 @@ export class QwenAgentManager {
   }
 
   /**
+   * 通过 ACP session/save 方法保存会话
+   *
+   * @param sessionId - 会话ID
+   * @param tag - 保存标签
+   * @returns 保存响应
+   */
+  async saveSessionViaAcp(
+    sessionId: string,
+    tag: string,
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(
+        '[QwenAgentManager] Saving session via ACP:',
+        sessionId,
+        'with tag:',
+        tag,
+      );
+      const response = await this.connection.saveSession(tag);
+      console.log('[QwenAgentManager] Session save response:', response);
+      // Extract message from response result or error
+      let message = '';
+      if (response?.result) {
+        if (typeof response.result === 'string') {
+          message = response.result;
+        } else if (
+          typeof response.result === 'object' &&
+          response.result !== null
+        ) {
+          // Try to get message from result object
+          message =
+            (response.result as { message?: string }).message ||
+            JSON.stringify(response.result);
+        } else {
+          message = String(response.result);
+        }
+      } else if (response?.error) {
+        message = response.error.message;
+      }
+
+      return { success: true, message };
+    } catch (error) {
+      console.error('[QwenAgentManager] Session save via ACP failed:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * 直接保存会话到文件系统（不依赖 ACP）
+   *
+   * @param messages - 当前会话消息
+   * @param sessionName - 会话名称
+   * @returns 保存结果
+   */
+  async saveSessionDirect(
+    messages: ChatMessage[],
+    sessionName: string,
+  ): Promise<{ success: boolean; sessionId?: string; message?: string }> {
+    try {
+      console.log('[QwenAgentManager] Saving session directly:', sessionName);
+
+      // 转换消息格式
+      const qwenMessages = messages.map((msg) => ({
+        id: crypto.randomUUID(),
+        timestamp: new Date(msg.timestamp).toISOString(),
+        type: msg.role === 'user' ? ('user' as const) : ('qwen' as const),
+        content: msg.content,
+      }));
+
+      // 保存会话
+      const sessionId = await this.sessionManager.saveSession(
+        qwenMessages,
+        sessionName,
+        this.currentWorkingDir,
+      );
+
+      console.log('[QwenAgentManager] Session saved directly:', sessionId);
+      return {
+        success: true,
+        sessionId,
+        message: `会话已保存: ${sessionName}`,
+      };
+    } catch (error) {
+      console.error('[QwenAgentManager] Session save directly failed:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
    * 尝试通过 ACP session/load 方法加载会话
    * 这是一个测试方法，用于验证 CLI 是否支持 session/load
    *
@@ -177,6 +275,42 @@ export class QwenAgentManager {
     } catch (error) {
       console.error('[QwenAgentManager] Session load via ACP failed:', error);
       throw error;
+    }
+  }
+
+  /**
+   * 直接从文件系统加载会话（不依赖 ACP）
+   *
+   * @param sessionId - 会话ID
+   * @returns 加载的会话消息或null
+   */
+  async loadSessionDirect(sessionId: string): Promise<ChatMessage[] | null> {
+    try {
+      console.log('[QwenAgentManager] Loading session directly:', sessionId);
+
+      // 加载会话
+      const session = await this.sessionManager.loadSession(
+        sessionId,
+        this.currentWorkingDir,
+      );
+
+      if (!session) {
+        console.log('[QwenAgentManager] Session not found:', sessionId);
+        return null;
+      }
+
+      // 转换消息格式
+      const messages: ChatMessage[] = session.messages.map((msg) => ({
+        role: msg.type === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+        timestamp: new Date(msg.timestamp).getTime(),
+      }));
+
+      console.log('[QwenAgentManager] Session loaded directly:', sessionId);
+      return messages;
+    } catch (error) {
+      console.error('[QwenAgentManager] Session load directly failed:', error);
+      return null;
     }
   }
 

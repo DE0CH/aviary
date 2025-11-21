@@ -22,6 +22,7 @@ import {
   type CompletionItem,
 } from './components/CompletionMenu.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
+import { SaveSessionDialog } from './components/SaveSessionDialog.js';
 
 interface ToolCallUpdate {
   type: 'tool_call' | 'tool_call_update';
@@ -227,6 +228,8 @@ export const App: React.FC = () => {
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [savedSessionTags, setSavedSessionTags] = useState<string[]>([]);
 
   // Workspace files cache
   const [workspaceFiles, setWorkspaceFiles] = useState<
@@ -539,66 +542,100 @@ export const App: React.FC = () => {
   }, [handleAttachContextClick]);
 
   // Handle removing context attachment
-  const handleToolCallUpdate = React.useCallback((update: ToolCallUpdate) => {
-    setToolCalls((prev) => {
-      const newMap = new Map(prev);
-      const existing = newMap.get(update.toolCallId);
+  const handleToolCallUpdate = React.useCallback(
+    (update: ToolCallUpdate) => {
+      setToolCalls((prevToolCalls) => {
+        const newMap = new Map(prevToolCalls);
+        const existing = newMap.get(update.toolCallId);
 
-      // Helper function to safely convert title to string
-      const safeTitle = (title: unknown): string => {
-        if (typeof title === 'string') {
-          return title;
+        // Helper function to safely convert title to string
+        const safeTitle = (title: unknown): string => {
+          if (typeof title === 'string') {
+            return title;
+          }
+          if (title && typeof title === 'object') {
+            return JSON.stringify(title);
+          }
+          return 'Tool Call';
+        };
+
+        if (update.type === 'tool_call') {
+          // New tool call - cast content to proper type
+          const content = update.content?.map((item) => ({
+            type: item.type as 'content' | 'diff',
+            content: item.content,
+            path: item.path,
+            oldText: item.oldText,
+            newText: item.newText,
+          }));
+
+          newMap.set(update.toolCallId, {
+            toolCallId: update.toolCallId,
+            kind: update.kind || 'other',
+            title: safeTitle(update.title),
+            status: update.status || 'pending',
+            rawInput: update.rawInput as string | object | undefined,
+            content,
+            locations: update.locations,
+          });
+        } else if (update.type === 'tool_call_update' && existing) {
+          // Update existing tool call
+          const updatedContent = update.content
+            ? update.content.map((item) => ({
+                type: item.type as 'content' | 'diff',
+                content: item.content,
+                path: item.path,
+                oldText: item.oldText,
+                newText: item.newText,
+              }))
+            : undefined;
+
+          newMap.set(update.toolCallId, {
+            ...existing,
+            ...(update.kind && { kind: update.kind }),
+            ...(update.title && { title: safeTitle(update.title) }),
+            ...(update.status && { status: update.status }),
+            ...(updatedContent && { content: updatedContent }),
+            ...(update.locations && { locations: update.locations }),
+          });
         }
-        if (title && typeof title === 'object') {
-          return JSON.stringify(title);
+
+        return newMap;
+      });
+    },
+    [setToolCalls],
+  );
+
+  const handleSaveSession = useCallback(
+    (tag: string) => {
+      // Send save session request to extension
+      vscode.postMessage({
+        type: 'saveSession',
+        data: { tag },
+      });
+      setShowSaveDialog(false);
+    },
+    [vscode],
+  );
+
+  // Handle save session response
+  const handleSaveSessionResponse = useCallback(
+    (response: { success: boolean; message?: string }) => {
+      if (response.success) {
+        // Add the new tag to saved session tags
+        if (response.message) {
+          const tagMatch = response.message.match(/tag: (.+)$/);
+          if (tagMatch) {
+            setSavedSessionTags((prev) => [...prev, tagMatch[1]]);
+          }
         }
-        return 'Tool Call';
-      };
-
-      if (update.type === 'tool_call') {
-        // New tool call - cast content to proper type
-        const content = update.content?.map((item) => ({
-          type: item.type as 'content' | 'diff',
-          content: item.content,
-          path: item.path,
-          oldText: item.oldText,
-          newText: item.newText,
-        }));
-
-        newMap.set(update.toolCallId, {
-          toolCallId: update.toolCallId,
-          kind: update.kind || 'other',
-          title: safeTitle(update.title),
-          status: update.status || 'pending',
-          rawInput: update.rawInput as string | object | undefined,
-          content,
-          locations: update.locations,
-        });
-      } else if (update.type === 'tool_call_update' && existing) {
-        // Update existing tool call
-        const updatedContent = update.content
-          ? update.content.map((item) => ({
-              type: item.type as 'content' | 'diff',
-              content: item.content,
-              path: item.path,
-              oldText: item.oldText,
-              newText: item.newText,
-            }))
-          : undefined;
-
-        newMap.set(update.toolCallId, {
-          ...existing,
-          ...(update.kind && { kind: update.kind }),
-          ...(update.title && { title: safeTitle(update.title) }),
-          ...(update.status && { status: update.status }),
-          ...(updatedContent && { content: updatedContent }),
-          ...(update.locations && { locations: update.locations }),
-        });
+      } else {
+        // Handle error - could show a toast or error message
+        console.error('Failed to save session:', response.message);
       }
-
-      return newMap;
-    });
-  }, []);
+    },
+    [setSavedSessionTags],
+  );
 
   useEffect(() => {
     // Listen for messages from extension
@@ -828,6 +865,12 @@ export const App: React.FC = () => {
           break;
         }
 
+        case 'saveSessionResponse': {
+          // Handle save session response
+          handleSaveSessionResponse(message.data);
+          break;
+        }
+
         default:
           break;
       }
@@ -835,7 +878,12 @@ export const App: React.FC = () => {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [currentSessionId, handlePermissionRequest, handleToolCallUpdate]);
+  }, [
+    currentSessionId,
+    handlePermissionRequest,
+    handleToolCallUpdate,
+    handleSaveSessionResponse,
+  ]);
 
   useEffect(() => {
     // Auto-scroll to bottom when messages change
@@ -1231,6 +1279,26 @@ export const App: React.FC = () => {
         </button>
         <div className="header-spacer"></div>
         <button
+          className="save-session-header-button"
+          onClick={() => setShowSaveDialog(true)}
+          title="Save Conversation"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden="true"
+            data-slot="icon"
+            className="icon-svg"
+          >
+            <path
+              fillRule="evenodd"
+              d="M4.25 2A2.25 2.25 0 0 0 2 4.25v11.5A2.25 2.25 0 0 0 4.25 18h11.5A2.25 2.25 0 0 0 18 15.75V8.25a.75.75 0 0 1 .217-.517l.083-.083a.75.75 0 0 1 1.061 0l2.239 2.239A.75.75 0 0 1 22 10.5v5.25a4.75 4.75 0 0 1-4.75 4.75H4.75A4.75 4.75 0 0 1 0 15.75V4.25A4.75 4.75 0 0 1 4.75 0h5a.75.75 0 0 1 0 1.5h-5ZM9.017 6.5a1.5 1.5 0 0 1 2.072.58l.43.862a1 1 0 0 0 .895.558h3.272a1.5 1.5 0 0 1 1.5 1.5v6.75a1.5 1.5 0 0 1-1.5 1.5h-7.5a1.5 1.5 0 0 1-1.5-1.5v-6.75a1.5 1.5 0 0 1 1.5-1.5h1.25a1 1 0 0 0 .895-.558l.43-.862a1.5 1.5 0 0 1 .511-.732ZM11.78 8.47a.75.75 0 0 0-1.06-1.06L8.75 9.379 7.78 8.41a.75.75 0 0 0-1.06 1.06l1.5 1.5a.75.75 0 0 0 1.06 0l2.5-2.5Z"
+              clipRule="evenodd"
+            ></path>
+          </svg>
+        </button>
+        <button
           className="new-session-header-button"
           onClick={handleNewQwenSession}
           title="New Session"
@@ -1595,6 +1663,14 @@ export const App: React.FC = () => {
           </form>
         </div>
       </div>
+
+      {/* Save Session Dialog */}
+      <SaveSessionDialog
+        isOpen={showSaveDialog}
+        onClose={() => setShowSaveDialog(false)}
+        onSave={handleSaveSession}
+        existingTags={savedSessionTags}
+      />
 
       {/* Permission Drawer - Cursor style */}
       {permissionRequest && (

@@ -41,6 +41,7 @@ import { AcpSessionManager } from './acpSessionManager.js';
  * ✅ session/prompt - Send user message to agent
  * ✅ session/cancel - Cancel current generation
  * ✅ session/load - Load previous session
+ * ✅ session/save - Save current session
  *
  * Custom Methods (Not in standard ACP):
  * ⚠️  session/list - List available sessions (custom extension)
@@ -346,6 +347,21 @@ export class AcpConnection {
    */
   async cancelSession(): Promise<void> {
     await this.sessionManager.cancelSession(this.child);
+  }
+
+  /**
+   * 保存当前会话
+   *
+   * @param tag - 保存标签
+   * @returns 保存响应
+   */
+  async saveSession(tag: string): Promise<AcpResponse> {
+    return this.sessionManager.saveSession(
+      tag,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
   }
 
   /**

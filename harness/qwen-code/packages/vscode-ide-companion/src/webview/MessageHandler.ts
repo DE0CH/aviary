@@ -25,6 +25,8 @@ export class MessageHandler {
     type: string;
     data: { optionId: string };
   }) => void;
+  // 当前消息列表
+  private messages: ChatMessage[] = [];
 
   constructor(
     private agentManager: QwenAgentManager,
@@ -195,6 +197,14 @@ export class MessageHandler {
 
       case 'getWorkspaceFiles':
         await this.handleGetWorkspaceFiles(data?.query as string);
+        break;
+
+      case 'saveSession':
+        await this.handleSaveSession(data?.tag as string);
+        break;
+
+      case 'resumeSession':
+        await this.handleResumeSession(data?.sessionId as string);
         break;
 
       default:
@@ -785,6 +795,130 @@ export class MessageHandler {
       this.sendToWebView({
         type: 'error',
         data: { message: `Failed to show context picker: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 处理保存会话请求
+   * 首先尝试通过 ACP 协议保存，如果失败则直接保存到文件系统
+   */
+  private async handleSaveSession(tag: string): Promise<void> {
+    try {
+      console.log('[MessageHandler] Saving session with tag:', tag);
+
+      if (!this.currentConversationId) {
+        throw new Error('No active conversation to save');
+      }
+
+      // 从 conversationStore 获取当前会话消息
+      const conversation = await this.conversationStore.getConversation(
+        this.currentConversationId,
+      );
+      const messages = conversation?.messages || [];
+
+      // 首先尝试通过 ACP 保存
+      try {
+        const response = await this.agentManager.saveSessionViaAcp(
+          this.currentConversationId,
+          tag,
+        );
+
+        console.log('[MessageHandler] Session saved via ACP:', response);
+
+        // Send response back to WebView
+        this.sendToWebView({
+          type: 'saveSessionResponse',
+          data: response,
+        });
+      } catch (acpError) {
+        console.warn(
+          '[MessageHandler] ACP save failed, falling back to direct save:',
+          acpError,
+        );
+
+        // ACP 保存失败，尝试直接保存到文件系统
+        const response = await this.agentManager.saveSessionDirect(
+          messages,
+          tag,
+        );
+
+        console.log('[MessageHandler] Session saved directly:', response);
+
+        // Send response back to WebView
+        this.sendToWebView({
+          type: 'saveSessionResponse',
+          data: response,
+        });
+      }
+
+      // Also refresh the session list
+      await this.handleGetQwenSessions();
+    } catch (error) {
+      console.error('[MessageHandler] Failed to save session:', error);
+      this.sendToWebView({
+        type: 'saveSessionResponse',
+        data: {
+          success: false,
+          message: `Failed to save session: ${error}`,
+        },
+      });
+    }
+  }
+
+  /**
+   * 处理恢复会话请求
+   * 首先尝试通过 ACP 协议加载，如果失败则直接从文件系统加载
+   */
+  private async handleResumeSession(sessionId: string): Promise<void> {
+    try {
+      console.log('[MessageHandler] Resuming session:', sessionId);
+
+      // 首先尝试通过 ACP 加载
+      try {
+        await this.agentManager.loadSessionViaAcp(sessionId);
+
+        // Set current conversation ID
+        this.currentConversationId = sessionId;
+
+        // Get session messages for display
+        const messages = await this.agentManager.getSessionMessages(sessionId);
+
+        // Send response back to WebView
+        this.sendToWebView({
+          type: 'qwenSessionSwitched',
+          data: { sessionId, messages },
+        });
+      } catch (acpError) {
+        console.warn(
+          '[MessageHandler] ACP load failed, falling back to direct load:',
+          acpError,
+        );
+
+        // ACP 加载失败，尝试直接从文件系统加载
+        const messages = await this.agentManager.loadSessionDirect(sessionId);
+
+        if (messages) {
+          // Set current conversation ID
+          this.currentConversationId = sessionId;
+
+          // Send response back to WebView
+          this.sendToWebView({
+            type: 'qwenSessionSwitched',
+            data: { sessionId, messages },
+          });
+        } else {
+          throw new Error('会话加载失败');
+        }
+      }
+
+      // Also refresh the session list
+      await this.handleGetQwenSessions();
+    } catch (error) {
+      console.error('[MessageHandler] Failed to resume session:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to resume session: ${error}` },
       });
     }
   }

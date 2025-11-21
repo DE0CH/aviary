@@ -350,6 +350,40 @@ export class AcpSessionManager {
   }
 
   /**
+   * 保存当前会话
+   *
+   * @param tag - 保存标签
+   * @param child - 子进程实例
+   * @param pendingRequests - 待处理请求映射表
+   * @param nextRequestId - 请求ID计数器
+   * @returns 保存响应
+   */
+  async saveSession(
+    tag: string,
+    child: ChildProcess | null,
+    pendingRequests: Map<number, PendingRequest<unknown>>,
+    nextRequestId: { value: number },
+  ): Promise<AcpResponse> {
+    if (!this.sessionId) {
+      throw new Error('No active ACP session');
+    }
+
+    console.log('[ACP] Saving session with tag:', tag);
+    const response = await this.sendRequest<AcpResponse>(
+      AGENT_METHODS.session_save,
+      {
+        sessionId: this.sessionId,
+        tag,
+      },
+      child,
+      pendingRequests,
+      nextRequestId,
+    );
+    console.log('[ACP] Session save response:', response);
+    return response;
+  }
+
+  /**
    * 重置会话管理器状态
    */
   reset(): void {

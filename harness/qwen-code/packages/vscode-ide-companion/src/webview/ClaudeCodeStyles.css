@@ -7,6 +7,19 @@
  * Path: /Users/jinjing/Downloads/Anthropic.claude-code-2.0.43/extension/webview/index.css
  */
 
+/* Import component styles */
+@import './components/SaveSessionDialog.css';
+@import './components/SessionManager.css';
+@import './components/MessageContent.css';
+@import './components/EmptyState.css';
+@import './components/CompletionMenu.css';
+@import './components/ContextPills.css';
+@import './components/PermissionDrawer.css';
+@import './components/PlanDisplay.css';
+@import './components/Timeline.css';
+@import './components/shared/FileLink.css';
+@import './components/toolcalls/shared/DiffDisplay.css';
+
 /* ===========================
    Header Styles (from Claude Code .he)
    =========================== */

@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-interface QwenMessage {
+export interface QwenMessage {
   id: string;
   timestamp: string;
   type: 'user' | 'qwen';
