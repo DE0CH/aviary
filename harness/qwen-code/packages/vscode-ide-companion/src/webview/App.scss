@@ -234,241 +234,6 @@ button {
 }
 
 /* ===========================
-   Claude Code Style Input Form (.Me > .u)
-   =========================== */
-/* Outer container (.Me) */
-.input-form-container {
-  background-color: var(--app-primary-background);
-  padding: 4px 16px 16px;
-}
-
-/* Inner wrapper */
-.input-form-wrapper {
-  display: block;
-}
-
-/* Input Form Container - matches Claude Code style */
-.input-form {
-  background: var(--app-input-secondary-background, var(--app-input-background));
-  border: 1px solid var(--app-input-border);
-  border-radius: var(--corner-radius-large);
-  color: var(--app-input-foreground);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* Inner background layer - creates depth effect */
-.input-form-background {
-  background: var(--app-input-background);
-  position: absolute;
-  border-radius: var(--corner-radius-large);
-  inset: 0;
-  z-index: 0;
-}
-
-.input-form:focus-within {
-  border-color: var(--app-qwen-orange);
-  box-shadow: 0 1px 2px color-mix(in srgb,var(--app-qwen-orange),transparent 80%);
-}
-
-/* Banner area - for warnings/messages */
-.input-banner {
-  /* Empty for now, can be used for warnings/banners */
-}
-
-/* Input wrapper - contains the contenteditable field */
-.input-wrapper {
-  position: relative;
-  display: flex;
-  z-index: 1;
-}
-
-/* Contenteditable input field - matches Claude Code */
-.input-field-editable {
-  padding: 10px 14px;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.5;
-  overflow-y: auto;
-  position: relative;
-  flex: 1;
-  align-self: stretch;
-  user-select: text;
-  min-height: 1.5em;
-  max-height: 200px;
-  background-color: transparent;
-  color: var(--app-input-foreground);
-  border: none;
-  border-radius: 0;
-  font-size: var(--vscode-chat-font-size, 13px);
-  overflow-x: hidden;
-  word-wrap: break-word;
-  white-space: pre-wrap;
-}
-
-.input-field-editable:focus {
-  outline: none;
-}
-
-.input-field-editable:empty:before {
-  content: attr(data-placeholder);
-  color: var(--app-input-placeholder-foreground);
-  pointer-events: none;
-  position: absolute;
-}
-
-.input-field-editable:disabled,
-.input-field-editable[contenteditable='false'] {
-  color: #999;
-  cursor: not-allowed;
-}
-
-/* Actions row - matches Claude Code */
-.input-actions {
-  display: flex;
-  align-items: center;
-  padding: 5px;
-  color: var(--app-secondary-foreground);
-  gap: 6px;
-  min-width: 0;
-  border-top: 0.5px solid var(--app-input-border);
-  z-index: 1;
-}
-
-/* Edit mode button (.l) */
-.action-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  height: 32px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--corner-radius-small);
-  color: var(--app-primary-foreground);
-  cursor: pointer;
-  font-size: 12px;
-  // font-weight: 500;
-  transition: background-color 0.15s;
-  white-space: nowrap;
-}
-
-.action-button:hover {
-  background-color: var(--app-ghost-button-hover-background);
-}
-
-.action-button svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-/* Divider (.ii) */
-.action-divider {
-  width: 1px;
-  height: 24px;
-  background-color: var(--app-transparent-inner-border);
-  margin: 0 2px;
-  flex-shrink: 0;
-}
-
-/* Icon buttons (.H) */
-.action-icon-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--corner-radius-small);
-  color: var(--app-secondary-foreground);
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-
-.action-icon-button:hover {
-  background-color: var(--app-ghost-button-hover-background);
-  color: var(--app-primary-foreground);
-}
-
-.action-icon-button.active {
-  background-color: var(--app-qwen-clay-button-orange);
-  color: var(--app-qwen-ivory);
-}
-
-.action-icon-button.active svg {
-  stroke: var(--app-qwen-ivory);
-  fill: var(--app-qwen-ivory);
-}
-
-.action-icon-button svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Spacer to push file indicator to the right */
-.input-actions-spacer {
-  flex: 1;
-  min-width: 0;
-}
-
-/* Active file indicator - shows current file selection */
-.active-file-indicator {
-  // Inherits all styles from .action-button
-  // Only add specific overrides here if needed
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 1;
-  min-width: 0;
-}
-
-/* Hide file indicator on very small screens */
-@media screen and (max-width: 330px) {
-  .active-file-indicator {
-    display: none;
-  }
-}
-
-/* Send button (.r) */
-.send-button-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: var(--app-qwen-clay-button-orange);
-  border: 1px solid transparent;
-  border-radius: var(--corner-radius-small);
-  color: var(--app-qwen-ivory);
-  cursor: pointer;
-  transition: background-color 0.15s, filter 0.15s;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.send-button-icon:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.send-button-icon:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.send-button-icon svg {
-  width: 20px;
-  height: 20px;
-}
-
-/* ===========================
    Tool Call Card Styles (Grid Layout)
    =========================== */
 .tool-call-card {
@@ -547,6 +312,92 @@ button {
 
 .tool-call-status-indicator.failed::before {
   background: #f44336;
+}
+
+/* ===========================
+   In-Progress Tool Call Styles (Claude Code style)
+   =========================== */
+.in-progress-tool-call {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-spacing-small);
+  padding: var(--app-spacing-medium);
+  margin: var(--app-spacing-small) 0;
+  background: var(--app-input-background);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-small);
+  animation: fadeIn 0.2s ease-in;
+}
+
+.in-progress-tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: var(--app-spacing-medium);
+}
+
+.in-progress-tool-call-kind {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--app-primary-foreground);
+}
+
+.in-progress-tool-call-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--app-secondary-foreground);
+  position: relative;
+  padding-left: 14px;
+}
+
+.in-progress-tool-call-status::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.in-progress-tool-call-status.pending::before {
+  background: #ffc107;
+}
+
+.in-progress-tool-call-status.in_progress::before {
+  background: #2196f3;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.in-progress-tool-call-status.completed::before {
+  background: #4caf50;
+}
+
+.in-progress-tool-call-status.failed::before {
+  background: #f44336;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.in-progress-tool-call-title {
+  font-size: 12px;
+  color: var(--app-secondary-foreground);
+  font-family: var(--app-monospace-font-family);
+  padding-left: 2px;
+}
+
+.in-progress-tool-call-locations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 2px;
 }
 
 .code-block {

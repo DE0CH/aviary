@@ -5,13 +5,8 @@
  */
 
 import type React from 'react';
-import { useEffect } from 'react';
-import {
-  PermissionRequest,
-  type PermissionOption,
-  type ToolCall,
-} from './PermissionRequest.js';
-import './PermissionDrawer.css';
+import { useEffect, useState, useRef } from 'react';
+import type { PermissionOption, ToolCall } from './PermissionRequest.js';
 
 interface PermissionDrawerProps {
   isOpen: boolean;
@@ -22,12 +17,7 @@ interface PermissionDrawerProps {
 }
 
 /**
- * Permission drawer component - displays permission requests in a bottom sheet
- * @param isOpen - Whether the drawer is open
- * @param options - Permission options to display
- * @param toolCall - Tool call information
- * @param onResponse - Callback when user responds
- * @param onClose - Optional callback when drawer closes
+ * Permission drawer component - Claude Code style bottom sheet
  */
 export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   isOpen,
@@ -36,80 +26,229 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   onResponse,
   onClose,
 }) => {
-  // Close drawer on Escape key
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [customMessage, setCustomMessage] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const customInputRef = useRef<HTMLDivElement>(null);
+
+  // Get the title for the permission request
+  const getTitle = () => {
+    if (toolCall.kind === 'edit' || toolCall.kind === 'write') {
+      const fileName =
+        toolCall.locations?.[0]?.path?.split('/').pop() || 'file';
+      return (
+        <>
+          Allow write to{' '}
+          <span className="font-mono text-[var(--app-primary-foreground)]">
+            {fileName}
+          </span>
+          ?
+        </>
+      );
+    }
+    if (toolCall.kind === 'execute' || toolCall.kind === 'bash') {
+      return 'Allow command execution?';
+    }
+    if (toolCall.kind === 'read') {
+      const fileName =
+        toolCall.locations?.[0]?.path?.split('/').pop() || 'file';
+      return (
+        <>
+          Allow read from{' '}
+          <span className="font-mono text-[var(--app-primary-foreground)]">
+            {fileName}
+          </span>
+          ?
+        </>
+      );
+    }
+    return toolCall.title || 'Permission Required';
+  };
+
+  // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) {
-        return;
-      }
+      if (!isOpen) return;
 
-      // Close on Escape
-      if (e.key === 'Escape' && onClose) {
-        onClose();
-        return;
-      }
-
-      // Quick select with number keys (1-9)
+      // Number keys 1-9 for quick select
       const numMatch = e.key.match(/^[1-9]$/);
-      if (numMatch) {
+      if (
+        numMatch &&
+        !customInputRef.current?.contains(document.activeElement)
+      ) {
         const index = parseInt(e.key, 10) - 1;
         if (index < options.length) {
           e.preventDefault();
           onResponse(options[index].optionId);
         }
+        return;
+      }
+
+      // Arrow keys for navigation
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const totalItems = options.length + 1; // +1 for custom input
+        if (e.key === 'ArrowDown') {
+          setFocusedIndex((prev) => (prev + 1) % totalItems);
+        } else {
+          setFocusedIndex((prev) => (prev - 1 + totalItems) % totalItems);
+        }
+      }
+
+      // Enter to select
+      if (
+        e.key === 'Enter' &&
+        !customInputRef.current?.contains(document.activeElement)
+      ) {
+        e.preventDefault();
+        if (focusedIndex < options.length) {
+          onResponse(options[focusedIndex].optionId);
+        }
+      }
+
+      // Escape to close
+      if (e.key === 'Escape' && onClose) {
+        onClose();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, options, onResponse]);
+  }, [isOpen, options, onResponse, onClose, focusedIndex]);
 
-  if (!isOpen) {
-    return null;
-  }
+  // Focus container when opened
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      containerRef.current.focus();
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   return (
-    <>
-      {/* Backdrop */}
-      <div className="permission-drawer-backdrop" onClick={onClose} />
+    <div className="fixed inset-x-0 bottom-0 z-[1000] p-2">
+      {/* Main container */}
+      <div
+        ref={containerRef}
+        className="relative flex flex-col rounded-large border p-2 outline-none animate-[slideUp_0.2s_ease-out]"
+        style={{
+          backgroundColor: 'var(--app-input-secondary-background)',
+          borderColor: 'var(--app-input-border)',
+        }}
+        tabIndex={0}
+        data-focused-index={focusedIndex}
+      >
+        {/* Background layer */}
+        <div
+          className="absolute inset-0 rounded-large"
+          style={{ backgroundColor: 'var(--app-input-background)' }}
+        />
 
-      {/* Drawer */}
-      <div className="permission-drawer">
-        <div className="permission-drawer-background"></div>
-        <div className="permission-drawer-header">
-          <h3 className="permission-drawer-title">Permission Required</h3>
-          {onClose && (
-            <button
-              className="permission-drawer-close"
-              onClick={onClose}
-              aria-label="Close drawer"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M2 2L14 14M2 14L14 2"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          )}
+        {/* Title */}
+        <div className="relative z-[1] px-3 py-3">
+          <div
+            className="text-sm font-medium"
+            style={{ color: 'var(--app-secondary-foreground)' }}
+          >
+            {getTitle()}
+          </div>
         </div>
 
-        <div className="permission-drawer-content">
-          <PermissionRequest
-            options={options}
-            toolCall={toolCall}
-            onResponse={onResponse}
-          />
+        {/* Options */}
+        <div className="relative z-[1] flex flex-col gap-1 px-1 pb-1">
+          {options.map((option, index) => {
+            const isAlways = option.kind.includes('always');
+            const isFocused = focusedIndex === index;
+
+            return (
+              <button
+                key={option.optionId}
+                className={`flex items-center gap-2 px-3 py-2 text-left rounded-small border transition-colors duration-150 ${
+                  isFocused
+                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] border-transparent'
+                    : 'hover:bg-[var(--app-list-hover-background)] border-transparent'
+                }`}
+                style={{
+                  color: isFocused
+                    ? 'var(--app-list-active-foreground)'
+                    : 'var(--app-primary-foreground)',
+                }}
+                onClick={() => onResponse(option.optionId)}
+                onMouseEnter={() => setFocusedIndex(index)}
+              >
+                {/* Number badge */}
+                <span
+                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
+                    isFocused
+                      ? 'bg-white/20 text-inherit'
+                      : 'bg-[var(--app-list-hover-background)] text-[var(--app-secondary-foreground)]'
+                  }`}
+                >
+                  {index + 1}
+                </span>
+
+                {/* Option text */}
+                <span className="text-sm">{option.name}</span>
+
+                {/* Always badge */}
+                {isAlways && <span className="text-sm">⚡</span>}
+              </button>
+            );
+          })}
+
+          {/* Custom message input */}
+          <div
+            className={`rounded-small border transition-colors duration-150 ${
+              focusedIndex === options.length
+                ? 'bg-[var(--app-list-hover-background)] border-transparent'
+                : 'border-transparent'
+            }`}
+            onMouseEnter={() => setFocusedIndex(options.length)}
+          >
+            <div
+              className="px-3 py-2 text-sm"
+              style={{ color: 'var(--app-secondary-foreground)' }}
+            >
+              Tell Qwen what to do instead
+            </div>
+            <div
+              ref={customInputRef}
+              contentEditable="plaintext-only"
+              spellCheck={false}
+              className="px-3 pb-2 text-sm outline-none bg-transparent min-h-[1.5em]"
+              style={{ color: 'var(--app-input-foreground)' }}
+              onInput={(e) => {
+                const target = e.target as HTMLDivElement;
+                setCustomMessage(target.textContent || '');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && customMessage.trim()) {
+                  e.preventDefault();
+                  const rejectOption = options.find((o) =>
+                    o.kind.includes('reject'),
+                  );
+                  if (rejectOption) {
+                    onResponse(rejectOption.optionId);
+                  }
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
-    </>
+
+      <style>{`
+        @keyframes slideUp {
+          from {
+            transform: translateY(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
+    </div>
   );
 };

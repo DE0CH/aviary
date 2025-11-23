@@ -109,17 +109,117 @@ export function useCompletionTrigger(
     const handleInput = async () => {
       const text = inputElement.textContent || '';
       const selection = window.getSelection();
+
+      console.log(
+        '[useCompletionTrigger] handleInput - text:',
+        JSON.stringify(text),
+        'length:',
+        text.length,
+      );
+
       if (!selection || selection.rangeCount === 0) {
+        console.log('[useCompletionTrigger] No selection or rangeCount === 0');
         return;
       }
 
       const range = selection.getRangeAt(0);
-      const cursorPosition = range.startOffset;
+      console.log(
+        '[useCompletionTrigger] range.startContainer:',
+        range.startContainer,
+        'startOffset:',
+        range.startOffset,
+      );
+      console.log(
+        '[useCompletionTrigger] startContainer === inputElement:',
+        range.startContainer === inputElement,
+      );
+      console.log(
+        '[useCompletionTrigger] startContainer.nodeType:',
+        range.startContainer.nodeType,
+        'TEXT_NODE:',
+        Node.TEXT_NODE,
+      );
+
+      // Get cursor position more reliably
+      // For contentEditable, we need to calculate the actual text offset
+      let cursorPosition = text.length; // Default to end of text
+
+      if (range.startContainer === inputElement) {
+        // Cursor is directly in the container (e.g., empty or at boundary)
+        // Use childNodes to determine position
+        const childIndex = range.startOffset;
+        let offset = 0;
+        for (
+          let i = 0;
+          i < childIndex && i < inputElement.childNodes.length;
+          i++
+        ) {
+          offset += inputElement.childNodes[i].textContent?.length || 0;
+        }
+        cursorPosition = offset || text.length;
+        console.log(
+          '[useCompletionTrigger] Container mode - childIndex:',
+          childIndex,
+          'offset:',
+          offset,
+          'cursorPosition:',
+          cursorPosition,
+        );
+      } else if (range.startContainer.nodeType === Node.TEXT_NODE) {
+        // Cursor is in a text node - calculate offset from start of input
+        const walker = document.createTreeWalker(
+          inputElement,
+          NodeFilter.SHOW_TEXT,
+          null,
+        );
+
+        let offset = 0;
+        let found = false;
+        let node: Node | null = walker.nextNode();
+        while (node) {
+          if (node === range.startContainer) {
+            offset += range.startOffset;
+            found = true;
+            break;
+          }
+          offset += node.textContent?.length || 0;
+          node = walker.nextNode();
+        }
+        // If we found the node, use the calculated offset; otherwise use text length
+        cursorPosition = found ? offset : text.length;
+        console.log(
+          '[useCompletionTrigger] Text node mode - found:',
+          found,
+          'offset:',
+          offset,
+          'cursorPosition:',
+          cursorPosition,
+        );
+      }
 
       // Find trigger character before cursor
-      const textBeforeCursor = text.substring(0, cursorPosition);
+      // Use text length if cursorPosition is 0 but we have text (edge case for first character)
+      const effectiveCursorPosition =
+        cursorPosition === 0 && text.length > 0 ? text.length : cursorPosition;
+      console.log(
+        '[useCompletionTrigger] cursorPosition:',
+        cursorPosition,
+        'effectiveCursorPosition:',
+        effectiveCursorPosition,
+      );
+
+      const textBeforeCursor = text.substring(0, effectiveCursorPosition);
       const lastAtMatch = textBeforeCursor.lastIndexOf('@');
       const lastSlashMatch = textBeforeCursor.lastIndexOf('/');
+
+      console.log(
+        '[useCompletionTrigger] textBeforeCursor:',
+        JSON.stringify(textBeforeCursor),
+        'lastAtMatch:',
+        lastAtMatch,
+        'lastSlashMatch:',
+        lastSlashMatch,
+      );
 
       // Check if we're in a trigger context
       let triggerPos = -1;
@@ -133,19 +233,46 @@ export function useCompletionTrigger(
         triggerChar = '/';
       }
 
+      console.log(
+        '[useCompletionTrigger] triggerPos:',
+        triggerPos,
+        'triggerChar:',
+        triggerChar,
+      );
+
       // Check if trigger is at word boundary (start of line or after space)
       if (triggerPos >= 0 && triggerChar) {
         const charBefore = triggerPos > 0 ? text[triggerPos - 1] : ' ';
         const isValidTrigger =
           charBefore === ' ' || charBefore === '\n' || triggerPos === 0;
 
+        console.log(
+          '[useCompletionTrigger] charBefore:',
+          JSON.stringify(charBefore),
+          'isValidTrigger:',
+          isValidTrigger,
+        );
+
         if (isValidTrigger) {
-          const query = text.substring(triggerPos + 1, cursorPosition);
+          const query = text.substring(triggerPos + 1, effectiveCursorPosition);
+
+          console.log(
+            '[useCompletionTrigger] query:',
+            JSON.stringify(query),
+            'hasSpace:',
+            query.includes(' '),
+            'hasNewline:',
+            query.includes('\n'),
+          );
 
           // Only show if query doesn't contain spaces (still typing the reference)
           if (!query.includes(' ') && !query.includes('\n')) {
             // Get precise cursor position for menu
             const cursorPos = getCursorPosition();
+            console.log(
+              '[useCompletionTrigger] Opening completion - cursorPos:',
+              cursorPos,
+            );
             if (cursorPos) {
               await openCompletion(triggerChar, query, cursorPos);
               return;
@@ -155,6 +282,10 @@ export function useCompletionTrigger(
       }
 
       // Close if no valid trigger
+      console.log(
+        '[useCompletionTrigger] No valid trigger, state.isOpen:',
+        state.isOpen,
+      );
       if (state.isOpen) {
         closeCompletion();
       }

@@ -62,11 +62,21 @@ export class QwenSessionUpdateHandler {
 
       case 'agent_thought_chunk':
         // 处理思考块 - 使用特殊回调
+        console.log(
+          '[SessionUpdateHandler] 🧠 THOUGHT CHUNK:',
+          update.content?.text,
+        );
         if (update.content?.text) {
           if (this.callbacks.onThoughtChunk) {
+            console.log(
+              '[SessionUpdateHandler] 🧠 Calling onThoughtChunk callback',
+            );
             this.callbacks.onThoughtChunk(update.content.text);
           } else if (this.callbacks.onStreamChunk) {
             // 回退到常规流处理
+            console.log(
+              '[SessionUpdateHandler] 🧠 Falling back to onStreamChunk',
+            );
             this.callbacks.onStreamChunk(update.content.text);
           }
         }
