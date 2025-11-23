@@ -75,6 +75,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
 
       {/* Drawer */}
       <div className="permission-drawer">
+        <div className="permission-drawer-background"></div>
         <div className="permission-drawer-header">
           <h3 className="permission-drawer-title">Permission Required</h3>
           {onClose && (
