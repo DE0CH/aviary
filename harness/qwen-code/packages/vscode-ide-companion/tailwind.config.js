@@ -3,7 +3,11 @@
 module.exports = {
   content: [
     // 渐进式采用策略：只扫描新创建的Tailwind组件
+    './src/webview/App.tsx',
     './src/webview/components/ui/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/MessageContent.tsx',
+    './src/webview/components/InfoBanner.tsx',
     // 当需要在更多组件中使用Tailwind时，可以逐步添加路径
     // "./src/webview/components/NewComponent/**/*.{js,jsx,ts,tsx}",
     // "./src/webview/pages/**/*.{js,jsx,ts,tsx}",

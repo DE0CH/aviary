@@ -101,6 +101,14 @@ export class QwenConnectionHandler {
             lastSession.sessionId,
           );
           sessionRestored = true;
+
+          // Save auth state after successful session restore
+          if (authStateManager) {
+            console.log(
+              '[QwenAgentManager] Saving auth state after successful session restore',
+            );
+            await authStateManager.saveAuthState(workingDir, authMethod);
+          }
         } catch (switchError) {
           console.log(
             '[QwenAgentManager] session/switch not supported or failed:',

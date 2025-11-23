@@ -29,8 +29,19 @@ export class AuthStateManager {
     const state = await this.getAuthState();
 
     if (!state) {
+      console.log('[AuthStateManager] No cached auth state found');
       return false;
     }
+
+    console.log('[AuthStateManager] Found cached auth state:', {
+      workingDir: state.workingDir,
+      authMethod: state.authMethod,
+      timestamp: new Date(state.timestamp).toISOString(),
+    });
+    console.log('[AuthStateManager] Checking against:', {
+      workingDir,
+      authMethod,
+    });
 
     // Check if auth is still valid (within cache duration)
     const now = Date.now();

@@ -108,7 +108,26 @@ export class MessageHandler {
 
     switch (message.type) {
       case 'sendMessage':
-        await this.handleSendMessage((data?.text as string) || '');
+        await this.handleSendMessage(
+          (data?.text as string) || '',
+          data?.context as
+            | Array<{
+                type: string;
+                name: string;
+                value: string;
+                startLine?: number;
+                endLine?: number;
+              }>
+            | undefined,
+          data?.fileContext as
+            | {
+                fileName: string;
+                filePath: string;
+                startLine?: number;
+                endLine?: number;
+              }
+            | undefined,
+        );
         break;
 
       case 'permissionResponse':
@@ -142,14 +161,24 @@ export class MessageHandler {
         break;
 
       case 'getActiveEditor': {
-        // 发送当前激活编辑器的文件名给 WebView
+        // 发送当前激活编辑器的文件名和选中的行号给 WebView
         const editor = vscode.window.activeTextEditor;
-        const fileName = editor?.document.uri.fsPath
-          ? getFileName(editor.document.uri.fsPath)
-          : null;
+        const filePath = editor?.document.uri.fsPath || null;
+        const fileName = filePath ? getFileName(filePath) : null;
+
+        // Get selection info if there is any selected text
+        let selectionInfo = null;
+        if (editor && !editor.selection.isEmpty) {
+          const selection = editor.selection;
+          selectionInfo = {
+            startLine: selection.start.line + 1, // VSCode is 0-indexed, display as 1-indexed
+            endLine: selection.end.line + 1,
+          };
+        }
+
         this.sendToWebView({
           type: 'activeEditorChanged',
-          data: { fileName },
+          data: { fileName, filePath, selection: selectionInfo },
         });
         break;
       }
@@ -235,8 +264,42 @@ export class MessageHandler {
   /**
    * 处理发送消息请求
    */
-  private async handleSendMessage(text: string): Promise<void> {
+  private async handleSendMessage(
+    text: string,
+    context?: Array<{
+      type: string;
+      name: string;
+      value: string;
+      startLine?: number;
+      endLine?: number;
+    }>,
+    fileContext?: {
+      fileName: string;
+      filePath: string;
+      startLine?: number;
+      endLine?: number;
+    },
+  ): Promise<void> {
     console.log('[MessageHandler] handleSendMessage called with:', text);
+    console.log('[MessageHandler] Context:', context);
+    console.log('[MessageHandler] FileContext:', fileContext);
+
+    // Format message with file context if present
+    let formattedText = text;
+    if (context && context.length > 0) {
+      const contextParts = context
+        .map((ctx) => {
+          if (ctx.startLine && ctx.endLine) {
+            // Include line numbers in the file reference
+            return `${ctx.value}#${ctx.startLine}${ctx.startLine !== ctx.endLine ? `-${ctx.endLine}` : ''}`;
+          }
+          return ctx.value;
+        })
+        .join('\n');
+
+      // Prepend context to the message
+      formattedText = `${contextParts}\n\n${text}`;
+    }
 
     // Ensure we have an active conversation - create one if needed
     if (!this.currentConversationId) {
@@ -306,7 +369,7 @@ export class MessageHandler {
       });
     }
 
-    // Save user message
+    // Save user message (save original text, not formatted)
     const userMessage: ChatMessage = {
       role: 'user',
       content: text,
@@ -319,10 +382,10 @@ export class MessageHandler {
     );
     console.log('[MessageHandler] User message saved to store');
 
-    // Send to WebView
+    // Send to WebView (show original text with file context)
     this.sendToWebView({
       type: 'message',
-      data: userMessage,
+      data: { ...userMessage, fileContext },
     });
     console.log('[MessageHandler] User message sent to webview');
 
@@ -332,8 +395,8 @@ export class MessageHandler {
         '[MessageHandler] Agent is not connected, skipping AI response',
       );
 
-      // Save pending message for auto-retry after login
-      this.pendingMessage = text;
+      // Save pending message for auto-retry after login (save formatted text for AI)
+      this.pendingMessage = formattedText;
       console.log(
         '[MessageHandler] Saved pending message for retry after login',
       );
@@ -361,7 +424,7 @@ export class MessageHandler {
       return;
     }
 
-    // Send to agent
+    // Send to agent (use formatted text with file context)
     try {
       // Reset stream content
       this.resetStreamContent();
@@ -373,8 +436,8 @@ export class MessageHandler {
       });
       console.log('[MessageHandler] Stream start sent');
 
-      console.log('[MessageHandler] Sending to agent manager...');
-      await this.agentManager.sendMessage(text);
+      console.log('[MessageHandler] Sending to agent manager:', formattedText);
+      await this.agentManager.sendMessage(formattedText);
       console.log('[MessageHandler] Agent manager send complete');
 
       // Stream is complete - save assistant message
@@ -1038,9 +1101,9 @@ export class MessageHandler {
         console.log('[MessageHandler] Login completed successfully');
 
         // Show success notification
-        vscode.window.showInformationMessage(
-          'Successfully logged in to Qwen Code!',
-        );
+        // vscode.window.showInformationMessage(
+        //   'Successfully logged in to Qwen Code!',
+        // );
 
         // Auto-resend pending message if exists
         if (this.pendingMessage) {

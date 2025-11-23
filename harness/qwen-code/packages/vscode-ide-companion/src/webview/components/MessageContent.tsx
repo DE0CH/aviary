@@ -7,7 +7,6 @@
  */
 
 import type React from 'react';
-import './MessageContent.css';
 
 interface MessageContentProps {
   content: string;
@@ -19,6 +18,9 @@ interface MessageContentProps {
  */
 const FILE_PATH_REGEX =
   /([a-zA-Z]:)?([/\\][\w\-. ]+)+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)/gi;
+// Match file paths with optional line numbers like: path/file.ts#7-14 or path/file.ts#7
+const FILE_PATH_WITH_LINES_REGEX =
+  /([a-zA-Z]:)?([/\\][\w\-. ]+)+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)#(\d+)(?:-(\d+))?/gi;
 const CODE_BLOCK_REGEX = /```(\w+)?\n([\s\S]*?)```/g;
 const INLINE_CODE_REGEX = /`([^`]+)`/g;
 
@@ -51,10 +53,31 @@ export const MessageContent: React.FC<MessageContentProps> = ({
         matchIndex++;
       }
 
-      // Add code block
+      // Add code block with Tailwind CSS
       parts.push(
-        <pre key={`code-${matchIndex}`} className="message-code-block">
-          <code className={`language-${language || 'plaintext'}`}>{code}</code>
+        <pre
+          key={`code-${matchIndex}`}
+          className="my-2 overflow-x-auto rounded p-3 leading-[1.5]"
+          style={{
+            backgroundColor: 'var(--app-code-background, rgba(0, 0, 0, 0.05))',
+            border: '1px solid var(--app-primary-border-color)',
+            borderRadius: 'var(--corner-radius-small, 4px)',
+            fontFamily:
+              "var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace)",
+            fontSize: '13px',
+          }}
+        >
+          <code
+            className={`language-${language || 'plaintext'}`}
+            style={{
+              background: 'none',
+              padding: 0,
+              fontFamily: 'inherit',
+              color: 'var(--app-primary-foreground)',
+            }}
+          >
+            {code}
+          </code>
         </pre>,
       );
       matchIndex++;
@@ -107,9 +130,19 @@ export const MessageContent: React.FC<MessageContentProps> = ({
         matchIndex++;
       }
 
-      // Add inline code
+      // Add inline code with Tailwind CSS
       parts.push(
-        <code key={`inline-${matchIndex}`} className="message-inline-code">
+        <code
+          key={`inline-${matchIndex}`}
+          className="rounded px-1.5 py-0.5 whitespace-nowrap text-[0.9em]"
+          style={{
+            backgroundColor: 'var(--app-code-background, rgba(0, 0, 0, 0.05))',
+            border: '1px solid var(--app-primary-border-color)',
+            fontFamily:
+              "var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace)",
+            color: 'var(--app-primary-foreground)',
+          }}
+        >
           {code}
         </code>,
       );
@@ -134,22 +167,99 @@ export const MessageContent: React.FC<MessageContentProps> = ({
     let lastIndex = 0;
     let matchIndex = startIndex;
 
-    const filePathMatches = Array.from(text.matchAll(FILE_PATH_REGEX));
+    // First, try to match file paths with line numbers
+    const filePathWithLinesMatches = Array.from(
+      text.matchAll(FILE_PATH_WITH_LINES_REGEX),
+    );
+    const processedRanges: Array<{ start: number; end: number }> = [];
 
-    filePathMatches.forEach((match) => {
+    filePathWithLinesMatches.forEach((match) => {
       const fullMatch = match[0];
       const startIdx = match.index!;
+      const filePath = fullMatch.split('#')[0]; // Get path without line numbers
+      const startLine = match[4]; // Capture group 4 is the start line
+      const endLine = match[5]; // Capture group 5 is the end line (optional)
+
+      processedRanges.push({
+        start: startIdx,
+        end: startIdx + fullMatch.length,
+      });
 
       // Add text before file path
       if (startIdx > lastIndex) {
         parts.push(text.slice(lastIndex, startIdx));
       }
 
-      // Add file path link
+      // Display text with line numbers
+      const displayText = endLine
+        ? `${filePath}#${startLine}-${endLine}`
+        : `${filePath}#${startLine}`;
+
+      // Add file path link with line numbers
       parts.push(
         <button
           key={`path-${matchIndex}`}
-          className="message-file-path"
+          className="bg-transparent border-0 p-0 underline cursor-pointer transition-colors text-[0.95em]"
+          style={{
+            fontFamily:
+              "var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace)",
+            color: 'var(--app-link-foreground, #007ACC)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color =
+              'var(--app-link-active-foreground, #005A9E)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--app-link-foreground, #007ACC)';
+          }}
+          onClick={() => onFileClick?.(filePath)}
+          title={`Open ${displayText}`}
+        >
+          {displayText}
+        </button>,
+      );
+
+      matchIndex++;
+      lastIndex = startIdx + fullMatch.length;
+    });
+
+    // Now match regular file paths (without line numbers) that weren't already matched
+    const filePathMatches = Array.from(text.matchAll(FILE_PATH_REGEX));
+
+    filePathMatches.forEach((match) => {
+      const fullMatch = match[0];
+      const startIdx = match.index!;
+
+      // Skip if this range was already processed as a path with line numbers
+      const isProcessed = processedRanges.some(
+        (range) => startIdx >= range.start && startIdx < range.end,
+      );
+      if (isProcessed) {
+        return;
+      }
+
+      // Add text before file path
+      if (startIdx > lastIndex) {
+        parts.push(text.slice(lastIndex, startIdx));
+      }
+
+      // Add file path link with Tailwind CSS
+      parts.push(
+        <button
+          key={`path-${matchIndex}`}
+          className="bg-transparent border-0 p-0 underline cursor-pointer transition-colors text-[0.95em]"
+          style={{
+            fontFamily:
+              "var(--app-monospace-font-family, 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace)",
+            color: 'var(--app-link-foreground, #007ACC)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color =
+              'var(--app-link-active-foreground, #005A9E)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--app-link-foreground, #007ACC)';
+          }}
           onClick={() => onFileClick?.(fullMatch)}
           title={`Open ${fullMatch}`}
         >

@@ -137,113 +137,8 @@ button {
 }
 
 /* ===========================
-   Header Styles (from Claude Code .he)
+   Animations (used by message components)
    =========================== */
-.chat-header {
-  display: flex;
-  border-bottom: 1px solid var(--app-primary-border-color);
-  padding: 6px 10px;
-  gap: 4px;
-  background-color: var(--app-header-background);
-  justify-content: flex-start;
-  user-select: none;
-}
-
-/* Session Selector Dropdown - styled as button (from Claude Code .E) */
-.session-selector-dropdown {
-  flex: 1;
-  max-width: 300px;
-  display: flex;
-}
-
-.session-selector-dropdown select {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  background: transparent;
-  color: var(--app-primary-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  outline: none;
-  min-width: 0;
-  max-width: 300px;
-  overflow: hidden;
-  font-size: var(--vscode-chat-font-size, 13px);
-  font-family: var(--vscode-chat-font-family);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-selector-dropdown select:hover,
-.session-selector-dropdown select:focus {
-  background: var(--app-ghost-button-hover-background);
-}
-
-/* New Session Button (from Claude Code .j) */
-.new-session-header-button {
-  flex: 0 0 auto;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  outline: none;
-  width: 24px;
-  height: 24px;
-  color: var(--app-primary-foreground);
-
-  svg {
-    width: 16px;
-    height: 16px;
-  }
-}
-
-.new-session-header-button:hover,
-.new-session-header-button:focus {
-  background: var(--app-ghost-button-hover-background);
-}
-
-/* ===========================
-   Messages Container
-   =========================== */
-.messages-container {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 20px 20px 120px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--app-spacing-medium);
-  background-color: var(--app-primary-background);
-  position: relative;
-  min-width: 0;
-}
-
-.messages-container:focus {
-  outline: none;
-}
-
-/* ===========================
-   Message Styles
-   =========================== */
-.message {
-  color: var(--app-primary-foreground);
-  display: flex;
-  gap: 0;
-  align-items: flex-start;
-  padding: var(--app-spacing-medium) 0;
-  flex-direction: column;
-  position: relative;
-  animation: fadeIn 0.2s ease-in;
-}
-
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -255,43 +150,6 @@ button {
   }
 }
 
-.message.user {
-  align-items: flex-end;
-  text-align: right;
-}
-
-.message.assistant {
-  align-items: flex-start;
-  text-align: left;
-}
-
-.message-content {
-  display: inline-block;
-  margin: 4px 0;
-  position: relative;
-  white-space: pre-wrap;
-  border: 1px solid var(--app-input-border);
-  border-radius: var(--corner-radius-medium);
-  background-color: var(--app-input-background);
-  padding: 4px 6px;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  user-select: text;
-  line-height: 1.5;
-}
-
-.message.streaming {
-  position: relative;
-}
-
-.streaming-indicator {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -299,93 +157,6 @@ button {
   50% {
     opacity: 0.3;
   }
-}
-
-/* Thinking message styles */
-.message.thinking {
-  background-color: rgba(100, 100, 255, 0.1);
-  border: 1px solid rgba(100, 100, 255, 0.3);
-  border-radius: var(--corner-radius-medium);
-  padding: var(--app-spacing-medium);
-}
-
-.thinking-message {
-  background-color: var(--app-list-hover-background, rgba(100, 100, 255, 0.1));
-  opacity: 0.8;
-  font-style: italic;
-  position: relative;
-  padding-left: 24px;
-}
-
-.thinking-message::before {
-  content: "💭";
-  position: absolute;
-  left: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.thinking-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(150, 150, 255, 1);
-  margin-bottom: var(--app-spacing-medium);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.thought-content {
-  font-style: italic;
-  opacity: 0.9;
-  color: rgba(200, 200, 255, 0.9);
-}
-
-/* Waiting message styles - similar to Claude Code thinking state */
-.message.waiting-message {
-  opacity: 0.85;
-}
-
-.waiting-message .message-content {
-  background-color: transparent;
-  border: none;
-  padding: 8px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Typing indicator for loading messages */
-.typing-indicator {
-  display: inline-flex;
-  align-items: center;
-  margin-right: 0;
-  gap: 4px;
-}
-
-.typing-dot, .thinking-dot {
-  width: 6px;
-  height: 6px;
-  background-color: var(--app-secondary-foreground);
-  border-radius: 50%;
-  margin-right: 0;
-  opacity: 0.6;
-  animation: typingPulse 1.4s infinite ease-in-out;
-}
-
-.typing-dot:nth-child(1),
-.thinking-dot:nth-child(1) {
-  animation-delay: 0s;
-}
-
-.typing-dot:nth-child(2),
-.thinking-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.typing-dot:nth-child(3),
-.thinking-dot:nth-child(3) {
-  animation-delay: 0.4s;
 }
 
 @keyframes typingPulse {
@@ -397,32 +168,6 @@ button {
     transform: scale(1);
     opacity: 1;
   }
-}
-
-.loading-text {
-  opacity: 0.7;
-  font-style: italic;
-  color: var(--app-secondary-foreground);
-}
-
-/* ===========================
-   Scrollbar Styling
-   =========================== */
-.messages-container::-webkit-scrollbar {
-  width: 8px;
-}
-
-.messages-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.messages-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: var(--corner-radius-small);
-}
-
-.messages-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
 }
 
 /* ===========================
@@ -486,50 +231,6 @@ button {
 .send-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* ===========================
-   Claude Code Style Header Buttons
-   =========================== */
-.header-conversations-button {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--corner-radius-small);
-  color: var(--app-primary-foreground);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  outline: none;
-  font-size: var(--vscode-chat-font-size, 13px);
-  font-weight: 500;
-  transition: background-color 0.2s;
-}
-
-.header-conversations-button:hover,
-.header-conversations-button:focus {
-  background-color: var(--app-ghost-button-hover-background);
-}
-
-.button-content {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.button-text {
-  font-size: var(--vscode-chat-font-size, 13px);
-}
-
-.dropdown-icon {
-  width: 14px;
-  height: 14px;
-}
-
-.header-spacer {
-  flex: 1;
 }
 
 /* ===========================

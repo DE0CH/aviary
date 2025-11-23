@@ -43,9 +43,9 @@ export class WebViewProvider {
       (message) => this.sendMessageToWebView(message),
     );
 
-    // Set login handler for /login command
+    // Set login handler for /login command - force re-login
     this.messageHandler.setLoginHandler(async () => {
-      await this.initializeAgentConnection();
+      await this.forceReLogin();
     });
 
     // Setup agent callbacks
@@ -159,27 +159,105 @@ export class WebViewProvider {
     // Register panel dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
 
+    // Track last known editor state (to preserve when switching to webview)
+    const _lastEditorState: {
+      fileName: string | null;
+      filePath: string | null;
+      selection: {
+        startLine: number;
+        endLine: number;
+      } | null;
+    } | null = null;
+
     // Listen for active editor changes and notify WebView
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
       (editor) => {
-        const fileName = editor?.document.uri.fsPath
-          ? getFileName(editor.document.uri.fsPath)
-          : null;
+        // If switching to a non-text editor (like webview), keep the last state
+        if (!editor) {
+          // Don't update - keep previous state
+          return;
+        }
+
+        const filePath = editor.document.uri.fsPath || null;
+        const fileName = filePath ? getFileName(filePath) : null;
+
+        // Get selection info if there is any selected text
+        let selectionInfo = null;
+        if (editor && !editor.selection.isEmpty) {
+          const selection = editor.selection;
+          selectionInfo = {
+            startLine: selection.start.line + 1,
+            endLine: selection.end.line + 1,
+          };
+        }
+
+        // Update last known state
+        lastEditorState = { fileName, filePath, selection: selectionInfo };
+
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
-          data: { fileName },
+          data: { fileName, filePath, selection: selectionInfo },
         });
       },
     );
     this.disposables.push(editorChangeDisposable);
 
-    // Don't auto-login; user must use /login command
-    // Just initialize empty conversation for the UI
+    // Listen for text selection changes
+    const selectionChangeDisposable =
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        const editor = event.textEditor;
+        if (editor === vscode.window.activeTextEditor) {
+          const filePath = editor.document.uri.fsPath || null;
+          const fileName = filePath ? getFileName(filePath) : null;
+
+          // Get selection info if there is any selected text
+          let selectionInfo = null;
+          if (!event.selections[0].isEmpty) {
+            const selection = event.selections[0];
+            selectionInfo = {
+              startLine: selection.start.line + 1,
+              endLine: selection.end.line + 1,
+            };
+          }
+
+          // Update last known state
+          lastEditorState = { fileName, filePath, selection: selectionInfo };
+
+          this.sendMessageToWebView({
+            type: 'activeEditorChanged',
+            data: { fileName, filePath, selection: selectionInfo },
+          });
+        }
+      });
+    this.disposables.push(selectionChangeDisposable);
+
+    // Check if we have valid auth cache and auto-reconnect
     if (!this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Agent not initialized, waiting for /login command',
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+      const config = vscode.workspace.getConfiguration('qwenCode');
+      const openaiApiKey = config.get<string>('openaiApiKey', '');
+      // Use the same authMethod logic as qwenConnectionHandler
+      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+      // Check if we have valid cached auth
+      const hasValidAuth = await this.authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
       );
-      await this.initializeEmptyConversation();
+
+      if (hasValidAuth) {
+        console.log(
+          '[WebViewProvider] Found valid auth cache, auto-reconnecting...',
+        );
+        // Auto-reconnect using cached auth
+        await this.initializeAgentConnection();
+      } else {
+        console.log(
+          '[WebViewProvider] No valid auth cache, waiting for /login command',
+        );
+        await this.initializeEmptyConversation();
+      }
     } else {
       console.log(
         '[WebViewProvider] Agent already initialized, reusing existing connection',
@@ -257,6 +335,32 @@ export class WebViewProvider {
       // Fallback to ConversationStore
       await this.initializeEmptyConversation();
     }
+  }
+
+  /**
+   * Force re-login by clearing auth cache and reconnecting
+   * Called when user explicitly uses /login command
+   */
+  async forceReLogin(): Promise<void> {
+    console.log('[WebViewProvider] Force re-login requested');
+
+    // Clear existing auth cache
+    await this.authStateManager.clearAuthState();
+    console.log('[WebViewProvider] Auth cache cleared');
+
+    // Disconnect existing connection if any
+    if (this.agentInitialized) {
+      try {
+        this.agentManager.disconnect();
+        console.log('[WebViewProvider] Existing connection disconnected');
+      } catch (error) {
+        console.log('[WebViewProvider] Error disconnecting:', error);
+      }
+      this.agentInitialized = false;
+    }
+
+    // Reinitialize connection (will trigger fresh authentication)
+    await this.initializeAgentConnection();
   }
 
   /**
@@ -373,15 +477,44 @@ export class WebViewProvider {
     // Register dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
 
+    // Track last known editor state (to preserve when switching to webview)
+    const _lastEditorState: {
+      fileName: string | null;
+      filePath: string | null;
+      selection: {
+        startLine: number;
+        endLine: number;
+      } | null;
+    } | null = null;
+
     // Listen for active editor changes and notify WebView
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
       (editor) => {
-        const fileName = editor?.document.uri.fsPath
-          ? getFileName(editor.document.uri.fsPath)
-          : null;
+        // If switching to a non-text editor (like webview), keep the last state
+        if (!editor) {
+          // Don't update - keep previous state
+          return;
+        }
+
+        const filePath = editor.document.uri.fsPath || null;
+        const fileName = filePath ? getFileName(filePath) : null;
+
+        // Get selection info if there is any selected text
+        let selectionInfo = null;
+        if (editor && !editor.selection.isEmpty) {
+          const selection = editor.selection;
+          selectionInfo = {
+            startLine: selection.start.line + 1,
+            endLine: selection.end.line + 1,
+          };
+        }
+
+        // Update last known state
+        lastEditorState = { fileName, filePath, selection: selectionInfo };
+
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
-          data: { fileName },
+          data: { fileName, filePath, selection: selectionInfo },
         });
       },
     );
@@ -392,18 +525,38 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // Don't auto-login on restore; user must use /login command
-    // Just initialize empty conversation for the UI
+    // Check if we have valid auth cache and auto-reconnect on restore
     if (!this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Agent not initialized after restore, waiting for /login command',
-      );
-      this.initializeEmptyConversation().catch((error) => {
-        console.error(
-          '[WebViewProvider] Failed to initialize empty conversation after restore:',
-          error,
-        );
-      });
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+      const config = vscode.workspace.getConfiguration('qwenCode');
+      const openaiApiKey = config.get<string>('openaiApiKey', '');
+      // Use the same authMethod logic as qwenConnectionHandler
+      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+      // Check if we have valid cached auth
+      this.authStateManager
+        .hasValidAuth(workingDir, authMethod)
+        .then(async (hasValidAuth) => {
+          if (hasValidAuth) {
+            console.log(
+              '[WebViewProvider] Found valid auth cache on restore, auto-reconnecting...',
+            );
+            await this.initializeAgentConnection();
+          } else {
+            console.log(
+              '[WebViewProvider] No valid auth cache after restore, waiting for /login command',
+            );
+            await this.initializeEmptyConversation();
+          }
+        })
+        .catch((error) => {
+          console.error(
+            '[WebViewProvider] Failed to check auth cache after restore:',
+            error,
+          );
+          this.initializeEmptyConversation().catch(console.error);
+        });
     } else {
       console.log(
         '[WebViewProvider] Agent already initialized, loading current session...',

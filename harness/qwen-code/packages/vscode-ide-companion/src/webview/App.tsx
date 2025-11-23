@@ -16,7 +16,6 @@ import { ToolCall, type ToolCallData } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 import { EmptyState } from './components/EmptyState.js';
 import { PlanDisplay, type PlanEntry } from './components/PlanDisplay.js';
-import { MessageContent } from './components/MessageContent.js';
 import {
   CompletionMenu,
   type CompletionItem,
@@ -24,6 +23,14 @@ import {
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { SaveSessionDialog } from './components/SaveSessionDialog.js';
 import { InfoBanner } from './components/InfoBanner.js';
+import { ChatHeader } from './components/ui/ChatHeader.js';
+import {
+  UserMessage,
+  AssistantMessage,
+  ThinkingMessage,
+  StreamingMessage,
+  WaitingMessage,
+} from './components/messages/index.js';
 
 interface ToolCallUpdate {
   type: 'tool_call' | 'tool_call_update';
@@ -54,6 +61,12 @@ interface TextMessage {
   role: 'user' | 'assistant' | 'thinking';
   content: string;
   timestamp: number;
+  fileContext?: {
+    fileName: string;
+    filePath: string;
+    startLine?: number;
+    endLine?: number;
+  };
 }
 
 // Loading messages from Claude Code CLI
@@ -228,6 +241,11 @@ export const App: React.FC = () => {
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [activeFileName, setActiveFileName] = useState<string | null>(null);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [activeSelection, setActiveSelection] = useState<{
+    startLine: number;
+    endLine: number;
+  } | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [savedSessionTags, setSavedSessionTags] = useState<string[]>([]);
@@ -842,9 +860,16 @@ export const App: React.FC = () => {
         }
 
         case 'activeEditorChanged': {
-          // 从扩展接收当前激活编辑器的文件名
+          // 从扩展接收当前激活编辑器的文件名和选中的行号
           const fileName = message.data?.fileName as string | null;
+          const filePath = message.data?.filePath as string | null;
+          const selection = message.data?.selection as {
+            startLine: number;
+            endLine: number;
+          } | null;
           setActiveFileName(fileName);
+          setActiveFilePath(filePath);
+          setActiveSelection(selection);
           break;
         }
 
@@ -1035,7 +1060,13 @@ export const App: React.FC = () => {
     setLoadingMessage(getRandomLoadingMessage());
 
     // Parse @file references from input text
-    const context: Array<{ type: string; name: string; value: string }> = [];
+    const context: Array<{
+      type: string;
+      name: string;
+      value: string;
+      startLine?: number;
+      endLine?: number;
+    }> = [];
     const fileRefPattern = /@([^\s]+)/g;
     let match;
 
@@ -1052,11 +1083,43 @@ export const App: React.FC = () => {
       }
     }
 
+    // Add active file selection context if present
+    if (activeFilePath) {
+      const fileName = activeFileName || 'current file';
+      context.push({
+        type: 'file',
+        name: fileName,
+        value: activeFilePath,
+        startLine: activeSelection?.startLine,
+        endLine: activeSelection?.endLine,
+      });
+    }
+
+    // Build file context for the message
+    let fileContextForMessage:
+      | {
+          fileName: string;
+          filePath: string;
+          startLine?: number;
+          endLine?: number;
+        }
+      | undefined;
+
+    if (activeFilePath && activeFileName) {
+      fileContextForMessage = {
+        fileName: activeFileName,
+        filePath: activeFilePath,
+        startLine: activeSelection?.startLine,
+        endLine: activeSelection?.endLine,
+      };
+    }
+
     vscode.postMessage({
       type: 'sendMessage',
       data: {
         text: inputText,
         context: context.length > 0 ? context : undefined,
+        fileContext: fileContextForMessage,
       },
     });
 
@@ -1298,104 +1361,59 @@ export const App: React.FC = () => {
         </>
       )}
 
-      <div className="chat-header">
-        <button
-          className="header-conversations-button"
-          onClick={handleLoadQwenSessions}
-          title="Past conversations"
-        >
-          <span className="button-content">
-            <span className="button-text">{currentSessionTitle}</span>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              aria-hidden="true"
-              className="dropdown-icon"
-            >
-              <path
-                fillRule="evenodd"
-                d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
-                clipRule="evenodd"
-              ></path>
-            </svg>
-          </span>
-        </button>
-        <div className="header-spacer"></div>
-        <button
-          className="save-session-header-button"
-          onClick={() => setShowSaveDialog(true)}
-          title="Save Conversation"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            aria-hidden="true"
-            data-slot="icon"
-            className="icon-svg"
-          >
-            <path
-              fillRule="evenodd"
-              d="M4.25 2A2.25 2.25 0 0 0 2 4.25v11.5A2.25 2.25 0 0 0 4.25 18h11.5A2.25 2.25 0 0 0 18 15.75V8.25a.75.75 0 0 1 .217-.517l.083-.083a.75.75 0 0 1 1.061 0l2.239 2.239A.75.75 0 0 1 22 10.5v5.25a4.75 4.75 0 0 1-4.75 4.75H4.75A4.75 4.75 0 0 1 0 15.75V4.25A4.75 4.75 0 0 1 4.75 0h5a.75.75 0 0 1 0 1.5h-5ZM9.017 6.5a1.5 1.5 0 0 1 2.072.58l.43.862a1 1 0 0 0 .895.558h3.272a1.5 1.5 0 0 1 1.5 1.5v6.75a1.5 1.5 0 0 1-1.5 1.5h-7.5a1.5 1.5 0 0 1-1.5-1.5v-6.75a1.5 1.5 0 0 1 1.5-1.5h1.25a1 1 0 0 0 .895-.558l.43-.862a1.5 1.5 0 0 1 .511-.732ZM11.78 8.47a.75.75 0 0 0-1.06-1.06L8.75 9.379 7.78 8.41a.75.75 0 0 0-1.06 1.06l1.5 1.5a.75.75 0 0 0 1.06 0l2.5-2.5Z"
-              clipRule="evenodd"
-            ></path>
-          </svg>
-        </button>
-        <button
-          className="new-session-header-button"
-          onClick={handleNewQwenSession}
-          title="New Session"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            aria-hidden="true"
-            data-slot="icon"
-            className="icon-svg"
-          >
-            <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"></path>
-          </svg>
-        </button>
-      </div>
+      <ChatHeader
+        currentSessionTitle={currentSessionTitle}
+        onLoadSessions={handleLoadQwenSessions}
+        onSaveSession={() => setShowSaveDialog(true)}
+        onNewSession={handleNewQwenSession}
+      />
 
-      <div className="messages-container">
+      <div
+        className="flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*]:px-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        style={{ backgroundColor: 'var(--app-primary-background)' }}
+      >
         {!hasContent ? (
           <EmptyState />
         ) : (
           <>
             {messages.map((msg, index) => {
-              // Special styling for thinking messages (Claude Code style)
-              const messageClass =
-                msg.role === 'thinking'
-                  ? 'message assistant thinking-message'
-                  : `message ${msg.role}`;
+              const handleFileClick = (path: string) => {
+                vscode.postMessage({
+                  type: 'openFile',
+                  data: { path },
+                });
+              };
+
+              if (msg.role === 'thinking') {
+                return (
+                  <ThinkingMessage
+                    key={index}
+                    content={msg.content}
+                    timestamp={msg.timestamp}
+                    onFileClick={handleFileClick}
+                  />
+                );
+              }
+
+              if (msg.role === 'user') {
+                return (
+                  <UserMessage
+                    key={index}
+                    content={msg.content}
+                    timestamp={msg.timestamp}
+                    onFileClick={handleFileClick}
+                    fileContext={msg.fileContext}
+                  />
+                );
+              }
 
               return (
-                <div key={index} className={messageClass}>
-                  <div className="message-content">
-                    {msg.role === 'thinking' && (
-                      <span className="thinking-indicator">
-                        <span className="thinking-dot"></span>
-                        <span className="thinking-dot"></span>
-                        <span className="thinking-dot"></span>
-                      </span>
-                    )}
-                    <MessageContent
-                      content={msg.content}
-                      onFileClick={(path) => {
-                        vscode.postMessage({
-                          type: 'openFile',
-                          data: { path },
-                        });
-                      }}
-                    />
-                  </div>
-                  <div className="message-timestamp">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </div>
-                </div>
+                <AssistantMessage
+                  key={index}
+                  content={msg.content}
+                  timestamp={msg.timestamp}
+                  onFileClick={handleFileClick}
+                />
               );
             })}
 
@@ -1411,16 +1429,7 @@ export const App: React.FC = () => {
 
             {/* Loading/Waiting Message - in message list */}
             {isWaitingForResponse && loadingMessage && (
-              <div className="message assistant waiting-message">
-                <div className="message-content">
-                  <span className="typing-indicator">
-                    <span className="typing-dot"></span>
-                    <span className="typing-dot"></span>
-                    <span className="typing-dot"></span>
-                  </span>
-                  <span className="loading-text">{loadingMessage}</span>
-                </div>
-              </div>
+              <WaitingMessage loadingMessage={loadingMessage} />
             )}
 
             {/* Not Logged In Message with Login Button - COMMENTED OUT */}
@@ -1442,20 +1451,15 @@ export const App: React.FC = () => {
             )} */}
 
             {isStreaming && currentStreamContent && (
-              <div className="message assistant streaming">
-                <div className="message-content">
-                  <MessageContent
-                    content={currentStreamContent}
-                    onFileClick={(path) => {
-                      vscode.postMessage({
-                        type: 'openFile',
-                        data: { path },
-                      });
-                    }}
-                  />
-                </div>
-                <div className="streaming-indicator">●</div>
-              </div>
+              <StreamingMessage
+                content={currentStreamContent}
+                onFileClick={(path) => {
+                  vscode.postMessage({
+                    type: 'openFile',
+                    data: { path },
+                  });
+                }}
+              />
             )}
 
             <div ref={messagesEndRef} />
@@ -1527,7 +1531,7 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   className="action-button active-file-indicator"
-                  title={`Showing Qwen Code your current file selection: ${activeFileName}`}
+                  title={`Showing Qwen Code your current file selection: ${activeFileName}${activeSelection ? `#${activeSelection.startLine}-${activeSelection.endLine}` : ''}`}
                   onClick={() => {
                     // Request to focus/reveal the active file
                     vscode.postMessage({
@@ -1549,7 +1553,11 @@ export const App: React.FC = () => {
                       clipRule="evenodd"
                     ></path>
                   </svg>
-                  <span>{activeFileName}</span>
+                  <span>
+                    {activeFileName}
+                    {activeSelection &&
+                      ` #${activeSelection.startLine}${activeSelection.startLine !== activeSelection.endLine ? `-${activeSelection.endLine}` : ''}`}
+                  </span>
                 </button>
               )}
               <div className="action-divider"></div>

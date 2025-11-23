@@ -1,0 +1,42 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import type React from 'react';
+import { MessageContent } from '../MessageContent.js';
+
+interface AssistantMessageProps {
+  content: string;
+  timestamp: number;
+  onFileClick?: (path: string) => void;
+}
+
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({
+  content,
+  timestamp: _timestamp,
+  onFileClick,
+}) => (
+  <div className="flex gap-0 items-start text-left py-2 flex-col relative animate-[fadeIn_0.2s_ease-in]">
+    <div
+      className="inline-block my-1 relative whitespace-pre-wrap rounded-md max-w-full overflow-x-auto overflow-y-hidden select-text leading-[1.5]"
+      style={{
+        border: '1px solid var(--app-input-border)',
+        borderRadius: 'var(--corner-radius-medium)',
+        backgroundColor: 'var(--app-input-background)',
+        padding: '4px 6px',
+        color: 'var(--app-primary-foreground)',
+      }}
+    >
+      <MessageContent content={content} onFileClick={onFileClick} />
+    </div>
+    {/* Timestamp - temporarily hidden */}
+    {/* <div
+        className="text-xs opacity-60"
+        style={{ color: 'var(--app-secondary-foreground)' }}
+      >
+        {new Date(timestamp).toLocaleTimeString()}
+      </div> */}
+  </div>
+);
