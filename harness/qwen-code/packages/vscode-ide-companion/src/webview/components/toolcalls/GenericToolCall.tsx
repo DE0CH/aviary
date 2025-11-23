@@ -9,6 +9,7 @@
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import {
+  ToolCallContainer,
   ToolCallCard,
   ToolCallRow,
   LocationsList,
@@ -23,7 +24,7 @@ import { useVSCode } from '../../hooks/useVSCode.js';
  * Minimal display: show description and outcome
  */
 export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { kind, title, content, locations } = toolCall;
+  const { kind, title, content, locations, toolCallId } = toolCall;
   const operationText = safeTitle(title);
   const vscode = useVSCode();
 
@@ -43,7 +44,7 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
   };
 
-  // Error case: show operation + error
+  // Error case: show operation + error in card layout
   if (errors.length > 0) {
     return (
       <ToolCallCard icon="🔧">
@@ -51,15 +52,13 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <div>{operationText}</div>
         </ToolCallRow>
         <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39', fontWeight: 500 }}>
-            {errors.join('\n')}
-          </div>
+          <div className="text-[#c74e39] font-medium">{errors.join('\n')}</div>
         </ToolCallRow>
       </ToolCallCard>
     );
   }
 
-  // Success with diff: show diff
+  // Success with diff: show diff in card layout
   if (diffs.length > 0) {
     return (
       <ToolCallCard icon="🔧">
@@ -81,44 +80,54 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     );
   }
 
-  // Success with output: show operation + output (truncated)
+  // Success with output: use card for long output, compact for short
   if (textOutputs.length > 0) {
     const output = textOutputs.join('\n');
-    const truncatedOutput =
-      output.length > 300 ? output.substring(0, 300) + '...' : output;
+    const isLong = output.length > 150;
 
+    if (isLong) {
+      const truncatedOutput =
+        output.length > 300 ? output.substring(0, 300) + '...' : output;
+
+      return (
+        <ToolCallCard icon="🔧">
+          <ToolCallRow label={kind}>
+            <div>{operationText}</div>
+          </ToolCallRow>
+          <ToolCallRow label="Output">
+            <div className="whitespace-pre-wrap font-mono text-[13px] opacity-90">
+              {truncatedOutput}
+            </div>
+          </ToolCallRow>
+        </ToolCallCard>
+      );
+    }
+
+    // Short output - compact format
     return (
-      <ToolCallCard icon="🔧">
-        <ToolCallRow label={kind}>
-          <div>{operationText}</div>
-        </ToolCallRow>
-        <ToolCallRow label="Output">
-          <div
-            style={{
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'var(--app-monospace-font-family)',
-              fontSize: '13px',
-              opacity: 0.9,
-            }}
-          >
-            {truncatedOutput}
-          </div>
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+        {operationText || output}
+      </ToolCallContainer>
     );
   }
 
-  // Success with files: show operation + file list
+  // Success with files: show operation + file list in compact format
   if (locations && locations.length > 0) {
     return (
-      <ToolCallCard icon="🔧">
-        <ToolCallRow label={kind}>
-          <LocationsList locations={locations} />
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+        <LocationsList locations={locations} />
+      </ToolCallContainer>
     );
   }
 
-  // No output
+  // No output - show just the operation
+  if (operationText) {
+    return (
+      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+        {operationText}
+      </ToolCallContainer>
+    );
+  }
+
   return null;
 };

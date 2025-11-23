@@ -12,9 +12,11 @@ import { shouldShowToolCall } from './shared/utils.js';
 import { GenericToolCall } from './GenericToolCall.js';
 import { ReadToolCall } from './ReadToolCall.js';
 import { WriteToolCall } from './WriteToolCall.js';
+import { EditToolCall } from './EditToolCall.js';
 import { ExecuteToolCall } from './ExecuteToolCall.js';
 import { SearchToolCall } from './SearchToolCall.js';
 import { ThinkToolCall } from './ThinkToolCall.js';
+import { TodoWriteToolCall } from './TodoWriteToolCall.js';
 
 /**
  * Factory function that returns the appropriate tool call component based on kind
@@ -30,8 +32,10 @@ export const getToolCallComponent = (
       return ReadToolCall;
 
     case 'write':
-    case 'edit':
       return WriteToolCall;
+
+    case 'edit':
+      return EditToolCall;
 
     case 'execute':
     case 'bash':
@@ -47,6 +51,11 @@ export const getToolCallComponent = (
     case 'think':
     case 'thinking':
       return ThinkToolCall;
+
+    case 'todowrite':
+    case 'todo_write':
+    case 'update_todos':
+      return TodoWriteToolCall;
 
     // Add more specialized components as needed
     // case 'fetch':

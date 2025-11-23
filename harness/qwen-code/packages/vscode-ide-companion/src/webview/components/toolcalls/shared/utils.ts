@@ -39,15 +39,16 @@ export const formatValue = (value: unknown): string => {
 
 /**
  * Safely convert title to string, handling object types
+ * Returns empty string if no meaningful title
  */
 export const safeTitle = (title: unknown): string => {
-  if (typeof title === 'string') {
+  if (typeof title === 'string' && title.trim()) {
     return title;
   }
   if (title && typeof title === 'object') {
     return JSON.stringify(title);
   }
-  return 'Tool Call';
+  return '';
 };
 
 /**
@@ -88,6 +89,19 @@ export const hasToolCallOutput = (
     return true;
   }
 
+  // Always show execute/bash/command tool calls (they show the command in title)
+  const kind = toolCall.kind.toLowerCase();
+  if (kind === 'execute' || kind === 'bash' || kind === 'command') {
+    // But only if they have a title
+    if (
+      toolCall.title &&
+      typeof toolCall.title === 'string' &&
+      toolCall.title.trim()
+    ) {
+      return true;
+    }
+  }
+
   // Show if there are locations (file paths)
   if (toolCall.locations && toolCall.locations.length > 0) {
     return true;
@@ -105,6 +119,15 @@ export const hasToolCallOutput = (
     ) {
       return true;
     }
+  }
+
+  // Show if there's a meaningful title for generic tool calls
+  if (
+    toolCall.title &&
+    typeof toolCall.title === 'string' &&
+    toolCall.title.trim()
+  ) {
+    return true;
   }
 
   // No output, don't show

@@ -248,20 +248,46 @@ export class AcpSessionManager {
     pendingRequests: Map<number, PendingRequest<unknown>>,
     nextRequestId: { value: number },
   ): Promise<AcpResponse> {
-    console.log('[ACP] Loading session:', sessionId);
-    const response = await this.sendRequest<AcpResponse>(
-      AGENT_METHODS.session_load,
-      {
-        sessionId,
-        cwd: process.cwd(),
-        mcpServers: [],
-      },
-      child,
-      pendingRequests,
-      nextRequestId,
-    );
-    console.log('[ACP] Session load response:', response);
-    return response;
+    console.log('[ACP] Sending session/load request for session:', sessionId);
+    console.log('[ACP] Request parameters:', {
+      sessionId,
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    try {
+      const response = await this.sendRequest<AcpResponse>(
+        AGENT_METHODS.session_load,
+        {
+          sessionId,
+          cwd: process.cwd(),
+          mcpServers: [],
+        },
+        child,
+        pendingRequests,
+        nextRequestId,
+      );
+
+      console.log(
+        '[ACP] Session load response:',
+        JSON.stringify(response).substring(0, 500),
+      );
+
+      // Check if response contains an error
+      if (response.error) {
+        console.error('[ACP] Session load returned error:', response.error);
+      } else {
+        console.log('[ACP] Session load succeeded');
+      }
+
+      return response;
+    } catch (error) {
+      console.error(
+        '[ACP] Session load request failed with exception:',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   }
 
   /**

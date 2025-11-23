@@ -8,7 +8,11 @@
 
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
-import { ToolCallCard, ToolCallRow } from './shared/LayoutComponents.js';
+import {
+  ToolCallContainer,
+  ToolCallCard,
+  ToolCallRow,
+} from './shared/LayoutComponents.js';
 import { groupContent } from './shared/utils.js';
 
 /**
@@ -25,36 +29,37 @@ export const ThinkToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Error case (rare for thinking)
   if (errors.length > 0) {
     return (
-      <ToolCallCard icon="💭">
-        <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39', fontWeight: 500 }}>
-            {errors.join('\n')}
-          </div>
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer label="Thinking" status="error">
+        {errors.join('\n')}
+      </ToolCallContainer>
     );
   }
 
-  // Show thoughts with label
+  // Show thoughts - use card for long content, compact for short
   if (textOutputs.length > 0) {
     const thoughts = textOutputs.join('\n\n');
-    const truncatedThoughts =
-      thoughts.length > 500 ? thoughts.substring(0, 500) + '...' : thoughts;
+    const isLong = thoughts.length > 200;
 
+    if (isLong) {
+      const truncatedThoughts =
+        thoughts.length > 500 ? thoughts.substring(0, 500) + '...' : thoughts;
+
+      return (
+        <ToolCallCard icon="💭">
+          <ToolCallRow label="Thinking">
+            <div className="italic opacity-90 leading-relaxed">
+              {truncatedThoughts}
+            </div>
+          </ToolCallRow>
+        </ToolCallCard>
+      );
+    }
+
+    // Short thoughts - compact format
     return (
-      <ToolCallCard icon="💭">
-        <ToolCallRow label="Thinking">
-          <div
-            style={{
-              fontStyle: 'italic',
-              opacity: 0.9,
-              lineHeight: 1.6,
-            }}
-          >
-            {truncatedThoughts}
-          </div>
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer label="Thinking" status="default">
+        <span className="italic opacity-90">{thoughts}</span>
+      </ToolCallContainer>
     );
   }
 

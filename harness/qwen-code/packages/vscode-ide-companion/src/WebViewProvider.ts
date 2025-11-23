@@ -50,6 +50,14 @@ export class WebViewProvider {
 
     // Setup agent callbacks
     this.agentManager.onStreamChunk((chunk: string) => {
+      // Ignore stream chunks from background /chat save commands
+      if (this.messageHandler.getIsSavingCheckpoint()) {
+        console.log(
+          '[WebViewProvider] Ignoring stream chunk from /chat save command',
+        );
+        return;
+      }
+
       this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'streamChunk',
@@ -59,6 +67,14 @@ export class WebViewProvider {
 
     // Setup thought chunk handler
     this.agentManager.onThoughtChunk((chunk: string) => {
+      // Ignore thought chunks from background /chat save commands
+      if (this.messageHandler.getIsSavingCheckpoint()) {
+        console.log(
+          '[WebViewProvider] Ignoring thought chunk from /chat save command',
+        );
+        return;
+      }
+
       this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'thoughtChunk',
@@ -69,11 +85,36 @@ export class WebViewProvider {
     // Note: Tool call updates are handled in handleSessionUpdate within QwenAgentManager
     // and sent via onStreamChunk callback
     this.agentManager.onToolCall((update) => {
+      // Ignore tool calls from background /chat save commands
+      if (this.messageHandler.getIsSavingCheckpoint()) {
+        console.log(
+          '[WebViewProvider] Ignoring tool call from /chat save command',
+        );
+        return;
+      }
+
+      // Cast update to access sessionUpdate property
+      const updateData = update as unknown as Record<string, unknown>;
+
+      // Determine message type from sessionUpdate field
+      // If sessionUpdate is missing, infer from content:
+      // - If has kind/title/rawInput, it's likely initial tool_call
+      // - If only has status/content updates, it's tool_call_update
+      let messageType = updateData.sessionUpdate as string | undefined;
+      if (!messageType) {
+        // Infer type: if has kind or title, assume initial call; otherwise update
+        if (updateData.kind || updateData.title || updateData.rawInput) {
+          messageType = 'tool_call';
+        } else {
+          messageType = 'tool_call_update';
+        }
+      }
+
       this.sendMessageToWebView({
         type: 'toolCall',
         data: {
-          type: 'tool_call',
-          ...(update as unknown as Record<string, unknown>),
+          type: messageType,
+          ...updateData,
         },
       });
     });

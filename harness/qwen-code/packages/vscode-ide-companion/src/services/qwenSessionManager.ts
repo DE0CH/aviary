@@ -47,6 +47,244 @@ export class QwenSessionManager {
   }
 
   /**
+   * Save current conversation as a checkpoint (matching CLI's /chat save format)
+   * Creates checkpoint with BOTH conversationId and sessionId as tags for compatibility
+   *
+   * @param messages - Current conversation messages
+   * @param conversationId - Conversation ID (from VSCode extension)
+   * @param sessionId - Session ID (from CLI tmp session file, optional)
+   * @param workingDir - Current working directory
+   * @returns Checkpoint tag
+   */
+  async saveCheckpoint(
+    messages: QwenMessage[],
+    conversationId: string,
+    workingDir: string,
+    sessionId?: string,
+  ): Promise<string> {
+    try {
+      console.log('[QwenSessionManager] ===== SAVEPOINT START =====');
+      console.log('[QwenSessionManager] Conversation ID:', conversationId);
+      console.log(
+        '[QwenSessionManager] Session ID:',
+        sessionId || 'not provided',
+      );
+      console.log('[QwenSessionManager] Working dir:', workingDir);
+      console.log('[QwenSessionManager] Message count:', messages.length);
+
+      // Get project directory (parent of chats directory)
+      const projectHash = this.getProjectHash(workingDir);
+      console.log('[QwenSessionManager] Project hash:', projectHash);
+
+      const projectDir = path.join(this.qwenDir, 'tmp', projectHash);
+      console.log('[QwenSessionManager] Project dir:', projectDir);
+
+      if (!fs.existsSync(projectDir)) {
+        console.log('[QwenSessionManager] Creating project directory...');
+        fs.mkdirSync(projectDir, { recursive: true });
+        console.log('[QwenSessionManager] Directory created');
+      } else {
+        console.log('[QwenSessionManager] Project directory already exists');
+      }
+
+      // Convert messages to checkpoint format (Gemini-style messages)
+      console.log(
+        '[QwenSessionManager] Converting messages to checkpoint format...',
+      );
+      const checkpointMessages = messages.map((msg, index) => {
+        console.log(
+          `[QwenSessionManager] Message ${index}: type=${msg.type}, contentLength=${msg.content?.length || 0}`,
+        );
+        return {
+          role: msg.type === 'user' ? 'user' : 'model',
+          parts: [
+            {
+              text: msg.content,
+            },
+          ],
+        };
+      });
+
+      console.log(
+        '[QwenSessionManager] Converted',
+        checkpointMessages.length,
+        'messages',
+      );
+
+      const jsonContent = JSON.stringify(checkpointMessages, null, 2);
+      console.log(
+        '[QwenSessionManager] JSON content length:',
+        jsonContent.length,
+      );
+
+      // Save with conversationId as primary tag
+      const convFilename = `checkpoint-${conversationId}.json`;
+      const convFilePath = path.join(projectDir, convFilename);
+      console.log(
+        '[QwenSessionManager] Saving checkpoint with conversationId:',
+        convFilePath,
+      );
+      fs.writeFileSync(convFilePath, jsonContent, 'utf-8');
+
+      // Also save with sessionId if provided (for compatibility with CLI session/load)
+      if (sessionId) {
+        const sessionFilename = `checkpoint-${sessionId}.json`;
+        const sessionFilePath = path.join(projectDir, sessionFilename);
+        console.log(
+          '[QwenSessionManager] Also saving checkpoint with sessionId:',
+          sessionFilePath,
+        );
+        fs.writeFileSync(sessionFilePath, jsonContent, 'utf-8');
+      }
+
+      // Verify primary file exists
+      if (fs.existsSync(convFilePath)) {
+        const stats = fs.statSync(convFilePath);
+        console.log(
+          '[QwenSessionManager] Primary checkpoint verified, size:',
+          stats.size,
+        );
+      } else {
+        console.error(
+          '[QwenSessionManager] ERROR: Primary checkpoint does not exist after write!',
+        );
+      }
+
+      console.log('[QwenSessionManager] ===== CHECKPOINT SAVED =====');
+      console.log('[QwenSessionManager] Primary path:', convFilePath);
+      if (sessionId) {
+        console.log(
+          '[QwenSessionManager] Secondary path (sessionId):',
+          path.join(projectDir, `checkpoint-${sessionId}.json`),
+        );
+      }
+      return conversationId;
+    } catch (error) {
+      console.error('[QwenSessionManager] ===== CHECKPOINT SAVE FAILED =====');
+      console.error('[QwenSessionManager] Error:', error);
+      console.error(
+        '[QwenSessionManager] Error stack:',
+        error instanceof Error ? error.stack : 'N/A',
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Find checkpoint file for a given sessionId
+   * Tries both checkpoint-{sessionId}.json and searches session files for matching sessionId
+   *
+   * @param sessionId - Session ID to find checkpoint for
+   * @param workingDir - Current working directory
+   * @returns Checkpoint tag if found, null otherwise
+   */
+  async findCheckpointTag(
+    sessionId: string,
+    workingDir: string,
+  ): Promise<string | null> {
+    try {
+      const projectHash = this.getProjectHash(workingDir);
+      const projectDir = path.join(this.qwenDir, 'tmp', projectHash);
+
+      // First, try direct checkpoint with sessionId
+      const directCheckpoint = path.join(
+        projectDir,
+        `checkpoint-${sessionId}.json`,
+      );
+      if (fs.existsSync(directCheckpoint)) {
+        console.log(
+          '[QwenSessionManager] Found direct checkpoint:',
+          directCheckpoint,
+        );
+        return sessionId;
+      }
+
+      // Second, look for session file with this sessionId to get conversationId
+      const sessionDir = path.join(projectDir, 'chats');
+      if (fs.existsSync(sessionDir)) {
+        const files = fs.readdirSync(sessionDir);
+        for (const file of files) {
+          if (file.startsWith('session-') && file.endsWith('.json')) {
+            try {
+              const filePath = path.join(sessionDir, file);
+              const content = fs.readFileSync(filePath, 'utf-8');
+              const session = JSON.parse(content) as QwenSession;
+
+              if (session.sessionId === sessionId) {
+                console.log(
+                  '[QwenSessionManager] Found matching session file:',
+                  file,
+                );
+                // Now check if there's a checkpoint with this conversationId
+                // We need to store conversationId in session files or use another strategy
+                // For now, return null and let it fallback
+                break;
+              }
+            } catch {
+              // Skip invalid files
+            }
+          }
+        }
+      }
+
+      console.log(
+        '[QwenSessionManager] No checkpoint found for sessionId:',
+        sessionId,
+      );
+      return null;
+    } catch (error) {
+      console.error('[QwenSessionManager] Error finding checkpoint:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Load a checkpoint by tag
+   *
+   * @param tag - Checkpoint tag
+   * @param workingDir - Current working directory
+   * @returns Loaded checkpoint messages or null if not found
+   */
+  async loadCheckpoint(
+    tag: string,
+    workingDir: string,
+  ): Promise<QwenMessage[] | null> {
+    try {
+      const projectHash = this.getProjectHash(workingDir);
+      const projectDir = path.join(this.qwenDir, 'tmp', projectHash);
+      const filename = `checkpoint-${tag}.json`;
+      const filePath = path.join(projectDir, filename);
+
+      if (!fs.existsSync(filePath)) {
+        console.log(
+          `[QwenSessionManager] Checkpoint file not found: ${filePath}`,
+        );
+        return null;
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const checkpointMessages = JSON.parse(content) as Array<{
+        role: 'user' | 'model';
+        parts: Array<{ text: string }>;
+      }>;
+
+      // Convert back to QwenMessage format
+      const messages: QwenMessage[] = checkpointMessages.map((msg) => ({
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        type: msg.role === 'user' ? ('user' as const) : ('qwen' as const),
+        content: msg.parts[0]?.text || '',
+      }));
+
+      console.log(`[QwenSessionManager] Checkpoint loaded: ${filePath}`);
+      return messages;
+    } catch (error) {
+      console.error('[QwenSessionManager] Failed to load checkpoint:', error);
+      return null;
+    }
+  }
+
+  /**
    * Save current conversation as a named session (checkpoint-like functionality)
    *
    * @param messages - Current conversation messages
@@ -66,16 +304,25 @@ export class QwenSessionManager {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
 
-      // Generate session ID and filename
+      // Generate session ID and filename using CLI's naming convention
       const sessionId = this.generateSessionId();
-      const filename = `session-${sessionId}.json`;
+      const shortId = sessionId.split('-')[0]; // First part of UUID (8 chars)
+      const now = new Date();
+      const isoDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+      const isoTime = now
+        .toISOString()
+        .split('T')[1]
+        .split(':')
+        .slice(0, 2)
+        .join('-'); // HH-MM
+      const filename = `session-${isoDate}T${isoTime}-${shortId}.json`;
       const filePath = path.join(sessionDir, filename);
 
       // Create session object
       const session: QwenSession = {
         sessionId,
         projectHash: this.getProjectHash(workingDir),
-        startTime: new Date().toISOString(),
+        startTime: messages[0]?.timestamp || new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         messages,
       };

@@ -112,14 +112,6 @@
 }
 
 /**
- * 在工具调用卡片中的样式调整
- */
-.tool-call-card .file-link {
-  /* 在工具调用中略微缩小字体 */
-  font-size: 0.95em;
-}
-
-/**
  * 在代码块中的样式调整
  */
 .code-block .file-link {

@@ -31,6 +31,8 @@ export class MessageHandler {
   private loginHandler?: () => Promise<void>;
   // 待发送消息（登录后自动重发）
   private pendingMessage: string | null = null;
+  // 标记是否正在执行后台保存命令
+  private isSavingCheckpoint = false;
 
   constructor(
     private agentManager: QwenAgentManager,
@@ -44,6 +46,13 @@ export class MessageHandler {
    */
   setLoginHandler(handler: () => Promise<void>): void {
     this.loginHandler = handler;
+  }
+
+  /**
+   * 检查是否正在后台保存 checkpoint
+   */
+  getIsSavingCheckpoint(): boolean {
+    return this.isSavingCheckpoint;
   }
 
   /**
@@ -459,6 +468,77 @@ export class MessageHandler {
         data: { timestamp: Date.now() },
       });
       console.log('[MessageHandler] Stream end sent');
+
+      // Auto-save session after response completes
+      // Use CLI's /chat save command for complete checkpoint with tool calls
+      if (this.currentConversationId) {
+        console.log(
+          '[MessageHandler] ===== STARTING AUTO-SAVE CHECKPOINT =====',
+        );
+        console.log(
+          '[MessageHandler] Session ID (will be used as checkpoint tag):',
+          this.currentConversationId,
+        );
+
+        try {
+          // Get conversation messages
+          const conversation = await this.conversationStore.getConversation(
+            this.currentConversationId,
+          );
+          console.log(
+            '[MessageHandler] Conversation loaded, message count:',
+            conversation?.messages.length,
+          );
+
+          // Save via CLI /chat save command (will trigger a response we need to ignore)
+          const messages = conversation?.messages || [];
+          console.log(
+            '[MessageHandler] Calling saveCheckpoint with',
+            messages.length,
+            'messages',
+          );
+
+          // Set flag to ignore the upcoming response from /chat save
+          this.isSavingCheckpoint = true;
+          console.log('[MessageHandler] Set isSavingCheckpoint = true');
+
+          const result = await this.agentManager.saveCheckpoint(
+            messages,
+            this.currentConversationId,
+          );
+
+          console.log('[MessageHandler] Checkpoint save result:', result);
+
+          // Reset flag after a delay (in case the command response comes late)
+          setTimeout(() => {
+            this.isSavingCheckpoint = false;
+            console.log('[MessageHandler] Reset isSavingCheckpoint = false');
+          }, 2000);
+
+          if (result.success) {
+            console.log(
+              '[MessageHandler] ===== CHECKPOINT SAVE SUCCESSFUL =====',
+            );
+            console.log('[MessageHandler] Checkpoint tag:', result.tag);
+          } else {
+            console.error(
+              '[MessageHandler] ===== CHECKPOINT SAVE FAILED =====',
+            );
+            console.error('[MessageHandler] Error:', result.message);
+          }
+        } catch (error) {
+          console.error(
+            '[MessageHandler] ===== CHECKPOINT SAVE EXCEPTION =====',
+          );
+          console.error('[MessageHandler] Exception details:', error);
+          this.isSavingCheckpoint = false;
+          // Don't show error to user - this is a background operation
+        }
+      } else {
+        console.warn(
+          '[MessageHandler] Skipping checkpoint save: no current conversation ID',
+        );
+      }
     } catch (error) {
       console.error('[MessageHandler] Error sending message:', error);
 
@@ -563,10 +643,42 @@ export class MessageHandler {
 
   /**
    * 处理新建 Qwen 会话请求
+   * 在创建新 session 前，先保存当前 session
    */
   private async handleNewQwenSession(): Promise<void> {
     try {
       console.log('[MessageHandler] Creating new Qwen session...');
+
+      // Save current session as checkpoint before switching to a new one
+      if (this.currentConversationId && this.agentManager.isConnected) {
+        try {
+          console.log(
+            '[MessageHandler] Auto-saving current session as checkpoint before creating new:',
+            this.currentConversationId,
+          );
+
+          const conversation = await this.conversationStore.getConversation(
+            this.currentConversationId,
+          );
+          const messages = conversation?.messages || [];
+
+          // Save as checkpoint using sessionId as tag
+          await this.agentManager.saveCheckpoint(
+            messages,
+            this.currentConversationId,
+          );
+          console.log(
+            '[MessageHandler] Current session checkpoint saved successfully before creating new session',
+          );
+        } catch (error) {
+          console.warn(
+            '[MessageHandler] Failed to auto-save current session checkpoint:',
+            error,
+          );
+          // Don't block new session creation if save fails
+        }
+      }
+
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
@@ -588,17 +700,45 @@ export class MessageHandler {
 
   /**
    * 处理切换 Qwen 会话请求
+   * 优先使用 CLI 的 checkpoint (session/load) 能力从保存的完整会话恢复
    */
   private async handleSwitchQwenSession(sessionId: string): Promise<void> {
     try {
       console.log('[MessageHandler] Switching to Qwen session:', sessionId);
 
-      // Get session messages from local files
-      const messages = await this.agentManager.getSessionMessages(sessionId);
-      console.log(
-        '[MessageHandler] Loaded messages from session:',
-        messages.length,
-      );
+      // Save current session as checkpoint before switching
+      if (
+        this.currentConversationId &&
+        this.currentConversationId !== sessionId &&
+        this.agentManager.isConnected
+      ) {
+        try {
+          console.log(
+            '[MessageHandler] Auto-saving current session as checkpoint before switching:',
+            this.currentConversationId,
+          );
+
+          const conversation = await this.conversationStore.getConversation(
+            this.currentConversationId,
+          );
+          const messages = conversation?.messages || [];
+
+          // Save as checkpoint using sessionId as tag
+          await this.agentManager.saveCheckpoint(
+            messages,
+            this.currentConversationId,
+          );
+          console.log(
+            '[MessageHandler] Current session checkpoint saved successfully before switching',
+          );
+        } catch (error) {
+          console.warn(
+            '[MessageHandler] Failed to auto-save current session checkpoint:',
+            error,
+          );
+          // Don't block session switching if save fails
+        }
+      }
 
       // Get session details for the header
       let sessionDetails = null;
@@ -612,12 +752,16 @@ export class MessageHandler {
         console.log('[MessageHandler] Could not get session details:', err);
       }
 
-      // Try to load session via ACP first, fallback to creating new session
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
+      // Try to load session via ACP checkpoint (session/load) first
+      // This will restore the full session with all tool calls and context
       try {
-        console.log('[MessageHandler] Testing session/load via ACP...');
+        console.log(
+          '[MessageHandler] Loading session via CLI checkpoint (session/load):',
+          sessionId,
+        );
         const loadResponse =
           await this.agentManager.loadSessionViaAcp(sessionId);
         console.log('[MessageHandler] session/load succeeded:', loadResponse);
@@ -628,13 +772,39 @@ export class MessageHandler {
           '[MessageHandler] Set currentConversationId to loaded session:',
           sessionId,
         );
-      } catch (_loadError) {
+
+        // Get session messages for display from loaded session
+        // This will now have complete tool call information
+        const messages = await this.agentManager.getSessionMessages(sessionId);
         console.log(
-          '[MessageHandler] session/load not supported, creating new session',
+          '[MessageHandler] Loaded complete messages from checkpoint:',
+          messages.length,
         );
 
-        // Fallback: CLI doesn't support loading old sessions
-        // So we create a NEW ACP session for continuation
+        // Send messages and session details to WebView
+        this.sendToWebView({
+          type: 'qwenSessionSwitched',
+          data: { sessionId, messages, session: sessionDetails },
+        });
+      } catch (loadError) {
+        const errorMessage =
+          loadError instanceof Error ? loadError.message : String(loadError);
+        console.warn(
+          '[MessageHandler] session/load failed, falling back to file-based restore.',
+        );
+        console.warn('[MessageHandler] Load error details:', errorMessage);
+        console.warn(
+          '[MessageHandler] This may happen if the session was not saved via /chat save.',
+        );
+
+        // Fallback: Load messages from local files (may be incomplete)
+        // and create a new ACP session for continuation
+        const messages = await this.agentManager.getSessionMessages(sessionId);
+        console.log(
+          '[MessageHandler] Loaded messages from local files:',
+          messages.length,
+        );
+
         try {
           const newAcpSessionId =
             await this.agentManager.createNewSession(workingDir);
@@ -649,24 +819,28 @@ export class MessageHandler {
             '[MessageHandler] Set currentConversationId (ACP) to:',
             newAcpSessionId,
           );
+
+          // Send messages and session details to WebView
+          // Note: These messages may be incomplete (no tool calls)
+          this.sendToWebView({
+            type: 'qwenSessionSwitched',
+            data: { sessionId, messages, session: sessionDetails },
+          });
+
+          vscode.window.showWarningMessage(
+            'Session restored from local cache. Some context may be incomplete. Save sessions regularly for full restoration.',
+          );
         } catch (createError) {
           console.error(
             '[MessageHandler] Failed to create new ACP session:',
             createError,
           );
-          vscode.window.showWarningMessage(
-            'Could not switch to session. Created new session instead.',
+          vscode.window.showErrorMessage(
+            'Could not switch to session. Please try again.',
           );
           throw createError;
         }
       }
-
-      // Send messages and session details to WebView
-      // The historical messages are display-only, not sent to CLI
-      this.sendToWebView({
-        type: 'qwenSessionSwitched',
-        data: { sessionId, messages, session: sessionDetails },
-      });
     } catch (error) {
       console.error('[MessageHandler] Failed to switch session:', error);
       this.sendToWebView({

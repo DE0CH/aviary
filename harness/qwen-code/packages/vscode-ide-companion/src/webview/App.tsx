@@ -580,9 +580,28 @@ export const App: React.FC = () => {
   // Handle removing context attachment
   const handleToolCallUpdate = React.useCallback(
     (update: ToolCallUpdate) => {
+      console.log('[App] handleToolCallUpdate:', {
+        type: update.type,
+        toolCallId: update.toolCallId,
+        kind: update.kind,
+        title: update.title,
+        status: update.status,
+      });
+
       setToolCalls((prevToolCalls) => {
         const newMap = new Map(prevToolCalls);
         const existing = newMap.get(update.toolCallId);
+
+        console.log(
+          '[App] existing tool call:',
+          existing
+            ? {
+                kind: existing.kind,
+                title: existing.title,
+                status: existing.status,
+              }
+            : 'not found',
+        );
 
         // Helper function to safely convert title to string
         const safeTitle = (title: unknown): string => {
@@ -627,13 +646,17 @@ export const App: React.FC = () => {
             : undefined;
 
           if (existing) {
-            // Update existing tool call
+            // Update existing tool call - merge content arrays
+            const mergedContent = updatedContent
+              ? [...(existing.content || []), ...updatedContent]
+              : existing.content;
+
             newMap.set(update.toolCallId, {
               ...existing,
               ...(update.kind && { kind: update.kind }),
               ...(update.title && { title: safeTitle(update.title) }),
               ...(update.status && { status: update.status }),
-              ...(updatedContent && { content: updatedContent }),
+              content: mergedContent,
               ...(update.locations && { locations: update.locations }),
             });
           } else {
@@ -641,7 +664,7 @@ export const App: React.FC = () => {
             newMap.set(update.toolCallId, {
               toolCallId: update.toolCallId,
               kind: update.kind || 'other',
-              title: safeTitle(update.title),
+              title: update.title ? safeTitle(update.title) : '',
               status: update.status || 'pending',
               rawInput: update.rawInput as string | object | undefined,
               content: updatedContent,
@@ -840,11 +863,16 @@ export const App: React.FC = () => {
           break;
 
         case 'toolCall':
-        case 'toolCallUpdate':
+        case 'toolCallUpdate': {
           // Handle tool call updates
-          handleToolCallUpdate(message.data);
+          // Convert sessionUpdate to type if needed
+          const toolCallData = message.data;
+          if (toolCallData.sessionUpdate && !toolCallData.type) {
+            toolCallData.type = toolCallData.sessionUpdate;
+          }
+          handleToolCallUpdate(toolCallData);
           break;
-
+        }
         case 'qwenSessionList': {
           const sessions = message.data.sessions || [];
           setQwenSessions(sessions);

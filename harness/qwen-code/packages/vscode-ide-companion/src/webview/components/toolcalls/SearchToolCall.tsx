@@ -9,6 +9,7 @@
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import {
+  ToolCallContainer,
   ToolCallCard,
   ToolCallRow,
   LocationsList,
@@ -27,19 +28,15 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Group content by type
   const { errors } = groupContent(content);
 
-  // Error case: show search query + error
+  // Error case: show search query + error in card layout
   if (errors.length > 0) {
     return (
       <ToolCallCard icon="🔍">
         <ToolCallRow label="Search">
-          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
-            {queryText}
-          </div>
+          <div className="font-mono">{queryText}</div>
         </ToolCallRow>
         <ToolCallRow label="Error">
-          <div style={{ color: '#c74e39', fontWeight: 500 }}>
-            {errors.join('\n')}
-          </div>
+          <div className="text-[#c74e39] font-medium">{errors.join('\n')}</div>
         </ToolCallRow>
       </ToolCallCard>
     );
@@ -47,20 +44,37 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success case with results: show search query + file list
   if (locations && locations.length > 0) {
+    // If multiple results, use card layout; otherwise use compact format
+    if (locations.length > 1) {
+      return (
+        <ToolCallCard icon="🔍">
+          <ToolCallRow label="Search">
+            <div className="font-mono">{queryText}</div>
+          </ToolCallRow>
+          <ToolCallRow label={`Found (${locations.length})`}>
+            <LocationsList locations={locations} />
+          </ToolCallRow>
+        </ToolCallCard>
+      );
+    }
+    // Single result - compact format
     return (
-      <ToolCallCard icon="🔍">
-        <ToolCallRow label="Search">
-          <div style={{ fontFamily: 'var(--app-monospace-font-family)' }}>
-            {queryText}
-          </div>
-        </ToolCallRow>
-        <ToolCallRow label={`Found (${locations.length})`}>
-          <LocationsList locations={locations} />
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer label="Search" status="success">
+        <span className="font-mono">{queryText}</span>
+        <span className="mx-2 opacity-50">→</span>
+        <LocationsList locations={locations} />
+      </ToolCallContainer>
     );
   }
 
-  // No results
+  // No results - show query only
+  if (queryText) {
+    return (
+      <ToolCallContainer label="Search" status="success">
+        <span className="font-mono">{queryText}</span>
+      </ToolCallContainer>
+    );
+  }
+
   return null;
 };

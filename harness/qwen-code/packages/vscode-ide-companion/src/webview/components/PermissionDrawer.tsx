@@ -157,7 +157,6 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
         {/* Options */}
         <div className="relative z-[1] flex flex-col gap-1 px-1 pb-1">
           {options.map((option, index) => {
-            const isAlways = option.kind.includes('always');
             const isFocused = focusedIndex === index;
 
             return (
@@ -165,13 +164,15 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 key={option.optionId}
                 className={`flex items-center gap-2 px-3 py-2 text-left rounded-small border transition-colors duration-150 ${
                   isFocused
-                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] border-transparent'
-                    : 'hover:bg-[var(--app-list-hover-background)] border-transparent'
+                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)]'
+                    : 'hover:bg-[var(--app-list-hover-background)]'
                 }`}
                 style={{
                   color: isFocused
                     ? 'var(--app-list-active-foreground)'
                     : 'var(--app-primary-foreground)',
+                  borderColor:
+                    'color-mix(in srgb, var(--app-secondary-foreground) 70%, transparent)',
                 }}
                 onClick={() => onResponse(option.optionId)}
                 onMouseEnter={() => setFocusedIndex(index)}
@@ -181,7 +182,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                   className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
                     isFocused
                       ? 'bg-white/20 text-inherit'
-                      : 'bg-[var(--app-list-hover-background)] text-[var(--app-secondary-foreground)]'
+                      : 'bg-[var(--app-list-hover-background)]'
                   }`}
                 >
                   {index + 1}
@@ -191,49 +192,44 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 <span className="text-sm">{option.name}</span>
 
                 {/* Always badge */}
-                {isAlways && <span className="text-sm">⚡</span>}
+                {/* {isAlways && <span className="text-sm">⚡</span>} */}
               </button>
             );
           })}
 
           {/* Custom message input */}
-          <div
-            className={`rounded-small border transition-colors duration-150 ${
+          <input
+            ref={customInputRef as React.RefObject<HTMLInputElement>}
+            type="text"
+            placeholder="Tell Qwen what to do instead"
+            spellCheck={false}
+            className={`w-full px-3 py-2 text-sm rounded-small border transition-colors duration-150 ${
               focusedIndex === options.length
-                ? 'bg-[var(--app-list-hover-background)] border-transparent'
-                : 'border-transparent'
+                ? 'bg-[var(--app-list-hover-background)]'
+                : 'bg-transparent'
             }`}
+            style={{
+              color: 'var(--app-input-foreground)',
+              outline: 'none',
+              borderColor:
+                'color-mix(in srgb, var(--app-secondary-foreground) 70%, transparent)',
+            }}
+            value={customMessage}
+            onChange={(e) => setCustomMessage(e.target.value)}
+            onFocus={() => setFocusedIndex(options.length)}
             onMouseEnter={() => setFocusedIndex(options.length)}
-          >
-            <div
-              className="px-3 py-2 text-sm"
-              style={{ color: 'var(--app-secondary-foreground)' }}
-            >
-              Tell Qwen what to do instead
-            </div>
-            <div
-              ref={customInputRef}
-              contentEditable="plaintext-only"
-              spellCheck={false}
-              className="px-3 pb-2 text-sm outline-none bg-transparent min-h-[1.5em]"
-              style={{ color: 'var(--app-input-foreground)' }}
-              onInput={(e) => {
-                const target = e.target as HTMLDivElement;
-                setCustomMessage(target.textContent || '');
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && customMessage.trim()) {
-                  e.preventDefault();
-                  const rejectOption = options.find((o) =>
-                    o.kind.includes('reject'),
-                  );
-                  if (rejectOption) {
-                    onResponse(rejectOption.optionId);
-                  }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && customMessage.trim()) {
+                e.preventDefault();
+                const rejectOption = options.find((o) =>
+                  o.kind.includes('reject'),
+                );
+                if (rejectOption) {
+                  onResponse(rejectOption.optionId);
                 }
-              }}
-            />
-          </div>
+              }
+            }}
+          />
         </div>
       </div>
 

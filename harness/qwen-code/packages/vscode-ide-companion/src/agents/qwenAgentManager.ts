@@ -23,7 +23,6 @@ import type {
 } from './qwenTypes.js';
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
-import * as crypto from 'crypto';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -163,8 +162,47 @@ export class QwenAgentManager {
   }
 
   /**
-   * 通过 ACP session/save 方法保存会话
+   * 通过发送 /chat save 命令保存会话
+   * 由于 CLI 不支持 session/save ACP 方法，我们直接发送 /chat save 命令
    *
+   * @param sessionId - 会话ID
+   * @param tag - 保存标签
+   * @returns 保存响应
+   */
+  async saveSessionViaCommand(
+    sessionId: string,
+    tag: string,
+  ): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log(
+        '[QwenAgentManager] Saving session via /chat save command:',
+        sessionId,
+        'with tag:',
+        tag,
+      );
+
+      // Send /chat save command as a prompt
+      // The CLI will handle this as a special command
+      await this.connection.sendPrompt(`/chat save "${tag}"`);
+
+      console.log('[QwenAgentManager] /chat save command sent successfully');
+      return {
+        success: true,
+        message: `Session saved with tag: ${tag}`,
+      };
+    } catch (error) {
+      console.error('[QwenAgentManager] /chat save command failed:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * 通过 ACP session/save 方法保存会话 (已废弃，CLI 不支持)
+   *
+   * @deprecated Use saveSessionViaCommand instead
    * @param sessionId - 会话ID
    * @param tag - 保存标签
    * @returns 保存响应
@@ -173,38 +211,106 @@ export class QwenAgentManager {
     sessionId: string,
     tag: string,
   ): Promise<{ success: boolean; message?: string }> {
+    // Fallback to command-based save since CLI doesn't support session/save ACP method
+    console.warn(
+      '[QwenAgentManager] saveSessionViaAcp is deprecated, using command-based save instead',
+    );
+    return this.saveSessionViaCommand(sessionId, tag);
+  }
+
+  /**
+   * 通过发送 /chat save 命令保存会话（CLI 方式）
+   * 这会调用 CLI 的原生保存功能，确保保存的内容完整
+   *
+   * @param tag - Checkpoint 标签
+   * @returns 保存结果
+   */
+  async saveCheckpointViaCommand(
+    tag: string,
+  ): Promise<{ success: boolean; tag?: string; message?: string }> {
     try {
       console.log(
-        '[QwenAgentManager] Saving session via ACP:',
-        sessionId,
-        'with tag:',
-        tag,
+        '[QwenAgentManager] ===== SAVING VIA /chat save COMMAND =====',
       );
-      const response = await this.connection.saveSession(tag);
-      console.log('[QwenAgentManager] Session save response:', response);
-      // Extract message from response result or error
-      let message = '';
-      if (response?.result) {
-        if (typeof response.result === 'string') {
-          message = response.result;
-        } else if (
-          typeof response.result === 'object' &&
-          response.result !== null
-        ) {
-          // Try to get message from result object
-          message =
-            (response.result as { message?: string }).message ||
-            JSON.stringify(response.result);
-        } else {
-          message = String(response.result);
-        }
-      } else if (response?.error) {
-        message = response.error.message;
-      }
+      console.log('[QwenAgentManager] Tag:', tag);
 
-      return { success: true, message };
+      // Send /chat save command as a prompt
+      // The CLI will handle this as a special command and save the checkpoint
+      const command = `/chat save "${tag}"`;
+      console.log('[QwenAgentManager] Sending command:', command);
+
+      await this.connection.sendPrompt(command);
+
+      console.log(
+        '[QwenAgentManager] Command sent, checkpoint should be saved by CLI',
+      );
+
+      // Wait a bit for CLI to process the command
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      return {
+        success: true,
+        tag,
+        message: `Checkpoint saved via CLI: ${tag}`,
+      };
     } catch (error) {
-      console.error('[QwenAgentManager] Session save via ACP failed:', error);
+      console.error('[QwenAgentManager] /chat save command failed:', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * 保存会话为 checkpoint（使用 CLI 的格式）
+   * 保存到 ~/.qwen/tmp/{projectHash}/checkpoint-{tag}.json
+   * 同时用 sessionId 和 conversationId 保存两份，确保可以通过任一 ID 恢复
+   *
+   * @param messages - 当前会话消息
+   * @param conversationId - Conversation ID (from VSCode extension)
+   * @returns 保存结果
+   */
+  async saveCheckpoint(
+    messages: ChatMessage[],
+    conversationId: string,
+  ): Promise<{ success: boolean; tag?: string; message?: string }> {
+    try {
+      console.log('[QwenAgentManager] ===== CHECKPOINT SAVE START =====');
+      console.log('[QwenAgentManager] Conversation ID:', conversationId);
+      console.log('[QwenAgentManager] Message count:', messages.length);
+      console.log(
+        '[QwenAgentManager] Current working dir:',
+        this.currentWorkingDir,
+      );
+      console.log(
+        '[QwenAgentManager] Current session ID (from CLI):',
+        this.currentSessionId,
+      );
+
+      // Use CLI's /chat save command instead of manually writing files
+      // This ensures we save the complete session context including tool calls
+      if (this.currentSessionId) {
+        console.log(
+          '[QwenAgentManager] Using CLI /chat save command for complete save',
+        );
+        return await this.saveCheckpointViaCommand(this.currentSessionId);
+      } else {
+        console.warn(
+          '[QwenAgentManager] No current session ID, cannot use /chat save',
+        );
+        return {
+          success: false,
+          message: 'No active CLI session',
+        };
+      }
+    } catch (error) {
+      console.error('[QwenAgentManager] ===== CHECKPOINT SAVE FAILED =====');
+      console.error('[QwenAgentManager] Error:', error);
+      console.error(
+        '[QwenAgentManager] Error stack:',
+        error instanceof Error ? error.stack : 'N/A',
+      );
       return {
         success: false,
         message: error instanceof Error ? error.message : String(error),
@@ -223,37 +329,9 @@ export class QwenAgentManager {
     messages: ChatMessage[],
     sessionName: string,
   ): Promise<{ success: boolean; sessionId?: string; message?: string }> {
-    try {
-      console.log('[QwenAgentManager] Saving session directly:', sessionName);
-
-      // 转换消息格式
-      const qwenMessages = messages.map((msg) => ({
-        id: crypto.randomUUID(),
-        timestamp: new Date(msg.timestamp).toISOString(),
-        type: msg.role === 'user' ? ('user' as const) : ('qwen' as const),
-        content: msg.content,
-      }));
-
-      // 保存会话
-      const sessionId = await this.sessionManager.saveSession(
-        qwenMessages,
-        sessionName,
-        this.currentWorkingDir,
-      );
-
-      console.log('[QwenAgentManager] Session saved directly:', sessionId);
-      return {
-        success: true,
-        sessionId,
-        message: `会话已保存: ${sessionName}`,
-      };
-    } catch (error) {
-      console.error('[QwenAgentManager] Session save directly failed:', error);
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
+    // Use checkpoint format instead of session format
+    // This matches CLI's /chat save behavior
+    return this.saveCheckpoint(messages, sessionName);
   }
 
   /**
@@ -266,14 +344,42 @@ export class QwenAgentManager {
   async loadSessionViaAcp(sessionId: string): Promise<unknown> {
     try {
       console.log(
-        '[QwenAgentManager] Testing session/load via ACP for:',
+        '[QwenAgentManager] Attempting session/load via ACP for session:',
         sessionId,
       );
       const response = await this.connection.loadSession(sessionId);
-      console.log('[QwenAgentManager] Session load response:', response);
+      console.log(
+        '[QwenAgentManager] Session load succeeded. Response:',
+        JSON.stringify(response).substring(0, 200),
+      );
       return response;
     } catch (error) {
-      console.error('[QwenAgentManager] Session load via ACP failed:', error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        '[QwenAgentManager] Session load via ACP failed for session:',
+        sessionId,
+      );
+      console.error('[QwenAgentManager] Error type:', error?.constructor?.name);
+      console.error('[QwenAgentManager] Error message:', errorMessage);
+
+      // Check if error is from ACP response
+      if (error && typeof error === 'object' && 'error' in error) {
+        const acpError = error as {
+          error?: { code?: number; message?: string };
+        };
+        if (acpError.error) {
+          console.error(
+            '[QwenAgentManager] ACP error code:',
+            acpError.error.code,
+          );
+          console.error(
+            '[QwenAgentManager] ACP error message:',
+            acpError.error.message,
+          );
+        }
+      }
+
       throw error;
     }
   }

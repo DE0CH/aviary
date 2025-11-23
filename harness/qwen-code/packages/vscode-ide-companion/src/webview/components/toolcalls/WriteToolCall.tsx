@@ -3,89 +3,93 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * Write/Edit tool call component - specialized for file writing and editing operations
+ * Write tool call component - specialized for file writing operations
  */
 
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
-import {
-  ToolCallCard,
-  ToolCallRow,
-  LocationsList,
-} from './shared/LayoutComponents.js';
-import { DiffDisplay } from './shared/DiffDisplay.js';
+import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { groupContent } from './shared/utils.js';
-import { useVSCode } from '../../hooks/useVSCode.js';
 
 /**
- * Specialized component for Write/Edit tool calls
- * Optimized for displaying file writing and editing operations with diffs
- * Follows minimal display principle: only show what matters
+ * Specialized component for Write tool calls
+ * Shows: Write filename + error message + content preview
  */
 export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
-  const { kind, status: _status, content, locations } = toolCall;
-  const isEdit = kind.toLowerCase() === 'edit';
-  const vscode = useVSCode();
+  const { content, locations, rawInput, toolCallId } = toolCall;
 
   // Group content by type
-  const { errors, diffs } = groupContent(content);
+  const { errors, textOutputs } = groupContent(content);
 
-  const handleOpenDiff = (
-    path: string | undefined,
-    oldText: string | null | undefined,
-    newText: string | undefined,
-  ) => {
-    if (path) {
-      vscode.postMessage({
-        type: 'openDiff',
-        data: { path, oldText: oldText || '', newText: newText || '' },
-      });
-    }
-  };
+  // Extract filename from path
+  const getFileName = (path: string): string => path.split('/').pop() || path;
 
-  // Error case: show error with operation label
+  // Extract content to write from rawInput
+  let writeContent = '';
+  if (rawInput && typeof rawInput === 'object') {
+    const inputObj = rawInput as { content?: string };
+    writeContent = inputObj.content || '';
+  } else if (typeof rawInput === 'string') {
+    writeContent = rawInput;
+  }
+
+  // Error case: show filename + error message + content preview
   if (errors.length > 0) {
+    const path = locations?.[0]?.path || '';
+    const fileName = path ? getFileName(path) : '';
+    const errorMessage = errors.join('\n');
+
+    // Truncate content preview
+    const truncatedContent =
+      writeContent.length > 200
+        ? writeContent.substring(0, 200) + '...'
+        : writeContent;
+
     return (
-      <ToolCallCard icon="✏️">
-        <ToolCallRow label={isEdit ? 'Edit' : 'Write'}>
-          <div style={{ color: '#c74e39', fontWeight: 500 }}>
-            {errors.join('\n')}
+      <ToolCallContainer
+        label={fileName ? `Write ${fileName}` : 'Write'}
+        status="error"
+        toolCallId={toolCallId}
+      >
+        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
+          <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
+          <span className="flex-shrink-0 w-full">{errorMessage}</span>
+        </div>
+        {truncatedContent && (
+          <div className="bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 mt-1">
+            <pre className="font-mono text-[13px] whitespace-pre-wrap break-words text-[var(--app-primary-foreground)] opacity-90">
+              {truncatedContent}
+            </pre>
           </div>
-        </ToolCallRow>
-      </ToolCallCard>
-    );
-  }
-
-  // Success case with diff: show diff (already has file path)
-  if (diffs.length > 0) {
-    return (
-      <ToolCallCard icon="✏️">
-        {diffs.map(
-          (item: import('./shared/types.js').ToolCallContent, idx: number) => (
-            <div key={`diff-${idx}`} style={{ gridColumn: '1 / -1' }}>
-              <DiffDisplay
-                path={item.path}
-                oldText={item.oldText}
-                newText={item.newText}
-                onOpenDiff={() =>
-                  handleOpenDiff(item.path, item.oldText, item.newText)
-                }
-              />
-            </div>
-          ),
         )}
-      </ToolCallCard>
+      </ToolCallContainer>
     );
   }
 
-  // Success case without diff: show operation + file
+  // Success case: show filename + line count
   if (locations && locations.length > 0) {
+    const fileName = getFileName(locations[0].path);
+    const lineCount = writeContent.split('\n').length;
     return (
-      <ToolCallCard icon="✏️">
-        <ToolCallRow label={isEdit ? 'Edited' : 'Created'}>
-          <LocationsList locations={locations} />
-        </ToolCallRow>
-      </ToolCallCard>
+      <ToolCallContainer
+        label={`Created ${fileName}`}
+        status="success"
+        toolCallId={toolCallId}
+      >
+        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1">
+          <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
+          <span className="flex-shrink-0 w-full">{lineCount} lines</span>
+        </div>
+      </ToolCallContainer>
+    );
+  }
+
+  // Fallback: show generic success
+  if (textOutputs.length > 0) {
+    return (
+      <ToolCallContainer label="Write" status="success" toolCallId={toolCallId}>
+        {textOutputs.join('\n')}
+      </ToolCallContainer>
     );
   }
 

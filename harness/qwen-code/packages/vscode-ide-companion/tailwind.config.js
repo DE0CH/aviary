@@ -6,6 +6,7 @@ module.exports = {
     './src/webview/App.tsx',
     './src/webview/components/ui/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/toolcalls/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/MessageContent.tsx',
     './src/webview/components/InfoBanner.tsx',
     './src/webview/components/InputForm.tsx',
