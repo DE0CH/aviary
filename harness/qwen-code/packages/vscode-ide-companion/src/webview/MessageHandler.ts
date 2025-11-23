@@ -207,6 +207,10 @@ export class MessageHandler {
         await this.handleResumeSession(data?.sessionId as string);
         break;
 
+      case 'openSettings':
+        await this.handleOpenSettings();
+        break;
+
       default:
         console.warn('[MessageHandler] Unknown message type:', message.type);
         break;
@@ -919,6 +923,26 @@ export class MessageHandler {
       this.sendToWebView({
         type: 'error',
         data: { message: `Failed to resume session: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 处理打开设置请求
+   * 打开 VSCode 设置页面并定位到扩展配置
+   */
+  private async handleOpenSettings(): Promise<void> {
+    try {
+      console.log('[MessageHandler] Opening settings');
+      await vscode.commands.executeCommand(
+        'workbench.action.openSettings',
+        'qwenCode',
+      );
+    } catch (error) {
+      console.error('[MessageHandler] Failed to open settings:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to open settings: ${error}` },
       });
     }
   }
