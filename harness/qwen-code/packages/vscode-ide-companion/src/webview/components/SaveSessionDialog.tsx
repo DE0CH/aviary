@@ -92,7 +92,9 @@ export const SaveSessionDialog: React.FC<SaveSessionDialogProps> = ({
                 value={tag}
                 onChange={(e) => {
                   setTag(e.target.value);
-                  if (error) setError('');
+                  if (error) {
+                    setError('');
+                  }
                 }}
                 placeholder="e.g., project-planning, bug-fix, research"
                 className={error ? 'error' : ''}

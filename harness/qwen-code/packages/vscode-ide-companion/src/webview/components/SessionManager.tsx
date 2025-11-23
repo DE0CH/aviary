@@ -32,11 +32,6 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Load sessions when component mounts
-  useEffect(() => {
-    loadSessions();
-  }, [loadSessions]);
-
   const loadSessions = React.useCallback(() => {
     setIsLoading(true);
     vscode.postMessage({
@@ -44,6 +39,11 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
       data: {},
     });
   }, [vscode]);
+
+  // Load sessions when component mounts
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   // Listen for session list updates
   useEffect(() => {
