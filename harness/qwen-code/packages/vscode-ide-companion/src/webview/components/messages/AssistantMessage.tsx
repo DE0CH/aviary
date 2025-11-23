@@ -6,37 +6,66 @@
 
 import type React from 'react';
 import { MessageContent } from '../MessageContent.js';
+import './AssistantMessage.css';
 
 interface AssistantMessageProps {
   content: string;
   timestamp: number;
   onFileClick?: (path: string) => void;
+  status?: 'default' | 'success' | 'error' | 'warning' | 'loading';
 }
 
+/**
+ * AssistantMessage component - renders AI responses with Claude Code styling
+ * Supports different states: default, success, error, warning, loading
+ *
+ * Claude Code DOM structure:
+ * <div class="K o"><span class="i"><p>...</p></span></div>
+ *
+ * Styles:
+ * .o - outer container with padding-left: 30px and ::before for bullet
+ * .i - inner span wrapper
+ */
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   content,
   timestamp: _timestamp,
   onFileClick,
-}) => (
-  <div className="flex gap-0 items-start text-left py-2 flex-col relative animate-[fadeIn_0.2s_ease-in]">
+  status = 'default',
+}) => {
+  // Map status to CSS class (only for ::before pseudo-element)
+  const getStatusClass = () => {
+    switch (status) {
+      case 'success':
+        return 'assistant-message-success';
+      case 'error':
+        return 'assistant-message-error';
+      case 'warning':
+        return 'assistant-message-warning';
+      case 'loading':
+        return 'assistant-message-loading';
+      default:
+        return 'assistant-message-default';
+    }
+  };
+
+  return (
     <div
-      className="inline-block my-1 relative whitespace-pre-wrap rounded-md max-w-full overflow-x-auto overflow-y-hidden select-text leading-[1.5]"
+      className={`assistant-message-container ${getStatusClass()}`}
       style={{
-        border: '1px solid var(--app-input-border)',
-        borderRadius: 'var(--corner-radius-medium)',
-        backgroundColor: 'var(--app-input-background)',
-        padding: '4px 6px',
-        color: 'var(--app-primary-foreground)',
+        width: '100%',
+        alignItems: 'flex-start',
+        paddingLeft: '30px',
+        userSelect: 'text',
+        position: 'relative',
+        paddingTop: '8px',
+        paddingBottom: '8px',
       }}
     >
-      <MessageContent content={content} onFileClick={onFileClick} />
+      <span style={{ color: 'var(--app-secondary-foreground)' }}>
+        <p style={{ margin: 0, color: 'var(--app-secondary-foreground)' }}>
+          <MessageContent content={content} onFileClick={onFileClick} />
+        </p>
+      </span>
     </div>
-    {/* Timestamp - temporarily hidden */}
-    {/* <div
-        className="text-xs opacity-60"
-        style={{ color: 'var(--app-secondary-foreground)' }}
-      >
-        {new Date(timestamp).toLocaleTimeString()}
-      </div> */}
-  </div>
-);
+  );
+};

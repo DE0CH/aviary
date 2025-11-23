@@ -19,19 +19,7 @@
 @import './components/Timeline.css';
 @import './components/shared/FileLink.css';
 @import './components/toolcalls/shared/DiffDisplay.css';
-
-/* ===========================
-   Header Styles (from Claude Code .he)
-   =========================== */
-.chat-header {
-  display: flex;
-  border-bottom: 1px solid var(--app-primary-border-color);
-  padding: 6px 10px;
-  gap: 4px;
-  background-color: var(--app-header-background);
-  justify-content: flex-start;
-  user-select: none;
-}
+@import './components/messages/AssistantMessage.css';
 
 /* ===========================
    Session Selector Button (from Claude Code .E)
