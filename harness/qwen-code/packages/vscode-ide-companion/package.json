@@ -175,10 +175,13 @@
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/vsce": "^3.6.0",
+    "autoprefixer": "^10.4.22",
     "esbuild": "^0.25.3",
     "eslint": "^9.25.1",
     "npm-run-all2": "^8.0.2",
+    "postcss": "^8.5.6",
     "sass": "^1.94.1",
+    "tailwindcss": "^3.4.18",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   },
