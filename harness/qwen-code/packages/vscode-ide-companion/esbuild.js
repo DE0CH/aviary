@@ -40,11 +40,22 @@ const cssInjectPlugin = {
     // Handle CSS files
     build.onLoad({ filter: /\.css$/ }, async (args) => {
       const fs = await import('fs');
+      const postcss = (await import('postcss')).default;
+      const tailwindcss = (await import('tailwindcss')).default;
+      const autoprefixer = (await import('autoprefixer')).default;
+
       const css = await fs.promises.readFile(args.path, 'utf8');
+
+      // Process with PostCSS (Tailwind + Autoprefixer)
+      const result = await postcss([tailwindcss, autoprefixer]).process(css, {
+        from: args.path,
+        to: args.path,
+      });
+
       return {
         contents: `
           const style = document.createElement('style');
-          style.textContent = ${JSON.stringify(css)};
+          style.textContent = ${JSON.stringify(result.css)};
           document.head.appendChild(style);
         `,
         loader: 'js',

@@ -6,6 +6,7 @@
 
 import ReactDOM from 'react-dom/client';
 import { App } from './App.js';
+import './tailwind.css';
 import './App.scss';
 import './ClaudeCodeStyles.css';
 

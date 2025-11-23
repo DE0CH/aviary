@@ -154,7 +154,7 @@
     "build:dev": "npm run check-types && npm run lint && node esbuild.js",
     "build:prod": "node esbuild.js --production",
     "generate:notices": "node ./scripts/generate-notices.js",
-    "prepare": "npm run generate:notices",
+    "prepare1": "npm run generate:notices",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "watch": "npm-run-all2 -p watch:*",
@@ -166,11 +166,13 @@
     "validate:notices": "node ./scripts/validate-notices.js"
   },
   "devDependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "20.x",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/semver": "^7.7.1",
     "@types/vscode": "^1.99.0",
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",
@@ -187,6 +189,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
+    "@qwen-code/qwen-code-core": "file:../core",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "react": "^18.2.0",

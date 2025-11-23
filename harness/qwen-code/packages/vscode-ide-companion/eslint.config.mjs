@@ -12,6 +12,21 @@ export default [
     files: ['**/*.ts', '**/*.tsx'],
   },
   {
+    files: ['**/*.js', '**/*.cjs', '**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: {
+        module: 'readonly',
+        require: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+  {
     plugins: {
       '@typescript-eslint': typescriptEslint,
     },
