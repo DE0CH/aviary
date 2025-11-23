@@ -15,8 +15,10 @@
  */
 
 import type {
-  ToolCallRequestInfo,
   WaitingToolCall,
+  ToolExecuteConfirmationDetails,
+  ToolMcpConfirmationDetails,
+  ApprovalMode,
 } from '@qwen-code/qwen-code-core';
 import {
   InputFormat,
@@ -206,6 +208,7 @@ export class PermissionController extends BaseController {
     }
 
     this.context.permissionMode = mode;
+    this.context.config.setApprovalMode(mode as ApprovalMode);
 
     if (this.context.debugMode) {
       console.error(
@@ -335,47 +338,6 @@ export class PermissionController extends BaseController {
   }
 
   /**
-   * Check if a tool should be executed based on current permission settings
-   *
-   * This is a convenience method for direct tool execution checks without
-   * going through the control request flow.
-   */
-  async shouldAllowTool(
-    toolRequest: ToolCallRequestInfo,
-    confirmationDetails?: unknown,
-  ): Promise<{
-    allowed: boolean;
-    message?: string;
-    updatedArgs?: Record<string, unknown>;
-  }> {
-    // Check permission mode
-    const modeResult = this.checkPermissionMode();
-    if (!modeResult.allowed) {
-      return {
-        allowed: false,
-        message: modeResult.message,
-      };
-    }
-
-    // Check tool registry
-    const registryResult = this.checkToolRegistry(toolRequest.name);
-    if (!registryResult.allowed) {
-      return {
-        allowed: false,
-        message: registryResult.message,
-      };
-    }
-
-    // If we have confirmation details, we could potentially modify args
-    // This is a hook for future enhancement
-    if (confirmationDetails) {
-      // Future: handle argument modifications based on confirmation details
-    }
-
-    return { allowed: true };
-  }
-
-  /**
    * Get callback for monitoring tool calls and handling outgoing permission requests
    * This is passed to executeToolCall to hook into CoreToolScheduler updates
    */
@@ -430,17 +392,14 @@ export class PermissionController extends BaseController {
         toolCall.confirmationDetails,
       );
 
-      const response = await this.sendControlRequest(
-        {
-          subtype: 'can_use_tool',
-          tool_name: toolCall.request.name,
-          tool_use_id: toolCall.request.callId,
-          input: toolCall.request.args,
-          permission_suggestions: permissionSuggestions,
-          blocked_path: null,
-        } as CLIControlPermissionRequest,
-        30000,
-      );
+      const response = await this.sendControlRequest({
+        subtype: 'can_use_tool',
+        tool_name: toolCall.request.name,
+        tool_use_id: toolCall.request.callId,
+        input: toolCall.request.args,
+        permission_suggestions: permissionSuggestions,
+        blocked_path: null,
+      } as CLIControlPermissionRequest);
 
       if (response.subtype !== 'success') {
         await toolCall.confirmationDetails.onConfirm(
@@ -462,8 +421,15 @@ export class PermissionController extends BaseController {
           ToolConfirmationOutcome.ProceedOnce,
         );
       } else {
+        // Extract cancel message from response if available
+        const cancelMessage =
+          typeof payload['message'] === 'string'
+            ? payload['message']
+            : undefined;
+
         await toolCall.confirmationDetails.onConfirm(
           ToolConfirmationOutcome.Cancel,
+          cancelMessage ? { cancelMessage } : undefined,
         );
       }
     } catch (error) {
@@ -473,9 +439,23 @@ export class PermissionController extends BaseController {
           error,
         );
       }
-      await toolCall.confirmationDetails.onConfirm(
-        ToolConfirmationOutcome.Cancel,
-      );
+      // On error, use default cancel message
+      // Only pass payload for exec and mcp types that support it
+      const confirmationType = toolCall.confirmationDetails.type;
+      if (confirmationType === 'exec' || confirmationType === 'mcp') {
+        const execOrMcpDetails = toolCall.confirmationDetails as
+          | ToolExecuteConfirmationDetails
+          | ToolMcpConfirmationDetails;
+        await execOrMcpDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+          undefined,
+        );
+      } else {
+        // For other types, don't pass payload (backward compatible)
+        await toolCall.confirmationDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+        );
+      }
     } finally {
       this.pendingOutgoingRequests.delete(toolCall.request.callId);
     }

@@ -77,6 +77,15 @@ export class SubagentManager {
   ): Promise<void> {
     this.validator.validateOrThrow(config);
 
+    // Prevent creating session-level agents
+    if (options.level === 'session') {
+      throw new SubagentError(
+        `Cannot create session-level subagent "${config.name}". Session agents are read-only and provided at runtime.`,
+        SubagentErrorCode.INVALID_CONFIG,
+        config.name,
+      );
+    }
+
     // Determine file path
     const filePath =
       options.customPath || this.getSubagentPath(config.name, options.level);
@@ -142,6 +151,11 @@ export class SubagentManager {
         return BuiltinAgentRegistry.getBuiltinAgent(name);
       }
 
+      if (level === 'session') {
+        const sessionSubagents = this.subagentsCache?.get('session') || [];
+        return sessionSubagents.find((agent) => agent.name === name) || null;
+      }
+
       return this.findSubagentByNameAtLevel(name, level);
     }
 
@@ -186,6 +200,15 @@ export class SubagentManager {
     if (existing.isBuiltin) {
       throw new SubagentError(
         `Cannot update built-in subagent "${name}"`,
+        SubagentErrorCode.INVALID_CONFIG,
+        name,
+      );
+    }
+
+    // Prevent updating session-level agents
+    if (existing.level === 'session') {
+      throw new SubagentError(
+        `Cannot update session-level subagent "${name}"`,
         SubagentErrorCode.INVALID_CONFIG,
         name,
       );
@@ -236,8 +259,8 @@ export class SubagentManager {
     let deleted = false;
 
     for (const currentLevel of levelsToCheck) {
-      // Skip builtin level for deletion
-      if (currentLevel === 'builtin') {
+      // Skip builtin and session levels for deletion
+      if (currentLevel === 'builtin' || currentLevel === 'session') {
         continue;
       }
 
@@ -277,6 +300,38 @@ export class SubagentManager {
     const subagents: SubagentConfig[] = [];
     const seenNames = new Set<string>();
 
+    // In SDK mode, only load session-level subagents
+    if (this.config.getSdkMode()) {
+      const sessionSubagents = this.config.getSessionSubagents();
+      if (sessionSubagents && sessionSubagents.length > 0) {
+        this.loadSessionSubagents(sessionSubagents);
+      }
+
+      const levelsToCheck: SubagentLevel[] = options.level
+        ? [options.level]
+        : ['session'];
+
+      for (const level of levelsToCheck) {
+        const levelSubagents = this.subagentsCache?.get(level) || [];
+
+        for (const subagent of levelSubagents) {
+          // Apply tool filter if specified
+          if (
+            options.hasTool &&
+            (!subagent.tools || !subagent.tools.includes(options.hasTool))
+          ) {
+            continue;
+          }
+
+          subagents.push(subagent);
+          seenNames.add(subagent.name);
+        }
+      }
+
+      return subagents;
+    }
+
+    // Normal mode: load from project, user, and builtin levels
     const levelsToCheck: SubagentLevel[] = options.level
       ? [options.level]
       : ['project', 'user', 'builtin'];
@@ -322,8 +377,8 @@ export class SubagentManager {
             comparison = a.name.localeCompare(b.name);
             break;
           case 'level': {
-            // Project comes before user, user comes before builtin
-            const levelOrder = { project: 0, user: 1, builtin: 2 };
+            // Project comes before user, user comes before builtin, session comes last
+            const levelOrder = { project: 0, user: 1, builtin: 2, session: 3 };
             comparison = levelOrder[a.level] - levelOrder[b.level];
             break;
           }
@@ -337,6 +392,27 @@ export class SubagentManager {
     }
 
     return subagents;
+  }
+
+  /**
+   * Loads session-level subagents into the cache.
+   * Session subagents are provided directly via config and are read-only.
+   *
+   * @param subagents - Array of session subagent configurations
+   */
+  loadSessionSubagents(subagents: SubagentConfig[]): void {
+    if (!this.subagentsCache) {
+      this.subagentsCache = new Map();
+    }
+
+    const sessionSubagents = subagents.map((config) => ({
+      ...config,
+      level: 'session' as SubagentLevel,
+      filePath: `<session:${config.name}>`,
+    }));
+
+    this.subagentsCache.set('session', sessionSubagents);
+    this.notifyChangeListeners();
   }
 
   /**
@@ -691,6 +767,10 @@ export class SubagentManager {
   getSubagentPath(name: string, level: SubagentLevel): string {
     if (level === 'builtin') {
       return `<builtin:${name}>`;
+    }
+
+    if (level === 'session') {
+      return `<session:${name}>`;
     }
 
     const baseDir =

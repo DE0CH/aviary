@@ -15,6 +15,7 @@ import {
   FatalInputError,
   promptIdContext,
   OutputFormat,
+  InputFormat,
   uiTelemetryService,
 } from '@qwen-code/qwen-code-core';
 import type { Content, Part, PartListUnion } from '@google/genai';
@@ -225,40 +226,14 @@ export async function runNonInteractive(
           for (const requestInfo of toolCallRequests) {
             const finalRequestInfo = requestInfo;
 
-            /*
-            if (options.controlService) {
-              const permissionResult =
-                await options.controlService.permission.shouldAllowTool(
-                  requestInfo,
-                );
-              if (!permissionResult.allowed) {
-                if (config.getDebugMode()) {
-                  console.error(
-                    `[runNonInteractive] Tool execution denied: ${requestInfo.name}`,
-                    permissionResult.message ?? '',
-                  );
-                }
-                if (adapter && permissionResult.message) {
-                  adapter.emitSystemMessage('tool_denied', {
-                    tool: requestInfo.name,
-                    message: permissionResult.message,
-                  });
-                }
-                continue;
-              }
-
-              if (permissionResult.updatedArgs) {
-                finalRequestInfo = {
-                  ...requestInfo,
-                  args: permissionResult.updatedArgs,
-                };
-              }
-            }
-
-            const toolCallUpdateCallback = options.controlService
-              ? options.controlService.permission.getToolCallUpdateCallback()
-              : undefined;
-            */
+            const inputFormat =
+              typeof config.getInputFormat === 'function'
+                ? config.getInputFormat()
+                : InputFormat.TEXT;
+            const toolCallUpdateCallback =
+              inputFormat === InputFormat.STREAM_JSON && options.controlService
+                ? options.controlService.permission.getToolCallUpdateCallback()
+                : undefined;
 
             // Only pass outputUpdateHandler for Task tool
             const isTaskTool = finalRequestInfo.name === 'task';
@@ -277,13 +252,13 @@ export async function runNonInteractive(
               isTaskTool && taskToolProgressHandler
                 ? {
                     outputUpdateHandler: taskToolProgressHandler,
-                    /*
-                    toolCallUpdateCallback
-                      ? { onToolCallsUpdate: toolCallUpdateCallback }
-                      : undefined,
-                    */
+                    onToolCallsUpdate: toolCallUpdateCallback,
                   }
-                : undefined,
+                : toolCallUpdateCallback
+                  ? {
+                      onToolCallsUpdate: toolCallUpdateCallback,
+                    }
+                  : undefined,
             );
 
             // Note: In JSON mode, subagent messages are automatically added to the main
@@ -303,9 +278,6 @@ export async function runNonInteractive(
                   ? toolResponse.resultDisplay
                   : undefined,
               );
-              // Note: We no longer emit a separate system message for tool errors
-              // in JSON/STREAM_JSON mode, as the error is already captured in the
-              // tool_result block with is_error=true.
             }
 
             if (adapter) {

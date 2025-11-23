@@ -55,11 +55,67 @@ export class SystemController extends BaseController {
     payload: CLIControlInitializeRequest,
   ): Promise<Record<string, unknown>> {
     // Register SDK MCP servers if provided
-    if (payload.sdkMcpServers && Array.isArray(payload.sdkMcpServers)) {
-      for (const serverName of payload.sdkMcpServers) {
+    if (payload.sdkMcpServers && typeof payload.sdkMcpServers === 'object') {
+      for (const serverName of Object.keys(payload.sdkMcpServers)) {
         this.context.sdkMcpServers.add(serverName);
       }
+
+      // Add SDK MCP servers to config
+      try {
+        this.context.config.addMcpServers(payload.sdkMcpServers);
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${Object.keys(payload.sdkMcpServers).length} SDK MCP servers to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error(
+            '[SystemController] Failed to add SDK MCP servers:',
+            error,
+          );
+        }
+      }
     }
+
+    // Add MCP servers to config if provided
+    if (payload.mcpServers && typeof payload.mcpServers === 'object') {
+      try {
+        this.context.config.addMcpServers(payload.mcpServers);
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${Object.keys(payload.mcpServers).length} MCP servers to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error('[SystemController] Failed to add MCP servers:', error);
+        }
+      }
+    }
+
+    // Add session subagents to config if provided
+    if (payload.agents && Array.isArray(payload.agents)) {
+      try {
+        this.context.config.addSessionSubagents(payload.agents);
+
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${payload.agents.length} session subagents to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error(
+            '[SystemController] Failed to add session subagents:',
+            error,
+          );
+        }
+      }
+    }
+
+    // Set SDK mode to true after handling initialize
+    this.context.config.setSdkMode(true);
 
     // Build capabilities for response
     const capabilities = this.buildControlCapabilities();
@@ -86,7 +142,7 @@ export class SystemController extends BaseController {
   buildControlCapabilities(): Record<string, unknown> {
     const capabilities: Record<string, unknown> = {
       can_handle_can_use_tool: true,
-      can_handle_hook_callback: true,
+      can_handle_hook_callback: false,
       can_set_permission_mode:
         typeof this.context.config.setApprovalMode === 'function',
       can_set_model: typeof this.context.config.setModel === 'function',

@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type {
+  MCPServerConfig,
+  SubagentConfig,
+} from '@qwen-code/qwen-code-core';
 
 /**
  * Annotation for attaching metadata to content blocks
@@ -295,10 +299,18 @@ export interface CLIControlPermissionRequest {
   blocked_path: string | null;
 }
 
+export enum AuthProviderType {
+  DYNAMIC_DISCOVERY = 'dynamic_discovery',
+  GOOGLE_CREDENTIALS = 'google_credentials',
+  SERVICE_ACCOUNT_IMPERSONATION = 'service_account_impersonation',
+}
+
 export interface CLIControlInitializeRequest {
   subtype: 'initialize';
   hooks?: HookRegistration[] | null;
-  sdkMcpServers?: string[];
+  sdkMcpServers?: Record<string, MCPServerConfig>;
+  mcpServers?: Record<string, MCPServerConfig>;
+  agents?: SubagentConfig[];
 }
 
 export interface CLIControlSetPermissionModeRequest {
