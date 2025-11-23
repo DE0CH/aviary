@@ -231,6 +231,27 @@ export class WebViewProvider {
       });
     this.disposables.push(selectionChangeDisposable);
 
+    // Send initial active editor state to WebView
+    const initialEditor = vscode.window.activeTextEditor;
+    if (initialEditor) {
+      const filePath = initialEditor.document.uri.fsPath || null;
+      const fileName = filePath ? getFileName(filePath) : null;
+
+      let selectionInfo = null;
+      if (!initialEditor.selection.isEmpty) {
+        const selection = initialEditor.selection;
+        selectionInfo = {
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        };
+      }
+
+      this.sendMessageToWebView({
+        type: 'activeEditorChanged',
+        data: { fileName, filePath, selection: selectionInfo },
+      });
+    }
+
     // Check if we have valid auth cache and auto-reconnect
     if (!this.agentInitialized) {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -519,6 +540,27 @@ export class WebViewProvider {
       },
     );
     this.disposables.push(editorChangeDisposable);
+
+    // Send initial active editor state to WebView
+    const initialEditor = vscode.window.activeTextEditor;
+    if (initialEditor) {
+      const filePath = initialEditor.document.uri.fsPath || null;
+      const fileName = filePath ? getFileName(filePath) : null;
+
+      let selectionInfo = null;
+      if (!initialEditor.selection.isEmpty) {
+        const selection = initialEditor.selection;
+        selectionInfo = {
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        };
+      }
+
+      this.sendMessageToWebView({
+        type: 'activeEditorChanged',
+        data: { fileName, filePath, selection: selectionInfo },
+      });
+    }
 
     // Capture the tab reference on restore
     this.panelManager.captureTab();
