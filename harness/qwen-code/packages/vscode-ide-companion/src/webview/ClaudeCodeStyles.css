@@ -287,6 +287,11 @@
   /* Tool Call Styles */
   --app-tool-background: var(--vscode-editor-background);
   --app-code-background: var(--vscode-textCodeBlock-background);
+
+  /* Warning/Error Styles */
+  --app-warning-background: var(--vscode-editorWarning-background, rgba(255, 204, 0, 0.1));
+  --app-warning-border: var(--vscode-editorWarning-foreground, #ffcc00);
+  --app-warning-foreground: var(--vscode-editorWarning-foreground, #ffcc00);
 }
 
 /* ===========================

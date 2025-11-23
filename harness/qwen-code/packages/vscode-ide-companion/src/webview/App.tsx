@@ -378,7 +378,42 @@ export const App: React.FC = () => {
       const inputElement = inputFieldRef.current;
       const currentText = inputElement.textContent || '';
 
-      if (item.type === 'file') {
+      if (item.type === 'command') {
+        // Handle /login command directly
+        if (item.label === '/login') {
+          // Clear input field
+          inputElement.textContent = '';
+          setInputText('');
+          // Close completion
+          completion.closeCompletion();
+          // Send login command to extension
+          vscode.postMessage({
+            type: 'login',
+            data: {},
+          });
+          return;
+        }
+
+        // For other commands, replace entire input with command
+        inputElement.textContent = item.label + ' ';
+        setInputText(item.label + ' ');
+
+        // Move cursor to end
+        setTimeout(() => {
+          const range = document.createRange();
+          const sel = window.getSelection();
+          if (inputElement.firstChild) {
+            range.setStart(inputElement.firstChild, (item.label + ' ').length);
+            range.collapse(true);
+          } else {
+            range.selectNodeContents(inputElement);
+            range.collapse(false);
+          }
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          inputElement.focus();
+        }, 10);
+      } else if (item.type === 'file') {
         // Store file reference mapping
         const filePath = (item.value as string) || item.label;
         fileReferenceMap.current.set(item.label, filePath);
@@ -441,32 +476,12 @@ export const App: React.FC = () => {
             inputElement.focus();
           }, 10);
         }
-      } else if (item.type === 'command') {
-        // Replace entire input with command
-        inputElement.textContent = item.label + ' ';
-        setInputText(item.label + ' ');
-
-        // Move cursor to end
-        setTimeout(() => {
-          const range = document.createRange();
-          const sel = window.getSelection();
-          if (inputElement.firstChild) {
-            range.setStart(inputElement.firstChild, (item.label + ' ').length);
-            range.collapse(true);
-          } else {
-            range.selectNodeContents(inputElement);
-            range.collapse(false);
-          }
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-          inputElement.focus();
-        }, 10);
       }
 
       // Close completion
       completion.closeCompletion();
     },
-    [completion],
+    [completion, vscode],
   );
 
   // Handle attach context button click (Cmd/Ctrl + /)
@@ -642,6 +657,7 @@ export const App: React.FC = () => {
     // Listen for messages from extension
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
+      // console.log('[App] Received message from extension:', message.type, message);
 
       switch (message.type) {
         case 'conversationLoaded': {
@@ -713,6 +729,18 @@ export const App: React.FC = () => {
           setIsStreaming(false);
           setIsWaitingForResponse(false);
           break;
+
+        // case 'notLoggedIn':
+        //   // Show not logged in message with login button
+        //   console.log('[App] Received notLoggedIn message:', message.data);
+        //   setIsStreaming(false);
+        //   setIsWaitingForResponse(false);
+        //   setNotLoggedInMessage(
+        //     (message.data as { message: string })?.message ||
+        //       'Please login to start chatting.',
+        //   );
+        //   console.log('[App] Set notLoggedInMessage to:', (message.data as { message: string })?.message);
+        //   break;
 
         case 'permissionRequest':
           // Show permission dialog
@@ -984,6 +1012,21 @@ export const App: React.FC = () => {
     e.preventDefault();
 
     if (!inputText.trim() || isStreaming) {
+      return;
+    }
+
+    // Check if this is a /login command
+    if (inputText.trim() === '/login') {
+      // Clear input field
+      setInputText('');
+      if (inputFieldRef.current) {
+        inputFieldRef.current.textContent = '';
+      }
+      // Send login command to extension
+      vscode.postMessage({
+        type: 'login',
+        data: {},
+      });
       return;
     }
 
@@ -1379,6 +1422,24 @@ export const App: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* Not Logged In Message with Login Button - COMMENTED OUT */}
+            {/* {notLoggedInMessage && (
+              <>
+                {console.log('[App] Rendering NotLoggedInMessage with message:', notLoggedInMessage)}
+                <NotLoggedInMessage
+                  message={notLoggedInMessage}
+                  onLoginClick={() => {
+                    setNotLoggedInMessage(null);
+                    vscode.postMessage({
+                      type: 'login',
+                      data: {},
+                    });
+                  }}
+                  onDismiss={() => setNotLoggedInMessage(null)}
+                />
+              </>
+            )} */}
 
             {isStreaming && currentStreamContent && (
               <div className="message assistant streaming">

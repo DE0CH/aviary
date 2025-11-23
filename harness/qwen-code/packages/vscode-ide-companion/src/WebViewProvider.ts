@@ -43,6 +43,11 @@ export class WebViewProvider {
       (message) => this.sendMessageToWebView(message),
     );
 
+    // Set login handler for /login command
+    this.messageHandler.setLoginHandler(async () => {
+      await this.initializeAgentConnection();
+    });
+
     // Setup agent callbacks
     this.agentManager.onStreamChunk((chunk: string) => {
       this.messageHandler.appendStreamContent(chunk);
@@ -168,9 +173,13 @@ export class WebViewProvider {
     );
     this.disposables.push(editorChangeDisposable);
 
-    // Initialize agent connection only once
+    // Don't auto-login; user must use /login command
+    // Just initialize empty conversation for the UI
     if (!this.agentInitialized) {
-      await this.initializeAgentConnection();
+      console.log(
+        '[WebViewProvider] Agent not initialized, waiting for /login command',
+      );
+      await this.initializeEmptyConversation();
     } else {
       console.log(
         '[WebViewProvider] Agent already initialized, reusing existing connection',
@@ -182,9 +191,9 @@ export class WebViewProvider {
 
   /**
    * Initialize agent connection and session
-   * Can be called from show() or restorePanel()
+   * Can be called from show() or via /login command
    */
-  private async initializeAgentConnection(): Promise<void> {
+  async initializeAgentConnection(): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
@@ -383,14 +392,15 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // Initialize agent connection if not already done
+    // Don't auto-login on restore; user must use /login command
+    // Just initialize empty conversation for the UI
     if (!this.agentInitialized) {
       console.log(
-        '[WebViewProvider] Initializing agent connection after restore...',
+        '[WebViewProvider] Agent not initialized after restore, waiting for /login command',
       );
-      this.initializeAgentConnection().catch((error) => {
+      this.initializeEmptyConversation().catch((error) => {
         console.error(
-          '[WebViewProvider] Failed to initialize agent after restore:',
+          '[WebViewProvider] Failed to initialize empty conversation after restore:',
           error,
         );
       });

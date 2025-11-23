@@ -98,11 +98,13 @@ export const InfoBanner: React.FC<InfoBannerProps> = ({
 
       {/* Close button */}
       <button
-        className="flex items-center justify-center cursor-pointer p-1.5 rounded"
+        className="flex items-center justify-center cursor-pointer rounded"
         style={{
           background: 'none',
           border: 'none',
+          padding: '6px',
           color: 'var(--app-secondary-foreground)',
+          borderRadius: '4px',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor =

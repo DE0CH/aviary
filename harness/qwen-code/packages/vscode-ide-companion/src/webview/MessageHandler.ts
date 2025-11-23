@@ -27,6 +27,10 @@ export class MessageHandler {
   }) => void;
   // 当前消息列表
   private messages: ChatMessage[] = [];
+  // 登录处理器
+  private loginHandler?: () => Promise<void>;
+  // 待发送消息（登录后自动重发）
+  private pendingMessage: string | null = null;
 
   constructor(
     private agentManager: QwenAgentManager,
@@ -34,6 +38,13 @@ export class MessageHandler {
     private currentConversationId: string | null,
     private sendToWebView: (message: unknown) => void,
   ) {}
+
+  /**
+   * 设置登录处理器
+   */
+  setLoginHandler(handler: () => Promise<void>): void {
+    this.loginHandler = handler;
+  }
 
   /**
    * 获取当前对话 ID
@@ -211,6 +222,10 @@ export class MessageHandler {
         await this.handleOpenSettings();
         break;
 
+      case 'login':
+        await this.handleLogin();
+        break;
+
       default:
         console.warn('[MessageHandler] Unknown message type:', message.type);
         break;
@@ -316,13 +331,33 @@ export class MessageHandler {
       console.warn(
         '[MessageHandler] Agent is not connected, skipping AI response',
       );
-      this.sendToWebView({
-        type: 'error',
-        data: {
-          message:
-            'Agent is not connected. Enable Qwen in settings or configure API key.',
-        },
-      });
+
+      // Save pending message for auto-retry after login
+      this.pendingMessage = text;
+      console.log(
+        '[MessageHandler] Saved pending message for retry after login',
+      );
+
+      // Show VSCode warning notification
+      const result = await vscode.window.showWarningMessage(
+        'You need to login first to use Qwen Code.',
+        'Login Now',
+      );
+
+      if (result === 'Login Now') {
+        // Trigger login
+        await this.handleLogin();
+      }
+
+      // COMMENTED OUT: Send special error type to WebView for inline display
+      // console.log('[MessageHandler] Sending notLoggedIn message to webview');
+      // this.sendToWebView({
+      //   type: 'notLoggedIn',
+      //   data: {
+      //     message: 'Please login to start chatting with Qwen Code.',
+      //   },
+      // });
+      // console.log('[MessageHandler] notLoggedIn message sent');
       return;
     }
 
@@ -363,11 +398,44 @@ export class MessageHandler {
       console.log('[MessageHandler] Stream end sent');
     } catch (error) {
       console.error('[MessageHandler] Error sending message:', error);
-      vscode.window.showErrorMessage(`Error sending message: ${error}`);
-      this.sendToWebView({
-        type: 'error',
-        data: { message: String(error) },
-      });
+
+      // Check if error is due to no active ACP session (not logged in)
+      const errorMsg = String(error);
+      if (errorMsg.includes('No active ACP session')) {
+        // Save pending message for auto-retry after login
+        this.pendingMessage = text;
+        console.log(
+          '[MessageHandler] Saved pending message for retry after login',
+        );
+
+        // Show VSCode warning notification with login option
+        const result = await vscode.window.showWarningMessage(
+          'You need to login first to use Qwen Code.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          // Trigger login
+          await this.handleLogin();
+        }
+
+        // COMMENTED OUT: Send special error type to WebView for inline display with login button
+        // console.log('[MessageHandler] Sending notLoggedIn message (session expired) to webview');
+        // this.sendToWebView({
+        //   type: 'notLoggedIn',
+        //   data: {
+        //     message: 'Session expired. Please login to continue chatting.',
+        //   },
+        // });
+        // console.log('[MessageHandler] notLoggedIn message sent');
+      } else {
+        // For other errors, show regular error message
+        vscode.window.showErrorMessage(`Error sending message: ${error}`);
+        this.sendToWebView({
+          type: 'error',
+          data: { message: errorMsg },
+        });
+      }
     }
   }
 
@@ -943,6 +1011,60 @@ export class MessageHandler {
       this.sendToWebView({
         type: 'error',
         data: { message: `Failed to open settings: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * 处理登录请求
+   * 通过 /login 命令触发登录流程
+   */
+  private async handleLogin(): Promise<void> {
+    try {
+      console.log('[MessageHandler] Login requested via /login command');
+
+      if (this.loginHandler) {
+        // Show progress notification in VSCode
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Logging in to Qwen Code...',
+            cancellable: false,
+          },
+          async () => {
+            await this.loginHandler!();
+          },
+        );
+        console.log('[MessageHandler] Login completed successfully');
+
+        // Show success notification
+        vscode.window.showInformationMessage(
+          'Successfully logged in to Qwen Code!',
+        );
+
+        // Auto-resend pending message if exists
+        if (this.pendingMessage) {
+          console.log(
+            '[MessageHandler] Auto-resending pending message after login',
+          );
+          const messageToSend = this.pendingMessage;
+          this.pendingMessage = null; // Clear pending message
+
+          // Resend the message
+          await this.handleSendMessage(messageToSend);
+        }
+      } else {
+        console.error('[MessageHandler] No login handler registered');
+        this.sendToWebView({
+          type: 'error',
+          data: { message: 'Login handler not available' },
+        });
+      }
+    } catch (error) {
+      console.error('[MessageHandler] Login failed:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Login failed: ${error}` },
       });
     }
   }
