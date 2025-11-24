@@ -2318,6 +2318,12 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ============================================================
+@qwen-code/qwen-code-core@undefined
+(git+https://github.com/QwenLM/qwen-code.git)
+
+License text not found.
+
+============================================================
 react@19.1.0
 (https://github.com/facebook/react.git)
 
