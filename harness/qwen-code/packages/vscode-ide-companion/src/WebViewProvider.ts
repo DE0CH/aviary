@@ -201,7 +201,7 @@ export class WebViewProvider {
     this.panelManager.registerDisposeHandler(this.disposables);
 
     // Track last known editor state (to preserve when switching to webview)
-    const _lastEditorState: {
+    let _lastEditorState: {
       fileName: string | null;
       filePath: string | null;
       selection: {
@@ -233,7 +233,7 @@ export class WebViewProvider {
         }
 
         // Update last known state
-        lastEditorState = { fileName, filePath, selection: selectionInfo };
+        _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
@@ -262,7 +262,7 @@ export class WebViewProvider {
           }
 
           // Update last known state
-          lastEditorState = { fileName, filePath, selection: selectionInfo };
+          _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
           this.sendMessageToWebView({
             type: 'activeEditorChanged',
@@ -421,8 +421,30 @@ export class WebViewProvider {
       this.agentInitialized = false;
     }
 
+    // Wait a moment for cleanup to complete
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     // Reinitialize connection (will trigger fresh authentication)
-    await this.initializeAgentConnection();
+    try {
+      await this.initializeAgentConnection();
+      console.log('[WebViewProvider] Force re-login completed successfully');
+
+      // Send success notification to WebView
+      this.sendMessageToWebView({
+        type: 'loginSuccess',
+        data: { message: 'Successfully logged in!' },
+      });
+    } catch (error) {
+      console.error('[WebViewProvider] Force re-login failed:', error);
+
+      // Send error notification to WebView
+      this.sendMessageToWebView({
+        type: 'loginError',
+        data: { message: `Login failed: ${error}` },
+      });
+
+      throw error;
+    }
   }
 
   /**
@@ -540,7 +562,7 @@ export class WebViewProvider {
     this.panelManager.registerDisposeHandler(this.disposables);
 
     // Track last known editor state (to preserve when switching to webview)
-    const _lastEditorState: {
+    let _lastEditorState: {
       fileName: string | null;
       filePath: string | null;
       selection: {
@@ -572,7 +594,7 @@ export class WebViewProvider {
         }
 
         // Update last known state
-        lastEditorState = { fileName, filePath, selection: selectionInfo };
+        _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
