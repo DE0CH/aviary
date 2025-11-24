@@ -6,6 +6,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useVSCode } from '../hooks/useVSCode.js';
+import {
+  RefreshIcon,
+  SaveDocumentIcon,
+  SearchIcon,
+  PlayIcon,
+  SwitchIcon,
+} from './icons/index.js';
 
 interface Session {
   id: string;
@@ -86,63 +93,19 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
           disabled={isLoading}
           title="Refresh sessions"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M13.3333 8C13.3333 10.9455 10.9455 13.3333 8 13.3333C5.05451 13.3333 2.66663 10.9455 2.66663 8C2.66663 5.05451 5.05451 2.66663 8 2.66663"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <path
-              d="M10.6666 8L13.3333 8M13.3333 8L13.3333 5.33333M13.3333 8L10.6666 10.6667"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <RefreshIcon width="16" height="16" />
         </button>
       </div>
 
       <div className="session-manager-actions">
         <button className="secondary-button" onClick={handleSaveCurrent}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path
-              d="M2.66663 2.66663H10.6666L13.3333 5.33329V13.3333H2.66663V2.66663Z"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M8 10.6666V8M8 8V5.33329M8 8H10.6666M8 8H5.33329"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <SaveDocumentIcon width="16" height="16" />
           Save Current
         </button>
       </div>
 
       <div className="session-search">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path
-            d="M7.33329 12.6666C10.2788 12.6666 12.6666 10.2788 12.6666 7.33329C12.6666 4.38777 10.2788 2 7.33329 2C4.38777 2 2 4.38777 2 7.33329C2 10.2788 4.38777 12.6666 7.33329 12.6666Z"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M13.9999 14L11.0999 11.1"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <SearchIcon width="16" height="16" />
         <input
           type="text"
           placeholder="Search conversations..."
@@ -187,36 +150,14 @@ export const SessionManager: React.FC<SessionManagerProps> = ({
                   onClick={() => handleResumeSession(session.id)}
                   title="Resume this conversation"
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M5.33337 4L10.6667 8L5.33337 12"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <PlayIcon width="16" height="16" />
                 </button>
                 <button
                   className="icon-button"
                   onClick={() => handleSwitchSession(session.id)}
                   title="Switch to this conversation"
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M10.6666 4L13.3333 6.66667L10.6666 9.33333"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M2.66663 6.66667H13.3333"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <SwitchIcon width="16" height="16" />
                 </button>
               </div>
             </div>

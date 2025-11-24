@@ -5,6 +5,7 @@
  */
 
 import type React from 'react';
+import { ChevronDownIcon, PlusIcon } from '../icons/index.js';
 
 interface ChatHeaderProps {
   currentSessionTitle: string;
@@ -41,19 +42,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <span style={{ fontSize: 'var(--vscode-chat-font-size, 13px)' }}>
           {currentSessionTitle}
         </span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          aria-hidden="true"
-          className="w-3.5 h-3.5"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
-            clipRule="evenodd"
-          ></path>
-        </svg>
+        <ChevronDownIcon className="w-3.5 h-3.5" />
       </span>
     </button>
 
@@ -94,16 +83,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       onClick={onNewSession}
       title="New Session"
     >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        aria-hidden="true"
-        data-slot="icon"
-        className="w-4 h-4"
-      >
-        <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"></path>
-      </svg>
+      <PlusIcon className="w-4 h-4" />
     </button>
   </div>
 );

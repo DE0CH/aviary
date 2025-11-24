@@ -6,6 +6,7 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef } from 'react';
+import { CloseIcon } from './icons/index.js';
 
 interface SaveSessionDialogProps {
   isOpen: boolean;
@@ -70,14 +71,7 @@ export const SaveSessionDialog: React.FC<SaveSessionDialogProps> = ({
         <div className="dialog-header">
           <h3>Save Conversation</h3>
           <button className="dialog-close" onClick={onClose} aria-label="Close">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M12 4L4 12M4 4L12 12"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
+            <CloseIcon width="16" height="16" />
           </button>
         </div>
 

@@ -5,6 +5,11 @@
  */
 
 import type React from 'react';
+import {
+  PlanCompletedIcon,
+  PlanInProgressIcon,
+  PlanPendingIcon,
+} from './icons/index.js';
 import './PlanDisplay.css';
 
 export interface PlanEntry {
@@ -28,63 +33,12 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
-        return (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="plan-icon completed"
-          >
-            <circle cx="7" cy="7" r="6" fill="currentColor" opacity="0.2" />
-            <path
-              d="M4 7.5L6 9.5L10 4.5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        );
+        return <PlanCompletedIcon className="plan-icon completed" />;
       case 'in_progress':
-        return (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="plan-icon in-progress"
-          >
-            <circle
-              cx="7"
-              cy="7"
-              r="5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-            />
-          </svg>
-        );
+        return <PlanInProgressIcon className="plan-icon in-progress" />;
       default:
         // pending
-        return (
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="plan-icon pending"
-          >
-            <circle
-              cx="7"
-              cy="7"
-              r="5.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
-        );
+        return <PlanPendingIcon className="plan-icon pending" />;
     }
   };
 
@@ -92,38 +46,8 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
     <div className="plan-display">
       <div className="plan-header">
         <div className="plan-progress-icons">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="plan-progress-icon"
-          >
-            <circle
-              cx="7"
-              cy="7"
-              r="5.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-            />
-          </svg>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            className="plan-progress-icon"
-          >
-            <circle cx="7" cy="7" r="6" fill="currentColor" opacity="0.2" />
-            <path
-              d="M4 7.5L6 9.5L10 4.5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <PlanPendingIcon className="plan-progress-icon" />
+          <PlanCompletedIcon className="plan-progress-icon" />
         </div>
         <span className="plan-title">
           {completedCount} of {totalCount} Done

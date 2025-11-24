@@ -13,14 +13,14 @@ export interface VSCodeAPI {
 declare const acquireVsCodeApi: () => VSCodeAPI;
 
 /**
- * 模块级别的 VS Code API 实例缓存
- * acquireVsCodeApi() 只能调用一次，必须在模块级别缓存
+ * Module-level VS Code API instance cache
+ * acquireVsCodeApi() can only be called once, must be cached at module level
  */
 let vscodeApiInstance: VSCodeAPI | null = null;
 
 /**
- * 获取 VS Code API 实例
- * 使用模块级别缓存确保 acquireVsCodeApi() 只被调用一次
+ * Get VS Code API instance
+ * Uses module-level cache to ensure acquireVsCodeApi() is only called once
  */
 function getVSCodeAPI(): VSCodeAPI {
   if (vscodeApiInstance) {
@@ -47,7 +47,7 @@ function getVSCodeAPI(): VSCodeAPI {
 
 /**
  * Hook to get VS Code API
- * 多个组件可以安全地调用此 hook，API 实例会被复用
+ * Multiple components can safely call this hook, API instance will be reused
  */
 export function useVSCode(): VSCodeAPI {
   return getVSCodeAPI();

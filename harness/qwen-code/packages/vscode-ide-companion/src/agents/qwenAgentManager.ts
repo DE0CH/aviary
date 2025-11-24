@@ -27,9 +27,9 @@ import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
 /**
- * Qwen Agent管理器
+ * Qwen Agent Manager
  *
- * 协调各个模块，提供统一的接口
+ * Coordinates various modules and provides unified interface
  */
 export class QwenAgentManager {
   private connection: AcpConnection;
@@ -39,7 +39,7 @@ export class QwenAgentManager {
   private sessionUpdateHandler: QwenSessionUpdateHandler;
   private currentWorkingDir: string = process.cwd();
 
-  // 回调函数存储
+  // Callback storage
   private callbacks: QwenAgentCallbacks = {};
 
   constructor() {
@@ -49,7 +49,7 @@ export class QwenAgentManager {
     this.connectionHandler = new QwenConnectionHandler();
     this.sessionUpdateHandler = new QwenSessionUpdateHandler({});
 
-    // 设置ACP连接的回调
+    // Set ACP connection callbacks
     this.connection.onSessionUpdate = (data: AcpSessionUpdate) => {
       this.sessionUpdateHandler.handleSessionUpdate(data);
     };
@@ -65,15 +65,15 @@ export class QwenAgentManager {
     };
 
     this.connection.onEndTurn = () => {
-      // 通知UI响应完成
+      // Notify UI response complete
     };
   }
 
   /**
-   * 连接到Qwen服务
+   * Connect to Qwen service
    *
-   * @param workingDir - 工作目录
-   * @param authStateManager - 认证状态管理器（可选）
+   * @param workingDir - Working directory
+   * @param authStateManager - Auth state manager (optional)
    */
   async connect(
     workingDir: string,
@@ -89,18 +89,18 @@ export class QwenAgentManager {
   }
 
   /**
-   * 发送消息
+   * Send message
    *
-   * @param message - 消息内容
+   * @param message - Message content
    */
   async sendMessage(message: string): Promise<void> {
     await this.connection.sendPrompt(message);
   }
 
   /**
-   * 获取会话列表
+   * Get session list
    *
-   * @returns 会话列表
+   * @returns Session list
    */
   async getSessionList(): Promise<Array<Record<string, unknown>>> {
     try {
@@ -129,10 +129,10 @@ export class QwenAgentManager {
   }
 
   /**
-   * 获取会话消息（从磁盘读取）
+   * Get session messages (read from disk)
    *
-   * @param sessionId - 会话ID
-   * @returns 消息列表
+   * @param sessionId - Session ID
+   * @returns Message list
    */
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
@@ -162,12 +162,12 @@ export class QwenAgentManager {
   }
 
   /**
-   * 通过发送 /chat save 命令保存会话
-   * 由于 CLI 不支持 session/save ACP 方法，我们直接发送 /chat save 命令
+   * Save session via /chat save command
+   * Since CLI doesn't support session/save ACP method, we send /chat save command directly
    *
-   * @param sessionId - 会话ID
-   * @param tag - 保存标签
-   * @returns 保存响应
+   * @param sessionId - Session ID
+   * @param tag - Save tag
+   * @returns Save response
    */
   async saveSessionViaCommand(
     sessionId: string,
@@ -200,12 +200,12 @@ export class QwenAgentManager {
   }
 
   /**
-   * 通过 ACP session/save 方法保存会话 (已废弃，CLI 不支持)
+   * Save session via ACP session/save method (deprecated, CLI doesn't support)
    *
    * @deprecated Use saveSessionViaCommand instead
-   * @param sessionId - 会话ID
-   * @param tag - 保存标签
-   * @returns 保存响应
+   * @param sessionId - Session ID
+   * @param tag - Save tag
+   * @returns Save response
    */
   async saveSessionViaAcp(
     sessionId: string,
@@ -219,11 +219,11 @@ export class QwenAgentManager {
   }
 
   /**
-   * 通过发送 /chat save 命令保存会话（CLI 方式）
-   * 这会调用 CLI 的原生保存功能，确保保存的内容完整
+   * Save session via /chat save command (CLI way)
+   * Calls CLI's native save function to ensure complete content is saved
    *
-   * @param tag - Checkpoint 标签
-   * @returns 保存结果
+   * @param tag - Checkpoint tag
+   * @returns Save result
    */
   async saveCheckpointViaCommand(
     tag: string,
@@ -263,13 +263,13 @@ export class QwenAgentManager {
   }
 
   /**
-   * 保存会话为 checkpoint（使用 CLI 的格式）
-   * 保存到 ~/.qwen/tmp/{projectHash}/checkpoint-{tag}.json
-   * 同时用 sessionId 和 conversationId 保存两份，确保可以通过任一 ID 恢复
+   * Save session as checkpoint (using CLI format)
+   * Saves to ~/.qwen/tmp/{projectHash}/checkpoint-{tag}.json
+   * Saves two copies with sessionId and conversationId to ensure recovery via either ID
    *
-   * @param messages - 当前会话消息
+   * @param messages - Current session messages
    * @param conversationId - Conversation ID (from VSCode extension)
-   * @returns 保存结果
+   * @returns Save result
    */
   async saveCheckpoint(
     messages: ChatMessage[],
@@ -319,11 +319,11 @@ export class QwenAgentManager {
   }
 
   /**
-   * 直接保存会话到文件系统（不依赖 ACP）
+   * Save session directly to file system (without relying on ACP)
    *
-   * @param messages - 当前会话消息
-   * @param sessionName - 会话名称
-   * @returns 保存结果
+   * @param messages - Current session messages
+   * @param sessionName - Session name
+   * @returns Save result
    */
   async saveSessionDirect(
     messages: ChatMessage[],
@@ -335,11 +335,11 @@ export class QwenAgentManager {
   }
 
   /**
-   * 尝试通过 ACP session/load 方法加载会话
-   * 这是一个测试方法，用于验证 CLI 是否支持 session/load
+   * Try to load session via ACP session/load method
+   * This is a test method to verify if CLI supports session/load
    *
-   * @param sessionId - 会话ID
-   * @returns 加载响应或错误
+   * @param sessionId - Session ID
+   * @returns Load response or error
    */
   async loadSessionViaAcp(sessionId: string): Promise<unknown> {
     try {
@@ -385,16 +385,16 @@ export class QwenAgentManager {
   }
 
   /**
-   * 直接从文件系统加载会话（不依赖 ACP）
+   * Load session directly from file system (without relying on ACP)
    *
-   * @param sessionId - 会话ID
-   * @returns 加载的会话消息或null
+   * @param sessionId - Session ID
+   * @returns Loaded session messages or null
    */
   async loadSessionDirect(sessionId: string): Promise<ChatMessage[] | null> {
     try {
       console.log('[QwenAgentManager] Loading session directly:', sessionId);
 
-      // 加载会话
+      // Load session
       const session = await this.sessionManager.loadSession(
         sessionId,
         this.currentWorkingDir,
@@ -405,7 +405,7 @@ export class QwenAgentManager {
         return null;
       }
 
-      // 转换消息格式
+      // Convert message format
       const messages: ChatMessage[] = session.messages.map((msg) => ({
         role: msg.type === 'user' ? 'user' : 'assistant',
         content: msg.content,
@@ -421,17 +421,17 @@ export class QwenAgentManager {
   }
 
   /**
-   * 创建新会话
+   * Create new session
    *
-   * 注意：认证应该在connect()方法中完成，这里只创建会话
+   * Note: Authentication should be done in connect() method, only create session here
    *
-   * @param workingDir - 工作目录
-   * @returns 新创建的 session ID
+   * @param workingDir - Working directory
+   * @returns Newly created session ID
    */
   async createNewSession(workingDir: string): Promise<string | null> {
     console.log('[QwenAgentManager] Creating new session...');
 
-    // 先进行认证
+    // Authenticate first
     console.log('[QwenAgentManager] Authenticating before creating session...');
     try {
       const config = vscode.workspace.getConfiguration('qwenCode');
@@ -455,16 +455,16 @@ export class QwenAgentManager {
   }
 
   /**
-   * 切换到指定会话
+   * Switch to specified session
    *
-   * @param sessionId - 会话ID
+   * @param sessionId - Session ID
    */
   async switchToSession(sessionId: string): Promise<void> {
     await this.connection.switchSession(sessionId);
   }
 
   /**
-   * 取消当前提示
+   * Cancel current prompt
    */
   async cancelCurrentPrompt(): Promise<void> {
     console.log('[QwenAgentManager] Cancelling current prompt');
@@ -472,9 +472,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册消息回调
+   * Register message callback
    *
-   * @param callback - 消息回调函数
+   * @param callback - Message callback function
    */
   onMessage(callback: (message: ChatMessage) => void): void {
     this.callbacks.onMessage = callback;
@@ -482,9 +482,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册流式文本块回调
+   * Register stream chunk callback
    *
-   * @param callback - 流式文本块回调函数
+   * @param callback - Stream chunk callback function
    */
   onStreamChunk(callback: (chunk: string) => void): void {
     this.callbacks.onStreamChunk = callback;
@@ -492,9 +492,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册思考文本块回调
+   * Register thought chunk callback
    *
-   * @param callback - 思考文本块回调函数
+   * @param callback - Thought chunk callback function
    */
   onThoughtChunk(callback: (chunk: string) => void): void {
     this.callbacks.onThoughtChunk = callback;
@@ -502,9 +502,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册工具调用回调
+   * Register tool call callback
    *
-   * @param callback - 工具调用回调函数
+   * @param callback - Tool call callback function
    */
   onToolCall(callback: (update: ToolCallUpdateData) => void): void {
     this.callbacks.onToolCall = callback;
@@ -512,9 +512,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册计划回调
+   * Register plan callback
    *
-   * @param callback - 计划回调函数
+   * @param callback - Plan callback function
    */
   onPlan(callback: (entries: PlanEntry[]) => void): void {
     this.callbacks.onPlan = callback;
@@ -522,9 +522,9 @@ export class QwenAgentManager {
   }
 
   /**
-   * 注册权限请求回调
+   * Register permission request callback
    *
-   * @param callback - 权限请求回调函数
+   * @param callback - Permission request callback function
    */
   onPermissionRequest(
     callback: (request: AcpPermissionRequest) => Promise<string>,
@@ -534,21 +534,21 @@ export class QwenAgentManager {
   }
 
   /**
-   * 断开连接
+   * Disconnect
    */
   disconnect(): void {
     this.connection.disconnect();
   }
 
   /**
-   * 检查是否已连接
+   * Check if connected
    */
   get isConnected(): boolean {
     return this.connection.isConnected;
   }
 
   /**
-   * 获取当前会话ID
+   * Get current session ID
    */
   get currentSessionId(): string | null {
     return this.connection.currentSessionId;

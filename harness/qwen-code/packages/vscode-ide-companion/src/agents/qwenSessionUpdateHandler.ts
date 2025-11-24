@@ -5,17 +5,17 @@
  */
 
 /**
- * Qwen会话更新处理器
+ * Qwen Session Update Handler
  *
- * 负责处理来自ACP的会话更新，并分发到相应的回调函数
+ * Handles session updates from ACP and dispatches them to appropriate callbacks
  */
 
 import type { AcpSessionUpdate } from '../shared/acpTypes.js';
 import type { QwenAgentCallbacks } from './qwenTypes.js';
 
 /**
- * Qwen会话更新处理器类
- * 处理各种会话更新事件并调用相应的回调
+ * Qwen Session Update Handler class
+ * Processes various session update events and calls appropriate callbacks
  */
 export class QwenSessionUpdateHandler {
   private callbacks: QwenAgentCallbacks;
@@ -25,18 +25,18 @@ export class QwenSessionUpdateHandler {
   }
 
   /**
-   * 更新回调函数
+   * Update callbacks
    *
-   * @param callbacks - 新的回调函数集合
+   * @param callbacks - New callback collection
    */
   updateCallbacks(callbacks: QwenAgentCallbacks): void {
     this.callbacks = callbacks;
   }
 
   /**
-   * 处理会话更新
+   * Handle session update
    *
-   * @param data - ACP会话更新数据
+   * @param data - ACP session update data
    */
   handleSessionUpdate(data: AcpSessionUpdate): void {
     const update = data.update;
@@ -47,21 +47,21 @@ export class QwenSessionUpdateHandler {
 
     switch (update.sessionUpdate) {
       case 'user_message_chunk':
-        // 处理用户消息块
+        // Handle user message chunk
         if (update.content?.text && this.callbacks.onStreamChunk) {
           this.callbacks.onStreamChunk(update.content.text);
         }
         break;
 
       case 'agent_message_chunk':
-        // 处理助手消息块
+        // Handle assistant message chunk
         if (update.content?.text && this.callbacks.onStreamChunk) {
           this.callbacks.onStreamChunk(update.content.text);
         }
         break;
 
       case 'agent_thought_chunk':
-        // 处理思考块 - 使用特殊回调
+        // Handle thought chunk - use special callback
         console.log(
           '[SessionUpdateHandler] 🧠 THOUGHT CHUNK:',
           update.content?.text,
@@ -73,7 +73,7 @@ export class QwenSessionUpdateHandler {
             );
             this.callbacks.onThoughtChunk(update.content.text);
           } else if (this.callbacks.onStreamChunk) {
-            // 回退到常规流处理
+            // Fallback to regular stream processing
             console.log(
               '[SessionUpdateHandler] 🧠 Falling back to onStreamChunk',
             );
@@ -83,7 +83,7 @@ export class QwenSessionUpdateHandler {
         break;
 
       case 'tool_call': {
-        // 处理新的工具调用
+        // Handle new tool call
         if (this.callbacks.onToolCall && 'toolCallId' in update) {
           this.callbacks.onToolCall({
             toolCallId: update.toolCallId as string,
@@ -103,7 +103,7 @@ export class QwenSessionUpdateHandler {
       }
 
       case 'tool_call_update': {
-        // 处理工具调用状态更新
+        // Handle tool call status update
         if (this.callbacks.onToolCall && 'toolCallId' in update) {
           this.callbacks.onToolCall({
             toolCallId: update.toolCallId as string,
@@ -123,7 +123,7 @@ export class QwenSessionUpdateHandler {
       }
 
       case 'plan': {
-        // 处理计划更新
+        // Handle plan update
         if ('entries' in update) {
           const entries = update.entries as Array<{
             content: string;
@@ -134,7 +134,7 @@ export class QwenSessionUpdateHandler {
           if (this.callbacks.onPlan) {
             this.callbacks.onPlan(entries);
           } else if (this.callbacks.onStreamChunk) {
-            // 回退到流处理
+            // Fallback to stream processing
             const planText =
               '\n📋 Plan:\n' +
               entries

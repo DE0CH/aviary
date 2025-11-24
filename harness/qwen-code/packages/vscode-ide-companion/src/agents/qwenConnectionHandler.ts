@@ -5,9 +5,9 @@
  */
 
 /**
- * Qwen连接处理器
+ * Qwen Connection Handler
  *
- * 负责Qwen Agent的连接建立、认证和会话创建
+ * Handles Qwen Agent connection establishment, authentication, and session creation
  */
 
 import * as vscode from 'vscode';
@@ -16,17 +16,17 @@ import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import type { AuthStateManager } from '../auth/authStateManager.js';
 
 /**
- * Qwen连接处理器类
- * 处理连接、认证和会话初始化
+ * Qwen Connection Handler class
+ * Handles connection, authentication, and session initialization
  */
 export class QwenConnectionHandler {
   /**
-   * 连接到Qwen服务并建立会话
+   * Connect to Qwen service and establish session
    *
-   * @param connection - ACP连接实例
-   * @param sessionReader - 会话读取器实例
-   * @param workingDir - 工作目录
-   * @param authStateManager - 认证状态管理器（可选）
+   * @param connection - ACP connection instance
+   * @param sessionReader - Session reader instance
+   * @param workingDir - Working directory
+   * @param authStateManager - Auth state manager (optional)
    */
   async connect(
     connection: AcpConnection,
@@ -47,7 +47,7 @@ export class QwenConnectionHandler {
     const model = config.get<string>('qwen.model', '');
     const proxy = config.get<string>('qwen.proxy', '');
 
-    // 构建额外的CLI参数
+    // Build extra CLI arguments
     const extraArgs: string[] = [];
     if (openaiApiKey) {
       extraArgs.push('--openai-api-key', openaiApiKey);
@@ -65,10 +65,10 @@ export class QwenConnectionHandler {
 
     await connection.connect('qwen', cliPath, workingDir, extraArgs);
 
-    // 确定认证方法
+    // Determine authentication method
     const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
 
-    // 检查是否有有效的缓存认证
+    // Check if we have valid cached authentication
     if (authStateManager) {
       const hasValidAuth = await authStateManager.hasValidAuth(
         workingDir,
@@ -79,10 +79,10 @@ export class QwenConnectionHandler {
       }
     }
 
-    // 尝试恢复现有会话或创建新会话
+    // Try to restore existing session or create new session
     let sessionRestored = false;
 
-    // 尝试从本地文件获取会话
+    // Try to get session from local files
     console.log('[QwenAgentManager] Reading local session files...');
     try {
       const sessions = await sessionReader.getAllSessions(workingDir);
@@ -129,11 +129,11 @@ export class QwenConnectionHandler {
       );
     }
 
-    // 如果无法恢复会话则创建新会话
+    // Create new session if unable to restore
     if (!sessionRestored) {
       console.log('[QwenAgentManager] Creating new session...');
 
-      // 检查是否有有效的缓存认证
+      // Check if we have valid cached authentication
       let hasValidAuth = false;
       if (authStateManager) {
         hasValidAuth = await authStateManager.hasValidAuth(
@@ -142,7 +142,7 @@ export class QwenConnectionHandler {
         );
       }
 
-      // 只在没有有效缓存认证时进行认证
+      // Only authenticate if we don't have valid cached auth
       if (!hasValidAuth) {
         console.log(
           '[QwenAgentManager] Authenticating before creating session...',
@@ -151,7 +151,7 @@ export class QwenConnectionHandler {
           await connection.authenticate(authMethod);
           console.log('[QwenAgentManager] Authentication successful');
 
-          // 保存认证状态
+          // Save auth state
           if (authStateManager) {
             console.log(
               '[QwenAgentManager] Saving auth state after successful authentication',
@@ -160,7 +160,7 @@ export class QwenConnectionHandler {
           }
         } catch (authError) {
           console.error('[QwenAgentManager] Authentication failed:', authError);
-          // 清除可能无效的缓存
+          // Clear potentially invalid cache
           if (authStateManager) {
             console.log(
               '[QwenAgentManager] Clearing auth cache due to authentication failure',
@@ -182,7 +182,7 @@ export class QwenConnectionHandler {
         await this.newSessionWithRetry(connection, workingDir, 3);
         console.log('[QwenAgentManager] New session created successfully');
 
-        // 确保认证状态已保存（防止重复认证）
+        // Ensure auth state is saved (prevent repeated authentication)
         if (authStateManager && !hasValidAuth) {
           console.log(
             '[QwenAgentManager] Saving auth state after successful session creation',
@@ -193,7 +193,7 @@ export class QwenConnectionHandler {
         console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
         console.log(`[QwenAgentManager] Error details:`, sessionError);
 
-        // 清除缓存
+        // Clear cache
         if (authStateManager) {
           console.log('[QwenAgentManager] Clearing auth cache due to failure');
           await authStateManager.clearAuthState();
@@ -209,11 +209,11 @@ export class QwenConnectionHandler {
   }
 
   /**
-   * 创建新会话（带重试）
+   * Create new session (with retry)
    *
-   * @param connection - ACP连接实例
-   * @param workingDir - 工作目录
-   * @param maxRetries - 最大重试次数
+   * @param connection - ACP connection instance
+   * @param workingDir - Working directory
+   * @param maxRetries - Maximum number of retries
    */
   private async newSessionWithRetry(
     connection: AcpConnection,

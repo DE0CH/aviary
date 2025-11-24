@@ -13,6 +13,7 @@ import {
   calculateDiffStats,
   formatDiffStatsDetailed,
 } from '../../../utils/diffStats.js';
+import { OpenDiffIcon } from '../../icons/index.js';
 import './DiffDisplay.css';
 
 /**
@@ -119,9 +120,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
               onClick={onOpenDiff}
               title="Open in VS Code diff viewer"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path d="M13.5 7l-4-4v3h-6v2h6v3l4-4z" fill="currentColor" />
-              </svg>
+              <OpenDiffIcon width="14" height="14" />
               Open Diff
             </button>
           )}
