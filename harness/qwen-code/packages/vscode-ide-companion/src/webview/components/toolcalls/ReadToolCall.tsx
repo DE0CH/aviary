@@ -48,7 +48,9 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         label={`Read ${fileName}`}
         status="success"
         toolCallId={toolCallId}
-      />
+      >
+        {null}
+      </ToolCallContainer>
     );
   }
 

@@ -68,6 +68,12 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
   // Get status text
   const statusText = getStatusText(status || 'in_progress');
 
+  // Safely prepare a display value for title. Titles may sometimes arrive as
+  // non-string objects; ensure we render a string in that case.
+  const titleText = typeof title === 'string' ? title : undefined;
+  const titleDisplay: React.ReactNode =
+    typeof title === 'string' ? title : title ? JSON.stringify(title) : null;
+
   return (
     <div className="in-progress-tool-call">
       <div className="in-progress-tool-call-header">
@@ -79,8 +85,8 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
         </span>
       </div>
 
-      {title && title !== kindLabel && (
-        <div className="in-progress-tool-call-title">{title}</div>
+      {titleDisplay && (titleText ? titleText !== kindLabel : true) && (
+        <div className="in-progress-tool-call-title">{titleDisplay}</div>
       )}
 
       {locations && locations.length > 0 && (

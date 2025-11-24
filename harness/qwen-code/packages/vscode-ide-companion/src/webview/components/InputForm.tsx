@@ -10,7 +10,9 @@ type EditMode = 'ask' | 'auto' | 'plan';
 
 interface InputFormProps {
   inputText: string;
-  inputFieldRef: React.RefObject<HTMLDivElement | null>;
+  // Note: RefObject<T> carries nullability in its `current` property, so the
+  // generic should be `HTMLDivElement` (not `HTMLDivElement | null`).
+  inputFieldRef: React.RefObject<HTMLDivElement>;
   isStreaming: boolean;
   isComposing: boolean;
   editMode: EditMode;

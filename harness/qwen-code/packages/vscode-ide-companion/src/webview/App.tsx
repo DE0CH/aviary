@@ -24,7 +24,7 @@ import {
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { SaveSessionDialog } from './components/SaveSessionDialog.js';
 import { InfoBanner } from './components/InfoBanner.js';
-import { ChatHeader } from './components/ui/ChatHeader.js';
+import { ChatHeader } from './components/layouts/ChatHeader.js';
 import {
   UserMessage,
   AssistantMessage,
@@ -830,12 +830,22 @@ export const App: React.FC = () => {
               }
             }
 
+            // Normalize status to our union type
+            const normalizedStatus = (
+              permToolCall.status === 'pending' ||
+              permToolCall.status === 'in_progress' ||
+              permToolCall.status === 'completed' ||
+              permToolCall.status === 'failed'
+                ? permToolCall.status
+                : 'pending'
+            ) as ToolCallUpdate['status'];
+
             handleToolCallUpdate({
               type: 'tool_call',
               toolCallId: permToolCall.toolCallId,
               kind,
               title: permToolCall.title,
-              status: permToolCall.status || 'pending',
+              status: normalizedStatus,
               content: permToolCall.content as Array<{
                 type: 'content' | 'diff';
                 content?: {
