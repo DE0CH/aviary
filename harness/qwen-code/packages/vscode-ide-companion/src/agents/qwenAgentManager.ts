@@ -3,7 +3,7 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
-
+import * as vscode from 'vscode';
 import { AcpConnection } from '../acp/acpConnection.js';
 import type {
   AcpSessionUpdate,
@@ -423,11 +423,28 @@ export class QwenAgentManager {
   /**
    * 创建新会话
    *
+   * 注意：认证应该在connect()方法中完成，这里只创建会话
+   *
    * @param workingDir - 工作目录
    * @returns 新创建的 session ID
    */
   async createNewSession(workingDir: string): Promise<string | null> {
     console.log('[QwenAgentManager] Creating new session...');
+
+    // 先进行认证
+    console.log('[QwenAgentManager] Authenticating before creating session...');
+    try {
+      const config = vscode.workspace.getConfiguration('qwenCode');
+      const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+      await this.connection.authenticate(authMethod);
+      console.log('[QwenAgentManager] Authentication successful');
+    } catch (authError) {
+      console.error('[QwenAgentManager] Authentication failed:', authError);
+      throw authError;
+    }
+
     await this.connection.newSession(workingDir);
     const newSessionId = this.connection.currentSessionId;
     console.log(

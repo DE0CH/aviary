@@ -132,25 +132,58 @@ export class QwenConnectionHandler {
     // 如果无法恢复会话则创建新会话
     if (!sessionRestored) {
       console.log('[QwenAgentManager] Creating new session...');
-      console.log(
-        `[QwenAgentManager] ⚠️ WORKAROUND: Skipping explicit authenticate() call`,
-      );
-      console.log(
-        `[QwenAgentManager] ⚠️ Reason: newSession() internally calls refreshAuth(), which triggers device flow`,
-      );
-      console.log(
-        `[QwenAgentManager] ⚠️ Calling authenticate() first causes double authentication`,
-      );
+
+      // 检查是否有有效的缓存认证
+      let hasValidAuth = false;
+      if (authStateManager) {
+        hasValidAuth = await authStateManager.hasValidAuth(
+          workingDir,
+          authMethod,
+        );
+      }
+
+      // 只在没有有效缓存认证时进行认证
+      if (!hasValidAuth) {
+        console.log(
+          '[QwenAgentManager] Authenticating before creating session...',
+        );
+        try {
+          await connection.authenticate(authMethod);
+          console.log('[QwenAgentManager] Authentication successful');
+
+          // 保存认证状态
+          if (authStateManager) {
+            console.log(
+              '[QwenAgentManager] Saving auth state after successful authentication',
+            );
+            await authStateManager.saveAuthState(workingDir, authMethod);
+          }
+        } catch (authError) {
+          console.error('[QwenAgentManager] Authentication failed:', authError);
+          // 清除可能无效的缓存
+          if (authStateManager) {
+            console.log(
+              '[QwenAgentManager] Clearing auth cache due to authentication failure',
+            );
+            await authStateManager.clearAuthState();
+          }
+          throw authError;
+        }
+      } else {
+        console.log(
+          '[QwenAgentManager] Skipping authentication - using valid cached auth',
+        );
+      }
 
       try {
         console.log(
-          `\n🔐 [AUTO AUTH] newSession will handle authentication automatically\n`,
+          '[QwenAgentManager] Creating new session after authentication...',
         );
         await this.newSessionWithRetry(connection, workingDir, 3);
         console.log('[QwenAgentManager] New session created successfully');
 
-        // 保存认证状态
-        if (authStateManager) {
+        // 确保认证状态已保存（防止重复认证）
+        if (authStateManager && !hasValidAuth) {
           console.log(
             '[QwenAgentManager] Saving auth state after successful session creation',
           );
