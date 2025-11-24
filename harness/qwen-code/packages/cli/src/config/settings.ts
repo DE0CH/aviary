@@ -77,7 +77,6 @@ const MIGRATION_MAP: Record<string, string> = {
   disableAutoUpdate: 'general.disableAutoUpdate',
   disableUpdateNag: 'general.disableUpdateNag',
   dnsResolutionOrder: 'advanced.dnsResolutionOrder',
-  enablePromptCompletion: 'general.enablePromptCompletion',
   enforcedAuthType: 'security.auth.enforcedType',
   excludeTools: 'tools.exclude',
   excludeMCPServers: 'mcp.excluded',
@@ -482,6 +481,27 @@ export class LoadedSettings {
     this._merged = this.computeMergedSettings();
     saveSettings(settingsFile);
   }
+}
+
+/**
+ * Creates a minimal LoadedSettings instance with empty settings.
+ * Used in stream-json mode where settings are ignored.
+ */
+export function createMinimalSettings(): LoadedSettings {
+  const emptySettingsFile: SettingsFile = {
+    path: '',
+    settings: {},
+    originalSettings: {},
+    rawJson: '{}',
+  };
+  return new LoadedSettings(
+    emptySettingsFile,
+    emptySettingsFile,
+    emptySettingsFile,
+    emptySettingsFile,
+    false,
+    new Set(),
+  );
 }
 
 function findEnvFile(startDir: string): string | null {
