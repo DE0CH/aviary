@@ -61,8 +61,17 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         paddingBottom: '8px',
       }}
     >
-      <span style={{ color: 'var(--app-secondary-foreground)' }}>
-        <p style={{ margin: 0, color: 'var(--app-secondary-foreground)' }}>
+      <span style={{ color: 'var(--app-secondary-foreground)', width: '100%' }}>
+        <p
+          style={{
+            margin: 0,
+            color: 'var(--app-secondary-foreground)',
+            width: '100%',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            whiteSpace: 'normal',
+          }}
+        >
           <MessageContent content={content} onFileClick={onFileClick} />
         </p>
       </span>

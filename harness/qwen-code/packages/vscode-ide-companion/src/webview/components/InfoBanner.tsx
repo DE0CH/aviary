@@ -47,7 +47,7 @@ export const InfoBanner: React.FC<InfoBannerProps> = ({
 
   return (
     <div
-      className="flex items-center justify-between border-t"
+      className="flex items-center justify-between"
       style={{
         gap: '12px',
         padding: '12px 16px',

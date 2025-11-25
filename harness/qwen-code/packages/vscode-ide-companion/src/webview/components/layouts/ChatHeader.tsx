@@ -23,7 +23,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   <div
     className="flex gap-1 select-none py-1.5 px-2.5"
     style={{
-      borderBottom: '1px solid var(--app-primary-border-color)',
       backgroundColor: 'var(--app-header-background)',
     }}
   >
