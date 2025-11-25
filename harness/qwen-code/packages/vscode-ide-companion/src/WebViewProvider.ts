@@ -43,7 +43,7 @@ export class WebViewProvider {
       (message) => this.sendMessageToWebView(message),
     );
 
-    // Set login handler for /login command - force re-login
+    // Set login handler for /login command - direct force re-login
     this.messageHandler.setLoginHandler(async () => {
       await this.forceReLogin();
     });
@@ -293,33 +293,13 @@ export class WebViewProvider {
       });
     }
 
-    // Check if we have valid auth cache and auto-reconnect
+    // Don't auto-login; user must use /login command
+    // Just initialize empty conversation for the UI
     if (!this.agentInitialized) {
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-      const config = vscode.workspace.getConfiguration('qwenCode');
-      const openaiApiKey = config.get<string>('openaiApiKey', '');
-      // Use the same authMethod logic as qwenConnectionHandler
-      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-      // Check if we have valid cached auth
-      const hasValidAuth = await this.authStateManager.hasValidAuth(
-        workingDir,
-        authMethod,
+      console.log(
+        '[WebViewProvider] Agent not initialized, waiting for /login command',
       );
-
-      if (hasValidAuth) {
-        console.log(
-          '[WebViewProvider] Found valid auth cache, auto-reconnecting...',
-        );
-        // Auto-reconnect using cached auth
-        await this.initializeAgentConnection();
-      } else {
-        console.log(
-          '[WebViewProvider] No valid auth cache, waiting for /login command',
-        );
-        await this.initializeEmptyConversation();
-      }
+      await this.initializeEmptyConversation();
     } else {
       console.log(
         '[WebViewProvider] Agent already initialized, reusing existing connection',
@@ -448,6 +428,39 @@ export class WebViewProvider {
   }
 
   /**
+   * Refresh connection without clearing auth cache
+   * Called when restoring WebView after VSCode restart
+   */
+  async refreshConnection(): Promise<void> {
+    console.log('[WebViewProvider] Refresh connection requested');
+
+    // Disconnect existing connection if any
+    if (this.agentInitialized) {
+      try {
+        this.agentManager.disconnect();
+        console.log('[WebViewProvider] Existing connection disconnected');
+      } catch (error) {
+        console.log('[WebViewProvider] Error disconnecting:', error);
+      }
+      this.agentInitialized = false;
+    }
+
+    // Wait a moment for cleanup to complete
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Reinitialize connection (will use cached auth if available)
+    try {
+      await this.initializeAgentConnection();
+      console.log(
+        '[WebViewProvider] Connection refresh completed successfully',
+      );
+    } catch (error) {
+      console.error('[WebViewProvider] Connection refresh failed:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Load messages from current Qwen session
    * Creates a new ACP session for immediate message sending
    */
@@ -540,7 +553,7 @@ export class WebViewProvider {
    * Restore an existing WebView panel (called during VSCode restart)
    * This sets up the panel with all event listeners
    */
-  restorePanel(panel: vscode.WebviewPanel): void {
+  async restorePanel(panel: vscode.WebviewPanel): Promise<void> {
     console.log('[WebViewProvider] Restoring WebView panel');
     this.panelManager.setPanel(panel);
 
@@ -630,49 +643,25 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // Check if we have valid auth cache and auto-reconnect on restore
-    if (!this.agentInitialized) {
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-      const config = vscode.workspace.getConfiguration('qwenCode');
-      const openaiApiKey = config.get<string>('openaiApiKey', '');
-      // Use the same authMethod logic as qwenConnectionHandler
-      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-      // Check if we have valid cached auth
-      this.authStateManager
-        .hasValidAuth(workingDir, authMethod)
-        .then(async (hasValidAuth) => {
-          if (hasValidAuth) {
-            console.log(
-              '[WebViewProvider] Found valid auth cache on restore, auto-reconnecting...',
-            );
-            await this.initializeAgentConnection();
-          } else {
-            console.log(
-              '[WebViewProvider] No valid auth cache after restore, waiting for /login command',
-            );
-            await this.initializeEmptyConversation();
-          }
-        })
-        .catch((error) => {
-          console.error(
-            '[WebViewProvider] Failed to check auth cache after restore:',
-            error,
-          );
-          this.initializeEmptyConversation().catch(console.error);
-        });
+    // Refresh connection on restore (will use cached auth if available)
+    if (this.agentInitialized) {
+      console.log(
+        '[WebViewProvider] Agent was initialized, refreshing connection...',
+      );
+      try {
+        await this.refreshConnection();
+        console.log('[WebViewProvider] Connection refreshed successfully');
+      } catch (error) {
+        console.error('[WebViewProvider] Failed to refresh connection:', error);
+        // Fall back to empty conversation if refresh fails
+        this.agentInitialized = false;
+        await this.initializeEmptyConversation();
+      }
     } else {
       console.log(
-        '[WebViewProvider] Agent already initialized, loading current session...',
+        '[WebViewProvider] Agent not initialized, waiting for /login command',
       );
-      // Reload current session messages
-      this.loadCurrentSessionMessages().catch((error) => {
-        console.error(
-          '[WebViewProvider] Failed to load session messages after restore:',
-          error,
-        );
-      });
+      await this.initializeEmptyConversation();
     }
   }
 

@@ -63,6 +63,10 @@
       {
         "command": "qwenCode.clearAuthCache",
         "title": "Qwen Code: Clear Authentication Cache"
+      },
+      {
+        "command": "qwenCode.login",
+        "title": "Qwen Code: Login"
       }
     ],
     "configuration": {
@@ -109,6 +113,10 @@
         {
           "command": "qwen.diff.cancel",
           "when": "qwen.diff.isVisible"
+        },
+        {
+          "command": "qwenCode.login",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -190,6 +198,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
     "@qwen-code/qwen-code-core": "file:../core",
+    "@qwen-code/qwen-code": "file:../cli",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "react": "^18.2.0",

@@ -150,6 +150,13 @@ export class MessageRouter {
    */
   setLoginHandler(handler: () => Promise<void>): void {
     this.authHandler.setLoginHandler(handler);
+    // Also set login handler for SessionMessageHandler
+    if (
+      this.sessionHandler &&
+      typeof this.sessionHandler.setLoginHandler === 'function'
+    ) {
+      this.sessionHandler.setLoginHandler(handler);
+    }
   }
 
   /**

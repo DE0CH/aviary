@@ -47,14 +47,14 @@ export class AuthMessageHandler extends BaseMessageHandler {
     try {
       console.log('[AuthMessageHandler] Login requested');
 
+      // Direct login without additional confirmation
       if (this.loginHandler) {
         await this.loginHandler();
       } else {
+        // Fallback: show message and use command
         vscode.window.showInformationMessage(
           'Please wait while we connect to Qwen Code...',
         );
-
-        // Fallback: trigger WebViewProvider's forceReLogin
         await vscode.commands.executeCommand('qwenCode.login');
       }
     } catch (error) {

@@ -15,6 +15,7 @@ import type { ChatMessage } from '../../agents/qwenAgentManager.js';
 export class SessionMessageHandler extends BaseMessageHandler {
   private currentStreamContent = '';
   private isSavingCheckpoint = false;
+  private loginHandler: (() => Promise<void>) | null = null;
 
   canHandle(messageType: string): boolean {
     return [
@@ -25,6 +26,13 @@ export class SessionMessageHandler extends BaseMessageHandler {
       'saveSession',
       'resumeSession',
     ].includes(messageType);
+  }
+
+  /**
+   * Set login handler
+   */
+  setLoginHandler(handler: () => Promise<void>): void {
+    this.loginHandler = handler;
   }
 
   async handle(message: { type: string; data?: unknown }): Promise<void> {
@@ -231,13 +239,23 @@ export class SessionMessageHandler extends BaseMessageHandler {
     if (!this.agentManager.isConnected) {
       console.warn('[SessionMessageHandler] Agent not connected');
 
+      // Show non-modal notification with Login button
       const result = await vscode.window.showWarningMessage(
         'You need to login first to use Qwen Code.',
         'Login Now',
       );
 
       if (result === 'Login Now') {
-        vscode.commands.executeCommand('qwenCode.login');
+        // Use login handler directly
+        if (this.loginHandler) {
+          await this.loginHandler();
+        } else {
+          // Fallback to command
+          vscode.window.showInformationMessage(
+            'Please wait while we connect to Qwen Code...',
+          );
+          await vscode.commands.executeCommand('qwenCode.login');
+        }
       }
       return;
     }

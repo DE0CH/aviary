@@ -13,7 +13,7 @@ interface WaitingMessageProps {
 export const WaitingMessage: React.FC<WaitingMessageProps> = ({
   loadingMessage,
 }) => (
-  <div className="flex gap-0 items-start text-left py-2 flex-col relative opacity-85 animate-[fadeIn_0.2s_ease-in]">
+  <div className="flex gap-0 items-start text-left py-2 flex-col opacity-85 animate-[fadeIn_0.2s_ease-in]">
     <div className="bg-transparent border-0 py-2 flex items-center gap-2">
       <span className="inline-flex items-center gap-1 mr-0">
         <span className="inline-block w-1.5 h-1.5 bg-[var(--app-secondary-foreground)] rounded-full mr-0 opacity-60 animate-[typingPulse_1.4s_infinite_ease-in-out] [animation-delay:0s]"></span>

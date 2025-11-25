@@ -231,6 +231,18 @@ export async function activate(context: vscode.ExtensionContext) {
       );
       log('Auth cache cleared by user');
     }),
+    vscode.commands.registerCommand('qwenCode.login', async () => {
+      // Get the current WebViewProvider instance - must already exist
+      if (webViewProviders.length > 0) {
+        const provider = webViewProviders[webViewProviders.length - 1];
+        await provider.forceReLogin();
+      } else {
+        // No WebViewProvider exists, show a message to user
+        vscode.window.showInformationMessage(
+          'Please open Qwen Code chat first before logging in.',
+        );
+      }
+    }),
   );
 
   ideServer = new IDEServer(log, diffManager);
