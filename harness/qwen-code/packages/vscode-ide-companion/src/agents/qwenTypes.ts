@@ -5,71 +5,71 @@
  */
 
 /**
- * Qwen Agent Manager 类型定义
+ * Qwen Agent Manager Type Definitions
  *
- * 包含所有相关的接口和类型定义
+ * Contains all related interfaces and type definitions
  */
 
 import type { AcpPermissionRequest } from '../shared/acpTypes.js';
 
 /**
- * 聊天消息
+ * Chat Message
  */
 export interface ChatMessage {
-  /** 消息角色：用户或助手 */
+  /** Message role: user or assistant */
   role: 'user' | 'assistant';
-  /** 消息内容 */
+  /** Message content */
   content: string;
-  /** 时间戳 */
+  /** Timestamp */
   timestamp: number;
 }
 
 /**
- * 计划条目
+ * Plan Entry
  */
 export interface PlanEntry {
-  /** 条目内容 */
+  /** Entry content */
   content: string;
-  /** 优先级 */
+  /** Priority */
   priority: 'high' | 'medium' | 'low';
-  /** 状态 */
+  /** Status */
   status: 'pending' | 'in_progress' | 'completed';
 }
 
 /**
- * 工具调用更新数据
+ * Tool Call Update Data
  */
 export interface ToolCallUpdateData {
-  /** 工具调用ID */
+  /** Tool call ID */
   toolCallId: string;
-  /** 工具类型 */
+  /** Tool type */
   kind?: string;
-  /** 工具标题 */
+  /** Tool title */
   title?: string;
-  /** 状态 */
+  /** Status */
   status?: string;
-  /** 原始输入 */
+  /** Raw input */
   rawInput?: unknown;
-  /** 内容 */
+  /** Content */
   content?: Array<Record<string, unknown>>;
-  /** 位置信息 */
+  /** Location information */
   locations?: Array<{ path: string; line?: number | null }>;
 }
 
 /**
- * 回调函数集合
+ * Callback Functions Collection
  */
 export interface QwenAgentCallbacks {
-  /** 消息回调 */
+  /** Message callback */
   onMessage?: (message: ChatMessage) => void;
-  /** 流式文本块回调 */
+  /** Stream text chunk callback */
   onStreamChunk?: (chunk: string) => void;
-  /** 思考文本块回调 */
+  /** Thought text chunk callback */
   onThoughtChunk?: (chunk: string) => void;
-  /** 工具调用回调 */
+  /** Tool call callback */
   onToolCall?: (update: ToolCallUpdateData) => void;
-  /** 计划回调 */
+  /** Plan callback */
   onPlan?: (entries: PlanEntry[]) => void;
-  /** 权限请求回调 */
+  /** Permission request callback */
   onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string>;
 }

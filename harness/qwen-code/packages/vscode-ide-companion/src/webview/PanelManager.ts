@@ -7,8 +7,8 @@
 import * as vscode from 'vscode';
 
 /**
- * Panel 和 Tab 管理器
- * 负责管理 WebView Panel 的创建、显示和 Tab 跟踪
+ * Panel and Tab Manager
+ * Responsible for managing the creation, display, and tab tracking of WebView Panels
  */
 export class PanelManager {
   private panel: vscode.WebviewPanel | null = null;
@@ -20,14 +20,14 @@ export class PanelManager {
   ) {}
 
   /**
-   * 获取当前的 Panel
+   * Get the current Panel
    */
   getPanel(): vscode.WebviewPanel | null {
     return this.panel;
   }
 
   /**
-   * 设置 Panel（用于恢复）
+   * Set Panel (for restoration)
    */
   setPanel(panel: vscode.WebviewPanel): void {
     console.log('[PanelManager] Setting panel for restoration');
@@ -35,8 +35,8 @@ export class PanelManager {
   }
 
   /**
-   * 创建新的 WebView Panel
-   * @returns 是否是新创建的 Panel
+   * Create new WebView Panel
+   * @returns Whether it is a newly created Panel
    */
   async createPanel(): Promise<boolean> {
     if (this.panel) {
@@ -126,8 +126,8 @@ export class PanelManager {
   }
 
   /**
-   * 查找已存在的 Qwen Code webview 所在的 group 和 view column
-   * @returns 找到的 group 和 view column，如果没有则返回 undefined
+   * Find the group and view column where the existing Qwen Code webview is located
+   * @returns The found group and view column, or undefined if not found
    */
   private findExistingQwenCodeGroup():
     | { group: vscode.TabGroup; viewColumn: vscode.ViewColumn }
@@ -160,8 +160,8 @@ export class PanelManager {
   }
 
   /**
-   * 自动锁定编辑器组（仅在新创建 Panel 时调用）
-   * 注意：我们不再自动锁定 Qwen Code group，以允许用户创建多个 Qwen Code tab
+   * Auto-lock editor group (only called when creating a new Panel)
+   * Note: We no longer auto-lock Qwen Code group to allow users to create multiple Qwen Code tabs
    */
   async autoLockEditorGroup(): Promise<void> {
     if (!this.panel) {
@@ -175,8 +175,8 @@ export class PanelManager {
   }
 
   /**
-   * 显示 Panel（如果存在则 reveal，否则什么都不做）
-   * @param preserveFocus 是否保持焦点
+   * Show Panel (reveal if exists, otherwise do nothing)
+   * @param preserveFocus Whether to preserve focus
    */
   revealPanel(preserveFocus: boolean = true): void {
     if (this.panel) {
@@ -185,8 +185,8 @@ export class PanelManager {
   }
 
   /**
-   * 捕获与 WebView Panel 对应的 Tab
-   * 用于跟踪和管理 Tab 状态
+   * Capture the Tab corresponding to the WebView Panel
+   * Used for tracking and managing Tab state
    */
   captureTab(): void {
     if (!this.panel) {
@@ -211,8 +211,8 @@ export class PanelManager {
   }
 
   /**
-   * 注册 Panel 的 dispose 事件处理器
-   * @param disposables 用于存储 Disposable 的数组
+   * Register the dispose event handler for the Panel
+   * @param disposables Array used to store Disposable objects
    */
   registerDisposeHandler(disposables: vscode.Disposable[]): void {
     if (!this.panel) {
@@ -231,8 +231,8 @@ export class PanelManager {
   }
 
   /**
-   * 注册视图状态变化事件处理器
-   * @param disposables 用于存储 Disposable 的数组
+   * Register the view state change event handler
+   * @param disposables Array used to store Disposable objects
    */
   registerViewStateChangeHandler(disposables: vscode.Disposable[]): void {
     if (!this.panel) {
@@ -251,7 +251,7 @@ export class PanelManager {
   }
 
   /**
-   * 销毁 Panel
+   * Dispose Panel
    */
   dispose(): void {
     this.panel?.dispose();

@@ -52,11 +52,11 @@ export class AcpConnection {
   private nextRequestId = { value: 0 };
   private backend: AcpBackend | null = null;
 
-  // 模块实例
+  // Module instances
   private messageHandler: AcpMessageHandler;
   private sessionManager: AcpSessionManager;
 
-  // 回调函数
+  // Callback functions
   onSessionUpdate: (data: AcpSessionUpdate) => void = () => {};
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
@@ -200,7 +200,7 @@ export class AcpConnection {
       }
     });
 
-    // 初始化协议
+    // Initialize protocol
     const res = await this.sessionManager.initialize(
       this.child,
       this.pendingRequests,
@@ -249,7 +249,7 @@ export class AcpConnection {
           }
         });
     } else {
-      // 响应
+      // Response
       this.messageHandler.handleMessage(
         message,
         this.pendingRequests,

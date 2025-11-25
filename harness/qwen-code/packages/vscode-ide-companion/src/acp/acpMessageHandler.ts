@@ -5,9 +5,9 @@
  */
 
 /**
- * ACP消息处理器
+ * ACP Message Handler
  *
- * 负责处理ACP协议中的消息接收、解析和分发
+ * Responsible for receiving, parsing, and distributing messages in the ACP protocol
  */
 
 import type {
@@ -27,8 +27,8 @@ import { AcpFileHandler } from './acpFileHandler.js';
 import type { ChildProcess } from 'child_process';
 
 /**
- * ACP消息处理器类
- * 负责消息的接收、解析和处理
+ * ACP Message Handler Class
+ * Responsible for receiving, parsing, and processing messages
  */
 export class AcpMessageHandler {
   private fileHandler: AcpFileHandler;
@@ -38,10 +38,10 @@ export class AcpMessageHandler {
   }
 
   /**
-   * 发送响应消息到子进程
+   * Send response message to child process
    *
-   * @param child - 子进程实例
-   * @param response - 响应消息
+   * @param child - Child process instance
+   * @param response - Response message
    */
   sendResponseMessage(child: ChildProcess | null, response: AcpResponse): void {
     if (child?.stdin) {
@@ -52,11 +52,11 @@ export class AcpMessageHandler {
   }
 
   /**
-   * 处理接收到的消息
+   * Handle received messages
    *
-   * @param message - ACP消息
-   * @param pendingRequests - 待处理请求映射表
-   * @param callbacks - 回调函数集合
+   * @param message - ACP message
+   * @param pendingRequests - Pending requests map
+   * @param callbacks - Callback functions collection
    */
   handleMessage(
     message: AcpMessage,
@@ -65,14 +65,14 @@ export class AcpMessageHandler {
   ): void {
     try {
       if ('method' in message) {
-        // 请求或通知
+        // Request or notification
         this.handleIncomingRequest(message, callbacks).catch(() => {});
       } else if (
         'id' in message &&
         typeof message.id === 'number' &&
         pendingRequests.has(message.id)
       ) {
-        // 响应
+        // Response
         this.handleResponse(message, pendingRequests, callbacks);
       }
     } catch (error) {
@@ -81,11 +81,11 @@ export class AcpMessageHandler {
   }
 
   /**
-   * 处理响应消息
+   * Handle response message
    *
-   * @param message - 响应消息
-   * @param pendingRequests - 待处理请求映射表
-   * @param callbacks - 回调函数集合
+   * @param message - Response message
+   * @param pendingRequests - Pending requests map
+   * @param callbacks - Callback functions collection
    */
   private handleResponse(
     message: AcpMessage,
@@ -138,11 +138,11 @@ export class AcpMessageHandler {
   }
 
   /**
-   * 处理进入的请求
+   * Handle incoming requests
    *
-   * @param message - 请求或通知消息
-   * @param callbacks - 回调函数集合
-   * @returns 请求处理结果
+   * @param message - Request or notification message
+   * @param callbacks - Callback functions collection
+   * @returns Request processing result
    */
   async handleIncomingRequest(
     message: AcpRequest | AcpNotification,
@@ -190,11 +190,11 @@ export class AcpMessageHandler {
   }
 
   /**
-   * 处理权限请求
+   * Handle permission requests
    *
-   * @param params - 权限请求参数
-   * @param callbacks - 回调函数集合
-   * @returns 权限请求结果
+   * @param params - Permission request parameters
+   * @param callbacks - Callback functions collection
+   * @returns Permission request result
    */
   private async handlePermissionRequest(
     params: AcpPermissionRequest,
@@ -206,7 +206,7 @@ export class AcpMessageHandler {
       const response = await callbacks.onPermissionRequest(params);
       const optionId = response.optionId;
 
-      // 处理取消、拒绝或允许
+      // Handle cancel, deny, or allow
       let outcome: string;
       if (optionId.includes('reject') || optionId === 'cancel') {
         outcome = 'rejected';

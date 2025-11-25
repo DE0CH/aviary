@@ -28,11 +28,11 @@ export class WebViewProvider {
   constructor(
     context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
-    authStateManager?: AuthStateManager, // 可选的全局AuthStateManager实例
+    authStateManager?: AuthStateManager, // Optional global AuthStateManager instance
   ) {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
-    // 如果提供了全局的authStateManager，则使用它，否则创建新的实例
+    // If a global authStateManager is provided, use it, otherwise create a new instance
     this.authStateManager = authStateManager || new AuthStateManager(context);
     this.panelManager = new PanelManager(extensionUri, () => {
       // Panel dispose callback

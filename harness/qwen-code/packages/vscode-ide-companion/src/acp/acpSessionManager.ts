@@ -5,9 +5,9 @@
  */
 
 /**
- * ACP会话管理器
+ * ACP Session Manager
  *
- * 负责管理ACP协议的会话操作，包括初始化、认证、会话创建和切换等
+ * Responsible for managing ACP protocol session operations, including initialization, authentication, session creation, and switching
  */
 
 import { JSONRPC_VERSION } from '../shared/acpTypes.js';
@@ -21,22 +21,22 @@ import type { PendingRequest } from './connectionTypes.js';
 import type { ChildProcess } from 'child_process';
 
 /**
- * ACP会话管理器类
- * 提供会话的初始化、认证、创建、加载和切换功能
+ * ACP Session Manager Class
+ * Provides session initialization, authentication, creation, loading, and switching functionality
  */
 export class AcpSessionManager {
   private sessionId: string | null = null;
   private isInitialized = false;
 
   /**
-   * 发送请求到ACP服务器
+   * Send request to ACP server
    *
-   * @param method - 请求方法名
-   * @param params - 请求参数
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 请求响应
+   * @param method - Request method name
+   * @param params - Request parameters
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Request response
    */
   private sendRequest<T = unknown>(
     method: string,
@@ -81,10 +81,10 @@ export class AcpSessionManager {
   }
 
   /**
-   * 发送消息到子进程
+   * Send message to child process
    *
-   * @param message - 请求或通知消息
-   * @param child - 子进程实例
+   * @param message - Request or notification message
+   * @param child - Child process instance
    */
   private sendMessage(
     message: AcpRequest | AcpNotification,
@@ -98,12 +98,12 @@ export class AcpSessionManager {
   }
 
   /**
-   * 初始化ACP协议连接
+   * Initialize ACP protocol connection
    *
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 初始化响应
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Initialization response
    */
   async initialize(
     child: ChildProcess | null,
@@ -135,13 +135,13 @@ export class AcpSessionManager {
   }
 
   /**
-   * 进行认证
+   * Perform authentication
    *
-   * @param methodId - 认证方法ID
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 认证响应
+   * @param methodId - Authentication method ID
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Authentication response
    */
   async authenticate(
     methodId: string | undefined,
@@ -168,13 +168,13 @@ export class AcpSessionManager {
   }
 
   /**
-   * 创建新会话
+   * Create new session
    *
-   * @param cwd - 工作目录
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 新会话响应
+   * @param cwd - Working directory
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns New session response
    */
   async newSession(
     cwd: string,
@@ -202,14 +202,14 @@ export class AcpSessionManager {
   }
 
   /**
-   * 发送提示消息
+   * Send prompt message
    *
-   * @param prompt - 提示内容
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 响应
-   * @throws 当没有活动会话时抛出错误
+   * @param prompt - Prompt content
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Response
+   * @throws Error when there is no active session
    */
   async sendPrompt(
     prompt: string,
@@ -234,13 +234,13 @@ export class AcpSessionManager {
   }
 
   /**
-   * 加载已有会话
+   * Load existing session
    *
-   * @param sessionId - 会话ID
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 加载响应
+   * @param sessionId - Session ID
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Load response
    */
   async loadSession(
     sessionId: string,
@@ -291,12 +291,12 @@ export class AcpSessionManager {
   }
 
   /**
-   * 获取会话列表
+   * Get session list
    *
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 会话列表响应
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Session list response
    */
   async listSessions(
     child: ChildProcess | null,
@@ -324,11 +324,11 @@ export class AcpSessionManager {
   }
 
   /**
-   * 切换到指定会话
+   * Switch to specified session
    *
-   * @param sessionId - 会话ID
-   * @param nextRequestId - 请求ID计数器
-   * @returns 切换响应
+   * @param sessionId - Session ID
+   * @param nextRequestId - Request ID counter
+   * @returns Switch response
    */
   async switchSession(
     sessionId: string,
@@ -349,9 +349,9 @@ export class AcpSessionManager {
   }
 
   /**
-   * 取消当前会话的提示生成
+   * Cancel prompt generation for current session
    *
-   * @param child - 子进程实例
+   * @param child - Child process instance
    */
   async cancelSession(child: ChildProcess | null): Promise<void> {
     if (!this.sessionId) {
@@ -376,13 +376,13 @@ export class AcpSessionManager {
   }
 
   /**
-   * 保存当前会话
+   * Save current session
    *
-   * @param tag - 保存标签
-   * @param child - 子进程实例
-   * @param pendingRequests - 待处理请求映射表
-   * @param nextRequestId - 请求ID计数器
-   * @returns 保存响应
+   * @param tag - Save tag
+   * @param child - Child process instance
+   * @param pendingRequests - Pending requests map
+   * @param nextRequestId - Request ID counter
+   * @returns Save response
    */
   async saveSession(
     tag: string,
@@ -410,7 +410,7 @@ export class AcpSessionManager {
   }
 
   /**
-   * 重置会话管理器状态
+   * Reset session manager state
    */
   reset(): void {
     this.sessionId = null;
@@ -418,14 +418,14 @@ export class AcpSessionManager {
   }
 
   /**
-   * 获取当前会话ID
+   * Get current session ID
    */
   getCurrentSessionId(): string | null {
     return this.sessionId;
   }
 
   /**
-   * 检查是否已初始化
+   * Check if initialized
    */
   getIsInitialized(): boolean {
     return this.isInitialized;

@@ -73,7 +73,8 @@ export class QwenAgentManager {
    * Connect to Qwen service
    *
    * @param workingDir - Working directory
-   * @param authStateManager - Auth state manager (optional)
+   * @param authStateManager - Authentication state manager (optional)
+   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
   async connect(
     workingDir: string,

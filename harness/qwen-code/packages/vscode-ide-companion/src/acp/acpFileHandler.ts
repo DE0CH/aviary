@@ -5,29 +5,29 @@
  */
 
 /**
- * ACP文件操作处理器
+ * ACP File Operation Handler
  *
- * 负责处理ACP协议中的文件读写操作
+ * Responsible for handling file read and write operations in the ACP protocol
  */
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
 /**
- * ACP文件操作处理器类
- * 提供文件读写功能，符合ACP协议规范
+ * ACP File Operation Handler Class
+ * Provides file read and write functionality according to ACP protocol specifications
  */
 export class AcpFileHandler {
   /**
-   * 处理读取文本文件请求
+   * Handle read text file request
    *
-   * @param params - 文件读取参数
-   * @param params.path - 文件路径
-   * @param params.sessionId - 会话ID
-   * @param params.line - 起始行号（可选）
-   * @param params.limit - 读取行数限制（可选）
-   * @returns 文件内容
-   * @throws 当文件读取失败时抛出错误
+   * @param params - File read parameters
+   * @param params.path - File path
+   * @param params.sessionId - Session ID
+   * @param params.line - Starting line number (optional)
+   * @param params.limit - Read line limit (optional)
+   * @returns File content
+   * @throws Error when file reading fails
    */
   async handleReadTextFile(params: {
     path: string;
@@ -48,7 +48,7 @@ export class AcpFileHandler {
         `[ACP] Successfully read file: ${params.path} (${content.length} bytes)`,
       );
 
-      // 处理行偏移和限制
+      // Handle line offset and limit
       if (params.line !== null || params.limit !== null) {
         const lines = content.split('\n');
         const startLine = params.line || 0;
@@ -71,14 +71,14 @@ export class AcpFileHandler {
   }
 
   /**
-   * 处理写入文本文件请求
+   * Handle write text file request
    *
-   * @param params - 文件写入参数
-   * @param params.path - 文件路径
-   * @param params.content - 文件内容
-   * @param params.sessionId - 会话ID
-   * @returns null表示成功
-   * @throws 当文件写入失败时抛出错误
+   * @param params - File write parameters
+   * @param params.path - File path
+   * @param params.content - File content
+   * @param params.sessionId - Session ID
+   * @returns null indicates success
+   * @throws Error when file writing fails
    */
   async handleWriteTextFile(params: {
     path: string;
@@ -91,12 +91,12 @@ export class AcpFileHandler {
     console.log(`[ACP] Content size: ${params.content.length} bytes`);
 
     try {
-      // 确保目录存在
+      // Ensure directory exists
       const dirName = path.dirname(params.path);
       console.log(`[ACP] Ensuring directory exists: ${dirName}`);
       await fs.mkdir(dirName, { recursive: true });
 
-      // 写入文件
+      // Write file
       await fs.writeFile(params.path, params.content, 'utf-8');
 
       console.log(`[ACP] Successfully wrote file: ${params.path}`);

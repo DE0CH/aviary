@@ -8,13 +8,13 @@ import * as vscode from 'vscode';
 import { getFileName } from '../utils/webviewUtils.js';
 
 /**
- * 文件操作处理器
- * 负责处理文件打开和 diff 查看功能
+ * File Operations Handler
+ * Responsible for handling file opening and diff viewing functionality
  */
 export class FileOperations {
   /**
-   * 打开文件并可选跳转到指定行和列
-   * @param filePath 文件路径，可以包含行号和列号（格式：path/to/file.ts:123 或 path/to/file.ts:123:45）
+   * Open file and optionally navigate to specified line and column
+   * @param filePath File path, can include line and column numbers (format: path/to/file.ts:123 or path/to/file.ts:123:45)
    */
   static async openFile(filePath?: string): Promise<void> {
     try {
@@ -73,8 +73,8 @@ export class FileOperations {
   }
 
   /**
-   * 打开 diff 视图比较文件变更
-   * @param data Diff 数据，包含文件路径、旧内容和新内容
+   * Open diff view to compare file changes
+   * @param data Diff data, including file path, old content, and new content
    */
   static async openDiff(data?: {
     path?: string;

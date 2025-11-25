@@ -8,15 +8,15 @@ import * as vscode from 'vscode';
 import { escapeHtml } from '../utils/webviewUtils.js';
 
 /**
- * WebView HTML 内容生成器
- * 负责生成 WebView 的 HTML 内容
+ * WebView HTML Content Generator
+ * Responsible for generating the HTML content of the WebView
  */
 export class WebViewContent {
   /**
-   * 生成 WebView 的 HTML 内容
+   * Generate HTML content for the WebView
    * @param panel WebView Panel
-   * @param extensionUri 扩展的 URI
-   * @returns HTML 字符串
+   * @param extensionUri Extension URI
+   * @returns HTML string
    */
   static generate(
     panel: vscode.WebviewPanel,
@@ -29,7 +29,7 @@ export class WebViewContent {
     // Convert extension URI for webview access - this allows frontend to construct resource paths
     const extensionUriForWebview = panel.webview.asWebviewUri(extensionUri);
 
-    // 对 URI 进行 HTML 转义以防止潜在的注入攻击
+    // Escape URI for HTML to prevent potential injection attacks
     const safeExtensionUri = escapeHtml(extensionUriForWebview.toString());
     const safeScriptUri = escapeHtml(scriptUri.toString());
 

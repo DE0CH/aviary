@@ -9,9 +9,9 @@ import type { ConversationStore } from '../storage/conversationStore.js';
 import { MessageRouter } from './handlers/MessageRouter.js';
 
 /**
- * MessageHandler (重构版)
- * 这是一个轻量级的包装类，内部使用 MessageRouter 和各个子处理器
- * 保持与原有代码的接口兼容性
+ * MessageHandler (Refactored Version)
+ * This is a lightweight wrapper class that internally uses MessageRouter and various sub-handlers
+ * Maintains interface compatibility with the original code
  */
 export class MessageHandler {
   private router: MessageRouter;
@@ -31,28 +31,28 @@ export class MessageHandler {
   }
 
   /**
-   * 路由消息到对应的处理器
+   * Route messages to the corresponding handler
    */
   async route(message: { type: string; data?: unknown }): Promise<void> {
     await this.router.route(message);
   }
 
   /**
-   * 设置当前会话 ID
+   * Set current session ID
    */
   setCurrentConversationId(id: string | null): void {
     this.router.setCurrentConversationId(id);
   }
 
   /**
-   * 获取当前会话 ID
+   * Get current session ID
    */
   getCurrentConversationId(): string | null {
     return this.router.getCurrentConversationId();
   }
 
   /**
-   * 设置权限处理器
+   * Set permission handler
    */
   setPermissionHandler(
     handler: (message: { type: string; data: { optionId: string } }) => void,
@@ -61,21 +61,21 @@ export class MessageHandler {
   }
 
   /**
-   * 设置登录处理器
+   * Set login handler
    */
   setLoginHandler(handler: () => Promise<void>): void {
     this.router.setLoginHandler(handler);
   }
 
   /**
-   * 追加流式内容
+   * Append stream content
    */
   appendStreamContent(chunk: string): void {
     this.router.appendStreamContent(chunk);
   }
 
   /**
-   * 检查是否正在保存 checkpoint
+   * Check if saving checkpoint
    */
   getIsSavingCheckpoint(): boolean {
     return this.router.getIsSavingCheckpoint();

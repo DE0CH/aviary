@@ -26,7 +26,8 @@ export class QwenConnectionHandler {
    * @param connection - ACP connection instance
    * @param sessionReader - Session reader instance
    * @param workingDir - Working directory
-   * @param authStateManager - Auth state manager (optional)
+   * @param authStateManager - Authentication state manager (optional)
+   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
   async connect(
     connection: AcpConnection,
@@ -100,7 +101,7 @@ export class QwenConnectionHandler {
           '[QwenAgentManager] Found existing sessions:',
           sessions.length,
         );
-        const lastSession = sessions[0]; // 已按lastUpdated排序
+        const lastSession = sessions[0]; // Already sorted by lastUpdated
 
         try {
           await connection.switchSession(lastSession.sessionId);

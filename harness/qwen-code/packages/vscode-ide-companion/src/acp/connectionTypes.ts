@@ -5,9 +5,9 @@
  */
 
 /**
- * ACP连接类型定义
+ * ACP Connection Type Definitions
  *
- * 包含了ACP连接所需的所有类型和接口定义
+ * Contains all types and interface definitions required for ACP connection
  */
 
 import type { ChildProcess } from 'child_process';
@@ -17,47 +17,47 @@ import type {
 } from '../shared/acpTypes.js';
 
 /**
- * 待处理的请求信息
+ * Pending Request Information
  */
 export interface PendingRequest<T = unknown> {
-  /** 成功回调 */
+  /** Success callback */
   resolve: (value: T) => void;
-  /** 失败回调 */
+  /** Failure callback */
   reject: (error: Error) => void;
-  /** 超时定时器ID */
+  /** Timeout timer ID */
   timeoutId?: NodeJS.Timeout;
-  /** 请求方法名 */
+  /** Request method name */
   method: string;
 }
 
 /**
- * ACP连接回调函数类型
+ * ACP Connection Callback Function Types
  */
 export interface AcpConnectionCallbacks {
-  /** 会话更新回调 */
+  /** Session update callback */
   onSessionUpdate: (data: AcpSessionUpdate) => void;
-  /** 权限请求回调 */
+  /** Permission request callback */
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
   }>;
-  /** 回合结束回调 */
+  /** Turn end callback */
   onEndTurn: () => void;
 }
 
 /**
- * ACP连接状态
+ * ACP Connection State
  */
 export interface AcpConnectionState {
-  /** 子进程实例 */
+  /** Child process instance */
   child: ChildProcess | null;
-  /** 待处理的请求映射表 */
+  /** Pending requests map */
   pendingRequests: Map<number, PendingRequest<unknown>>;
-  /** 下一个请求ID */
+  /** Next request ID */
   nextRequestId: number;
-  /** 当前会话ID */
+  /** Current session ID */
   sessionId: string | null;
-  /** 是否已初始化 */
+  /** Whether initialized */
   isInitialized: boolean;
-  /** 后端类型 */
+  /** Backend type */
   backend: string | null;
 }

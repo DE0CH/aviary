@@ -90,7 +90,7 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
   );
 
   /**
-   * 处理Save session响应
+   * Handle Save session response
    */
   const handleSaveSessionResponse = useCallback(
     (response: { success: boolean; message?: string }) => {

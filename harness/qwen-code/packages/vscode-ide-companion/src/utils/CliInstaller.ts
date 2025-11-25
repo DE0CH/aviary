@@ -8,13 +8,13 @@ import * as vscode from 'vscode';
 import { CliDetector } from './cliDetector.js';
 
 /**
- * CLI 检测和安装处理器
- * 负责 Qwen CLI 的检测、安装和提示功能
+ * CLI Detection and Installation Handler
+ * Responsible for detecting, installing, and prompting for Qwen CLI
  */
 export class CliInstaller {
   /**
-   * 检查 CLI 安装状态并发送结果到 WebView
-   * @param sendToWebView 发送消息到 WebView 的回调函数
+   * Check CLI installation status and send results to WebView
+   * @param sendToWebView Callback function to send messages to WebView
    */
   static async checkInstallation(
     sendToWebView: (message: unknown) => void,
@@ -50,8 +50,8 @@ export class CliInstaller {
   }
 
   /**
-   * 提示用户安装 CLI
-   * 显示警告消息，提供安装选项
+   * Prompt user to install CLI
+   * Display warning message with installation options
    */
   static async promptInstallation(): Promise<void> {
     const selection = await vscode.window.showWarningMessage(
@@ -71,8 +71,8 @@ export class CliInstaller {
   }
 
   /**
-   * 安装 Qwen CLI
-   * 通过 npm 安装全局 CLI 包
+   * Install Qwen CLI
+   * Install global CLI package via npm
    */
   static async install(): Promise<void> {
     try {
