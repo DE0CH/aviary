@@ -552,6 +552,7 @@ export const useWebViewMessages = ({
             path: string;
           }>;
           if (files) {
+            console.log('[WebView] Received workspaceFiles:', files.length);
             handlers.fileContext.setWorkspaceFiles(files);
           }
           break;

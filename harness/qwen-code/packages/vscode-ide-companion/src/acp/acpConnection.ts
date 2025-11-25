@@ -20,6 +20,7 @@ import type {
 } from './connectionTypes.js';
 import { AcpMessageHandler } from './acpMessageHandler.js';
 import { AcpSessionManager } from './acpSessionManager.js';
+import { statSync } from 'fs';
 
 /**
  * ACP Connection Handler for VSCode Extension
@@ -66,7 +67,75 @@ export class AcpConnection {
   }
 
   /**
-   * Connect to ACP backend
+   * Determine the correct Node.js executable path for a given CLI installation
+   * Handles various Node.js version managers (nvm, n, manual installations)
+   *
+   * @param cliPath - Path to the CLI executable
+   * @returns Path to the Node.js executable, or null if not found
+   */
+  private determineNodePathForCli(cliPath: string): string | null {
+    // Common patterns for Node.js installations
+    const nodePathPatterns = [
+      // NVM pattern: /Users/user/.nvm/versions/node/vXX.XX.X/bin/qwen -> /Users/user/.nvm/versions/node/vXX.XX.X/bin/node
+      cliPath.replace(/\/bin\/qwen$/, '/bin/node'),
+
+      // N pattern: /Users/user/n/bin/qwen -> /Users/user/n/bin/node
+      cliPath.replace(/\/bin\/qwen$/, '/bin/node'),
+
+      // Manual installation pattern: /usr/local/bin/qwen -> /usr/local/bin/node
+      cliPath.replace(/\/qwen$/, '/node'),
+
+      // Alternative pattern: /opt/nodejs/bin/qwen -> /opt/nodejs/bin/node
+      cliPath.replace(/\/bin\/qwen$/, '/bin/node'),
+    ];
+
+    // Check each pattern
+    for (const nodePath of nodePathPatterns) {
+      try {
+        if (statSync(nodePath).isFile()) {
+          // Verify it's executable
+          const stats = statSync(nodePath);
+          if (stats.mode & 0o111) {
+            // Check if executable
+            console.log(
+              `[ACP] Found Node.js executable for CLI at: ${nodePath}`,
+            );
+            return nodePath;
+          }
+        }
+      } catch (_error) {
+        // File doesn't exist or other error, continue to next pattern
+        continue;
+      }
+    }
+
+    // Try to find node in the same directory as the CLI
+    const cliDir = cliPath.substring(0, cliPath.lastIndexOf('/'));
+    const potentialNodePaths = [`${cliDir}/node`, `${cliDir}/bin/node`];
+
+    for (const nodePath of potentialNodePaths) {
+      try {
+        if (statSync(nodePath).isFile()) {
+          const stats = statSync(nodePath);
+          if (stats.mode & 0o111) {
+            console.log(
+              `[ACP] Found Node.js executable in CLI directory at: ${nodePath}`,
+            );
+            return nodePath;
+          }
+        }
+      } catch (_error) {
+        // File doesn't exist, continue
+        continue;
+      }
+    }
+
+    console.log(`[ACP] Could not determine Node.js path for CLI: ${cliPath}`);
+    return null;
+  }
+
+  /**
+   * 连接到ACP后端
    *
    * @param backend - Backend type
    * @param cliPath - CLI path
@@ -112,8 +181,23 @@ export class AcpConnection {
       spawnCommand = isWindows ? 'npx.cmd' : 'npx';
       spawnArgs = [...parts.slice(1), '--experimental-acp', ...extraArgs];
     } else {
-      spawnCommand = cliPath;
-      spawnArgs = ['--experimental-acp', ...extraArgs];
+      // For qwen CLI, ensure we use the correct Node.js version
+      // Handle various Node.js version managers (nvm, n, manual installations)
+      if (cliPath.includes('/qwen') && !isWindows) {
+        // Try to determine the correct node executable for this qwen installation
+        const nodePath = this.determineNodePathForCli(cliPath);
+        if (nodePath) {
+          spawnCommand = nodePath;
+          spawnArgs = [cliPath, '--experimental-acp', ...extraArgs];
+        } else {
+          // Fallback to direct execution
+          spawnCommand = cliPath;
+          spawnArgs = ['--experimental-acp', ...extraArgs];
+        }
+      } else {
+        spawnCommand = cliPath;
+        spawnArgs = ['--experimental-acp', ...extraArgs];
+      }
     }
 
     console.log('[ACP] Spawning command:', spawnCommand, spawnArgs.join(' '));

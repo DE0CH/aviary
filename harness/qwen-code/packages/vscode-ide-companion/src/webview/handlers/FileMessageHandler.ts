@@ -181,6 +181,9 @@ export class FileMessageHandler extends BaseMessageHandler {
    */
   private async handleGetWorkspaceFiles(query?: string): Promise<void> {
     try {
+      console.log('[FileMessageHandler] handleGetWorkspaceFiles start', {
+        query,
+      });
       const files: Array<{
         id: string;
         label: string;
@@ -220,6 +223,11 @@ export class FileMessageHandler extends BaseMessageHandler {
 
       // Search or show recent files
       if (query) {
+        // Query mode: perform filesystem search (may take longer on large workspaces)
+        console.log(
+          '[FileMessageHandler] Searching workspace files for query',
+          query,
+        );
         const uris = await vscode.workspace.findFiles(
           `**/*${query}*`,
           '**/node_modules/**',
@@ -230,6 +238,7 @@ export class FileMessageHandler extends BaseMessageHandler {
           addFile(uri);
         }
       } else {
+        // Non-query mode: respond quickly with currently active and open files
         // Add current active file first
         const activeEditor = vscode.window.activeTextEditor;
         if (activeEditor) {
@@ -247,7 +256,21 @@ export class FileMessageHandler extends BaseMessageHandler {
           }
         }
 
-        // If not enough files, add some workspace files
+        // Send an initial quick response so UI can render immediately
+        try {
+          this.sendToWebView({ type: 'workspaceFiles', data: { files } });
+          console.log(
+            '[FileMessageHandler] Sent initial workspaceFiles (open tabs/active)',
+            files.length,
+          );
+        } catch (e) {
+          console.warn(
+            '[FileMessageHandler] Failed sending initial response',
+            e,
+          );
+        }
+
+        // If not enough files, add some workspace files (bounded)
         if (files.length < 10) {
           const recentUris = await vscode.workspace.findFiles(
             '**/*',
@@ -264,10 +287,11 @@ export class FileMessageHandler extends BaseMessageHandler {
         }
       }
 
-      this.sendToWebView({
-        type: 'workspaceFiles',
-        data: { files },
-      });
+      this.sendToWebView({ type: 'workspaceFiles', data: { files } });
+      console.log(
+        '[FileMessageHandler] Sent final workspaceFiles',
+        files.length,
+      );
     } catch (error) {
       console.error(
         '[FileMessageHandler] Failed to get workspace files:',

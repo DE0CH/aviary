@@ -121,8 +121,11 @@ export class CliInstaller {
             );
 
             const { stdout, stderr } = await execAsync(
-              'npm install -g @qwen-code/qwen-code@latest',
-              { timeout: 120000 }, // 2 minutes timeout
+              installCommand,
+              {
+                timeout: 120000,
+                shell: '/bin/bash',
+              }, // 2 minutes timeout
             );
 
             console.log('[CliInstaller] Installation output:', stdout);
@@ -156,6 +159,7 @@ export class CliInstaller {
             const errorMessage =
               error instanceof Error ? error.message : String(error);
             console.error('[CliInstaller] Installation failed:', errorMessage);
+            console.error('[CliInstaller] Error stack:', error);
 
             vscode.window
               .showErrorMessage(

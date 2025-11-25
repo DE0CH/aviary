@@ -36,6 +36,7 @@ export class QwenConnectionHandler {
     sessionReader: QwenSessionReader,
     workingDir: string,
     authStateManager?: AuthStateManager,
+    cliPath?: string,
   ): Promise<void> {
     const connectId = Date.now();
     console.log(`\n========================================`);
@@ -65,7 +66,9 @@ export class QwenConnectionHandler {
     }
 
     const config = vscode.workspace.getConfiguration('qwenCode');
-    const cliPath = config.get<string>('qwen.cliPath', 'qwen');
+    // Use the provided CLI path if available, otherwise use the configured path
+    const effectiveCliPath =
+      cliPath || config.get<string>('qwen.cliPath', 'qwen');
     const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
     const openaiBaseUrl = config.get<string>('qwen.openaiBaseUrl', '');
     const model = config.get<string>('qwen.model', '');
@@ -87,7 +90,7 @@ export class QwenConnectionHandler {
       console.log('[QwenAgentManager] Using proxy:', proxy);
     }
 
-    await connection.connect('qwen', cliPath, workingDir, extraArgs);
+    await connection.connect('qwen', effectiveCliPath, workingDir, extraArgs);
 
     // Determine authentication method
     const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';

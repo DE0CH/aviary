@@ -89,7 +89,7 @@ export class QwenAgentManager {
   async connect(
     workingDir: string,
     authStateManager?: AuthStateManager,
-    _cliPath?: string, // TODO: reserved for future override via settings
+    _cliPath?: string,
   ): Promise<void> {
     this.currentWorkingDir = workingDir;
     await this.connectionHandler.connect(
@@ -97,6 +97,7 @@ export class QwenAgentManager {
       this.sessionReader,
       workingDir,
       authStateManager,
+      _cliPath,
     );
   }
 
