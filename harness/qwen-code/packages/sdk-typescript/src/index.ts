@@ -28,38 +28,8 @@ export {
   isCLIPartialAssistantMessage,
 } from './types/protocol.js';
 
-export { AbortError, isAbortError } from './types/errors.js';
-
-export { ControlRequestType } from './types/protocol.js';
-
-export { ProcessTransport } from './transport/ProcessTransport.js';
-export type { Transport } from './transport/Transport.js';
-
-export { Stream } from './utils/Stream.js';
-export {
-  serializeJsonLine,
-  parseJsonLineSafe,
-  isValidMessage,
-  parseJsonLinesStream,
-} from './utils/jsonLines.js';
-export {
-  findCliPath,
-  resolveCliPath,
-  prepareSpawnInfo,
-} from './utils/cliPath.js';
-export type { SpawnInfo } from './utils/cliPath.js';
-
-export { createSdkMcpServer } from './mcp/createSdkMcpServer.js';
-export {
-  tool,
-  createTool,
-  validateToolName,
-  validateInputSchema,
-} from './mcp/tool.js';
-
 export type {
   JSONSchema,
-  ToolDefinition,
   PermissionMode,
   CanUseTool,
   PermissionResult,
