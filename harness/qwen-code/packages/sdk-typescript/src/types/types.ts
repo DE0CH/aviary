@@ -30,6 +30,7 @@ export type TransportOptions = {
   coreTools?: string[];
   excludeTools?: string[];
   authType?: string;
+  includePartialMessages?: boolean;
 };
 
 type ToolInput = Record<string, unknown>;

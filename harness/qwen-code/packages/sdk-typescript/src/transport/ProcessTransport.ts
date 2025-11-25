@@ -155,6 +155,10 @@ export class ProcessTransport implements Transport {
       args.push('--auth-type', this.options.authType);
     }
 
+    if (this.options.includePartialMessages) {
+      args.push('--include-partial-messages');
+    }
+
     return args;
   }
 

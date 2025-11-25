@@ -476,4 +476,67 @@ describe('Multi-Turn Conversations (E2E)', () => {
       }
     });
   });
+
+  describe('Partial Messages in Multi-Turn', () => {
+    it('should receive partial messages when includePartialMessages is enabled', async () => {
+      async function* createMultiTurnConversation(): AsyncIterable<CLIUserMessage> {
+        const sessionId = crypto.randomUUID();
+
+        yield {
+          type: 'user',
+          session_id: sessionId,
+          message: {
+            role: 'user',
+            content: 'What is 1 + 1?',
+          },
+          parent_tool_use_id: null,
+        } as CLIUserMessage;
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        yield {
+          type: 'user',
+          session_id: sessionId,
+          message: {
+            role: 'user',
+            content: 'What is 2 + 2?',
+          },
+          parent_tool_use_id: null,
+        } as CLIUserMessage;
+      }
+
+      const q = query({
+        prompt: createMultiTurnConversation(),
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          includePartialMessages: true,
+          debug: false,
+        },
+      });
+
+      const messages: CLIMessage[] = [];
+      let partialMessageCount = 0;
+      let assistantMessageCount = 0;
+
+      try {
+        for await (const message of q) {
+          messages.push(message);
+
+          if (isCLIPartialAssistantMessage(message)) {
+            partialMessageCount++;
+          }
+
+          if (isCLIAssistantMessage(message)) {
+            assistantMessageCount++;
+          }
+        }
+
+        expect(messages.length).toBeGreaterThan(0);
+        expect(partialMessageCount).toBeGreaterThan(0);
+        expect(assistantMessageCount).toBeGreaterThanOrEqual(2);
+      } finally {
+        await q.close();
+      }
+    });
+  });
 });

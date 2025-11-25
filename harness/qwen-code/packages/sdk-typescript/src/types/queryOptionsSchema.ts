@@ -76,6 +76,7 @@ export const QueryOptionsSchema = z
         ),
       )
       .optional(),
+    includePartialMessages: z.boolean().optional(),
   })
   .strict();
 

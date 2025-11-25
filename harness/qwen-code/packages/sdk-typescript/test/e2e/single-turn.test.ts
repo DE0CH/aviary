@@ -9,6 +9,7 @@ import {
   isCLIAssistantMessage,
   isCLISystemMessage,
   isCLIResultMessage,
+  isCLIPartialAssistantMessage,
   type TextBlock,
   type ContentBlock,
   type CLIMessage,
@@ -323,6 +324,41 @@ describe('Single-Turn Query (E2E)', () => {
         }
 
         expect(hasResponse).toBe(true);
+      } finally {
+        await q.close();
+      }
+    });
+
+    it('should receive partial messages when includePartialMessages is enabled', async () => {
+      const q = query({
+        prompt: 'Count from 1 to 5',
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          includePartialMessages: true,
+          debug: false,
+        },
+      });
+
+      const messages: CLIMessage[] = [];
+      let partialMessageCount = 0;
+      let assistantMessageCount = 0;
+
+      try {
+        for await (const message of q) {
+          messages.push(message);
+
+          if (isCLIPartialAssistantMessage(message)) {
+            partialMessageCount++;
+          }
+
+          if (isCLIAssistantMessage(message)) {
+            assistantMessageCount++;
+          }
+        }
+
+        expect(messages.length).toBeGreaterThan(0);
+        expect(partialMessageCount).toBeGreaterThan(0);
+        expect(assistantMessageCount).toBeGreaterThan(0);
       } finally {
         await q.close();
       }

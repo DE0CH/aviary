@@ -43,6 +43,7 @@ export function query({
     coreTools: options.coreTools,
     excludeTools: options.excludeTools,
     authType: options.authType,
+    includePartialMessages: options.includePartialMessages,
   });
 
   const queryOptions: QueryOptions = {
