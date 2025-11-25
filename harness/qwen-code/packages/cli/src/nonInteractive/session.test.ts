@@ -134,7 +134,7 @@ function createControlCancel(requestId: string): ControlCancelRequest {
   };
 }
 
-describe('runNonInteractiveStreamJson (refactored)', () => {
+describe('runNonInteractiveStreamJson', () => {
   let config: Config;
   let mockInputReader: {
     read: () => AsyncGenerator<

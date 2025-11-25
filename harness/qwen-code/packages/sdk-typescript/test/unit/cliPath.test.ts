@@ -11,7 +11,6 @@ import {
   parseExecutableSpec,
   prepareSpawnInfo,
   findNativeCliPath,
-  resolveCliPath,
 } from '../../src/utils/cliPath.js';
 
 // Mock fs module
@@ -416,28 +415,6 @@ describe('CLI Path Utilities', () => {
       mockFs.existsSync.mockReturnValue(false);
 
       expect(() => findNativeCliPath()).toThrow('qwen CLI not found. Please:');
-
-      process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
-    });
-  });
-
-  describe('resolveCliPath (backward compatibility)', () => {
-    it('should resolve CLI path for backward compatibility', () => {
-      mockFs.existsSync.mockReturnValue(true);
-
-      const result = resolveCliPath('/path/to/qwen');
-
-      expect(result).toBe('/path/to/qwen');
-    });
-
-    it('should auto-detect when no path provided', () => {
-      const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-      process.env['QWEN_CODE_CLI_PATH'] = '/usr/local/bin/qwen';
-      mockFs.existsSync.mockReturnValue(true);
-
-      const result = resolveCliPath();
-
-      expect(result).toBe('/usr/local/bin/qwen');
 
       process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
     });

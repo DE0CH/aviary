@@ -1,5 +1,4 @@
 import type { PermissionMode, PermissionSuggestion } from './protocol.js';
-import type { ExternalMcpServerConfig } from './queryOptionsSchema.js';
 
 export type { PermissionMode };
 
@@ -23,7 +22,6 @@ export type TransportOptions = {
   cwd?: string;
   model?: string;
   permissionMode?: PermissionMode;
-  mcpServers?: Record<string, ExternalMcpServerConfig>;
   env?: Record<string, string>;
   abortController?: AbortController;
   debug?: boolean;

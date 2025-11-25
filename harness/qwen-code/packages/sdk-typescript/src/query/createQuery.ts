@@ -21,28 +21,20 @@ export function query({
   prompt: string | AsyncIterable<CLIUserMessage>;
   options?: QueryOptions;
 }): Query {
-  // Validate options and obtain normalized executable metadata
   const parsedExecutable = validateOptions(options);
 
-  // Determine if this is a single-turn or multi-turn query
-  // Single-turn: string prompt (simple Q&A)
-  // Multi-turn: AsyncIterable prompt (streaming conversation)
   const isSingleTurn = typeof prompt === 'string';
 
-  // Resolve CLI specification while preserving explicit runtime directives
   const pathToQwenExecutable =
     options.pathToQwenExecutable ?? parsedExecutable.executablePath;
 
-  // Use provided abortController or create a new one
   const abortController = options.abortController ?? new AbortController();
 
-  // Create transport with abortController
   const transport = new ProcessTransport({
     pathToQwenExecutable,
     cwd: options.cwd,
     model: options.model,
     permissionMode: options.permissionMode,
-    mcpServers: options.mcpServers,
     env: options.env,
     abortController,
     debug: options.debug,
@@ -53,18 +45,14 @@ export function query({
     authType: options.authType,
   });
 
-  // Build query options with abortController
   const queryOptions: QueryOptions = {
     ...options,
     abortController,
   };
 
-  // Create Query
   const queryInstance = new Query(transport, queryOptions, isSingleTurn);
 
-  // Handle prompt based on type
   if (isSingleTurn) {
-    // For single-turn queries, send the prompt directly via transport
     const stringPrompt = prompt as string;
     const message: CLIUserMessage = {
       type: 'user',
@@ -95,16 +83,9 @@ export function query({
   return queryInstance;
 }
 
-/**
- * Backward compatibility alias
- * @deprecated Use query() instead
- */
-export const createQuery = query;
-
 function validateOptions(
   options: QueryOptions,
 ): ReturnType<typeof parseExecutableSpec> {
-  // Validate options using Zod schema
   const validationResult = QueryOptionsSchema.safeParse(options);
   if (!validationResult.success) {
     const errors = validationResult.error.errors
@@ -113,7 +94,6 @@ function validateOptions(
     throw new Error(`Invalid QueryOptions: ${errors}`);
   }
 
-  // Validate executable path early to provide clear error messages
   let parsedExecutable: ReturnType<typeof parseExecutableSpec>;
   try {
     parsedExecutable = parseExecutableSpec(options.pathToQwenExecutable);
@@ -122,7 +102,6 @@ function validateOptions(
     throw new Error(`Invalid pathToQwenExecutable: ${errorMessage}`);
   }
 
-  // Validate no MCP server name conflicts (cross-field validation not easily expressible in Zod)
   if (options.mcpServers && options.sdkMcpServers) {
     const externalNames = Object.keys(options.mcpServers);
     const sdkNames = Object.keys(options.sdkMcpServers);

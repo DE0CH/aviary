@@ -154,7 +154,6 @@ export function parseExecutableSpec(executableSpec?: string): {
   executablePath: string;
   isExplicitRuntime: boolean;
 } {
-  // Handle empty string case first (before checking for undefined/null)
   if (
     executableSpec === '' ||
     (executableSpec && executableSpec.trim() === '')
@@ -163,7 +162,6 @@ export function parseExecutableSpec(executableSpec?: string): {
   }
 
   if (!executableSpec) {
-    // Auto-detect native CLI
     return {
       executablePath: findNativeCliPath(),
       isExplicitRuntime: false,
@@ -178,7 +176,6 @@ export function parseExecutableSpec(executableSpec?: string): {
       throw new Error(`Invalid runtime specification: '${executableSpec}'`);
     }
 
-    // Validate runtime is supported
     const supportedRuntimes = ['node', 'bun', 'tsx', 'deno'];
     if (!supportedRuntimes.includes(runtime)) {
       throw new Error(
@@ -186,7 +183,6 @@ export function parseExecutableSpec(executableSpec?: string): {
       );
     }
 
-    // Validate runtime availability
     if (!validateRuntimeAvailability(runtime)) {
       throw new Error(
         `Runtime '${runtime}' is not available on this system. Please install it first.`,
@@ -195,7 +191,6 @@ export function parseExecutableSpec(executableSpec?: string): {
 
     const resolvedPath = path.resolve(filePath);
 
-    // Validate file exists
     if (!fs.existsSync(resolvedPath)) {
       throw new Error(
         `Executable file not found at '${resolvedPath}' for runtime '${runtime}'. ` +
@@ -203,7 +198,6 @@ export function parseExecutableSpec(executableSpec?: string): {
       );
     }
 
-    // Validate file extension matches runtime
     if (!validateFileExtensionForRuntime(resolvedPath, runtime)) {
       const ext = path.extname(resolvedPath);
       throw new Error(
@@ -285,14 +279,6 @@ function getExpectedExtensions(runtime: string): string[] {
   }
 }
 
-/**
- * @deprecated Use parseExecutableSpec and prepareSpawnInfo instead
- */
-export function resolveCliPath(explicitPath?: string): string {
-  const parsed = parseExecutableSpec(explicitPath);
-  return parsed.executablePath;
-}
-
 function detectRuntimeFromExtension(filePath: string): string | undefined {
   const ext = path.extname(filePath).toLowerCase();
 
@@ -355,11 +341,4 @@ export function prepareSpawnInfo(executableSpec?: string): SpawnInfo {
     type: 'native',
     originalInput: executableSpec || '',
   };
-}
-
-/**
- * @deprecated Use prepareSpawnInfo() instead
- */
-export function findCliPath(): string {
-  return findNativeCliPath();
 }

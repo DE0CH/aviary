@@ -855,13 +855,6 @@ export class Config {
     return this.mcpServers;
   }
 
-  setMcpServers(servers: Record<string, MCPServerConfig>): void {
-    if (this.initialized) {
-      throw new Error('Cannot modify mcpServers after initialization');
-    }
-    this.mcpServers = servers;
-  }
-
   addMcpServers(servers: Record<string, MCPServerConfig>): void {
     if (this.initialized) {
       throw new Error('Cannot modify mcpServers after initialization');

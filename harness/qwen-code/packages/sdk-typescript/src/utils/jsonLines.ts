@@ -38,20 +38,16 @@ export async function* parseJsonLinesStream(
   context = 'JsonLines',
 ): AsyncGenerator<unknown, void, unknown> {
   for await (const line of lines) {
-    // Skip empty lines
     if (line.trim().length === 0) {
       continue;
     }
 
-    // Parse with error handling
     const message = parseJsonLineSafe(line, context);
 
-    // Skip malformed messages
     if (message === null) {
       continue;
     }
 
-    // Validate message structure
     if (!isValidMessage(message)) {
       console.warn(
         `[${context}] Invalid message structure (missing 'type' field), skipping:`,

@@ -7,11 +7,6 @@ import { parseJsonLinesStream } from '../utils/jsonLines.js';
 import { prepareSpawnInfo } from '../utils/cliPath.js';
 import { AbortError } from '../types/errors.js';
 
-type ExitListener = {
-  callback: (error?: Error) => void;
-  handler: (code: number | null, signal: NodeJS.Signals | null) => void;
-};
-
 export class ProcessTransport implements Transport {
   private childProcess: ChildProcess | null = null;
   private childStdin: Writable | null = null;
@@ -21,7 +16,6 @@ export class ProcessTransport implements Transport {
   private _exitError: Error | null = null;
   private closed = false;
   private abortController: AbortController;
-  private exitListeners: ExitListener[] = [];
   private processExitHandler: (() => void) | null = null;
   private abortHandler: (() => void) | null = null;
 
@@ -115,15 +109,6 @@ export class ProcessTransport implements Transport {
           this.logForDebugging(error.message);
         }
       }
-
-      const error = this._exitError;
-      for (const listener of this.exitListeners) {
-        try {
-          listener.callback(error || undefined);
-        } catch (err) {
-          this.logForDebugging(`Exit listener error: ${err}`);
-        }
-      }
     });
   }
 
@@ -191,11 +176,6 @@ export class ProcessTransport implements Transport {
       );
       this.abortHandler = null;
     }
-
-    for (const { handler } of this.exitListeners) {
-      this.childProcess?.off('close', handler);
-    }
-    this.exitListeners = [];
 
     if (this.childProcess && !this.childProcess.killed) {
       this.childProcess.kill('SIGTERM');
@@ -341,30 +321,6 @@ export class ProcessTransport implements Transport {
 
   get exitError(): Error | null {
     return this._exitError;
-  }
-
-  onExit(callback: (error?: Error) => void): () => void {
-    if (!this.childProcess) {
-      return () => {};
-    }
-
-    const handler = (code: number | null, signal: NodeJS.Signals | null) => {
-      const error = this.getProcessExitError(code, signal);
-      callback(error);
-    };
-
-    this.childProcess.on('close', handler);
-    this.exitListeners.push({ callback, handler });
-
-    return () => {
-      if (this.childProcess) {
-        this.childProcess.off('close', handler);
-      }
-      const index = this.exitListeners.findIndex((l) => l.handler === handler);
-      if (index !== -1) {
-        this.exitListeners.splice(index, 1);
-      }
-    };
   }
 
   endInput(): void {

@@ -1,5 +1,5 @@
 export { query } from './query/createQuery.js';
-
+export { AbortError, isAbortError } from './types/errors.js';
 export { Query } from './query/Query.js';
 
 export type { ExternalMcpServerConfig } from './types/queryOptionsSchema.js';

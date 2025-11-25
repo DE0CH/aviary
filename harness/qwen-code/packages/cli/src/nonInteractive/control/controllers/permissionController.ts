@@ -442,7 +442,7 @@ export class PermissionController extends BaseController {
       // On error, use default cancel message
       // Only pass payload for exec and mcp types that support it
       const confirmationType = toolCall.confirmationDetails.type;
-      if (confirmationType === 'exec' || confirmationType === 'mcp') {
+      if (['edit', 'exec', 'mcp'].includes(confirmationType)) {
         const execOrMcpDetails = toolCall.confirmationDetails as
           | ToolExecuteConfirmationDetails
           | ToolMcpConfirmationDetails;
