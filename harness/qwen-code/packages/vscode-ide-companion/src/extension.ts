@@ -14,7 +14,7 @@ import {
   IDE_DEFINITIONS,
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
-import { WebViewProvider } from './WebViewProvider.js';
+import { WebViewProvider } from './webview/WebViewProvider.js';
 import { AuthStateManager } from './auth/authStateManager.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
@@ -115,12 +115,29 @@ export async function activate(context: vscode.ExtensionContext) {
   const diffManager = new DiffManager(log, diffContentProvider);
 
   // Initialize Auth State Manager
+  console.log('[Extension] Initializing global AuthStateManager');
   authStateManager = new AuthStateManager(context);
+  console.log(
+    '[Extension] Global AuthStateManager initialized:',
+    !!authStateManager,
+  );
 
   // Helper function to create a new WebView provider instance
   const createWebViewProvider = (): WebViewProvider => {
-    const provider = new WebViewProvider(context, context.extensionUri);
+    console.log(
+      '[Extension] Creating WebViewProvider with global AuthStateManager:',
+      !!authStateManager,
+    );
+    const provider = new WebViewProvider(
+      context,
+      context.extensionUri,
+      authStateManager,
+    );
     webViewProviders.push(provider);
+    console.log(
+      '[Extension] WebViewProvider created, total providers:',
+      webViewProviders.length,
+    );
     return provider;
   };
 
@@ -138,19 +155,26 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Create a new provider for the restored panel
         const provider = createWebViewProvider();
-        provider.restorePanel(webviewPanel);
+        console.log('[Extension] Provider created for deserialization');
 
-        // Restore state if available
+        // Restore state if available BEFORE restoring the panel
         if (state && typeof state === 'object') {
+          console.log('[Extension] Restoring state:', state);
           provider.restoreState(
             state as {
               conversationId: string | null;
               agentInitialized: boolean;
             },
           );
+        } else {
+          console.log('[Extension] No state to restore or invalid state');
         }
 
+        await provider.restorePanel(webviewPanel);
+        console.log('[Extension] Panel restore completed');
+
         log('WebView panel restored from serialization');
+        return true;
       },
     }),
   );

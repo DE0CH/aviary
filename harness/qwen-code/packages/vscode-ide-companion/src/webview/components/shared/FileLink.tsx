@@ -3,8 +3,8 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * FileLink 组件 - 可点击的文件路径链接
- * 支持点击打开文件并跳转到指定行号和列号
+ * FileLink component - Clickable file path links
+ * Supports clicking to open files and jump to specified line and column numbers
  */
 
 import type React from 'react';
@@ -15,24 +15,24 @@ import './FileLink.css';
  * Props for FileLink
  */
 interface FileLinkProps {
-  /** 文件路径 */
+  /** File path */
   path: string;
-  /** 可选的行号（从 1 开始） */
+  /** Optional line number (starting from 1) */
   line?: number | null;
-  /** 可选的列号（从 1 开始） */
+  /** Optional column number (starting from 1) */
   column?: number | null;
-  /** 是否显示完整路径，默认 false（只显示文件名） */
+  /** Whether to show full path, default false (show filename only) */
   showFullPath?: boolean;
-  /** 可选的自定义类名 */
+  /** Optional custom class name */
   className?: string;
-  /** 是否禁用点击行为（当父元素已经处理点击时使用） */
+  /** Whether to disable click behavior (use when parent element handles clicks) */
   disableClick?: boolean;
 }
 
 /**
- * 从完整路径中提取文件名
- * @param path 文件路径
- * @returns 文件名
+ * Extract filename from full path
+ * @param path File path
+ * @returns Filename
  */
 function getFileName(path: string): string {
   const segments = path.split(/[/\\]/);
@@ -40,13 +40,13 @@ function getFileName(path: string): string {
 }
 
 /**
- * FileLink 组件 - 可点击的文件链接
+ * FileLink component - Clickable file link
  *
- * 功能：
- * - 点击打开文件
- * - 支持行号和列号跳转
- * - 悬停显示完整路径
- * - 可选显示模式（完整路径 vs 仅文件名）
+ * Features:
+ * - Click to open file
+ * - Support line and column number navigation
+ * - Hover to show full path
+ * - Optional display mode (full path vs filename only)
  *
  * @example
  * ```tsx
@@ -65,22 +65,22 @@ export const FileLink: React.FC<FileLinkProps> = ({
   const vscode = useVSCode();
 
   /**
-   * 处理点击事件 - 发送消息到 VSCode 打开文件
+   * Handle click event - Send message to VSCode to open file
    */
   const handleClick = (e: React.MouseEvent) => {
-    // 总是阻止默认行为（防止 <a> 标签的 # 跳转）
+    // Always prevent default behavior (prevent <a> tag # navigation)
     e.preventDefault();
 
     if (disableClick) {
-      // 如果禁用点击，直接返回，不阻止冒泡
-      // 这样父元素可以处理点击事件
+      // If click is disabled, return directly without stopping propagation
+      // This allows parent elements to handle click events
       return;
     }
 
-    // 如果启用点击，阻止事件冒泡
+    // If click is enabled, stop event propagation
     e.stopPropagation();
 
-    // 构建包含行号和列号的完整路径
+    // Build full path including line and column numbers
     let fullPath = path;
     if (line !== null && line !== undefined) {
       fullPath += `:${line}`;
@@ -97,10 +97,10 @@ export const FileLink: React.FC<FileLinkProps> = ({
     });
   };
 
-  // 构建显示文本
+  // Build display text
   const displayPath = showFullPath ? path : getFileName(path);
 
-  // 构建悬停提示（始终显示完整路径）
+  // Build hover tooltip (always show full path)
   const fullDisplayText =
     line !== null && line !== undefined
       ? column !== null && column !== undefined

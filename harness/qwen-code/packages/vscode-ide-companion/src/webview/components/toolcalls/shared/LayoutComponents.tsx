@@ -59,7 +59,7 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
     >
       ●
     </span>
-    <div className="flex flex-col gap-1 pl-[30px]">
+    <div className="toolcall-content-wrapper flex flex-col gap-1 pl-[30px] max-w-full">
       <div className="flex items-center gap-2">
         <span className="text-[13px] font-medium text-[var(--app-primary-foreground)]">
           {label}
@@ -195,7 +195,7 @@ interface LocationsListProps {
  * List of file locations with clickable links
  */
 export const LocationsList: React.FC<LocationsListProps> = ({ locations }) => (
-  <div className="flex flex-col gap-1 pl-[30px]">
+  <div className="toolcall-locations-list flex flex-col gap-1 pl-[30px] max-w-full">
     {locations.map((loc, idx) => (
       <FileLink key={idx} path={loc.path} line={loc.line} showFullPath={true} />
     ))}

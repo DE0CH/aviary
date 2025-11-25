@@ -33,15 +33,15 @@ function getExtensionUri(): string | undefined {
 }
 
 /**
- * 验证 URL 是否为安全的 VS Code webview 资源 URL
- * 防止 XSS 攻击
+ * Validate if URL is a secure VS Code webview resource URL
+ * Prevent XSS attacks
  *
- * @param url - 待验证的 URL
- * @returns 是否为安全的 URL
+ * @param url - URL to validate
+ * @returns Whether it is a secure URL
  */
 function isValidWebviewUrl(url: string): boolean {
   try {
-    // VS Code webview 资源 URL 的合法协议
+    // Valid protocols for VS Code webview resource URLs
     const allowedProtocols = [
       'vscode-webview-resource:',
       'https-vscode-webview-resource:',
@@ -49,7 +49,7 @@ function isValidWebviewUrl(url: string): boolean {
       'https:',
     ];
 
-    // 检查是否以合法协议开头
+    // Check if it starts with a valid protocol
     return allowedProtocols.some((protocol) => url.startsWith(protocol));
   } catch {
     return false;
@@ -76,7 +76,7 @@ export function generateResourceUrl(relativePath: string): string {
     return '';
   }
 
-  // 验证 extensionUri 是否为安全的 URL
+  // Validate if extensionUri is a secure URL
   if (!isValidWebviewUrl(extensionUri)) {
     console.error(
       '[resourceUrl] Invalid extension URI - possible security risk:',
@@ -97,7 +97,7 @@ export function generateResourceUrl(relativePath: string): string {
 
   const fullUrl = `${baseUri}${cleanPath}`;
 
-  // 验证最终生成的 URL 是否安全
+  // Validate if the final generated URL is secure
   if (!isValidWebviewUrl(fullUrl)) {
     console.error('[resourceUrl] Generated URL failed validation:', fullUrl);
     return '';

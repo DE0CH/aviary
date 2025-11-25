@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { CliDetector } from '../utils/cliDetector.js';
+import { CliDetector } from './cliDetector.js';
 
 /**
  * CLI 检测和安装处理器

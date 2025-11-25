@@ -141,6 +141,7 @@ export class FileOperations {
         newUri,
         `${fileName} (Before ↔ After)`,
         {
+          viewColumn: vscode.ViewColumn.Beside,
           preview: false,
           preserveFocus: false,
         },

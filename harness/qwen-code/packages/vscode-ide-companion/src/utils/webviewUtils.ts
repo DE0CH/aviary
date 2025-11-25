@@ -5,21 +5,21 @@
  */
 
 /**
- * 从完整路径中提取文件名
- * @param fsPath 文件的完整路径
- * @returns 文件名（不含路径）
+ * Extract filename from full path
+ * @param fsPath Full path of the file
+ * @returns Filename (without path)
  */
 export function getFileName(fsPath: string): string {
-  // 使用 path.basename 的逻辑：找到最后一个路径分隔符后的部分
+  // Use path.basename logic: find the part after the last path separator
   const lastSlash = Math.max(fsPath.lastIndexOf('/'), fsPath.lastIndexOf('\\'));
   return lastSlash >= 0 ? fsPath.substring(lastSlash + 1) : fsPath;
 }
 
 /**
- * HTML 转义函数，防止 XSS 攻击
- * 将特殊字符转换为 HTML 实体
- * @param text 需要转义的文本
- * @returns 转义后的文本
+ * HTML escape function to prevent XSS attacks
+ * Convert special characters to HTML entities
+ * @param text Text to escape
+ * @returns Escaped text
  */
 export function escapeHtml(text: string): string {
   return text

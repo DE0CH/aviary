@@ -81,8 +81,6 @@ export class DiffManager {
    * @param newContent The modified content (right side)
    */
   async showDiff(filePath: string, oldContent: string, newContent: string) {
-    const _fileUri = vscode.Uri.file(filePath);
-
     // Left side: old content using qwen-diff scheme
     const leftDocUri = vscode.Uri.from({
       scheme: DIFF_SCHEME,
@@ -118,6 +116,7 @@ export class DiffManager {
       rightDocUri,
       diffTitle,
       {
+        viewColumn: vscode.ViewColumn.Beside,
         preview: false,
         preserveFocus: true,
       },

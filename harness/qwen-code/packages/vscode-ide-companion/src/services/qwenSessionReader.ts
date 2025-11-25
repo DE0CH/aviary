@@ -42,7 +42,7 @@ export class QwenSessionReader {
   }
 
   /**
-   * 获取所有会话列表（可选：仅当前项目或所有项目）
+   * Get all session list (optional: current project only or all projects)
    */
   async getAllSessions(
     workingDir?: string,
@@ -52,13 +52,13 @@ export class QwenSessionReader {
       const sessions: QwenSession[] = [];
 
       if (!allProjects && workingDir) {
-        // 仅当前项目
+        // Current project only
         const projectHash = await this.getProjectHash(workingDir);
         const chatsDir = path.join(this.qwenDir, 'tmp', projectHash, 'chats');
         const projectSessions = await this.readSessionsFromDir(chatsDir);
         sessions.push(...projectSessions);
       } else {
-        // 所有项目
+        // All projects
         const tmpDir = path.join(this.qwenDir, 'tmp');
         if (!fs.existsSync(tmpDir)) {
           console.log('[QwenSessionReader] Tmp directory not found:', tmpDir);
@@ -73,7 +73,7 @@ export class QwenSessionReader {
         }
       }
 
-      // 按最后更新时间排序
+      // Sort by last updated time
       sessions.sort(
         (a, b) =>
           new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime(),
@@ -87,7 +87,7 @@ export class QwenSessionReader {
   }
 
   /**
-   * 从指定目录读取所有会话
+   * Read all sessions from specified directory
    */
   private async readSessionsFromDir(chatsDir: string): Promise<QwenSession[]> {
     const sessions: QwenSession[] = [];
@@ -120,7 +120,7 @@ export class QwenSessionReader {
   }
 
   /**
-   * 获取特定会话的详情
+   * Get details of specific session
    */
   async getSession(
     sessionId: string,
@@ -132,8 +132,8 @@ export class QwenSessionReader {
   }
 
   /**
-   * 计算项目 hash（需要与 Qwen CLI 一致）
-   * Qwen CLI 使用项目路径的 SHA256 hash
+   * Calculate project hash (needs to be consistent with Qwen CLI)
+   * Qwen CLI uses SHA256 hash of project path
    */
   private async getProjectHash(workingDir: string): Promise<string> {
     const crypto = await import('crypto');
@@ -141,12 +141,12 @@ export class QwenSessionReader {
   }
 
   /**
-   * 获取会话的标题（基于第一条用户消息）
+   * Get session title (based on first user message)
    */
   getSessionTitle(session: QwenSession): string {
     const firstUserMessage = session.messages.find((m) => m.type === 'user');
     if (firstUserMessage) {
-      // 截取前50个字符作为标题
+      // Extract first 50 characters as title
       return (
         firstUserMessage.content.substring(0, 50) +
         (firstUserMessage.content.length > 50 ? '...' : '')
@@ -156,7 +156,7 @@ export class QwenSessionReader {
   }
 
   /**
-   * 删除会话文件
+   * Delete session file
    */
   async deleteSession(
     sessionId: string,

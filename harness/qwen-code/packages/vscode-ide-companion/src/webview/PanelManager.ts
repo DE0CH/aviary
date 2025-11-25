@@ -30,6 +30,7 @@ export class PanelManager {
    * 设置 Panel（用于恢复）
    */
   setPanel(panel: vscode.WebviewPanel): void {
+    console.log('[PanelManager] Setting panel for restoration');
     this.panel = panel;
   }
 
@@ -171,19 +172,6 @@ export class PanelManager {
     console.log(
       '[PanelManager] Skipping auto-lock to allow multiple Qwen Code tabs',
     );
-
-    // If you want to enable auto-locking for the first tab, uncomment the following:
-    // const existingQwenInfo = this.findExistingQwenCodeGroup();
-    // if (!existingQwenInfo) {
-    //   console.log('[PanelManager] First Qwen Code tab, locking editor group');
-    //   try {
-    //     this.revealPanel(false);
-    //     await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
-    //     console.log('[PanelManager] Editor group locked successfully');
-    //   } catch (error) {
-    //     console.warn('[PanelManager] Failed to lock editor group:', error);
-    //   }
-    // }
   }
 
   /**

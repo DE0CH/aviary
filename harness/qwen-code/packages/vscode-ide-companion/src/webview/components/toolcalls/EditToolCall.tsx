@@ -94,7 +94,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <span className="absolute left-2 top-[10px] text-[10px] text-[#74c991]">
             ●
           </span>
-          <div className="flex flex-col gap-1 pl-[30px]">
+          <div className="toolcall-edit-content flex flex-col gap-1 pl-[30px] max-w-full">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-[13px] font-medium text-[var(--app-primary-foreground)]">

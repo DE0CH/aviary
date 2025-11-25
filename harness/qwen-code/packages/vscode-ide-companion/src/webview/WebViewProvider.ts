@@ -5,16 +5,16 @@
  */
 
 import * as vscode from 'vscode';
-import { QwenAgentManager } from './agents/qwenAgentManager.js';
-import { ConversationStore } from './storage/conversationStore.js';
-import type { AcpPermissionRequest } from './shared/acpTypes.js';
-import { CliDetector } from './utils/cliDetector.js';
-import { AuthStateManager } from './auth/authStateManager.js';
-import { PanelManager } from './webview/PanelManager.js';
-import { MessageHandler } from './webview/MessageHandler.js';
-import { WebViewContent } from './webview/WebViewContent.js';
-import { CliInstaller } from './webview/CliInstaller.js';
-import { getFileName } from './utils/webviewUtils.js';
+import { QwenAgentManager } from '../agents/qwenAgentManager.js';
+import { ConversationStore } from '../storage/conversationStore.js';
+import type { AcpPermissionRequest } from '../shared/acpTypes.js';
+import { CliDetector } from '../utils/cliDetector.js';
+import { AuthStateManager } from '../auth/authStateManager.js';
+import { PanelManager } from './PanelManager.js';
+import { MessageHandler } from './MessageHandler.js';
+import { WebViewContent } from './WebViewContent.js';
+import { CliInstaller } from '../utils/CliInstaller.js';
+import { getFileName } from '../utils/webviewUtils.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -28,10 +28,12 @@ export class WebViewProvider {
   constructor(
     context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
+    authStateManager?: AuthStateManager, // 可选的全局AuthStateManager实例
   ) {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
-    this.authStateManager = new AuthStateManager(context);
+    // 如果提供了全局的authStateManager，则使用它，否则创建新的实例
+    this.authStateManager = authStateManager || new AuthStateManager(context);
     this.panelManager = new PanelManager(extensionUri, () => {
       // Panel dispose callback
       this.disposables.forEach((d) => d.dispose());
@@ -174,6 +176,13 @@ export class WebViewProvider {
       return;
     }
 
+    // Set up state serialization
+    newPanel.onDidChangeViewState(() => {
+      console.log(
+        '[WebViewProvider] Panel view state changed, triggering serialization check',
+      );
+    });
+
     // Capture the Tab that corresponds to our WebviewPanel
     this.panelManager.captureTab();
 
@@ -293,19 +302,50 @@ export class WebViewProvider {
       });
     }
 
-    // Don't auto-login; user must use /login command
-    // Just initialize empty conversation for the UI
-    if (!this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Agent not initialized, waiting for /login command',
+    // Smart login restore: Check if we have valid cached auth and restore connection if available
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+    const config = vscode.workspace.getConfiguration('qwenCode');
+    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+    // Check if we have valid cached authentication
+    let hasValidAuth = false;
+    if (this.authStateManager) {
+      hasValidAuth = await this.authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
       );
-      await this.initializeEmptyConversation();
-    } else {
+      console.log(
+        '[WebViewProvider] Has valid cached auth on show:',
+        hasValidAuth,
+      );
+    }
+
+    if (hasValidAuth && !this.agentInitialized) {
+      console.log(
+        '[WebViewProvider] Found valid cached auth, attempting to restore connection...',
+      );
+      try {
+        await this.initializeAgentConnection();
+        console.log('[WebViewProvider] Connection restored successfully');
+      } catch (error) {
+        console.error('[WebViewProvider] Failed to restore connection:', error);
+        // Fall back to empty conversation if restore fails
+        await this.initializeEmptyConversation();
+      }
+    } else if (this.agentInitialized) {
       console.log(
         '[WebViewProvider] Agent already initialized, reusing existing connection',
       );
       // Reload current session messages
       await this.loadCurrentSessionMessages();
+    } else {
+      console.log(
+        '[WebViewProvider] No valid cached auth or agent already initialized, showing empty conversation',
+      );
+      // Just initialize empty conversation for the UI
+      await this.initializeEmptyConversation();
     }
   }
 
@@ -352,6 +392,10 @@ export class WebViewProvider {
 
         try {
           console.log('[WebViewProvider] Connecting to agent...');
+          console.log(
+            '[WebViewProvider] Using authStateManager:',
+            !!this.authStateManager,
+          );
           const authInfo = await this.authStateManager.getAuthInfo();
           console.log('[WebViewProvider] Auth cache status:', authInfo);
 
@@ -385,10 +429,18 @@ export class WebViewProvider {
    */
   async forceReLogin(): Promise<void> {
     console.log('[WebViewProvider] Force re-login requested');
+    console.log(
+      '[WebViewProvider] Current authStateManager:',
+      !!this.authStateManager,
+    );
 
     // Clear existing auth cache
-    await this.authStateManager.clearAuthState();
-    console.log('[WebViewProvider] Auth cache cleared');
+    if (this.authStateManager) {
+      await this.authStateManager.clearAuthState();
+      console.log('[WebViewProvider] Auth cache cleared');
+    } else {
+      console.log('[WebViewProvider] No authStateManager to clear');
+    }
 
     // Disconnect existing connection if any
     if (this.agentInitialized) {
@@ -555,6 +607,10 @@ export class WebViewProvider {
    */
   async restorePanel(panel: vscode.WebviewPanel): Promise<void> {
     console.log('[WebViewProvider] Restoring WebView panel');
+    console.log(
+      '[WebViewProvider] Current authStateManager in restore:',
+      !!this.authStateManager,
+    );
     this.panelManager.setPanel(panel);
 
     panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
@@ -643,10 +699,41 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // Refresh connection on restore (will use cached auth if available)
-    if (this.agentInitialized) {
+    // Smart login restore: Check if we have valid cached auth and restore connection if available
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+    const config = vscode.workspace.getConfiguration('qwenCode');
+    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+    // Check if we have valid cached authentication
+    let hasValidAuth = false;
+    if (this.authStateManager) {
+      hasValidAuth = await this.authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
+      );
       console.log(
-        '[WebViewProvider] Agent was initialized, refreshing connection...',
+        '[WebViewProvider] Has valid cached auth on restore:',
+        hasValidAuth,
+      );
+    }
+
+    if (hasValidAuth && !this.agentInitialized) {
+      console.log(
+        '[WebViewProvider] Found valid cached auth, attempting to restore connection...',
+      );
+      try {
+        await this.initializeAgentConnection();
+        console.log('[WebViewProvider] Connection restored successfully');
+      } catch (error) {
+        console.error('[WebViewProvider] Failed to restore connection:', error);
+        // Fall back to empty conversation if restore fails
+        await this.initializeEmptyConversation();
+      }
+    } else if (this.agentInitialized) {
+      console.log(
+        '[WebViewProvider] Agent already initialized, refreshing connection...',
       );
       try {
         await this.refreshConnection();
@@ -659,8 +746,9 @@ export class WebViewProvider {
       }
     } else {
       console.log(
-        '[WebViewProvider] Agent not initialized, waiting for /login command',
+        '[WebViewProvider] No valid cached auth or agent already initialized, showing empty conversation',
       );
+      // Just initialize empty conversation for the UI
       await this.initializeEmptyConversation();
     }
   }
@@ -673,10 +761,28 @@ export class WebViewProvider {
     conversationId: string | null;
     agentInitialized: boolean;
   } {
-    return {
+    console.log('[WebViewProvider] Getting state for serialization');
+    console.log(
+      '[WebViewProvider] Current conversationId:',
+      this.messageHandler.getCurrentConversationId(),
+    );
+    console.log(
+      '[WebViewProvider] Current agentInitialized:',
+      this.agentInitialized,
+    );
+    const state = {
       conversationId: this.messageHandler.getCurrentConversationId(),
       agentInitialized: this.agentInitialized,
     };
+    console.log('[WebViewProvider] Returning state:', state);
+    return state;
+  }
+
+  /**
+   * Get the current panel
+   */
+  getPanel(): vscode.WebviewPanel | null {
+    return this.panelManager.getPanel();
   }
 
   /**
@@ -689,6 +795,10 @@ export class WebViewProvider {
     console.log('[WebViewProvider] Restoring state:', state);
     this.messageHandler.setCurrentConversationId(state.conversationId);
     this.agentInitialized = state.agentInitialized;
+    console.log(
+      '[WebViewProvider] State restored. agentInitialized:',
+      this.agentInitialized,
+    );
 
     // Reload content after restore
     const panel = this.panelManager.getPanel();

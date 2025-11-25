@@ -55,5 +55,4 @@ export const CLIENT_METHODS = {
  */
 export const CUSTOM_METHODS = {
   session_list: 'session/list',
-  session_switch: 'session/switch',
 } as const;

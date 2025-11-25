@@ -70,13 +70,21 @@ export class QwenConnectionHandler {
 
     // Check if we have valid cached authentication
     if (authStateManager) {
+      console.log('[QwenAgentManager] Checking for cached authentication...');
+      console.log('[QwenAgentManager] Working dir:', workingDir);
+      console.log('[QwenAgentManager] Auth method:', authMethod);
       const hasValidAuth = await authStateManager.hasValidAuth(
         workingDir,
         authMethod,
       );
+      console.log('[QwenAgentManager] Has valid auth:', hasValidAuth);
       if (hasValidAuth) {
         console.log('[QwenAgentManager] Using cached authentication');
+      } else {
+        console.log('[QwenAgentManager] No valid cached authentication found');
       }
+    } else {
+      console.log('[QwenAgentManager] No authStateManager provided');
     }
 
     // Try to restore existing session or create new session
@@ -156,7 +164,10 @@ export class QwenConnectionHandler {
             console.log(
               '[QwenAgentManager] Saving auth state after successful authentication',
             );
+            console.log('[QwenAgentManager] Working dir for save:', workingDir);
+            console.log('[QwenAgentManager] Auth method for save:', authMethod);
             await authStateManager.saveAuthState(workingDir, authMethod);
+            console.log('[QwenAgentManager] Auth state save completed');
           }
         } catch (authError) {
           console.error('[QwenAgentManager] Authentication failed:', authError);

@@ -40,10 +40,12 @@ export class SettingsMessageHandler extends BaseMessageHandler {
    */
   private async handleOpenSettings(): Promise<void> {
     try {
-      await vscode.commands.executeCommand(
-        'workbench.action.openSettings',
-        'qwenCode',
-      );
+      // Open settings in a side panel
+      await vscode.commands.executeCommand('workbench.action.openSettings', {
+        // TODO:
+        // openToSide: true,
+        query: 'qwenCode',
+      });
     } catch (error) {
       console.error('[SettingsMessageHandler] Failed to open settings:', error);
       vscode.window.showErrorMessage(`Failed to open settings: ${error}`);

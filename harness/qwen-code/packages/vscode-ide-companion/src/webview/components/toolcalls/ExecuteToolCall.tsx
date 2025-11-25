@@ -39,7 +39,7 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
-        <div className="bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3">
+        <div className="execute-toolcall-error-card bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3 max-w-full overflow-x-auto">
           <div className="grid grid-cols-[80px_1fr] gap-3">
             <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
               IN
@@ -73,7 +73,7 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
-        <div className="bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3">
+        <div className="execute-toolcall-output-card bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3 max-w-full overflow-x-auto">
           <div className="grid grid-cols-[80px_1fr] gap-3">
             <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
               IN

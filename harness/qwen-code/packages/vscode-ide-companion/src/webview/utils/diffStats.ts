@@ -3,35 +3,35 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * Diff 统计计算工具
+ * Diff statistics calculation tool
  */
 
 /**
- * Diff 统计信息
+ * Diff statistics
  */
 export interface DiffStats {
-  /** 新增行数 */
+  /** Number of added lines */
   added: number;
-  /** 删除行数 */
+  /** Number of removed lines */
   removed: number;
-  /** 修改行数（估算值） */
+  /** Number of changed lines (estimated value) */
   changed: number;
-  /** 总变更行数 */
+  /** Total number of changed lines */
   total: number;
 }
 
 /**
- * 计算两个文本之间的 diff 统计信息
+ * Calculate diff statistics between two texts
  *
- * 使用简单的行对比算法（避免引入重量级 diff 库）
- * 算法说明：
- * 1. 将文本按行分割
- * 2. 比较行的集合差异
- * 3. 估算修改行数（同时出现在新增和删除中的行数）
+ * Using a simple line comparison algorithm (avoiding heavy-weight diff libraries)
+ * Algorithm explanation:
+ * 1. Split text by lines
+ * 2. Compare set differences of lines
+ * 3. Estimate changed lines (lines that appear in both added and removed)
  *
- * @param oldText 旧文本内容
- * @param newText 新文本内容
- * @returns diff 统计信息
+ * @param oldText Old text content
+ * @param newText New text content
+ * @returns Diff statistics
  *
  * @example
  * ```typescript
@@ -46,15 +46,15 @@ export function calculateDiffStats(
   oldText: string | null | undefined,
   newText: string | undefined,
 ): DiffStats {
-  // 处理空值情况
+  // Handle null values
   const oldContent = oldText || '';
   const newContent = newText || '';
 
-  // 按行分割
+  // Split by lines
   const oldLines = oldContent.split('\n').filter((line) => line.trim() !== '');
   const newLines = newContent.split('\n').filter((line) => line.trim() !== '');
 
-  // 如果其中一个为空，直接计算
+  // If one of them is empty, calculate directly
   if (oldLines.length === 0) {
     return {
       added: newLines.length,
@@ -73,18 +73,18 @@ export function calculateDiffStats(
     };
   }
 
-  // 使用 Set 进行快速查找
+  // Use Set for fast lookup
   const oldSet = new Set(oldLines);
   const newSet = new Set(newLines);
 
-  // 计算新增：在 new 中但不在 old 中的行
+  // Calculate added: lines in new but not in old
   const addedLines = newLines.filter((line) => !oldSet.has(line));
 
-  // 计算删除：在 old 中但不在 new 中的行
+  // Calculate removed: lines in old but not in new
   const removedLines = oldLines.filter((line) => !newSet.has(line));
 
-  // 估算修改：取较小值（因为修改的行既被删除又被添加）
-  // 这是一个简化的估算，实际的 diff 算法会更精确
+  // Estimate changes: take the minimum value (because changed lines are both deleted and added)
+  // This is a simplified estimation, actual diff algorithms would be more precise
   const estimatedChanged = Math.min(addedLines.length, removedLines.length);
 
   const added = addedLines.length - estimatedChanged;
@@ -100,10 +100,10 @@ export function calculateDiffStats(
 }
 
 /**
- * 格式化 diff 统计信息为人类可读的文本
+ * Format diff statistics as human-readable text
  *
- * @param stats diff 统计信息
- * @returns 格式化后的文本，例如 "+5 -3 ~2"
+ * @param stats Diff statistics
+ * @returns Formatted text, e.g. "+5 -3 ~2"
  *
  * @example
  * ```typescript
@@ -130,10 +130,10 @@ export function formatDiffStats(stats: DiffStats): string {
 }
 
 /**
- * 格式化详细的 diff 统计信息
+ * Format detailed diff statistics
  *
- * @param stats diff 统计信息
- * @returns 详细的描述文本
+ * @param stats Diff statistics
+ * @returns Detailed description text
  *
  * @example
  * ```typescript

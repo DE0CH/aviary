@@ -45,7 +45,6 @@ import { AcpSessionManager } from './acpSessionManager.js';
  *
  * Custom Methods (Not in standard ACP):
  * ⚠️  session/list - List available sessions (custom extension)
- * ⚠️  session/switch - Switch to different session (custom extension)
  */
 export class AcpConnection {
   private child: ChildProcess | null = null;
@@ -70,12 +69,12 @@ export class AcpConnection {
   }
 
   /**
-   * 连接到ACP后端
+   * Connect to ACP backend
    *
-   * @param backend - 后端类型
-   * @param cliPath - CLI路径
-   * @param workingDir - 工作目录
-   * @param extraArgs - 额外的命令行参数
+   * @param backend - Backend type
+   * @param cliPath - CLI path
+   * @param workingDir - Working directory
+   * @param extraArgs - Extra command line arguments
    */
   async connect(
     backend: AcpBackend,
@@ -92,8 +91,8 @@ export class AcpConnection {
     const isWindows = process.platform === 'win32';
     const env = { ...process.env };
 
-    // 如果在extraArgs中配置了代理，也将其设置为环境变量
-    // 这确保token刷新请求也使用代理
+    // If proxy is configured in extraArgs, also set it as environment variable
+    // This ensures token refresh requests also use the proxy
     const proxyArg = extraArgs.find(
       (arg, i) => arg === '--proxy' && i + 1 < extraArgs.length,
     );
@@ -134,9 +133,9 @@ export class AcpConnection {
   }
 
   /**
-   * 设置子进程处理器
+   * Set up child process handlers
    *
-   * @param backend - 后端名称
+   * @param backend - Backend name
    */
   private async setupChildProcessHandlers(backend: string): Promise<void> {
     let spawnError: Error | null = null;
@@ -163,7 +162,7 @@ export class AcpConnection {
       );
     });
 
-    // 等待进程启动
+    // Wait for process to start
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     if (spawnError) {
@@ -174,7 +173,7 @@ export class AcpConnection {
       throw new Error(`${backend} ACP process failed to start`);
     }
 
-    // 处理来自ACP服务器的消息
+    // Handle messages from ACP server
     let buffer = '';
     this.child.stdout?.on('data', (data) => {
       buffer += data.toString();
@@ -191,7 +190,7 @@ export class AcpConnection {
             );
             this.handleMessage(message);
           } catch (_error) {
-            // 忽略非JSON行
+            // Ignore non-JSON lines
             console.log(
               '[ACP] <<< Non-JSON line (ignored):',
               line.substring(0, 200),
@@ -212,9 +211,9 @@ export class AcpConnection {
   }
 
   /**
-   * 处理接收到的消息
+   * Handle received messages
    *
-   * @param message - ACP消息
+   * @param message - ACP message
    */
   private handleMessage(message: AcpMessage): void {
     const callbacks: AcpConnectionCallbacks = {
@@ -223,9 +222,9 @@ export class AcpConnection {
       onEndTurn: this.onEndTurn,
     };
 
-    // 处理消息
+    // Handle message
     if ('method' in message) {
-      // 请求或通知
+      // Request or notification
       this.messageHandler
         .handleIncomingRequest(message, callbacks)
         .then((result) => {
@@ -260,10 +259,10 @@ export class AcpConnection {
   }
 
   /**
-   * 认证
+   * Authenticate
    *
-   * @param methodId - 认证方法ID
-   * @returns 认证响应
+   * @param methodId - Authentication method ID
+   * @returns Authentication response
    */
   async authenticate(methodId?: string): Promise<AcpResponse> {
     return this.sessionManager.authenticate(
@@ -275,10 +274,10 @@ export class AcpConnection {
   }
 
   /**
-   * 创建新会话
+   * Create new session
    *
-   * @param cwd - 工作目录
-   * @returns 新会话响应
+   * @param cwd - Working directory
+   * @returns New session response
    */
   async newSession(cwd: string = process.cwd()): Promise<AcpResponse> {
     return this.sessionManager.newSession(
@@ -290,10 +289,10 @@ export class AcpConnection {
   }
 
   /**
-   * 发送提示消息
+   * Send prompt message
    *
-   * @param prompt - 提示内容
-   * @returns 响应
+   * @param prompt - Prompt content
+   * @returns Response
    */
   async sendPrompt(prompt: string): Promise<AcpResponse> {
     return this.sessionManager.sendPrompt(
@@ -305,10 +304,10 @@ export class AcpConnection {
   }
 
   /**
-   * 加载已有会话
+   * Load existing session
    *
-   * @param sessionId - 会话ID
-   * @returns 加载响应
+   * @param sessionId - Session ID
+   * @returns Load response
    */
   async loadSession(sessionId: string): Promise<AcpResponse> {
     return this.sessionManager.loadSession(
@@ -320,9 +319,9 @@ export class AcpConnection {
   }
 
   /**
-   * 获取会话列表
+   * Get session list
    *
-   * @returns 会话列表响应
+   * @returns Session list response
    */
   async listSessions(): Promise<AcpResponse> {
     return this.sessionManager.listSessions(
@@ -333,27 +332,27 @@ export class AcpConnection {
   }
 
   /**
-   * 切换到指定会话
+   * Switch to specified session
    *
-   * @param sessionId - 会话ID
-   * @returns 切换响应
+   * @param sessionId - Session ID
+   * @returns Switch response
    */
   async switchSession(sessionId: string): Promise<AcpResponse> {
     return this.sessionManager.switchSession(sessionId, this.nextRequestId);
   }
 
   /**
-   * 取消当前会话的提示生成
+   * Cancel current session prompt generation
    */
   async cancelSession(): Promise<void> {
     await this.sessionManager.cancelSession(this.child);
   }
 
   /**
-   * 保存当前会话
+   * Save current session
    *
-   * @param tag - 保存标签
-   * @returns 保存响应
+   * @param tag - Save tag
+   * @returns Save response
    */
   async saveSession(tag: string): Promise<AcpResponse> {
     return this.sessionManager.saveSession(
@@ -365,7 +364,7 @@ export class AcpConnection {
   }
 
   /**
-   * 断开连接
+   * Disconnect
    */
   disconnect(): void {
     if (this.child) {
@@ -379,21 +378,21 @@ export class AcpConnection {
   }
 
   /**
-   * 检查是否已连接
+   * Check if connected
    */
   get isConnected(): boolean {
     return this.child !== null && !this.child.killed;
   }
 
   /**
-   * 检查是否有活动会话
+   * Check if there is an active session
    */
   get hasActiveSession(): boolean {
     return this.sessionManager.getCurrentSessionId() !== null;
   }
 
   /**
-   * 获取当前会话ID
+   * Get current session ID
    */
   get currentSessionId(): string | null {
     return this.sessionManager.getCurrentSessionId();

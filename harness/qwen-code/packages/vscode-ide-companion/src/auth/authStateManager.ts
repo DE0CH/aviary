@@ -37,6 +37,7 @@ export class AuthStateManager {
       workingDir: state.workingDir,
       authMethod: state.authMethod,
       timestamp: new Date(state.timestamp).toISOString(),
+      isAuthenticated: state.isAuthenticated,
     });
     console.log('[AuthStateManager] Checking against:', {
       workingDir,
@@ -50,6 +51,11 @@ export class AuthStateManager {
 
     if (isExpired) {
       console.log('[AuthStateManager] Cached auth expired');
+      console.log(
+        '[AuthStateManager] Cache age:',
+        Math.floor((now - state.timestamp) / 1000 / 60),
+        'minutes',
+      );
       await this.clearAuthState();
       return false;
     }
@@ -60,6 +66,10 @@ export class AuthStateManager {
 
     if (!isSameContext) {
       console.log('[AuthStateManager] Working dir or auth method changed');
+      console.log('[AuthStateManager] Cached workingDir:', state.workingDir);
+      console.log('[AuthStateManager] Current workingDir:', workingDir);
+      console.log('[AuthStateManager] Cached authMethod:', state.authMethod);
+      console.log('[AuthStateManager] Current authMethod:', authMethod);
       return false;
     }
 
@@ -78,31 +88,54 @@ export class AuthStateManager {
       timestamp: Date.now(),
     };
 
+    console.log('[AuthStateManager] Saving auth state:', {
+      workingDir,
+      authMethod,
+      timestamp: new Date(state.timestamp).toISOString(),
+    });
+
     await this.context.globalState.update(
       AuthStateManager.AUTH_STATE_KEY,
       state,
     );
     console.log('[AuthStateManager] Auth state saved');
+
+    // Verify the state was saved correctly
+    const savedState = await this.getAuthState();
+    console.log('[AuthStateManager] Verified saved state:', savedState);
   }
 
   /**
    * Clear authentication state
    */
   async clearAuthState(): Promise<void> {
+    console.log('[AuthStateManager] Clearing auth state');
+    const currentState = await this.getAuthState();
+    console.log(
+      '[AuthStateManager] Current state before clearing:',
+      currentState,
+    );
+
     await this.context.globalState.update(
       AuthStateManager.AUTH_STATE_KEY,
       undefined,
     );
     console.log('[AuthStateManager] Auth state cleared');
+
+    // Verify the state was cleared
+    const newState = await this.getAuthState();
+    console.log('[AuthStateManager] State after clearing:', newState);
   }
 
   /**
    * Get current auth state
    */
   private async getAuthState(): Promise<AuthState | undefined> {
-    return this.context.globalState.get<AuthState>(
+    const a = this.context.globalState.get<AuthState>(
       AuthStateManager.AUTH_STATE_KEY,
     );
+    console.log('[AuthStateManager] Auth state:', a);
+    return a;
   }
 
   /**
