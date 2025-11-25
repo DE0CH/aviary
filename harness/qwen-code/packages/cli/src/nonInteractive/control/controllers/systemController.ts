@@ -54,13 +54,13 @@ export class SystemController extends BaseController {
   private async handleInitialize(
     payload: CLIControlInitializeRequest,
   ): Promise<Record<string, unknown>> {
-    // Register SDK MCP servers if provided
+    this.context.config.setSdkMode(true);
+
     if (payload.sdkMcpServers && typeof payload.sdkMcpServers === 'object') {
       for (const serverName of Object.keys(payload.sdkMcpServers)) {
         this.context.sdkMcpServers.add(serverName);
       }
 
-      // Add SDK MCP servers to config
       try {
         this.context.config.addMcpServers(payload.sdkMcpServers);
         if (this.context.debugMode) {
@@ -78,7 +78,6 @@ export class SystemController extends BaseController {
       }
     }
 
-    // Add MCP servers to config if provided
     if (payload.mcpServers && typeof payload.mcpServers === 'object') {
       try {
         this.context.config.addMcpServers(payload.mcpServers);
@@ -94,10 +93,9 @@ export class SystemController extends BaseController {
       }
     }
 
-    // Add session subagents to config if provided
     if (payload.agents && Array.isArray(payload.agents)) {
       try {
-        this.context.config.addSessionSubagents(payload.agents);
+        this.context.config.setSessionSubagents(payload.agents);
 
         if (this.context.debugMode) {
           console.error(
@@ -113,9 +111,6 @@ export class SystemController extends BaseController {
         }
       }
     }
-
-    // Set SDK mode to true after handling initialize
-    this.context.config.setSdkMode(true);
 
     // Build capabilities for response
     const capabilities = this.buildControlCapabilities();

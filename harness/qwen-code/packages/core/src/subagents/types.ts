@@ -42,8 +42,8 @@ export interface SubagentConfig {
   /** Storage level - determines where the configuration file is stored */
   level: SubagentLevel;
 
-  /** Absolute path to the configuration file */
-  filePath: string;
+  /** Absolute path to the configuration file. Optional for session subagents. */
+  filePath?: string;
 
   /**
    * Optional model configuration. If not provided, uses defaults.

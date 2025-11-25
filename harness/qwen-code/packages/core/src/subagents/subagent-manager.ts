@@ -159,7 +159,14 @@ export class SubagentManager {
       return this.findSubagentByNameAtLevel(name, level);
     }
 
-    // Try project level first
+    // Try session level first (highest priority for runtime)
+    const sessionSubagents = this.subagentsCache?.get('session') || [];
+    const sessionConfig = sessionSubagents.find((agent) => agent.name === name);
+    if (sessionConfig) {
+      return sessionConfig;
+    }
+
+    // Try project level
     const projectConfig = await this.findSubagentByNameAtLevel(name, 'project');
     if (projectConfig) {
       return projectConfig;
@@ -219,6 +226,15 @@ export class SubagentManager {
 
     // Validate the updated configuration
     this.validator.validateOrThrow(updatedConfig);
+
+    // Ensure filePath exists for file-based agents
+    if (!existing.filePath) {
+      throw new SubagentError(
+        `Cannot update subagent "${name}": no file path available`,
+        SubagentErrorCode.FILE_ERROR,
+        name,
+      );
+    }
 
     // Write the updated configuration
     const content = this.serializeSubagent(updatedConfig);
@@ -302,11 +318,6 @@ export class SubagentManager {
 
     // In SDK mode, only load session-level subagents
     if (this.config.getSdkMode()) {
-      const sessionSubagents = this.config.getSessionSubagents();
-      if (sessionSubagents && sessionSubagents.length > 0) {
-        this.loadSessionSubagents(sessionSubagents);
-      }
-
       const levelsToCheck: SubagentLevel[] = options.level
         ? [options.level]
         : ['session'];

@@ -613,6 +613,12 @@ export class Config {
     }
     this.promptRegistry = new PromptRegistry();
     this.subagentManager = new SubagentManager(this);
+
+    // Load session subagents if they were provided before initialization
+    if (this.sessionSubagents.length > 0) {
+      this.subagentManager.loadSessionSubagents(this.sessionSubagents);
+    }
+
     this.toolRegistry = await this.createToolRegistry();
 
     await this.geminiClient.initialize();
@@ -872,13 +878,6 @@ export class Config {
       throw new Error('Cannot modify sessionSubagents after initialization');
     }
     this.sessionSubagents = subagents;
-  }
-
-  addSessionSubagents(subagents: SubagentConfig[]): void {
-    if (this.initialized) {
-      throw new Error('Cannot modify sessionSubagents after initialization');
-    }
-    this.sessionSubagents = [...this.sessionSubagents, ...subagents];
   }
 
   getSdkMode(): boolean {

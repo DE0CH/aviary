@@ -129,6 +129,7 @@ export class Query implements AsyncIterable<CLIMessage> {
         sdkMcpServers:
           sdkMcpServerNames.length > 0 ? sdkMcpServerNames : undefined,
         mcpServers: this.options.mcpServers,
+        agents: this.options.agents,
       });
     } catch (error) {
       console.error('[Query] Initialization error:', error);

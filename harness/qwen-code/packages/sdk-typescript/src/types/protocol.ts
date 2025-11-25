@@ -517,7 +517,7 @@ export interface SubagentConfig {
   tools?: string[];
   systemPrompt: string;
   level: SubagentLevel;
-  filePath: string;
+  filePath?: string;
   modelConfig?: Partial<ModelConfig>;
   runConfig?: Partial<RunConfig>;
   color?: string;

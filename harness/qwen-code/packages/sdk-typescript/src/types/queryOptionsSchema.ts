@@ -31,7 +31,6 @@ export const SubagentConfigSchema = z.object({
   description: z.string().min(1, 'Description must be a non-empty string'),
   tools: z.array(z.string()).optional(),
   systemPrompt: z.string().min(1, 'System prompt must be a non-empty string'),
-  filePath: z.string().min(1, 'File path must be a non-empty string'),
   modelConfig: ModelConfigSchema.partial().optional(),
   runConfig: RunConfigSchema.partial().optional(),
   color: z.string().optional(),
@@ -71,9 +70,9 @@ export const QueryOptionsSchema = z
             typeof val === 'object' &&
             'name' in val &&
             'description' in val &&
-            'systemPrompt' in val &&
-            'filePath' in val,
-          { message: 'agents must be an array of SubagentConfig objects' },
+            'systemPrompt' in val && {
+              message: 'agents must be an array of SubagentConfig objects',
+            },
         ),
       )
       .optional(),
