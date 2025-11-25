@@ -59,4 +59,3 @@ gha-creds-*.json
 patch_output.log
 
 .claude/
-pnpm-lock.yaml
