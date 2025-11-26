@@ -28,12 +28,10 @@ export class WebViewProvider {
   constructor(
     context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
-    authStateManager?: AuthStateManager, // Optional global AuthStateManager instance
   ) {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
-    // If a global authStateManager is provided, use it, otherwise create a new instance
-    this.authStateManager = authStateManager || new AuthStateManager(context);
+    this.authStateManager = new AuthStateManager(context);
     this.panelManager = new PanelManager(extensionUri, () => {
       // Panel dispose callback
       this.disposables.forEach((d) => d.dispose());
@@ -527,7 +525,10 @@ export class WebViewProvider {
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
       try {
-        await this.agentManager.createNewSession(workingDir);
+        await this.agentManager.createNewSession(
+          workingDir,
+          this.authStateManager,
+        );
         console.log('[WebViewProvider] ACP session created successfully');
       } catch (sessionError) {
         console.error(
@@ -599,6 +600,17 @@ export class WebViewProvider {
     this.agentInitialized = false;
     // Disconnect existing connection
     this.agentManager.disconnect();
+  }
+
+  /**
+   * Clear authentication cache for this WebViewProvider instance
+   */
+  async clearAuthCache(): Promise<void> {
+    console.log('[WebViewProvider] Clearing auth cache for this instance');
+    if (this.authStateManager) {
+      await this.authStateManager.clearAuthState();
+      this.resetAgentState();
+    }
   }
 
   /**
@@ -818,7 +830,10 @@ export class WebViewProvider {
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
       // Create new Qwen session via agent manager
-      await this.agentManager.createNewSession(workingDir);
+      await this.agentManager.createNewSession(
+        workingDir,
+        this.authStateManager,
+      );
 
       // Clear current conversation UI
       this.sendMessageToWebView({

@@ -135,6 +135,31 @@ export const useWebViewMessages = ({
       const handlers = handlersRef.current;
 
       switch (message.type) {
+        case 'loginSuccess': {
+          // Clear loading state and show a short assistant notice
+          handlers.messageHandling.clearWaitingForResponse();
+          handlers.messageHandling.addMessage({
+            role: 'assistant',
+            content: 'Successfully logged in. You can continue chatting.',
+            timestamp: Date.now(),
+          });
+          break;
+        }
+
+        case 'loginError': {
+          // Clear loading state and show error notice
+          handlers.messageHandling.clearWaitingForResponse();
+          const errorMsg =
+            (message?.data?.message as string) ||
+            'Login failed. Please try again.';
+          handlers.messageHandling.addMessage({
+            role: 'assistant',
+            content: errorMsg,
+            timestamp: Date.now(),
+          });
+          break;
+        }
+
         case 'conversationLoaded': {
           const conversation = message.data as Conversation;
           handlers.messageHandling.setMessages(conversation.messages);

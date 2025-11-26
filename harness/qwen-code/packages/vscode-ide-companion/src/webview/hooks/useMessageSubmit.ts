@@ -49,7 +49,7 @@ export const useMessageSubmit = ({
         return;
       }
 
-      // Handle /login command
+      // Handle /login command - show inline loading while extension authenticates
       if (inputText.trim() === '/login') {
         setInputText('');
         if (inputFieldRef.current) {
@@ -59,6 +59,12 @@ export const useMessageSubmit = ({
           type: 'login',
           data: {},
         });
+        // Show a friendly loading message in the chat while logging in
+        try {
+          messageHandling.setWaitingForResponse('Logging in to Qwen Code...');
+        } catch (_err) {
+          // Best-effort UI hint; ignore if hook not available
+        }
         return;
       }
 

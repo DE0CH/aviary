@@ -15,7 +15,6 @@ import {
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { WebViewProvider } from './webview/WebViewProvider.js';
-import { AuthStateManager } from './auth/authStateManager.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
 const INFO_MESSAGE_SHOWN_KEY = 'qwenCodeInfoMessageShown';
@@ -34,7 +33,6 @@ const HIDE_INSTALLATION_GREETING_IDES: ReadonlySet<IdeInfo['name']> = new Set([
 let ideServer: IDEServer;
 let logger: vscode.OutputChannel;
 let webViewProviders: WebViewProvider[] = []; // Track multiple chat tabs
-let authStateManager: AuthStateManager;
 
 let log: (message: string) => void = () => {};
 
@@ -114,30 +112,10 @@ export async function activate(context: vscode.ExtensionContext) {
   const diffContentProvider = new DiffContentProvider();
   const diffManager = new DiffManager(log, diffContentProvider);
 
-  // Initialize Auth State Manager
-  console.log('[Extension] Initializing global AuthStateManager');
-  authStateManager = new AuthStateManager(context);
-  console.log(
-    '[Extension] Global AuthStateManager initialized:',
-    !!authStateManager,
-  );
-
   // Helper function to create a new WebView provider instance
   const createWebViewProvider = (): WebViewProvider => {
-    console.log(
-      '[Extension] Creating WebViewProvider with global AuthStateManager:',
-      !!authStateManager,
-    );
-    const provider = new WebViewProvider(
-      context,
-      context.extensionUri,
-      authStateManager,
-    );
+    const provider = new WebViewProvider(context, context.extensionUri);
     webViewProviders.push(provider);
-    console.log(
-      '[Extension] WebViewProvider created, total providers:',
-      webViewProviders.length,
-    );
     return provider;
   };
 
@@ -243,12 +221,10 @@ export async function activate(context: vscode.ExtensionContext) {
       provider.show();
     }),
     vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
-      await authStateManager.clearAuthState();
-
-      // Reset all WebView agent states to force re-authentication
-      webViewProviders.forEach((provider) => {
-        provider.resetAgentState();
-      });
+      // Clear auth state for all WebView providers
+      for (const provider of webViewProviders) {
+        await provider.clearAuthCache();
+      }
 
       vscode.window.showInformationMessage(
         'Qwen Code authentication cache cleared. You will need to login again on next connection.',

@@ -429,21 +429,60 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @returns Newly created session ID
    */
-  async createNewSession(workingDir: string): Promise<string | null> {
+  async createNewSession(
+    workingDir: string,
+    authStateManager?: AuthStateManager,
+  ): Promise<string | null> {
     console.log('[QwenAgentManager] Creating new session...');
 
-    // Authenticate first
-    console.log('[QwenAgentManager] Authenticating before creating session...');
-    try {
-      const config = vscode.workspace.getConfiguration('qwenCode');
-      const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-      const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+    // Check if we have valid cached authentication
+    let hasValidAuth = false;
+    const config = vscode.workspace.getConfiguration('qwenCode');
+    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
 
-      await this.connection.authenticate(authMethod);
-      console.log('[QwenAgentManager] Authentication successful');
-    } catch (authError) {
-      console.error('[QwenAgentManager] Authentication failed:', authError);
-      throw authError;
+    if (authStateManager) {
+      hasValidAuth = await authStateManager.hasValidAuth(
+        workingDir,
+        authMethod,
+      );
+      console.log(
+        '[QwenAgentManager] Has valid cached auth for new session:',
+        hasValidAuth,
+      );
+    }
+
+    // Only authenticate if we don't have valid cached auth
+    if (!hasValidAuth) {
+      console.log(
+        '[QwenAgentManager] Authenticating before creating session...',
+      );
+      try {
+        await this.connection.authenticate(authMethod);
+        console.log('[QwenAgentManager] Authentication successful');
+
+        // Save auth state
+        if (authStateManager) {
+          console.log(
+            '[QwenAgentManager] Saving auth state after successful authentication',
+          );
+          await authStateManager.saveAuthState(workingDir, authMethod);
+        }
+      } catch (authError) {
+        console.error('[QwenAgentManager] Authentication failed:', authError);
+        // Clear potentially invalid cache
+        if (authStateManager) {
+          console.log(
+            '[QwenAgentManager] Clearing auth cache due to authentication failure',
+          );
+          await authStateManager.clearAuthState();
+        }
+        throw authError;
+      }
+    } else {
+      console.log(
+        '[QwenAgentManager] Skipping authentication - using valid cached auth',
+      );
     }
 
     await this.connection.newSession(workingDir);
