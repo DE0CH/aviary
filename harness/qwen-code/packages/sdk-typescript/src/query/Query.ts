@@ -11,6 +11,7 @@ const CONTROL_REQUEST_TIMEOUT = 30000;
 const STREAM_CLOSE_TIMEOUT = 10000;
 
 import { randomUUID } from 'node:crypto';
+import { SdkLogger } from '../utils/logger.js';
 import type {
   CLIMessage,
   CLIUserMessage,
@@ -30,7 +31,7 @@ import {
   isControlCancel,
 } from '../types/protocol.js';
 import type { Transport } from '../transport/Transport.js';
-import { type QueryOptions } from '../types/queryOptionsSchema.js';
+import type { QueryOptions } from '../types/types.js';
 import { Stream } from '../utils/Stream.js';
 import { serializeJsonLine } from '../utils/jsonLines.js';
 import { AbortError } from '../types/errors.js';
@@ -48,6 +49,8 @@ interface PendingControlRequest {
 interface TransportWithEndInput extends Transport {
   endInput(): void;
 }
+
+const logger = SdkLogger.createLogger('Query');
 
 export class Query implements AsyncIterable<CLIMessage> {
   private transport: Transport;
@@ -101,13 +104,13 @@ export class Query implements AsyncIterable<CLIMessage> {
     if (this.abortController.signal.aborted) {
       this.inputStream.error(new AbortError('Query aborted by user'));
       this.close().catch((err) => {
-        console.error('[Query] Error during abort cleanup:', err);
+        logger.error('Error during abort cleanup:', err);
       });
     } else {
       this.abortController.signal.addEventListener('abort', () => {
         this.inputStream.error(new AbortError('Query aborted by user'));
         this.close().catch((err) => {
-          console.error('[Query] Error during abort cleanup:', err);
+          logger.error('Error during abort cleanup:', err);
         });
       });
     }
@@ -120,7 +123,7 @@ export class Query implements AsyncIterable<CLIMessage> {
 
   private async initialize(): Promise<void> {
     try {
-      await this.setupSdkMcpServers();
+      logger.debug('Initializing Query');
 
       const sdkMcpServerNames = Array.from(this.sdkMcpTransports.keys());
 
@@ -131,49 +134,10 @@ export class Query implements AsyncIterable<CLIMessage> {
         mcpServers: this.options.mcpServers,
         agents: this.options.agents,
       });
+      logger.info('Query initialized successfully');
     } catch (error) {
-      console.error('[Query] Initialization error:', error);
+      logger.error('Initialization error:', error);
       throw error;
-    }
-  }
-
-  private async setupSdkMcpServers(): Promise<void> {
-    if (!this.options.sdkMcpServers) {
-      return;
-    }
-
-    const externalNames = Object.keys(this.options.mcpServers ?? {});
-    const sdkNames = Object.keys(this.options.sdkMcpServers);
-
-    const conflicts = sdkNames.filter((name) => externalNames.includes(name));
-    if (conflicts.length > 0) {
-      throw new Error(
-        `MCP server name conflicts between mcpServers and sdkMcpServers: ${conflicts.join(', ')}`,
-      );
-    }
-
-    /**
-     * Import SdkControlServerTransport dynamically to avoid circular dependencies.
-     * Create transport for each server that sends MCP messages via control plane.
-     */
-    const { SdkControlServerTransport } = await import(
-      '../mcp/SdkControlServerTransport.js'
-    );
-
-    for (const [name, server] of Object.entries(this.options.sdkMcpServers)) {
-      const transport = new SdkControlServerTransport({
-        serverName: name,
-        sendToQuery: async (message: JSONRPCMessage) => {
-          await this.sendControlRequest(ControlRequestType.MCP_MESSAGE, {
-            server_name: name,
-            message,
-          });
-        },
-      });
-
-      await transport.start();
-      await server.connect(transport);
-      this.sdkMcpTransports.set(name, transport);
     }
   }
 
@@ -256,9 +220,7 @@ export class Query implements AsyncIterable<CLIMessage> {
       return;
     }
 
-    if (process.env['DEBUG']) {
-      console.warn('[Query] Unknown message type:', message);
-    }
+    logger.warn('Unknown message type:', message);
     this.inputStream.enqueue(message as CLIMessage);
   }
 
@@ -267,6 +229,7 @@ export class Query implements AsyncIterable<CLIMessage> {
   ): Promise<void> {
     const { request_id, request: payload } = request;
 
+    logger.debug(`Handling control request: ${payload.subtype}`);
     const requestAbortController = new AbortController();
 
     try {
@@ -299,6 +262,7 @@ export class Query implements AsyncIterable<CLIMessage> {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+      logger.error(`Control request error (${payload.subtype}):`, errorMessage);
       await this.sendControlResponse(request_id, false, errorMessage);
     }
   }
@@ -369,8 +333,8 @@ export class Query implements AsyncIterable<CLIMessage> {
        */
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.warn(
-        '[Query] Permission callback error (denying by default):',
+      logger.warn(
+        'Permission callback error (denying by default):',
         errorMessage,
       );
       return {
@@ -448,9 +412,10 @@ export class Query implements AsyncIterable<CLIMessage> {
 
     const pending = this.pendingControlRequests.get(request_id);
     if (!pending) {
-      console.warn(
-        '[Query] Received response for unknown request:',
+      logger.warn(
+        'Received response for unknown request:',
         request_id,
+        JSON.stringify(payload),
       );
       return;
     }
@@ -459,6 +424,9 @@ export class Query implements AsyncIterable<CLIMessage> {
     this.pendingControlRequests.delete(request_id);
 
     if (payload.subtype === 'success') {
+      logger.debug(
+        `Control response success for request: ${request_id}: ${JSON.stringify(payload.response)}`,
+      );
       pending.resolve(payload.response as Record<string, unknown> | null);
     } else {
       /**
@@ -469,6 +437,10 @@ export class Query implements AsyncIterable<CLIMessage> {
         typeof payload.error === 'string'
           ? payload.error
           : (payload.error?.message ?? 'Unknown error');
+      logger.error(
+        `Control response error for request ${request_id}:`,
+        errorMessage,
+      );
       pending.reject(new Error(errorMessage));
     }
   }
@@ -477,12 +449,13 @@ export class Query implements AsyncIterable<CLIMessage> {
     const { request_id } = request;
 
     if (!request_id) {
-      console.warn('[Query] Received cancel request without request_id');
+      logger.warn('Received cancel request without request_id');
       return;
     }
 
     const pending = this.pendingControlRequests.get(request_id);
     if (pending) {
+      logger.debug(`Cancelling control request: ${request_id}`);
       pending.abortController.abort();
       clearTimeout(pending.timeout);
       this.pendingControlRequests.delete(request_id);
@@ -580,10 +553,11 @@ export class Query implements AsyncIterable<CLIMessage> {
       try {
         await transport.close();
       } catch (error) {
-        console.error('[Query] Error closing MCP transport:', error);
+        logger.error('Error closing MCP transport:', error);
       }
     }
     this.sdkMcpTransports.clear();
+    logger.info('Query closed');
   }
 
   private async *readSdkMessages(): AsyncGenerator<CLIMessage> {
@@ -652,7 +626,7 @@ export class Query implements AsyncIterable<CLIMessage> {
       this.endInput();
     } catch (error) {
       if (this.abortController.signal.aborted) {
-        console.log('[Query] Aborted during input streaming');
+        logger.info('Aborted during input streaming');
         this.inputStream.error(
           new AbortError('Query aborted during input streaming'),
         );

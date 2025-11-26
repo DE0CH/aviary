@@ -50,7 +50,6 @@ export const QueryOptionsSchema = z
       })
       .optional(),
     mcpServers: z.record(z.string(), ExternalMcpServerConfigSchema).optional(),
-    sdkMcpServers: z.record(z.string(), SdkMcpServerConfigSchema).optional(),
     abortController: z.instanceof(AbortController).optional(),
     debug: z.boolean().optional(),
     stderr: z
@@ -58,6 +57,7 @@ export const QueryOptionsSchema = z
         (message: string) => void
       >((val) => typeof val === 'function', { message: 'stderr must be a function' })
       .optional(),
+    logLevel: z.enum(['debug', 'info', 'warn', 'error']).optional(),
     maxSessionTurns: z.number().optional(),
     coreTools: z.array(z.string()).optional(),
     excludeTools: z.array(z.string()).optional(),
@@ -79,8 +79,3 @@ export const QueryOptionsSchema = z
     includePartialMessages: z.boolean().optional(),
   })
   .strict();
-
-export type ExternalMcpServerConfig = z.infer<
-  typeof ExternalMcpServerConfigSchema
->;
-export type QueryOptions = z.infer<typeof QueryOptionsSchema>;

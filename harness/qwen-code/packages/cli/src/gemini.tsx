@@ -449,7 +449,8 @@ export async function main() {
     }
 
     const nonInteractiveConfig = await validateNonInteractiveAuth(
-      settings.merged.security?.auth?.selectedType,
+      settings.merged.security?.auth?.selectedType ||
+        (argv.authType as AuthType),
       settings.merged.security?.auth?.useExternal,
       config,
       settings,

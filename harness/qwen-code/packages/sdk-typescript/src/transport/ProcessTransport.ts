@@ -6,6 +6,9 @@ import type { Transport } from './Transport.js';
 import { parseJsonLinesStream } from '../utils/jsonLines.js';
 import { prepareSpawnInfo } from '../utils/cliPath.js';
 import { AbortError } from '../types/errors.js';
+import { SdkLogger } from '../utils/logger.js';
+
+const logger = SdkLogger.createLogger('ProcessTransport');
 
 export class ProcessTransport implements Transport {
   private childProcess: ChildProcess | null = null;
@@ -23,6 +26,11 @@ export class ProcessTransport implements Transport {
     this.options = options;
     this.abortController =
       this.options.abortController ?? new AbortController();
+    SdkLogger.configure({
+      debug: options.debug,
+      stderr: options.stderr,
+      logLevel: options.logLevel,
+    });
     this.initialize();
   }
 
@@ -41,7 +49,7 @@ export class ProcessTransport implements Transport {
       const stderrMode =
         this.options.debug || this.options.stderr ? 'pipe' : 'ignore';
 
-      this.logForDebugging(
+      logger.debug(
         `Spawning CLI (${spawnInfo.type}): ${spawnInfo.command} ${[...spawnInfo.args, ...cliArgs].join(' ')}`,
       );
 
@@ -61,7 +69,7 @@ export class ProcessTransport implements Transport {
 
       if (this.options.debug || this.options.stderr) {
         this.childProcess.stderr?.on('data', (data) => {
-          this.logForDebugging(data.toString());
+          logger.debug(data.toString());
         });
       }
 
@@ -79,8 +87,10 @@ export class ProcessTransport implements Transport {
       this.setupEventHandlers();
 
       this.ready = true;
+      logger.info('CLI process started successfully');
     } catch (error) {
       this.ready = false;
+      logger.error('Failed to initialize CLI process:', error);
       throw error;
     }
   }
@@ -94,7 +104,7 @@ export class ProcessTransport implements Transport {
         this._exitError = new AbortError('CLI process aborted by user');
       } else {
         this._exitError = new Error(`CLI process error: ${error.message}`);
-        this.logForDebugging(this._exitError.message);
+        logger.error(this._exitError.message);
       }
     });
 
@@ -106,7 +116,7 @@ export class ProcessTransport implements Transport {
         const error = this.getProcessExitError(code, signal);
         if (error) {
           this._exitError = error;
-          this.logForDebugging(error.message);
+          logger.error(error.message);
         }
       }
     });
@@ -269,28 +279,24 @@ export class ProcessTransport implements Transport {
       );
     }
 
-    if (process.env['DEBUG']) {
-      this.logForDebugging(
-        `[ProcessTransport] Writing to stdin (${message.length} bytes): ${message.substring(0, 100)}`,
-      );
-    }
+    logger.debug(
+      `Writing to stdin (${message.length} bytes): ${message.trim()}`,
+    );
 
     try {
       const written = this.childStdin.write(message);
       if (!written) {
-        this.logForDebugging(
-          `[ProcessTransport] Write buffer full (${message.length} bytes), data queued. Waiting for drain event...`,
+        logger.warn(
+          `Write buffer full (${message.length} bytes), data queued. Waiting for drain event...`,
         );
-      } else if (process.env['DEBUG']) {
-        this.logForDebugging(
-          `[ProcessTransport] Write successful (${message.length} bytes)`,
-        );
+      } else {
+        logger.debug(`Write successful (${message.length} bytes)`);
       }
     } catch (error) {
       this.ready = false;
-      throw new Error(
-        `Failed to write to stdin: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const errorMsg = `Failed to write to stdin: ${error instanceof Error ? error.message : String(error)}`;
+      logger.error(errorMsg);
+      throw new Error(errorMsg);
     }
   }
 
@@ -339,14 +345,5 @@ export class ProcessTransport implements Transport {
 
   getOutputStream(): Readable | undefined {
     return this.childStdout || undefined;
-  }
-
-  private logForDebugging(message: string): void {
-    if (this.options.debug || process.env['DEBUG']) {
-      process.stderr.write(`[ProcessTransport] ${message}\n`);
-    }
-    if (this.options.stderr) {
-      this.options.stderr(message);
-    }
   }
 }

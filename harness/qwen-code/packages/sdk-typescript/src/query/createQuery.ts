@@ -7,18 +7,29 @@ import { serializeJsonLine } from '../utils/jsonLines.js';
 import { ProcessTransport } from '../transport/ProcessTransport.js';
 import { parseExecutableSpec } from '../utils/cliPath.js';
 import { Query } from './Query.js';
-import {
-  QueryOptionsSchema,
-  type QueryOptions,
-} from '../types/queryOptionsSchema.js';
+import type { QueryOptions } from '../types/types.js';
+import { QueryOptionsSchema } from '../types/queryOptionsSchema.js';
+import { SdkLogger } from '../utils/logger.js';
 
 export type { QueryOptions };
+
+const logger = SdkLogger.createLogger('createQuery');
 
 export function query({
   prompt,
   options = {},
 }: {
+  /**
+   * The prompt to send to the Qwen Code CLI process.
+   * - `string` for single-turn query,
+   * - `AsyncIterable<CLIUserMessage>` for multi-turn query.
+   *
+   * The transport will remain open until the prompt is done.
+   */
   prompt: string | AsyncIterable<CLIUserMessage>;
+  /**
+   * Configuration options for the query.
+   */
   options?: QueryOptions;
 }): Query {
   const parsedExecutable = validateOptions(options);
@@ -39,6 +50,7 @@ export function query({
     abortController,
     debug: options.debug,
     stderr: options.stderr,
+    logLevel: options.logLevel,
     maxSessionTurns: options.maxSessionTurns,
     coreTools: options.coreTools,
     excludeTools: options.excludeTools,
@@ -70,14 +82,14 @@ export function query({
         await queryInstance.initialized;
         transport.write(serializeJsonLine(message));
       } catch (err) {
-        console.error('[query] Error sending single-turn prompt:', err);
+        logger.error('Error sending single-turn prompt:', err);
       }
     })();
   } else {
     queryInstance
       .streamInput(prompt as AsyncIterable<CLIUserMessage>)
       .catch((err) => {
-        console.error('[query] Error streaming input:', err);
+        logger.error('Error streaming input:', err);
       });
   }
 
@@ -101,18 +113,6 @@ function validateOptions(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid pathToQwenExecutable: ${errorMessage}`);
-  }
-
-  if (options.mcpServers && options.sdkMcpServers) {
-    const externalNames = Object.keys(options.mcpServers);
-    const sdkNames = Object.keys(options.sdkMcpServers);
-
-    const conflicts = externalNames.filter((name) => sdkNames.includes(name));
-    if (conflicts.length > 0) {
-      throw new Error(
-        `MCP server name conflicts between mcpServers and sdkMcpServers: ${conflicts.join(', ')}`,
-      );
-    }
   }
 
   return parsedExecutable;

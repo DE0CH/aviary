@@ -9,6 +9,7 @@
  */
 
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { SdkLogger } from '../utils/logger.js';
 
 export type SendToQueryCallback = (message: JSONRPCMessage) => Promise<void>;
 
@@ -21,6 +22,7 @@ export class SdkControlServerTransport {
   sendToQuery: SendToQueryCallback;
   private serverName: string;
   private started = false;
+  private logger;
 
   onmessage?: (message: JSONRPCMessage) => void;
   onerror?: (error: Error) => void;
@@ -29,10 +31,14 @@ export class SdkControlServerTransport {
   constructor(options: SdkControlServerTransportOptions) {
     this.sendToQuery = options.sendToQuery;
     this.serverName = options.serverName;
+    this.logger = SdkLogger.createLogger(
+      `SdkControlServerTransport:${options.serverName}`,
+    );
   }
 
   async start(): Promise<void> {
     this.started = true;
+    this.logger.debug('Transport started');
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
@@ -43,10 +49,10 @@ export class SdkControlServerTransport {
     }
 
     try {
-      // Send via Query's control plane
+      this.logger.debug('Sending message to Query', message);
       await this.sendToQuery(message);
     } catch (error) {
-      // Invoke error callback if set
+      this.logger.error('Error sending message:', error);
       if (this.onerror) {
         this.onerror(error instanceof Error ? error : new Error(String(error)));
       }
@@ -60,6 +66,7 @@ export class SdkControlServerTransport {
     }
 
     this.started = false;
+    this.logger.debug('Transport closed');
 
     // Notify MCP Server
     if (this.onclose) {
@@ -69,29 +76,22 @@ export class SdkControlServerTransport {
 
   handleMessage(message: JSONRPCMessage): void {
     if (!this.started) {
-      console.warn(
-        `[SdkControlServerTransport] Received message for closed transport (${this.serverName})`,
-      );
+      this.logger.warn('Received message for closed transport');
       return;
     }
 
+    this.logger.debug('Handling message from CLI', message);
     if (this.onmessage) {
       this.onmessage(message);
     } else {
-      console.warn(
-        `[SdkControlServerTransport] No onmessage handler set for ${this.serverName}`,
-      );
+      this.logger.warn('No onmessage handler set');
     }
   }
 
   handleError(error: Error): void {
+    this.logger.error('Transport error:', error);
     if (this.onerror) {
       this.onerror(error);
-    } else {
-      console.error(
-        `[SdkControlServerTransport] Error for ${this.serverName}:`,
-        error,
-      );
     }
   }
 

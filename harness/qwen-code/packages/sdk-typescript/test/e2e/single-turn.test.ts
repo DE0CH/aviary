@@ -39,7 +39,8 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'What is 2 + 2? Just give me the number.',
         options: {
           ...SHARED_TEST_OPTIONS,
-          debug: false,
+          debug: true,
+          logLevel: 'debug',
         },
       });
 

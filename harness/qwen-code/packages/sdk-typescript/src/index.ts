@@ -1,10 +1,10 @@
 export { query } from './query/createQuery.js';
 export { AbortError, isAbortError } from './types/errors.js';
 export { Query } from './query/Query.js';
-
-export type { ExternalMcpServerConfig } from './types/queryOptionsSchema.js';
+export { SdkLogger } from './utils/logger.js';
 
 export type { QueryOptions } from './query/createQuery.js';
+export type { LogLevel, LoggerConfig, ScopedLogger } from './utils/logger.js';
 
 export type {
   ContentBlock,
@@ -29,8 +29,9 @@ export {
 } from './types/protocol.js';
 
 export type {
-  JSONSchema,
   PermissionMode,
   CanUseTool,
   PermissionResult,
+  ExternalMcpServerConfig,
+  SdkMcpServerConfig,
 } from './types/types.js';

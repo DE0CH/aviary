@@ -1,3 +1,5 @@
+import { SdkLogger } from './logger.js';
+
 export function serializeJsonLine(message: unknown): string {
   try {
     return JSON.stringify(message) + '\n';
@@ -12,11 +14,12 @@ export function parseJsonLineSafe(
   line: string,
   context = 'JsonLines',
 ): unknown | null {
+  const logger = SdkLogger.createLogger(context);
   try {
     return JSON.parse(line);
   } catch (error) {
-    console.warn(
-      `[${context}] Failed to parse JSON line, skipping:`,
+    logger.warn(
+      'Failed to parse JSON line, skipping:',
       line.substring(0, 100),
       error instanceof Error ? error.message : String(error),
     );
@@ -37,6 +40,7 @@ export async function* parseJsonLinesStream(
   lines: AsyncIterable<string>,
   context = 'JsonLines',
 ): AsyncGenerator<unknown, void, unknown> {
+  const logger = SdkLogger.createLogger(context);
   for await (const line of lines) {
     if (line.trim().length === 0) {
       continue;
@@ -49,8 +53,8 @@ export async function* parseJsonLinesStream(
     }
 
     if (!isValidMessage(message)) {
-      console.warn(
-        `[${context}] Invalid message structure (missing 'type' field), skipping:`,
+      logger.warn(
+        "Invalid message structure (missing 'type' field), skipping:",
         line.substring(0, 100),
       );
       continue;
