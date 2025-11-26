@@ -24,7 +24,7 @@ execSync('tsc --project tsconfig.build.json', {
 
 try {
   execSync(
-    'npx dts-bundle-generator -o dist/index.d.ts src/index.ts --no-check',
+    'npx dts-bundle-generator --project tsconfig.build.json -o dist/index.d.ts src/index.ts --no-check',
     {
       stdio: 'inherit',
       cwd: rootDir,
