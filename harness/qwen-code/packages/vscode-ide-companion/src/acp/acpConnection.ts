@@ -42,9 +42,6 @@ import { AcpSessionManager } from './acpSessionManager.js';
  * ✅ session/cancel - Cancel current generation
  * ✅ session/load - Load previous session
  * ✅ session/save - Save current session
- *
- * Custom Methods (Not in standard ACP):
- * ⚠️  session/list - List available sessions (custom extension)
  */
 export class AcpConnection {
   private child: ChildProcess | null = null;
@@ -101,10 +98,10 @@ export class AcpConnection {
       const proxyUrl = extraArgs[proxyIndex + 1];
       console.log('[ACP] Setting proxy environment variables:', proxyUrl);
 
-      env.HTTP_PROXY = proxyUrl;
-      env.HTTPS_PROXY = proxyUrl;
-      env.http_proxy = proxyUrl;
-      env.https_proxy = proxyUrl;
+      env['HTTP_PROXY'] = proxyUrl;
+      env['HTTPS_PROXY'] = proxyUrl;
+      env['http_proxy'] = proxyUrl;
+      env['https_proxy'] = proxyUrl;
     }
 
     let spawnCommand: string;

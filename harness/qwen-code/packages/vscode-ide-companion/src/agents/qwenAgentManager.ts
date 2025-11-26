@@ -23,6 +23,7 @@ import type {
 } from './qwenTypes.js';
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
+import { CliContextManager } from '../cli/cliContextManager.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -137,14 +138,64 @@ export class QwenAgentManager {
    * @returns Session list
    */
   async getSessionList(): Promise<Array<Record<string, unknown>>> {
+    console.log(
+      '[QwenAgentManager] Getting session list with version-aware strategy',
+    );
+
+    // Check if CLI supports session/list method
+    const cliContextManager = CliContextManager.getInstance();
+    const supportsSessionList = cliContextManager.supportsSessionList();
+
+    console.log(
+      '[QwenAgentManager] CLI supports session/list:',
+      supportsSessionList,
+    );
+
+    // Try ACP method first if supported
+    if (supportsSessionList) {
+      try {
+        console.log(
+          '[QwenAgentManager] Attempting to get session list via ACP method',
+        );
+        const response = await this.connection.listSessions();
+        console.log('[QwenAgentManager] ACP session list response:', response);
+
+        if (response.result && Array.isArray(response.result)) {
+          const sessions = response.result.map((session) => ({
+            id: session.sessionId || session.id,
+            sessionId: session.sessionId || session.id,
+            title: session.title || session.name || 'Untitled Session',
+            name: session.title || session.name || 'Untitled Session',
+            startTime: session.startTime,
+            lastUpdated: session.lastUpdated,
+            messageCount: session.messageCount || 0,
+            projectHash: session.projectHash,
+          }));
+
+          console.log(
+            '[QwenAgentManager] Sessions retrieved via ACP:',
+            sessions.length,
+          );
+          return sessions;
+        }
+      } catch (error) {
+        console.warn(
+          '[QwenAgentManager] ACP session list failed, falling back to file system method:',
+          error,
+        );
+      }
+    }
+
+    // Always fall back to file system method
     try {
+      console.log('[QwenAgentManager] Getting session list from file system');
       const sessions = await this.sessionReader.getAllSessions(undefined, true);
       console.log(
-        '[QwenAgentManager] Session list from files (all projects):',
+        '[QwenAgentManager] Session list from file system (all projects):',
         sessions.length,
       );
 
-      return sessions.map(
+      const result = sessions.map(
         (session: QwenSession): Record<string, unknown> => ({
           id: session.sessionId,
           sessionId: session.sessionId,
@@ -156,8 +207,17 @@ export class QwenAgentManager {
           projectHash: session.projectHash,
         }),
       );
+
+      console.log(
+        '[QwenAgentManager] Sessions retrieved from file system:',
+        result.length,
+      );
+      return result;
     } catch (error) {
-      console.error('[QwenAgentManager] Failed to get session list:', error);
+      console.error(
+        '[QwenAgentManager] Failed to get session list from file system:',
+        error,
+      );
       return [];
     }
   }
@@ -370,12 +430,22 @@ export class QwenAgentManager {
 
   /**
    * Try to load session via ACP session/load method
-   * This is a test method to verify if CLI supports session/load
+   * This method will only be used if CLI version supports it
    *
    * @param sessionId - Session ID
    * @returns Load response or error
    */
   async loadSessionViaAcp(sessionId: string): Promise<unknown> {
+    // Check if CLI supports session/load method
+    const cliContextManager = CliContextManager.getInstance();
+    const supportsSessionLoad = cliContextManager.supportsSessionLoad();
+
+    if (!supportsSessionLoad) {
+      throw new Error(
+        `CLI version does not support session/load method. Please upgrade to version 0.2.4 or later.`,
+      );
+    }
+
     try {
       console.log(
         '[QwenAgentManager] Attempting session/load via ACP for session:',
@@ -419,23 +489,91 @@ export class QwenAgentManager {
   }
 
   /**
-   * Load session directly from file system (without relying on ACP)
+   * Load session with version-aware strategy
+   * First tries ACP method if CLI version supports it, falls back to file system method
    *
-   * @param sessionId - Session ID
+   * @param sessionId - Session ID to load
    * @returns Loaded session messages or null
    */
-  async loadSessionDirect(sessionId: string): Promise<ChatMessage[] | null> {
-    try {
-      console.log('[QwenAgentManager] Loading session directly:', sessionId);
+  async loadSession(sessionId: string): Promise<ChatMessage[] | null> {
+    console.log(
+      '[QwenAgentManager] Loading session with version-aware strategy:',
+      sessionId,
+    );
 
-      // Load session
+    // Check if CLI supports session/load method
+    const cliContextManager = CliContextManager.getInstance();
+    const supportsSessionLoad = cliContextManager.supportsSessionLoad();
+
+    console.log(
+      '[QwenAgentManager] CLI supports session/load:',
+      supportsSessionLoad,
+    );
+
+    // Try ACP method first if supported
+    if (supportsSessionLoad) {
+      try {
+        console.log(
+          '[QwenAgentManager] Attempting to load session via ACP method',
+        );
+        await this.loadSessionViaAcp(sessionId);
+        console.log('[QwenAgentManager] Session loaded successfully via ACP');
+
+        // After loading via ACP, we still need to get messages from file system
+        // In future, we might get them directly from the ACP response
+      } catch (error) {
+        console.warn(
+          '[QwenAgentManager] ACP session load failed, falling back to file system method:',
+          error,
+        );
+      }
+    }
+
+    // Always fall back to file system method
+    try {
+      console.log(
+        '[QwenAgentManager] Loading session messages from file system',
+      );
+      const messages = await this.loadSessionMessagesFromFile(sessionId);
+      console.log(
+        '[QwenAgentManager] Session messages loaded successfully from file system',
+      );
+      return messages;
+    } catch (error) {
+      console.error(
+        '[QwenAgentManager] Failed to load session messages from file system:',
+        error,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Load session messages from file system
+   *
+   * @param sessionId - Session ID to load
+   * @returns Loaded session messages
+   */
+  private async loadSessionMessagesFromFile(
+    sessionId: string,
+  ): Promise<ChatMessage[] | null> {
+    try {
+      console.log(
+        '[QwenAgentManager] Loading session from file system:',
+        sessionId,
+      );
+
+      // Load session from file system
       const session = await this.sessionManager.loadSession(
         sessionId,
         this.currentWorkingDir,
       );
 
       if (!session) {
-        console.log('[QwenAgentManager] Session not found:', sessionId);
+        console.log(
+          '[QwenAgentManager] Session not found in file system:',
+          sessionId,
+        );
         return null;
       }
 
@@ -446,12 +584,24 @@ export class QwenAgentManager {
         timestamp: new Date(msg.timestamp).getTime(),
       }));
 
-      console.log('[QwenAgentManager] Session loaded directly:', sessionId);
       return messages;
     } catch (error) {
-      console.error('[QwenAgentManager] Session load directly failed:', error);
-      return null;
+      console.error(
+        '[QwenAgentManager] Session load from file system failed:',
+        error,
+      );
+      throw error;
     }
+  }
+
+  /**
+   * Load session, preferring ACP method if CLI version supports it
+   *
+   * @param sessionId - Session ID
+   * @returns Loaded session messages or null
+   */
+  async loadSessionDirect(sessionId: string): Promise<ChatMessage[] | null> {
+    return this.loadSession(sessionId);
   }
 
   /**

@@ -42,8 +42,6 @@ export class SettingsMessageHandler extends BaseMessageHandler {
     try {
       // Open settings in a side panel
       await vscode.commands.executeCommand('workbench.action.openSettings', {
-        // TODO:
-        // openToSide: true,
         query: 'qwenCode',
       });
     } catch (error) {

@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import type { VSCodeAPI } from '../hooks/useVSCode.js';
+import type { VSCodeAPI } from '../../hooks/useVSCode.js';
 
 /**
  * Session management Hook

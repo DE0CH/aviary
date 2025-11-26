@@ -152,7 +152,6 @@ export async function activate(context: vscode.ExtensionContext) {
         console.log('[Extension] Panel restore completed');
 
         log('WebView panel restored from serialization');
-        return true;
       },
     }),
   );

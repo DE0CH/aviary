@@ -140,9 +140,6 @@ export const WITTY_LOADING_PHRASES = [
   "New line? That's Ctrl+J.",
 ];
 
-/**
- * Get random loading message
- */
 export const getRandomLoadingMessage = (): string =>
   WITTY_LOADING_PHRASES[
     Math.floor(Math.random() * WITTY_LOADING_PHRASES.length)

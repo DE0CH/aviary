@@ -93,6 +93,33 @@ export class CliInstaller {
           const execAsync = promisify(exec);
 
           try {
+            // Use NVM environment to ensure we get the same Node.js version
+            // as when they run 'node -v' in terminal
+            // Fallback chain: default alias -> node alias -> current version
+            const installCommand =
+              process.platform === 'win32'
+                ? 'npm install -g @qwen-code/qwen-code@latest'
+                : 'source ~/.nvm/nvm.sh 2>/dev/null && (nvm use default 2>/dev/null || nvm use node 2>/dev/null || nvm use 2>/dev/null); npm install -g @qwen-code/qwen-code@latest';
+
+            console.log(
+              '[CliInstaller] Installing with command:',
+              installCommand,
+            );
+            console.log(
+              '[CliInstaller] Current process PATH:',
+              process.env['PATH'],
+            );
+
+            // Also log Node.js version being used by VS Code
+            console.log(
+              '[CliInstaller] VS Code Node.js version:',
+              process.version,
+            );
+            console.log(
+              '[CliInstaller] VS Code Node.js execPath:',
+              process.execPath,
+            );
+
             const { stdout, stderr } = await execAsync(
               'npm install -g @qwen-code/qwen-code@latest',
               { timeout: 120000 }, // 2 minutes timeout

@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import type { VSCodeAPI } from '../hooks/useVSCode.js';
+import type { VSCodeAPI } from '../../hooks/useVSCode.js';
 
 /**
  * File context management Hook

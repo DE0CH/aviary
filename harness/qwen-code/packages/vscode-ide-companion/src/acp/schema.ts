@@ -18,7 +18,8 @@
  * ✅ initialize - Protocol initialization
  * ✅ authenticate - User authentication
  * ✅ session/new - Create new session
- * ✅ session/load - Load existing session
+ * ✅ session/load - Load existing session (v0.2.4+)
+ * ✅ session/list - List available sessions (v0.2.4+)
  * ✅ session/prompt - Send user message to agent
  * ✅ session/cancel - Cancel current generation
  * ✅ session/save - Save current session
@@ -27,6 +28,7 @@ export const AGENT_METHODS = {
   authenticate: 'authenticate',
   initialize: 'initialize',
   session_cancel: 'session/cancel',
+  session_list: 'session/list',
   session_load: 'session/load',
   session_new: 'session/new',
   session_prompt: 'session/prompt',

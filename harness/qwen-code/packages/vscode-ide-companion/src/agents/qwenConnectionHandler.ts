@@ -57,6 +57,8 @@ export class QwenConnectionHandler {
       console.warn(
         `[QwenAgentManager] CLI version ${versionInfo.version} is below minimum required version ${'0.2.4'}`,
       );
+
+      // TODO: 暂时注释
       // vscode.window.showWarningMessage(
       //   `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version 0.2.4 or later.`,
       // );
