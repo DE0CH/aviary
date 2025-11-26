@@ -6,7 +6,7 @@
 
 import { useCallback } from 'react';
 import type { VSCodeAPI } from './useVSCode.js';
-import { getRandomLoadingMessage } from '../constants/loadingMessages.js';
+import { getRandomLoadingMessage } from '../../constants/loadingMessages.js';
 
 interface UseMessageSubmitProps {
   vscode: VSCodeAPI;

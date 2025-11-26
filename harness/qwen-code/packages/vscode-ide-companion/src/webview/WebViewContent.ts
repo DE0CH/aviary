@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { escapeHtml } from '../utils/webviewUtils.js';
+import { escapeHtml } from './utils/webviewUtils.js';
 
 /**
  * WebView HTML Content Generator

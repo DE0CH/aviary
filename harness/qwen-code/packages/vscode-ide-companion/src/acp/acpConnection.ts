@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { JSONRPC_VERSION } from '../shared/acpTypes.js';
+import { JSONRPC_VERSION } from '../constants/acpTypes.js';
 import type {
   AcpBackend,
   AcpMessage,
   AcpPermissionRequest,
   AcpResponse,
   AcpSessionUpdate,
-} from '../shared/acpTypes.js';
+} from '../constants/acpTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { spawn } from 'child_process';
 import type {

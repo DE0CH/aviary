@@ -10,7 +10,7 @@
  * Handles session updates from ACP and dispatches them to appropriate callbacks
  */
 
-import type { AcpSessionUpdate } from '../shared/acpTypes.js';
+import type { AcpSessionUpdate } from '../constants/acpTypes.js';
 import type { QwenAgentCallbacks } from './qwenTypes.js';
 
 /**

@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getFileName } from '../utils/webviewUtils.js';
+import { getFileName } from './utils/webviewUtils.js';
 
 /**
  * File Operations Handler

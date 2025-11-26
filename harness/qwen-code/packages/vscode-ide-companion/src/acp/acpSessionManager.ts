@@ -10,12 +10,12 @@
  * Responsible for managing ACP protocol session operations, including initialization, authentication, session creation, and switching
  */
 
-import { JSONRPC_VERSION } from '../shared/acpTypes.js';
+import { JSONRPC_VERSION } from '../constants/acpTypes.js';
 import type {
   AcpRequest,
   AcpNotification,
   AcpResponse,
-} from '../shared/acpTypes.js';
+} from '../constants/acpTypes.js';
 import { AGENT_METHODS, CUSTOM_METHODS } from './schema.js';
 import type { PendingRequest } from './connectionTypes.js';
 import type { ChildProcess } from 'child_process';

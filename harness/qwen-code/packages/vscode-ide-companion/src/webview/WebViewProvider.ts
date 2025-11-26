@@ -7,14 +7,14 @@
 import * as vscode from 'vscode';
 import { QwenAgentManager } from '../agents/qwenAgentManager.js';
 import { ConversationStore } from '../storage/conversationStore.js';
-import type { AcpPermissionRequest } from '../shared/acpTypes.js';
+import type { AcpPermissionRequest } from '../constants/acpTypes.js';
 import { CliDetector } from '../utils/cliDetector.js';
 import { AuthStateManager } from '../auth/authStateManager.js';
 import { PanelManager } from './PanelManager.js';
 import { MessageHandler } from './MessageHandler.js';
 import { WebViewContent } from './WebViewContent.js';
 import { CliInstaller } from '../utils/CliInstaller.js';
-import { getFileName } from '../utils/webviewUtils.js';
+import { getFileName } from './utils/webviewUtils.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;

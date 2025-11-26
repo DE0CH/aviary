@@ -8,7 +8,7 @@ import { AcpConnection } from '../acp/acpConnection.js';
 import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
-} from '../shared/acpTypes.js';
+} from '../constants/acpTypes.js';
 import {
   QwenSessionReader,
   type QwenSession,

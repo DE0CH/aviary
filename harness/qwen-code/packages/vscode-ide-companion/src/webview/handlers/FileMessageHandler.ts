@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
-import { getFileName } from '../../utils/webviewUtils.js';
+import { getFileName } from '../utils/webviewUtils.js';
 
 /**
  * File message handler
