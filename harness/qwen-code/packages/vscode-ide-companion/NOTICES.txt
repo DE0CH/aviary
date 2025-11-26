@@ -2324,6 +2324,12 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 License text not found.
 
 ============================================================
+@qwen-code/qwen-code@undefined
+(git+https://github.com/QwenLM/qwen-code.git)
+
+License text not found.
+
+============================================================
 react@19.1.0
 (https://github.com/facebook/react.git)
 
