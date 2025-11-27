@@ -673,4 +673,640 @@ describe('Permission Control (E2E)', () => {
       }
     });
   });
+
+  describe('ApprovalMode behavior tests', () => {
+    describe('default mode', () => {
+      it(
+        'should auto-deny tools requiring confirmation without canUseTool callback',
+        async () => {
+          const q = query({
+            prompt:
+              'Create a file named test-default-deny.txt with content "hello"',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'default',
+              cwd: '/tmp',
+              // No canUseTool callback provided
+            },
+          });
+
+          try {
+            let hasToolResult = false;
+            let hasErrorInResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    hasToolResult = true;
+                    // Check if the result contains an error about permission
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      (toolResult.content.includes('permission') ||
+                        toolResult.content.includes('declined'))
+                    ) {
+                      hasErrorInResult = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            // In default mode without canUseTool, tools should be denied
+            expect(hasToolResult).toBe(true);
+            expect(hasErrorInResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should allow tools when canUseTool returns allow',
+        async () => {
+          let callbackInvoked = false;
+
+          const q = query({
+            prompt:
+              'Create a file named test-default-allow.txt with content "world"',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'default',
+              cwd: '/tmp',
+              canUseTool: async (toolName, input) => {
+                callbackInvoked = true;
+                return {
+                  behavior: 'allow',
+                  updatedInput: input,
+                };
+              },
+            },
+          });
+
+          try {
+            let hasSuccessfulToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    // Check if the result is successful (not an error)
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      !toolResult.content.includes('permission') &&
+                      !toolResult.content.includes('declined')
+                    ) {
+                      hasSuccessfulToolResult = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(callbackInvoked).toBe(true);
+            expect(hasSuccessfulToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should execute read-only tools without confirmation',
+        async () => {
+          const q = query({
+            prompt: 'List files in the current directory',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'default',
+              cwd: '/tmp',
+              // No canUseTool callback - read-only tools should still work
+            },
+          });
+
+          try {
+            let hasToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult) {
+                    hasToolResult = true;
+                  }
+                }
+              }
+            }
+
+            expect(hasToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+    });
+
+    describe('yolo mode', () => {
+      it(
+        'should auto-approve all tools without canUseTool callback',
+        async () => {
+          const q = query({
+            prompt:
+              'Create a file named test-yolo.txt with content "yolo mode"',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'yolo',
+              cwd: '/tmp',
+              // No canUseTool callback - tools should still execute
+            },
+          });
+
+          try {
+            let hasSuccessfulToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    // Check if the result is successful (not a permission error)
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      !toolResult.content.includes('permission') &&
+                      !toolResult.content.includes('declined')
+                    ) {
+                      hasSuccessfulToolResult = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(hasSuccessfulToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should not invoke canUseTool callback in yolo mode',
+        async () => {
+          let callbackInvoked = false;
+
+          const q = query({
+            prompt: 'Create a file named test-yolo-no-callback.txt',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'yolo',
+              cwd: '/tmp',
+              canUseTool: async (toolName, input) => {
+                callbackInvoked = true;
+                return {
+                  behavior: 'allow',
+                  updatedInput: input,
+                };
+              },
+            },
+          });
+
+          try {
+            let hasToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult) {
+                    hasToolResult = true;
+                  }
+                }
+              }
+            }
+
+            expect(hasToolResult).toBe(true);
+            // canUseTool should not be invoked in yolo mode
+            expect(callbackInvoked).toBe(false);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should execute dangerous commands without confirmation',
+        async () => {
+          const q = query({
+            prompt: 'Run command: echo "dangerous operation"',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'yolo',
+              cwd: '/tmp',
+            },
+          });
+
+          try {
+            let hasCommandResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    hasCommandResult = true;
+                  }
+                }
+              }
+            }
+
+            expect(hasCommandResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+    });
+
+    describe('plan mode', () => {
+      it(
+        'should block non-read-only tools and return plan mode error',
+        async () => {
+          const q = query({
+            prompt: 'Create a file named test-plan.txt',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'plan',
+              cwd: '/tmp',
+            },
+          });
+
+          try {
+            let hasBlockedToolCall = false;
+            let hasPlanModeMessage = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    hasBlockedToolCall = true;
+                    // Check for plan mode specific error message
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      (toolResult.content.includes('Plan mode') ||
+                        toolResult.content.includes('plan mode'))
+                    ) {
+                      hasPlanModeMessage = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(hasBlockedToolCall).toBe(true);
+            expect(hasPlanModeMessage).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should allow read-only tools in plan mode',
+        async () => {
+          const q = query({
+            prompt: 'List files in /tmp directory',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'plan',
+              cwd: '/tmp',
+            },
+          });
+
+          try {
+            let hasSuccessfulToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    // Check if the result is successful (not blocked by plan mode)
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      !toolResult.content.includes('Plan mode')
+                    ) {
+                      hasSuccessfulToolResult = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(hasSuccessfulToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should block tools even with canUseTool callback in plan mode',
+        async () => {
+          let callbackInvoked = false;
+
+          const q = query({
+            prompt: 'Create a file named test-plan-callback.txt',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'plan',
+              cwd: '/tmp',
+              canUseTool: async (toolName, input) => {
+                callbackInvoked = true;
+                return {
+                  behavior: 'allow',
+                  updatedInput: input,
+                };
+              },
+            },
+          });
+
+          try {
+            let hasPlanModeBlock = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (
+                    toolResult &&
+                    'content' in toolResult &&
+                    typeof toolResult.content === 'string' &&
+                    toolResult.content.includes('Plan mode')
+                  ) {
+                    hasPlanModeBlock = true;
+                  }
+                }
+              }
+            }
+
+            // Plan mode should block tools before canUseTool is invoked
+            expect(hasPlanModeBlock).toBe(true);
+            // canUseTool should not be invoked for blocked tools in plan mode
+            expect(callbackInvoked).toBe(false);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+    });
+
+    describe('auto-edit mode', () => {
+      it(
+        'should behave like default mode without canUseTool callback',
+        async () => {
+          const q = query({
+            prompt: 'Create a file named test-auto-edit.txt',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'auto-edit',
+              cwd: '/tmp',
+              // No canUseTool callback
+            },
+          });
+
+          try {
+            let hasToolResult = false;
+            let hasDeniedTool = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    hasToolResult = true;
+                    // Check if the tool was denied
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      (toolResult.content.includes('permission') ||
+                        toolResult.content.includes('declined'))
+                    ) {
+                      hasDeniedTool = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(hasToolResult).toBe(true);
+            expect(hasDeniedTool).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should allow tools when canUseTool returns allow',
+        async () => {
+          let callbackInvoked = false;
+
+          const q = query({
+            prompt: 'Create a file named test-auto-edit-allow.txt',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'auto-edit',
+              cwd: '/tmp',
+              canUseTool: async (toolName, input) => {
+                callbackInvoked = true;
+                return {
+                  behavior: 'allow',
+                  updatedInput: input,
+                };
+              },
+            },
+          });
+
+          try {
+            let hasSuccessfulToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult && 'tool_use_id' in toolResult) {
+                    // Check if the result is successful
+                    if (
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string' &&
+                      !toolResult.content.includes('permission') &&
+                      !toolResult.content.includes('declined')
+                    ) {
+                      hasSuccessfulToolResult = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            expect(callbackInvoked).toBe(true);
+            expect(hasSuccessfulToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should execute read-only tools without confirmation',
+        async () => {
+          const q = query({
+            prompt: 'Read the contents of /etc/hosts file',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'auto-edit',
+              // No canUseTool callback - read-only tools should still work
+            },
+          });
+
+          try {
+            let hasToolResult = false;
+
+            for await (const message of q) {
+              if (isCLIUserMessage(message)) {
+                if (Array.isArray(message.message.content)) {
+                  const toolResult = message.message.content.find(
+                    (block) => block.type === 'tool_result',
+                  );
+                  if (toolResult) {
+                    hasToolResult = true;
+                  }
+                }
+              }
+            }
+
+            expect(hasToolResult).toBe(true);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+    });
+
+    describe('mode comparison tests', () => {
+      it(
+        'should demonstrate different behaviors across all modes for write operations',
+        async () => {
+          const modes: Array<'default' | 'plan' | 'auto-edit' | 'yolo'> = [
+            'default',
+            'plan',
+            'auto-edit',
+            'yolo',
+          ];
+          const results: Record<string, boolean> = {};
+
+          for (const mode of modes) {
+            const q = query({
+              prompt: `Create a file named test-${mode}.txt`,
+              options: {
+                ...SHARED_TEST_OPTIONS,
+                permissionMode: mode,
+                cwd: '/tmp',
+                canUseTool:
+                  mode === 'yolo'
+                    ? undefined
+                    : async (toolName, input) => {
+                        return {
+                          behavior: 'allow',
+                          updatedInput: input,
+                        };
+                      },
+              },
+            });
+
+            try {
+              let toolExecuted = false;
+
+              for await (const message of q) {
+                if (isCLIUserMessage(message)) {
+                  if (Array.isArray(message.message.content)) {
+                    const toolResult = message.message.content.find(
+                      (block) => block.type === 'tool_result',
+                    );
+                    if (
+                      toolResult &&
+                      'content' in toolResult &&
+                      typeof toolResult.content === 'string'
+                    ) {
+                      // Check if tool executed successfully (not blocked or denied)
+                      if (
+                        !toolResult.content.includes('Plan mode') &&
+                        !toolResult.content.includes('permission') &&
+                        !toolResult.content.includes('declined')
+                      ) {
+                        toolExecuted = true;
+                      }
+                    }
+                  }
+                }
+              }
+
+              results[mode] = toolExecuted;
+            } finally {
+              await q.close();
+            }
+          }
+
+          // Verify expected behaviors
+          expect(results['default']).toBe(true); // Allowed via canUseTool
+          expect(results['plan']).toBe(false); // Blocked by plan mode
+          expect(results['auto-edit']).toBe(true); // Allowed via canUseTool
+          expect(results['yolo']).toBe(true); // Auto-approved
+        },
+        TEST_TIMEOUT * 4,
+      );
+    });
+  });
 });

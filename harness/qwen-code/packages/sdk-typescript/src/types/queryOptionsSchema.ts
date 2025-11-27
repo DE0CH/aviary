@@ -61,6 +61,7 @@ export const QueryOptionsSchema = z
     maxSessionTurns: z.number().optional(),
     coreTools: z.array(z.string()).optional(),
     excludeTools: z.array(z.string()).optional(),
+    allowedTools: z.array(z.string()).optional(),
     authType: z.enum(['openai', 'qwen-oauth']).optional(),
     agents: z
       .array(

@@ -34,6 +34,7 @@ export type TransportOptions = {
   maxSessionTurns?: number;
   coreTools?: string[];
   excludeTools?: string[];
+  allowedTools?: string[];
   authType?: string;
   includePartialMessages?: boolean;
 };
@@ -125,22 +126,50 @@ export interface QueryOptions {
   env?: Record<string, string>;
 
   /**
-   * Alias for `approval-mode` command line argument.
-   * Behaves slightly differently from the command line argument.
-   * Permission mode controlling how the CLI handles tool usage and file operations **in non-interactive mode**.
-   * - 'default': Automatically deny all write-like tools(edit, write_file, etc.) and dangers commands.
-   * - 'plan': Shows a plan before executing operations
-   * - 'auto-edit': Automatically applies edits without confirmation
-   * - 'yolo': Executes all operations without prompting
+   * Permission mode controlling how the SDK handles tool execution approval.
+   *
+   * - 'default': Write tools are denied unless approved via `canUseTool` callback or in `allowedTools`.
+   *   Read-only tools execute without confirmation.
+   * - 'plan': Blocks all write tools, instructing AI to present a plan first.
+   *   Read-only tools execute normally.
+   * - 'auto-edit': Auto-approve edit tools (edit, write_file) while other tools require confirmation.
+   * - 'yolo': All tools execute automatically without confirmation.
+   *
+   * **Priority Chain (highest to lowest):**
+   * 1. `excludeTools` - Blocks tools completely (returns permission error)
+   * 2. `permissionMode: 'plan'` - Blocks non-read-only tools (except exit_plan_mode)
+   * 3. `permissionMode: 'yolo'` - Auto-approves all tools
+   * 4. `allowedTools` - Auto-approves matching tools
+   * 5. `canUseTool` callback - Custom approval logic
+   * 6. Default behavior - Auto-deny in SDK mode
+   *
    * @default 'default'
+   * @see canUseTool For custom permission handling
+   * @see allowedTools For auto-approving specific tools
+   * @see excludeTools For blocking specific tools
    */
   permissionMode?: 'default' | 'plan' | 'auto-edit' | 'yolo';
 
   /**
-   * Custom permission handler for tool usage.
-   * This function is called when the SDK needs to determine if a tool should be allowed.
-   * Use this with `permissionMode` to gain more control over the tool usage.
-   * TODO: For now we don't support modifying the input.
+   * Custom permission handler for tool execution approval.
+   *
+   * This callback is invoked when a tool requires confirmation and allows you to
+   * programmatically approve or deny execution. It acts as a fallback after
+   * `allowedTools` check but before default denial.
+   *
+   * **When is this called?**
+   * - Only for tools requiring confirmation (write operations, shell commands, etc.)
+   * - After `excludeTools` and `allowedTools` checks
+   * - Not called in 'yolo' mode or 'plan' mode
+   * - Not called for tools already in `allowedTools`
+   *
+   * **Usage with permissionMode:**
+   * - 'default': Invoked for all write tools not in `allowedTools`; if not provided, auto-denied.
+   * - 'auto-edit': Invoked for non-edit tools (edit/write_file auto-approved); if not provided, auto-denied.
+   * - 'plan': Not invoked; write tools are blocked by plan mode.
+   * - 'yolo': Not invoked; all tools auto-approved.
+   *
+   * @see allowedTools For auto-approving tools without callback
    */
   canUseTool?: CanUseTool;
 
@@ -197,10 +226,48 @@ export interface QueryOptions {
   /**
    * Equivalent to `tool.exclude` in settings.json.
    * List of tools to exclude from the session.
-   * These tools will not be available to the AI, even if they are core tools.
-   * @example ['run_terminal_cmd', 'delete_file']
+   *
+   * **Behavior:**
+   * - Excluded tools return a permission error immediately when invoked
+   * - Takes highest priority - overrides all other permission settings
+   * - Tools will not be available to the AI, even if in `coreTools` or `allowedTools`
+   *
+   * **Pattern matching:**
+   * - Tool name: `'write_file'`, `'run_shell_command'`
+   * - Tool class: `'WriteTool'`, `'ShellTool'`
+   * - Shell command prefix: `'ShellTool(git commit)'` (matches commands starting with "git commit")
+   *
+   * @example ['run_terminal_cmd', 'delete_file', 'ShellTool(rm )']
+   * @see allowedTools For allowing specific tools
    */
   excludeTools?: string[];
+
+  /**
+   * Equivalent to `tool.allowed` in settings.json.
+   * List of tools that are allowed to run without confirmation.
+   *
+   * **Behavior:**
+   * - Matching tools bypass `canUseTool` callback and execute automatically
+   * - Only applies when tool requires confirmation (write operations, shell commands)
+   * - Checked after `excludeTools` but before `canUseTool` callback
+   * - Does not override `permissionMode: 'plan'` (plan mode blocks all write tools)
+   * - Has no effect in `permissionMode: 'yolo'` (already auto-approved)
+   *
+   * **Pattern matching:**
+   * - Tool name: `'write_file'`, `'run_shell_command'`
+   * - Tool class: `'WriteTool'`, `'ShellTool'`
+   * - Shell command prefix: `'ShellTool(git status)'` (matches commands starting with "git status")
+   *
+   * **Use cases:**
+   * - Auto-approve safe shell commands: `['ShellTool(git status)', 'ShellTool(ls)']`
+   * - Auto-approve specific tools: `['write_file', 'edit']`
+   * - Combine with `permissionMode: 'default'` to selectively auto-approve tools
+   *
+   * @example ['read_file', 'ShellTool(git status)', 'ShellTool(npm test)']
+   * @see canUseTool For custom approval logic
+   * @see excludeTools For blocking specific tools
+   */
+  allowedTools?: string[];
 
   /**
    * Authentication type for the AI service.
