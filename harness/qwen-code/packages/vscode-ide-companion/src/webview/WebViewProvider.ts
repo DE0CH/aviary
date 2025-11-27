@@ -399,12 +399,7 @@ export class WebViewProvider {
           const authInfo = await this.authStateManager.getAuthInfo();
           console.log('[WebViewProvider] Auth cache status:', authInfo);
 
-          // Pass the detected CLI path to ensure we use the correct installation
-          await this.agentManager.connect(
-            workingDir,
-            this.authStateManager,
-            cliDetection.cliPath,
-          );
+          await this.agentManager.connect(workingDir, this.authStateManager);
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
 

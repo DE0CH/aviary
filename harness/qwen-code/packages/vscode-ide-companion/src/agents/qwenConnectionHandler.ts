@@ -23,18 +23,16 @@ export class QwenConnectionHandler {
   /**
    * Connect to Qwen service and establish session
    *
-   * @param connection - ACP连接实例
-   * @param sessionReader - 会话读取器实例
-   * @param workingDir - 工作目录
-   * @param authStateManager - 认证状态管理器（可选）
-   * @param cliPath - CLI路径（可选，如果提供将覆盖配置中的路径）
+   * @param connection - ACP connection instance
+   * @param sessionReader - Session reader instance
+   * @param workingDir - Working directory
+   * @param authStateManager - Auth state manager (optional)
    */
   async connect(
     connection: AcpConnection,
     sessionReader: QwenSessionReader,
     workingDir: string,
     authStateManager?: AuthStateManager,
-    cliPath?: string,
   ): Promise<void> {
     const connectId = Date.now();
     console.log(`\n========================================`);
@@ -43,9 +41,7 @@ export class QwenConnectionHandler {
     console.log(`========================================\n`);
 
     const config = vscode.workspace.getConfiguration('qwenCode');
-    // Use the provided CLI path if available, otherwise use the configured path
-    const effectiveCliPath =
-      cliPath || config.get<string>('qwen.cliPath', 'qwen');
+    const cliPath = config.get<string>('qwen.cliPath', 'qwen');
     const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
     const openaiBaseUrl = config.get<string>('qwen.openaiBaseUrl', '');
     const model = config.get<string>('qwen.model', '');
@@ -67,7 +63,7 @@ export class QwenConnectionHandler {
       console.log('[QwenAgentManager] Using proxy:', proxy);
     }
 
-    await connection.connect('qwen', effectiveCliPath, workingDir, extraArgs);
+    await connection.connect('qwen', cliPath, workingDir, extraArgs);
 
     // Determine authentication method
     const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';

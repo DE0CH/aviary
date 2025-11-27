@@ -72,14 +72,12 @@ export class QwenAgentManager {
   /**
    * Connect to Qwen service
    *
-   * @param workingDir - 工作目录
-   * @param authStateManager - 认证状态管理器（可选）
-   * @param cliPath - CLI路径（可选，如果提供将覆盖配置中的路径）
+   * @param workingDir - Working directory
+   * @param authStateManager - Auth state manager (optional)
    */
   async connect(
     workingDir: string,
     authStateManager?: AuthStateManager,
-    cliPath?: string,
   ): Promise<void> {
     this.currentWorkingDir = workingDir;
     await this.connectionHandler.connect(
@@ -87,7 +85,6 @@ export class QwenAgentManager {
       this.sessionReader,
       workingDir,
       authStateManager,
-      cliPath,
     );
   }
 
