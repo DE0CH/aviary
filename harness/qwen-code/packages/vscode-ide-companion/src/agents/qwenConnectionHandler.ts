@@ -14,6 +14,8 @@ import * as vscode from 'vscode';
 import type { AcpConnection } from '../acp/acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import type { AuthStateManager } from '../auth/authStateManager.js';
+import { CliVersionManager } from '../cli/cliVersionManager.js';
+import { CliContextManager } from '../cli/cliContextManager.js';
 
 /**
  * Qwen Connection Handler class
@@ -40,6 +42,25 @@ export class QwenConnectionHandler {
     console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
     console.log(`[QwenAgentManager] Call stack:\n${new Error().stack}`);
     console.log(`========================================\n`);
+
+    // Check CLI version and features
+    const cliVersionManager = CliVersionManager.getInstance();
+    const versionInfo = await cliVersionManager.detectCliVersion();
+    console.log('[QwenAgentManager] CLI version info:', versionInfo);
+
+    // Store CLI context
+    const cliContextManager = CliContextManager.getInstance();
+    cliContextManager.setCurrentVersionInfo(versionInfo);
+
+    // Show warning if CLI version is below minimum requirement
+    if (!versionInfo.isSupported) {
+      console.warn(
+        `[QwenAgentManager] CLI version ${versionInfo.version} is below minimum required version ${'0.2.4'}`,
+      );
+      // vscode.window.showWarningMessage(
+      //   `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version 0.2.4 or later.`,
+      // );
+    }
 
     const config = vscode.workspace.getConfiguration('qwenCode');
     const cliPath = config.get<string>('qwen.cliPath', 'qwen');

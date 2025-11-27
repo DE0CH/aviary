@@ -99,7 +99,40 @@ export class QwenAgentManager {
   }
 
   /**
-   * Get session list
+   * Validate if current session is still active
+   * This is a lightweight check to verify session validity
+   *
+   * @returns True if session is valid, false otherwise
+   */
+  async validateCurrentSession(): Promise<boolean> {
+    try {
+      // If we don't have a current session, it's definitely not valid
+      if (!this.connection.currentSessionId) {
+        return false;
+      }
+
+      // Try to get session list to verify our session still exists
+      const sessions = await this.getSessionList();
+      const currentSessionId = this.connection.currentSessionId;
+
+      // Check if our current session exists in the session list
+      const sessionExists = sessions.some(
+        (session: Record<string, unknown>) =>
+          session.id === currentSessionId ||
+          session.sessionId === currentSessionId,
+      );
+
+      return sessionExists;
+    } catch (error) {
+      console.warn('[QwenAgentManager] Session validation failed:', error);
+      // If we can't validate, assume session is invalid
+      return false;
+    }
+  }
+
+  /**
+   * Get session list with version-aware strategy
+   * First tries ACP method if CLI version supports it, falls back to file system method
    *
    * @returns Session list
    */

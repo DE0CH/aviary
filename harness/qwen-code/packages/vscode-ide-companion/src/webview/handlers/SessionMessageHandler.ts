@@ -260,6 +260,32 @@ export class SessionMessageHandler extends BaseMessageHandler {
       return;
     }
 
+    // // Validate current session before sending message
+    // const isSessionValid = await this.agentManager.validateCurrentSession();
+    // if (!isSessionValid) {
+    //   console.warn('[SessionMessageHandler] Current session is not valid');
+
+    //   // Show non-modal notification with Login button
+    //   const result = await vscode.window.showWarningMessage(
+    //     'Your session has expired. Please login again to continue using Qwen Code.',
+    //     'Login Now',
+    //   );
+
+    //   if (result === 'Login Now') {
+    //     // Use login handler directly
+    //     if (this.loginHandler) {
+    //       await this.loginHandler();
+    //     } else {
+    //       // Fallback to command
+    //       vscode.window.showInformationMessage(
+    //         'Please wait while we connect to Qwen Code...',
+    //       );
+    //       await vscode.commands.executeCommand('qwenCode.login');
+    //     }
+    //   }
+    //   return;
+    // }
+
     // Send to agent
     try {
       this.resetStreamContent();
@@ -327,9 +353,15 @@ export class SessionMessageHandler extends BaseMessageHandler {
       console.error('[SessionMessageHandler] Error sending message:', error);
 
       const errorMsg = String(error);
-      if (errorMsg.includes('No active ACP session')) {
+      // Check for session not found error and handle it appropriately
+      if (
+        errorMsg.includes('Session not found') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Clear auth cache since session is invalid
+        // Note: We would need access to authStateManager for this, but for now we'll just show login prompt
         const result = await vscode.window.showWarningMessage(
-          'You need to login first to use Qwen Code.',
+          'Your session has expired. Please login again to continue using Qwen Code.',
           'Login Now',
         );
 
