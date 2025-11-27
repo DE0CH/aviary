@@ -2,7 +2,7 @@
  * Factory function for creating Query instances.
  */
 
-import type { CLIUserMessage } from '../types/protocol.js';
+import type { SDKUserMessage } from '../types/protocol.js';
 import { serializeJsonLine } from '../utils/jsonLines.js';
 import { ProcessTransport } from '../transport/ProcessTransport.js';
 import { parseExecutableSpec } from '../utils/cliPath.js';
@@ -22,11 +22,11 @@ export function query({
   /**
    * The prompt to send to the Qwen Code CLI process.
    * - `string` for single-turn query,
-   * - `AsyncIterable<CLIUserMessage>` for multi-turn query.
+   * - `AsyncIterable<SDKUserMessage>` for multi-turn query.
    *
    * The transport will remain open until the prompt is done.
    */
-  prompt: string | AsyncIterable<CLIUserMessage>;
+  prompt: string | AsyncIterable<SDKUserMessage>;
   /**
    * Configuration options for the query.
    */
@@ -67,7 +67,7 @@ export function query({
 
   if (isSingleTurn) {
     const stringPrompt = prompt as string;
-    const message: CLIUserMessage = {
+    const message: SDKUserMessage = {
       type: 'user',
       session_id: queryInstance.getSessionId(),
       message: {
@@ -87,7 +87,7 @@ export function query({
     })();
   } else {
     queryInstance
-      .streamInput(prompt as AsyncIterable<CLIUserMessage>)
+      .streamInput(prompt as AsyncIterable<SDKUserMessage>)
       .catch((err) => {
         logger.error('Error streaming input:', err);
       });

@@ -14,14 +14,15 @@ const e2eTestsDir = join(rootDir, '.integration-tests');
 let runDir = '';
 
 export async function setup() {
-  runDir = join(e2eTestsDir, `${Date.now()}`);
+  runDir = join(e2eTestsDir, `sdk-e2e-${Date.now()}`);
   await mkdir(runDir, { recursive: true });
 
   // Clean up old test runs, but keep the latest few for debugging
   try {
     const testRuns = await readdir(e2eTestsDir);
-    if (testRuns.length > 5) {
-      const oldRuns = testRuns.sort().slice(0, testRuns.length - 5);
+    const sdkTestRuns = testRuns.filter((run) => run.startsWith('sdk-e2e-'));
+    if (sdkTestRuns.length > 5) {
+      const oldRuns = sdkTestRuns.sort().slice(0, sdkTestRuns.length - 5);
       await Promise.all(
         oldRuns.map((oldRun) =>
           rm(join(e2eTestsDir, oldRun), {
@@ -44,7 +45,7 @@ export async function setup() {
   }
   process.env['VERBOSE'] = process.env['VERBOSE'] ?? 'false';
 
-  console.log(`\nE2E test output directory: ${runDir}`);
+  console.log(`\nSDK E2E test output directory: ${runDir}`);
   console.log(`CLI path: ${process.env['TEST_CLI_PATH']}`);
 }
 

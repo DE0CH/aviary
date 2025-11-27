@@ -89,7 +89,7 @@ export interface APIAssistantMessage {
   usage: Usage;
 }
 
-export interface CLIUserMessage {
+export interface SDKUserMessage {
   type: 'user';
   uuid?: string;
   session_id: string;
@@ -98,7 +98,7 @@ export interface CLIUserMessage {
   options?: Record<string, unknown>;
 }
 
-export interface CLIAssistantMessage {
+export interface SDKAssistantMessage {
   type: 'assistant';
   uuid: string;
   session_id: string;
@@ -106,7 +106,7 @@ export interface CLIAssistantMessage {
   parent_tool_use_id: string | null;
 }
 
-export interface CLISystemMessage {
+export interface SDKSystemMessage {
   type: 'system';
   subtype: string;
   uuid: string;
@@ -133,7 +133,7 @@ export interface CLISystemMessage {
   };
 }
 
-export interface CLIResultMessageSuccess {
+export interface SDKResultMessageSuccess {
   type: 'result';
   subtype: 'success';
   uuid: string;
@@ -149,7 +149,7 @@ export interface CLIResultMessageSuccess {
   [key: string]: unknown;
 }
 
-export interface CLIResultMessageError {
+export interface SDKResultMessageError {
   type: 'result';
   subtype: 'error_max_turns' | 'error_during_execution';
   uuid: string;
@@ -169,7 +169,7 @@ export interface CLIResultMessageError {
   [key: string]: unknown;
 }
 
-export type CLIResultMessage = CLIResultMessageSuccess | CLIResultMessageError;
+export type SDKResultMessage = SDKResultMessageSuccess | SDKResultMessageError;
 
 export interface MessageStartStreamEvent {
   type: 'message_start';
@@ -222,7 +222,7 @@ export type StreamEvent =
   | ContentBlockStopEvent
   | MessageStopStreamEvent;
 
-export interface CLIPartialAssistantMessage {
+export interface SDKPartialAssistantMessage {
   type: 'stream_event';
   uuid: string;
   session_id: string;
@@ -389,22 +389,22 @@ export type ControlMessage =
   | ControlCancelRequest;
 
 /**
- * Union of all CLI message types
+ * Union of all SDK message types
  */
-export type CLIMessage =
-  | CLIUserMessage
-  | CLIAssistantMessage
-  | CLISystemMessage
-  | CLIResultMessage
-  | CLIPartialAssistantMessage;
+export type SDKMessage =
+  | SDKUserMessage
+  | SDKAssistantMessage
+  | SDKSystemMessage
+  | SDKResultMessage
+  | SDKPartialAssistantMessage;
 
-export function isCLIUserMessage(msg: any): msg is CLIUserMessage {
+export function isSDKUserMessage(msg: any): msg is SDKUserMessage {
   return (
     msg && typeof msg === 'object' && msg.type === 'user' && 'message' in msg
   );
 }
 
-export function isCLIAssistantMessage(msg: any): msg is CLIAssistantMessage {
+export function isSDKAssistantMessage(msg: any): msg is SDKAssistantMessage {
   return (
     msg &&
     typeof msg === 'object' &&
@@ -416,7 +416,7 @@ export function isCLIAssistantMessage(msg: any): msg is CLIAssistantMessage {
   );
 }
 
-export function isCLISystemMessage(msg: any): msg is CLISystemMessage {
+export function isSDKSystemMessage(msg: any): msg is SDKSystemMessage {
   return (
     msg &&
     typeof msg === 'object' &&
@@ -427,7 +427,7 @@ export function isCLISystemMessage(msg: any): msg is CLISystemMessage {
   );
 }
 
-export function isCLIResultMessage(msg: any): msg is CLIResultMessage {
+export function isSDKResultMessage(msg: any): msg is SDKResultMessage {
   return (
     msg &&
     typeof msg === 'object' &&
@@ -440,9 +440,9 @@ export function isCLIResultMessage(msg: any): msg is CLIResultMessage {
   );
 }
 
-export function isCLIPartialAssistantMessage(
+export function isSDKPartialAssistantMessage(
   msg: any,
-): msg is CLIPartialAssistantMessage {
+): msg is SDKPartialAssistantMessage {
   return (
     msg &&
     typeof msg === 'object' &&

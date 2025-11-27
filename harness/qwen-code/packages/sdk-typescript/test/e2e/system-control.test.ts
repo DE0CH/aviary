@@ -6,9 +6,9 @@
 import { describe, it, expect } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  type CLIUserMessage,
+  isSDKAssistantMessage,
+  isSDKSystemMessage,
+  type SDKUserMessage,
 } from '../../src/types/protocol.js';
 
 const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
@@ -30,7 +30,7 @@ function createStreamingInputWithControlPoint(
   firstMessage: string,
   secondMessage: string,
 ): {
-  generator: AsyncIterable<CLIUserMessage>;
+  generator: AsyncIterable<SDKUserMessage>;
   resume: () => void;
 } {
   let resumeResolve: (() => void) | null = null;
@@ -49,7 +49,7 @@ function createStreamingInputWithControlPoint(
         content: firstMessage,
       },
       parent_tool_use_id: null,
-    } as CLIUserMessage;
+    } as SDKUserMessage;
 
     await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -65,7 +65,7 @@ function createStreamingInputWithControlPoint(
         content: secondMessage,
       },
       parent_tool_use_id: null,
-    } as CLIUserMessage;
+    } as SDKUserMessage;
   })();
 
   const resume = () => {
@@ -113,10 +113,10 @@ describe('System Control (E2E)', () => {
         // Consume messages in a single loop
         (async () => {
           for await (const message of q) {
-            if (isCLISystemMessage(message)) {
+            if (isSDKSystemMessage(message)) {
               systemMessages.push({ model: message.model });
             }
-            if (isCLIAssistantMessage(message)) {
+            if (isSDKAssistantMessage(message)) {
               if (!firstResponseReceived) {
                 firstResponseReceived = true;
                 resolvers.first?.();
@@ -186,7 +186,7 @@ describe('System Control (E2E)', () => {
           session_id: sessionId,
           message: { role: 'user', content: 'First message' },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 200));
         await resumePromise1;
@@ -197,7 +197,7 @@ describe('System Control (E2E)', () => {
           session_id: sessionId,
           message: { role: 'user', content: 'Second message' },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 200));
         await resumePromise2;
@@ -208,7 +208,7 @@ describe('System Control (E2E)', () => {
           session_id: sessionId,
           message: { role: 'user', content: 'Third message' },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       })();
 
       const q = query({
@@ -232,10 +232,10 @@ describe('System Control (E2E)', () => {
 
         (async () => {
           for await (const message of q) {
-            if (isCLISystemMessage(message)) {
+            if (isSDKSystemMessage(message)) {
               systemMessages.push({ model: message.model });
             }
-            if (isCLIAssistantMessage(message)) {
+            if (isSDKAssistantMessage(message)) {
               if (responseCount < resolvers.length) {
                 resolvers[responseCount]?.();
                 responseCount++;

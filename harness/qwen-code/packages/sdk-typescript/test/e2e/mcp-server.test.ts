@@ -9,234 +9,48 @@
  * Tests that the SDK can properly interact with MCP servers configured in qwen-code
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIAssistantMessage,
-  isCLIResultMessage,
-  isCLISystemMessage,
-  isCLIUserMessage,
-  type TextBlock,
-  type ContentBlock,
-  type CLIMessage,
+  isSDKAssistantMessage,
+  isSDKResultMessage,
+  isSDKSystemMessage,
+  isSDKUserMessage,
+  type SDKMessage,
   type ToolUseBlock,
-  type CLISystemMessage,
+  type SDKSystemMessage,
 } from '../../src/types/protocol.js';
-import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
-
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
-const E2E_TEST_FILE_DIR = process.env['E2E_TEST_FILE_DIR']!;
+import {
+  SDKTestHelper,
+  createMCPServer,
+  extractText,
+  findToolUseBlocks,
+  createSharedTestOptions,
+} from './test-helper.js';
 
 const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
+  ...createSharedTestOptions(),
   permissionMode: 'yolo' as const,
 };
 
-/**
- * Helper to extract text from ContentBlock array
- */
-function extractText(content: ContentBlock[]): string {
-  return content
-    .filter((block): block is TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
-}
-
-/**
- * Minimal MCP server implementation that doesn't require external dependencies
- * This implements the MCP protocol directly using Node.js built-ins
- */
-const MCP_SERVER_SCRIPT = `#!/usr/bin/env node
-/**
- * @license
- * Copyright 2025 Qwen Team
- * SPDX-License-Identifier: Apache-2.0
- */
-
-const readline = require('readline');
-const fs = require('fs');
-
-// Debug logging to stderr (only when MCP_DEBUG or VERBOSE is set)
-const debugEnabled = process.env['MCP_DEBUG'] === 'true' || process.env['VERBOSE'] === 'true';
-function debug(msg) {
-  if (debugEnabled) {
-    fs.writeSync(2, \`[MCP-DEBUG] \${msg}\\n\`);
-  }
-}
-
-debug('MCP server starting...');
-
-// Simple JSON-RPC implementation for MCP
-class SimpleJSONRPC {
-  constructor() {
-    this.handlers = new Map();
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: false
-    });
-    
-    this.rl.on('line', (line) => {
-      debug(\`Received line: \${line}\`);
-      try {
-        const message = JSON.parse(line);
-        debug(\`Parsed message: \${JSON.stringify(message)}\`);
-        this.handleMessage(message);
-      } catch (e) {
-        debug(\`Parse error: \${e.message}\`);
-      }
-    });
-  }
-  
-  send(message) {
-    const msgStr = JSON.stringify(message);
-    debug(\`Sending message: \${msgStr}\`);
-    process.stdout.write(msgStr + '\\n');
-  }
-  
-  async handleMessage(message) {
-    if (message.method && this.handlers.has(message.method)) {
-      try {
-        const result = await this.handlers.get(message.method)(message.params || {});
-        if (message.id !== undefined) {
-          this.send({
-            jsonrpc: '2.0',
-            id: message.id,
-            result
-          });
-        }
-      } catch (error) {
-        if (message.id !== undefined) {
-          this.send({
-            jsonrpc: '2.0',
-            id: message.id,
-            error: {
-              code: -32603,
-              message: error.message
-            }
-          });
-        }
-      }
-    } else if (message.id !== undefined) {
-      this.send({
-        jsonrpc: '2.0',
-        id: message.id,
-        error: {
-          code: -32601,
-          message: 'Method not found'
-        }
-      });
-    }
-  }
-  
-  on(method, handler) {
-    this.handlers.set(method, handler);
-  }
-}
-
-// Create MCP server
-const rpc = new SimpleJSONRPC();
-
-// Handle initialize
-rpc.on('initialize', async (params) => {
-  debug('Handling initialize request');
-  return {
-    protocolVersion: '2024-11-05',
-    capabilities: {
-      tools: {}
-    },
-    serverInfo: {
-      name: 'test-math-server',
-      version: '1.0.0'
-    }
-  };
-});
-
-// Handle tools/list
-rpc.on('tools/list', async () => {
-  debug('Handling tools/list request');
-  return {
-    tools: [
-      {
-        name: 'add',
-        description: 'Add two numbers together',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            a: { type: 'number', description: 'First number' },
-            b: { type: 'number', description: 'Second number' }
-          },
-          required: ['a', 'b']
-        }
-      },
-      {
-        name: 'multiply',
-        description: 'Multiply two numbers together',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            a: { type: 'number', description: 'First number' },
-            b: { type: 'number', description: 'Second number' }
-          },
-          required: ['a', 'b']
-        }
-      }
-    ]
-  };
-});
-
-// Handle tools/call
-rpc.on('tools/call', async (params) => {
-  debug(\`Handling tools/call request for tool: \${params.name}\`);
-  
-  if (params.name === 'add') {
-    const { a, b } = params.arguments;
-    return {
-      content: [{
-        type: 'text',
-        text: String(a + b)
-      }]
-    };
-  }
-  
-  if (params.name === 'multiply') {
-    const { a, b } = params.arguments;
-    return {
-      content: [{
-        type: 'text',
-        text: String(a * b)
-      }]
-    };
-  }
-  
-  throw new Error('Unknown tool: ' + params.name);
-});
-
-// Send initialization notification
-rpc.send({
-  jsonrpc: '2.0',
-  method: 'initialized'
-});
-`;
-
 describe('MCP Server Integration (E2E)', () => {
-  let testDir: string;
+  let helper: SDKTestHelper;
   let serverScriptPath: string;
+  let testDir: string;
 
-  beforeAll(() => {
-    // Use the centralized E2E test directory from globalSetup
-    testDir = join(E2E_TEST_FILE_DIR, 'mcp-server-test');
-    mkdirSync(testDir, { recursive: true });
+  beforeAll(async () => {
+    // Create isolated test environment using SDKTestHelper
+    helper = new SDKTestHelper();
+    testDir = await helper.setup('mcp-server-integration');
 
-    // Write MCP server script
-    serverScriptPath = join(testDir, 'mcp-server.cjs');
-    writeFileSync(serverScriptPath, MCP_SERVER_SCRIPT);
+    // Create MCP server using the helper utility
+    const mcpServer = await createMCPServer(helper, 'math', 'test-math-server');
+    serverScriptPath = mcpServer.scriptPath;
+  });
 
-    // Make script executable on Unix-like systems
-    if (process.platform !== 'win32') {
-      chmodSync(serverScriptPath, 0o755);
-    }
+  afterAll(async () => {
+    // Cleanup test directory
+    await helper.cleanup();
   });
 
   describe('Basic MCP Tool Usage', () => {
@@ -257,7 +71,7 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
       let foundToolUse = false;
 
@@ -265,12 +79,9 @@ describe('MCP Server Integration (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
-            const toolUseBlock = message.message.content.find(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use',
-            );
-            if (toolUseBlock && toolUseBlock.name === 'add') {
+          if (isSDKAssistantMessage(message)) {
+            const toolUseBlocks = findToolUseBlocks(message, 'add');
+            if (toolUseBlocks.length > 0) {
               foundToolUse = true;
             }
             assistantText += extractText(message.message.content);
@@ -285,8 +96,8 @@ describe('MCP Server Integration (E2E)', () => {
 
         // Validate successful completion
         const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
+        expect(isSDKResultMessage(lastMessage)).toBe(true);
+        if (isSDKResultMessage(lastMessage)) {
           expect(lastMessage.subtype).toBe('success');
         }
       } finally {
@@ -311,7 +122,7 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
       let foundToolUse = false;
 
@@ -319,12 +130,9 @@ describe('MCP Server Integration (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
-            const toolUseBlock = message.message.content.find(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use',
-            );
-            if (toolUseBlock && toolUseBlock.name === 'multiply') {
+          if (isSDKAssistantMessage(message)) {
+            const toolUseBlocks = findToolUseBlocks(message, 'multiply');
+            if (toolUseBlocks.length > 0) {
               foundToolUse = true;
             }
             assistantText += extractText(message.message.content);
@@ -339,7 +147,7 @@ describe('MCP Server Integration (E2E)', () => {
 
         // Validate successful completion
         const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
+        expect(isSDKResultMessage(lastMessage)).toBe(true);
       } finally {
         await q.close();
       }
@@ -363,11 +171,11 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      let systemMessage: SDKSystemMessage | null = null;
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
+          if (isSDKSystemMessage(message) && message.subtype === 'init') {
             systemMessage = message;
             break;
           }
@@ -410,7 +218,7 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
       const toolCalls: string[] = [];
 
@@ -418,11 +226,8 @@ describe('MCP Server Integration (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
-            const toolUseBlocks = message.message.content.filter(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use',
-            );
+          if (isSDKAssistantMessage(message)) {
+            const toolUseBlocks = findToolUseBlocks(message);
             toolUseBlocks.forEach((block) => {
               toolCalls.push(block.name);
             });
@@ -439,7 +244,7 @@ describe('MCP Server Integration (E2E)', () => {
 
         // Validate successful completion
         const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
+        expect(isSDKResultMessage(lastMessage)).toBe(true);
       } finally {
         await q.close();
       }
@@ -462,7 +267,7 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
       const addToolCalls: ToolUseBlock[] = [];
 
@@ -470,16 +275,9 @@ describe('MCP Server Integration (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
-            const toolUseBlocks = message.message.content.filter(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use',
-            );
-            toolUseBlocks.forEach((block) => {
-              if (block.name === 'add') {
-                addToolCalls.push(block);
-              }
-            });
+          if (isSDKAssistantMessage(message)) {
+            const toolUseBlocks = findToolUseBlocks(message, 'add');
+            addToolCalls.push(...toolUseBlocks);
             assistantText += extractText(message.message.content);
           }
         }
@@ -493,7 +291,7 @@ describe('MCP Server Integration (E2E)', () => {
 
         // Validate successful completion
         const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
+        expect(isSDKResultMessage(lastMessage)).toBe(true);
       } finally {
         await q.close();
       }
@@ -525,19 +323,16 @@ describe('MCP Server Integration (E2E)', () => {
         for await (const message of q) {
           messageTypes.push(message.type);
 
-          if (isCLIAssistantMessage(message)) {
-            const toolUseBlock = message.message.content.find(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use',
-            );
-            if (toolUseBlock) {
+          if (isSDKAssistantMessage(message)) {
+            const toolUseBlocks = findToolUseBlocks(message);
+            if (toolUseBlocks.length > 0) {
               foundToolUse = true;
-              expect(toolUseBlock.name).toBe('add');
-              expect(toolUseBlock.input).toBeDefined();
+              expect(toolUseBlocks[0].name).toBe('add');
+              expect(toolUseBlocks[0].input).toBeDefined();
             }
           }
 
-          if (isCLIUserMessage(message)) {
+          if (isSDKUserMessage(message)) {
             const content = message.message.content;
             const contentArray = Array.isArray(content)
               ? content
@@ -584,21 +379,21 @@ describe('MCP Server Integration (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantText += extractText(message.message.content);
           }
         }
 
         // Should complete without crashing
         const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
+        expect(isSDKResultMessage(lastMessage)).toBe(true);
 
         // Assistant should indicate tool is not available or provide alternative
         expect(assistantText.length).toBeGreaterThan(0);

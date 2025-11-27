@@ -7,12 +7,12 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { Query } from '../../src/query/Query.js';
 import type { Transport } from '../../src/transport/Transport.js';
 import type {
-  CLIMessage,
-  CLIUserMessage,
-  CLIAssistantMessage,
-  CLISystemMessage,
-  CLIResultMessage,
-  CLIPartialAssistantMessage,
+  SDKMessage,
+  SDKUserMessage,
+  SDKAssistantMessage,
+  SDKSystemMessage,
+  SDKResultMessage,
+  SDKPartialAssistantMessage,
   CLIControlRequest,
   CLIControlResponse,
   ControlCancelRequest,
@@ -118,7 +118,7 @@ function findControlRequest(
 function createUserMessage(
   content: string,
   sessionId = 'test-session',
-): CLIUserMessage {
+): SDKUserMessage {
   return {
     type: 'user',
     session_id: sessionId,
@@ -133,7 +133,7 @@ function createUserMessage(
 function createAssistantMessage(
   content: string,
   sessionId = 'test-session',
-): CLIAssistantMessage {
+): SDKAssistantMessage {
   return {
     type: 'assistant',
     uuid: 'msg-123',
@@ -153,7 +153,7 @@ function createAssistantMessage(
 function createSystemMessage(
   subtype: string,
   sessionId = 'test-session',
-): CLISystemMessage {
+): SDKSystemMessage {
   return {
     type: 'system',
     subtype,
@@ -168,7 +168,7 @@ function createSystemMessage(
 function createResultMessage(
   success: boolean,
   sessionId = 'test-session',
-): CLIResultMessage {
+): SDKResultMessage {
   if (success) {
     return {
       type: 'result',
@@ -202,7 +202,7 @@ function createResultMessage(
 
 function createPartialMessage(
   sessionId = 'test-session',
-): CLIPartialAssistantMessage {
+): SDKPartialAssistantMessage {
   return {
     type: 'stream_event',
     uuid: 'stream-123',
@@ -816,7 +816,7 @@ describe('Query', () => {
           msg !== null &&
           'type' in msg &&
           msg.type === 'user',
-      ) as CLIUserMessage[];
+      ) as SDKUserMessage[];
 
       userMessages.forEach((msg) => {
         expect(msg.session_id).toBe(sessionId);
@@ -889,7 +889,7 @@ describe('Query', () => {
       const query = new Query(transport, { cwd: '/test' });
 
       const iterationPromise = (async () => {
-        const messages: CLIMessage[] = [];
+        const messages: SDKMessage[] = [];
         for await (const msg of query) {
           messages.push(msg);
         }
@@ -946,7 +946,7 @@ describe('Query', () => {
     it('should support for await loop', async () => {
       const query = new Query(transport, { cwd: '/test' });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       const iterationPromise = (async () => {
         for await (const msg of query) {
           messages.push(msg);
@@ -960,7 +960,7 @@ describe('Query', () => {
       await iterationPromise;
 
       expect(messages).toHaveLength(2);
-      expect((messages[0] as CLIUserMessage).message.content).toBe('First');
+      expect((messages[0] as SDKUserMessage).message.content).toBe('First');
 
       await query.close();
     });
@@ -968,7 +968,7 @@ describe('Query', () => {
     it('should complete iteration when query closes', async () => {
       const query = new Query(transport, { cwd: '/test' });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       const iterationPromise = (async () => {
         for await (const msg of query) {
           messages.push(msg);
@@ -1321,7 +1321,7 @@ describe('Query', () => {
 
       const result = await query.next();
       expect(result.done).toBe(false);
-      expect((result.value as CLIResultMessage).is_error).toBe(true);
+      expect((result.value as SDKResultMessage).is_error).toBe(true);
 
       await query.close();
     });
@@ -1430,7 +1430,7 @@ describe('Query', () => {
         transport.simulateMessage(createUserMessage(`Message ${i}`));
       }
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       for (let i = 0; i < 100; i++) {
         const result = await query.next();
         if (!result.done) {
@@ -1447,7 +1447,7 @@ describe('Query', () => {
       const query = new Query(transport, { cwd: '/test' });
 
       const iterationPromise = (async () => {
-        const messages: CLIMessage[] = [];
+        const messages: SDKMessage[] = [];
         for await (const msg of query) {
           messages.push(msg);
           if (messages.length === 2) {

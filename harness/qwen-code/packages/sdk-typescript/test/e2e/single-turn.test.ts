@@ -6,31 +6,22 @@
 import { describe, it, expect } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  isCLIResultMessage,
-  isCLIPartialAssistantMessage,
-  type TextBlock,
-  type ContentBlock,
-  type CLIMessage,
-  type CLISystemMessage,
-  type CLIAssistantMessage,
+  isSDKAssistantMessage,
+  isSDKSystemMessage,
+  isSDKResultMessage,
+  isSDKPartialAssistantMessage,
+  type SDKMessage,
+  type SDKSystemMessage,
+  type SDKAssistantMessage,
 } from '../../src/types/protocol.js';
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
+import {
+  extractText,
+  createSharedTestOptions,
+  assertSuccessfulCompletion,
+  collectMessagesByType,
+} from './test-helper.js';
 
-const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
-};
-
-/**
- * Helper to extract text from ContentBlock array
- */
-function extractText(content: ContentBlock[]): string {
-  return content
-    .filter((block): block is TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
-}
+const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 describe('Single-Turn Query (E2E)', () => {
   describe('Simple Text Queries', () => {
@@ -44,14 +35,14 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantText += extractText(message.message.content);
           }
         }
@@ -64,11 +55,7 @@ describe('Single-Turn Query (E2E)', () => {
         expect(assistantText).toMatch(/4/);
 
         // Validate message flow ends with success
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
-          expect(lastMessage.subtype).toBe('success');
-        }
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -83,14 +70,14 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantText += extractText(message.message.content);
           }
         }
@@ -100,8 +87,7 @@ describe('Single-Turn Query (E2E)', () => {
         expect(assistantText.toLowerCase()).toContain('paris');
 
         // Validate completion
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -116,14 +102,14 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let assistantText = '';
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantText += extractText(message.message.content);
           }
         }
@@ -133,7 +119,10 @@ describe('Single-Turn Query (E2E)', () => {
         expect(assistantText.toLowerCase()).toMatch(/hello|hi|greetings/);
 
         // Validate message types
-        const assistantMessages = messages.filter(isCLIAssistantMessage);
+        const assistantMessages = collectMessagesByType(
+          messages,
+          isSDKAssistantMessage,
+        );
         expect(assistantMessages.length).toBeGreaterThan(0);
       } finally {
         await q.close();
@@ -151,14 +140,14 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
+      let systemMessage: SDKSystemMessage | null = null;
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
+          if (isSDKSystemMessage(message) && message.subtype === 'init') {
             systemMessage = message;
           }
         }
@@ -180,7 +169,7 @@ describe('Single-Turn Query (E2E)', () => {
 
         // Validate system message appears early in sequence
         const systemMessageIndex = messages.findIndex(
-          (msg) => isCLISystemMessage(msg) && msg.subtype === 'init',
+          (msg) => isSDKSystemMessage(msg) && msg.subtype === 'init',
         );
         expect(systemMessageIndex).toBeGreaterThanOrEqual(0);
         expect(systemMessageIndex).toBeLessThan(3);
@@ -198,12 +187,12 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      let systemMessage: SDKSystemMessage | null = null;
       const sessionId = q.getSessionId();
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
+          if (isSDKSystemMessage(message) && message.subtype === 'init') {
             systemMessage = message;
           }
         }
@@ -262,7 +251,7 @@ describe('Single-Turn Query (E2E)', () => {
         for await (const message of q) {
           messageCount++;
 
-          if (isCLIResultMessage(message)) {
+          if (isSDKResultMessage(message)) {
             completedNaturally = true;
             expect(message.subtype).toBe('success');
           }
@@ -319,7 +308,7 @@ describe('Single-Turn Query (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             hasResponse = true;
           }
         }
@@ -340,7 +329,7 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let partialMessageCount = 0;
       let assistantMessageCount = 0;
 
@@ -348,11 +337,11 @@ describe('Single-Turn Query (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIPartialAssistantMessage(message)) {
+          if (isSDKPartialAssistantMessage(message)) {
             partialMessageCount++;
           }
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessageCount++;
           }
         }
@@ -376,7 +365,7 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
@@ -384,9 +373,18 @@ describe('Single-Turn Query (E2E)', () => {
         }
 
         // Validate type guards work correctly
-        const assistantMessages = messages.filter(isCLIAssistantMessage);
-        const resultMessages = messages.filter(isCLIResultMessage);
-        const systemMessages = messages.filter(isCLISystemMessage);
+        const assistantMessages = collectMessagesByType(
+          messages,
+          isSDKAssistantMessage,
+        );
+        const resultMessages = collectMessagesByType(
+          messages,
+          isSDKResultMessage,
+        );
+        const systemMessages = collectMessagesByType(
+          messages,
+          isSDKSystemMessage,
+        );
 
         expect(assistantMessages.length).toBeGreaterThan(0);
         expect(resultMessages.length).toBeGreaterThan(0);
@@ -414,11 +412,11 @@ describe('Single-Turn Query (E2E)', () => {
         },
       });
 
-      let assistantMessage: CLIAssistantMessage | null = null;
+      let assistantMessage: SDKAssistantMessage | null = null;
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessage = message;
           }
         }
@@ -426,17 +424,9 @@ describe('Single-Turn Query (E2E)', () => {
         expect(assistantMessage).not.toBeNull();
         expect(assistantMessage!.message.content).toBeDefined();
 
-        // Extract text blocks
-        const textBlocks = assistantMessage!.message.content.filter(
-          (block: ContentBlock): block is TextBlock => block.type === 'text',
-        );
-
-        expect(textBlocks.length).toBeGreaterThan(0);
-        expect(textBlocks[0].text).toBeDefined();
-        expect(textBlocks[0].text.length).toBeGreaterThan(0);
-
         // Validate content contains expected numbers
         const text = extractText(assistantMessage!.message.content);
+        expect(text.length).toBeGreaterThan(0);
         expect(text).toMatch(/1/);
         expect(text).toMatch(/2/);
         expect(text).toMatch(/3/);

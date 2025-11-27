@@ -6,19 +6,19 @@
 import { describe, it, expect } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIUserMessage,
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  isCLIResultMessage,
-  isCLIPartialAssistantMessage,
+  isSDKUserMessage,
+  isSDKAssistantMessage,
+  isSDKSystemMessage,
+  isSDKResultMessage,
+  isSDKPartialAssistantMessage,
   isControlRequest,
   isControlResponse,
   isControlCancel,
-  type CLIUserMessage,
-  type CLIAssistantMessage,
+  type SDKUserMessage,
+  type SDKAssistantMessage,
   type TextBlock,
   type ContentBlock,
-  type CLIMessage,
+  type SDKMessage,
   type ControlMessage,
   type ToolUseBlock,
 } from '../../src/types/protocol.js';
@@ -31,16 +31,16 @@ const SHARED_TEST_OPTIONS = {
 /**
  * Determine the message type using protocol type guards
  */
-function getMessageType(message: CLIMessage | ControlMessage): string {
-  if (isCLIUserMessage(message)) {
+function getMessageType(message: SDKMessage | ControlMessage): string {
+  if (isSDKUserMessage(message)) {
     return '🧑 USER';
-  } else if (isCLIAssistantMessage(message)) {
+  } else if (isSDKAssistantMessage(message)) {
     return '🤖 ASSISTANT';
-  } else if (isCLISystemMessage(message)) {
+  } else if (isSDKSystemMessage(message)) {
     return `🖥️ SYSTEM(${message.subtype})`;
-  } else if (isCLIResultMessage(message)) {
+  } else if (isSDKResultMessage(message)) {
     return `✅ RESULT(${message.subtype})`;
-  } else if (isCLIPartialAssistantMessage(message)) {
+  } else if (isSDKPartialAssistantMessage(message)) {
     return '⏳ STREAM_EVENT';
   } else if (isControlRequest(message)) {
     return `🎮 CONTROL_REQUEST(${message.request.subtype})`;
@@ -67,7 +67,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
   describe('AsyncIterable Prompt Support', () => {
     it('should handle multi-turn conversation using AsyncIterable prompt', async () => {
       // Create multi-turn conversation generator
-      async function* createMultiTurnConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createMultiTurnConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -78,7 +78,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'What is 1 + 1?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -90,7 +90,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'What is 2 + 2?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -102,7 +102,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'What is 3 + 3?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       // Create multi-turn query using AsyncIterable prompt
@@ -114,15 +114,15 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
-      const assistantMessages: CLIAssistantMessage[] = [];
+      const messages: SDKMessage[] = [];
+      const assistantMessages: SDKAssistantMessage[] = [];
       const assistantTexts: string[] = [];
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessages.push(message);
             const text = extractText(message.message.content);
             assistantTexts.push(text);
@@ -142,7 +142,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
     });
 
     it('should maintain session context across turns', async () => {
-      async function* createContextualConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createContextualConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -154,7 +154,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
               'Suppose we have 3 rabbits and 4 carrots. How many animals are there?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -166,7 +166,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'How many animals are there? Only output the number',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -177,11 +177,11 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const assistantMessages: CLIAssistantMessage[] = [];
+      const assistantMessages: SDKAssistantMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessages.push(message);
           }
         }
@@ -201,7 +201,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
 
   describe('Tool Usage in Multi-Turn', () => {
     it('should handle tool usage across multiple turns', async () => {
-      async function* createToolConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createToolConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -212,7 +212,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Create a file named test.txt with content "hello"',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -224,7 +224,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Now read the test.txt file',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -237,15 +237,15 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let toolUseCount = 0;
-      const assistantMessages: CLIAssistantMessage[] = [];
+      const assistantMessages: SDKAssistantMessage[] = [];
 
       try {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessages.push(message);
             const hasToolUseBlock = message.message.content.some(
               (block: ContentBlock): block is ToolUseBlock =>
@@ -274,7 +274,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
 
   describe('Message Flow and Sequencing', () => {
     it('should process messages in correct sequence', async () => {
-      async function* createSequentialConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createSequentialConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -285,7 +285,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'First question: What is 1 + 1?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -297,7 +297,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Second question: What is 2 + 2?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -316,7 +316,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
           const messageType = getMessageType(message);
           messageSequence.push(messageType);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const text = extractText(message.message.content);
             assistantResponses.push(text);
           }
@@ -338,7 +338,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
     });
 
     it('should handle conversation completion correctly', async () => {
-      async function* createSimpleConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createSimpleConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -349,7 +349,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Hello',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -361,7 +361,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Goodbye',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -379,7 +379,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         for await (const message of q) {
           messageCount++;
 
-          if (isCLIResultMessage(message)) {
+          if (isSDKResultMessage(message)) {
             completedNaturally = true;
             expect(message.subtype).toBe('success');
           }
@@ -395,11 +395,11 @@ describe('Multi-Turn Conversations (E2E)', () => {
 
   describe('Error Handling in Multi-Turn', () => {
     it('should handle empty conversation gracefully', async () => {
-      async function* createEmptyConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createEmptyConversation(): AsyncIterable<SDKUserMessage> {
         // Generator that yields nothing
         /* eslint-disable no-constant-condition */
         if (false) {
-          yield {} as CLIUserMessage; // Unreachable, but satisfies TypeScript
+          yield {} as SDKUserMessage; // Unreachable, but satisfies TypeScript
         }
       }
 
@@ -411,7 +411,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
@@ -426,7 +426,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
     });
 
     it('should handle conversation with delays', async () => {
-      async function* createDelayedConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createDelayedConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -437,7 +437,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'First message',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         // Longer delay to test patience
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -450,7 +450,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'Second message after delay',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -461,11 +461,11 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const assistantMessages: CLIAssistantMessage[] = [];
+      const assistantMessages: SDKAssistantMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessages.push(message);
           }
         }
@@ -479,7 +479,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
 
   describe('Partial Messages in Multi-Turn', () => {
     it('should receive partial messages when includePartialMessages is enabled', async () => {
-      async function* createMultiTurnConversation(): AsyncIterable<CLIUserMessage> {
+      async function* createMultiTurnConversation(): AsyncIterable<SDKUserMessage> {
         const sessionId = crypto.randomUUID();
 
         yield {
@@ -490,7 +490,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'What is 1 + 1?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
 
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -502,7 +502,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
             content: 'What is 2 + 2?',
           },
           parent_tool_use_id: null,
-        } as CLIUserMessage;
+        } as SDKUserMessage;
       }
 
       const q = query({
@@ -514,7 +514,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let partialMessageCount = 0;
       let assistantMessageCount = 0;
 
@@ -522,11 +522,11 @@ describe('Multi-Turn Conversations (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIPartialAssistantMessage(message)) {
+          if (isSDKPartialAssistantMessage(message)) {
             partialMessageCount++;
           }
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             assistantMessageCount++;
           }
         }

@@ -9,50 +9,42 @@
  * Tests subagent delegation and task completion
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  isCLIResultMessage,
-  type TextBlock,
-  type ContentBlock,
-  type CLIMessage,
-  type CLISystemMessage,
+  isSDKAssistantMessage,
+  type SDKMessage,
   type SubagentConfig,
+  type ContentBlock,
   type ToolUseBlock,
 } from '../../src/types/protocol.js';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import {
+  SDKTestHelper,
+  extractText,
+  createSharedTestOptions,
+  findToolUseBlocks,
+  assertSuccessfulCompletion,
+  findSystemMessage,
+} from './test-helper.js';
 
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
-const E2E_TEST_FILE_DIR = process.env['E2E_TEST_FILE_DIR']!;
-
-const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
-};
-
-/**
- * Helper to extract text from ContentBlock array
- */
-function extractText(content: ContentBlock[]): string {
-  return content
-    .filter((block): block is TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
-}
+const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 describe('Subagents (E2E)', () => {
+  let helper: SDKTestHelper;
   let testWorkDir: string;
 
   beforeAll(async () => {
-    // Create a test working directory
-    testWorkDir = join(E2E_TEST_FILE_DIR, 'subagent-tests');
-    await mkdir(testWorkDir, { recursive: true });
+    // Create isolated test environment using SDKTestHelper
+    helper = new SDKTestHelper();
+    testWorkDir = await helper.setup('subagent-tests');
 
     // Create a simple test file for subagent to work with
-    const testFilePath = join(testWorkDir, 'test.txt');
-    await writeFile(testFilePath, 'Hello from test file\n', 'utf-8');
+    await helper.createFile('test.txt', 'Hello from test file\n');
+  });
+
+  afterAll(async () => {
+    // Cleanup test directory
+    await helper.cleanup();
   });
 
   describe('Subagent Configuration', () => {
@@ -75,29 +67,21 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
           messages.push(message);
-
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
         }
 
         // Validate system message includes the subagent
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('simple-greeter');
 
         // Validate successful completion
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
-          expect(lastMessage.subtype).toBe('success');
-        }
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -128,16 +112,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate both subagents are registered
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('greeter');
@@ -170,16 +153,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate subagent is registered
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('custom-model-agent');
@@ -210,16 +192,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate subagent is registered
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('limited-agent');
@@ -248,16 +229,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate subagent is registered
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('read-only-agent');
@@ -277,7 +257,7 @@ describe('Subagents (E2E)', () => {
         tools: ['read_file', 'list_directory'],
       };
 
-      const testFile = join(testWorkDir, 'test.txt');
+      const testFile = helper.getPath('test.txt');
       const q = query({
         prompt: `Use the file-reader subagent to read the file at ${testFile} and tell me what it contains.`,
         options: {
@@ -289,7 +269,7 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let foundTaskTool = false;
       let taskToolUseId: string | null = null;
       let foundSubagentToolCall = false;
@@ -299,25 +279,19 @@ describe('Subagents (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             // Check for task tool use in content blocks (main agent calling subagent)
-            const toolUseBlock = message.message.content.find(
-              (block: ContentBlock): block is ToolUseBlock =>
-                block.type === 'tool_use' && block.name === 'task',
-            );
-            if (toolUseBlock) {
+            const taskToolBlocks = findToolUseBlocks(message, 'task');
+            if (taskToolBlocks.length > 0) {
               foundTaskTool = true;
-              taskToolUseId = toolUseBlock.id;
+              taskToolUseId = taskToolBlocks[0].id;
             }
 
             // Check if this message is from a subagent (has parent_tool_use_id)
             if (message.parent_tool_use_id !== null) {
               // This is a subagent message
-              const subagentToolUse = message.message.content.find(
-                (block: ContentBlock): block is ToolUseBlock =>
-                  block.type === 'tool_use',
-              );
-              if (subagentToolUse) {
+              const subagentToolBlocks = findToolUseBlocks(message);
+              if (subagentToolBlocks.length > 0) {
                 foundSubagentToolCall = true;
                 // Verify parent_tool_use_id matches the task tool use id
                 expect(message.parent_tool_use_id).toBe(taskToolUseId);
@@ -339,11 +313,7 @@ describe('Subagents (E2E)', () => {
         expect(assistantText.length).toBeGreaterThan(0);
 
         // Validate successful completion
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
-          expect(lastMessage.subtype).toBe('success');
-        }
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -369,7 +339,7 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let foundTaskTool = false;
       let assistantText = '';
 
@@ -377,7 +347,7 @@ describe('Subagents (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             // Check for task tool use (main agent delegating to subagent)
             const toolUseBlock = message.message.content.find(
               (block: ContentBlock): block is ToolUseBlock =>
@@ -398,11 +368,7 @@ describe('Subagents (E2E)', () => {
         expect(assistantText.length).toBeGreaterThan(0);
 
         // Validate successful completion
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
-          expect(lastMessage.subtype).toBe('success');
-        }
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -429,7 +395,7 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      const messages: CLIMessage[] = [];
+      const messages: SDKMessage[] = [];
       let taskToolUseId: string | null = null;
       const subagentToolCalls: ToolUseBlock[] = [];
       const mainAgentToolCalls: ToolUseBlock[] = [];
@@ -438,7 +404,7 @@ describe('Subagents (E2E)', () => {
         for await (const message of q) {
           messages.push(message);
 
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             // Collect all tool use blocks
             const toolUseBlocks = message.message.content.filter(
               (block: ContentBlock): block is ToolUseBlock =>
@@ -471,8 +437,8 @@ describe('Subagents (E2E)', () => {
 
         // Verify all subagent messages have the correct parent_tool_use_id
         const subagentMessages = messages.filter(
-          (msg): msg is CLIMessage & { parent_tool_use_id: string } =>
-            isCLIAssistantMessage(msg) && msg.parent_tool_use_id !== null,
+          (msg): msg is SDKMessage & { parent_tool_use_id: string } =>
+            isSDKAssistantMessage(msg) && msg.parent_tool_use_id !== null,
         );
 
         expect(subagentMessages.length).toBeGreaterThan(0);
@@ -482,23 +448,19 @@ describe('Subagents (E2E)', () => {
 
         // Verify no main agent tool calls (except task) have parent_tool_use_id
         const mainAgentMessages = messages.filter(
-          (msg): msg is CLIMessage =>
-            isCLIAssistantMessage(msg) && msg.parent_tool_use_id === null,
+          (msg): msg is SDKMessage =>
+            isSDKAssistantMessage(msg) && msg.parent_tool_use_id === null,
         );
 
         for (const mainMsg of mainAgentMessages) {
-          if (isCLIAssistantMessage(mainMsg)) {
+          if (isSDKAssistantMessage(mainMsg)) {
             // Main agent messages should not have parent_tool_use_id
             expect(mainMsg.parent_tool_use_id).toBeNull();
           }
         }
 
         // Validate successful completion
-        const lastMessage = messages[messages.length - 1];
-        expect(isCLIResultMessage(lastMessage)).toBe(true);
-        if (isCLIResultMessage(lastMessage)) {
-          expect(lastMessage.subtype).toBe('success');
-        }
+        assertSuccessfulCompletion(messages);
       } finally {
         await q.close();
       }
@@ -517,16 +479,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Should still work with empty agents array
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
       } finally {
@@ -552,16 +513,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate minimal agent is registered
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('minimal-agent');
@@ -596,16 +556,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate subagent works with debug mode
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.agents).toBeDefined();
         expect(systemMessage!.agents).toContain('test-agent');
@@ -633,16 +592,15 @@ describe('Subagents (E2E)', () => {
         },
       });
 
-      let systemMessage: CLISystemMessage | null = null;
+      const messages: SDKMessage[] = [];
 
       try {
         for await (const message of q) {
-          if (isCLISystemMessage(message) && message.subtype === 'init') {
-            systemMessage = message;
-          }
+          messages.push(message);
         }
 
         // Validate session consistency
+        const systemMessage = findSystemMessage(messages, 'init');
         expect(systemMessage).not.toBeNull();
         expect(systemMessage!.session_id).toBeDefined();
         expect(systemMessage!.uuid).toBeDefined();

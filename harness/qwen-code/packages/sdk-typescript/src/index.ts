@@ -12,20 +12,20 @@ export type {
   ThinkingBlock,
   ToolUseBlock,
   ToolResultBlock,
-  CLIUserMessage,
-  CLIAssistantMessage,
-  CLISystemMessage,
-  CLIResultMessage,
-  CLIPartialAssistantMessage,
-  CLIMessage,
+  SDKUserMessage,
+  SDKAssistantMessage,
+  SDKSystemMessage,
+  SDKResultMessage,
+  SDKPartialAssistantMessage,
+  SDKMessage,
 } from './types/protocol.js';
 
 export {
-  isCLIUserMessage,
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  isCLIResultMessage,
-  isCLIPartialAssistantMessage,
+  isSDKUserMessage,
+  isSDKAssistantMessage,
+  isSDKSystemMessage,
+  isSDKResultMessage,
+  isSDKPartialAssistantMessage,
 } from './types/protocol.js';
 
 export type {

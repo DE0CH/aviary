@@ -22,6 +22,7 @@ export default tseslint.config(
       'bundle/**',
       'package/bundle/**',
       '.integration-tests/**',
+      'packages/**/.integration-test/**',
       'dist/**',
     ],
   },

@@ -13,19 +13,19 @@ const STREAM_CLOSE_TIMEOUT = 10000;
 import { randomUUID } from 'node:crypto';
 import { SdkLogger } from '../utils/logger.js';
 import type {
-  CLIMessage,
-  CLIUserMessage,
+  SDKMessage,
+  SDKUserMessage,
   CLIControlRequest,
   CLIControlResponse,
   ControlCancelRequest,
   PermissionSuggestion,
 } from '../types/protocol.js';
 import {
-  isCLIUserMessage,
-  isCLIAssistantMessage,
-  isCLISystemMessage,
-  isCLIResultMessage,
-  isCLIPartialAssistantMessage,
+  isSDKUserMessage,
+  isSDKAssistantMessage,
+  isSDKSystemMessage,
+  isSDKResultMessage,
+  isSDKPartialAssistantMessage,
   isControlRequest,
   isControlResponse,
   isControlCancel,
@@ -52,12 +52,12 @@ interface TransportWithEndInput extends Transport {
 
 const logger = SdkLogger.createLogger('Query');
 
-export class Query implements AsyncIterable<CLIMessage> {
+export class Query implements AsyncIterable<SDKMessage> {
   private transport: Transport;
   private options: QueryOptions;
   private sessionId: string;
-  private inputStream: Stream<CLIMessage>;
-  private sdkMessages: AsyncGenerator<CLIMessage>;
+  private inputStream: Stream<SDKMessage>;
+  private sdkMessages: AsyncGenerator<SDKMessage>;
   private abortController: AbortController;
   private pendingControlRequests: Map<string, PendingControlRequest> =
     new Map();
@@ -79,7 +79,7 @@ export class Query implements AsyncIterable<CLIMessage> {
     this.transport = transport;
     this.options = options;
     this.sessionId = randomUUID();
-    this.inputStream = new Stream<CLIMessage>();
+    this.inputStream = new Stream<SDKMessage>();
     this.abortController = options.abortController ?? new AbortController();
     this.isSingleTurn = singleTurn;
 
@@ -187,7 +187,7 @@ export class Query implements AsyncIterable<CLIMessage> {
       return;
     }
 
-    if (isCLISystemMessage(message)) {
+    if (isSDKSystemMessage(message)) {
       /**
        * SystemMessage contains session info (cwd, tools, model, etc.)
        * that should be passed to user.
@@ -196,7 +196,7 @@ export class Query implements AsyncIterable<CLIMessage> {
       return;
     }
 
-    if (isCLIResultMessage(message)) {
+    if (isSDKResultMessage(message)) {
       if (this.firstResultReceivedResolve) {
         this.firstResultReceivedResolve();
       }
@@ -212,16 +212,16 @@ export class Query implements AsyncIterable<CLIMessage> {
     }
 
     if (
-      isCLIAssistantMessage(message) ||
-      isCLIUserMessage(message) ||
-      isCLIPartialAssistantMessage(message)
+      isSDKAssistantMessage(message) ||
+      isSDKUserMessage(message) ||
+      isSDKPartialAssistantMessage(message)
     ) {
       this.inputStream.enqueue(message);
       return;
     }
 
     logger.warn('Unknown message type:', message);
-    this.inputStream.enqueue(message as CLIMessage);
+    this.inputStream.enqueue(message as SDKMessage);
   }
 
   private async handleControlRequest(
@@ -560,29 +560,29 @@ export class Query implements AsyncIterable<CLIMessage> {
     logger.info('Query closed');
   }
 
-  private async *readSdkMessages(): AsyncGenerator<CLIMessage> {
+  private async *readSdkMessages(): AsyncGenerator<SDKMessage> {
     for await (const message of this.inputStream) {
       yield message;
     }
   }
 
-  async next(...args: [] | [unknown]): Promise<IteratorResult<CLIMessage>> {
+  async next(...args: [] | [unknown]): Promise<IteratorResult<SDKMessage>> {
     return this.sdkMessages.next(...args);
   }
 
-  async return(value?: unknown): Promise<IteratorResult<CLIMessage>> {
+  async return(value?: unknown): Promise<IteratorResult<SDKMessage>> {
     return this.sdkMessages.return(value);
   }
 
-  async throw(e?: unknown): Promise<IteratorResult<CLIMessage>> {
+  async throw(e?: unknown): Promise<IteratorResult<SDKMessage>> {
     return this.sdkMessages.throw(e);
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<CLIMessage> {
+  [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
     return this.sdkMessages;
   }
 
-  async streamInput(messages: AsyncIterable<CLIUserMessage>): Promise<void> {
+  async streamInput(messages: AsyncIterable<SDKUserMessage>): Promise<void> {
     if (this.closed) {
       throw new Error('Query is closed');
     }

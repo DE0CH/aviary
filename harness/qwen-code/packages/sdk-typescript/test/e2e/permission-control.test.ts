@@ -7,10 +7,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { query } from '../../src/index.js';
 import {
-  isCLIAssistantMessage,
-  isCLIResultMessage,
-  isCLIUserMessage,
-  type CLIUserMessage,
+  isSDKAssistantMessage,
+  isSDKResultMessage,
+  isSDKUserMessage,
+  type SDKUserMessage,
   type ToolUseBlock,
   type ContentBlock,
 } from '../../src/types/protocol.js';
@@ -32,7 +32,7 @@ function createStreamingInputWithControlPoint(
   firstMessage: string,
   secondMessage: string,
 ): {
-  generator: AsyncIterable<CLIUserMessage>;
+  generator: AsyncIterable<SDKUserMessage>;
   resume: () => void;
 } {
   let resumeResolve: (() => void) | null = null;
@@ -51,7 +51,7 @@ function createStreamingInputWithControlPoint(
         content: firstMessage,
       },
       parent_tool_use_id: null,
-    } as CLIUserMessage;
+    } as SDKUserMessage;
 
     await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -67,7 +67,7 @@ function createStreamingInputWithControlPoint(
         content: secondMessage,
       },
       parent_tool_use_id: null,
-    } as CLIUserMessage;
+    } as SDKUserMessage;
   })();
 
   const resume = () => {
@@ -120,7 +120,7 @@ describe('Permission Control (E2E)', () => {
       try {
         let hasToolUse = false;
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const toolUseBlock = message.message.content.find(
               (block: ContentBlock): block is ToolUseBlock =>
                 block.type === 'tool_use',
@@ -162,7 +162,7 @@ describe('Permission Control (E2E)', () => {
       try {
         let hasToolResult = false;
         for await (const message of q) {
-          if (isCLIUserMessage(message)) {
+          if (isSDKUserMessage(message)) {
             if (
               Array.isArray(message.message.content) &&
               message.message.content.some(
@@ -372,7 +372,7 @@ describe('Permission Control (E2E)', () => {
 
         (async () => {
           for await (const message of q) {
-            if (isCLIAssistantMessage(message) || isCLIResultMessage(message)) {
+            if (isSDKAssistantMessage(message) || isSDKResultMessage(message)) {
               if (!firstResponseReceived) {
                 firstResponseReceived = true;
                 resolvers.first?.();
@@ -447,7 +447,7 @@ describe('Permission Control (E2E)', () => {
 
         (async () => {
           for await (const message of q) {
-            if (isCLIAssistantMessage(message) || isCLIResultMessage(message)) {
+            if (isSDKAssistantMessage(message) || isSDKResultMessage(message)) {
               if (!firstResponseReceived) {
                 firstResponseReceived = true;
                 resolvers.first?.();
@@ -522,7 +522,7 @@ describe('Permission Control (E2E)', () => {
 
         (async () => {
           for await (const message of q) {
-            if (isCLIAssistantMessage(message) || isCLIResultMessage(message)) {
+            if (isSDKAssistantMessage(message) || isSDKResultMessage(message)) {
               if (!firstResponseReceived) {
                 firstResponseReceived = true;
                 resolvers.first?.();
@@ -628,7 +628,7 @@ describe('Permission Control (E2E)', () => {
 
         (async () => {
           for await (const message of q) {
-            if (isCLIResultMessage(message)) {
+            if (isSDKResultMessage(message)) {
               if (!firstResponseReceived) {
                 firstResponseReceived = true;
                 resolvers.first?.();
@@ -695,7 +695,7 @@ describe('Permission Control (E2E)', () => {
             let hasErrorInResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -752,7 +752,7 @@ describe('Permission Control (E2E)', () => {
             let hasSuccessfulToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -798,7 +798,7 @@ describe('Permission Control (E2E)', () => {
             let hasToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -838,7 +838,7 @@ describe('Permission Control (E2E)', () => {
             let hasSuccessfulToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -891,7 +891,7 @@ describe('Permission Control (E2E)', () => {
             let hasToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -929,7 +929,7 @@ describe('Permission Control (E2E)', () => {
             let hasCommandResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -968,7 +968,7 @@ describe('Permission Control (E2E)', () => {
             let hasPlanModeMessage = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1014,7 +1014,7 @@ describe('Permission Control (E2E)', () => {
             let hasSuccessfulToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1066,7 +1066,7 @@ describe('Permission Control (E2E)', () => {
             let hasPlanModeBlock = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1114,7 +1114,7 @@ describe('Permission Control (E2E)', () => {
             let hasDeniedTool = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1169,7 +1169,7 @@ describe('Permission Control (E2E)', () => {
             let hasSuccessfulToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1214,7 +1214,7 @@ describe('Permission Control (E2E)', () => {
             let hasToolResult = false;
 
             for await (const message of q) {
-              if (isCLIUserMessage(message)) {
+              if (isSDKUserMessage(message)) {
                 if (Array.isArray(message.message.content)) {
                   const toolResult = message.message.content.find(
                     (block) => block.type === 'tool_result',
@@ -1270,7 +1270,7 @@ describe('Permission Control (E2E)', () => {
               let toolExecuted = false;
 
               for await (const message of q) {
-                if (isCLIUserMessage(message)) {
+                if (isSDKUserMessage(message)) {
                   if (Array.isArray(message.message.content)) {
                     const toolResult = message.message.content.find(
                       (block) => block.type === 'tool_result',
