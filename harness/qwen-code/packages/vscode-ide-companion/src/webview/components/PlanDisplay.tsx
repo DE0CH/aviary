@@ -22,7 +22,7 @@ interface PlanDisplayProps {
  * PlanDisplay component - displays AI's task plan/todo list
  */
 export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
-  // 计算整体状态用于左侧圆点颜色
+  // Calculate overall status for left dot color
   const allCompleted =
     entries.length > 0 && entries.every((e) => e.status === 'completed');
   const anyInProgress = entries.some((e) => e.status === 'in_progress');
@@ -36,14 +36,14 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
     <div
       className={[
         'plan-display',
-        // 容器：类似示例中的 .A/.e
+        // Container: Similar to example .A/.e
         'relative flex flex-col items-start py-2 pl-[30px] select-text text-[var(--app-primary-foreground)]',
-        // 左侧状态圆点，类似示例 .e:before
+        // Left status dot, similar to example .e:before
         'before:content-["\\25cf"] before:absolute before:left-[10px] before:top-[12px] before:text-[10px] before:z-[1]',
         statusDotClass,
       ].join(' ')}
     >
-      {/* 标题区域，类似示例中的 summary/_e/or */}
+      {/* Title area, similar to example summary/_e/or */}
       <div className="plan-header w-full">
         <div className="relative">
           <div className="list-none line-clamp-2 max-w-full overflow-hidden _e">
@@ -56,7 +56,7 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
         </div>
       </div>
 
-      {/* 列表区域，类似示例中的 .qr/.Fr/.Hr */}
+      {/* List area, similar to example .qr/.Fr/.Hr */}
       <div className="qr grid-cols-1 flex flex-col py-2">
         <ul className="Fr list-none p-0 m-0 flex flex-col gap-1">
           {entries.map((entry, index) => {
@@ -70,7 +70,7 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
                   isDone ? 'fo opacity-70' : '',
                 ].join(' ')}
               >
-                {/* 展示用复选框（复用组件） */}
+                {/* Display checkbox (reusable component) */}
                 <label className="flex items-start gap-2">
                   <CheckboxDisplay
                     checked={isDone}

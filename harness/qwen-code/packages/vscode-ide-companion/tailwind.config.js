@@ -1,8 +1,14 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* eslint-env node */
 /** @type {import('tailwindcss').Config} */
-// eslint-disable-next-line no-undef
-module.exports = {
+export default {
   content: [
-    // 渐进式采用策略：只扫描新创建的Tailwind组件
+    // Progressive adoption strategy: Only scan newly created Tailwind components
     './src/webview/App.tsx',
     './src/webview/components/ui/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
@@ -13,9 +19,6 @@ module.exports = {
     './src/webview/components/InputForm.tsx',
     './src/webview/components/PermissionDrawer.tsx',
     './src/webview/components/PlanDisplay.tsx',
-    // 当需要在更多组件中使用Tailwind时，可以逐步添加路径
-    // "./src/webview/components/NewComponent/**/*.{js,jsx,ts,tsx}",
-    // "./src/webview/pages/**/*.{js,jsx,ts,tsx}",
   ],
   theme: {
     extend: {

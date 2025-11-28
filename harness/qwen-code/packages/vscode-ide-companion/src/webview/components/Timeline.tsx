@@ -18,18 +18,18 @@ export type TimelineItemType =
 export interface TimelineItemProps {
   type: TimelineItemType;
   children: React.ReactNode;
-  /** 是否可折叠（主要用于工具输出） */
+  /** Whether collapsible (mainly for tool output) */
   collapsible?: boolean;
-  /** 默认是否展开 */
+  /** Default expanded */
   defaultExpanded?: boolean;
-  /** 自定义标题（用于折叠时显示） */
+  /** Custom title (used for display when collapsed) */
   title?: string;
-  /** 是否是最后一个项目 */
+  /** Whether it is the last item */
   isLast?: boolean;
 }
 
 /**
- * Timeline 项目组件 - 统一展示消息和工具调用
+ * Timeline item component - Unified display of messages and tool calls
  */
 export const TimelineItem: React.FC<TimelineItemProps> = ({
   type,
@@ -44,15 +44,15 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   const getDotColor = (): string => {
     switch (type) {
       case 'user-message':
-        return 'blue'; // 用户消息 - 蓝色
+        return 'blue'; // User message - Blue
       case 'assistant-message':
-        return 'gray'; // LLM 输出 - 灰色
+        return 'gray'; // LLM output - Gray
       case 'tool-call':
-        return 'green'; // 工具调用 - 绿色
+        return 'green'; // Tool call - Green
       case 'tool-output':
-        return 'gray'; // 工具输出 - 灰色
+        return 'gray'; // Tool output - Gray
       case 'thinking':
-        return 'purple'; // 思考 - 紫色
+        return 'purple'; // Thinking - Purple
       default:
         return 'gray';
     }
@@ -80,20 +80,20 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
 
   return (
     <div className={`timeline-item ${type} ${isLast ? 'last' : ''}`}>
-      {/* 时间线连接线 - 暂时禁用 */}
+      {/* Timeline connecting line - Temporarily disabled */}
       {/* {!isLast && <div className="timeline-line" />} */}
 
-      {/* 状态圆点 */}
+      {/* Status dot */}
       <div className={`timeline-dot ${dotColor}`}>
         <span className="dot-inner" />
       </div>
 
-      {/* 内容区域 */}
+      {/* Content area */}
       <div className="timeline-content">
-        {/* 标签（可选） */}
+        {/* Label (optional) */}
         {itemLabel && <div className="timeline-label">{itemLabel}</div>}
 
-        {/* 可折叠内容 */}
+        {/* Collapsible content */}
         {collapsible ? (
           <>
             <button
@@ -119,7 +119,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
 };
 
 /**
- * Timeline 容器组件
+ * Timeline container component
  */
 export const Timeline: React.FC<{ children: React.ReactNode }> = ({
   children,

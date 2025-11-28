@@ -32,7 +32,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   onFileClick,
   status = 'default',
 }) => {
-  // 空内容直接不渲染，避免只显示 ::before 的圆点导致观感不佳
+  // Empty content not rendered directly, avoid poor visual experience from only showing ::before dot
   if (!content || content.trim().length === 0) {
     return null;
   }

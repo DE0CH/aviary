@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Use explicit Vitest imports instead of relying on globals.
+import { describe, it, expect } from 'vitest';
 import type { ToolCallData } from '../toolcalls/shared/types.js';
 import { hasToolCallOutput } from '../toolcalls/shared/utils.js';
 

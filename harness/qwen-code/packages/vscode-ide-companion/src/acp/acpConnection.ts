@@ -135,7 +135,7 @@ export class AcpConnection {
   }
 
   /**
-   * 连接到ACP后端
+   * Connect to ACP backend
    *
    * @param backend - Backend type
    * @param cliPath - CLI path

@@ -5,7 +5,7 @@
  */
 
 import type { RefObject } from 'react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { CompletionItem } from '../components/CompletionMenu.js';
 
 interface CompletionTriggerState {
@@ -27,6 +27,26 @@ export function useCompletionTrigger(
     query: string,
   ) => Promise<CompletionItem[]>,
 ) {
+  // Show immediate loading and provide a timeout fallback for slow sources
+  const LOADING_ITEM = useMemo<CompletionItem>(
+    () => ({
+      id: 'loading',
+      label: 'Loading…',
+      type: 'info',
+    }),
+    [],
+  );
+
+  const TIMEOUT_ITEM = useMemo<CompletionItem>(
+    () => ({
+      id: 'timeout',
+      label: 'Timeout',
+      type: 'info',
+    }),
+    [],
+  );
+  const TIMEOUT_MS = 5000;
+
   const [state, setState] = useState<CompletionTriggerState>({
     isOpen: false,
     triggerChar: null,
@@ -35,7 +55,15 @@ export function useCompletionTrigger(
     items: [],
   });
 
+  // Timer for loading timeout
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const closeCompletion = useCallback(() => {
+    // Clear pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     setState({
       isOpen: false,
       triggerChar: null,
@@ -51,16 +79,56 @@ export function useCompletionTrigger(
       query: string,
       position: { top: number; left: number },
     ) => {
-      const items = await getCompletionItems(trigger, query);
+      // Clear previous timeout if any
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      // Open immediately with a loading placeholder
       setState({
         isOpen: true,
         triggerChar: trigger,
         query,
         position,
-        items,
+        items: [LOADING_ITEM],
       });
+
+      // Schedule a timeout fallback if loading takes too long
+      timeoutRef.current = setTimeout(() => {
+        setState((prev) => {
+          // Only show timeout if still open and still for the same request
+          if (
+            prev.isOpen &&
+            prev.triggerChar === trigger &&
+            prev.query === query &&
+            prev.items.length > 0 &&
+            prev.items[0]?.id === 'loading'
+          ) {
+            return { ...prev, items: [TIMEOUT_ITEM] };
+          }
+          return prev;
+        });
+      }, TIMEOUT_MS);
+
+      const items = await getCompletionItems(trigger, query);
+
+      // Clear timeout on success
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        isOpen: true,
+        triggerChar: trigger,
+        query,
+        position,
+        items,
+      }));
     },
-    [getCompletionItems],
+    [getCompletionItems, LOADING_ITEM, TIMEOUT_ITEM],
   );
 
   const refreshCompletion = useCallback(async () => {

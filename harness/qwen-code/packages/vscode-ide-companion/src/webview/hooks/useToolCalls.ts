@@ -108,11 +108,11 @@ export const useToolCalls = () => {
           newText: item.newText,
         }));
 
-        // 合并策略：对于 todo_write + mergeable 标题（Updated Plan/Update Todos），
-        // 如果与最近一条同类卡片相同或是补充，则合并更新而不是新增。
+        // Merge strategy: For todo_write + mergeable titles (Updated Plan/Update Todos),
+        // if it is the same as or a supplement to the most recent similar card, merge the update instead of adding new.
         if (isTodoWrite(update.kind) && isTodoTitleMergeable(update.title)) {
           const nextText = extractText(content);
-          // 找最近一条 todo_write + 可合并标题 的卡片
+          // Find the most recent card with todo_write + mergeable title
           let lastId: string | null = null;
           let lastText = '';
           let lastTimestamp = 0;
@@ -132,16 +132,16 @@ export const useToolCalls = () => {
           if (lastId) {
             const cmp = isSameOrSupplement(lastText, nextText);
             if (cmp.same) {
-              // 完全相同：忽略本次新增
+              // Completely identical: Ignore this addition
               return newMap;
             }
             if (cmp.supplement) {
-              // 补充：替换内容到上一条（使用更新语义）
+              // Supplement: Replace content to the previous item (using update semantics)
               const prev = newMap.get(lastId);
               if (prev) {
                 newMap.set(lastId, {
                   ...prev,
-                  content, // 覆盖（不追加）
+                  content, // Override (do not append)
                   status: update.status || prev.status,
                   timestamp: update.timestamp || Date.now(),
                 });
@@ -159,7 +159,7 @@ export const useToolCalls = () => {
           rawInput: update.rawInput as string | object | undefined,
           content,
           locations: update.locations,
-          timestamp: update.timestamp || Date.now(), // 添加时间戳
+          timestamp: update.timestamp || Date.now(), // Add timestamp
         });
       } else if (update.type === 'tool_call_update') {
         const updatedContent = update.content
@@ -173,7 +173,7 @@ export const useToolCalls = () => {
           : undefined;
 
         if (existing) {
-          // 默认行为是追加；但对于 todo_write + 可合并标题，使用替换避免堆叠重复
+          // Default behavior is to append; but for todo_write + mergeable titles, use replacement to avoid stacking duplicates
           let mergedContent = existing.content;
           if (updatedContent) {
             if (
@@ -181,7 +181,7 @@ export const useToolCalls = () => {
               (isTodoTitleMergeable(update.title) ||
                 isTodoTitleMergeable(existing.title))
             ) {
-              mergedContent = updatedContent; // 覆盖
+              mergedContent = updatedContent; // Override
             } else {
               mergedContent = [...(existing.content || []), ...updatedContent];
             }
@@ -200,7 +200,7 @@ export const useToolCalls = () => {
             ...(update.status && { status: update.status }),
             content: mergedContent,
             ...(update.locations && { locations: update.locations }),
-            timestamp: nextTimestamp, // 更新时间戳（完成/失败时以完成时间为准）
+            timestamp: nextTimestamp, // Update timestamp (use completion time when completed/failed)
           });
         } else {
           newMap.set(update.toolCallId, {
@@ -211,7 +211,7 @@ export const useToolCalls = () => {
             rawInput: update.rawInput as string | object | undefined,
             content: updatedContent,
             locations: update.locations,
-            timestamp: update.timestamp || Date.now(), // 添加时间戳
+            timestamp: update.timestamp || Date.now(), // Add timestamp
           });
         }
       }

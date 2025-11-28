@@ -29,7 +29,7 @@ interface DiffDisplayProps {
   oldText?: string | null;
   newText?: string;
   onOpenDiff?: () => void;
-  /** 是否显示统计信息 */
+  /** Whether to display statistics */
   showStats?: boolean;
 }
 
@@ -44,13 +44,13 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   onOpenDiff,
   showStats = true,
 }) => {
-  // 统计信息（仅在文本变化时重新计算）
+  // Statistics (recalculate only when text changes)
   const stats = useMemo(
     () => calculateDiffStats(oldText, newText),
     [oldText, newText],
   );
 
-  // 仅生成变更行（增加/删除），不渲染上下文
+  // Only generate changed lines (additions/deletions), do not render context
   const ops: DiffOp[] = useMemo(
     () => computeLineDiff(oldText, newText),
     [oldText, newText],
@@ -106,7 +106,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
         </div>
       </div>
 
-      {/* 只绘制差异行的预览区域 */}
+      {/* Only draw preview area for diff lines */}
       <pre className="diff-preview code-block" aria-label="Diff preview">
         <div className="code-content">
           {previewOps.length === 0 && (
@@ -142,7 +142,7 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
         </div>
       </pre>
 
-      {/* 在预览下方提供显式打开按钮（可选） */}
+      {/* Provide explicit open button below preview (optional) */}
       {onOpenDiff && (
         <div className="diff-compact-actions">
           <button

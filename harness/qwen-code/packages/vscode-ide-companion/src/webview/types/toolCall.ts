@@ -30,7 +30,7 @@ export interface ToolCallUpdate {
     path: string;
     line?: number | null;
   }>;
-  timestamp?: number; // 添加时间戳字段用于消息排序
+  timestamp?: number; // Add timestamp field for message ordering
 }
 
 /**

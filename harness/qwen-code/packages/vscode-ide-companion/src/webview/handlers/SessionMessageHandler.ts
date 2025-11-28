@@ -25,6 +25,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
       'getQwenSessions',
       'saveSession',
       'resumeSession',
+      // UI action: open a new chat tab (new WebviewPanel)
+      'openNewChatTab',
     ].includes(messageType);
   }
 
@@ -80,6 +82,24 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       case 'resumeSession':
         await this.handleResumeSession((data?.sessionId as string) || '');
+        break;
+
+      case 'openNewChatTab':
+        // Open a brand new chat tab (WebviewPanel) via the extension command
+        // This does not alter the current conversation in this tab; the new tab
+        // will initialize its own state and (optionally) create a new session.
+        try {
+          await vscode.commands.executeCommand('qwenCode.openNewChatTab');
+        } catch (error) {
+          console.error(
+            '[SessionMessageHandler] Failed to open new chat tab:',
+            error,
+          );
+          this.sendToWebView({
+            type: 'error',
+            data: { message: `Failed to open new chat tab: ${error}` },
+          });
+        }
         break;
 
       default:

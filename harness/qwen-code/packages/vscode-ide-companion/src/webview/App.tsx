@@ -62,6 +62,8 @@ export const App: React.FC = () => {
   } | null>(null);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Scroll container for message list; used to keep the view anchored to the latest content
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputFieldRef = useRef<HTMLDivElement>(null);
   const [showBanner, setShowBanner] = useState(true);
   const [editMode, setEditMode] = useState<EditMode>('ask');
@@ -172,6 +174,51 @@ export const App: React.FC = () => {
     inputFieldRef,
     setInputText,
   });
+
+  // Auto-scroll handling: keep the view pinned to bottom when new content arrives,
+  // but don't interrupt the user if they scrolled up.
+  const prevCountsRef = useRef({ msgLen: 0, inProgLen: 0, doneLen: 0 });
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    const endEl = messagesEndRef.current;
+    if (!container || !endEl) {
+      return;
+    }
+
+    const nearBottom = () => {
+      const threshold = 64; // px tolerance
+      return (
+        container.scrollTop + container.clientHeight >=
+        container.scrollHeight - threshold
+      );
+    };
+
+    // Detect whether new items were appended (vs. streaming chunk updates)
+    const prev = prevCountsRef.current;
+    const newMsg = messageHandling.messages.length > prev.msgLen;
+    const newInProg = inProgressToolCalls.length > prev.inProgLen;
+    const newDone = completedToolCalls.length > prev.doneLen;
+    prevCountsRef.current = {
+      msgLen: messageHandling.messages.length,
+      inProgLen: inProgressToolCalls.length,
+      doneLen: completedToolCalls.length,
+    };
+
+    // If user is near bottom, or if we just appended a new item, scroll to bottom
+    if (nearBottom() || newMsg || newInProg || newDone) {
+      const smooth = newMsg || newInProg || newDone; // avoid smooth on streaming chunks
+      endEl.scrollIntoView({
+        behavior: smooth ? 'smooth' : 'auto',
+        block: 'end',
+      });
+    }
+  }, [
+    messageHandling.messages,
+    inProgressToolCalls,
+    completedToolCalls,
+    messageHandling.isWaitingForResponse,
+    messageHandling.loadingMessage,
+  ]);
 
   // Handle permission response
   const handlePermissionResponse = useCallback(
@@ -380,6 +427,7 @@ export const App: React.FC = () => {
       />
 
       <div
+        ref={messagesContainerRef}
         className="flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>.message-item]:px-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
         style={{ backgroundColor: 'var(--app-primary-background)' }}
       >
@@ -387,23 +435,23 @@ export const App: React.FC = () => {
           <EmptyState />
         ) : (
           <>
-            {/* 创建统一的消息数组，包含所有类型的消息和工具调用 */}
+            {/* Create unified message array containing all types of messages and tool calls */}
             {(() => {
-              // 普通消息
+              // Regular messages
               const regularMessages = messageHandling.messages.map((msg) => ({
                 type: 'message' as const,
                 data: msg,
                 timestamp: msg.timestamp,
               }));
 
-              // 进行中的工具调用
+              // In-progress tool calls
               const inProgressTools = inProgressToolCalls.map((toolCall) => ({
                 type: 'in-progress-tool-call' as const,
                 data: toolCall,
                 timestamp: toolCall.timestamp || Date.now(),
               }));
 
-              // 完成的工具调用
+              // Completed tool calls
               const completedTools = completedToolCalls
                 .filter(hasToolCallOutput)
                 .map((toolCall) => ({
@@ -412,7 +460,7 @@ export const App: React.FC = () => {
                   timestamp: toolCall.timestamp || Date.now(),
                 }));
 
-              // 合并并按时间戳排序，确保消息与工具调用穿插显示
+              // Merge and sort by timestamp to ensure messages and tool calls are interleaved
               const allMessages = [
                 ...regularMessages,
                 ...inProgressTools,
@@ -492,7 +540,7 @@ export const App: React.FC = () => {
               });
             })()}
 
-            {/* 已改为在 useWebViewMessages 中将每次 plan 推送为历史 toolcall，避免重复展示最新块 */}
+            {/* Changed to push each plan as a historical toolcall in useWebViewMessages to avoid duplicate display of the latest block */}
 
             {messageHandling.isWaitingForResponse &&
               messageHandling.loadingMessage && (

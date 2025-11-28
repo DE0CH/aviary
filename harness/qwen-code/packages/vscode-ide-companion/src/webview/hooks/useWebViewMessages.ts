@@ -137,7 +137,7 @@ export const useWebViewMessages = ({
     prevLines: string[],
     nextLines: string[],
   ): boolean => {
-    // 认为“补充” = 旧内容的文本集合（忽略状态）被新内容包含
+    // Consider "supplement" = old content text collection (ignoring status) is contained in new content
     const key = (line: string) => {
       const idx = line.indexOf('] ');
       return idx >= 0 ? line.slice(idx + 2).trim() : line.trim();
@@ -350,12 +350,12 @@ export const useWebViewMessages = ({
             const entries = message.data.entries as PlanEntry[];
             handlers.setPlanEntries(entries);
 
-            // 生成新的快照文本
+            // Generate new snapshot text
             const lines = buildPlanLines(entries);
             const text = lines.join('\n');
             const prev = lastPlanSnapshotRef.current;
 
-            // 1) 完全相同 -> 跳过
+            // 1) Identical -> Skip
             if (prev && prev.text === text) {
               break;
             }
@@ -363,7 +363,7 @@ export const useWebViewMessages = ({
             try {
               const ts = Date.now();
 
-              // 2) 补充或状态更新 -> 合并到上一条（使用 tool_call_update 覆盖内容）
+              // 2) Supplement or status update -> Merge to previous (use tool_call_update to override content)
               if (prev && isSupplementOf(prev.lines, lines)) {
                 handlers.handleToolCallUpdate({
                   type: 'tool_call_update',
@@ -381,7 +381,7 @@ export const useWebViewMessages = ({
                 });
                 lastPlanSnapshotRef.current = { id: prev.id, text, lines };
               } else {
-                // 3) 其他情况 -> 新增一条历史卡片
+                // 3) Other cases -> Add a new history card
                 const toolCallId = `plan-snapshot-${ts}`;
                 handlers.handleToolCallUpdate({
                   type: 'tool_call',
@@ -400,7 +400,7 @@ export const useWebViewMessages = ({
                 lastPlanSnapshotRef.current = { id: toolCallId, text, lines };
               }
 
-              // 分割助手消息段，保持渲染块独立
+              // Split assistant message segments, keep rendering blocks independent
               handlers.messageHandling.breakAssistantSegment?.();
             } catch (err) {
               console.warn(

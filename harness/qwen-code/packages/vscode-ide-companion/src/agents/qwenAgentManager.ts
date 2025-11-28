@@ -39,6 +39,9 @@ export class QwenAgentManager {
   private connectionHandler: QwenConnectionHandler;
   private sessionUpdateHandler: QwenSessionUpdateHandler;
   private currentWorkingDir: string = process.cwd();
+  // Cache the last used AuthStateManager so internal calls (e.g. fallback paths)
+  // can reuse it and avoid forcing a fresh authentication unnecessarily.
+  private defaultAuthStateManager?: AuthStateManager;
 
   // Callback storage
   private callbacks: QwenAgentCallbacks = {};
@@ -92,6 +95,8 @@ export class QwenAgentManager {
     _cliPath?: string,
   ): Promise<void> {
     this.currentWorkingDir = workingDir;
+    // Remember the provided authStateManager for future calls
+    this.defaultAuthStateManager = authStateManager;
     await this.connectionHandler.connect(
       this.connection,
       this.sessionReader,
@@ -392,23 +397,25 @@ export class QwenAgentManager {
         '[QwenAgentManager] Current session ID (from CLI):',
         this.currentSessionId,
       );
+      // In ACP mode, the CLI does not accept arbitrary slash commands like
+      // "/chat save". To ensure we never block on unsupported features,
+      // persist checkpoints directly to ~/.qwen/tmp using our SessionManager.
+      const qwenMessages = messages.map((m) => ({
+        // Generate minimal QwenMessage shape expected by the writer
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        type: m.role === 'user' ? ('user' as const) : ('qwen' as const),
+        content: m.content,
+      }));
 
-      // Use CLI's /chat save command instead of manually writing files
-      // This ensures we save the complete session context including tool calls
-      if (this.currentSessionId) {
-        console.log(
-          '[QwenAgentManager] Using CLI /chat save command for complete save',
-        );
-        return await this.saveCheckpointViaCommand(this.currentSessionId);
-      } else {
-        console.warn(
-          '[QwenAgentManager] No current session ID, cannot use /chat save',
-        );
-        return {
-          success: false,
-          message: 'No active CLI session',
-        };
-      }
+      const tag = await this.sessionManager.saveCheckpoint(
+        qwenMessages,
+        conversationId,
+        this.currentWorkingDir,
+        this.currentSessionId || undefined,
+      );
+
+      return { success: true, tag };
     } catch (error) {
       console.error('[QwenAgentManager] ===== CHECKPOINT SAVE FAILED =====');
       console.error('[QwenAgentManager] Error:', error);
@@ -634,12 +641,12 @@ export class QwenAgentManager {
     const config = vscode.workspace.getConfiguration('qwenCode');
     const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
     const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-    if (authStateManager) {
-      hasValidAuth = await authStateManager.hasValidAuth(
-        workingDir,
-        authMethod,
-      );
+    // Prefer the provided authStateManager, otherwise fall back to the one
+    // remembered during connect(). This prevents accidental re-auth in
+    // fallback paths (e.g. session switching) when the handler didn't pass it.
+    const effectiveAuth = authStateManager || this.defaultAuthStateManager;
+    if (effectiveAuth) {
+      hasValidAuth = await effectiveAuth.hasValidAuth(workingDir, authMethod);
       console.log(
         '[QwenAgentManager] Has valid cached auth for new session:',
         hasValidAuth,
@@ -656,20 +663,20 @@ export class QwenAgentManager {
         console.log('[QwenAgentManager] Authentication successful');
 
         // Save auth state
-        if (authStateManager) {
+        if (effectiveAuth) {
           console.log(
             '[QwenAgentManager] Saving auth state after successful authentication',
           );
-          await authStateManager.saveAuthState(workingDir, authMethod);
+          await effectiveAuth.saveAuthState(workingDir, authMethod);
         }
       } catch (authError) {
         console.error('[QwenAgentManager] Authentication failed:', authError);
         // Clear potentially invalid cache
-        if (authStateManager) {
+        if (effectiveAuth) {
           console.log(
             '[QwenAgentManager] Clearing auth cache due to authentication failure',
           );
-          await authStateManager.clearAuthState();
+          await effectiveAuth.clearAuthState();
         }
         throw authError;
       }

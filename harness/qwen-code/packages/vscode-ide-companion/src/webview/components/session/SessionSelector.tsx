@@ -20,8 +20,8 @@ interface SessionSelectorProps {
 }
 
 /**
- * 会话选择器组件
- * 显示会话列表并支持搜索和选择
+ * Session selector component
+ * Display session list and support search and selection
  */
 export const SessionSelector: React.FC<SessionSelectorProps> = ({
   visible,

@@ -36,7 +36,7 @@ const mapToolStatusToBullet = (
   }
 };
 
-// 从文本中尽可能解析带有 - [ ] / - [x] 的 todo 列表
+// Parse todo list with - [ ] / - [x] from text as much as possible
 const parseTodoEntries = (textOutputs: string[]): TodoEntry[] => {
   const text = textOutputs.join('\n');
   const lines = text.split(/\r?\n/);
@@ -60,7 +60,7 @@ const parseTodoEntries = (textOutputs: string[]): TodoEntry[] => {
     }
   }
 
-  // 如果没匹配到，退化为将非空行当作 pending 条目
+  // If no match is found, fall back to treating non-empty lines as pending items
   if (entries.length === 0) {
     for (const line of lines) {
       const title = line.trim();
@@ -83,7 +83,7 @@ export const TodoWriteToolCall: React.FC<BaseToolCallProps> = ({
   const { content, status } = toolCall;
   const { errors, textOutputs } = groupContent(content);
 
-  // 错误优先展示
+  // Error-first display
   if (errors.length > 0) {
     return (
       <ToolCallContainer label="Update Todos" status="error">
