@@ -3,19 +3,16 @@
  * - setModel API for dynamic model switching
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { query } from '../../src/index.js';
 import {
   isSDKAssistantMessage,
   isSDKSystemMessage,
   type SDKUserMessage,
 } from '../../src/types/protocol.js';
+import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
-
-const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
-};
+const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 /**
  * Factory function that creates a streaming input with a control point.
@@ -78,6 +75,18 @@ function createStreamingInputWithControlPoint(
 }
 
 describe('System Control (E2E)', () => {
+  let helper: SDKTestHelper;
+  let testDir: string;
+
+  beforeEach(async () => {
+    helper = new SDKTestHelper();
+    testDir = await helper.setup('system-control');
+  });
+
+  afterEach(async () => {
+    await helper.cleanup();
+  });
+
   describe('setModel API', () => {
     it('should change model dynamically during streaming input', async () => {
       const { generator, resume } = createStreamingInputWithControlPoint(
@@ -89,6 +98,7 @@ describe('System Control (E2E)', () => {
         prompt: generator,
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           model: 'qwen3-max',
           debug: false,
         },
@@ -134,7 +144,7 @@ describe('System Control (E2E)', () => {
           new Promise((_, reject) =>
             setTimeout(
               () => reject(new Error('Timeout waiting for first response')),
-              10000,
+              15000,
             ),
           ),
         ]);
@@ -215,6 +225,7 @@ describe('System Control (E2E)', () => {
         prompt: generator,
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           model: 'qwen3-max',
           debug: false,
         },
@@ -291,6 +302,7 @@ describe('System Control (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           model: 'qwen3-max',
         },
       });

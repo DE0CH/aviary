@@ -9,7 +9,7 @@
  * Tests that the SDK can properly interact with MCP servers configured in qwen-code
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { query } from '../../src/index.js';
 import {
   isSDKAssistantMessage,
@@ -38,7 +38,7 @@ describe('MCP Server Integration (E2E)', () => {
   let serverScriptPath: string;
   let testDir: string;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     // Create isolated test environment using SDKTestHelper
     helper = new SDKTestHelper();
     testDir = await helper.setup('mcp-server-integration');
@@ -48,7 +48,7 @@ describe('MCP Server Integration (E2E)', () => {
     serverScriptPath = mcpServer.scriptPath;
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     // Cleanup test directory
     await helper.cleanup();
   });

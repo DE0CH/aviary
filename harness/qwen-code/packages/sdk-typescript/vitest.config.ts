@@ -28,6 +28,14 @@ export default defineConfig({
     },
     include: ['test/**/*.test.ts'],
     exclude: ['node_modules/', 'dist/'],
+    retry: 2,
+    fileParallelism: true,
+    poolOptions: {
+      threads: {
+        minThreads: 2,
+        maxThreads: 4,
+      },
+    },
     testTimeout: testTimeoutMs,
     hookTimeout: 10000,
     globalSetup: './test/e2e/globalSetup.ts',

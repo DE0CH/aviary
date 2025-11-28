@@ -3,7 +3,7 @@
  * Tests basic query patterns with simple prompts and clear output expectations
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { query } from '../../src/index.js';
 import {
   isSDKAssistantMessage,
@@ -15,6 +15,7 @@ import {
   type SDKAssistantMessage,
 } from '../../src/types/protocol.js';
 import {
+  SDKTestHelper,
   extractText,
   createSharedTestOptions,
   assertSuccessfulCompletion,
@@ -24,12 +25,24 @@ import {
 const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 describe('Single-Turn Query (E2E)', () => {
+  let helper: SDKTestHelper;
+  let testDir: string;
+
+  beforeEach(async () => {
+    helper = new SDKTestHelper();
+    testDir = await helper.setup('single-turn');
+  });
+
+  afterEach(async () => {
+    await helper.cleanup();
+  });
   describe('Simple Text Queries', () => {
     it('should answer basic arithmetic question', async () => {
       const q = query({
         prompt: 'What is 2 + 2? Just give me the number.',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: true,
           logLevel: 'debug',
         },
@@ -66,6 +79,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'What is the capital of France? One word answer.',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -98,6 +112,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Say hello and tell me your name in one sentence.',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -136,6 +151,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -183,6 +199,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -215,6 +232,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Say hi',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -240,6 +258,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Say goodbye',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -273,6 +292,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: true,
           stderr: (msg: string) => {
             stderrMessages.push(msg);
@@ -293,8 +313,6 @@ describe('Single-Turn Query (E2E)', () => {
     });
 
     it('should respect cwd option', async () => {
-      const testDir = process.cwd();
-
       const q = query({
         prompt: 'What is 1 + 1?',
         options: {
@@ -324,6 +342,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Count from 1 to 5',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           includePartialMessages: true,
           debug: false,
         },
@@ -361,6 +380,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'What is 5 + 5?',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -408,6 +428,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Count from 1 to 3',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -468,6 +489,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -486,6 +508,7 @@ describe('Single-Turn Query (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });

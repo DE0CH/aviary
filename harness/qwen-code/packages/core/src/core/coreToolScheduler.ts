@@ -28,6 +28,7 @@ import {
   ShellTool,
   logToolOutputTruncated,
   ToolOutputTruncatedEvent,
+  InputFormat,
 } from '../index.js';
 import type { Part, PartListUnion } from '@google/genai';
 import { getResponseTextFromParts } from '../utils/generateContentResponseUtilities.js';
@@ -824,10 +825,10 @@ export class CoreToolScheduler {
             const shouldAutoDeny =
               !this.config.isInteractive() &&
               !this.config.getIdeMode() &&
-              !this.config.getExperimentalZedIntegration();
+              !this.config.getExperimentalZedIntegration() &&
+              this.config.getInputFormat() !== InputFormat.STREAM_JSON;
 
             if (shouldAutoDeny) {
-              // Treat as execution denied error, similar to excluded tools
               const errorMessage = `Qwen Code requires permission to use "${reqInfo.name}", but that permission was declined.`;
               this.setStatusInternal(
                 reqInfo.callId,

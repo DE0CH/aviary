@@ -9,7 +9,7 @@
  * Tests subagent delegation and task completion
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { query } from '../../src/index.js';
 import {
   isSDKAssistantMessage,
@@ -33,7 +33,7 @@ describe('Subagents (E2E)', () => {
   let helper: SDKTestHelper;
   let testWorkDir: string;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     // Create isolated test environment using SDKTestHelper
     helper = new SDKTestHelper();
     testWorkDir = await helper.setup('subagent-tests');
@@ -42,7 +42,7 @@ describe('Subagents (E2E)', () => {
     await helper.createFile('test.txt', 'Hello from test file\n');
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     // Cleanup test directory
     await helper.cleanup();
   });

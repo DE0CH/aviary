@@ -499,6 +499,147 @@ export function findToolCalls(
   return results;
 }
 
+/**
+ * Find tool result for a specific tool use ID
+ */
+export function findToolResult(
+  messages: SDKMessage[],
+  toolUseId: string,
+): { content: string; isError: boolean } | null {
+  for (const message of messages) {
+    if (message.type === 'user' && 'message' in message) {
+      const userMsg = message as SDKUserMessage;
+      const content = userMsg.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            block.type === 'tool_result' &&
+            (block as { tool_use_id?: string }).tool_use_id === toolUseId
+          ) {
+            const resultBlock = block as {
+              content?: string | ContentBlock[];
+              is_error?: boolean;
+            };
+            let resultContent = '';
+            if (typeof resultBlock.content === 'string') {
+              resultContent = resultBlock.content;
+            } else if (Array.isArray(resultBlock.content)) {
+              resultContent = resultBlock.content
+                .filter((b): b is TextBlock => b.type === 'text')
+                .map((b) => b.text)
+                .join('');
+            }
+            return {
+              content: resultContent,
+              isError: resultBlock.is_error ?? false,
+            };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Find all tool results for a specific tool name
+ */
+export function findToolResults(
+  messages: SDKMessage[],
+  toolName: string,
+): Array<{ toolUseId: string; content: string; isError: boolean }> {
+  const results: Array<{
+    toolUseId: string;
+    content: string;
+    isError: boolean;
+  }> = [];
+
+  // First find all tool calls for this tool
+  const toolCalls = findToolCalls(messages, toolName);
+
+  // Then find the result for each tool call
+  for (const { toolUse } of toolCalls) {
+    const result = findToolResult(messages, toolUse.id);
+    if (result) {
+      results.push({
+        toolUseId: toolUse.id,
+        content: result.content,
+        isError: result.isError,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Find all tool result blocks from messages (without requiring tool name)
+ */
+export function findAllToolResultBlocks(
+  messages: SDKMessage[],
+): Array<{ toolUseId: string; content: string; isError: boolean }> {
+  const results: Array<{
+    toolUseId: string;
+    content: string;
+    isError: boolean;
+  }> = [];
+
+  for (const message of messages) {
+    if (message.type === 'user' && 'message' in message) {
+      const userMsg = message as SDKUserMessage;
+      const content = userMsg.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'tool_result' && 'tool_use_id' in block) {
+            const resultBlock = block as {
+              tool_use_id: string;
+              content?: string | ContentBlock[];
+              is_error?: boolean;
+            };
+            let resultContent = '';
+            if (typeof resultBlock.content === 'string') {
+              resultContent = resultBlock.content;
+            } else if (Array.isArray(resultBlock.content)) {
+              resultContent = (resultBlock.content as ContentBlock[])
+                .filter((b): b is TextBlock => b.type === 'text')
+                .map((b) => b.text)
+                .join('');
+            }
+            results.push({
+              toolUseId: resultBlock.tool_use_id,
+              content: resultContent,
+              isError: resultBlock.is_error ?? false,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Check if any tool results exist in messages
+ */
+export function hasAnyToolResults(messages: SDKMessage[]): boolean {
+  return findAllToolResultBlocks(messages).length > 0;
+}
+
+/**
+ * Check if any successful (non-error) tool results exist
+ */
+export function hasSuccessfulToolResults(messages: SDKMessage[]): boolean {
+  return findAllToolResultBlocks(messages).some((r) => !r.isError);
+}
+
+/**
+ * Check if any error tool results exist
+ */
+export function hasErrorToolResults(messages: SDKMessage[]): boolean {
+  return findAllToolResultBlocks(messages).some((r) => r.isError);
+}
+
 // ============================================================================
 // Streaming Input Utilities
 // ============================================================================

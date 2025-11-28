@@ -54,6 +54,7 @@ export function query({
     maxSessionTurns: options.maxSessionTurns,
     coreTools: options.coreTools,
     excludeTools: options.excludeTools,
+    allowedTools: options.allowedTools,
     authType: options.authType,
     includePartialMessages: options.includePartialMessages,
   });

@@ -3,7 +3,7 @@
  * Tests multi-turn conversation functionality with real CLI
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { query } from '../../src/index.js';
 import {
   isSDKUserMessage,
@@ -22,11 +22,9 @@ import {
   type ControlMessage,
   type ToolUseBlock,
 } from '../../src/types/protocol.js';
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
+import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
-const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
-};
+const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 /**
  * Determine the message type using protocol type guards
@@ -64,6 +62,18 @@ function extractText(content: ContentBlock[]): string {
 }
 
 describe('Multi-Turn Conversations (E2E)', () => {
+  let helper: SDKTestHelper;
+  let testDir: string;
+
+  beforeEach(async () => {
+    helper = new SDKTestHelper();
+    testDir = await helper.setup('multi-turn');
+  });
+
+  afterEach(async () => {
+    await helper.cleanup();
+  });
+
   describe('AsyncIterable Prompt Support', () => {
     it('should handle multi-turn conversation using AsyncIterable prompt', async () => {
       // Create multi-turn conversation generator
@@ -110,6 +120,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createMultiTurnConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -173,6 +184,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createContextualConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -232,7 +244,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         options: {
           ...SHARED_TEST_OPTIONS,
           permissionMode: 'yolo',
-          cwd: '/tmp',
+          cwd: testDir,
           debug: false,
         },
       });
@@ -304,6 +316,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createSequentialConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -368,6 +381,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createSimpleConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -407,6 +421,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createEmptyConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -457,6 +472,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createDelayedConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -509,6 +525,7 @@ describe('Multi-Turn Conversations (E2E)', () => {
         prompt: createMultiTurnConversation(),
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           includePartialMessages: true,
           debug: false,
         },

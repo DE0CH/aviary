@@ -5,25 +5,32 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   query,
   AbortError,
   isAbortError,
-  isCLIAssistantMessage,
+  isSDKAssistantMessage,
   type TextBlock,
   type ContentBlock,
 } from '../../src/index.js';
+import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
-const TEST_CLI_PATH = process.env['TEST_CLI_PATH']!;
-
-const SHARED_TEST_OPTIONS = {
-  pathToQwenExecutable: TEST_CLI_PATH,
-};
+const SHARED_TEST_OPTIONS = createSharedTestOptions();
 
 describe('AbortController and Process Lifecycle (E2E)', () => {
+  let helper: SDKTestHelper;
+  let testDir: string;
+
+  beforeEach(async () => {
+    helper = new SDKTestHelper();
+    testDir = await helper.setup('abort-and-lifecycle');
+  });
+
+  afterEach(async () => {
+    await helper.cleanup();
+  });
   describe('Basic AbortController Usage', () => {
-    /* TODO: Currently query does not throw AbortError when aborted */
     it('should support AbortController cancellation', async () => {
       const controller = new AbortController();
 
@@ -36,6 +43,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Write a very long story about TypeScript programming',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -43,7 +51,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const textBlocks = message.message.content.filter(
               (block): block is TextBlock => block.type === 'text',
             );
@@ -73,6 +81,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -82,7 +91,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             if (!receivedFirstMessage) {
               // Abort immediately after receiving first assistant message
               receivedFirstMessage = true;
@@ -107,6 +116,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Write a very long essay',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -136,6 +146,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Why do we choose to go to the moon?',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -144,7 +155,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const textBlocks = message.message.content.filter(
               (block): block is TextBlock => block.type === 'text',
             );
@@ -171,13 +182,14 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Hello world',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const textBlocks = message.message.content.filter(
               (block): block is TextBlock => block.type === 'text',
             );
@@ -204,6 +216,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'What is 2 + 2?',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -213,7 +226,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message) && !endInputCalled) {
+          if (isSDKAssistantMessage(message) && !endInputCalled) {
             const textBlocks = message.message.content.filter(
               (block: ContentBlock): block is TextBlock =>
                 block.type === 'text',
@@ -271,6 +284,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Explain the concept of async programming',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -303,6 +317,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Why do we choose to go to the moon?',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: true,
           stderr: (msg: string) => {
             stderrMessages.push(msg);
@@ -312,7 +327,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
 
       try {
         for await (const message of q) {
-          if (isCLIAssistantMessage(message)) {
+          if (isSDKAssistantMessage(message)) {
             const textBlocks = message.message.content.filter(
               (block): block is TextBlock => block.type === 'text',
             );
@@ -336,6 +351,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
           stderr: (msg: string) => {
             stderrMessages.push(msg);
@@ -363,6 +379,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Write a very long essay about programming',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -394,6 +411,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Count to 100',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },
@@ -422,6 +440,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           debug: false,
         },
       });
@@ -446,6 +465,7 @@ describe('AbortController and Process Lifecycle (E2E)', () => {
         prompt: 'Hello',
         options: {
           ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
           abortController: controller,
           debug: false,
         },

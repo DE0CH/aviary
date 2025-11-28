@@ -296,32 +296,17 @@ export class Query implements AsyncIterable<SDKMessage> {
         timeoutPromise,
       ]);
 
-      // Handle boolean return (backward compatibility)
-      if (typeof result === 'boolean') {
-        return result
-          ? { behavior: 'allow', updatedInput: toolInput }
-          : { behavior: 'deny', message: 'Denied' };
-      }
-
-      // Handle PermissionResult format
-      const permissionResult = result as {
-        behavior: 'allow' | 'deny';
-        updatedInput?: Record<string, unknown>;
-        message?: string;
-        interrupt?: boolean;
-      };
-
-      if (permissionResult.behavior === 'allow') {
+      if (result.behavior === 'allow') {
         return {
           behavior: 'allow',
-          updatedInput: permissionResult.updatedInput ?? toolInput,
+          updatedInput: result.updatedInput ?? toolInput,
         };
       } else {
         return {
           behavior: 'deny',
-          message: permissionResult.message ?? 'Denied',
-          ...(permissionResult.interrupt !== undefined
-            ? { interrupt: permissionResult.interrupt }
+          message: result.message ?? 'Denied',
+          ...(result.interrupt !== undefined
+            ? { interrupt: result.interrupt }
             : {}),
         };
       }
