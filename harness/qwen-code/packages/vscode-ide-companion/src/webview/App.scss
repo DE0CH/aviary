@@ -118,6 +118,17 @@ body {
   padding: 0;
 }
 
+/* Ensure tool call containers keep a consistent left indent even if Tailwind utilities are purged */
+.toolcall-container {
+  /* Consistent indent for tool call blocks */
+  padding-left: 30px;
+}
+
+.toolcall-card {
+  /* Consistent indent for card-style tool calls */
+  padding-left: 30px;
+}
+
 button {
   color: var(--app-primary-foreground);
   font-family: var(--vscode-chat-font-family);
@@ -233,90 +244,14 @@ button {
   cursor: not-allowed;
 }
 
-/* ===========================
-   In-Progress Tool Call Styles (Claude Code style)
-   =========================== */
-.in-progress-tool-call {
-  display: flex;
-  flex-direction: column;
-  gap: var(--app-spacing-small);
-  padding: var(--app-spacing-medium);
-  margin: var(--app-spacing-small) 0;
-  background: var(--app-input-background);
-  border: 1px solid var(--app-input-border);
-  border-radius: var(--corner-radius-small);
-  animation: fadeIn 0.2s ease-in;
-}
-
-.in-progress-tool-call-header {
-  display: flex;
-  align-items: center;
-  gap: var(--app-spacing-medium);
-}
-
-.in-progress-tool-call-kind {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--app-primary-foreground);
-}
-
-.in-progress-tool-call-status {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  color: var(--app-secondary-foreground);
-  position: relative;
-  padding-left: 14px;
-}
-
-.in-progress-tool-call-status::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  margin-right: 6px;
-}
-
-.in-progress-tool-call-status.pending::before {
-  background: #ffc107;
-}
-
-.in-progress-tool-call-status.in_progress::before {
-  background: #2196f3;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.in-progress-tool-call-status.completed::before {
-  background: #4caf50;
-}
-
-.in-progress-tool-call-status.failed::before {
-  background: #f44336;
-}
-
+/* Animation for in-progress status (used by pseudo bullets and spinners) */
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.4;
+    opacity: 0.5;
   }
-}
-
-.in-progress-tool-call-title {
-  font-size: 12px;
-  color: var(--app-secondary-foreground);
-  font-family: var(--app-monospace-font-family);
-  padding-left: 2px;
-}
-
-.in-progress-tool-call-locations {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-left: 2px;
 }
 
 .code-block {
@@ -658,4 +593,3 @@ button {
   color: #4caf50;
   font-size: 13px;
 }
-

@@ -10,7 +10,12 @@
 export type { IconProps } from './types.js';
 
 // File icons
-export { FileIcon, FileListIcon, SaveDocumentIcon } from './FileIcons.js';
+export {
+  FileIcon,
+  FileListIcon,
+  SaveDocumentIcon,
+  FolderIcon,
+} from './FileIcons.js';
 
 // Navigation icons
 export {

@@ -32,6 +32,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   onFileClick,
   status = 'default',
 }) => {
+  // 空内容直接不渲染，避免只显示 ::before 的圆点导致观感不佳
+  if (!content || content.trim().length === 0) {
+    return null;
+  }
+
   // Map status to CSS class (only for ::before pseudo-element)
   const getStatusClass = () => {
     switch (status) {

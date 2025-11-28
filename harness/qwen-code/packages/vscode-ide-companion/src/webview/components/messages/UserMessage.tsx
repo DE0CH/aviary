@@ -29,7 +29,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 }) => {
   // Generate display text for file context
   const getFileContextDisplay = () => {
-    if (!fileContext) return null;
+    if (!fileContext) {
+      return null;
+    }
     const { fileName, startLine, endLine } = fileContext;
     if (startLine && endLine) {
       return startLine === endLine

@@ -82,3 +82,26 @@ export const SaveDocumentIcon: React.FC<IconProps> = ({
     <path d="M8 10.6666V8M8 8V5.33329M8 8H10.6666M8 8H5.33329" />
   </svg>
 );
+
+/**
+ * Folder icon (16x16)
+ * Useful for directory entries in completion lists
+ */
+export const FolderIcon: React.FC<IconProps> = ({
+  size = 16,
+  className,
+  ...props
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 16 16"
+    fill="currentColor"
+    width={size}
+    height={size}
+    className={className}
+    aria-hidden="true"
+    {...props}
+  >
+    <path d="M1.5 3A1.5 1.5 0 0 1 3 1.5h3.086a1.5 1.5 0 0 1 1.06.44L8.5 3H13A1.5 1.5 0 0 1 14.5 4.5v7A1.5 1.5 0 0 1 13 13H3A1.5 1.5 0 0 1 1.5 11.5v-8Z" />
+  </svg>
+);

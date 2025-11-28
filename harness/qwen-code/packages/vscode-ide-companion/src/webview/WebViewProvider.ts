@@ -10,9 +10,9 @@ import { ConversationStore } from '../storage/conversationStore.js';
 import type { AcpPermissionRequest } from '../constants/acpTypes.js';
 import { CliDetector } from '../cli/cliDetector.js';
 import { AuthStateManager } from '../auth/authStateManager.js';
-import { PanelManager } from './PanelManager.js';
-import { MessageHandler } from './MessageHandler.js';
-import { WebViewContent } from './WebViewContent.js';
+import { PanelManager } from '../webview/PanelManager.js';
+import { MessageHandler } from '../webview/MessageHandler.js';
+import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/CliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 
@@ -79,6 +79,15 @@ export class WebViewProvider {
       this.sendMessageToWebView({
         type: 'thoughtChunk',
         data: { chunk },
+      });
+    });
+
+    // Setup end-turn handler from ACP stopReason=end_turn
+    this.agentManager.onEndTurn(() => {
+      // Ensure WebView exits streaming state even if no explicit streamEnd was emitted elsewhere
+      this.sendMessageToWebView({
+        type: 'streamEnd',
+        data: { timestamp: Date.now(), reason: 'end_turn' },
       });
     });
 
@@ -365,6 +374,10 @@ export class WebViewProvider {
       '[WebViewProvider] Starting initialization, workingDir:',
       workingDir,
     );
+    console.log(
+      '[WebViewProvider] AuthStateManager available:',
+      !!this.authStateManager,
+    );
 
     const config = vscode.workspace.getConfiguration('qwenCode');
     const qwenEnabled = config.get<boolean>('qwen.enabled', true);
@@ -604,11 +617,17 @@ export class WebViewProvider {
       });
     } catch (error) {
       console.error('[WebViewProvider] Force re-login failed:', error);
+      console.error(
+        '[WebViewProvider] Error stack:',
+        error instanceof Error ? error.stack : 'N/A',
+      );
 
       // Send error notification to WebView
       this.sendMessageToWebView({
         type: 'loginError',
-        data: { message: `Login failed: ${error}` },
+        data: {
+          message: `Login failed: ${error instanceof Error ? error.message : String(error)}`,
+        },
       });
 
       throw error;

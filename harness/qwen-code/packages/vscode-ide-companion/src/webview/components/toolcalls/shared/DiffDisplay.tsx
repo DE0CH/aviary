@@ -7,7 +7,7 @@
  */
 
 import type React from 'react';
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { FileLink } from '../../shared/FileLink.js';
 import {
   calculateDiffStats,
@@ -15,6 +15,11 @@ import {
 } from '../../../utils/diffStats.js';
 import { OpenDiffIcon } from '../../icons/index.js';
 import './DiffDisplay.css';
+import {
+  computeLineDiff,
+  truncateOps,
+  type DiffOp,
+} from '../../../utils/simpleDiff.js';
 
 /**
  * Props for DiffDisplay
@@ -24,8 +29,8 @@ interface DiffDisplayProps {
   oldText?: string | null;
   newText?: string;
   onOpenDiff?: () => void;
-  /** 默认显示模式：'compact' | 'full' */
-  defaultMode?: 'compact' | 'full';
+  /** 是否显示统计信息 */
+  showStats?: boolean;
 }
 
 /**
@@ -37,20 +42,27 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
   oldText,
   newText,
   onOpenDiff,
-  defaultMode = 'compact',
+  showStats = true,
 }) => {
-  // 视图模式状态：紧凑或完整
-  const [viewMode, setViewMode] = useState<'compact' | 'full'>(defaultMode);
-
-  // 计算 diff 统计信息（仅在文本变化时重新计算）
+  // 统计信息（仅在文本变化时重新计算）
   const stats = useMemo(
     () => calculateDiffStats(oldText, newText),
     [oldText, newText],
   );
 
-  // 渲染紧凑视图
-  const renderCompactView = () => (
-    <div className="diff-compact-view">
+  // 仅生成变更行（增加/删除），不渲染上下文
+  const ops: DiffOp[] = useMemo(
+    () => computeLineDiff(oldText, newText),
+    [oldText, newText],
+  );
+  const {
+    items: previewOps,
+    truncated,
+    omitted,
+  } = useMemo(() => truncateOps<DiffOp>(ops), [ops]);
+
+  return (
+    <div className="diff-display-container">
       <div
         className="diff-compact-clickable"
         onClick={onOpenDiff}
@@ -75,87 +87,74 @@ export const DiffDisplay: React.FC<DiffDisplayProps> = ({
               />
             </div>
           )}
-          <div className="diff-stats">
-            {stats.added > 0 && (
-              <span className="stat-added">+{stats.added}</span>
-            )}
-            {stats.removed > 0 && (
-              <span className="stat-removed">-{stats.removed}</span>
-            )}
-            {stats.changed > 0 && (
-              <span className="stat-changed">~{stats.changed}</span>
-            )}
-            {stats.total === 0 && (
-              <span className="stat-no-change">No changes</span>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="diff-compact-actions">
-        <button
-          className="diff-action-button secondary"
-          onClick={(e) => {
-            e.stopPropagation();
-            setViewMode('full');
-          }}
-          title="Show full before/after content"
-        >
-          Show Details
-        </button>
-      </div>
-    </div>
-  );
-
-  // 渲染完整视图
-  const renderFullView = () => (
-    <div className="diff-full-view">
-      <div className="diff-header">
-        <div className="diff-file-path">
-          {path && <FileLink path={path} showFullPath={true} />}
-        </div>
-        <div className="diff-header-actions">
-          {onOpenDiff && (
-            <button
-              className="diff-action-button primary"
-              onClick={onOpenDiff}
-              title="Open in VS Code diff viewer"
-            >
-              <OpenDiffIcon width="14" height="14" />
-              Open Diff
-            </button>
+          {showStats && (
+            <div className="diff-stats" title={formatDiffStatsDetailed(stats)}>
+              {stats.added > 0 && (
+                <span className="stat-added">+{stats.added}</span>
+              )}
+              {stats.removed > 0 && (
+                <span className="stat-removed">-{stats.removed}</span>
+              )}
+              {stats.changed > 0 && (
+                <span className="stat-changed">~{stats.changed}</span>
+              )}
+              {stats.total === 0 && (
+                <span className="stat-no-change">No changes</span>
+              )}
+            </div>
           )}
+        </div>
+      </div>
+
+      {/* 只绘制差异行的预览区域 */}
+      <pre className="diff-preview code-block" aria-label="Diff preview">
+        <div className="code-content">
+          {previewOps.length === 0 && (
+            <div className="diff-line no-change">(no changes)</div>
+          )}
+          {previewOps.map((op, idx) => {
+            if (op.type === 'add') {
+              const line = op.line;
+              return (
+                <div key={`add-${idx}`} className="diff-line added">
+                  +{line || ' '}
+                </div>
+              );
+            }
+            if (op.type === 'remove') {
+              const line = op.line;
+              return (
+                <div key={`rm-${idx}`} className="diff-line removed">
+                  -{line || ' '}
+                </div>
+              );
+            }
+            return null;
+          })}
+          {truncated && (
+            <div
+              className="diff-omitted"
+              title={`${omitted} lines omitted in preview`}
+            >
+              … {omitted} lines omitted
+            </div>
+          )}
+        </div>
+      </pre>
+
+      {/* 在预览下方提供显式打开按钮（可选） */}
+      {onOpenDiff && (
+        <div className="diff-compact-actions">
           <button
-            className="diff-action-button secondary"
-            onClick={() => setViewMode('compact')}
-            title="Collapse to compact view"
+            className="diff-action-button primary"
+            onClick={onOpenDiff}
+            title="Open in VS Code diff viewer"
           >
-            Collapse
+            <OpenDiffIcon width="14" height="14" />
+            Open Diff
           </button>
         </div>
-      </div>
-      <div className="diff-stats-line">{formatDiffStatsDetailed(stats)}</div>
-      {oldText !== undefined && (
-        <div className="diff-section">
-          <div className="diff-label">Before:</div>
-          <pre className="code-block">
-            <div className="code-content">{oldText || '(empty)'}</div>
-          </pre>
-        </div>
       )}
-      {newText !== undefined && (
-        <div className="diff-section">
-          <div className="diff-label">After:</div>
-          <pre className="code-block">
-            <div className="code-content">{newText}</div>
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="diff-display-container">
-      {viewMode === 'compact' ? renderCompactView() : renderFullView()}
     </div>
   );
 };

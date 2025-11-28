@@ -27,10 +27,10 @@ export const useMessageHandling = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
-  const [currentStreamContent, setCurrentStreamContent] = useState('');
-
-  // Use ref to store current stream content, avoiding useEffect dependency issues
-  const currentStreamContentRef = useRef<string>('');
+  // Track the index of the assistant placeholder message during streaming
+  const streamingMessageIndexRef = useRef<number | null>(null);
+  // Track the index of the current aggregated thinking message
+  const thinkingMessageIndexRef = useRef<number | null>(null);
 
   /**
    * Add message
@@ -49,41 +49,75 @@ export const useMessageHandling = () => {
   /**
    * Start streaming response
    */
-  const startStreaming = useCallback(() => {
+  const startStreaming = useCallback((timestamp?: number) => {
+    // Create an assistant placeholder message immediately so tool calls won't jump before it
+    setMessages((prev) => {
+      // Record index of the placeholder to update on chunks
+      streamingMessageIndexRef.current = prev.length;
+      return [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '',
+          // Use provided timestamp (from extension) to keep ordering stable
+          timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+        },
+      ];
+    });
     setIsStreaming(true);
-    setCurrentStreamContent('');
-    currentStreamContentRef.current = '';
   }, []);
 
   /**
    * Add stream chunk
    */
   const appendStreamChunk = useCallback((chunk: string) => {
-    setCurrentStreamContent((prev) => {
-      const newContent = prev + chunk;
-      currentStreamContentRef.current = newContent;
-      return newContent;
+    setMessages((prev) => {
+      let idx = streamingMessageIndexRef.current;
+      const next = prev.slice();
+
+      // If there is no active placeholder (e.g., after a tool call), start a new one
+      if (idx === null) {
+        idx = next.length;
+        streamingMessageIndexRef.current = idx;
+        next.push({ role: 'assistant', content: '', timestamp: Date.now() });
+      }
+
+      if (idx < 0 || idx >= next.length) {
+        return prev;
+      }
+      const target = next[idx];
+      next[idx] = { ...target, content: (target.content || '') + chunk };
+      return next;
     });
+  }, []);
+
+  /**
+   * Break current assistant stream segment (e.g., when a tool call starts/updates)
+   * Next incoming chunk will create a new assistant placeholder
+   */
+  const breakAssistantSegment = useCallback(() => {
+    streamingMessageIndexRef.current = null;
   }, []);
 
   /**
    * End streaming response
    */
   const endStreaming = useCallback(() => {
-    // If there is streaming content, add it as complete assistant message
-    if (currentStreamContentRef.current) {
-      const assistantMessage: TextMessage = {
-        role: 'assistant',
-        content: currentStreamContentRef.current,
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-    }
-
+    // Finalize streaming; content already lives in the placeholder message
     setIsStreaming(false);
     setIsWaitingForResponse(false);
-    setCurrentStreamContent('');
-    currentStreamContentRef.current = '';
+    streamingMessageIndexRef.current = null;
+    // Remove the thinking message if it exists (collapse thoughts)
+    setMessages((prev) => {
+      const idx = thinkingMessageIndexRef.current;
+      thinkingMessageIndexRef.current = null;
+      if (idx === null || idx < 0 || idx >= prev.length) {
+        return prev;
+      }
+      const next = prev.slice();
+      next.splice(idx, 1);
+      return next;
+    });
   }, []);
 
   /**
@@ -108,7 +142,6 @@ export const useMessageHandling = () => {
     isStreaming,
     isWaitingForResponse,
     loadingMessage,
-    currentStreamContent,
 
     // Operations
     addMessage,
@@ -116,6 +149,36 @@ export const useMessageHandling = () => {
     startStreaming,
     appendStreamChunk,
     endStreaming,
+    // Thought handling
+    appendThinkingChunk: (chunk: string) => {
+      setMessages((prev) => {
+        let idx = thinkingMessageIndexRef.current;
+        const next = prev.slice();
+        if (idx === null) {
+          idx = next.length;
+          thinkingMessageIndexRef.current = idx;
+          next.push({ role: 'thinking', content: '', timestamp: Date.now() });
+        }
+        if (idx >= 0 && idx < next.length) {
+          const target = next[idx];
+          next[idx] = { ...target, content: (target.content || '') + chunk };
+        }
+        return next;
+      });
+    },
+    clearThinking: () => {
+      setMessages((prev) => {
+        const idx = thinkingMessageIndexRef.current;
+        thinkingMessageIndexRef.current = null;
+        if (idx === null || idx < 0 || idx >= prev.length) {
+          return prev;
+        }
+        const next = prev.slice();
+        next.splice(idx, 1);
+        return next;
+      });
+    },
+    breakAssistantSegment,
     setWaitingForResponse,
     clearWaitingForResponse,
     setMessages,

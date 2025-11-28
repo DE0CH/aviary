@@ -5,115 +5,83 @@
  */
 
 /**
- * PlanDisplay.css - Styles for the task plan component
- * Clean checklist-style design matching Claude Code CLI
+ * PlanDisplay.css -> Tailwind 化
+ * 说明：尽量用 @apply，把原有类名保留，便于调试；
+ * 仅在必须的地方保留少量原生 CSS（如关键帧）。
  */
 
+/* 容器 */
 .plan-display {
-  background: transparent;
-  border: none;
-  padding: 8px 16px;
-  margin: 8px 0;
+  @apply bg-transparent border-0 py-2 px-4 my-2;
 }
 
+/* 标题区 */
 .plan-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  @apply flex items-center gap-1.5 mb-2;
 }
 
 .plan-progress-icons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+  @apply flex items-center gap-[2px];
 }
 
 .plan-progress-icon {
-  flex-shrink: 0;
-  color: var(--app-secondary-foreground);
-  opacity: 0.6;
+  @apply shrink-0 text-[var(--app-secondary-foreground)] opacity-60;
 }
 
 .plan-title {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--app-secondary-foreground);
-  opacity: 0.8;
+  @apply text-xs font-normal text-[var(--app-secondary-foreground)] opacity-80;
 }
 
+/* 列表 */
 .plan-entries {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  @apply flex flex-col gap-px;
 }
 
 .plan-entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
-  min-height: 20px;
+  @apply flex items-center gap-2 py-[3px] min-h-[20px];
 }
 
-/* Icon container */
+/* 图标容器（保留类名以兼容旧 DOM） */
 .plan-entry-icon {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
+  @apply shrink-0 flex items-center justify-center w-[14px] h-[14px];
 }
 
 .plan-icon {
-  display: block;
-  width: 14px;
-  height: 14px;
+  @apply block w-[14px] h-[14px];
 }
 
-/* 不同状态的图标颜色 */
+/* 不同状态颜色（保留类名） */
 .plan-icon.pending {
-  color: var(--app-secondary-foreground);
-  opacity: 0.35;
+  @apply text-[var(--app-secondary-foreground)] opacity-30;
 }
 
 .plan-icon.in-progress {
-  color: var(--app-secondary-foreground);
-  opacity: 0.7;
+  @apply text-[var(--app-secondary-foreground)] opacity-70;
 }
 
 .plan-icon.completed {
-  color: #4caf50; /* 绿色勾号 */
-  opacity: 0.8;
+  @apply text-[#4caf50] opacity-80; /* 绿色勾号 */
 }
 
-/* Content */
+/* 内容 */
 .plan-entry-content {
-  flex: 1;
-  display: flex;
-  align-items: center;
+  @apply flex-1 flex items-center;
 }
 
 .plan-entry-text {
-  flex: 1;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--app-primary-foreground);
-  opacity: 0.85;
+  @apply flex-1 text-xs leading-[1.5] text-[var(--app-primary-foreground)] opacity-80;
 }
 
-/* Status-specific styles */
+/* 状态化文本（保留选择器，兼容旧结构） */
 .plan-entry.completed .plan-entry-text {
-  opacity: 0.5;
-  text-decoration: line-through;
+  @apply opacity-50 line-through;
 }
 
 .plan-entry.in_progress .plan-entry-text {
-  font-weight: 400;
-  opacity: 0.9;
+  @apply font-normal opacity-90;
 }
 
+/* 保留 fadeIn 动画，供 App.tsx 使用 */
 @keyframes fadeIn {
   from {
     opacity: 0;

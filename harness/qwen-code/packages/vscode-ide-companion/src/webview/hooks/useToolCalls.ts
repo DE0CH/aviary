@@ -25,6 +25,70 @@ export const useToolCalls = () => {
       const newMap = new Map(prevToolCalls);
       const existing = newMap.get(update.toolCallId);
 
+      // Helpers for todo/todos plan merging & content replacement
+      const isTodoWrite = (kind?: string) =>
+        (kind || '').toLowerCase() === 'todo_write' ||
+        (kind || '').toLowerCase() === 'todowrite' ||
+        (kind || '').toLowerCase() === 'update_todos';
+
+      const normTitle = (t: unknown) =>
+        typeof t === 'string' ? t.trim().toLowerCase() : '';
+
+      const isTodoTitleMergeable = (t?: unknown) => {
+        const nt = normTitle(t);
+        return nt === 'updated plan' || nt === 'update todos';
+      };
+
+      const extractText = (
+        content?: Array<{
+          type: 'content' | 'diff';
+          content?: { text?: string };
+        }>,
+      ): string => {
+        if (!content || content.length === 0) {
+          return '';
+        }
+        const parts: string[] = [];
+        for (const item of content) {
+          if (item.type === 'content' && item.content?.text) {
+            parts.push(String(item.content.text));
+          }
+        }
+        return parts.join('\n');
+      };
+
+      const normalizeTodoLines = (text: string): string[] => {
+        if (!text) {
+          return [];
+        }
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        return lines.map((line) => {
+          const idx = line.indexOf('] ');
+          return idx >= 0 ? line.slice(idx + 2).trim() : line;
+        });
+      };
+
+      const isSameOrSupplement = (
+        prevText: string,
+        nextText: string,
+      ): { same: boolean; supplement: boolean } => {
+        const prev = normalizeTodoLines(prevText);
+        const next = normalizeTodoLines(nextText);
+        if (prev.length === next.length) {
+          const same = prev.every((l, i) => l === next[i]);
+          if (same) {
+            return { same: true, supplement: false };
+          }
+        }
+        // supplement = prev set is subset of next set
+        const setNext = new Set(next);
+        const subset = prev.every((l) => setNext.has(l));
+        return { same: false, supplement: subset };
+      };
+
       const safeTitle = (title: unknown): string => {
         if (typeof title === 'string') {
           return title;
@@ -44,6 +108,49 @@ export const useToolCalls = () => {
           newText: item.newText,
         }));
 
+        // 合并策略：对于 todo_write + mergeable 标题（Updated Plan/Update Todos），
+        // 如果与最近一条同类卡片相同或是补充，则合并更新而不是新增。
+        if (isTodoWrite(update.kind) && isTodoTitleMergeable(update.title)) {
+          const nextText = extractText(content);
+          // 找最近一条 todo_write + 可合并标题 的卡片
+          let lastId: string | null = null;
+          let lastText = '';
+          let lastTimestamp = 0;
+          for (const tc of newMap.values()) {
+            if (
+              isTodoWrite(tc.kind) &&
+              isTodoTitleMergeable(tc.title) &&
+              typeof tc.timestamp === 'number' &&
+              tc.timestamp >= lastTimestamp
+            ) {
+              lastId = tc.toolCallId;
+              lastText = extractText(tc.content);
+              lastTimestamp = tc.timestamp || 0;
+            }
+          }
+
+          if (lastId) {
+            const cmp = isSameOrSupplement(lastText, nextText);
+            if (cmp.same) {
+              // 完全相同：忽略本次新增
+              return newMap;
+            }
+            if (cmp.supplement) {
+              // 补充：替换内容到上一条（使用更新语义）
+              const prev = newMap.get(lastId);
+              if (prev) {
+                newMap.set(lastId, {
+                  ...prev,
+                  content, // 覆盖（不追加）
+                  status: update.status || prev.status,
+                  timestamp: update.timestamp || Date.now(),
+                });
+                return newMap;
+              }
+            }
+          }
+        }
+
         newMap.set(update.toolCallId, {
           toolCallId: update.toolCallId,
           kind: update.kind || 'other',
@@ -52,6 +159,7 @@ export const useToolCalls = () => {
           rawInput: update.rawInput as string | object | undefined,
           content,
           locations: update.locations,
+          timestamp: update.timestamp || Date.now(), // 添加时间戳
         });
       } else if (update.type === 'tool_call_update') {
         const updatedContent = update.content
@@ -65,9 +173,25 @@ export const useToolCalls = () => {
           : undefined;
 
         if (existing) {
-          const mergedContent = updatedContent
-            ? [...(existing.content || []), ...updatedContent]
-            : existing.content;
+          // 默认行为是追加；但对于 todo_write + 可合并标题，使用替换避免堆叠重复
+          let mergedContent = existing.content;
+          if (updatedContent) {
+            if (
+              isTodoWrite(update.kind || existing.kind) &&
+              (isTodoTitleMergeable(update.title) ||
+                isTodoTitleMergeable(existing.title))
+            ) {
+              mergedContent = updatedContent; // 覆盖
+            } else {
+              mergedContent = [...(existing.content || []), ...updatedContent];
+            }
+          }
+          // If tool call has just completed/failed, bump timestamp to now for correct ordering
+          const isFinal =
+            update.status === 'completed' || update.status === 'failed';
+          const nextTimestamp = isFinal
+            ? Date.now()
+            : update.timestamp || existing.timestamp || Date.now();
 
           newMap.set(update.toolCallId, {
             ...existing,
@@ -76,6 +200,7 @@ export const useToolCalls = () => {
             ...(update.status && { status: update.status }),
             content: mergedContent,
             ...(update.locations && { locations: update.locations }),
+            timestamp: nextTimestamp, // 更新时间戳（完成/失败时以完成时间为准）
           });
         } else {
           newMap.set(update.toolCallId, {
@@ -86,6 +211,7 @@ export const useToolCalls = () => {
             rawInput: update.rawInput as string | object | undefined,
             content: updatedContent,
             locations: update.locations,
+            timestamp: update.timestamp || Date.now(), // 添加时间戳
           });
         }
       }

@@ -63,6 +63,14 @@ export function useCompletionTrigger(
     [getCompletionItems],
   );
 
+  const refreshCompletion = useCallback(async () => {
+    if (!state.isOpen || !state.triggerChar) {
+      return;
+    }
+    const items = await getCompletionItems(state.triggerChar, state.query);
+    setState((prev) => ({ ...prev, items }));
+  }, [state.isOpen, state.triggerChar, state.query, getCompletionItems]);
+
   useEffect(() => {
     const inputElement = inputRef.current;
     if (!inputElement) {
@@ -217,5 +225,6 @@ export function useCompletionTrigger(
     items: state.items,
     closeCompletion,
     openCompletion,
+    refreshCompletion,
   };
 }

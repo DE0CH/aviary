@@ -66,7 +66,16 @@ export class QwenAgentManager {
     };
 
     this.connection.onEndTurn = () => {
-      // Notify UI response complete
+      try {
+        if (this.callbacks.onEndTurn) {
+          this.callbacks.onEndTurn();
+        } else if (this.callbacks.onStreamChunk) {
+          // Fallback: send a zero-length chunk then rely on streamEnd elsewhere
+          this.callbacks.onStreamChunk('');
+        }
+      } catch (err) {
+        console.warn('[QwenAgentManager] onEndTurn callback error:', err);
+      }
     };
   }
 
@@ -80,6 +89,7 @@ export class QwenAgentManager {
   async connect(
     workingDir: string,
     authStateManager?: AuthStateManager,
+    _cliPath?: string, // TODO: reserved for future override via settings
   ): Promise<void> {
     this.currentWorkingDir = workingDir;
     await this.connectionHandler.connect(
@@ -753,6 +763,16 @@ export class QwenAgentManager {
     callback: (request: AcpPermissionRequest) => Promise<string>,
   ): void {
     this.callbacks.onPermissionRequest = callback;
+    this.sessionUpdateHandler.updateCallbacks(this.callbacks);
+  }
+
+  /**
+   * Register end-of-turn callback
+   *
+   * @param callback - Called when ACP stopReason === 'end_turn'
+   */
+  onEndTurn(callback: () => void): void {
+    this.callbacks.onEndTurn = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }
 

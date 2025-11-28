@@ -7,10 +7,12 @@ module.exports = {
     './src/webview/components/ui/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/toolcalls/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/InProgressToolCall.tsx',
     './src/webview/components/MessageContent.tsx',
     './src/webview/components/InfoBanner.tsx',
     './src/webview/components/InputForm.tsx',
     './src/webview/components/PermissionDrawer.tsx',
+    './src/webview/components/PlanDisplay.tsx',
     // 当需要在更多组件中使用Tailwind时，可以逐步添加路径
     // "./src/webview/components/NewComponent/**/*.{js,jsx,ts,tsx}",
     // "./src/webview/pages/**/*.{js,jsx,ts,tsx}",

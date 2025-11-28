@@ -13,8 +13,11 @@ export interface CompletionItem {
   label: string;
   description?: string;
   icon?: React.ReactNode;
-  type: 'file' | 'symbol' | 'command' | 'variable';
-  value?: unknown;
+  type: 'file' | 'folder' | 'symbol' | 'command' | 'variable' | 'info';
+  // Value inserted into the input when selected (e.g., filename or command)
+  value?: string;
+  // Optional full path for files (used to build @filename -> full path mapping)
+  path?: string;
 }
 
 interface CompletionMenuProps {

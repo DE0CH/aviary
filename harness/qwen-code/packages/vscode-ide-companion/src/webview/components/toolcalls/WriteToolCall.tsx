@@ -10,6 +10,7 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { groupContent } from './shared/utils.js';
+import { FileLink } from '../shared/FileLink.js';
 
 /**
  * Specialized component for Write tool calls
@@ -22,7 +23,7 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { errors, textOutputs } = groupContent(content);
 
   // Extract filename from path
-  const getFileName = (path: string): string => path.split('/').pop() || path;
+  // const getFileName = (path: string): string => path.split('/').pop() || path;
 
   // Extract content to write from rawInput
   let writeContent = '';
@@ -36,7 +37,6 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Error case: show filename + error message + content preview
   if (errors.length > 0) {
     const path = locations?.[0]?.path || '';
-    const fileName = path ? getFileName(path) : '';
     const errorMessage = errors.join('\n');
 
     // Truncate content preview
@@ -47,9 +47,18 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
     return (
       <ToolCallContainer
-        label={fileName ? `Write ${fileName}` : 'Write'}
+        label={'Write'}
         status="error"
         toolCallId={toolCallId}
+        labelSuffix={
+          path ? (
+            <FileLink
+              path={path}
+              showFullPath={false}
+              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+            />
+          ) : undefined
+        }
       >
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
@@ -68,13 +77,22 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success case: show filename + line count
   if (locations && locations.length > 0) {
-    const fileName = getFileName(locations[0].path);
+    const path = locations[0].path;
     const lineCount = writeContent.split('\n').length;
     return (
       <ToolCallContainer
-        label={`Created ${fileName}`}
+        label={'Created'}
         status="success"
         toolCallId={toolCallId}
+        labelSuffix={
+          path ? (
+            <FileLink
+              path={path}
+              showFullPath={false}
+              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+            />
+          ) : undefined
+        }
       >
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>

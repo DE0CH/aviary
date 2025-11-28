@@ -10,6 +10,7 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { groupContent } from './shared/utils.js';
+import { FileLink } from '../shared/FileLink.js';
 
 /**
  * Specialized component for Read tool calls
@@ -23,17 +24,25 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { errors } = groupContent(content);
 
   // Extract filename from path
-  const getFileName = (path: string): string => path.split('/').pop() || path;
+  // const getFileName = (path: string): string => path.split('/').pop() || path;
 
   // Error case: show error
   if (errors.length > 0) {
     const path = locations?.[0]?.path || '';
-    const fileName = path ? getFileName(path) : '';
     return (
       <ToolCallContainer
-        label={fileName ? `Read ${fileName}` : 'Read'}
+        label={'Read'}
         status="error"
         toolCallId={toolCallId}
+        labelSuffix={
+          path ? (
+            <FileLink
+              path={path}
+              showFullPath={false}
+              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+            />
+          ) : undefined
+        }
       >
         {errors.join('\n')}
       </ToolCallContainer>
@@ -42,12 +51,21 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success case: show which file was read with filename in label
   if (locations && locations.length > 0) {
-    const fileName = getFileName(locations[0].path);
+    const path = locations[0].path;
     return (
       <ToolCallContainer
-        label={`Read ${fileName}`}
+        label={'Read'}
         status="success"
         toolCallId={toolCallId}
+        labelSuffix={
+          path ? (
+            <FileLink
+              path={path}
+              showFullPath={false}
+              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+            />
+          ) : undefined
+        }
       >
         {null}
       </ToolCallContainer>

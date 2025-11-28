@@ -44,7 +44,34 @@ const cssInjectPlugin = {
       const tailwindcss = (await import('tailwindcss')).default;
       const autoprefixer = (await import('autoprefixer')).default;
 
-      const css = await fs.promises.readFile(args.path, 'utf8');
+      let css = await fs.promises.readFile(args.path, 'utf8');
+
+      // For ClaudeCodeStyles.css, we need to resolve @import statements
+      if (args.path.endsWith('ClaudeCodeStyles.css')) {
+        // Read all imported CSS files and inline them
+        const importRegex = /@import\s+'([^']+)';/g;
+        let match;
+        const basePath = args.path.substring(0, args.path.lastIndexOf('/'));
+        while ((match = importRegex.exec(css)) !== null) {
+          const importPath = match[1];
+          // Resolve relative paths correctly
+          let fullPath;
+          if (importPath.startsWith('./')) {
+            fullPath = basePath + importPath.substring(1);
+          } else if (importPath.startsWith('../')) {
+            fullPath = basePath + '/' + importPath;
+          } else {
+            fullPath = basePath + '/' + importPath;
+          }
+
+          try {
+            const importedCss = await fs.promises.readFile(fullPath, 'utf8');
+            css = css.replace(match[0], importedCss);
+          } catch (err) {
+            console.warn(`Could not import ${fullPath}: ${err.message}`);
+          }
+        }
+      }
 
       // Process with PostCSS (Tailwind + Autoprefixer)
       const result = await postcss([tailwindcss, autoprefixer]).process(css, {
@@ -65,10 +92,25 @@ const cssInjectPlugin = {
     // Handle SCSS files
     build.onLoad({ filter: /\.scss$/ }, async (args) => {
       const sass = await import('sass');
-      const result = sass.compile(args.path, {
+      const postcss = (await import('postcss')).default;
+      const tailwindcss = (await import('tailwindcss')).default;
+      const autoprefixer = (await import('autoprefixer')).default;
+
+      // Compile SCSS to CSS
+      const sassResult = sass.compile(args.path, {
         loadPaths: [args.path.substring(0, args.path.lastIndexOf('/'))],
       });
-      const css = result.css;
+
+      // Process with PostCSS (Tailwind + Autoprefixer)
+      const postcssResult = await postcss([tailwindcss, autoprefixer]).process(
+        sassResult.css,
+        {
+          from: args.path,
+          to: args.path,
+        },
+      );
+
+      const css = postcssResult.css;
       return {
         contents: `
           const style = document.createElement('style');

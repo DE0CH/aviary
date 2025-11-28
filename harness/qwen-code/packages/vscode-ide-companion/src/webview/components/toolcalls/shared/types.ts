@@ -48,6 +48,7 @@ export interface ToolCallData {
   rawInput?: string | object;
   content?: ToolCallContent[];
   locations?: ToolCallLocation[];
+  timestamp?: number; // 添加时间戳字段用于消息排序
 }
 
 /**

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
 import { useSessionManagement } from './hooks/session/useSessionManagement.js';
 import { useFileContext } from './hooks/file/useFileContext.js';
@@ -16,16 +16,15 @@ import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
 } from './components/PermissionRequest.js';
+import type { TextMessage } from './hooks/message/useMessageHandling.js';
+import type { ToolCallData } from './components/ToolCall.js';
 import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 import { InProgressToolCall } from './components/InProgressToolCall.js';
 import { EmptyState } from './components/EmptyState.js';
-import { PlanDisplay, type PlanEntry } from './components/PlanDisplay.js';
-import {
-  CompletionMenu,
-  type CompletionItem,
-} from './components/CompletionMenu.js';
+import type { PlanEntry } from './components/PlanDisplay.js';
+import { type CompletionItem } from './components/CompletionMenu.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { SaveSessionDialog } from './components/SaveSessionDialog.js';
 import { InfoBanner } from './components/InfoBanner.js';
@@ -34,7 +33,6 @@ import {
   UserMessage,
   AssistantMessage,
   ThinkingMessage,
-  StreamingMessage,
   WaitingMessage,
 } from './components/messages/index.js';
 import { InputForm } from './components/InputForm.js';
@@ -87,7 +85,9 @@ export const App: React.FC = () => {
             description: file.description,
             type: 'file' as const,
             icon: fileIcon,
-            value: file.path,
+            // Insert filename after @, keep path for mapping
+            value: file.label,
+            path: file.path,
           }),
         );
 
@@ -102,8 +102,21 @@ export const App: React.FC = () => {
           );
         }
 
+        // If first time and still loading, show a placeholder
+        if (allItems.length === 0) {
+          return [
+            {
+              id: 'loading-files',
+              label: 'Searching files…',
+              description: 'Type to filter, or wait a moment…',
+              type: 'info' as const,
+            },
+          ];
+        }
+
         return allItems;
       } else {
+        // Handle slash commands
         const commands: CompletionItem[] = [
           {
             id: 'login',
@@ -124,18 +137,25 @@ export const App: React.FC = () => {
 
   const completion = useCompletionTrigger(inputFieldRef, getCompletionItems);
 
+  // When workspace files update while menu open for @, refresh items so the first @ shows the list
+  useEffect(() => {
+    if (completion.isOpen && completion.triggerChar === '@') {
+      completion.refreshCompletion();
+    }
+  }, [fileContext.workspaceFiles, completion]);
+
   // Message submission
-  const { handleSubmit } = useMessageSubmit({
-    vscode,
+  const handleSubmit = useMessageSubmit({
     inputText,
     setInputText,
+    messageHandling,
+    fileContext,
+    vscode,
     inputFieldRef,
     isStreaming: messageHandling.isStreaming,
-    fileContext,
-    messageHandling,
   });
 
-  // WebView messages
+  // Message handling
   useWebViewMessages({
     sessionManagement,
     fileContext,
@@ -143,22 +163,16 @@ export const App: React.FC = () => {
     handleToolCallUpdate,
     clearToolCalls,
     setPlanEntries,
-    handlePermissionRequest: React.useCallback(
-      (request: {
-        options: PermissionOption[];
-        toolCall: PermissionToolCall;
-      }) => {
-        setPermissionRequest(request);
-      },
-      [],
-    ),
+    handlePermissionRequest: setPermissionRequest,
     inputFieldRef,
     setInputText,
   });
 
-  // Permission handling
-  const handlePermissionResponse = React.useCallback(
+  // Handle permission response
+  const handlePermissionResponse = useCallback(
     (optionId: string) => {
+      // Forward the selected optionId directly to extension as ACP permission response
+      // Expected values include: 'proceed_once', 'proceed_always', 'cancel', 'proceed_always_server', etc.
       vscode.postMessage({
         type: 'permissionResponse',
         data: { optionId },
@@ -168,182 +182,153 @@ export const App: React.FC = () => {
     [vscode],
   );
 
-  // Completion selection
-  const handleCompletionSelect = React.useCallback(
+  // Handle completion selection
+  const handleCompletionSelect = useCallback(
     (item: CompletionItem) => {
-      if (!inputFieldRef.current) {
+      // Handle completion selection by inserting the value into the input field
+      const inputElement = inputFieldRef.current;
+      if (!inputElement) {
         return;
       }
 
-      const inputElement = inputFieldRef.current;
-      const currentText = inputElement.textContent || '';
+      // Ignore info items (placeholders like "Searching files…")
+      if (item.type === 'info') {
+        completion.closeCompletion();
+        return;
+      }
 
+      // Slash commands can execute immediately
       if (item.type === 'command') {
-        if (item.label === '/login') {
-          inputElement.textContent = '';
-          setInputText('');
+        const command = (item.label || '').trim();
+        if (command === '/login') {
+          vscode.postMessage({ type: 'login', data: {} });
           completion.closeCompletion();
-          vscode.postMessage({
-            type: 'login',
-            data: {},
-          });
           return;
-        }
-
-        inputElement.textContent = item.label + ' ';
-        setInputText(item.label + ' ');
-
-        setTimeout(() => {
-          const range = document.createRange();
-          const sel = window.getSelection();
-          if (inputElement.firstChild) {
-            range.setStart(inputElement.firstChild, (item.label + ' ').length);
-            range.collapse(true);
-          } else {
-            range.selectNodeContents(inputElement);
-            range.collapse(false);
-          }
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-          inputElement.focus();
-        }, 10);
-      } else if (item.type === 'file') {
-        const filePath = (item.value as string) || item.label;
-        fileContext.addFileReference(item.label, filePath);
-
-        const atPos = currentText.lastIndexOf('@');
-
-        if (atPos !== -1) {
-          const textAfterAt = currentText.substring(atPos + 1);
-          const spaceIndex = textAfterAt.search(/[\s\n]/);
-          const queryEnd =
-            spaceIndex === -1 ? currentText.length : atPos + 1 + spaceIndex;
-
-          const textBefore = currentText.substring(0, atPos);
-          const textAfter = currentText.substring(queryEnd);
-          const newText = `${textBefore}@${item.label} ${textAfter}`;
-
-          inputElement.textContent = newText;
-          setInputText(newText);
-
-          const newCursorPos = atPos + item.label.length + 2;
-
-          setTimeout(() => {
-            const textNode = inputElement.firstChild;
-            if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-              const selection = window.getSelection();
-              if (selection) {
-                const range = document.createRange();
-                try {
-                  range.setStart(
-                    textNode,
-                    Math.min(newCursorPos, newText.length),
-                  );
-                  range.collapse(true);
-                  selection.removeAllRanges();
-                  selection.addRange(range);
-                } catch (e) {
-                  console.error('[handleCompletionSelect] Error:', e);
-                  range.selectNodeContents(inputElement);
-                  range.collapse(false);
-                  selection.removeAllRanges();
-                  selection.addRange(range);
-                }
-              }
-            }
-            inputElement.focus();
-          }, 10);
         }
       }
 
+      // If selecting a file, add @filename -> fullpath mapping
+      if (item.type === 'file' && item.value && item.path) {
+        try {
+          fileContext.addFileReference(item.value, item.path);
+        } catch (err) {
+          console.warn('[App] addFileReference failed:', err);
+        }
+      }
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        return;
+      }
+
+      // Current text and cursor
+      const text = inputElement.textContent || '';
+      const range = selection.getRangeAt(0);
+
+      // Compute total text offset for contentEditable
+      let cursorPos = text.length;
+      if (range.startContainer === inputElement) {
+        const childIndex = range.startOffset;
+        let offset = 0;
+        for (
+          let i = 0;
+          i < childIndex && i < inputElement.childNodes.length;
+          i++
+        ) {
+          offset += inputElement.childNodes[i].textContent?.length || 0;
+        }
+        cursorPos = offset || text.length;
+      } else if (range.startContainer.nodeType === Node.TEXT_NODE) {
+        const walker = document.createTreeWalker(
+          inputElement,
+          NodeFilter.SHOW_TEXT,
+          null,
+        );
+        let offset = 0;
+        let found = false;
+        let node: Node | null = walker.nextNode();
+        while (node) {
+          if (node === range.startContainer) {
+            offset += range.startOffset;
+            found = true;
+            break;
+          }
+          offset += node.textContent?.length || 0;
+          node = walker.nextNode();
+        }
+        cursorPos = found ? offset : text.length;
+      }
+
+      // Replace from trigger to cursor with selected value
+      const textBeforeCursor = text.substring(0, cursorPos);
+      const atPos = textBeforeCursor.lastIndexOf('@');
+      const slashPos = textBeforeCursor.lastIndexOf('/');
+      const triggerPos = Math.max(atPos, slashPos);
+
+      if (triggerPos >= 0) {
+        const insertValue =
+          typeof item.value === 'string' ? item.value : String(item.label);
+        const newText =
+          text.substring(0, triggerPos + 1) + // keep the trigger symbol
+          insertValue +
+          ' ' +
+          text.substring(cursorPos);
+
+        // Update DOM and state, and move caret to end
+        inputElement.textContent = newText;
+        setInputText(newText);
+
+        const newRange = document.createRange();
+        const sel = window.getSelection();
+        newRange.selectNodeContents(inputElement);
+        newRange.collapse(false);
+        sel?.removeAllRanges();
+        sel?.addRange(newRange);
+      }
+
+      // Close the completion menu
       completion.closeCompletion();
     },
-    [completion, vscode, fileContext],
+    [completion, inputFieldRef, setInputText, fileContext, vscode],
   );
 
-  // Attach context (Cmd/Ctrl + /)
-  const handleAttachContextClick = React.useCallback(async () => {
-    if (inputFieldRef.current) {
-      inputFieldRef.current.focus();
-
-      const currentText = inputFieldRef.current.textContent || '';
-      const newText = currentText ? `${currentText} @` : '@';
-      inputFieldRef.current.textContent = newText;
-      setInputText(newText);
-
-      const range = document.createRange();
-      const sel = window.getSelection();
-      range.selectNodeContents(inputFieldRef.current);
-      range.collapse(false);
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-
-      requestAnimationFrame(async () => {
-        if (!inputFieldRef.current) {
-          return;
-        }
-
-        let position = { top: 0, left: 0 };
-        const selection = window.getSelection();
-
-        if (selection && selection.rangeCount > 0) {
-          try {
-            const currentRange = selection.getRangeAt(0);
-            const rangeRect = currentRange.getBoundingClientRect();
-            if (rangeRect.top > 0 && rangeRect.left > 0) {
-              position = {
-                top: rangeRect.top,
-                left: rangeRect.left,
-              };
-            } else {
-              const inputRect = inputFieldRef.current.getBoundingClientRect();
-              position = { top: inputRect.top, left: inputRect.left };
-            }
-          } catch (error) {
-            console.error('[App] Error getting cursor position:', error);
-            const inputRect = inputFieldRef.current.getBoundingClientRect();
-            position = { top: inputRect.top, left: inputRect.left };
-          }
-        } else {
-          const inputRect = inputFieldRef.current.getBoundingClientRect();
-          position = { top: inputRect.top, left: inputRect.left };
-        }
-
-        await completion.openCompletion('@', '', position);
-      });
-    }
-  }, [completion]);
-
-  // Keyboard shortcut for attach context
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
-        e.preventDefault();
-        handleAttachContextClick();
+  // Handle save session
+  const handleSaveSession = useCallback(
+    async (tag: string) => {
+      if (!sessionManagement.currentSessionId) {
+        return;
       }
-    };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleAttachContextClick]);
+      try {
+        vscode.postMessage({
+          type: 'saveSession',
+          data: {
+            sessionId: sessionManagement.currentSessionId,
+            tag,
+          },
+        });
 
-  // Auto-scroll to latest message
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messageHandling.messages, messageHandling.currentStreamContent]);
+        // Assume success for now, as we don't get a response
+        sessionManagement.setSavedSessionTags((prev) => [...prev, tag]);
+        setShowSaveDialog(false);
+      } catch (error) {
+        console.error('[App] Error saving session:', error);
+      }
+    },
+    [sessionManagement, vscode],
+  );
 
-  // Load sessions on mount
-  useEffect(() => {
-    vscode.postMessage({ type: 'getQwenSessions', data: {} });
+  // Handle attach context click
+  const handleAttachContextClick = useCallback(() => {
+    // Open native file picker (different from '@' completion which searches workspace files)
+    vscode.postMessage({
+      type: 'attachFile',
+      data: {},
+    });
   }, [vscode]);
 
-  // Request active editor on mount
-  useEffect(() => {
-    fileContext.requestActiveEditor();
-  }, [fileContext]);
-
-  // Toggle edit mode
-  const handleToggleEditMode = () => {
+  // Handle toggle edit mode
+  const handleToggleEditMode = useCallback(() => {
     setEditMode((prev) => {
       if (prev === 'ask') {
         return 'auto';
@@ -353,8 +338,9 @@ export const App: React.FC = () => {
       }
       return 'ask';
     });
-  };
+  }, []);
 
+  // Handle toggle thinking
   const handleToggleThinking = () => {
     setThinkingEnabled((prev) => !prev);
   };
@@ -389,84 +375,124 @@ export const App: React.FC = () => {
       />
 
       <div
-        className="flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*]:px-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        className="flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>.message-item]:px-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
         style={{ backgroundColor: 'var(--app-primary-background)' }}
       >
         {!hasContent ? (
           <EmptyState />
         ) : (
           <>
-            {messageHandling.messages.map((msg, index) => {
-              const handleFileClick = (path: string) => {
-                vscode.postMessage({
-                  type: 'openFile',
-                  data: { path },
-                });
-              };
+            {/* 创建统一的消息数组，包含所有类型的消息和工具调用 */}
+            {(() => {
+              // 普通消息
+              const regularMessages = messageHandling.messages.map((msg) => ({
+                type: 'message' as const,
+                data: msg,
+                timestamp: msg.timestamp,
+              }));
 
-              if (msg.role === 'thinking') {
-                return (
-                  <ThinkingMessage
-                    key={index}
-                    content={msg.content}
-                    timestamp={msg.timestamp}
-                    onFileClick={handleFileClick}
-                  />
-                );
-              }
+              // 进行中的工具调用
+              const inProgressTools = inProgressToolCalls.map((toolCall) => ({
+                type: 'in-progress-tool-call' as const,
+                data: toolCall,
+                timestamp: toolCall.timestamp || Date.now(),
+              }));
 
-              if (msg.role === 'user') {
-                return (
-                  <UserMessage
-                    key={index}
-                    content={msg.content}
-                    timestamp={msg.timestamp}
-                    onFileClick={handleFileClick}
-                    fileContext={msg.fileContext}
-                  />
-                );
-              }
+              // 完成的工具调用
+              const completedTools = completedToolCalls
+                .filter(hasToolCallOutput)
+                .map((toolCall) => ({
+                  type: 'completed-tool-call' as const,
+                  data: toolCall,
+                  timestamp: toolCall.timestamp || Date.now(),
+                }));
 
-              return (
-                <AssistantMessage
-                  key={index}
-                  content={msg.content}
-                  timestamp={msg.timestamp}
-                  onFileClick={handleFileClick}
-                />
-              );
-            })}
+              // 合并并按时间戳排序，确保消息与工具调用穿插显示
+              const allMessages = [
+                ...regularMessages,
+                ...inProgressTools,
+                ...completedTools,
+              ].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-            {inProgressToolCalls.map((toolCall) => (
-              <InProgressToolCall
-                key={toolCall.toolCallId}
-                toolCall={toolCall}
-              />
-            ))}
+              console.log('[App] allMessages:', allMessages);
 
-            {completedToolCalls.filter(hasToolCallOutput).map((toolCall) => (
-              <ToolCall key={toolCall.toolCallId} toolCall={toolCall} />
-            ))}
+              return allMessages.map((item, index) => {
+                switch (item.type) {
+                  case 'message': {
+                    const msg = item.data as TextMessage;
+                    const handleFileClick = (path: string) => {
+                      vscode.postMessage({
+                        type: 'openFile',
+                        data: { path },
+                      });
+                    };
 
-            {planEntries.length > 0 && <PlanDisplay entries={planEntries} />}
+                    if (msg.role === 'thinking') {
+                      return (
+                        <div key={`message-${index}`} className="message-item">
+                          <ThinkingMessage
+                            content={msg.content || ''}
+                            timestamp={msg.timestamp || 0}
+                            onFileClick={handleFileClick}
+                          />
+                        </div>
+                      );
+                    }
+
+                    if (msg.role === 'user') {
+                      return (
+                        <div key={`message-${index}`} className="message-item">
+                          <UserMessage
+                            content={msg.content || ''}
+                            timestamp={msg.timestamp || 0}
+                            onFileClick={handleFileClick}
+                            fileContext={msg.fileContext}
+                          />
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={`message-${index}`} className="message-item">
+                        <AssistantMessage
+                          content={msg.content || ''}
+                          timestamp={msg.timestamp || 0}
+                          onFileClick={handleFileClick}
+                        />
+                      </div>
+                    );
+                  }
+
+                  case 'in-progress-tool-call':
+                    return (
+                      <InProgressToolCall
+                        key={`in-progress-${(item.data as ToolCallData).toolCallId}`}
+                        toolCall={item.data as ToolCallData}
+                        // onFileClick={handleFileClick}
+                      />
+                    );
+
+                  case 'completed-tool-call':
+                    return (
+                      <ToolCall
+                        key={`completed-${(item.data as ToolCallData).toolCallId}`}
+                        toolCall={item.data as ToolCallData}
+                        // onFileClick={handleFileClick}
+                      />
+                    );
+
+                  default:
+                    return null;
+                }
+              });
+            })()}
+
+            {/* 已改为在 useWebViewMessages 中将每次 plan 推送为历史 toolcall，避免重复展示最新块 */}
 
             {messageHandling.isWaitingForResponse &&
               messageHandling.loadingMessage && (
                 <WaitingMessage
                   loadingMessage={messageHandling.loadingMessage}
-                />
-              )}
-
-            {messageHandling.isStreaming &&
-              messageHandling.currentStreamContent && (
-                <StreamingMessage
-                  content={messageHandling.currentStreamContent}
-                  onFileClick={(path) => {
-                    vscode.postMessage({
-                      type: 'openFile',
-                      data: { path },
-                    });
-                  }}
                 />
               )}
 
@@ -497,7 +523,7 @@ export const App: React.FC = () => {
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
         onKeyDown={() => {}}
-        onSubmit={handleSubmit}
+        onSubmit={handleSubmit.handleSubmit}
         onToggleEditMode={handleToggleEditMode}
         onToggleThinking={handleToggleThinking}
         onFocusActiveEditor={fileContext.focusActiveEditor}
@@ -537,12 +563,15 @@ export const App: React.FC = () => {
         }}
         onAttachContext={handleAttachContextClick}
         completionIsOpen={completion.isOpen}
+        completionItems={completion.items}
+        onCompletionSelect={handleCompletionSelect}
+        onCompletionClose={completion.closeCompletion}
       />
 
       <SaveSessionDialog
         isOpen={showSaveDialog}
         onClose={() => setShowSaveDialog(false)}
-        onSave={sessionManagement.handleSaveSession}
+        onSave={handleSaveSession}
         existingTags={sessionManagement.savedSessionTags}
       />
 
@@ -556,14 +585,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {completion.isOpen && completion.items.length > 0 && (
-        <CompletionMenu
-          items={completion.items}
-          position={completion.position}
-          onSelect={handleCompletionSelect}
-          onClose={completion.closeCompletion}
-        />
-      )}
+      {/* Claude-style dropdown is rendered inside InputForm for proper anchoring */}
     </div>
   );
 };

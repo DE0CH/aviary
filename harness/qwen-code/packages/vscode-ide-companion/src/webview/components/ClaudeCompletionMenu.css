@@ -1,0 +1,115 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Claude Code-like dropdown anchored to input container */
+.hi {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--app-menu-background);
+  border: 1px solid var(--app-input-border);
+  border-radius: var(--corner-radius-large);
+  overflow: hidden;
+  animation: So .15s ease-out;
+  max-height: 50vh;
+  z-index: 1000;
+}
+
+/* Optional top spacer to create visual separation from input */
+.hi > .spacer-4px { height: 4px; }
+
+.xi {
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: var(--app-list-padding);
+  gap: var(--app-list-gap);
+  padding-bottom: 8px;
+}
+
+.fi { /* divider */
+  height: 1px;
+  background: var(--app-input-border);
+  margin: 4px 0;
+}
+
+.vi { /* section label */
+  padding: 4px 12px;
+  color: var(--app-primary-foreground);
+  opacity: .5;
+  font-size: .9em;
+}
+
+.wi { /* item */
+  padding: var(--app-list-item-padding);
+  margin: 0 4px;
+  cursor: pointer;
+  border-radius: var(--app-list-border-radius);
+}
+
+.ki { /* item content */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.Ii { /* leading icon */
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-symbolIcon-fileForeground, #cccccc);
+}
+
+.Lo { /* primary text */
+  color: var(--app-primary-foreground);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.Mo { /* secondary text (path/description) */
+  color: var(--app-secondary-foreground);
+  opacity: .7;
+  font-size: .9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.jo { /* active/selected */
+  background: var(--app-list-active-background);
+  color: var(--app-list-active-foreground);
+}
+
+.jo .Lo { color: var(--app-list-active-foreground); }
+
+.yi { /* trailing icon placeholder */
+  width: 16px;
+  height: 16px;
+  opacity: .5;
+  margin-left: auto;
+}
+
+@keyframes So {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Container around the input to anchor the dropdown */
+.Bo {
+  position: relative;
+  display: flex;
+}

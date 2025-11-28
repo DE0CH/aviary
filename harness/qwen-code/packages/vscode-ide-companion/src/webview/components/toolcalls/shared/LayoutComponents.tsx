@@ -22,6 +22,8 @@ interface ToolCallContainerProps {
   children: React.ReactNode;
   /** Tool call ID for debugging */
   toolCallId?: string;
+  /** Optional trailing content rendered next to label (e.g., clickable filename) */
+  labelSuffix?: React.ReactNode;
 }
 
 /**
@@ -51,24 +53,30 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   label,
   status = 'success',
   children,
-  toolCallId,
+  toolCallId: _toolCallId,
+  labelSuffix,
 }) => (
-  <div className="relative pl-[30px] py-2 select-text">
-    <span
-      className={`absolute left-2 top-[10px] text-[10px] ${getBulletColorClass(status)}`}
-    >
-      ●
-    </span>
-    <div className="toolcall-content-wrapper flex flex-col gap-1 pl-[30px] max-w-full">
-      <div className="flex items-center gap-2">
+  <div className="relative pl-[30px] py-2 select-text toolcall-container">
+    <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
+      <div className="flex items-center gap-2 relative min-w-0">
+        {/* Status icon (bullet), vertically centered with header row */}
+        <span
+          aria-hidden
+          className={`absolute -left-[20px] top-1/2 -translate-y-1/2 text-[10px] leading-none ${getBulletColorClass(
+            status,
+          )}`}
+        >
+          ●
+        </span>
         <span className="text-[13px] font-medium text-[var(--app-primary-foreground)]">
           {label}
         </span>
-        {toolCallId && (
+        {/* {toolCallId && (
           <span className="text-[10px] opacity-30">
             [{toolCallId.slice(-8)}]
           </span>
-        )}
+        )} */}
+        {labelSuffix}
       </div>
       {children && (
         <div className="text-[var(--app-secondary-foreground)]">{children}</div>
@@ -92,7 +100,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({
   icon: _icon,
   children,
 }) => (
-  <div className="ml-[30px] grid grid-cols-[auto_1fr] gap-medium bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-medium p-large my-medium items-start animate-[fadeIn_0.2s_ease-in]">
+  <div className="grid grid-cols-[auto_1fr] gap-medium bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-medium p-large my-medium items-start animate-[fadeIn_0.2s_ease-in] toolcall-card">
     <div className="flex flex-col gap-medium min-w-0">{children}</div>
   </div>
 );
@@ -195,7 +203,7 @@ interface LocationsListProps {
  * List of file locations with clickable links
  */
 export const LocationsList: React.FC<LocationsListProps> = ({ locations }) => (
-  <div className="toolcall-locations-list flex flex-col gap-1 pl-[30px] max-w-full">
+  <div className="toolcall-locations-list flex flex-col gap-1 max-w-full">
     {locations.map((loc, idx) => (
       <FileLink key={idx} path={loc.path} line={loc.line} showFullPath={true} />
     ))}

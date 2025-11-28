@@ -68,7 +68,9 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
+      if (!isOpen) {
+        return;
+      }
 
       // Number keys 1-9 for quick select
       const numMatch = e.key.match(/^[1-9]$/);
@@ -123,7 +125,9 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!isOpen) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-[1000] p-2">
@@ -162,18 +166,11 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
             return (
               <button
                 key={option.optionId}
-                className={`flex items-center gap-2 px-3 py-2 text-left rounded-small border transition-colors duration-150 ${
+                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] ${
                   isFocused
                     ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)]'
                     : 'hover:bg-[var(--app-list-hover-background)]'
                 }`}
-                style={{
-                  color: isFocused
-                    ? 'var(--app-list-active-foreground)'
-                    : 'var(--app-primary-foreground)',
-                  borderColor:
-                    'color-mix(in srgb, var(--app-secondary-foreground) 70%, transparent)',
-                }}
                 onClick={() => onResponse(option.optionId)}
                 onMouseEnter={() => setFocusedIndex(index)}
               >
@@ -197,39 +194,60 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
             );
           })}
 
-          {/* Custom message input */}
-          <input
-            ref={customInputRef as React.RefObject<HTMLInputElement>}
-            type="text"
-            placeholder="Tell Qwen what to do instead"
-            spellCheck={false}
-            className={`w-full px-3 py-2 text-sm rounded-small border transition-colors duration-150 ${
-              focusedIndex === options.length
-                ? 'bg-[var(--app-list-hover-background)]'
-                : 'bg-transparent'
-            }`}
-            style={{
-              color: 'var(--app-input-foreground)',
-              outline: 'none',
-              borderColor:
-                'color-mix(in srgb, var(--app-secondary-foreground) 70%, transparent)',
-            }}
-            value={customMessage}
-            onChange={(e) => setCustomMessage(e.target.value)}
-            onFocus={() => setFocusedIndex(options.length)}
-            onMouseEnter={() => setFocusedIndex(options.length)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && customMessage.trim()) {
-                e.preventDefault();
-                const rejectOption = options.find((o) =>
-                  o.kind.includes('reject'),
-                );
-                if (rejectOption) {
-                  onResponse(rejectOption.optionId);
-                }
-              }
-            }}
-          />
+          {/* Custom message input (styled consistently with option items) */}
+          {(() => {
+            const isFocused = focusedIndex === options.length;
+            return (
+              <div
+                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 cursor-text text-[var(--app-primary-foreground)] ${
+                  isFocused
+                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)]'
+                    : 'hover:bg-[var(--app-list-hover-background)]'
+                }`}
+                onMouseEnter={() => setFocusedIndex(options.length)}
+                onClick={() => customInputRef.current?.focus()}
+              >
+                {/* Number badge (N+1) */}
+                <span
+                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
+                    isFocused
+                      ? 'bg-white/20 text-inherit'
+                      : 'bg-[var(--app-list-hover-background)]'
+                  }`}
+                >
+                  {options.length + 1}
+                </span>
+
+                {/* Input field */}
+                <input
+                  ref={customInputRef as React.RefObject<HTMLInputElement>}
+                  type="text"
+                  placeholder="Tell Qwen what to do instead"
+                  spellCheck={false}
+                  className="flex-1 bg-transparent border-0 outline-none text-sm placeholder:opacity-70"
+                  style={{ color: 'var(--app-input-foreground)' }}
+                  value={customMessage}
+                  onChange={(e) => setCustomMessage(e.target.value)}
+                  onFocus={() => setFocusedIndex(options.length)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === 'Enter' &&
+                      !e.shiftKey &&
+                      customMessage.trim()
+                    ) {
+                      e.preventDefault();
+                      const rejectOption = options.find((o) =>
+                        o.kind.includes('reject'),
+                      );
+                      if (rejectOption) {
+                        onResponse(rejectOption.optionId);
+                      }
+                    }
+                  }}
+                />
+              </div>
+            );
+          })()}
         </div>
       </div>
 

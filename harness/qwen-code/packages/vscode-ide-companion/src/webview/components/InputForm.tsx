@@ -15,6 +15,8 @@ import {
   LinkIcon,
   ArrowUpIcon,
 } from './icons/index.js';
+import { ClaudeCompletionMenu } from './ClaudeCompletionMenu.js';
+import type { CompletionItem } from './CompletionMenu.js';
 
 type EditMode = 'ask' | 'auto' | 'plan';
 
@@ -40,6 +42,9 @@ interface InputFormProps {
   onShowCommandMenu: () => void;
   onAttachContext: () => void;
   completionIsOpen: boolean;
+  completionItems?: CompletionItem[];
+  onCompletionSelect?: (item: CompletionItem) => void;
+  onCompletionClose?: () => void;
 }
 
 // Get edit mode display info
@@ -92,6 +97,10 @@ export const InputForm: React.FC<InputFormProps> = ({
   onShowCommandMenu,
   onAttachContext,
   completionIsOpen,
+  // Claude-style completion dropdown (optional)
+  completionItems,
+  onCompletionSelect,
+  onCompletionClose,
 }) => {
   const editModeInfo = getEditModeInfo(editMode);
 
@@ -133,12 +142,27 @@ export const InputForm: React.FC<InputFormProps> = ({
           {/* Banner area */}
           <div className="input-banner" />
 
-          {/* Input wrapper */}
-          <div className="relative flex z-[1]">
+          {/* Input wrapper (Claude-style anchor container) */}
+          <div className="relative flex z-[1] Bo">
+            {/* Claude-style anchored dropdown */}
+            {completionIsOpen &&
+              completionItems &&
+              completionItems.length > 0 &&
+              onCompletionSelect &&
+              onCompletionClose && (
+                // Render dropdown above the input, matching Claude Code
+                <ClaudeCompletionMenu
+                  items={completionItems}
+                  onSelect={onCompletionSelect}
+                  onClose={onCompletionClose}
+                  title={undefined}
+                />
+              )}
+
             <div
               ref={inputFieldRef}
               contentEditable="plaintext-only"
-              className="flex-1 self-stretch p-2.5 px-3.5 outline-none font-inherit leading-relaxed overflow-y-auto relative select-text min-h-[1.5em] max-h-[200px] bg-transparent border-none rounded-none overflow-x-hidden break-words whitespace-pre-wrap empty:before:content-[attr(data-placeholder)] empty:before:absolute empty:before:pointer-events-none disabled:text-gray-400 disabled:cursor-not-allowed"
+              className="c flex-1 self-stretch p-2.5 px-3.5 outline-none font-inherit leading-relaxed overflow-y-auto relative select-text min-h-[1.5em] max-h-[200px] bg-transparent border-none rounded-none overflow-x-hidden break-words whitespace-pre-wrap empty:before:content-[attr(data-placeholder)] empty:before:absolute empty:before:pointer-events-none disabled:text-gray-400 disabled:cursor-not-allowed"
               style={{
                 color: 'var(--app-input-foreground)',
                 fontSize: 'var(--vscode-chat-font-size, 13px)',

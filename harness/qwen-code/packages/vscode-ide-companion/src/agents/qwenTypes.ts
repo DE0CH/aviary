@@ -65,4 +65,6 @@ export interface QwenAgentCallbacks {
   onPlan?: (entries: PlanEntry[]) => void;
   /** Permission request callback */
   onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string>;
+  /** End of turn callback (e.g., stopReason === 'end_turn') */
+  onEndTurn?: () => void;
 }

@@ -20,7 +20,7 @@
    紧凑视图样式 - 超简洁版本
    ======================================== */
 
-.diff-compact-view {
+.diff-display-container {
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   background: var(--vscode-editor-background);
@@ -97,7 +97,7 @@
 }
 
 .diff-compact-actions {
-  padding: 4px 10px 6px;
+  padding: 6px 10px 8px;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground);
   display: flex;
@@ -108,19 +108,16 @@
    完整视图样式
    ======================================== */
 
-.diff-full-view {
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
+/* 已移除完整视图，统一为简洁模式 + 预览 */
 
-.diff-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  background: var(--vscode-editorGroupHeader-tabsBackground);
-  border-bottom: 1px solid var(--vscode-panel-border);
+/* 预览区域（仅变更行） */
+.diff-preview {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.06));
+  border-top: 1px solid var(--vscode-panel-border);
+  max-height: 320px;
+  overflow: auto;
 }
 
 .diff-file-path {
@@ -133,12 +130,32 @@
   gap: 8px;
 }
 
-.diff-stats-line {
-  padding: 8px 12px;
-  background: var(--vscode-editor-background);
+.diff-line {
+  white-space: pre;
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', 'Courier New', monospace);
+  font-size: 0.88em;
+  line-height: 1.45;
+}
+
+.diff-line.added {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(76, 175, 80, 0.18));
+  color: var(--vscode-diffEditor-insertedTextForeground, #b5f1cc);
+}
+
+.diff-line.removed {
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(244, 67, 54, 0.18));
+  color: var(--vscode-diffEditor-removedTextForeground, #f6b1a7);
+}
+
+.diff-line.no-change {
   color: var(--vscode-descriptionForeground);
-  font-size: 0.9em;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  opacity: 0.8;
+}
+
+.diff-omitted {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  padding-top: 6px;
 }
 
 .diff-section {
@@ -249,16 +266,6 @@
 
   .diff-stats {
     align-self: flex-start;
-  }
-
-  .diff-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .diff-header-actions {
-    align-self: flex-end;
   }
 }
 

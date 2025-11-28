@@ -9,7 +9,69 @@
 import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
-import { groupContent } from './shared/utils.js';
+import { groupContent, safeTitle } from './shared/utils.js';
+import { CheckboxDisplay } from '../ui/CheckboxDisplay.js';
+
+type EntryStatus = 'pending' | 'in_progress' | 'completed';
+
+interface TodoEntry {
+  content: string;
+  status: EntryStatus;
+}
+
+const mapToolStatusToBullet = (
+  status: import('./shared/types.js').ToolCallStatus,
+): 'success' | 'error' | 'warning' | 'loading' | 'default' => {
+  switch (status) {
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    case 'in_progress':
+      return 'warning';
+    case 'pending':
+      return 'loading';
+    default:
+      return 'default';
+  }
+};
+
+// 从文本中尽可能解析带有 - [ ] / - [x] 的 todo 列表
+const parseTodoEntries = (textOutputs: string[]): TodoEntry[] => {
+  const text = textOutputs.join('\n');
+  const lines = text.split(/\r?\n/);
+  const entries: TodoEntry[] = [];
+
+  const todoRe = /^(?:\s*(?:[-*]|\d+[.)])\s*)?\[( |x|X|-)\]\s+(.*)$/;
+  for (const line of lines) {
+    const m = line.match(todoRe);
+    if (m) {
+      const mark = m[1];
+      const title = m[2].trim();
+      const status: EntryStatus =
+        mark === 'x' || mark === 'X'
+          ? 'completed'
+          : mark === '-'
+            ? 'in_progress'
+            : 'pending';
+      if (title) {
+        entries.push({ content: title, status });
+      }
+    }
+  }
+
+  // 如果没匹配到，退化为将非空行当作 pending 条目
+  if (entries.length === 0) {
+    for (const line of lines) {
+      const title = line.trim();
+      if (title) {
+        entries.push({ content: title, status: 'pending' });
+      }
+    }
+  }
+
+  return entries;
+};
 
 /**
  * Specialized component for TodoWrite tool calls
@@ -18,12 +80,10 @@ import { groupContent } from './shared/utils.js';
 export const TodoWriteToolCall: React.FC<BaseToolCallProps> = ({
   toolCall,
 }) => {
-  const { content } = toolCall;
-
-  // Group content by type
+  const { content, status } = toolCall;
   const { errors, textOutputs } = groupContent(content);
 
-  // Error case: show error
+  // 错误优先展示
   if (errors.length > 0) {
     return (
       <ToolCallContainer label="Update Todos" status="error">
@@ -32,17 +92,45 @@ export const TodoWriteToolCall: React.FC<BaseToolCallProps> = ({
     );
   }
 
-  // Success case: show simple confirmation
-  const outputText =
-    textOutputs.length > 0 ? textOutputs.join(' ') : 'Todos updated';
+  const entries = parseTodoEntries(textOutputs);
 
-  // Truncate if too long
-  const displayText =
-    outputText.length > 100 ? outputText.substring(0, 100) + '...' : outputText;
+  const label = safeTitle(toolCall.title) || 'Update Todos';
 
   return (
-    <ToolCallContainer label="Update Todos" status="success">
-      {displayText}
+    <ToolCallContainer label={label} status={mapToolStatusToBullet(status)}>
+      <ul className="Fr list-none p-0 m-0 flex flex-col gap-1">
+        {entries.map((entry, idx) => {
+          const isDone = entry.status === 'completed';
+          const isIndeterminate = entry.status === 'in_progress';
+          return (
+            <li
+              key={idx}
+              className={[
+                'Hr flex items-start gap-2 p-0 rounded text-[var(--app-primary-foreground)]',
+                isDone ? 'fo opacity-70' : '',
+              ].join(' ')}
+            >
+              <label className="flex items-start gap-2">
+                <CheckboxDisplay
+                  checked={isDone}
+                  indeterminate={isIndeterminate}
+                />
+              </label>
+
+              <div
+                className={[
+                  'vo flex-1 text-xs leading-[1.5] text-[var(--app-primary-foreground)]',
+                  isDone
+                    ? 'line-through text-[var(--app-secondary-foreground)] opacity-70'
+                    : 'opacity-85',
+                ].join(' ')}
+              >
+                {entry.content}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </ToolCallContainer>
   );
 };

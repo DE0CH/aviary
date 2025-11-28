@@ -134,7 +134,7 @@ export const MessageContent: React.FC<MessageContentProps> = ({
       parts.push(
         <code
           key={`inline-${matchIndex}`}
-          className="rounded px-1.5 py-0.5 whitespace-nowrap text-[0.9em]"
+          className="rounded px-1.5 py-0.5 whitespace-nowrap text-[0.9em] inline-block max-w-full overflow-hidden text-ellipsis align-baseline"
           style={{
             backgroundColor: 'var(--app-code-background, rgba(0, 0, 0, 0.05))',
             border: '1px solid var(--app-primary-border-color)',

@@ -66,9 +66,12 @@ interface UseWebViewMessagesProps {
       timestamp: number;
     }) => void;
     clearMessages: () => void;
-    startStreaming: () => void;
+    startStreaming: (timestamp?: number) => void;
     appendStreamChunk: (chunk: string) => void;
     endStreaming: () => void;
+    breakAssistantSegment: () => void;
+    appendThinkingChunk: (chunk: string) => void;
+    clearThinking: () => void;
     clearWaitingForResponse: () => void;
   };
 
@@ -115,6 +118,38 @@ export const useWebViewMessages = ({
     setPlanEntries,
     handlePermissionRequest,
   });
+
+  // Track last "Updated Plan" snapshot toolcall to support merge/dedupe
+  const lastPlanSnapshotRef = useRef<{
+    id: string;
+    text: string; // joined lines
+    lines: string[];
+  } | null>(null);
+
+  const buildPlanLines = (entries: PlanEntry[]): string[] =>
+    entries.map((e) => {
+      const mark =
+        e.status === 'completed' ? 'x' : e.status === 'in_progress' ? '-' : ' ';
+      return `- [${mark}] ${e.content}`.trim();
+    });
+
+  const isSupplementOf = (
+    prevLines: string[],
+    nextLines: string[],
+  ): boolean => {
+    // 认为“补充” = 旧内容的文本集合（忽略状态）被新内容包含
+    const key = (line: string) => {
+      const idx = line.indexOf('] ');
+      return idx >= 0 ? line.slice(idx + 2).trim() : line.trim();
+    };
+    const nextSet = new Set(nextLines.map(key));
+    for (const pl of prevLines) {
+      if (!nextSet.has(key(pl))) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   // Update refs
   useEffect(() => {
@@ -202,12 +237,42 @@ export const useWebViewMessages = ({
         }
 
         case 'message': {
-          handlers.messageHandling.addMessage(message.data);
+          const msg = message.data as {
+            role?: 'user' | 'assistant' | 'thinking';
+            content?: string;
+            timestamp?: number;
+          };
+          handlers.messageHandling.addMessage(
+            msg as unknown as Parameters<
+              typeof handlers.messageHandling.addMessage
+            >[0],
+          );
+          // Robustness: if an assistant message arrives outside the normal stream
+          // pipeline (no explicit streamEnd), ensure we clear streaming/waiting states
+          if (msg.role === 'assistant') {
+            try {
+              handlers.messageHandling.endStreaming();
+            } catch (err) {
+              // no-op: stream might not have been started
+              console.warn('[PanelManager] Failed to end streaming:', err);
+            }
+            try {
+              handlers.messageHandling.clearWaitingForResponse();
+            } catch (err) {
+              // no-op: already cleared
+              console.warn(
+                '[PanelManager] Failed to clear waiting for response:',
+                err,
+              );
+            }
+          }
           break;
         }
 
         case 'streamStart':
-          handlers.messageHandling.startStreaming();
+          handlers.messageHandling.startStreaming(
+            (message.data as { timestamp?: number } | undefined)?.timestamp,
+          );
           break;
 
         case 'streamChunk': {
@@ -216,17 +281,14 @@ export const useWebViewMessages = ({
         }
 
         case 'thoughtChunk': {
-          const thinkingMessage = {
-            role: 'thinking' as const,
-            content: message.data.content || message.data.chunk || '',
-            timestamp: Date.now(),
-          };
-          handlers.messageHandling.addMessage(thinkingMessage);
+          const chunk = message.data.content || message.data.chunk || '';
+          handlers.messageHandling.appendThinkingChunk(chunk);
           break;
         }
 
         case 'streamEnd':
           handlers.messageHandling.endStreaming();
+          handlers.messageHandling.clearThinking();
           break;
 
         case 'error':
@@ -276,13 +338,76 @@ export const useWebViewMessages = ({
               content: permToolCall.content as ToolCallUpdate['content'],
               locations: permToolCall.locations,
             });
+
+            // Split assistant stream so subsequent chunks start a new assistant message
+            handlers.messageHandling.breakAssistantSegment();
           }
           break;
         }
 
         case 'plan':
           if (message.data.entries && Array.isArray(message.data.entries)) {
-            handlers.setPlanEntries(message.data.entries as PlanEntry[]);
+            const entries = message.data.entries as PlanEntry[];
+            handlers.setPlanEntries(entries);
+
+            // 生成新的快照文本
+            const lines = buildPlanLines(entries);
+            const text = lines.join('\n');
+            const prev = lastPlanSnapshotRef.current;
+
+            // 1) 完全相同 -> 跳过
+            if (prev && prev.text === text) {
+              break;
+            }
+
+            try {
+              const ts = Date.now();
+
+              // 2) 补充或状态更新 -> 合并到上一条（使用 tool_call_update 覆盖内容）
+              if (prev && isSupplementOf(prev.lines, lines)) {
+                handlers.handleToolCallUpdate({
+                  type: 'tool_call_update',
+                  toolCallId: prev.id,
+                  kind: 'todo_write',
+                  title: 'Updated Plan',
+                  status: 'completed',
+                  content: [
+                    {
+                      type: 'content',
+                      content: { type: 'text', text },
+                    },
+                  ],
+                  timestamp: ts,
+                });
+                lastPlanSnapshotRef.current = { id: prev.id, text, lines };
+              } else {
+                // 3) 其他情况 -> 新增一条历史卡片
+                const toolCallId = `plan-snapshot-${ts}`;
+                handlers.handleToolCallUpdate({
+                  type: 'tool_call',
+                  toolCallId,
+                  kind: 'todo_write',
+                  title: 'Updated Plan',
+                  status: 'completed',
+                  content: [
+                    {
+                      type: 'content',
+                      content: { type: 'text', text },
+                    },
+                  ],
+                  timestamp: ts,
+                });
+                lastPlanSnapshotRef.current = { id: toolCallId, text, lines };
+              }
+
+              // 分割助手消息段，保持渲染块独立
+              handlers.messageHandling.breakAssistantSegment?.();
+            } catch (err) {
+              console.warn(
+                '[useWebViewMessages] failed to push/merge plan snapshot toolcall:',
+                err,
+              );
+            }
           }
           break;
 
@@ -293,6 +418,15 @@ export const useWebViewMessages = ({
             toolCallData.type = toolCallData.sessionUpdate;
           }
           handlers.handleToolCallUpdate(toolCallData);
+          // Split assistant stream at tool boundaries similar to Claude/GPT rhythm
+          const status = (toolCallData.status || '').toString();
+          const isStart = toolCallData.type === 'tool_call';
+          const isFinalUpdate =
+            toolCallData.type === 'tool_call_update' &&
+            (status === 'completed' || status === 'failed');
+          if (isStart || isFinalUpdate) {
+            handlers.messageHandling.breakAssistantSegment();
+          }
           break;
         }
 
@@ -343,6 +477,7 @@ export const useWebViewMessages = ({
           }
           handlers.clearToolCalls();
           handlers.setPlanEntries([]);
+          lastPlanSnapshotRef.current = null;
           break;
 
         case 'conversationCleared':
@@ -352,6 +487,7 @@ export const useWebViewMessages = ({
           handlers.sessionManagement.setCurrentSessionTitle(
             'Past Conversations',
           );
+          lastPlanSnapshotRef.current = null;
           break;
 
         case 'sessionTitleUpdated': {

@@ -9,3 +9,4 @@ export { AssistantMessage } from './AssistantMessage.js';
 export { ThinkingMessage } from './ThinkingMessage.js';
 export { StreamingMessage } from './StreamingMessage.js';
 export { WaitingMessage } from './WaitingMessage.js';
+export { PlanDisplay } from '../PlanDisplay.js';

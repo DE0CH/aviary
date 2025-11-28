@@ -46,11 +46,20 @@ export class AuthMessageHandler extends BaseMessageHandler {
   private async handleLogin(): Promise<void> {
     try {
       console.log('[AuthMessageHandler] Login requested');
+      console.log(
+        '[AuthMessageHandler] Login handler available:',
+        !!this.loginHandler,
+      );
 
       // Direct login without additional confirmation
       if (this.loginHandler) {
+        console.log('[AuthMessageHandler] Calling login handler');
         await this.loginHandler();
+        console.log(
+          '[AuthMessageHandler] Login handler completed successfully',
+        );
       } else {
+        console.log('[AuthMessageHandler] Using fallback login method');
         // Fallback: show message and use command
         vscode.window.showInformationMessage(
           'Please wait while we connect to Qwen Code...',
@@ -59,9 +68,15 @@ export class AuthMessageHandler extends BaseMessageHandler {
       }
     } catch (error) {
       console.error('[AuthMessageHandler] Login failed:', error);
+      console.error(
+        '[AuthMessageHandler] Error stack:',
+        error instanceof Error ? error.stack : 'N/A',
+      );
       this.sendToWebView({
         type: 'loginError',
-        data: { message: `Login failed: ${error}` },
+        data: {
+          message: `Login failed: ${error instanceof Error ? error.message : String(error)}`,
+        },
       });
     }
   }
