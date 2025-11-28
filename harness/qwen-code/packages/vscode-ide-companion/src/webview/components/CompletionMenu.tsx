@@ -97,9 +97,7 @@ export const CompletionMenu: React.FC<CompletionMenuProps> = ({
     }
   }, [selected]);
 
-  if (items.length === 0) {
-    return null;
-  }
+  const isEmpty = items.length === 0;
 
   return (
     <div
@@ -111,27 +109,31 @@ export const CompletionMenu: React.FC<CompletionMenuProps> = ({
       }}
     >
       <div className="completion-menu-items">
-        {items.map((item, index) => (
-          <div
-            key={item.id}
-            data-index={index}
-            className={`completion-menu-item ${index === selected ? 'selected' : ''}`}
-            onClick={() => onSelect(item)}
-            onMouseEnter={() => setSelected(index)}
-          >
-            {item.icon && (
-              <div className="completion-item-icon">{item.icon}</div>
-            )}
-            <div className="completion-item-content">
-              <div className="completion-item-label">{item.label}</div>
-              {item.description && (
-                <div className="completion-item-description">
-                  {item.description}
-                </div>
+        {isEmpty ? (
+          <div className="completion-menu-empty">Type to search files…</div>
+        ) : (
+          items.map((item, index) => (
+            <div
+              key={item.id}
+              data-index={index}
+              className={`completion-menu-item ${index === selected ? 'selected' : ''}`}
+              onClick={() => onSelect(item)}
+              onMouseEnter={() => setSelected(index)}
+            >
+              {item.icon && (
+                <div className="completion-item-icon">{item.icon}</div>
               )}
+              <div className="completion-item-content">
+                <div className="completion-item-label">{item.label}</div>
+                {item.description && (
+                  <div className="completion-item-description">
+                    {item.description}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );
