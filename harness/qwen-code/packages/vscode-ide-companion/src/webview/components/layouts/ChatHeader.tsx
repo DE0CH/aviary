@@ -21,39 +21,26 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onNewSession,
 }) => (
   <div
-    className="flex gap-1 select-none py-1.5 px-2.5"
+    className="chat-header flex items-center select-none py-1.5 px-2.5 w-full"
     style={{
       backgroundColor: 'var(--app-header-background)',
     }}
   >
-    {/* Past Conversations Button */}
     <button
-      className="flex-none py-1 px-2 bg-transparent border border-transparent rounded cursor-pointer flex items-center justify-center outline-none font-medium transition-colors duration-200 hover:bg-[var(--app-ghost-button-hover-background)] focus:bg-[var(--app-ghost-button-hover-background)]"
-      style={{
-        borderRadius: 'var(--corner-radius-small)',
-        color: 'var(--app-primary-foreground)',
-        fontSize: 'var(--vscode-chat-font-size, 13px)',
-      }}
+      className="btn-ghost btn-md px-2 flex items-center outline-none font-medium max-w-[70%] min-w-0 overflow-hidden rounded hover:bg-[var(--app-ghost-button-hover-background)] h-6 leading-6"
       onClick={onLoadSessions}
       title="Past conversations"
     >
-      <span className="flex items-center gap-1">
-        <span style={{ fontSize: 'var(--vscode-chat-font-size, 13px)' }}>
-          {currentSessionTitle}
-        </span>
-        <ChevronDownIcon className="w-3.5 h-3.5" />
+      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
+        {currentSessionTitle}
       </span>
+      <ChevronDownIcon className="w-4 h-4 flex-shrink-0 ml-1" />
     </button>
 
-    {/* Spacer */}
-    <div className="flex-1"></div>
+    <div className="flex-1 min-w-2"></div>
 
-    {/* New Session Button */}
     <button
-      className="flex-none p-0 bg-transparent border border-transparent rounded cursor-pointer flex items-center justify-center outline-none w-6 h-6 hover:bg-[var(--app-ghost-button-hover-background)] focus:bg-[var(--app-ghost-button-hover-background)]"
-      style={{
-        color: 'var(--app-primary-foreground)',
-      }}
+      className="btn-ghost btn-sm flex items-center justify-center outline-none rounded hover:bg-[var(--app-ghost-button-hover-background)] h-6 leading-6 w-6"
       onClick={onNewSession}
       title="New Session"
     >

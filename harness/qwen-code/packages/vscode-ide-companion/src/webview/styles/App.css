@@ -88,9 +88,6 @@
   /* Widget */
   --app-widget-border: var(--vscode-editorWidget-border);
   --app-widget-shadow: var(--vscode-widget-shadow);
-
-  /* Ghost Button (from Claude Code) */
-  --app-ghost-button-hover-background: var(--vscode-toolbar-hoverBackground);
 }
 
 /* Light Theme Overrides */

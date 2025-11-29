@@ -114,7 +114,10 @@ export default tseslint.config(
             'memfs/lib/volume.js',
             'yargs/**',
             'msw/node',
-            '**/generated/**'
+            '**/generated/**',
+            './styles/tailwind.css',
+            './styles/App.css',
+            './styles/ClaudeCodeStyles.css'
           ],
         },
       ],

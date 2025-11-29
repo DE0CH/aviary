@@ -7,6 +7,7 @@
 import typescriptEslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import reactHooks from 'eslint-plugin-react-hooks';
+import importPlugin from 'eslint-plugin-import';
 
 export default [
   {
@@ -55,10 +56,13 @@ export default [
       ],
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'error',
+      // Restrict deep imports but allow known-safe exceptions used by the webview
+      // - react-dom/client: required for React 18's createRoot API
+      // - ./styles/**: local CSS modules loaded by the webview
       'import/no-internal-modules': [
         'error',
         {
-          allow: ['./styles/**'],
+          allow: ['react-dom/client', './styles/**'],
         },
       ],
 

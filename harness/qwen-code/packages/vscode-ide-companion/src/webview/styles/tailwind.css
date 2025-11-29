@@ -7,3 +7,32 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ===========================
+   Reusable Component Classes
+   =========================== */
+@layer components {
+  .btn-ghost {
+    @apply bg-transparent border border-transparent rounded cursor-pointer outline-none transition-colors duration-200;
+    color: var(--app-primary-foreground);
+    font-size: var(--vscode-chat-font-size, 13px);
+    border-radius: 4px;
+  }
+
+  .btn-ghost:hover,
+  .btn-ghost:focus {
+    background: var(--app-ghost-button-hover-background);
+  }
+
+  .btn-sm {
+    @apply p-small;
+  }
+
+  .btn-md {
+    @apply py-small px-medium;
+  }
+
+  .icon-sm {
+    @apply w-4 h-4;
+  }
+}
