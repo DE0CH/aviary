@@ -10,14 +10,12 @@ import { ChevronDownIcon, PlusIcon } from '../icons/index.js';
 interface ChatHeaderProps {
   currentSessionTitle: string;
   onLoadSessions: () => void;
-  onSaveSession: () => void;
   onNewSession: () => void;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
   currentSessionTitle,
   onLoadSessions,
-  onSaveSession: _onSaveSession,
   onNewSession,
 }) => (
   <div

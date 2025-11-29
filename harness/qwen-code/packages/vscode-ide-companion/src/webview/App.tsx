@@ -26,7 +26,6 @@ import { EmptyState } from './components/EmptyState.js';
 import type { PlanEntry } from './components/PlanDisplay.js';
 import { type CompletionItem } from './components/CompletionMenu.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
-import { SaveSessionDialog } from './components/SaveSessionDialog.js';
 import { InfoBanner } from './components/InfoBanner.js';
 import { ChatHeader } from './components/layouts/ChatHeader.js';
 import {
@@ -69,7 +68,6 @@ export const App: React.FC = () => {
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   // Completion system
   const getCompletionItems = React.useCallback(
@@ -344,32 +342,6 @@ export const App: React.FC = () => {
     [completion, inputFieldRef, setInputText, fileContext, vscode],
   );
 
-  // Handle save session
-  const handleSaveSession = useCallback(
-    async (tag: string) => {
-      if (!sessionManagement.currentSessionId) {
-        return;
-      }
-
-      try {
-        vscode.postMessage({
-          type: 'saveSession',
-          data: {
-            sessionId: sessionManagement.currentSessionId,
-            tag,
-          },
-        });
-
-        // Assume success for now, as we don't get a response
-        sessionManagement.setSavedSessionTags((prev) => [...prev, tag]);
-        setShowSaveDialog(false);
-      } catch (error) {
-        console.error('[App] Error saving session:', error);
-      }
-    },
-    [sessionManagement, vscode],
-  );
-
   // Handle attach context click
   const handleAttachContextClick = useCallback(() => {
     // Open native file picker (different from '@' completion which searches workspace files)
@@ -422,7 +394,6 @@ export const App: React.FC = () => {
       <ChatHeader
         currentSessionTitle={sessionManagement.currentSessionTitle}
         onLoadSessions={sessionManagement.handleLoadQwenSessions}
-        onSaveSession={() => setShowSaveDialog(true)}
         onNewSession={sessionManagement.handleNewQwenSession}
       />
 
@@ -619,13 +590,6 @@ export const App: React.FC = () => {
         completionItems={completion.items}
         onCompletionSelect={handleCompletionSelect}
         onCompletionClose={completion.closeCompletion}
-      />
-
-      <SaveSessionDialog
-        isOpen={showSaveDialog}
-        onClose={() => setShowSaveDialog(false)}
-        onSave={handleSaveSession}
-        existingTags={sessionManagement.savedSessionTags}
       />
 
       {permissionRequest && (

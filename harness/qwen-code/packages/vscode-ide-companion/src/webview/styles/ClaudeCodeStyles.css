@@ -8,7 +8,6 @@
  */
 
 /* Import component styles */
-@import '../components/SaveSessionDialog.css';
 @import '../components/EmptyState.css';
 @import '../components/CompletionMenu.css';
 @import '../components/ContextPills.css';
