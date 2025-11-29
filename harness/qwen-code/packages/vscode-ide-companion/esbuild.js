@@ -88,38 +88,6 @@ const cssInjectPlugin = {
         loader: 'js',
       };
     });
-
-    // Handle SCSS files
-    build.onLoad({ filter: /\.scss$/ }, async (args) => {
-      const sass = await import('sass');
-      const postcss = (await import('postcss')).default;
-      const tailwindcss = (await import('tailwindcss')).default;
-      const autoprefixer = (await import('autoprefixer')).default;
-
-      // Compile SCSS to CSS
-      const sassResult = sass.compile(args.path, {
-        loadPaths: [args.path.substring(0, args.path.lastIndexOf('/'))],
-      });
-
-      // Process with PostCSS (Tailwind + Autoprefixer)
-      const postcssResult = await postcss([tailwindcss, autoprefixer]).process(
-        sassResult.css,
-        {
-          from: args.path,
-          to: args.path,
-        },
-      );
-
-      const css = postcssResult.css;
-      return {
-        contents: `
-          const style = document.createElement('style');
-          style.textContent = ${JSON.stringify(css)};
-          document.head.appendChild(style);
-        `,
-        loader: 'js',
-      };
-    });
   },
 };
 

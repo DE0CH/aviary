@@ -6,6 +6,7 @@
 
 import typescriptEslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
   {
@@ -29,6 +30,8 @@ export default [
   {
     plugins: {
       '@typescript-eslint': typescriptEslint,
+      'react-hooks': reactHooks,
+      import: importPlugin,
     },
 
     languageOptions: {
@@ -48,6 +51,14 @@ export default [
         {
           selector: 'import',
           format: ['camelCase', 'PascalCase'],
+        },
+      ],
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+      'import/no-internal-modules': [
+        'error',
+        {
+          allow: ['./styles/**'],
         },
       ],
 

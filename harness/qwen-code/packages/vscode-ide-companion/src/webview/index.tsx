@@ -6,9 +6,12 @@
 
 import ReactDOM from 'react-dom/client';
 import { App } from './App.js';
-import './tailwind.css';
-import './App.scss';
-import './ClaudeCodeStyles.css';
+// eslint-disable-next-line import/no-internal-modules
+import './styles/tailwind.css';
+// eslint-disable-next-line import/no-internal-modules
+import './styles/App.css';
+// eslint-disable-next-line import/no-internal-modules
+import './styles/ClaudeCodeStyles.css';
 
 const container = document.getElementById('root');
 if (container) {

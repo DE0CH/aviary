@@ -13,7 +13,7 @@ import { AuthStateManager } from '../auth/authStateManager.js';
 import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
-import { CliInstaller } from '../cli/1cliInstaller.js';
+import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 
 export class WebViewProvider {
