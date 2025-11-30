@@ -29,7 +29,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       onClick={onLoadSessions}
       title="Past conversations"
     >
-      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
+      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0 mr-1">
         {currentSessionTitle}
       </span>
       <ChevronDownIcon className="w-4 h-4 flex-shrink-0 ml-1" />
@@ -38,7 +38,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
     <div className="flex-1 min-w-2"></div>
 
     <button
-      className="btn-ghost btn-sm flex items-center justify-center outline-none rounded hover:bg-[var(--app-ghost-button-hover-background)] h-6 leading-6 w-6"
+      className="btn-ghost btn-sm flex items-center justify-center outline-none rounded hover:bg-[var(--app-ghost-button-hover-background)] p-1 leading-6"
       onClick={onNewSession}
       title="New Session"
     >
