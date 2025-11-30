@@ -45,6 +45,8 @@
   --app-input-active-border: var(--vscode-inputOption-activeBorder);
   --app-input-placeholder-foreground: var(--vscode-input-placeholderForeground);
   --app-input-secondary-background: var(--vscode-menu-background);
+  /* Input Highlight (focus ring/border) */
+  --app-input-highlight: var(--app-qwen-orange);
 
   /* Code Highlighting */
   --app-code-background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.05));
@@ -93,6 +95,8 @@
 /* Light Theme Overrides */
 .vscode-light {
   --app-transparent-inner-border: rgba(0, 0, 0, 0.07);
+  /* Slightly different brand shade in light theme for better contrast */
+  --app-input-highlight: var(--app-qwen-clay-button-orange);
 }
 
 /* Icon SVG styles */
@@ -142,6 +146,12 @@ button {
   width: 100%;
   background-color: var(--app-primary-background);
   color: var(--app-primary-foreground);
+}
+
+/* Message list container: prevent browser scroll anchoring from fighting our manual pin-to-bottom logic */
+.chat-messages > * {
+  /* Disable overflow anchoring on individual items so the UA doesn't auto-adjust scroll */
+  overflow-anchor: none;
 }
 
 /* ===========================

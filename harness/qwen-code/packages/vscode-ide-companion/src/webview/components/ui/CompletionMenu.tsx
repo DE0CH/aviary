@@ -8,7 +8,7 @@ import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { CompletionItem } from '../CompletionTypes.js';
 
-interface ClaudeCompletionMenuProps {
+interface CompletionMenuProps {
   items: CompletionItem[];
   onSelect: (item: CompletionItem) => void;
   onClose: () => void;
@@ -20,7 +20,7 @@ interface ClaudeCompletionMenuProps {
  * Claude Code-like anchored dropdown rendered above the input field.
  * Keyboard: Up/Down to move, Enter to select, Esc to close.
  */
-export const ClaudeCompletionMenu: React.FC<ClaudeCompletionMenuProps> = ({
+export const CompletionMenu: React.FC<CompletionMenuProps> = ({
   items,
   onSelect,
   onClose,

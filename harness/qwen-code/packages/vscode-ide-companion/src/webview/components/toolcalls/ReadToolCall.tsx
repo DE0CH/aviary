@@ -23,9 +23,6 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Group content by type
   const { errors } = groupContent(content);
 
-  // Extract filename from path
-  // const getFileName = (path: string): string => path.split('/').pop() || path;
-
   // Error case: show error
   if (errors.length > 0) {
     const path = locations?.[0]?.path || '';

@@ -4,12 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * PlanDisplay.css -> Tailwind 化
- * 说明：尽量用 @apply，把原有类名保留，便于调试；
- * 仅在必须的地方保留少量原生 CSS（如关键帧）。
- */
-
 /* 容器 */
 .plan-display {
   @apply bg-transparent border-0 py-2 px-4 my-2;

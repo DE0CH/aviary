@@ -115,7 +115,8 @@ export const FileLink: React.FC<FileLinkProps> = ({
         // Keep a semantic handle for scoped overrides (e.g. DiffDisplay.css)
         'file-link',
         // Layout + interaction
-        'inline-flex items-baseline',
+        // Use items-center + leading-none to vertically center within surrounding rows
+        'inline-flex items-center leading-none',
         disableClick
           ? 'pointer-events-none cursor-[inherit] hover:no-underline'
           : 'cursor-pointer',
@@ -136,7 +137,7 @@ export const FileLink: React.FC<FileLinkProps> = ({
       aria-label={`Open file: ${fullDisplayText}`}
       // Inherit font family from context so it matches theme body text.
     >
-      <span className="file-link-path font-medium">{displayPath}</span>
+      <span className="file-link-path">{displayPath}</span>
       {line !== null && line !== undefined && (
         <span className="file-link-location opacity-70 text-[0.9em] font-normal dark:opacity-60">
           :{line}

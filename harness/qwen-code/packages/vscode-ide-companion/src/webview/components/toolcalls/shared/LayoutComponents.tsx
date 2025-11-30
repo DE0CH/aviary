@@ -68,7 +68,8 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
         >
           ●
         </span>
-        <span className="text-[13px] font-medium text-[var(--app-primary-foreground)]">
+
+        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>
         {/* {toolCallId && (

@@ -15,6 +15,7 @@ import {
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { WebViewProvider } from './webview/WebViewProvider.js';
+import { registerNewCommands } from './commands/index.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
 const INFO_MESSAGE_SHOWN_KEY = 'qwenCodeInfoMessageShown';
@@ -156,6 +157,15 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // Register newly added commands via commands module
+  registerNewCommands(
+    context,
+    log,
+    diffManager,
+    () => webViewProviders,
+    createWebViewProvider,
+  );
+
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.uri.scheme === DIFF_SCHEME) {
@@ -176,70 +186,6 @@ export async function activate(context: vscode.ExtensionContext) {
       const docUri = uri ?? vscode.window.activeTextEditor?.document.uri;
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(docUri);
-      }
-    }),
-    vscode.commands.registerCommand(
-      'qwenCode.showDiff',
-      async (args: { path: string; oldText: string; newText: string }) => {
-        log(`[Command] showDiff called for: ${args.path}`);
-        try {
-          // Convert relative path to absolute if needed
-          let absolutePath = args.path;
-          if (!args.path.startsWith('/') && !args.path.match(/^[a-zA-Z]:/)) {
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (workspaceFolder) {
-              absolutePath = vscode.Uri.joinPath(
-                workspaceFolder.uri,
-                args.path,
-              ).fsPath;
-            }
-          }
-
-          await diffManager.showDiff(absolutePath, args.oldText, args.newText);
-        } catch (error) {
-          log(`[Command] Error showing diff: ${error}`);
-          vscode.window.showErrorMessage(`Failed to show diff: ${error}`);
-        }
-      },
-    ),
-    vscode.commands.registerCommand('qwenCode.openChat', () => {
-      // Open or reveal the most recent chat tab
-      if (webViewProviders.length > 0) {
-        const lastProvider = webViewProviders[webViewProviders.length - 1];
-        lastProvider.show();
-      } else {
-        // Create first chat tab
-        const provider = createWebViewProvider();
-        provider.show();
-      }
-    }),
-    vscode.commands.registerCommand('qwenCode.openNewChatTab', () => {
-      // Always create a new WebviewPanel (tab) in the same view column
-      // The PanelManager will find existing Qwen Code tabs and open in the same column
-      const provider = createWebViewProvider();
-      provider.show();
-    }),
-    vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
-      // Clear auth state for all WebView providers
-      for (const provider of webViewProviders) {
-        await provider.clearAuthCache();
-      }
-
-      vscode.window.showInformationMessage(
-        'Qwen Code authentication cache cleared. You will need to login again on next connection.',
-      );
-      log('Auth cache cleared by user');
-    }),
-    vscode.commands.registerCommand('qwenCode.login', async () => {
-      // Get the current WebViewProvider instance - must already exist
-      if (webViewProviders.length > 0) {
-        const provider = webViewProviders[webViewProviders.length - 1];
-        await provider.forceReLogin();
-      } else {
-        // No WebViewProvider exists, show a message to user
-        vscode.window.showInformationMessage(
-          'Please open Qwen Code chat first before logging in.',
-        );
       }
     }),
   );

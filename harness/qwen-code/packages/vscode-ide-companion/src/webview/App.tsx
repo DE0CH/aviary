@@ -4,7 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useLayoutEffect,
+} from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
 import { useSessionManagement } from './hooks/session/useSessionManagement.js';
 import { useFileContext } from './hooks/file/useFileContext.js';
@@ -181,21 +187,39 @@ export const App: React.FC = () => {
 
   // Auto-scroll handling: keep the view pinned to bottom when new content arrives,
   // but don't interrupt the user if they scrolled up.
+  // We track whether the user is currently "pinned" to the bottom (near the end).
+  const [pinnedToBottom, setPinnedToBottom] = useState(true);
   const prevCountsRef = useRef({ msgLen: 0, inProgLen: 0, doneLen: 0 });
+
+  // Observe scroll position to know if user has scrolled away from the bottom.
   useEffect(() => {
     const container = messagesContainerRef.current;
-    const endEl = messagesEndRef.current;
-    if (!container || !endEl) {
+    if (!container) {
       return;
     }
 
-    const nearBottom = () => {
-      const threshold = 64; // px tolerance
-      return (
-        container.scrollTop + container.clientHeight >=
-        container.scrollHeight - threshold
-      );
+    const onScroll = () => {
+      // Use a small threshold so slight deltas don't flip the state.
+      // Note: there's extra bottom padding for the input area, so keep this a bit generous.
+      const threshold = 80; // px tolerance
+      const distanceFromBottom =
+        container.scrollHeight - (container.scrollTop + container.clientHeight);
+      setPinnedToBottom(distanceFromBottom <= threshold);
     };
+
+    // Initialize once mounted so first render is correct
+    onScroll();
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => container.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // When content changes, if the user is pinned to bottom, keep it anchored there.
+  // Only smooth-scroll when new items are appended; do not smooth for streaming chunk updates.
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
+    }
 
     // Detect whether new items were appended (vs. streaming chunk updates)
     const prev = prevCountsRef.current;
@@ -208,26 +232,22 @@ export const App: React.FC = () => {
       doneLen: completedToolCalls.length,
     };
 
-    // If user is near bottom, or if we just appended a new item, scroll to bottom
-    if (nearBottom() || newMsg || newInProg || newDone) {
-      // Try scrollIntoView first
-      const smooth = newMsg || newInProg || newDone; // avoid smooth on streaming chunks
-      endEl.scrollIntoView({
-        behavior: smooth ? 'smooth' : 'auto',
-        block: 'end',
-      });
-
-      // Fallback: directly set scrollTop if scrollIntoView doesn't work
-      setTimeout(() => {
-        if (container && endEl) {
-          const shouldScroll = nearBottom() || newMsg || newInProg || newDone;
-          if (shouldScroll) {
-            container.scrollTop = container.scrollHeight;
-          }
-        }
-      }, 50);
+    if (!pinnedToBottom) {
+      // Do nothing if user scrolled away; avoid stealing scroll.
+      return;
     }
+
+    const smooth = newMsg || newInProg || newDone; // avoid smooth on streaming chunks
+
+    // Anchor to the bottom on next frame to avoid layout thrash.
+    const raf = requestAnimationFrame(() => {
+      const top = container.scrollHeight - container.clientHeight;
+      // Use scrollTo to avoid cross-context issues with scrollIntoView.
+      container.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [
+    pinnedToBottom,
     messageHandling.messages,
     inProgressToolCalls,
     completedToolCalls,
@@ -235,6 +255,45 @@ export const App: React.FC = () => {
     messageHandling.loadingMessage,
     messageHandling.isStreaming,
     planEntries,
+  ]);
+
+  // When the last rendered item resizes (e.g., images/code blocks load/expand),
+  // if we're pinned to bottom, keep it anchored there.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    const endEl = messagesEndRef.current;
+    if (!container || !endEl) {
+      return;
+    }
+
+    const lastItem = endEl.previousElementSibling as HTMLElement | null;
+    if (!lastItem) {
+      return;
+    }
+
+    let frame = 0;
+    const ro = new ResizeObserver(() => {
+      if (!pinnedToBottom) {
+        return;
+      }
+      // Defer to next frame to avoid thrash during rapid size changes
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const top = container.scrollHeight - container.clientHeight;
+        container.scrollTo({ top });
+      });
+    });
+    ro.observe(lastItem);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [
+    pinnedToBottom,
+    messageHandling.messages,
+    inProgressToolCalls,
+    completedToolCalls,
   ]);
 
   // Handle permission response
@@ -418,7 +477,7 @@ export const App: React.FC = () => {
 
       <div
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>.message-item]:px-0 [&>.message-item]:py-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        className="chat-messages flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:mb-[10px] [&>.message-item]:px-0 [&>.message-item]:py-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
         style={{ backgroundColor: 'var(--app-primary-background)' }}
       >
         {!hasContent ? (

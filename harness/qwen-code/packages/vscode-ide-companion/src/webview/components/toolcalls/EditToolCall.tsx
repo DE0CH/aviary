@@ -102,7 +102,8 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           onClick={openFirstDiff}
           title="Open diff in VS Code"
         >
-          <span className="absolute left-2 top-[10px] text-[10px] text-[#74c991]">
+          {/* Center the bullet vertically like the shared container */}
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] leading-none text-[#74c991]">
             ●
           </span>
           {/* Keep content within overall width: pl-[30px] provides the bullet indent; */}
@@ -110,7 +111,8 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <div className="toolcall-edit-content flex flex-col gap-1 pl-[30px] min-w-0 max-w-full">
             <div className="flex items-center justify-between min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[13px] font-medium text-[var(--app-primary-foreground)]">
+                {/* Align the inline Edit label styling with shared toolcall label: larger + bold */}
+                <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
                   Edit
                 </span>
                 {path && (

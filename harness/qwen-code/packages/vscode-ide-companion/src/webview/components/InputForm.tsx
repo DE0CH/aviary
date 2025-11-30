@@ -15,7 +15,7 @@ import {
   LinkIcon,
   ArrowUpIcon,
 } from './icons/index.js';
-import { ClaudeCompletionMenu } from './ui/ClaudeCompletionMenu.js';
+import { CompletionMenu } from './ui/CompletionMenu.js';
 import type { CompletionItem } from './CompletionTypes.js';
 
 type EditMode = 'ask' | 'auto' | 'plan';
@@ -124,11 +124,10 @@ export const InputForm: React.FC<InputFormProps> = ({
     >
       <div className="block">
         <form
-          className="relative flex flex-col rounded-large border shadow-sm transition-all duration-200 focus-within:shadow-md"
+          className="relative flex flex-col rounded-large border border-[var(--app-input-border)] shadow-sm transition-colors duration-200 focus-within:border-[var(--app-input-highlight)] focus-within:[box-shadow:0_1px_2px_color-mix(in_srgb,var(--app-input-highlight),transparent_80%)]"
           style={{
             backgroundColor:
               'var(--app-input-secondary-background, var(--app-input-background))',
-            borderColor: 'var(--app-input-border)',
             color: 'var(--app-input-foreground)',
           }}
           onSubmit={onSubmit}
@@ -151,7 +150,7 @@ export const InputForm: React.FC<InputFormProps> = ({
               onCompletionSelect &&
               onCompletionClose && (
                 // Render dropdown above the input, matching Claude Code
-                <ClaudeCompletionMenu
+                <CompletionMenu
                   items={completionItems}
                   onSelect={onCompletionSelect}
                   onClose={onCompletionClose}
@@ -193,26 +192,30 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Edit mode button */}
             <button
               type="button"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs whitespace-nowrap transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] min-w-0 flex-shrink overflow-hidden [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0"
               style={{ color: 'var(--app-primary-foreground)' }}
               title={editModeInfo.title}
               onClick={onToggleEditMode}
             >
               {editModeInfo.icon}
-              <span>{editModeInfo.text}</span>
+              {/* Let the label truncate with ellipsis; hide on very small screens */}
+              <span className="min-w-0 truncate hidden sm:inline">
+                {editModeInfo.text}
+              </span>
             </button>
 
             {/* Active file indicator */}
             {activeFileName && (
               <button
                 type="button"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs whitespace-nowrap transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0 max-w-[200px] overflow-hidden text-ellipsis flex-shrink min-w-0"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0 max-w-[200px] flex-shrink min-w-0 overflow-hidden"
                 style={{ color: 'var(--app-primary-foreground)' }}
                 title={`Showing Qwen Code your current file selection: ${activeFileName}${activeSelection ? `#${activeSelection.startLine}-${activeSelection.endLine}` : ''}`}
                 onClick={onFocusActiveEditor}
               >
                 <CodeBracketsIcon />
-                <span>
+                {/* Truncate file path/selection; hide label on very small screens */}
+                <span className="min-w-0 truncate hidden sm:inline">
                   {activeFileName}
                   {activeSelection &&
                     ` #${activeSelection.startLine}${activeSelection.startLine !== activeSelection.endLine ? `-${activeSelection.endLine}` : ''}`}
