@@ -8,7 +8,7 @@
 
 import type React from 'react';
 import { useMemo } from 'react';
-import { FileLink } from '../../shared/FileLink.js';
+import { FileLink } from '../../ui/FileLink.js';
 import {
   calculateDiffStats,
   formatDiffStatsDetailed,

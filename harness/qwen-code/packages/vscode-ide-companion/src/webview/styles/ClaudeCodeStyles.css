@@ -9,11 +9,8 @@
 
 /* Import component styles */
 @import '../components/EmptyState.css';
-@import '../components/CompletionMenu.css';
-@import '../components/ContextPills.css';
 @import '../components/PlanDisplay.css';
 @import '../components/Timeline.css';
-@import '../components/shared/FileLink.css';
 @import '../components/toolcalls/shared/DiffDisplay.css';
 @import '../components/messages/AssistantMessage.css';
 
@@ -63,4 +60,3 @@
   --app-warning-border: var(--vscode-editorWarning-foreground, #ffcc00);
   --app-warning-foreground: var(--vscode-editorWarning-foreground, #ffcc00);
 }
-

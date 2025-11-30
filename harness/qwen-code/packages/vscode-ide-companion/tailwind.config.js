@@ -23,6 +23,16 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        // ClaudeCompletionMenu mount animation: fade in + slight upward slide
+        'completion-menu-enter': {
+          '0%': { opacity: '0', transform: 'translateY(4px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      animation: {
+        'completion-menu-enter': 'completion-menu-enter 150ms ease-out both',
+      },
       colors: {
         qwen: {
           orange: '#615fff',

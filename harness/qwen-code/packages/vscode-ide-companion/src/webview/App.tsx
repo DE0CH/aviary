@@ -24,7 +24,7 @@ import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 import { InProgressToolCall } from './components/InProgressToolCall.js';
 import { EmptyState } from './components/EmptyState.js';
 import type { PlanEntry } from './components/PlanDisplay.js';
-import { type CompletionItem } from './components/CompletionMenu.js';
+import { type CompletionItem } from './components/CompletionTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { InfoBanner } from './components/InfoBanner.js';
 import { ChatHeader } from './components/layouts/ChatHeader.js';
@@ -210,11 +210,22 @@ export const App: React.FC = () => {
 
     // If user is near bottom, or if we just appended a new item, scroll to bottom
     if (nearBottom() || newMsg || newInProg || newDone) {
+      // Try scrollIntoView first
       const smooth = newMsg || newInProg || newDone; // avoid smooth on streaming chunks
       endEl.scrollIntoView({
         behavior: smooth ? 'smooth' : 'auto',
         block: 'end',
       });
+
+      // Fallback: directly set scrollTop if scrollIntoView doesn't work
+      setTimeout(() => {
+        if (container && endEl) {
+          const shouldScroll = nearBottom() || newMsg || newInProg || newDone;
+          if (shouldScroll) {
+            container.scrollTop = container.scrollHeight;
+          }
+        }
+      }, 50);
     }
   }, [
     messageHandling.messages,
@@ -222,6 +233,8 @@ export const App: React.FC = () => {
     completedToolCalls,
     messageHandling.isWaitingForResponse,
     messageHandling.loadingMessage,
+    messageHandling.isStreaming,
+    planEntries,
   ]);
 
   // Handle permission response

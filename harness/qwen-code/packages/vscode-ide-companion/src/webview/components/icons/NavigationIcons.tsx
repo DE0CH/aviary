@@ -137,10 +137,6 @@ export const CloseIcon: React.FC<IconProps> = ({
   </svg>
 );
 
-/**
- * Close X icon for context pills (16x16)
- * Used to remove attachments
- */
 export const CloseSmallIcon: React.FC<IconProps> = ({
   size = 16,
   className,

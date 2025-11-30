@@ -76,7 +76,7 @@
 }
 
 .timeline-dot.green .dot-inner {
-  background-color: var(--app-qwen-green, #6BCF7F);
+  background-color: var(--app-qwen-green, #6bcf7f);
 }
 
 .timeline-dot.purple .dot-inner {
@@ -147,7 +147,12 @@
   border: 1px solid var(--app-transparent-inner-border);
   border-radius: 6px;
   padding: 12px;
-  font-family: var(--vscode-editor-font-family, 'Monaco', 'Courier New', monospace);
+  font-family: var(
+    --vscode-editor-font-family,
+    'Monaco',
+    'Courier New',
+    monospace
+  );
   font-size: 12px;
   color: var(--app-secondary-foreground);
   max-height: 300px;
@@ -168,11 +173,6 @@
   border: 1px solid var(--app-transparent-inner-border);
   border-radius: 8px;
   padding: 10px 14px;
-}
-
-/* 助手消息样式 */
-.timeline-item.assistant-message .timeline-body {
-  /* 保持默认样式，不加背景 */
 }
 
 /* 思考消息样式 */

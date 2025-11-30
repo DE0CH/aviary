@@ -15,8 +15,8 @@ import {
   LinkIcon,
   ArrowUpIcon,
 } from './icons/index.js';
-import { ClaudeCompletionMenu } from './ClaudeCompletionMenu.js';
-import type { CompletionItem } from './CompletionMenu.js';
+import { ClaudeCompletionMenu } from './ui/ClaudeCompletionMenu.js';
+import type { CompletionItem } from './CompletionTypes.js';
 
 type EditMode = 'ask' | 'auto' | 'plan';
 
@@ -143,7 +143,7 @@ export const InputForm: React.FC<InputFormProps> = ({
           <div className="input-banner" />
 
           {/* Input wrapper (Claude-style anchor container) */}
-          <div className="relative flex z-[1] Bo">
+          <div className="relative flex z-[1]">
             {/* Claude-style anchored dropdown */}
             {completionIsOpen &&
               completionItems &&

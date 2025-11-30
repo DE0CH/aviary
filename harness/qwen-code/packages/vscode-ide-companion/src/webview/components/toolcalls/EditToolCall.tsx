@@ -12,7 +12,7 @@ import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { DiffDisplay } from './shared/DiffDisplay.js';
 import { groupContent } from './shared/utils.js';
 import { useVSCode } from '../../hooks/useVSCode.js';
-import { FileLink } from '../shared/FileLink.js';
+import { FileLink } from '../ui/FileLink.js';
 
 /**
  * Calculate diff summary (added/removed lines)

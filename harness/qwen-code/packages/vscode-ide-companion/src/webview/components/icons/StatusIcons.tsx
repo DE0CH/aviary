@@ -149,10 +149,6 @@ export const UserIcon: React.FC<IconProps> = ({
   </svg>
 );
 
-/**
- * Symbol arrow icon (16x16)
- * Used for symbol type in context pills
- */
 export const SymbolIcon: React.FC<IconProps> = ({
   size = 16,
   className,
@@ -172,10 +168,6 @@ export const SymbolIcon: React.FC<IconProps> = ({
   </svg>
 );
 
-/**
- * Selection/text lines icon (16x16)
- * Used for selection type in context pills
- */
 export const SelectionIcon: React.FC<IconProps> = ({
   size = 16,
   className,

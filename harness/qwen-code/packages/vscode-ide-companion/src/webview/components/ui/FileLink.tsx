@@ -9,7 +9,7 @@
 
 import type React from 'react';
 import { useVSCode } from '../../hooks/useVSCode.js';
-import './FileLink.css';
+// Tailwind rewrite: styles from FileLink.css are now expressed as utility classes
 
 /**
  * Props for FileLink
@@ -111,15 +111,34 @@ export const FileLink: React.FC<FileLinkProps> = ({
   return (
     <a
       href="#"
-      className={`file-link ${disableClick ? 'file-link-disabled' : ''} ${className}`}
+      className={[
+        // Keep a semantic handle for scoped overrides (e.g. DiffDisplay.css)
+        'file-link',
+        // Layout + interaction
+        'inline-flex items-baseline',
+        disableClick
+          ? 'pointer-events-none cursor-[inherit] hover:no-underline'
+          : 'cursor-pointer',
+        // Typography + color: match theme body text and fixed size
+        'text-[11px] no-underline hover:underline',
+        'text-[var(--app-primary-foreground)]',
+        // Transitions
+        'transition-colors duration-100 ease-in-out',
+        // Focus ring (keyboard nav)
+        'focus:outline focus:outline-1 focus:outline-[var(--vscode-focusBorder)] focus:outline-offset-2 focus:rounded-[2px]',
+        // Active state
+        'active:opacity-80',
+        className,
+      ].join(' ')}
       onClick={handleClick}
       title={fullDisplayText}
       role="button"
       aria-label={`Open file: ${fullDisplayText}`}
+      // Inherit font family from context so it matches theme body text.
     >
-      <span className="file-link-path">{displayPath}</span>
+      <span className="file-link-path font-medium">{displayPath}</span>
       {line !== null && line !== undefined && (
-        <span className="file-link-location">
+        <span className="file-link-location opacity-70 text-[0.9em] font-normal dark:opacity-60">
           :{line}
           {column !== null && column !== undefined && <>:{column}</>}
         </span>

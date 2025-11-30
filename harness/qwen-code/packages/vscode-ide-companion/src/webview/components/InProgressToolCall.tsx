@@ -8,7 +8,7 @@
 
 import React from 'react';
 import type { ToolCallData } from './toolcalls/shared/types.js';
-import { FileLink } from './shared/FileLink.js';
+import { FileLink } from './ui/FileLink.js';
 import { useVSCode } from '../hooks/useVSCode.js';
 
 interface InProgressToolCallProps {

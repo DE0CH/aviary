@@ -32,10 +32,6 @@ export const FileIcon: React.FC<IconProps> = ({
   </svg>
 );
 
-/**
- * File list icon (16x16)
- * Used for file type indicator in context pills
- */
 export const FileListIcon: React.FC<IconProps> = ({
   size = 16,
   className,

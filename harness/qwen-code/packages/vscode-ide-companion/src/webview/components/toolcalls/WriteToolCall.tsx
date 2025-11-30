@@ -10,7 +10,7 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { groupContent } from './shared/utils.js';
-import { FileLink } from '../shared/FileLink.js';
+import { FileLink } from '../ui/FileLink.js';
 
 /**
  * Specialized component for Write tool calls

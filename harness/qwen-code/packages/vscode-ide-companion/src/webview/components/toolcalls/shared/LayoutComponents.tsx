@@ -8,7 +8,7 @@
  */
 
 import type React from 'react';
-import { FileLink } from '../../shared/FileLink.js';
+import { FileLink } from '../../ui/FileLink.js';
 
 /**
  * Props for ToolCallContainer - Claude Code style layout
