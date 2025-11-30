@@ -309,57 +309,13 @@ export class WebViewProvider {
       });
     }
 
-    // // Initialize empty conversation immediately for fast UI rendering
-    // await this.initializeEmptyConversation();
-
-    // // Perform background CLI detection and connection without blocking UI
-    // this.performBackgroundInitialization();
-
-    // Smart login restore: Check if we have valid cached auth and restore connection if available
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-    // Check if we have valid cached authentication
-    let hasValidAuth = false;
-    if (this.authStateManager) {
-      hasValidAuth = await this.authStateManager.hasValidAuth(
-        workingDir,
-        authMethod,
-      );
-      console.log(
-        '[WebViewProvider] Has valid cached auth on show:',
-        hasValidAuth,
-      );
-    }
-
-    if (hasValidAuth && !this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Found valid cached auth, attempting to restore connection...',
-      );
-      try {
-        await this.initializeAgentConnection();
-        console.log('[WebViewProvider] Connection restored successfully');
-      } catch (error) {
-        console.error('[WebViewProvider] Failed to restore connection:', error);
-        // Fall back to empty conversation if restore fails
-        await this.initializeEmptyConversation();
-      }
-    } else if (this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Agent already initialized, reusing existing connection',
-      );
-      // Reload current session messages
-      await this.loadCurrentSessionMessages();
-    } else {
-      console.log(
-        '[WebViewProvider] No valid cached auth or agent already initialized, showing empty conversation',
-      );
-      // Just initialize empty conversation for the UI
-      await this.initializeEmptyConversation();
-    }
+    // Lazy initialization: Do not attempt to connect/auth on WebView show.
+    // Render the chat UI immediately; we will connect/login on-demand when the
+    // user sends a message or requests a session action.
+    console.log(
+      '[WebViewProvider] Lazy init: rendering empty conversation only',
+    );
+    await this.initializeEmptyConversation();
   }
 
   /**
@@ -460,124 +416,6 @@ export class WebViewProvider {
   }
 
   /**
-   * Perform background initialization without blocking UI
-   * This method runs CLI detection and connection in the background
-   */
-  private async performBackgroundInitialization(): Promise<void> {
-    try {
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-      const config = vscode.workspace.getConfiguration('qwenCode');
-      const qwenEnabled = config.get<boolean>('qwen.enabled', true);
-
-      if (qwenEnabled) {
-        // Check if we have valid cached authentication
-        const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-        const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-        let hasValidAuth = false;
-        if (this.authStateManager) {
-          hasValidAuth = await this.authStateManager.hasValidAuth(
-            workingDir,
-            authMethod,
-          );
-          console.log(
-            '[WebViewProvider] Has valid cached auth in background init:',
-            hasValidAuth,
-          );
-        }
-
-        // Perform CLI detection in background
-        const cliDetection = await CliDetector.detectQwenCli();
-
-        if (!cliDetection.isInstalled) {
-          console.log(
-            '[WebViewProvider] Qwen CLI not detected in background check',
-          );
-          console.log(
-            '[WebViewProvider] CLI detection error:',
-            cliDetection.error,
-          );
-
-          // Notify webview that CLI is not installed
-          this.sendMessageToWebView({
-            type: 'cliNotInstalled',
-            data: {
-              error: cliDetection.error,
-            },
-          });
-        } else {
-          console.log(
-            '[WebViewProvider] Qwen CLI detected in background check, attempting connection...',
-          );
-          console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
-          console.log('[WebViewProvider] CLI version:', cliDetection.version);
-
-          if (hasValidAuth && !this.agentInitialized) {
-            console.log(
-              '[WebViewProvider] Found valid cached auth, attempting to restore connection in background...',
-            );
-            try {
-              // Pass the detected CLI path to ensure we use the correct installation
-              await this.agentManager.connect(
-                workingDir,
-                this.authStateManager,
-                cliDetection.cliPath,
-              );
-              console.log(
-                '[WebViewProvider] Connection restored successfully in background',
-              );
-              this.agentInitialized = true;
-
-              // Load messages from the current Qwen session
-              await this.loadCurrentSessionMessages();
-
-              // Notify webview that agent is connected
-              this.sendMessageToWebView({
-                type: 'agentConnected',
-                data: {},
-              });
-            } catch (error) {
-              console.error(
-                '[WebViewProvider] Failed to restore connection in background:',
-                error,
-              );
-              // Clear auth cache on error
-              await this.authStateManager.clearAuthState();
-
-              // Notify webview that agent connection failed
-              this.sendMessageToWebView({
-                type: 'agentConnectionError',
-                data: {
-                  message:
-                    error instanceof Error ? error.message : String(error),
-                },
-              });
-            }
-          } else if (this.agentInitialized) {
-            console.log(
-              '[WebViewProvider] Agent already initialized, no need to reconnect in background',
-            );
-          } else {
-            console.log(
-              '[WebViewProvider] No valid cached auth, skipping background connection',
-            );
-          }
-        }
-      } else {
-        console.log(
-          '[WebViewProvider] Qwen agent is disabled in settings (background)',
-        );
-      }
-    } catch (error) {
-      console.error(
-        '[WebViewProvider] Background initialization failed:',
-        error,
-      );
-    }
-  }
-
-  /**
    * Force re-login by clearing auth cache and reconnecting
    * Called when user explicitly uses /login command
    */
@@ -588,55 +426,72 @@ export class WebViewProvider {
       !!this.authStateManager,
     );
 
-    // Clear existing auth cache
-    if (this.authStateManager) {
-      await this.authStateManager.clearAuthState();
-      console.log('[WebViewProvider] Auth cache cleared');
-    } else {
-      console.log('[WebViewProvider] No authStateManager to clear');
-    }
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Logging in to Qwen Code... ',
+        cancellable: false,
+      },
+      async (progress) => {
+        try {
+          progress.report({ message: 'Preparing sign-in...' });
 
-    // Disconnect existing connection if any
-    if (this.agentInitialized) {
-      try {
-        this.agentManager.disconnect();
-        console.log('[WebViewProvider] Existing connection disconnected');
-      } catch (error) {
-        console.log('[WebViewProvider] Error disconnecting:', error);
-      }
-      this.agentInitialized = false;
-    }
+          // Clear existing auth cache
+          if (this.authStateManager) {
+            await this.authStateManager.clearAuthState();
+            console.log('[WebViewProvider] Auth cache cleared');
+          } else {
+            console.log('[WebViewProvider] No authStateManager to clear');
+          }
 
-    // Wait a moment for cleanup to complete
-    await new Promise((resolve) => setTimeout(resolve, 500));
+          // Disconnect existing connection if any
+          if (this.agentInitialized) {
+            try {
+              this.agentManager.disconnect();
+              console.log('[WebViewProvider] Existing connection disconnected');
+            } catch (error) {
+              console.log('[WebViewProvider] Error disconnecting:', error);
+            }
+            this.agentInitialized = false;
+          }
 
-    // Reinitialize connection (will trigger fresh authentication)
-    try {
-      await this.initializeAgentConnection();
-      console.log('[WebViewProvider] Force re-login completed successfully');
+          // Wait a moment for cleanup to complete
+          await new Promise((resolve) => setTimeout(resolve, 300));
 
-      // Send success notification to WebView
-      this.sendMessageToWebView({
-        type: 'loginSuccess',
-        data: { message: 'Successfully logged in!' },
-      });
-    } catch (error) {
-      console.error('[WebViewProvider] Force re-login failed:', error);
-      console.error(
-        '[WebViewProvider] Error stack:',
-        error instanceof Error ? error.stack : 'N/A',
-      );
+          progress.report({
+            message: 'Connecting to CLI and starting sign-in...',
+          });
 
-      // Send error notification to WebView
-      this.sendMessageToWebView({
-        type: 'loginError',
-        data: {
-          message: `Login failed: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      });
+          // Reinitialize connection (will trigger fresh authentication)
+          await this.initializeAgentConnection();
+          console.log(
+            '[WebViewProvider] Force re-login completed successfully',
+          );
 
-      throw error;
-    }
+          // Send success notification to WebView
+          this.sendMessageToWebView({
+            type: 'loginSuccess',
+            data: { message: 'Successfully logged in!' },
+          });
+        } catch (error) {
+          console.error('[WebViewProvider] Force re-login failed:', error);
+          console.error(
+            '[WebViewProvider] Error stack:',
+            error instanceof Error ? error.stack : 'N/A',
+          );
+
+          // Send error notification to WebView
+          this.sendMessageToWebView({
+            type: 'loginError',
+            data: {
+              message: `Login failed: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          });
+
+          throw error;
+        }
+      },
+    );
   }
 
   /**
@@ -873,63 +728,11 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // TODO:
-    // await this.initializeEmptyConversation();
-    //     // Perform background initialization without blocking UI
-    // this.performBackgroundInitialization();
-
-    // Smart login restore: Check if we have valid cached auth and restore connection if available
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
-    // Check if we have valid cached authentication
-    let hasValidAuth = false;
-    if (this.authStateManager) {
-      hasValidAuth = await this.authStateManager.hasValidAuth(
-        workingDir,
-        authMethod,
-      );
-      console.log(
-        '[WebViewProvider] Has valid cached auth on restore:',
-        hasValidAuth,
-      );
-    }
-
-    if (hasValidAuth && !this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Found valid cached auth, attempting to restore connection...',
-      );
-      try {
-        await this.initializeAgentConnection();
-        console.log('[WebViewProvider] Connection restored successfully');
-      } catch (error) {
-        console.error('[WebViewProvider] Failed to restore connection:', error);
-        // Fall back to empty conversation if restore fails
-        await this.initializeEmptyConversation();
-      }
-    } else if (this.agentInitialized) {
-      console.log(
-        '[WebViewProvider] Agent already initialized, refreshing connection...',
-      );
-      try {
-        await this.refreshConnection();
-        console.log('[WebViewProvider] Connection refreshed successfully');
-      } catch (error) {
-        console.error('[WebViewProvider] Failed to refresh connection:', error);
-        // Fall back to empty conversation if refresh fails
-        this.agentInitialized = false;
-        await this.initializeEmptyConversation();
-      }
-    } else {
-      console.log(
-        '[WebViewProvider] No valid cached auth or agent already initialized, showing empty conversation',
-      );
-      // Just initialize empty conversation for the UI
-      await this.initializeEmptyConversation();
-    }
+    // Lazy init on restore as well: do not auto-connect; just render UI.
+    console.log(
+      '[WebViewProvider] Lazy restore: rendering empty conversation only',
+    );
+    await this.initializeEmptyConversation();
   }
 
   /**

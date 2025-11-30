@@ -60,10 +60,16 @@ export const App: React.FC = () => {
     toolCall: PermissionToolCall;
   } | null>(null);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(
+    null,
+  ) as React.RefObject<HTMLDivElement>;
   // Scroll container for message list; used to keep the view anchored to the latest content
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const inputFieldRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(
+    null,
+  ) as React.RefObject<HTMLDivElement>;
+  const inputFieldRef = useRef<HTMLDivElement>(
+    null,
+  ) as React.RefObject<HTMLDivElement>;
   const [showBanner, setShowBanner] = useState(true);
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);

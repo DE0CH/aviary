@@ -376,17 +376,23 @@ export class SessionMessageHandler extends BaseMessageHandler {
       // Check for session not found error and handle it appropriately
       if (
         errorMsg.includes('Session not found') ||
-        errorMsg.includes('No active ACP session')
+        errorMsg.includes('No active ACP session') ||
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)')
       ) {
         // Clear auth cache since session is invalid
         // Note: We would need access to authStateManager for this, but for now we'll just show login prompt
         const result = await vscode.window.showWarningMessage(
-          'Your session has expired. Please login again to continue using Qwen Code.',
+          'Your login has expired. Please login again to continue using Qwen Code.',
           'Login Now',
         );
 
         if (result === 'Login Now') {
-          vscode.commands.executeCommand('qwenCode.login');
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
         }
       } else {
         vscode.window.showErrorMessage(`Error sending message: ${error}`);
@@ -404,6 +410,23 @@ export class SessionMessageHandler extends BaseMessageHandler {
   private async handleNewQwenSession(): Promise<void> {
     try {
       console.log('[SessionMessageHandler] Creating new Qwen session...');
+
+      // Ensure connection (login) before creating a new session
+      if (!this.agentManager.isConnected) {
+        const result = await vscode.window.showWarningMessage(
+          'You need to login before creating a new session.',
+          'Login Now',
+        );
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        } else {
+          return;
+        }
+      }
 
       // Save current session before creating new one
       if (this.currentConversationId && this.agentManager.isConnected) {
@@ -450,6 +473,39 @@ export class SessionMessageHandler extends BaseMessageHandler {
     try {
       console.log('[SessionMessageHandler] Switching to session:', sessionId);
 
+      // If not connected yet, offer to login or view offline
+      if (!this.agentManager.isConnected) {
+        const selection = await vscode.window.showWarningMessage(
+          'You are not logged in. Login now to fully restore this session, or view it offline.',
+          'Login Now',
+          'View Offline',
+        );
+
+        if (selection === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        } else if (selection === 'View Offline') {
+          // Show messages from local cache only
+          const messages =
+            await this.agentManager.getSessionMessages(sessionId);
+          this.currentConversationId = sessionId;
+          this.sendToWebView({
+            type: 'qwenSessionSwitched',
+            data: { sessionId, messages },
+          });
+          vscode.window.showInformationMessage(
+            'Showing cached session content. Login to interact with the AI.',
+          );
+          return;
+        } else {
+          // User dismissed; do nothing
+          return;
+        }
+      }
+
       // Save current session before switching
       if (
         this.currentConversationId &&
@@ -489,7 +545,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-      // Try to load session via ACP
+      // Try to load session via ACP (now we should be connected)
       try {
         const loadResponse =
           await this.agentManager.loadSessionViaAcp(sessionId);
@@ -514,26 +570,39 @@ export class SessionMessageHandler extends BaseMessageHandler {
         // Fallback: create new session
         const messages = await this.agentManager.getSessionMessages(sessionId);
 
-        try {
-          const newAcpSessionId =
-            await this.agentManager.createNewSession(workingDir);
+        // If we are connected, try to create a fresh ACP session so user can interact
+        if (this.agentManager.isConnected) {
+          try {
+            const newAcpSessionId =
+              await this.agentManager.createNewSession(workingDir);
 
-          this.currentConversationId = newAcpSessionId;
+            this.currentConversationId = newAcpSessionId;
 
+            this.sendToWebView({
+              type: 'qwenSessionSwitched',
+              data: { sessionId, messages, session: sessionDetails },
+            });
+
+            vscode.window.showWarningMessage(
+              'Session restored from local cache. Some context may be incomplete.',
+            );
+          } catch (createError) {
+            console.error(
+              '[SessionMessageHandler] Failed to create session:',
+              createError,
+            );
+            throw createError;
+          }
+        } else {
+          // Offline view only
+          this.currentConversationId = sessionId;
           this.sendToWebView({
             type: 'qwenSessionSwitched',
             data: { sessionId, messages, session: sessionDetails },
           });
-
           vscode.window.showWarningMessage(
-            'Session restored from local cache. Some context may be incomplete.',
+            'Showing cached session content. Login to interact with the AI.',
           );
-        } catch (createError) {
-          console.error(
-            '[SessionMessageHandler] Failed to create session:',
-            createError,
-          );
-          throw createError;
         }
       }
     } catch (error) {
@@ -620,6 +689,37 @@ export class SessionMessageHandler extends BaseMessageHandler {
    */
   private async handleResumeSession(sessionId: string): Promise<void> {
     try {
+      // If not connected, offer to login or view offline
+      if (!this.agentManager.isConnected) {
+        const selection = await vscode.window.showWarningMessage(
+          'You are not logged in. Login now to fully restore this session, or view it offline.',
+          'Login Now',
+          'View Offline',
+        );
+
+        if (selection === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        } else if (selection === 'View Offline') {
+          const messages =
+            await this.agentManager.getSessionMessages(sessionId);
+          this.currentConversationId = sessionId;
+          this.sendToWebView({
+            type: 'qwenSessionSwitched',
+            data: { sessionId, messages },
+          });
+          vscode.window.showInformationMessage(
+            'Showing cached session content. Login to interact with the AI.',
+          );
+          return;
+        } else {
+          return;
+        }
+      }
+
       // Try ACP load first
       try {
         await this.agentManager.loadSessionViaAcp(sessionId);

@@ -39,10 +39,7 @@ export class QwenConnectionHandler {
     cliPath?: string,
   ): Promise<void> {
     const connectId = Date.now();
-    console.log(`\n========================================`);
     console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
-    console.log(`[QwenAgentManager] Call stack:\n${new Error().stack}`);
-    console.log(`========================================\n`);
 
     // Check CLI version and features
     const cliVersionManager = CliVersionManager.getInstance();
@@ -166,7 +163,9 @@ export class QwenConnectionHandler {
 
     // Create new session if unable to restore
     if (!sessionRestored) {
-      console.log('[QwenAgentManager] Creating new session...');
+      console.log(
+        '[QwenAgentManager] no sessionRestored, Creating new session...',
+      );
 
       // Check if we have valid cached authentication
       let hasValidAuth = false;
@@ -217,7 +216,13 @@ export class QwenConnectionHandler {
         console.log(
           '[QwenAgentManager] Creating new session after authentication...',
         );
-        await this.newSessionWithRetry(connection, workingDir, 3);
+        await this.newSessionWithRetry(
+          connection,
+          workingDir,
+          3,
+          authMethod,
+          authStateManager,
+        );
         console.log('[QwenAgentManager] New session created successfully');
 
         // Ensure auth state is saved (prevent repeated authentication)
@@ -257,6 +262,8 @@ export class QwenConnectionHandler {
     connection: AcpConnection,
     workingDir: string,
     maxRetries: number,
+    authMethod: string,
+    authStateManager?: AuthStateManager,
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -273,6 +280,38 @@ export class QwenConnectionHandler {
           `[QwenAgentManager] Session creation attempt ${attempt} failed:`,
           errorMessage,
         );
+
+        // If the backend reports that authentication is required, try to
+        // authenticate on-the-fly once and retry without waiting.
+        const requiresAuth =
+          errorMessage.includes('Authentication required') ||
+          errorMessage.includes('(code: -32000)');
+        if (requiresAuth) {
+          console.log(
+            '[QwenAgentManager] Backend requires authentication. Authenticating and retrying session/new...',
+          );
+          try {
+            await connection.authenticate(authMethod);
+            if (authStateManager) {
+              await authStateManager.saveAuthState(workingDir, authMethod);
+            }
+            // Retry immediately after successful auth
+            await connection.newSession(workingDir);
+            console.log(
+              '[QwenAgentManager] Session created successfully after auth',
+            );
+            return;
+          } catch (authErr) {
+            console.error(
+              '[QwenAgentManager] Re-authentication failed:',
+              authErr,
+            );
+            if (authStateManager) {
+              await authStateManager.clearAuthState();
+            }
+            // Fall through to retry logic below
+          }
+        }
 
         if (attempt === maxRetries) {
           throw new Error(

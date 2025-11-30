@@ -686,7 +686,38 @@ export class QwenAgentManager {
       );
     }
 
-    await this.connection.newSession(workingDir);
+    // Try to create a new ACP session. If the backend asks for auth despite our
+    // cached flag (e.g. fresh process or expired tokens), re-authenticate and retry.
+    try {
+      await this.connection.newSession(workingDir);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const requiresAuth =
+        msg.includes('Authentication required') ||
+        msg.includes('(code: -32000)');
+
+      if (requiresAuth) {
+        console.warn(
+          '[QwenAgentManager] session/new requires authentication. Retrying with authenticate...',
+        );
+        try {
+          await this.connection.authenticate(authMethod);
+          // Persist auth cache so subsequent calls can skip the web flow.
+          if (effectiveAuth) {
+            await effectiveAuth.saveAuthState(workingDir, authMethod);
+          }
+          await this.connection.newSession(workingDir);
+        } catch (reauthErr) {
+          // Clear potentially stale cache on failure and rethrow
+          if (effectiveAuth) {
+            await effectiveAuth.clearAuthState();
+          }
+          throw reauthErr;
+        }
+      } else {
+        throw err;
+      }
+    }
     const newSessionId = this.connection.currentSessionId;
     console.log(
       '[QwenAgentManager] New session created with ID:',
