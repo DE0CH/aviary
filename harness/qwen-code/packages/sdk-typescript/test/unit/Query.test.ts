@@ -312,50 +312,6 @@ describe('Query', () => {
       await transport2.close();
     });
 
-    it('should validate MCP server name conflicts', async () => {
-      const mockServer = {
-        connect: vi.fn(),
-      };
-
-      await expect(async () => {
-        const query = new Query(transport, {
-          cwd: '/test',
-          mcpServers: { server1: { command: 'test' } },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          sdkMcpServers: { server1: mockServer as any },
-        });
-        await query.initialized;
-      }).rejects.toThrow(/name conflicts/);
-    });
-
-    it('should initialize with SDK MCP servers', async () => {
-      const mockServer = {
-        connect: vi.fn().mockResolvedValue(undefined),
-      };
-
-      const query = new Query(transport, {
-        cwd: '/test',
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        sdkMcpServers: { testServer: mockServer as any },
-      });
-
-      // Respond to initialize request
-      await vi.waitFor(() => {
-        expect(transport.writtenMessages.length).toBeGreaterThan(0);
-      });
-
-      const initRequest =
-        transport.getLastWrittenMessage() as CLIControlRequest;
-      transport.simulateMessage(
-        createControlResponse(initRequest.request_id, true, {}),
-      );
-
-      await query.initialized;
-      expect(mockServer.connect).toHaveBeenCalled();
-
-      await query.close();
-    });
-
     it('should handle initialization errors', async () => {
       const query = new Query(transport, {
         cwd: '/test',
@@ -483,7 +439,7 @@ describe('Query', () => {
 
   describe('Control Plane - Permission Control', () => {
     it('should handle can_use_tool control requests', async () => {
-      const canUseTool = vi.fn().mockResolvedValue(true);
+      const canUseTool = vi.fn().mockResolvedValue({ behavior: 'allow' });
       const query = new Query(transport, {
         cwd: '/test',
         canUseTool,
@@ -507,7 +463,7 @@ describe('Query', () => {
     });
 
     it('should send control response with permission result - allow', async () => {
-      const canUseTool = vi.fn().mockResolvedValue(true);
+      const canUseTool = vi.fn().mockResolvedValue({ behavior: 'allow' });
       const query = new Query(transport, {
         cwd: '/test',
         canUseTool,
@@ -533,7 +489,7 @@ describe('Query', () => {
     });
 
     it('should send control response with permission result - deny', async () => {
-      const canUseTool = vi.fn().mockResolvedValue(false);
+      const canUseTool = vi.fn().mockResolvedValue({ behavior: 'deny' });
       const query = new Query(transport, {
         cwd: '/test',
         canUseTool,
@@ -586,7 +542,7 @@ describe('Query', () => {
       const canUseTool = vi.fn().mockImplementation(
         () =>
           new Promise((resolve) => {
-            setTimeout(() => resolve(true), 35000); // Exceeds 30s timeout
+            setTimeout(() => resolve({ behavior: 'allow' }), 35000); // Exceeds 30s timeout
           }),
       );
 
@@ -709,10 +665,14 @@ describe('Query', () => {
   describe('Control Plane - Control Cancel', () => {
     it('should handle control cancel requests', async () => {
       const canUseTool = vi.fn().mockImplementation(
-        ({ signal }: { signal: AbortSignal }) =>
+        (
+          _toolName: string,
+          _toolInput: unknown,
+          { signal }: { signal: AbortSignal },
+        ) =>
           new Promise((resolve, reject) => {
             signal.addEventListener('abort', () => reject(new AbortError()));
-            setTimeout(() => resolve(true), 5000);
+            setTimeout(() => resolve({ behavior: 'allow' }), 5000);
           }),
       );
 

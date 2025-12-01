@@ -1187,13 +1187,20 @@ describe('ProcessTransport', () => {
       const options: TransportOptions = {
         pathToQwenExecutable: 'qwen',
         stderr: stderrCallback,
+        debug: true, // Enable debug to ensure stderr data is logged
       };
 
       new ProcessTransport(options);
 
+      // Clear previous calls from logger.info during initialization
+      stderrCallback.mockClear();
+
       mockStderr.emit('data', Buffer.from('error message'));
 
-      expect(stderrCallback).toHaveBeenCalledWith('error message');
+      // The stderr data is passed through logger.debug, which formats it
+      // So we check that the callback was called with a message containing 'error message'
+      expect(stderrCallback).toHaveBeenCalled();
+      expect(stderrCallback.mock.calls[0][0]).toContain('error message');
     });
   });
 
