@@ -399,13 +399,15 @@ describe('CLI Path Utilities', () => {
       delete process.env['QWEN_CODE_CLI_PATH'];
 
       // Mock fs.existsSync to return true for volta bin
-      mockFs.existsSync.mockImplementation((path) => {
-        return path.toString().includes('.volta/bin/qwen');
+      // Use path.join to match platform-specific path separators
+      const voltaBinPath = path.join('.volta', 'bin', 'qwen');
+      mockFs.existsSync.mockImplementation((p) => {
+        return p.toString().includes(voltaBinPath);
       });
 
       const result = findNativeCliPath();
 
-      expect(result).toContain('.volta/bin/qwen');
+      expect(result).toContain(voltaBinPath);
 
       process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
     });
