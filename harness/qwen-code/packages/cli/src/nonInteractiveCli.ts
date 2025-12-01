@@ -17,6 +17,7 @@ import {
   OutputFormat,
   InputFormat,
   uiTelemetryService,
+  parseAndFormatApiError,
 } from '@qwen-code/qwen-code-core';
 import type { Content, Part, PartListUnion } from '@google/genai';
 import type { CLIUserMessage, PermissionMode } from './nonInteractive/types.js';
@@ -210,6 +211,15 @@ export async function runNonInteractive(
               process.stdout.write(event.value);
             } else if (event.type === GeminiEventType.ToolCallRequest) {
               toolCallRequests.push(event.value);
+            } else if (event.type === GeminiEventType.Error) {
+              // Format and output the error message for text mode
+              const errorText = parseAndFormatApiError(
+                event.value.error,
+                config.getContentGeneratorConfig()?.authType,
+                undefined,
+                config.getModel(),
+              );
+              process.stderr.write(`${errorText}\n`);
             }
           }
         }

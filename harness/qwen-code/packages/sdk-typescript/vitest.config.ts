@@ -38,7 +38,6 @@ export default defineConfig({
     },
     testTimeout: testTimeoutMs,
     hookTimeout: 10000,
-    globalSetup: './test/e2e/globalSetup.ts',
   },
   resolve: {
     alias: {

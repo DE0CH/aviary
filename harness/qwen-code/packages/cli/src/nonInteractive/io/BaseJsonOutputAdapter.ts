@@ -13,7 +13,11 @@ import type {
   ServerGeminiStreamEvent,
   TaskResultDisplay,
 } from '@qwen-code/qwen-code-core';
-import { GeminiEventType, ToolErrorType } from '@qwen-code/qwen-code-core';
+import {
+  GeminiEventType,
+  ToolErrorType,
+  parseAndFormatApiError,
+} from '@qwen-code/qwen-code-core';
 import type { Part, GenerateContentResponseUsageMetadata } from '@google/genai';
 import type {
   CLIAssistantMessage,
@@ -600,6 +604,18 @@ export abstract class BaseJsonOutputAdapter {
         }
         this.finalizePendingBlocks(state, null);
         break;
+      case GeminiEventType.Error: {
+        // Format the error message using parseAndFormatApiError for consistency
+        // with interactive mode error display
+        const errorText = parseAndFormatApiError(
+          event.value.error,
+          this.config.getContentGeneratorConfig()?.authType,
+          undefined,
+          this.config.getModel(),
+        );
+        this.appendText(state, errorText, null);
+        break;
+      }
       default:
         break;
     }

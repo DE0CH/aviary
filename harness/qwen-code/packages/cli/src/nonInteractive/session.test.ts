@@ -69,6 +69,7 @@ function createConfig(overrides: ConfigOverrides = {}): Config {
     getDebugMode: () => false,
     getApprovalMode: () => 'auto',
     getOutputFormat: () => 'stream-json',
+    initialize: vi.fn(),
   };
   return { ...base, ...overrides } as unknown as Config;
 }
