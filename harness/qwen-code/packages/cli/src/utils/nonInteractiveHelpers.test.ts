@@ -529,7 +529,7 @@ describe('buildSystemMessage', () => {
         { name: 'mcp-server-2', status: 'connected' },
       ],
       model: 'test-model',
-      permissionMode: 'auto',
+      permission_mode: 'auto',
       slash_commands: ['commit', 'help', 'memory'],
       qwen_code_version: '1.0.0',
       agents: [],

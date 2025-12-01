@@ -180,7 +180,7 @@ describe('Single-Turn Query (E2E)', () => {
         expect(systemMessage!.mcp_servers).toBeDefined();
         expect(Array.isArray(systemMessage!.mcp_servers)).toBe(true);
         expect(systemMessage!.model).toBeDefined();
-        expect(systemMessage!.permissionMode).toBeDefined();
+        expect(systemMessage!.permission_mode).toBeDefined();
         expect(systemMessage!.qwen_code_version).toBeDefined();
 
         // Validate system message appears early in sequence

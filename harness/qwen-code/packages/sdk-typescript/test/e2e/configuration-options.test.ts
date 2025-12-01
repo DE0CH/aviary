@@ -609,7 +609,7 @@ describe('Configuration Options (E2E)', () => {
         expect(initMessage).toBeDefined();
         expect(initMessage!.session_id).toBeDefined();
         expect(initMessage!.tools).toBeDefined();
-        expect(initMessage!.permissionMode).toBeDefined();
+        expect(initMessage!.permission_mode).toBeDefined();
 
         assertSuccessfulCompletion(messages);
       } finally {

@@ -26,10 +26,11 @@ import {
 import {
   SDKTestHelper,
   createSharedTestOptions,
-  findAllToolResultBlocks,
   hasAnyToolResults,
   hasSuccessfulToolResults,
   hasErrorToolResults,
+  findSystemMessage,
+  findToolCalls,
 } from './test-helper.js';
 
 const TEST_TIMEOUT = 30000;
@@ -846,17 +847,32 @@ describe('Permission Control (E2E)', () => {
       );
     });
 
-    /**
-     * We've some issues of how to handle plan mode.
-     * The test cases are skipped for now.
-     */
-    describe.skip('plan mode', () => {
+    describe('plan mode', () => {
+      // Write tools that should never be called in plan mode
+      const WRITE_TOOLS = [
+        'edit',
+        'write_file',
+        'run_shell_command',
+        'delete_file',
+        'move_file',
+      ];
+
+      // Read tools that should be allowed in plan mode
+      const READ_TOOLS = [
+        'read_file',
+        'read_many_files',
+        'grep_search',
+        'glob',
+        'list_directory',
+        'web_search',
+        'web_fetch',
+      ];
+
       it(
-        'should block non-read-only tools and return plan mode error',
+        'should have permission_mode set to plan in system message',
         async () => {
           const q = query({
-            prompt:
-              'Init a monorepo of a Node.js project with frontend and backend.',
+            prompt: 'List files in the current directory',
             options: {
               ...SHARED_TEST_OPTIONS,
               permissionMode: 'plan',
@@ -870,29 +886,29 @@ describe('Permission Control (E2E)', () => {
               messages.push(message);
             }
 
-            const toolResults = findAllToolResultBlocks(messages);
-            const hasBlockedToolCall = toolResults.length > 0;
-            const hasPlanModeMessage = toolResults.some(
-              (result) =>
-                result.isError &&
-                (result.content.includes('Plan mode') ||
-                  result.content.includes('plan mode')),
-            );
-
-            expect(hasBlockedToolCall).toBe(true);
-            expect(hasPlanModeMessage).toBe(true);
+            // Find the init system message
+            const systemMessage = findSystemMessage(messages, 'init');
+            expect(systemMessage).not.toBeNull();
+            expect(systemMessage!.permission_mode).toBe('plan');
           } finally {
             await q.close();
           }
         },
-        TEST_TIMEOUT * 10,
+        TEST_TIMEOUT,
       );
 
       it(
-        'should allow read-only tools in plan mode',
+        'should not call any write tools in plan mode',
         async () => {
+          // Create a test file so the model has something to reference
+          await helper.createFile(
+            'test-plan-file.txt',
+            'This is test content for plan mode verification.',
+          );
+
           const q = query({
-            prompt: 'List files in /tmp directory',
+            prompt:
+              'Read the file test-plan-file.txt and suggest how to improve its content.',
             options: {
               ...SHARED_TEST_OPTIONS,
               permissionMode: 'plan',
@@ -906,6 +922,62 @@ describe('Permission Control (E2E)', () => {
               messages.push(message);
             }
 
+            // Verify permission_mode is 'plan'
+            const systemMessage = findSystemMessage(messages, 'init');
+            expect(systemMessage!.permission_mode).toBe('plan');
+
+            // Find all tool calls and verify none are write tools
+            const allToolCalls = findToolCalls(messages);
+            const writeToolCalls = allToolCalls.filter((tc) =>
+              WRITE_TOOLS.includes(tc.toolUse.name),
+            );
+
+            // No write tools should be called in plan mode
+            expect(writeToolCalls.length).toBe(0);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should allow read-only tools without restrictions',
+        async () => {
+          // Create test files for the model to read
+          await helper.createFile('test-read-1.txt', 'Content of file 1');
+          await helper.createFile('test-read-2.txt', 'Content of file 2');
+
+          const q = query({
+            prompt:
+              'Read the contents of test-read-1.txt and test-read-2.txt files, then list files in the current directory.',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'plan',
+              cwd: testDir,
+            },
+          });
+
+          try {
+            const messages: SDKMessage[] = [];
+            for await (const message of q) {
+              messages.push(message);
+            }
+
+            // Verify permission_mode is 'plan'
+            const systemMessage = findSystemMessage(messages, 'init');
+            expect(systemMessage!.permission_mode).toBe('plan');
+
+            // Find all tool calls
+            const allToolCalls = findToolCalls(messages);
+
+            // Verify read tools were called (at least one)
+            const readToolCalls = allToolCalls.filter((tc) =>
+              READ_TOOLS.includes(tc.toolUse.name),
+            );
+            expect(readToolCalls.length).toBeGreaterThan(0);
+
+            // Verify tool results are successful (not blocked)
             expect(hasSuccessfulToolResults(messages)).toBe(true);
           } finally {
             await q.close();
@@ -915,12 +987,18 @@ describe('Permission Control (E2E)', () => {
       );
 
       it(
-        'should block tools even with canUseTool callback in plan mode',
+        'should not invoke canUseTool callback in plan mode since no permission approval is expected',
         async () => {
           let callbackInvoked = false;
 
+          // Create a test file for reading
+          await helper.createFile(
+            'test-plan-callback.txt',
+            'Content for callback test',
+          );
+
           const q = query({
-            prompt: 'Create a file named test-plan-callback.txt',
+            prompt: 'Read the file test-plan-callback.txt',
             options: {
               ...SHARED_TEST_OPTIONS,
               permissionMode: 'plan',
@@ -941,16 +1019,61 @@ describe('Permission Control (E2E)', () => {
               messages.push(message);
             }
 
-            const toolResults = findAllToolResultBlocks(messages);
-            const hasPlanModeBlock = toolResults.some(
-              (result) =>
-                result.isError && result.content.includes('Plan mode'),
-            );
+            // Verify permission_mode is 'plan'
+            const systemMessage = findSystemMessage(messages, 'init');
+            expect(systemMessage!.permission_mode).toBe('plan');
 
-            // Plan mode should block tools before canUseTool is invoked
-            expect(hasPlanModeBlock).toBe(true);
-            // canUseTool should not be invoked for blocked tools in plan mode
+            // Read tools should work without invoking canUseTool
+            // In plan mode, no permission approval is expected from user
+            expect(hasSuccessfulToolResults(messages)).toBe(true);
+
+            // canUseTool should not be invoked in plan mode
+            // since plan mode is for research only, no permission interaction needed
             expect(callbackInvoked).toBe(false);
+          } finally {
+            await q.close();
+          }
+        },
+        TEST_TIMEOUT,
+      );
+
+      it(
+        'should only output research and plan as text, no actual changes',
+        async () => {
+          // Create a test file
+          const originalContent = 'Original content for plan mode test';
+          await helper.createFile('test-no-changes.txt', originalContent);
+
+          const q = query({
+            prompt:
+              'Read test-no-changes.txt and plan how you would modify it to add a header. Do not actually make any changes.',
+            options: {
+              ...SHARED_TEST_OPTIONS,
+              permissionMode: 'plan',
+              cwd: testDir,
+            },
+          });
+
+          try {
+            const messages: SDKMessage[] = [];
+            for await (const message of q) {
+              messages.push(message);
+            }
+
+            // Verify permission_mode is 'plan'
+            const systemMessage = findSystemMessage(messages, 'init');
+            expect(systemMessage!.permission_mode).toBe('plan');
+
+            // Verify the file was not modified
+            const fileContent = await helper.readFile('test-no-changes.txt');
+            expect(fileContent).toBe(originalContent);
+
+            // Verify no write tools were called
+            const allToolCalls = findToolCalls(messages);
+            const writeToolCalls = allToolCalls.filter((tc) =>
+              WRITE_TOOLS.includes(tc.toolUse.name),
+            );
+            expect(writeToolCalls.length).toBe(0);
           } finally {
             await q.close();
           }
@@ -1064,9 +1187,8 @@ describe('Permission Control (E2E)', () => {
       it(
         'should demonstrate different behaviors across all modes for write operations',
         async () => {
-          const modes: Array<'default' | 'plan' | 'auto-edit' | 'yolo'> = [
+          const modes: Array<'default' | 'auto-edit' | 'yolo'> = [
             'default',
-            'plan',
             'auto-edit',
             'yolo',
           ];

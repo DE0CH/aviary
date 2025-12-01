@@ -119,9 +119,8 @@ export interface SDKSystemMessage {
     status: string;
   }>;
   model?: string;
-  permissionMode?: string;
+  permission_mode?: string;
   slash_commands?: string[];
-  apiKeySource?: string;
   qwen_code_version?: string;
   output_style?: string;
   agents?: string[];
