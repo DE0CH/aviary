@@ -59,7 +59,7 @@ describe('CLI Path Utilities', () => {
         const result = parseExecutableSpec();
 
         expect(result).toEqual({
-          executablePath: '/usr/local/bin/qwen',
+          executablePath: path.resolve('/usr/local/bin/qwen'),
           isExplicitRuntime: false,
         });
 
@@ -167,7 +167,7 @@ describe('CLI Path Utilities', () => {
         const result = parseExecutableSpec('/absolute/path/to/qwen');
 
         expect(result).toEqual({
-          executablePath: '/absolute/path/to/qwen',
+          executablePath: path.resolve('/absolute/path/to/qwen'),
           isExplicitRuntime: false,
         });
       });
@@ -214,7 +214,7 @@ describe('CLI Path Utilities', () => {
         const result = prepareSpawnInfo('/usr/local/bin/qwen');
 
         expect(result).toEqual({
-          command: '/usr/local/bin/qwen',
+          command: path.resolve('/usr/local/bin/qwen'),
           args: [],
           type: 'native',
           originalInput: '/usr/local/bin/qwen',
@@ -304,8 +304,9 @@ describe('CLI Path Utilities', () => {
           throw new Error('Command not found');
         });
 
+        const resolvedPath = path.resolve('/path/to/index.ts');
         expect(() => prepareSpawnInfo('/path/to/index.ts')).toThrow(
-          "TypeScript file '/path/to/index.ts' requires 'tsx' runtime, but it's not available",
+          `TypeScript file '${resolvedPath}' requires 'tsx' runtime, but it's not available`,
         );
         expect(() => prepareSpawnInfo('/path/to/index.ts')).toThrow(
           'Please install tsx: npm install -g tsx',
@@ -368,7 +369,7 @@ describe('CLI Path Utilities', () => {
         const result = prepareSpawnInfo();
 
         expect(result).toEqual({
-          command: '/usr/local/bin/qwen',
+          command: path.resolve('/usr/local/bin/qwen'),
           args: [],
           type: 'native',
           originalInput: '',
@@ -388,7 +389,7 @@ describe('CLI Path Utilities', () => {
 
       const result = findNativeCliPath();
 
-      expect(result).toBe('/custom/path/to/qwen');
+      expect(result).toBe(path.resolve('/custom/path/to/qwen'));
 
       process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
     });
