@@ -10,7 +10,6 @@
 /* Import component styles */
 @import '../components/EmptyState.css';
 @import '../components/PlanDisplay.css';
-@import '../components/Timeline.css';
 @import '../components/toolcalls/shared/DiffDisplay.css';
 @import '../components/messages/AssistantMessage.css';
 

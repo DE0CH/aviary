@@ -6,7 +6,7 @@
  * Edit tool call component - specialized for file editing operations
  */
 
-import type React from 'react';
+import { useEffect, useCallback } from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { DiffDisplay } from './shared/DiffDisplay.js';
@@ -45,21 +45,45 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Group content by type
   const { errors, diffs } = groupContent(content);
 
-  const handleOpenDiff = (
-    path: string | undefined,
-    oldText: string | null | undefined,
-    newText: string | undefined,
-  ) => {
-    if (path) {
-      vscode.postMessage({
-        type: 'openDiff',
-        data: { path, oldText: oldText || '', newText: newText || '' },
-      });
-    }
-  };
+  const handleOpenDiff = useCallback(
+    (
+      path: string | undefined,
+      oldText: string | null | undefined,
+      newText: string | undefined,
+    ) => {
+      if (path) {
+        vscode.postMessage({
+          type: 'openDiff',
+          data: { path, oldText: oldText || '', newText: newText || '' },
+        });
+      }
+    },
+    [vscode],
+  );
 
   // Extract filename from path
   const getFileName = (path: string): string => path.split('/').pop() || path;
+
+  // Automatically trigger openDiff when diff content is detected (Claude Code style)
+  useEffect(() => {
+    // Only auto-open if there are diffs and we have the required data
+    if (diffs.length > 0) {
+      const firstDiff = diffs[0];
+      const path = firstDiff.path || (locations && locations[0]?.path) || '';
+
+      if (
+        path &&
+        firstDiff.oldText !== undefined &&
+        firstDiff.newText !== undefined
+      ) {
+        // Add a small delay to ensure the component is fully rendered
+        const timer = setTimeout(() => {
+          handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [diffs, locations, handleOpenDiff]);
 
   // Error case: show error
   if (errors.length > 0) {
@@ -98,14 +122,10 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     return (
       <div>
         <div
-          className="relative py-2 select-text cursor-pointer hover:bg-[var(--app-input-background)]"
+          className="relative py-2 select-text cursor-pointer hover:bg-[var(--app-input-background)] toolcall-container toolcall-status-success"
           onClick={openFirstDiff}
           title="Open diff in VS Code"
         >
-          {/* Center the bullet vertically like the shared container */}
-          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] leading-none text-[#74c991]">
-            ●
-          </span>
           {/* Keep content within overall width: pl-[30px] provides the bullet indent; */}
           {/* IMPORTANT: Always include min-w-0/max-w-full on inner wrappers to prevent overflow. */}
           <div className="toolcall-edit-content flex flex-col gap-1 pl-[30px] min-w-0 max-w-full">

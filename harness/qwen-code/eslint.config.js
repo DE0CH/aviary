@@ -74,6 +74,8 @@ export default tseslint.config(
       },
     },
     rules: {
+      // We use TypeScript for React components; prop-types are unnecessary
+      'react/prop-types': 'off',
       // General Best Practice Rules (subset adapted for flat config)
       '@typescript-eslint/array-type': ['error', { default: 'array-simple' }],
       'arrow-body-style': ['error', 'as-needed'],

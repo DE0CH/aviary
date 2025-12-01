@@ -9,6 +9,7 @@
 
 import type React from 'react';
 import { FileLink } from '../../ui/FileLink.js';
+import './LayoutComponents.css';
 
 /**
  * Props for ToolCallContainer - Claude Code style layout
@@ -26,28 +27,12 @@ interface ToolCallContainerProps {
   labelSuffix?: React.ReactNode;
 }
 
-/**
- * Get bullet point color classes based on status
- */
-const getBulletColorClass = (
-  status: 'success' | 'error' | 'warning' | 'loading' | 'default',
-): string => {
-  switch (status) {
-    case 'success':
-      return 'text-[#74c991]';
-    case 'error':
-      return 'text-[#c74e39]';
-    case 'warning':
-      return 'text-[#e1c08d]';
-    case 'loading':
-      return 'text-[var(--app-secondary-foreground)] animate-pulse';
-    default:
-      return 'text-[var(--app-secondary-foreground)]';
-  }
-};
+// NOTE: We previously computed a bullet color class in JS, but the current
+// implementation uses CSS classes (e.g. `.toolcall-status-success`) with
+// pseudo-elements. Remove the unused helper to satisfy ESLint.
 
 /**
- * Main container with Claude Code style bullet point
+ * Main container with Claude Code style bullet point and timeline
  */
 export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   label,
@@ -56,19 +41,12 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   toolCallId: _toolCallId,
   labelSuffix,
 }) => (
-  <div className="relative pl-[30px] py-2 select-text toolcall-container">
+  <div
+    className={`relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+  >
+    {/* Timeline connector line using ::after pseudo-element */}
     <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
       <div className="flex items-center gap-2 relative min-w-0">
-        {/* Status icon (bullet), vertically centered with header row */}
-        <span
-          aria-hidden
-          className={`absolute -left-[20px] top-1/2 -translate-y-1/2 text-[10px] leading-none ${getBulletColorClass(
-            status,
-          )}`}
-        >
-          ●
-        </span>
-
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>

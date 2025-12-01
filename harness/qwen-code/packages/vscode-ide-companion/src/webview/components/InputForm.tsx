@@ -123,20 +123,9 @@ export const InputForm: React.FC<InputFormProps> = ({
       style={{ backgroundColor: 'var(--app-primary-background)' }}
     >
       <div className="block">
-        <form
-          className="relative flex flex-col rounded-large border border-[var(--app-input-border)] shadow-sm transition-colors duration-200 focus-within:border-[var(--app-input-highlight)] focus-within:[box-shadow:0_1px_2px_color-mix(in_srgb,var(--app-input-highlight),transparent_80%)]"
-          style={{
-            backgroundColor:
-              'var(--app-input-secondary-background, var(--app-input-background))',
-            color: 'var(--app-input-foreground)',
-          }}
-          onSubmit={onSubmit}
-        >
+        <form className="composer-form" onSubmit={onSubmit}>
           {/* Inner background layer */}
-          <div
-            className="absolute inset-0 rounded-large z-0"
-            style={{ backgroundColor: 'var(--app-input-background)' }}
-          />
+          <div className="composer-overlay" />
 
           {/* Banner area */}
           <div className="input-banner" />
@@ -161,11 +150,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             <div
               ref={inputFieldRef}
               contentEditable="plaintext-only"
-              className="c flex-1 self-stretch p-2.5 px-3.5 outline-none font-inherit leading-relaxed overflow-y-auto relative select-text min-h-[1.5em] max-h-[200px] bg-transparent border-none rounded-none overflow-x-hidden break-words whitespace-pre-wrap empty:before:content-[attr(data-placeholder)] empty:before:absolute empty:before:pointer-events-none disabled:text-gray-400 disabled:cursor-not-allowed"
-              style={{
-                color: 'var(--app-input-foreground)',
-                fontSize: 'var(--vscode-chat-font-size, 13px)',
-              }}
+              className="composer-input"
               role="textbox"
               aria-label="Message input"
               aria-multiline="true"
@@ -181,41 +166,31 @@ export const InputForm: React.FC<InputFormProps> = ({
             />
           </div>
 
-          {/* Actions row */}
-          <div
-            className="flex items-center p-1.5 gap-1.5 min-w-0 z-[1]"
-            style={{
-              color: 'var(--app-secondary-foreground)',
-              borderTop: '0.5px solid var(--app-input-border)',
-            }}
-          >
+          {/* Actions row (compact, Claude-style) */}
+          <div className="composer-actions">
             {/* Edit mode button */}
             <button
               type="button"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] min-w-0 flex-shrink overflow-hidden [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0"
-              style={{ color: 'var(--app-primary-foreground)' }}
+              className="btn-text-compact btn-text-compact--primary"
               title={editModeInfo.title}
               onClick={onToggleEditMode}
             >
               {editModeInfo.icon}
               {/* Let the label truncate with ellipsis; hide on very small screens */}
-              <span className="min-w-0 truncate hidden sm:inline">
-                {editModeInfo.text}
-              </span>
+              <span className="hidden sm:inline">{editModeInfo.text}</span>
             </button>
 
             {/* Active file indicator */}
             {activeFileName && (
               <button
                 type="button"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 h-8 bg-transparent border border-transparent rounded-small cursor-pointer text-xs transition-colors duration-150 hover:bg-[var(--app-ghost-button-hover-background)] [&>svg]:w-4 [&>svg]:h-4 [&>svg]:flex-shrink-0 max-w-[200px] flex-shrink min-w-0 overflow-hidden"
-                style={{ color: 'var(--app-primary-foreground)' }}
+                className="btn-text-compact btn-text-compact--primary"
                 title={`Showing Qwen Code your current file selection: ${activeFileName}${activeSelection ? `#${activeSelection.startLine}-${activeSelection.endLine}` : ''}`}
                 onClick={onFocusActiveEditor}
               >
                 <CodeBracketsIcon />
                 {/* Truncate file path/selection; hide label on very small screens */}
-                <span className="min-w-0 truncate hidden sm:inline">
+                <span className="hidden sm:inline">
                   {activeFileName}
                   {activeSelection &&
                     ` #${activeSelection.startLine}${activeSelection.startLine !== activeSelection.endLine ? `-${activeSelection.endLine}` : ''}`}
@@ -225,7 +200,7 @@ export const InputForm: React.FC<InputFormProps> = ({
 
             {/* Divider */}
             <div
-              className="w-px h-6 mx-0.5 flex-shrink-0"
+              className="w-px h-[26px] mx-0.5 flex-shrink-0"
               style={{
                 backgroundColor: 'var(--app-transparent-inner-border)',
               }}
@@ -237,19 +212,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Thinking button */}
             <button
               type="button"
-              className={`flex items-center justify-center w-8 h-8 p-0 bg-transparent border border-transparent rounded-small cursor-pointer transition-all duration-150 flex-shrink-0 hover:bg-[var(--app-ghost-button-hover-background)] [&>svg]:w-4 [&>svg]:h-4 ${
-                thinkingEnabled
-                  ? 'bg-qwen-clay-orange text-qwen-ivory [&>svg]:stroke-qwen-ivory [&>svg]:fill-qwen-ivory'
-                  : ''
-              }`}
-              style={{
-                color: thinkingEnabled
-                  ? 'var(--app-qwen-ivory)'
-                  : 'var(--app-secondary-foreground)',
-                backgroundColor: thinkingEnabled
-                  ? 'var(--app-qwen-clay-button-orange)'
-                  : undefined,
-              }}
+              className={`btn-icon-compact ${thinkingEnabled ? 'btn-icon-compact--active' : ''}`}
               title={thinkingEnabled ? 'Thinking on' : 'Thinking off'}
               onClick={onToggleThinking}
             >
@@ -259,8 +222,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Command button */}
             <button
               type="button"
-              className="flex items-center justify-center w-8 h-8 p-0 bg-transparent border border-transparent rounded-small cursor-pointer transition-all duration-150 flex-shrink-0 hover:bg-[var(--app-ghost-button-hover-background)] hover:text-[var(--app-primary-foreground)] [&>svg]:w-4 [&>svg]:h-4"
-              style={{ color: 'var(--app-secondary-foreground)' }}
+              className="btn-icon-compact hover:text-[var(--app-primary-foreground)]"
               title="Show command menu (/)"
               onClick={onShowCommandMenu}
             >
@@ -270,8 +232,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Attach button */}
             <button
               type="button"
-              className="flex items-center justify-center w-8 h-8 p-0 bg-transparent border border-transparent rounded-small cursor-pointer transition-all duration-150 flex-shrink-0 hover:bg-[var(--app-ghost-button-hover-background)] hover:text-[var(--app-primary-foreground)] [&>svg]:w-4 [&>svg]:h-4"
-              style={{ color: 'var(--app-secondary-foreground)' }}
+              className="btn-icon-compact hover:text-[var(--app-primary-foreground)]"
               title="Attach context (Cmd/Ctrl + /)"
               onClick={onAttachContext}
             >
@@ -281,11 +242,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Send button */}
             <button
               type="submit"
-              className="flex items-center justify-center w-8 h-8 p-0 border border-transparent rounded-small cursor-pointer transition-all duration-150 ml-auto flex-shrink-0 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed [&>svg]:w-5 [&>svg]:h-5"
-              style={{
-                backgroundColor: 'var(--app-qwen-clay-button-orange)',
-                color: 'var(--app-qwen-ivory)',
-              }}
+              className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
               disabled={isStreaming || !inputText.trim()}
             >
               <ArrowUpIcon />

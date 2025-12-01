@@ -18,27 +18,22 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onLoadSessions,
   onNewSession,
 }) => (
-  <div
-    className="chat-header flex items-center select-none py-1.5 px-2.5 w-full"
-    style={{
-      backgroundColor: 'var(--app-header-background)',
-    }}
-  >
+  <div className="chat-header flex items-center select-none w-full border-b border-[var(--app-primary-border-color)] bg-[var(--app-header-background)] py-1.5 px-2">
     <button
-      className="btn-ghost btn-md px-2 flex items-center outline-none font-medium max-w-[70%] min-w-0 overflow-hidden rounded hover:bg-[var(--app-ghost-button-hover-background)] h-6 leading-6"
+      className="flex items-center gap-1.5 py-0.5 px-2 bg-transparent border-none rounded cursor-pointer outline-none min-w-0 max-w-[300px] overflow-hidden text-[var(--vscode-chat-font-size,13px)] font-[var(--vscode-chat-font-family)] hover:bg-[var(--app-ghost-button-hover-background)] focus:bg-[var(--app-ghost-button-hover-background)]"
       onClick={onLoadSessions}
       title="Past conversations"
     >
-      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0 mr-1">
+      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
         {currentSessionTitle}
       </span>
-      <ChevronDownIcon className="w-4 h-4 flex-shrink-0 ml-1" />
+      <ChevronDownIcon className="w-4 h-4 flex-shrink-0" />
     </button>
 
-    <div className="flex-1 min-w-2"></div>
+    <div className="flex-1 min-w-1"></div>
 
     <button
-      className="btn-ghost btn-sm flex items-center justify-center outline-none rounded hover:bg-[var(--app-ghost-button-hover-background)] p-1 leading-6"
+      className="flex items-center justify-center p-1.5 bg-transparent border-none rounded cursor-pointer outline-none hover:bg-[var(--app-ghost-button-hover-background)]"
       onClick={onNewSession}
       title="New Session"
     >
