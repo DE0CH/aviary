@@ -81,15 +81,13 @@ await esbuild.build({
   treeShaking: true,
 });
 
-const filesToCopy = ['README.md', 'LICENSE'];
-for (const file of filesToCopy) {
-  const sourcePath = join(rootDir, '..', '..', file);
-  const targetPath = join(rootDir, 'dist', file);
-  if (existsSync(sourcePath)) {
-    try {
-      cpSync(sourcePath, targetPath);
-    } catch (error) {
-      console.warn(`Could not copy ${file}:`, error.message);
-    }
+// Copy LICENSE from root directory to dist
+const licenseSource = join(rootDir, '..', '..', 'LICENSE');
+const licenseTarget = join(rootDir, 'dist', 'LICENSE');
+if (existsSync(licenseSource)) {
+  try {
+    cpSync(licenseSource, licenseTarget);
+  } catch (error) {
+    console.warn('Could not copy LICENSE:', error.message);
   }
 }
