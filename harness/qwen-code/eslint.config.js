@@ -238,7 +238,7 @@ export default tseslint.config(
   prettierConfig,
   // extra settings for scripts that we run directly with node
   {
-    files: ['./integration-tests/**/*.js'],
+    files: ['./integration-tests/**/*.{js,ts,tsx}'],
     languageOptions: {
       globals: {
         ...globals.node,

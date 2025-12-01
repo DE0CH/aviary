@@ -4,12 +4,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { query } from '../../src/index.js';
 import {
+  query,
   isSDKAssistantMessage,
   isSDKSystemMessage,
   type SDKUserMessage,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
 const SHARED_TEST_OPTIONS = createSharedTestOptions();
@@ -265,7 +265,7 @@ describe('System Control (E2E)', () => {
 
         // First model change
         await q.setModel('qwen3-turbo');
-        resumeResolve1?.();
+        resumeResolve1!();
 
         // Wait for second response
         await Promise.race([
@@ -277,7 +277,7 @@ describe('System Control (E2E)', () => {
 
         // Second model change
         await q.setModel('qwen3-vl-plus');
-        resumeResolve2?.();
+        resumeResolve2!();
 
         // Wait for third response
         await Promise.race([

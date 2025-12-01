@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { query } from '../../src/index.js';
 import {
+  query,
   isSDKAssistantMessage,
   isSDKSystemMessage,
   isSDKResultMessage,
@@ -13,7 +13,7 @@ import {
   type SDKMessage,
   type SDKSystemMessage,
   type SDKAssistantMessage,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import {
   SDKTestHelper,
   extractText,

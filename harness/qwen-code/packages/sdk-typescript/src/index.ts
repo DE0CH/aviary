@@ -18,6 +18,14 @@ export type {
   SDKResultMessage,
   SDKPartialAssistantMessage,
   SDKMessage,
+  ControlMessage,
+  CLIControlRequest,
+  CLIControlResponse,
+  ControlCancelRequest,
+  SubagentConfig,
+  SubagentLevel,
+  ModelConfig,
+  RunConfig,
 } from './types/protocol.js';
 
 export {
@@ -26,6 +34,9 @@ export {
   isSDKSystemMessage,
   isSDKResultMessage,
   isSDKPartialAssistantMessage,
+  isControlRequest,
+  isControlResponse,
+  isControlCancel,
 } from './types/protocol.js';
 
 export type {

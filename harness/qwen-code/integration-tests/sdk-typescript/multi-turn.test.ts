@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { query } from '../../src/index.js';
 import {
+  query,
   isSDKUserMessage,
   isSDKAssistantMessage,
   isSDKSystemMessage,
@@ -21,7 +21,7 @@ import {
   type SDKMessage,
   type ControlMessage,
   type ToolUseBlock,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
 const SHARED_TEST_OPTIONS = createSharedTestOptions();

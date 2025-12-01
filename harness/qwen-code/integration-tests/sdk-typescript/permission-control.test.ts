@@ -13,8 +13,8 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import { query } from '../../src/index.js';
 import {
+  query,
   isSDKAssistantMessage,
   isSDKResultMessage,
   isSDKUserMessage,
@@ -22,7 +22,7 @@ import {
   type SDKUserMessage,
   type ToolUseBlock,
   type ContentBlock,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import {
   SDKTestHelper,
   createSharedTestOptions,

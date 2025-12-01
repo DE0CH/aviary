@@ -13,7 +13,7 @@ import {
   isSDKAssistantMessage,
   type TextBlock,
   type ContentBlock,
-} from '../../src/index.js';
+} from '@qwen-code/sdk-typescript';
 import { SDKTestHelper, createSharedTestOptions } from './test-helper.js';
 
 const SHARED_TEST_OPTIONS = createSharedTestOptions();

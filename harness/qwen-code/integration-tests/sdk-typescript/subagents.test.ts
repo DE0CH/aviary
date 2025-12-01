@@ -10,14 +10,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { query } from '../../src/index.js';
 import {
+  query,
   isSDKAssistantMessage,
   type SDKMessage,
   type SubagentConfig,
   type ContentBlock,
   type ToolUseBlock,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import {
   SDKTestHelper,
   extractText,

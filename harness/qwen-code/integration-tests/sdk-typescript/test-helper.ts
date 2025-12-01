@@ -21,12 +21,12 @@ import type {
   ContentBlock,
   TextBlock,
   ToolUseBlock,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 import {
   isSDKAssistantMessage,
   isSDKSystemMessage,
   isSDKResultMessage,
-} from '../../src/types/protocol.js';
+} from '@qwen-code/sdk-typescript';
 
 // ============================================================================
 // Core Test Helper Class
