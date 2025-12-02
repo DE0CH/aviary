@@ -161,17 +161,24 @@ export class PanelManager {
 
   /**
    * Auto-lock editor group (only called when creating a new Panel)
-   * Note: We no longer auto-lock Qwen Code group to allow users to create multiple Qwen Code tabs
+   * After creating/revealing the WebviewPanel, lock the active editor group so
+   * the group stays dedicated (users can still unlock manually). We still
+   * temporarily unlock before creation to allow adding tabs to an existing
+   * group; this method restores the locked state afterwards.
    */
   async autoLockEditorGroup(): Promise<void> {
     if (!this.panel) {
       return;
     }
 
-    // We don't auto-lock anymore to allow multiple Qwen Code tabs in the same group
-    console.log(
-      '[PanelManager] Skipping auto-lock to allow multiple Qwen Code tabs',
-    );
+    try {
+      // The newly created panel is focused (preserveFocus: false), so this
+      // locks the correct, active editor group.
+      await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
+      console.log('[PanelManager] Group locked after panel creation');
+    } catch (error) {
+      console.warn('[PanelManager] Failed to lock editor group:', error);
+    }
   }
 
   /**

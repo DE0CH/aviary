@@ -10,6 +10,7 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { ToolCallContainer } from './shared/LayoutComponents.js';
 import { safeTitle, groupContent } from './shared/utils.js';
+import './ExecuteToolCall.css';
 
 /**
  * Specialized component for Execute/Bash tool calls
@@ -35,25 +36,30 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   if (errors.length > 0) {
     return (
       <ToolCallContainer label="Bash" status="error" toolCallId={toolCallId}>
+        {/* Branch connector summary (Claude-like) */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
-        <div className="execute-toolcall-error-card bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3 max-w-full overflow-x-auto">
-          <div className="grid grid-cols-[80px_1fr] gap-3">
-            <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
-              IN
+        {/* Error card - semantic DOM + Tailwind styles */}
+        <div className="execute-toolcall-card">
+          <div className="execute-toolcall-content">
+            {/* IN row */}
+            <div className="execute-toolcall-row">
+              <div className="execute-toolcall-label">IN</div>
+              <div className="execute-toolcall-row-content">
+                <pre className="execute-toolcall-pre">{inputCommand}</pre>
+              </div>
             </div>
-            <div className="text-[var(--app-primary-foreground)] font-mono text-[13px] break-words">
-              {inputCommand}
-            </div>
-          </div>
-          <div className="grid grid-cols-[80px_1fr] gap-3">
-            <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
-              Error
-            </div>
-            <div className="text-[#c74e39] font-mono text-[13px] whitespace-pre-wrap break-words">
-              {errors.join('\n')}
+
+            {/* ERROR row */}
+            <div className="execute-toolcall-row">
+              <div className="execute-toolcall-label">Error</div>
+              <div className="execute-toolcall-row-content">
+                <pre className="execute-toolcall-pre execute-toolcall-error-content">
+                  {errors.join('\n')}
+                </pre>
+              </div>
             </div>
           </div>
         </div>
@@ -69,25 +75,30 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
     return (
       <ToolCallContainer label="Bash" status="success" toolCallId={toolCallId}>
+        {/* Branch connector summary (Claude-like) */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
-        <div className="execute-toolcall-output-card bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded-md p-3 flex flex-col gap-3 max-w-full overflow-x-auto">
-          <div className="grid grid-cols-[80px_1fr] gap-3">
-            <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
-              IN
+        {/* Output card - semantic DOM + Tailwind styles */}
+        <div className="execute-toolcall-card">
+          <div className="execute-toolcall-content">
+            {/* IN row */}
+            <div className="execute-toolcall-row">
+              <div className="execute-toolcall-label">IN</div>
+              <div className="execute-toolcall-row-content">
+                <pre className="execute-toolcall-pre">{inputCommand}</pre>
+              </div>
             </div>
-            <div className="text-[var(--app-primary-foreground)] font-mono text-[13px] break-words">
-              {inputCommand}
-            </div>
-          </div>
-          <div className="grid grid-cols-[80px_1fr] gap-3">
-            <div className="text-xs text-[var(--app-secondary-foreground)] font-medium pt-[2px]">
-              OUT
-            </div>
-            <div className="text-[var(--app-primary-foreground)] font-mono text-[13px] whitespace-pre-wrap opacity-90 break-words">
-              {truncatedOutput}
+
+            {/* OUT row */}
+            <div className="execute-toolcall-row">
+              <div className="execute-toolcall-label">OUT</div>
+              <div className="execute-toolcall-row-content">
+                <div className="execute-toolcall-output-subtle">
+                  <pre className="execute-toolcall-pre">{truncatedOutput}</pre>
+                </div>
+              </div>
             </div>
           </div>
         </div>

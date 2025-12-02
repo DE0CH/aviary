@@ -23,7 +23,6 @@
   bottom: 0;
   width: 1px;
   background-color: var(--app-primary-border-color);
-  z-index: 1;
 }
 
 /* First item connector starts lower */
