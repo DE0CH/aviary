@@ -155,14 +155,7 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
 
   return (
     <div className="relative py-2 toolcall-container">
-      <div className="flex items-center gap-2 mb-1 relative">
-        {/* Pulsing bullet dot (Claude-style), vertically centered with header row */}
-        <span
-          aria-hidden
-          className="absolute -left-[20px] top-1/2 -translate-y-1/2 text-[10px] leading-none text-[#e1c08d] animate-[pulse_1.5s_ease-in-out_infinite]"
-        >
-          ●
-        </span>
+      <div className="flex items-center gap-2 mb-1 relative before:content-['\25cf'] before:absolute before:left-[-22px] before:top-1/2 before:-translate-y-1/2 before:text-[10px] before:leading-none before:text-[#e1c08d] before:animate-pulse-slow">
         <span className={`text-xs font-medium ${kindColorClass}`}>
           {kindLabel}
         </span>

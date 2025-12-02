@@ -58,32 +58,3 @@
     opacity: 0.5;
   }
 }
-
-/* Timeline connector line using ::after pseudo-element */
-/* Default: full height connector for middle items */
-.assistant-message-container::after {
-  content: "";
-  position: absolute;
-  left: 12px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background-color: var(--app-primary-border-color);
-  opacity: 0.4;
-  z-index: 0;
-}
-
-/* First item: connector starts from bullet point position */
-.assistant-message-container:first-child::after {
-  top: 12px; /* Start from around the bullet point position (8px padding + 4px offset) */
-}
-
-/* Last item: connector ends at bullet point position */
-.assistant-message-container:last-child::after {
-  bottom: 12px; /* End at around the bullet point position */
-}
-
-/* First and last are the same item (single item): no connector */
-.assistant-message-container:first-child:last-child::after {
-  content: none;
-}

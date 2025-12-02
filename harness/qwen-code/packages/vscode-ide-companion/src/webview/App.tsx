@@ -477,7 +477,7 @@ export const App: React.FC = () => {
 
       <div
         ref={messagesContainerRef}
-        className="chat-messages flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:mb-[10px] [&>.message-item]:px-0 [&>.message-item]:py-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        className="chat-messages flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb:hover]:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:pb-[10px] [&>.message-item]:px-0 [&>.message-item]:py-0 [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
         style={{ backgroundColor: 'var(--app-primary-background)' }}
       >
         {!hasContent ? (

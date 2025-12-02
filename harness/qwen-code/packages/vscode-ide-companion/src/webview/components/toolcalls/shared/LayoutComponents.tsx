@@ -10,6 +10,7 @@
 import type React from 'react';
 import { FileLink } from '../../ui/FileLink.js';
 import './LayoutComponents.css';
+import './SimpleTimeline.css';
 
 /**
  * Props for ToolCallContainer - Claude Code style layout
@@ -46,7 +47,7 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   >
     {/* Timeline connector line using ::after pseudo-element */}
     <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
-      <div className="flex items-center gap-2 relative min-w-0">
+      <div className="flex items-center gap-2 relative min-w-0 toolcall-header">
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>

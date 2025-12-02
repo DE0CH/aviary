@@ -29,9 +29,15 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(4px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        // Pulse animation for in-progress tool calls
+        'pulse-slow': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.5' },
+        },
       },
       animation: {
         'completion-menu-enter': 'completion-menu-enter 150ms ease-out both',
+        'pulse-slow': 'pulse-slow 1.5s ease-in-out infinite',
       },
       colors: {
         qwen: {

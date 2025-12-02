@@ -12,6 +12,8 @@
 @import '../components/PlanDisplay.css';
 @import '../components/toolcalls/shared/DiffDisplay.css';
 @import '../components/messages/AssistantMessage.css';
+@import '../components/messages/SimpleTimeline.css';
+@import '../components/toolcalls/shared/SimpleTimeline.css';
 
 
 /* ===========================
