@@ -280,31 +280,31 @@ export class SessionMessageHandler extends BaseMessageHandler {
       return;
     }
 
-    // // Validate current session before sending message
-    // const isSessionValid = await this.agentManager.validateCurrentSession();
-    // if (!isSessionValid) {
-    //   console.warn('[SessionMessageHandler] Current session is not valid');
+    // Validate current session before sending message
+    const isSessionValid = await this.agentManager.checkSessionValidity();
+    if (!isSessionValid) {
+      console.warn('[SessionMessageHandler] Current session is not valid');
 
-    //   // Show non-modal notification with Login button
-    //   const result = await vscode.window.showWarningMessage(
-    //     'Your session has expired. Please login again to continue using Qwen Code.',
-    //     'Login Now',
-    //   );
+      // Show non-modal notification with Login button
+      const result = await vscode.window.showWarningMessage(
+        'Your session has expired. Please login again to continue using Qwen Code.',
+        'Login Now',
+      );
 
-    //   if (result === 'Login Now') {
-    //     // Use login handler directly
-    //     if (this.loginHandler) {
-    //       await this.loginHandler();
-    //     } else {
-    //       // Fallback to command
-    //       vscode.window.showInformationMessage(
-    //         'Please wait while we connect to Qwen Code...',
-    //       );
-    //       await vscode.commands.executeCommand('qwenCode.login');
-    //     }
-    //   }
-    //   return;
-    // }
+      if (result === 'Login Now') {
+        // Use login handler directly
+        if (this.loginHandler) {
+          await this.loginHandler();
+        } else {
+          // Fallback to command
+          vscode.window.showInformationMessage(
+            'Please wait while we connect to Qwen Code...',
+          );
+          await vscode.commands.executeCommand('qwenCode.login');
+        }
+      }
+      return;
+    }
 
     // Send to agent
     try {
@@ -378,12 +378,13 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('Session not found') ||
         errorMsg.includes('No active ACP session') ||
         errorMsg.includes('Authentication required') ||
-        errorMsg.includes('(code: -32000)')
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token')
       ) {
-        // Clear auth cache since session is invalid
-        // Note: We would need access to authStateManager for this, but for now we'll just show login prompt
+        // Show a more user-friendly error message for expired sessions
         const result = await vscode.window.showWarningMessage(
-          'Your login has expired. Please login again to continue using Qwen Code.',
+          'Your login session has expired or is invalid. Please login again to continue using Qwen Code.',
           'Login Now',
         );
 
@@ -394,6 +395,12 @@ export class SessionMessageHandler extends BaseMessageHandler {
             await vscode.commands.executeCommand('qwenCode.login');
           }
         }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
       } else {
         vscode.window.showErrorMessage(`Error sending message: ${error}`);
         this.sendToWebView({
@@ -459,10 +466,41 @@ export class SessionMessageHandler extends BaseMessageHandler {
         '[SessionMessageHandler] Failed to create new session:',
         error,
       );
-      this.sendToWebView({
-        type: 'error',
-        data: { message: `Failed to create new session: ${error}` },
-      });
+
+      const errorMsg = String(error);
+      // Check for authentication/session expiration errors
+      if (
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Show a more user-friendly error message for expired sessions
+        const result = await vscode.window.showWarningMessage(
+          'Your login session has expired or is invalid. Please login again to create a new session.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
+      } else {
+        this.sendToWebView({
+          type: 'error',
+          data: { message: `Failed to create new session: ${error}` },
+        });
+      }
     }
   }
 
@@ -562,10 +600,42 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'qwenSessionSwitched',
           data: { sessionId, messages, session: sessionDetails },
         });
-      } catch (_loadError) {
+      } catch (loadError) {
         console.warn(
-          '[SessionMessageHandler] session/load failed, using fallback',
+          '[SessionMessageHandler] session/load failed, using fallback:',
+          loadError,
         );
+
+        const errorMsg = String(loadError);
+        // Check for authentication/session expiration errors
+        if (
+          errorMsg.includes('Authentication required') ||
+          errorMsg.includes('(code: -32000)') ||
+          errorMsg.includes('Unauthorized') ||
+          errorMsg.includes('Invalid token') ||
+          errorMsg.includes('No active ACP session')
+        ) {
+          // Show a more user-friendly error message for expired sessions
+          const result = await vscode.window.showWarningMessage(
+            'Your login session has expired or is invalid. Please login again to switch sessions.',
+            'Login Now',
+          );
+
+          if (result === 'Login Now') {
+            if (this.loginHandler) {
+              await this.loginHandler();
+            } else {
+              await vscode.commands.executeCommand('qwenCode.login');
+            }
+          }
+
+          // Send a specific error to the webview for better UI handling
+          this.sendToWebView({
+            type: 'sessionExpired',
+            data: { message: 'Session expired. Please login again.' },
+          });
+          return;
+        }
 
         // Fallback: create new session
         const messages = await this.agentManager.getSessionMessages(sessionId);
@@ -591,6 +661,38 @@ export class SessionMessageHandler extends BaseMessageHandler {
               '[SessionMessageHandler] Failed to create session:',
               createError,
             );
+
+            const createErrorMsg = String(createError);
+            // Check for authentication/session expiration errors in session creation
+            if (
+              createErrorMsg.includes('Authentication required') ||
+              createErrorMsg.includes('(code: -32000)') ||
+              createErrorMsg.includes('Unauthorized') ||
+              createErrorMsg.includes('Invalid token') ||
+              createErrorMsg.includes('No active ACP session')
+            ) {
+              // Show a more user-friendly error message for expired sessions
+              const result = await vscode.window.showWarningMessage(
+                'Your login session has expired or is invalid. Please login again to switch sessions.',
+                'Login Now',
+              );
+
+              if (result === 'Login Now') {
+                if (this.loginHandler) {
+                  await this.loginHandler();
+                } else {
+                  await vscode.commands.executeCommand('qwenCode.login');
+                }
+              }
+
+              // Send a specific error to the webview for better UI handling
+              this.sendToWebView({
+                type: 'sessionExpired',
+                data: { message: 'Session expired. Please login again.' },
+              });
+              return;
+            }
+
             throw createError;
           }
         } else {
@@ -607,10 +709,41 @@ export class SessionMessageHandler extends BaseMessageHandler {
       }
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to switch session:', error);
-      this.sendToWebView({
-        type: 'error',
-        data: { message: `Failed to switch session: ${error}` },
-      });
+
+      const errorMsg = String(error);
+      // Check for authentication/session expiration errors
+      if (
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Show a more user-friendly error message for expired sessions
+        const result = await vscode.window.showWarningMessage(
+          'Your login session has expired or is invalid. Please login again to switch sessions.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
+      } else {
+        this.sendToWebView({
+          type: 'error',
+          data: { message: `Failed to switch session: ${error}` },
+        });
+      }
     }
   }
 
@@ -626,10 +759,41 @@ export class SessionMessageHandler extends BaseMessageHandler {
       });
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to get sessions:', error);
-      this.sendToWebView({
-        type: 'error',
-        data: { message: `Failed to get sessions: ${error}` },
-      });
+
+      const errorMsg = String(error);
+      // Check for authentication/session expiration errors
+      if (
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Show a more user-friendly error message for expired sessions
+        const result = await vscode.window.showWarningMessage(
+          'Your login session has expired or is invalid. Please login again to view sessions.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
+      } else {
+        this.sendToWebView({
+          type: 'error',
+          data: { message: `Failed to get sessions: ${error}` },
+        });
+      }
     }
   }
 
@@ -658,7 +822,38 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'saveSessionResponse',
           data: response,
         });
-      } catch (_acpError) {
+      } catch (acpError) {
+        const errorMsg = String(acpError);
+        // Check for authentication/session expiration errors
+        if (
+          errorMsg.includes('Authentication required') ||
+          errorMsg.includes('(code: -32000)') ||
+          errorMsg.includes('Unauthorized') ||
+          errorMsg.includes('Invalid token') ||
+          errorMsg.includes('No active ACP session')
+        ) {
+          // Show a more user-friendly error message for expired sessions
+          const result = await vscode.window.showWarningMessage(
+            'Your login session has expired or is invalid. Please login again to save sessions.',
+            'Login Now',
+          );
+
+          if (result === 'Login Now') {
+            if (this.loginHandler) {
+              await this.loginHandler();
+            } else {
+              await vscode.commands.executeCommand('qwenCode.login');
+            }
+          }
+
+          // Send a specific error to the webview for better UI handling
+          this.sendToWebView({
+            type: 'sessionExpired',
+            data: { message: 'Session expired. Please login again.' },
+          });
+          return;
+        }
+
         // Fallback to direct save
         const response = await this.agentManager.saveSessionDirect(
           messages,
@@ -674,13 +869,44 @@ export class SessionMessageHandler extends BaseMessageHandler {
       await this.handleGetQwenSessions();
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to save session:', error);
-      this.sendToWebView({
-        type: 'saveSessionResponse',
-        data: {
-          success: false,
-          message: `Failed to save session: ${error}`,
-        },
-      });
+
+      const errorMsg = String(error);
+      // Check for authentication/session expiration errors
+      if (
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Show a more user-friendly error message for expired sessions
+        const result = await vscode.window.showWarningMessage(
+          'Your login session has expired or is invalid. Please login again to save sessions.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
+      } else {
+        this.sendToWebView({
+          type: 'saveSessionResponse',
+          data: {
+            success: false,
+            message: `Failed to save session: ${error}`,
+          },
+        });
+      }
     }
   }
 
@@ -732,7 +958,38 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'qwenSessionSwitched',
           data: { sessionId, messages },
         });
-      } catch (_acpError) {
+      } catch (acpError) {
+        const errorMsg = String(acpError);
+        // Check for authentication/session expiration errors
+        if (
+          errorMsg.includes('Authentication required') ||
+          errorMsg.includes('(code: -32000)') ||
+          errorMsg.includes('Unauthorized') ||
+          errorMsg.includes('Invalid token') ||
+          errorMsg.includes('No active ACP session')
+        ) {
+          // Show a more user-friendly error message for expired sessions
+          const result = await vscode.window.showWarningMessage(
+            'Your login session has expired or is invalid. Please login again to resume sessions.',
+            'Login Now',
+          );
+
+          if (result === 'Login Now') {
+            if (this.loginHandler) {
+              await this.loginHandler();
+            } else {
+              await vscode.commands.executeCommand('qwenCode.login');
+            }
+          }
+
+          // Send a specific error to the webview for better UI handling
+          this.sendToWebView({
+            type: 'sessionExpired',
+            data: { message: 'Session expired. Please login again.' },
+          });
+          return;
+        }
+
         // Fallback to direct load
         const messages = await this.agentManager.loadSessionDirect(sessionId);
 
@@ -751,10 +1008,41 @@ export class SessionMessageHandler extends BaseMessageHandler {
       await this.handleGetQwenSessions();
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to resume session:', error);
-      this.sendToWebView({
-        type: 'error',
-        data: { message: `Failed to resume session: ${error}` },
-      });
+
+      const errorMsg = String(error);
+      // Check for authentication/session expiration errors
+      if (
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('Unauthorized') ||
+        errorMsg.includes('Invalid token') ||
+        errorMsg.includes('No active ACP session')
+      ) {
+        // Show a more user-friendly error message for expired sessions
+        const result = await vscode.window.showWarningMessage(
+          'Your login session has expired or is invalid. Please login again to resume sessions.',
+          'Login Now',
+        );
+
+        if (result === 'Login Now') {
+          if (this.loginHandler) {
+            await this.loginHandler();
+          } else {
+            await vscode.commands.executeCommand('qwenCode.login');
+          }
+        }
+
+        // Send a specific error to the webview for better UI handling
+        this.sendToWebView({
+          type: 'sessionExpired',
+          data: { message: 'Session expired. Please login again.' },
+        });
+      } else {
+        this.sendToWebView({
+          type: 'error',
+          data: { message: `Failed to resume session: ${error}` },
+        });
+      }
     }
   }
 }

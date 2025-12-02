@@ -18,7 +18,7 @@ import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
 } from '../constants/acpTypes.js';
-import { CLIENT_METHODS } from './schema.js';
+import { CLIENT_METHODS } from '../constants/acpSchema.js';
 import type {
   PendingRequest,
   AcpConnectionCallbacks,

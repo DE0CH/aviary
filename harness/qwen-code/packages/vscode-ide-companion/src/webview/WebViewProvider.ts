@@ -309,13 +309,59 @@ export class WebViewProvider {
       });
     }
 
-    // Lazy initialization: Do not attempt to connect/auth on WebView show.
-    // Render the chat UI immediately; we will connect/login on-demand when the
-    // user sends a message or requests a session action.
+    // Attempt to restore authentication state and initialize connection
     console.log(
-      '[WebViewProvider] Lazy init: rendering empty conversation only',
+      '[WebViewProvider] Attempting to restore auth state and connection...',
     );
-    await this.initializeEmptyConversation();
+    await this.attemptAuthStateRestoration();
+  }
+
+  /**
+   * Attempt to restore authentication state and initialize connection
+   * This is called when the webview is first shown
+   */
+  private async attemptAuthStateRestoration(): Promise<void> {
+    try {
+      if (this.authStateManager) {
+        // Debug current auth state
+        await this.authStateManager.debugAuthState();
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+        const config = vscode.workspace.getConfiguration('qwenCode');
+        const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+        const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+        const hasValidAuth = await this.authStateManager.hasValidAuth(
+          workingDir,
+          authMethod,
+        );
+        console.log('[WebViewProvider] Has valid cached auth:', hasValidAuth);
+
+        if (hasValidAuth) {
+          console.log(
+            '[WebViewProvider] Valid auth found, attempting connection...',
+          );
+          // Try to connect with cached auth
+          await this.initializeAgentConnection();
+        } else {
+          console.log(
+            '[WebViewProvider] No valid auth found, rendering empty conversation',
+          );
+          // Render the chat UI immediately without connecting
+          await this.initializeEmptyConversation();
+        }
+      } else {
+        console.log(
+          '[WebViewProvider] No auth state manager, rendering empty conversation',
+        );
+        await this.initializeEmptyConversation();
+      }
+    } catch (error) {
+      console.error('[WebViewProvider] Auth state restoration failed:', error);
+      // Fallback to rendering empty conversation
+      await this.initializeEmptyConversation();
+    }
   }
 
   /**
@@ -521,40 +567,140 @@ export class WebViewProvider {
       console.log(
         '[WebViewProvider] Connection refresh completed successfully',
       );
+
+      // Notify webview that agent is connected after refresh
+      this.sendMessageToWebView({
+        type: 'agentConnected',
+        data: {},
+      });
     } catch (error) {
       console.error('[WebViewProvider] Connection refresh failed:', error);
+
+      // Notify webview that agent connection failed after refresh
+      this.sendMessageToWebView({
+        type: 'agentConnectionError',
+        data: {
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+
       throw error;
     }
   }
 
   /**
    * Load messages from current Qwen session
-   * Creates a new ACP session for immediate message sending
+   * Attempts to restore an existing session before creating a new one
    */
   private async loadCurrentSessionMessages(): Promise<void> {
     try {
       console.log(
-        '[WebViewProvider] Initializing with empty conversation and creating ACP session',
+        '[WebViewProvider] Initializing with session restoration attempt',
       );
 
-      // Create a new ACP session so user can send messages immediately
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-      try {
-        await this.agentManager.createNewSession(
+      // First, try to restore an existing session if we have cached auth
+      if (this.authStateManager) {
+        const config = vscode.workspace.getConfiguration('qwenCode');
+        const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
+        const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
+
+        const hasValidAuth = await this.authStateManager.hasValidAuth(
           workingDir,
-          this.authStateManager,
+          authMethod,
         );
-        console.log('[WebViewProvider] ACP session created successfully');
-      } catch (sessionError) {
-        console.error(
-          '[WebViewProvider] Failed to create ACP session:',
-          sessionError,
+        if (hasValidAuth) {
+          console.log(
+            '[WebViewProvider] Found valid cached auth, attempting session restoration',
+          );
+
+          try {
+            // Try to create a session (this will use cached auth)
+            const sessionId = await this.agentManager.createNewSession(
+              workingDir,
+              this.authStateManager,
+            );
+
+            if (sessionId) {
+              console.log(
+                '[WebViewProvider] ACP session restored successfully with ID:',
+                sessionId,
+              );
+            } else {
+              console.log(
+                '[WebViewProvider] ACP session restoration returned no session ID',
+              );
+            }
+          } catch (restoreError) {
+            console.warn(
+              '[WebViewProvider] Failed to restore ACP session:',
+              restoreError,
+            );
+            // Clear invalid auth cache
+            await this.authStateManager.clearAuthState();
+
+            // Fall back to creating a new session
+            try {
+              await this.agentManager.createNewSession(
+                workingDir,
+                this.authStateManager,
+              );
+              console.log(
+                '[WebViewProvider] ACP session created successfully after restore failure',
+              );
+            } catch (sessionError) {
+              console.error(
+                '[WebViewProvider] Failed to create ACP session:',
+                sessionError,
+              );
+              vscode.window.showWarningMessage(
+                `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+              );
+            }
+          }
+        } else {
+          console.log(
+            '[WebViewProvider] No valid cached auth found, creating new session',
+          );
+          // No valid auth, create a new session (will trigger auth if needed)
+          try {
+            await this.agentManager.createNewSession(
+              workingDir,
+              this.authStateManager,
+            );
+            console.log('[WebViewProvider] ACP session created successfully');
+          } catch (sessionError) {
+            console.error(
+              '[WebViewProvider] Failed to create ACP session:',
+              sessionError,
+            );
+            vscode.window.showWarningMessage(
+              `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+            );
+          }
+        }
+      } else {
+        // No auth state manager, create a new session
+        console.log(
+          '[WebViewProvider] No auth state manager, creating new session',
         );
-        vscode.window.showWarningMessage(
-          `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
-        );
+        try {
+          await this.agentManager.createNewSession(
+            workingDir,
+            this.authStateManager,
+          );
+          console.log('[WebViewProvider] ACP session created successfully');
+        } catch (sessionError) {
+          console.error(
+            '[WebViewProvider] Failed to create ACP session:',
+            sessionError,
+          );
+          vscode.window.showWarningMessage(
+            `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+          );
+        }
       }
 
       await this.initializeEmptyConversation();
@@ -728,11 +874,11 @@ export class WebViewProvider {
 
     console.log('[WebViewProvider] Panel restored successfully');
 
-    // Lazy init on restore as well: do not auto-connect; just render UI.
+    // Attempt to restore authentication state and initialize connection
     console.log(
-      '[WebViewProvider] Lazy restore: rendering empty conversation only',
+      '[WebViewProvider] Attempting to restore auth state and connection after restore...',
     );
-    await this.initializeEmptyConversation();
+    await this.attemptAuthStateRestoration();
   }
 
   /**

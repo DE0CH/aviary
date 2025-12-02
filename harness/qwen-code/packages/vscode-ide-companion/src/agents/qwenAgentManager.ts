@@ -148,6 +148,50 @@ export class QwenAgentManager {
   }
 
   /**
+   * Check if the current session is valid and can send messages
+   * This performs a lightweight validation by sending a test prompt
+   *
+   * @returns True if session is valid, false otherwise
+   */
+  async checkSessionValidity(): Promise<boolean> {
+    try {
+      // If we don't have a current session, it's definitely not valid
+      if (!this.connection.currentSessionId) {
+        return false;
+      }
+
+      // Try to send a lightweight test prompt to validate the session
+      // We use a simple prompt that should return quickly
+      await this.connection.sendPrompt('test session validity');
+      return true;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn(
+        '[QwenAgentManager] Session validity check failed:',
+        errorMsg,
+      );
+
+      // Check for common authentication/session expiration errors
+      const isAuthError =
+        errorMsg.includes('Authentication required') ||
+        errorMsg.includes('(code: -32000)') ||
+        errorMsg.includes('No active ACP session') ||
+        errorMsg.includes('Session not found');
+
+      if (isAuthError) {
+        console.log(
+          '[QwenAgentManager] Detected authentication/session expiration',
+        );
+        return false;
+      }
+
+      // For other errors, we can't determine validity definitively
+      // Assume session is still valid unless we know it's not
+      return true;
+    }
+  }
+
+  /**
    * Get session list with version-aware strategy
    * First tries ACP method if CLI version supports it, falls back to file system method
    *

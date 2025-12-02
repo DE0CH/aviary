@@ -124,9 +124,26 @@ export class CliDetector {
       } catch (detectionError) {
         console.log('[CliDetector] CLI not found, error:', detectionError);
         // CLI not found
+        let error = `Qwen Code CLI not found in PATH. Please install it using: npm install -g @qwen-code/qwen-code@latest`;
+
+        // Provide specific guidance for permission errors
+        if (detectionError instanceof Error) {
+          const errorMessage = detectionError.message;
+          if (
+            errorMessage.includes('EACCES') ||
+            errorMessage.includes('Permission denied')
+          ) {
+            error += `\n\nThis may be due to permission issues. Possible solutions:
+              \n1. Reinstall the CLI without sudo: npm install -g @qwen-code/qwen-code@latest
+              \n2. If previously installed with sudo, fix ownership: sudo chown -R $(whoami) $(npm config get prefix)/lib/node_modules/@qwen-code/qwen-code
+              \n3. Use nvm for Node.js version management to avoid permission issues
+              \n4. Check your PATH environment variable includes npm's global bin directory`;
+          }
+        }
+
         this.cachedResult = {
           isInstalled: false,
-          error: `Qwen Code CLI not found in PATH. Please install it using: npm install -g @qwen-code/qwen-code@latest`,
+          error,
         };
         this.lastCheckTime = now;
         return this.cachedResult;
@@ -135,9 +152,24 @@ export class CliDetector {
       console.log('[CliDetector] General detection error:', error);
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+
+      let userFriendlyError = `Failed to detect Qwen Code CLI: ${errorMessage}`;
+
+      // Provide specific guidance for permission errors
+      if (
+        errorMessage.includes('EACCES') ||
+        errorMessage.includes('Permission denied')
+      ) {
+        userFriendlyError += `\n\nThis may be due to permission issues. Possible solutions:
+          \n1. Reinstall the CLI without sudo: npm install -g @qwen-code/qwen-code@latest
+          \n2. If previously installed with sudo, fix ownership: sudo chown -R $(whoami) $(npm config get prefix)/lib/node_modules/@qwen-code/qwen-code
+          \n3. Use nvm for Node.js version management to avoid permission issues
+          \n4. Check your PATH environment variable includes npm's global bin directory`;
+      }
+
       this.cachedResult = {
         isInstalled: false,
-        error: `Failed to detect Qwen Code CLI: ${errorMessage}`,
+        error: userFriendlyError,
       };
       this.lastCheckTime = now;
       return this.cachedResult;

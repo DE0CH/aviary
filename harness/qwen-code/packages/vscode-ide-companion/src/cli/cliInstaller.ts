@@ -161,9 +161,23 @@ export class CliInstaller {
             console.error('[CliInstaller] Installation failed:', errorMessage);
             console.error('[CliInstaller] Error stack:', error);
 
+            // Provide specific guidance for permission errors
+            let userFriendlyMessage = `Failed to install Qwen Code CLI: ${errorMessage}`;
+
+            if (
+              errorMessage.includes('EACCES') ||
+              errorMessage.includes('Permission denied')
+            ) {
+              userFriendlyMessage += `\n\nThis is likely due to permission issues. Possible solutions:
+                \n1. Reinstall without sudo: npm install -g @qwen-code/qwen-code@latest
+                \n2. Fix npm permissions: sudo chown -R $(whoami) $(npm config get prefix)/{lib/node_modules,bin,share}
+                \n3. Use nvm for Node.js version management to avoid permission issues
+                \n4. Configure npm to use a different directory: npm config set prefix ~/.npm-global`;
+            }
+
             vscode.window
               .showErrorMessage(
-                `Failed to install Qwen Code CLI: ${errorMessage}`,
+                userFriendlyMessage,
                 'Try Manual Installation',
                 'View Documentation',
               )
@@ -173,9 +187,26 @@ export class CliInstaller {
                     'Qwen Code Installation',
                   );
                   terminal.show();
-                  terminal.sendText(
-                    'npm install -g @qwen-code/qwen-code@latest',
-                  );
+
+                  // Provide different installation commands based on error type
+                  if (
+                    errorMessage.includes('EACCES') ||
+                    errorMessage.includes('Permission denied')
+                  ) {
+                    terminal.sendText('# Try installing without sudo:');
+                    terminal.sendText(
+                      'npm install -g @qwen-code/qwen-code@latest',
+                    );
+                    terminal.sendText('');
+                    terminal.sendText('# Or fix npm permissions:');
+                    terminal.sendText(
+                      'sudo chown -R $(whoami) $(npm config get prefix)/{lib/node_modules,bin,share}',
+                    );
+                  } else {
+                    terminal.sendText(
+                      'npm install -g @qwen-code/qwen-code@latest',
+                    );
+                  }
                 } else if (selection === 'View Documentation') {
                   vscode.env.openExternal(
                     vscode.Uri.parse(

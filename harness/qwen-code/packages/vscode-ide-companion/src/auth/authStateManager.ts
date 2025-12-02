@@ -78,6 +78,29 @@ export class AuthStateManager {
   }
 
   /**
+   * Force check auth state without clearing cache
+   * This is useful for debugging to see what's actually cached
+   */
+  async debugAuthState(): Promise<void> {
+    const state = await this.getAuthState();
+    console.log('[AuthStateManager] DEBUG - Current auth state:', state);
+
+    if (state) {
+      const now = Date.now();
+      const age = Math.floor((now - state.timestamp) / 1000 / 60);
+      const isExpired =
+        now - state.timestamp > AuthStateManager.AUTH_CACHE_DURATION;
+
+      console.log('[AuthStateManager] DEBUG - Auth state age:', age, 'minutes');
+      console.log('[AuthStateManager] DEBUG - Auth state expired:', isExpired);
+      console.log(
+        '[AuthStateManager] DEBUG - Auth state valid:',
+        state.isAuthenticated,
+      );
+    }
+  }
+
+  /**
    * Save successful authentication state
    */
   async saveAuthState(workingDir: string, authMethod: string): Promise<void> {

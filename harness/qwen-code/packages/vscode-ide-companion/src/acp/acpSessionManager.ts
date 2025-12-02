@@ -16,7 +16,7 @@ import type {
   AcpNotification,
   AcpResponse,
 } from '../constants/acpTypes.js';
-import { AGENT_METHODS, CUSTOM_METHODS } from './schema.js';
+import { AGENT_METHODS, CUSTOM_METHODS } from '../constants/acpSchema.js';
 import type { PendingRequest } from './connectionTypes.js';
 import type { ChildProcess } from 'child_process';
 

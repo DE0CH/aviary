@@ -5,15 +5,9 @@
  */
 import type { AcpPermissionRequest } from '../constants/acpTypes.js';
 
-/**
- * Chat Message
- */
 export interface ChatMessage {
-  /** Message role: user or assistant */
   role: 'user' | 'assistant';
-  /** Message content */
   content: string;
-  /** Timestamp */
   timestamp: number;
 }
 
