@@ -5,25 +5,24 @@
  */
 
 import type React from 'react';
-import './EmptyState.css';
-import { generateIconUrl } from '../utils/resourceUrl.js';
+import { generateIconUrl } from '../../utils/resourceUrl.js';
 
 export const EmptyState: React.FC = () => {
   // Generate icon URL using the utility function
   const iconUri = generateIconUrl('icon.png');
 
   return (
-    <div className="empty-state">
-      <div className="empty-state-content">
+    <div className="flex flex-col items-center justify-center h-full p-5 md:p-10">
+      <div className="flex flex-col items-center gap-8 max-w-[600px] w-full">
         {/* Qwen Logo */}
-        <div className="empty-state-logo">
+        <div className="flex flex-col items-center gap-6">
           <img
             src={iconUri}
             alt="Qwen Logo"
-            className="empty-state-logo-image"
+            className="w-[60px] h-[60px] object-contain"
           />
-          <div className="empty-state-text">
-            <div className="empty-state-title">
+          <div className="text-center">
+            <div className="text-[15px] text-app-primary-foreground leading-normal font-normal max-w-[400px]">
               What to do first? Ask about this codebase or we can start writing
               code.
             </div>

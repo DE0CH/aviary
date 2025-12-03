@@ -6,7 +6,7 @@
 
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
-import type { CompletionItem } from '../CompletionTypes.js';
+import type { CompletionItem } from '../../types/CompletionTypes.js';
 
 interface CompletionMenuProps {
   items: CompletionItem[];

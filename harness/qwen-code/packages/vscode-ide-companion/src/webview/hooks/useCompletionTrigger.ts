@@ -6,7 +6,7 @@
 
 import type { RefObject } from 'react';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { CompletionItem } from '../components/CompletionTypes.js';
+import type { CompletionItem } from '../types/CompletionTypes.js';
 
 interface CompletionTriggerState {
   isOpen: boolean;

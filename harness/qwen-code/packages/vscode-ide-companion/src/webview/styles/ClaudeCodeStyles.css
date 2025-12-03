@@ -8,8 +8,6 @@
  */
 
 /* Import component styles */
-@import '../components/EmptyState.css';
-@import '../components/PlanDisplay.css';
 @import '../components/toolcalls/shared/DiffDisplay.css';
 @import '../components/messages/AssistantMessage.css';
 @import '../components/messages/SimpleTimeline.css';

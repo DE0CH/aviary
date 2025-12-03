@@ -28,12 +28,12 @@ import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 import { InProgressToolCall } from './components/InProgressToolCall.js';
-import { EmptyState } from './components/EmptyState.js';
+import { EmptyState } from './components/ui/EmptyState.js';
 import type { PlanEntry } from './components/PlanDisplay.js';
-import { type CompletionItem } from './components/CompletionTypes.js';
+import { type CompletionItem } from './types/CompletionTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { InfoBanner } from './components/InfoBanner.js';
-import { ChatHeader } from './components/layouts/ChatHeader.js';
+import { ChatHeader } from './components/ui/layouts/ChatHeader.js';
 import {
   UserMessage,
   AssistantMessage,
