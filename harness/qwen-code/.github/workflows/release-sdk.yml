@@ -1,11 +1,6 @@
 name: 'Release SDK'
 
 on:
-  schedule:
-    # Runs every day at 1:00 AM UTC for the nightly release (offset from CLI at 0:00).
-    - cron: '0 1 * * *'
-    # Runs every Wednesday at 00:59 UTC for the preview release (offset from CLI on Tuesday).
-    - cron: '59 0 * * 3'
   workflow_dispatch:
     inputs:
       version:
