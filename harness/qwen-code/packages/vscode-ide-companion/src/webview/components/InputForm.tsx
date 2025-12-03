@@ -16,7 +16,7 @@ import {
   ArrowUpIcon,
 } from './icons/index.js';
 import { CompletionMenu } from './ui/CompletionMenu.js';
-import type { CompletionItem } from './CompletionTypes.js';
+import type { CompletionItem } from '../types/CompletionTypes.js';
 
 type EditMode = 'ask' | 'auto' | 'plan';
 

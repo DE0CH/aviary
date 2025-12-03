@@ -13,7 +13,7 @@ import { GenericToolCall } from './GenericToolCall.js';
 import { ReadToolCall } from './ReadToolCall.js';
 import { WriteToolCall } from './WriteToolCall.js';
 import { EditToolCall } from './EditToolCall.js';
-import { ExecuteToolCall } from './ExecuteToolCall.js';
+import { ExecuteToolCall } from './Bash/Bash.js';
 import { SearchToolCall } from './SearchToolCall.js';
 import { ThinkToolCall } from './ThinkToolCall.js';
 import { TodoWriteToolCall } from './TodoWriteToolCall.js';

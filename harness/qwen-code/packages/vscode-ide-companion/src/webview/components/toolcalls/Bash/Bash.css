@@ -7,7 +7,7 @@
  */
 
 /* Root container for execute tool call output */
-.execute-toolcall-card {
+.bash-toolcall-card {
   border: 0.5px solid var(--app-input-border);
   border-radius: 5px;
   background: var(--app-tool-background);
@@ -18,7 +18,7 @@
 }
 
 /* Content wrapper inside the card */
-.execute-toolcall-content {
+.bash-toolcall-content {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -26,7 +26,7 @@
 }
 
 /* Individual input/output row */
-.execute-toolcall-row {
+.bash-toolcall-row {
   display: grid;
   grid-template-columns: max-content 1fr;
   border-top: 0.5px solid var(--app-input-border);
@@ -34,12 +34,12 @@
 }
 
 /* First row has no top border */
-.execute-toolcall-row:first-child {
+.bash-toolcall-row:first-child {
   border-top: none;
 }
 
 /* Row label (IN/OUT/ERROR) */
-.execute-toolcall-label {
+.bash-toolcall-label {
   grid-column: 1;
   color: var(--app-secondary-foreground);
   text-align: left;
@@ -50,7 +50,7 @@
 }
 
 /* Row content area */
-.execute-toolcall-row-content {
+.bash-toolcall-row-content {
   grid-column: 2;
   white-space: pre-wrap;
   word-break: break-word;
@@ -59,14 +59,18 @@
 }
 
 /* Truncated content styling */
-.execute-toolcall-row-content:not(.execute-toolcall-full) {
+.bash-toolcall-row-content:not(.bash-toolcall-full) {
   max-height: 60px;
-  mask-image: linear-gradient(to bottom, var(--app-primary-background) 40px, transparent 60px);
+  mask-image: linear-gradient(
+    to bottom,
+    var(--app-primary-background) 40px,
+    transparent 60px
+  );
   overflow: hidden;
 }
 
 /* Preformatted content */
-.execute-toolcall-pre {
+.bash-toolcall-pre {
   margin-block: 0;
   overflow: hidden;
   font-family: var(--app-monospace-font-family);
@@ -74,7 +78,7 @@
 }
 
 /* Code content */
-.execute-toolcall-code {
+.bash-toolcall-code {
   margin: 0;
   padding: 0;
   font-family: var(--app-monospace-font-family);
@@ -82,7 +86,7 @@
 }
 
 /* Output content with subtle styling */
-.execute-toolcall-output-subtle {
+.bash-toolcall-output-subtle {
   background-color: var(--app-code-background);
   white-space: pre;
   overflow-x: auto;
@@ -93,6 +97,6 @@
 }
 
 /* Error content styling */
-.execute-toolcall-error-content {
+.bash-toolcall-error-content {
   color: #c74e39;
 }

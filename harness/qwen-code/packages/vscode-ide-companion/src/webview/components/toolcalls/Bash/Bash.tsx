@@ -7,9 +7,9 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from './shared/types.js';
-import { ToolCallContainer } from './shared/LayoutComponents.js';
-import { safeTitle, groupContent } from './shared/utils.js';
+import type { BaseToolCallProps } from '../shared/types.js';
+import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import { safeTitle, groupContent } from '../shared/utils.js';
 import './ExecuteToolCall.css';
 
 /**
@@ -42,21 +42,21 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
         {/* Error card - semantic DOM + Tailwind styles */}
-        <div className="execute-toolcall-card">
-          <div className="execute-toolcall-content">
+        <div className="bash-toolcall-card">
+          <div className="bash-toolcall-content">
             {/* IN row */}
-            <div className="execute-toolcall-row">
-              <div className="execute-toolcall-label">IN</div>
-              <div className="execute-toolcall-row-content">
-                <pre className="execute-toolcall-pre">{inputCommand}</pre>
+            <div className="bash-toolcall-row">
+              <div className="bash-toolcall-label">IN</div>
+              <div className="bash-toolcall-row-content">
+                <pre className="bash-toolcall-pre">{inputCommand}</pre>
               </div>
             </div>
 
             {/* ERROR row */}
-            <div className="execute-toolcall-row">
-              <div className="execute-toolcall-label">Error</div>
-              <div className="execute-toolcall-row-content">
-                <pre className="execute-toolcall-pre execute-toolcall-error-content">
+            <div className="bash-toolcall-row">
+              <div className="bash-toolcall-label">Error</div>
+              <div className="bash-toolcall-row-content">
+                <pre className="bash-toolcall-pre bash-toolcall-error-content">
                   {errors.join('\n')}
                 </pre>
               </div>
@@ -81,22 +81,22 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           <span className="flex-shrink-0 w-full">{commandText}</span>
         </div>
         {/* Output card - semantic DOM + Tailwind styles */}
-        <div className="execute-toolcall-card">
-          <div className="execute-toolcall-content">
+        <div className="bash-toolcall-card">
+          <div className="bash-toolcall-content">
             {/* IN row */}
-            <div className="execute-toolcall-row">
-              <div className="execute-toolcall-label">IN</div>
-              <div className="execute-toolcall-row-content">
-                <pre className="execute-toolcall-pre">{inputCommand}</pre>
+            <div className="bash-toolcall-row">
+              <div className="bash-toolcall-label">IN</div>
+              <div className="bash-toolcall-row-content">
+                <pre className="bash-toolcall-pre">{inputCommand}</pre>
               </div>
             </div>
 
             {/* OUT row */}
-            <div className="execute-toolcall-row">
-              <div className="execute-toolcall-label">OUT</div>
-              <div className="execute-toolcall-row-content">
-                <div className="execute-toolcall-output-subtle">
-                  <pre className="execute-toolcall-pre">{truncatedOutput}</pre>
+            <div className="bash-toolcall-row">
+              <div className="bash-toolcall-label">OUT</div>
+              <div className="bash-toolcall-row-content">
+                <div className="bash-toolcall-output-subtle">
+                  <pre className="bash-toolcall-pre">{truncatedOutput}</pre>
                 </div>
               </div>
             </div>
