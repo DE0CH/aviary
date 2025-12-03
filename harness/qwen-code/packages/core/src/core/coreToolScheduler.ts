@@ -16,6 +16,7 @@ import type {
   ToolConfirmationPayload,
   AnyDeclarativeTool,
   AnyToolInvocation,
+  ChatRecordingService,
 } from '../index.js';
 import {
   ToolConfirmationOutcome,
@@ -321,6 +322,10 @@ interface CoreToolSchedulerOptions {
   onToolCallsUpdate?: ToolCallsUpdateHandler;
   getPreferredEditor: () => EditorType | undefined;
   onEditorClose: () => void;
+  /**
+   * Optional recording service. If provided, tool results will be recorded.
+   */
+  chatRecordingService?: ChatRecordingService;
 }
 
 export class CoreToolScheduler {
@@ -332,6 +337,7 @@ export class CoreToolScheduler {
   private getPreferredEditor: () => EditorType | undefined;
   private config: Config;
   private onEditorClose: () => void;
+  private chatRecordingService?: ChatRecordingService;
   private isFinalizingToolCalls = false;
   private isScheduling = false;
   private requestQueue: Array<{
@@ -349,6 +355,7 @@ export class CoreToolScheduler {
     this.onToolCallsUpdate = options.onToolCallsUpdate;
     this.getPreferredEditor = options.getPreferredEditor;
     this.onEditorClose = options.onEditorClose;
+    this.chatRecordingService = options.chatRecordingService;
   }
 
   private setStatusInternal(
@@ -1208,6 +1215,9 @@ export class CoreToolScheduler {
         logToolCall(this.config, new ToolCallEvent(call));
       }
 
+      // Record tool results before notifying completion
+      this.recordToolResults(completedCalls);
+
       if (this.onAllToolCallsComplete) {
         this.isFinalizingToolCalls = true;
         await this.onAllToolCallsComplete(completedCalls);
@@ -1221,6 +1231,33 @@ export class CoreToolScheduler {
           .then(next.resolve)
           .catch(next.reject);
       }
+    }
+  }
+
+  /**
+   * Records tool results to the chat recording service.
+   * This captures both the raw Content (for API reconstruction) and
+   * enriched metadata (for UI recovery).
+   */
+  private recordToolResults(completedCalls: CompletedToolCall[]): void {
+    if (!this.chatRecordingService) return;
+
+    // Collect all response parts from completed calls
+    const responseParts: Part[] = completedCalls.flatMap(
+      (call) => call.response.responseParts,
+    );
+
+    if (responseParts.length === 0) return;
+
+    // Record each tool result individually
+    for (const call of completedCalls) {
+      this.chatRecordingService.recordToolResult(call.response.responseParts, {
+        callId: call.request.callId,
+        status: call.status,
+        resultDisplay: call.response.resultDisplay,
+        error: call.response.error,
+        errorType: call.response.errorType,
+      });
     }
   }
 

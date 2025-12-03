@@ -6,17 +6,15 @@
 
 import { useCallback, useMemo, useEffect, useState } from 'react';
 import { type PartListUnion } from '@google/genai';
-import process from 'node:process';
 import type { UseHistoryManagerReturn } from './useHistoryManager.js';
-import type { Config } from '@qwen-code/qwen-code-core';
 import {
+  type Logger,
+  type Config,
   GitService,
-  Logger,
   logSlashCommand,
   makeSlashCommandEvent,
   SlashCommandStatus,
   ToolConfirmationOutcome,
-  Storage,
   IdeClient,
 } from '@qwen-code/qwen-code-core';
 import { useSessionStats } from '../contexts/SessionContext.js';
@@ -40,6 +38,27 @@ import {
   type ExtensionUpdateAction,
   type ExtensionUpdateStatus,
 } from '../state/extensions.js';
+
+type SerializableHistoryItem = Record<string, unknown>;
+
+function serializeHistoryItemForRecording(
+  item: Omit<HistoryItem, 'id'>,
+): SerializableHistoryItem {
+  const clone: SerializableHistoryItem = { ...item };
+  if ('timestamp' in clone && clone['timestamp'] instanceof Date) {
+    clone['timestamp'] = clone['timestamp'].toISOString();
+  }
+  return clone;
+}
+
+const SLASH_COMMANDS_SKIP_RECORDING = new Set([
+  'quit',
+  'quit-confirm',
+  'exit',
+  'clear',
+  'reset',
+  'new',
+]);
 
 interface SlashCommandProcessorActions {
   openAuthDialog: () => void;
@@ -75,8 +94,9 @@ export const useSlashCommandProcessor = (
   actions: SlashCommandProcessorActions,
   extensionsUpdateState: Map<string, ExtensionUpdateStatus>,
   isConfigInitialized: boolean,
+  logger: Logger | null,
 ) => {
-  const session = useSessionStats();
+  const { stats: sessionStats, startNewSession } = useSessionStats();
   const [commands, setCommands] = useState<readonly SlashCommand[]>([]);
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
@@ -108,16 +128,6 @@ export const useSlashCommandProcessor = (
       return;
     }
     return new GitService(config.getProjectRoot(), config.storage);
-  }, [config]);
-
-  const logger = useMemo(() => {
-    const l = new Logger(
-      config?.getSessionId() || '',
-      config?.storage ?? new Storage(process.cwd()),
-    );
-    // The logger's initialize is async, but we can create the instance
-    // synchronously. Commands that use it will await its initialization.
-    return l;
   }, [config]);
 
   const [pendingItem, setPendingItem] = useState<HistoryItemWithoutId | null>(
@@ -218,8 +228,9 @@ export const useSlashCommandProcessor = (
           actions.addConfirmUpdateExtensionRequest,
       },
       session: {
-        stats: session.stats,
+        stats: sessionStats,
         sessionShellAllowlist,
+        startNewSession,
       },
     }),
     [
@@ -231,7 +242,8 @@ export const useSlashCommandProcessor = (
       addItem,
       clearItems,
       refreshStatic,
-      session.stats,
+      sessionStats,
+      startNewSession,
       actions,
       pendingItem,
       setPendingItem,
@@ -302,10 +314,25 @@ export const useSlashCommandProcessor = (
         return false;
       }
 
+      const recordedItems: Array<Omit<HistoryItem, 'id'>> = [];
+      const recordItem = (item: Omit<HistoryItem, 'id'>) => {
+        recordedItems.push(item);
+      };
+      const addItemWithRecording: UseHistoryManagerReturn['addItem'] = (
+        item,
+        timestamp,
+      ) => {
+        recordItem(item);
+        return addItem(item, timestamp);
+      };
+
       setIsProcessing(true);
 
       const userMessageTimestamp = Date.now();
-      addItem({ type: MessageType.USER, text: trimmed }, userMessageTimestamp);
+      addItemWithRecording(
+        { type: MessageType.USER, text: trimmed },
+        userMessageTimestamp,
+      );
 
       let hasError = false;
       const {
@@ -324,6 +351,10 @@ export const useSlashCommandProcessor = (
           if (commandToExecute.action) {
             const fullCommandContext: CommandContext = {
               ...commandContext,
+              ui: {
+                ...commandContext.ui,
+                addItem: addItemWithRecording,
+              },
               invocation: {
                 raw: trimmed,
                 name: commandToExecute.name,
@@ -428,15 +459,7 @@ export const useSlashCommandProcessor = (
                         return;
                       }
                       if (shouldQuit) {
-                        if (action === 'save_and_quit') {
-                          // First save conversation with auto-generated tag, then quit
-                          const timestamp = new Date()
-                            .toISOString()
-                            .replace(/[:.]/g, '-');
-                          const autoSaveTag = `auto-save chat ${timestamp}`;
-                          handleSlashCommand(`/chat save "${autoSaveTag}"`);
-                          setTimeout(() => handleSlashCommand('/quit'), 100);
-                        } else if (action === 'summary_and_quit') {
+                        if (action === 'summary_and_quit') {
                           // Generate summary and then quit
                           handleSlashCommand('/summary')
                             .then(() => {
@@ -447,7 +470,7 @@ export const useSlashCommandProcessor = (
                             })
                             .catch((error) => {
                               // If summary fails, still quit but show error
-                              addItem(
+                              addItemWithRecording(
                                 {
                                   type: 'error',
                                   text: `Failed to generate summary before quit: ${
@@ -466,7 +489,7 @@ export const useSlashCommandProcessor = (
                         } else {
                           // Just quit immediately - trigger the actual quit action
                           const now = Date.now();
-                          const { sessionStartTime } = session.stats;
+                          const { sessionStartTime } = sessionStats;
                           const wallDuration = now - sessionStartTime.getTime();
 
                           actions.quit([
@@ -550,7 +573,7 @@ export const useSlashCommandProcessor = (
                   });
 
                   if (!confirmed) {
-                    addItem(
+                    addItemWithRecording(
                       {
                         type: MessageType.INFO,
                         text: 'Operation cancelled.',
@@ -606,7 +629,7 @@ export const useSlashCommandProcessor = (
           });
           logSlashCommand(config, event);
         }
-        addItem(
+        addItemWithRecording(
           {
             type: MessageType.ERROR,
             text: e instanceof Error ? e.message : String(e),
@@ -615,6 +638,38 @@ export const useSlashCommandProcessor = (
         );
         return { type: 'handled' };
       } finally {
+        if (config?.getChatRecordingService) {
+          const chatRecorder = config.getChatRecordingService();
+          const primaryCommand =
+            resolvedCommandPath[0] ||
+            trimmed.replace(/^[/?]/, '').split(/\s+/)[0] ||
+            trimmed;
+          const shouldRecord =
+            !SLASH_COMMANDS_SKIP_RECORDING.has(primaryCommand);
+          try {
+            if (shouldRecord) {
+              chatRecorder?.recordSlashCommand({
+                phase: 'invocation',
+                rawCommand: trimmed,
+              });
+              const outputItems = recordedItems
+                .filter((item) => item.type !== 'user')
+                .map(serializeHistoryItemForRecording);
+              chatRecorder?.recordSlashCommand({
+                phase: 'result',
+                rawCommand: trimmed,
+                outputHistoryItems: outputItems,
+              });
+            }
+          } catch (recordError) {
+            if (config.getDebugMode()) {
+              console.error(
+                '[slashCommand] Failed to record slash command:',
+                recordError,
+              );
+            }
+          }
+        }
         if (config && resolvedCommandPath[0] && !hasError) {
           const event = makeSlashCommandEvent({
             command: resolvedCommandPath[0],
@@ -637,7 +692,7 @@ export const useSlashCommandProcessor = (
       setSessionShellAllowlist,
       setIsProcessing,
       setConfirmationRequest,
-      session.stats,
+      sessionStats,
     ],
   );
 

@@ -40,6 +40,7 @@ import {
   getAllGeminiMdFilenames,
   ShellExecutionService,
 } from '@qwen-code/qwen-code-core';
+import { buildResumedHistoryItems } from './utils/resumeHistoryUtils.js';
 import { validateAuthMethod } from '../config/auth.js';
 import { loadHierarchicalGeminiMemory } from '../config/config.js';
 import process from 'node:process';
@@ -196,7 +197,6 @@ export const AppContainer = (props: AppContainerProps) => {
 
   const [isConfigInitialized, setConfigInitialized] = useState(false);
 
-  const logger = useLogger(config.storage);
   const [userMessages, setUserMessages] = useState<string[]>([]);
 
   // Terminal and layout hooks
@@ -206,6 +206,7 @@ export const AppContainer = (props: AppContainerProps) => {
 
   // Additional hooks moved from App.tsx
   const { stats: sessionStats } = useSessionStats();
+  const logger = useLogger(config.storage, sessionStats.sessionId);
   const branchName = useGitBranchName(config.getTargetDir());
 
   // Layout measurements
@@ -216,17 +217,28 @@ export const AppContainer = (props: AppContainerProps) => {
   const lastTitleRef = useRef<string | null>(null);
   const staticExtraHeight = 3;
 
+  // Initialize config (runs once on mount)
   useEffect(() => {
     (async () => {
       // Note: the program will not work if this fails so let errors be
       // handled by the global catch.
       await config.initialize();
       setConfigInitialized(true);
+
+      const resumedSessionData = config.getResumedSessionData();
+      if (resumedSessionData) {
+        const historyItems = buildResumedHistoryItems(
+          resumedSessionData,
+          config,
+        );
+        historyManager.loadHistory(historyItems);
+      }
     })();
     registerCleanup(async () => {
       const ideClient = await IdeClient.getInstance();
       await ideClient.disconnect();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
 
   useEffect(
@@ -522,6 +534,7 @@ export const AppContainer = (props: AppContainerProps) => {
     slashCommandActions,
     extensionsUpdateStateInternal,
     isConfigInitialized,
+    logger,
   );
 
   // Vision switch handlers

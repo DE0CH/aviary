@@ -63,6 +63,7 @@ export * from './utils/thoughtUtils.js';
 export * from './services/fileDiscoveryService.js';
 export * from './services/gitService.js';
 export * from './services/chatRecordingService.js';
+export * from './services/sessionService.js';
 export * from './services/fileSystemService.js';
 
 // Export IDE specific logic
@@ -104,6 +105,7 @@ export * from './tools/mcp-client.js';
 export * from './tools/mcp-tool.js';
 export * from './tools/task.js';
 export * from './tools/todoWrite.js';
+export * from './tools/exitPlanMode.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';
@@ -121,7 +123,6 @@ export { OAuthUtils } from './mcp/oauth-utils.js';
 
 // Export telemetry functions
 export * from './telemetry/index.js';
-export { sessionId } from './utils/session.js';
 export * from './utils/browser.js';
 // OpenAI Logging Utilities
 export { OpenAILogger, openaiLogger } from './utils/openaiLogger.js';

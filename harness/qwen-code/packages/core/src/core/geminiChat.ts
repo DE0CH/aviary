@@ -14,10 +14,9 @@ import type {
   SendMessageParameters,
   Part,
   Tool,
+  GenerateContentResponseUsageMetadata,
 } from '@google/genai';
-import { ApiError } from '@google/genai';
-import { toParts } from '../code_assist/converter.js';
-import { createUserContent } from '@google/genai';
+import { ApiError, createUserContent } from '@google/genai';
 import { retryWithBackoff } from '../utils/retry.js';
 import type { Config } from '../config/config.js';
 import {
@@ -30,14 +29,12 @@ import {
   logContentRetry,
   logContentRetryFailure,
 } from '../telemetry/loggers.js';
-import { ChatRecordingService } from '../services/chatRecordingService.js';
+import { type ChatRecordingService } from '../services/chatRecordingService.js';
 import {
   ContentRetryEvent,
   ContentRetryFailureEvent,
 } from '../telemetry/types.js';
 import { handleFallback } from '../fallback/handler.js';
-import { isFunctionResponse } from '../utils/messageInspectors.js';
-import { partListUnionToString } from './geminiRequest.js';
 import { uiTelemetryService } from '../telemetry/uiTelemetry.js';
 
 export enum StreamEventType {
@@ -200,16 +197,23 @@ export class GeminiChat {
   // A promise to represent the current state of the message being sent to the
   // model.
   private sendPromise: Promise<void> = Promise.resolve();
-  private readonly chatRecordingService: ChatRecordingService;
 
+  /**
+   * Creates a new GeminiChat instance.
+   *
+   * @param config - The configuration object.
+   * @param generationConfig - Optional generation configuration.
+   * @param history - Optional initial conversation history.
+   * @param chatRecordingService - Optional recording service. If provided, chat
+   *   messages will be recorded.
+   */
   constructor(
     private readonly config: Config,
     private readonly generationConfig: GenerateContentConfig = {},
     private history: Content[] = [],
+    private readonly chatRecordingService?: ChatRecordingService,
   ) {
     validateHistory(history);
-    this.chatRecordingService = new ChatRecordingService(config);
-    this.chatRecordingService.initialize();
   }
 
   setSystemInstruction(sysInstr: string) {
@@ -252,20 +256,6 @@ export class GeminiChat {
     this.sendPromise = streamDonePromise;
 
     const userContent = createUserContent(params.message);
-
-    // Record user input - capture complete message with all parts (text, files, images, etc.)
-    // but skip recording function responses (tool call results) as they should be stored in tool call records
-    if (!isFunctionResponse(userContent)) {
-      const userMessage = Array.isArray(params.message)
-        ? params.message
-        : [params.message];
-      const userMessageContent = partListUnionToString(toParts(userMessage));
-      this.chatRecordingService.recordMessage({
-        model,
-        type: 'user',
-        content: userMessageContent,
-      });
-    }
 
     // Add user content to history ONCE before any attempts.
     this.history.push(userContent);
@@ -505,7 +495,11 @@ export class GeminiChat {
     model: string,
     streamResponse: AsyncGenerator<GenerateContentResponse>,
   ): AsyncGenerator<GenerateContentResponse> {
-    const modelResponseParts: Part[] = [];
+    // Collect ALL parts from the model response (including thoughts for recording)
+    const allModelParts: Part[] = [];
+    // Non-thought parts for history (what we send back to the API)
+    const historyParts: Part[] = [];
+    let usageMetadata: GenerateContentResponseUsageMetadata | undefined;
 
     let hasToolCall = false;
     let hasFinishReason = false;
@@ -516,23 +510,20 @@ export class GeminiChat {
       if (isValidResponse(chunk)) {
         const content = chunk.candidates?.[0]?.content;
         if (content?.parts) {
-          if (content.parts.some((part) => part.thought)) {
-            // Record thoughts
-            this.recordThoughtFromContent(content);
-          }
           if (content.parts.some((part) => part.functionCall)) {
             hasToolCall = true;
           }
 
-          modelResponseParts.push(
-            ...content.parts.filter((part) => !part.thought),
-          );
+          // Collect all parts for recording
+          allModelParts.push(...content.parts);
+          // Collect non-thought parts for history
+          historyParts.push(...content.parts.filter((part) => !part.thought));
         }
       }
 
-      // Record token usage if this chunk has usageMetadata
+      // Collect token usage for consolidated recording
       if (chunk.usageMetadata) {
-        this.chatRecordingService.recordMessageTokens(chunk.usageMetadata);
+        usageMetadata = chunk.usageMetadata;
         if (chunk.usageMetadata.promptTokenCount !== undefined) {
           uiTelemetryService.setLastPromptTokenCount(
             chunk.usageMetadata.promptTokenCount,
@@ -543,10 +534,11 @@ export class GeminiChat {
       yield chunk; // Yield every chunk to the UI immediately.
     }
 
-    // String thoughts and consolidate text parts.
-    const consolidatedParts: Part[] = [];
-    for (const part of modelResponseParts) {
-      const lastPart = consolidatedParts[consolidatedParts.length - 1];
+    // Consolidate text parts for history (merges adjacent text parts).
+    const consolidatedHistoryParts: Part[] = [];
+    for (const part of historyParts) {
+      const lastPart =
+        consolidatedHistoryParts[consolidatedHistoryParts.length - 1];
       if (
         lastPart?.text &&
         isValidNonThoughtTextPart(lastPart) &&
@@ -554,22 +546,29 @@ export class GeminiChat {
       ) {
         lastPart.text += part.text;
       } else {
-        consolidatedParts.push(part);
+        consolidatedHistoryParts.push(part);
       }
     }
 
-    const responseText = consolidatedParts
+    const responseText = consolidatedHistoryParts
       .filter((part) => part.text)
       .map((part) => part.text)
       .join('')
       .trim();
 
-    // Record model response text from the collected parts
-    if (responseText) {
-      this.chatRecordingService.recordMessage({
+    // Record assistant turn with raw Content and metadata
+    if (responseText || hasToolCall || usageMetadata) {
+      this.chatRecordingService?.recordAssistantTurn({
         model,
-        type: 'qwen',
-        content: responseText,
+        message: [
+          ...(responseText ? [{ text: responseText }] : []),
+          ...(hasToolCall
+            ? historyParts
+                .filter((part) => part.functionCall)
+                .map((part) => ({ functionCall: part.functionCall }))
+            : []),
+        ],
+        tokens: usageMetadata,
       });
     }
 
@@ -594,39 +593,8 @@ export class GeminiChat {
       }
     }
 
-    this.history.push({ role: 'model', parts: consolidatedParts });
-  }
-
-  /**
-   * Gets the chat recording service instance.
-   */
-  getChatRecordingService(): ChatRecordingService {
-    return this.chatRecordingService;
-  }
-
-  /**
-   * Extracts and records thought from thought content.
-   */
-  private recordThoughtFromContent(content: Content): void {
-    if (!content.parts || content.parts.length === 0) {
-      return;
-    }
-
-    const thoughtPart = content.parts[0];
-    if (thoughtPart.text) {
-      // Extract subject and description using the same logic as turn.ts
-      const rawText = thoughtPart.text;
-      const subjectStringMatches = rawText.match(/\*\*(.*?)\*\*/s);
-      const subject = subjectStringMatches
-        ? subjectStringMatches[1].trim()
-        : '';
-      const description = rawText.replace(/\*\*(.*?)\*\*/s, '').trim();
-
-      this.chatRecordingService.recordThought({
-        subject,
-        description,
-      });
-    }
+    // Add to history (without thoughts, for API calls)
+    this.history.push({ role: 'model', parts: consolidatedHistoryParts });
   }
 }
 
