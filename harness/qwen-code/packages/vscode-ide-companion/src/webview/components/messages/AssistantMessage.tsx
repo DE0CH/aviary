@@ -7,7 +7,6 @@
 import type React from 'react';
 import { MessageContent } from '../MessageContent.js';
 import './AssistantMessage.css';
-import './SimpleTimeline.css';
 
 interface AssistantMessageProps {
   content: string;
@@ -56,7 +55,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   return (
     <div
-      className={`qwen-message message-item assistant-message-container simple-timeline-container ${getStatusClass()}`}
+      className={`qwen-message message-item assistant-message-container ${getStatusClass()}`}
       style={{
         width: '100%',
         alignItems: 'flex-start',

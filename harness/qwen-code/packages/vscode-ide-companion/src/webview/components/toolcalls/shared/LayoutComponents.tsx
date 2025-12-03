@@ -10,7 +10,6 @@
 import type React from 'react';
 import { FileLink } from '../../ui/FileLink.js';
 import './LayoutComponents.css';
-import './SimpleTimeline.css';
 
 /**
  * Props for ToolCallContainer - Claude Code style layout
