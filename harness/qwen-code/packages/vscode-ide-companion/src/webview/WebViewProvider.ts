@@ -204,6 +204,17 @@ export class WebViewProvider {
     // Handle messages from WebView
     newPanel.webview.onDidReceiveMessage(
       async (message: { type: string; data?: unknown }) => {
+        // Allow webview to request updating the VS Code tab title
+        if (message.type === 'updatePanelTitle') {
+          const title = String(
+            (message.data as { title?: unknown } | undefined)?.title ?? '',
+          ).trim();
+          const panelRef = this.panelManager.getPanel();
+          if (panelRef) {
+            panelRef.title = title || 'Qwen Code';
+          }
+          return;
+        }
         await this.messageHandler.route(message);
       },
       null,
@@ -790,9 +801,19 @@ export class WebViewProvider {
 
     panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
 
-    // Handle messages from WebView
+    // Handle messages from WebView (restored panel)
     panel.webview.onDidReceiveMessage(
       async (message: { type: string; data?: unknown }) => {
+        if (message.type === 'updatePanelTitle') {
+          const title = String(
+            (message.data as { title?: unknown } | undefined)?.title ?? '',
+          ).trim();
+          const panelRef = this.panelManager.getPanel();
+          if (panelRef) {
+            panelRef.title = title || 'Qwen Code';
+          }
+          return;
+        }
         await this.messageHandler.route(message);
       },
       null,

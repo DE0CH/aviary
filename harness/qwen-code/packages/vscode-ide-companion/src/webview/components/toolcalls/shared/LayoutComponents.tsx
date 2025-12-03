@@ -43,11 +43,11 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   labelSuffix,
 }) => (
   <div
-    className={`relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+    className={`qwen-message relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
   >
     {/* Timeline connector line using ::after pseudo-element */}
     <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
-      <div className="flex items-center gap-2 relative min-w-0 toolcall-header">
+      <div className="flex items-center gap-2 relative min-w-0">
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>

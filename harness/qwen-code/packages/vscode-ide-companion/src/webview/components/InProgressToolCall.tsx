@@ -154,41 +154,50 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
   };
 
   return (
-    <div className="relative py-2 toolcall-container">
-      <div className="flex items-center gap-2 mb-1 relative before:content-['\25cf'] before:absolute before:left-[-22px] before:top-1/2 before:-translate-y-1/2 before:text-[10px] before:leading-none before:text-[#e1c08d] before:animate-pulse-slow">
-        <span className={`text-xs font-medium ${kindColorClass}`}>
-          {kindLabel}
-        </span>
-        {filePath && (
-          <FileLink
-            path={filePath}
-            line={fileLine ?? undefined}
-            showFullPath={false}
-            className="text-xs"
-          />
-        )}
-        {!filePath && fileName && (
-          <span className="text-xs text-[var(--app-secondary-foreground)] font-mono">
-            {fileName}
-          </span>
-        )}
-
-        {diffData && (
-          <button
-            type="button"
-            onClick={handleOpenDiff}
-            className="text-[11px] px-2 py-0.5 border border-[var(--app-input-border)] rounded-small text-[var(--app-primary-foreground)] bg-transparent hover:bg-[var(--app-ghost-button-hover-background)] cursor-pointer"
+    <div className="relative pl-[30px] py-2 select-text toolcall-container in-progress-toolcall">
+      <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
+        <div className="flex items-center gap-2 relative min-w-0 toolcall-header">
+          <span
+            className={`text-[14px] leading-none font-bold ${kindColorClass}`}
           >
-            Open Diff
-          </button>
+            {kindLabel}
+          </span>
+          {filePath && (
+            <FileLink
+              path={filePath}
+              line={fileLine ?? undefined}
+              showFullPath={false}
+              className="text-[14px]"
+            />
+          )}
+          {!filePath && fileName && (
+            <span className="text-[14px] leading-none text-[var(--app-secondary-foreground)]">
+              {fileName}
+            </span>
+          )}
+
+          {diffData && (
+            <button
+              type="button"
+              onClick={handleOpenDiff}
+              className="text-[11px] px-2 py-0.5 border border-[var(--app-input-border)] rounded-small text-[var(--app-primary-foreground)] bg-transparent hover:bg-[var(--app-ghost-button-hover-background)] cursor-pointer"
+            >
+              Open Diff
+            </button>
+          )}
+        </div>
+
+        {contentText && (
+          <div className="text-[var(--app-secondary-foreground)]">
+            <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
+              <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
+              <span className="toolcall-content-text flex-shrink-0 w-full">
+                {contentText}
+              </span>
+            </div>
+          </div>
         )}
       </div>
-
-      {contentText && (
-        <div className="text-xs text-[var(--app-secondary-foreground)] font-mono mt-1 whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto p-1 bg-[var(--app-input-background)] border border-[var(--app-input-border)] rounded">
-          {contentText}
-        </div>
-      )}
     </div>
   );
 };

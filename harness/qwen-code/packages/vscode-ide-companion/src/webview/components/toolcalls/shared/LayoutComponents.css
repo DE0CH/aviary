@@ -153,8 +153,53 @@
   max-width: 100%;
 }
 
-/* Flex container with margin bottom */
+/* ToolCall header with loading indicator */
 .toolcall-header {
-  /* TODO: 应该不需要？ 待删除 */
-  /* margin-bottom: 12px; */
+  position: relative;
+}
+
+.toolcall-header::before {
+  content: '\25cf';
+  position: absolute;
+  left: -22px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  line-height: 1;
+  z-index: 1;
+  color: #e1c08d;
+  animation: toolcallHeaderPulse 1.5s ease-in-out infinite;
+}
+
+/* Loading animation for toolcall header */
+@keyframes toolcallHeaderPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* In-progress toolcall specific styles */
+.in-progress-toolcall .toolcall-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.in-progress-toolcall .toolcall-header {
+  display: flex;
+  align-items: center;
+  gap: 2;
+  position: relative;
+  min-width: 0;
+}
+
+.in-progress-toolcall .toolcall-content-text {
+  word-break: break-word;
+  white-space: pre-wrap;
+  width: 100%;
 }

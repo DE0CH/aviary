@@ -5,6 +5,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
 import { getFileName } from '../utils/webviewUtils.js';
 
@@ -20,6 +23,7 @@ export class FileMessageHandler extends BaseMessageHandler {
       'getWorkspaceFiles',
       'openFile',
       'openDiff',
+      'createAndOpenTempFile',
     ].includes(messageType);
   }
 
@@ -45,6 +49,10 @@ export class FileMessageHandler extends BaseMessageHandler {
 
       case 'openDiff':
         await this.handleOpenDiff(data);
+        break;
+
+      case 'createAndOpenTempFile':
+        await this.handleCreateAndOpenTempFile(data);
         break;
 
       default:
@@ -345,6 +353,54 @@ export class FileMessageHandler extends BaseMessageHandler {
     } catch (error) {
       console.error('[FileMessageHandler] Failed to open diff:', error);
       vscode.window.showErrorMessage(`Failed to open diff: ${error}`);
+    }
+  }
+
+  /**
+   * Create and open temporary file
+   */
+  private async handleCreateAndOpenTempFile(
+    data: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (!data) {
+      console.warn(
+        '[FileMessageHandler] No data provided for createAndOpenTempFile',
+      );
+      return;
+    }
+
+    try {
+      const content = (data.content as string) || '';
+      const fileName = (data.fileName as string) || 'temp';
+      const fileExtension = (data.fileExtension as string) || '.txt';
+
+      // Create temporary file path
+      const tempDir = os.tmpdir();
+      const tempFileName = `${fileName}-${Date.now()}${fileExtension}`;
+      const tempFilePath = path.join(tempDir, tempFileName);
+
+      // Write content to temporary file
+      await fs.promises.writeFile(tempFilePath, content, 'utf8');
+
+      // Open the temporary file in VS Code
+      const uri = vscode.Uri.file(tempFilePath);
+      await vscode.window.showTextDocument(uri, {
+        preview: false,
+        preserveFocus: false,
+      });
+
+      console.log(
+        '[FileMessageHandler] Created and opened temporary file:',
+        tempFilePath,
+      );
+    } catch (error) {
+      console.error(
+        '[FileMessageHandler] Failed to create and open temporary file:',
+        error,
+      );
+      vscode.window.showErrorMessage(
+        `Failed to create and open temporary file: ${error}`,
+      );
     }
   }
 }

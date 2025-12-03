@@ -12,8 +12,9 @@ import { shouldShowToolCall } from './shared/utils.js';
 import { GenericToolCall } from './GenericToolCall.js';
 import { ReadToolCall } from './ReadToolCall.js';
 import { WriteToolCall } from './WriteToolCall.js';
-import { EditToolCall } from './EditToolCall.js';
-import { ExecuteToolCall } from './Bash/Bash.js';
+import { EditToolCall } from './Edit/EditToolCall.js';
+import { ExecuteToolCall as BashExecuteToolCall } from './Bash/Bash.js';
+import { ExecuteToolCall } from './Execute/Execute.js';
 import { SearchToolCall } from './SearchToolCall.js';
 import { ThinkToolCall } from './ThinkToolCall.js';
 import { TodoWriteToolCall } from './TodoWriteToolCall.js';
@@ -38,9 +39,11 @@ export const getToolCallComponent = (
       return EditToolCall;
 
     case 'execute':
+      return ExecuteToolCall;
+
     case 'bash':
     case 'command':
-      return ExecuteToolCall;
+      return BashExecuteToolCall;
 
     case 'search':
     case 'grep':

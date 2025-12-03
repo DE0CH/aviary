@@ -18,7 +18,7 @@ export const ThinkingMessage: React.FC<ThinkingMessageProps> = ({
   timestamp: _timestamp,
   onFileClick,
 }) => (
-  <div className="flex gap-0 items-start text-left py-2 flex-col relative opacity-80 italic pl-6 animate-[fadeIn_0.2s_ease-in]">
+  <div className="qwen-message thinking-message flex gap-0 items-start text-left py-2 flex-col relative opacity-80 italic pl-6 animate-[fadeIn_0.2s_ease-in]">
     <div
       className="inline-block my-1 relative whitespace-pre-wrap rounded-md max-w-full overflow-x-auto overflow-y-hidden select-text leading-[1.5]"
       style={{

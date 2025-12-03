@@ -1,0 +1,37 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Custom timeline styles for qwen-message message-item elements
+ *
+ * 实现原理：
+ * 1. 为所有AI消息项(qwen-message.message-item:not(.user-message-container))创建垂直连接线
+ * 2. 当用户消息(user-message-container)隔断AI消息序列时，会自动重新开始一组新的时间线规则
+ * 3. 每组AI消息序列的开始元素(top设为15px)，结束元素(bottom设为calc(100% - 15px))
+ */
+
+/* 默认的连接线样式 - 为所有AI消息项创建完整高度的连接线 */
+.qwen-message.message-item:not(.user-message-container)::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--app-primary-border-color);
+  z-index: 0;
+}
+
+/* 处理每组AI消息序列的开始 - 包括整个消息列表的第一个AI消息和被用户消息隔断后的新AI消息 */
+.qwen-message.message-item:not(.user-message-container):first-child::after,
+.user-message-container + .qwen-message.message-item:not(.user-message-container)::after {
+  top: 15px;
+}
+
+/* 处理每组AI消息序列的结尾 */
+.qwen-message.message-item:not(.user-message-container):last-child::after,
+.qwen-message.message-item:not(.user-message-container):has(+ .user-message-container)::after {
+  bottom: calc(100% - 15px);
+  top: 0;
+}

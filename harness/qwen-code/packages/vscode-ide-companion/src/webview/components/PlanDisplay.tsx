@@ -5,7 +5,6 @@
  */
 
 import type React from 'react';
-import './PlanDisplay.css';
 import { CheckboxDisplay } from './ui/CheckboxDisplay.js';
 
 export interface PlanEntry {
@@ -35,16 +34,17 @@ export const PlanDisplay: React.FC<PlanDisplayProps> = ({ entries }) => {
   return (
     <div
       className={[
-        'plan-display',
         // Container: Similar to example .A/.e
         'relative flex flex-col items-start py-2 pl-[30px] select-text text-[var(--app-primary-foreground)]',
         // Left status dot, similar to example .e:before
         'before:content-["\\25cf"] before:absolute before:left-[10px] before:top-[12px] before:text-[10px] before:z-[1]',
         statusDotClass,
+        // Original plan-display styles: bg-transparent border-0 py-2 px-4 my-2
+        'bg-transparent border-0 my-2',
       ].join(' ')}
     >
       {/* Title area, similar to example summary/_e/or */}
-      <div className="plan-header w-full">
+      <div className="w-full flex items-center gap-1.5 mb-2">
         <div className="relative">
           <div className="list-none line-clamp-2 max-w-full overflow-hidden _e">
             <span>

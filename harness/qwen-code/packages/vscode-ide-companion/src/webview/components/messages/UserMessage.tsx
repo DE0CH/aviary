@@ -44,7 +44,10 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const fileContextDisplay = getFileContextDisplay();
 
   return (
-    <div className="flex gap-0 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]">
+    <div
+      className="qwen-message message-item user-message-container flex gap-0 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]"
+      style={{ position: 'relative' }}
+    >
       <div
         className="inline-block relative whitespace-pre-wrap rounded-md max-w-full overflow-x-auto overflow-y-hidden select-text leading-[1.5]"
         style={{

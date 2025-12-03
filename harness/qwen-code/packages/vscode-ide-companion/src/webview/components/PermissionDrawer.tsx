@@ -178,7 +178,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 <span
                   className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
                     isFocused
-                      ? 'bg-white/20 text-inherit'
+                      ? 'text-inherit'
                       : 'bg-[var(--app-list-hover-background)]'
                   }`}
                 >
@@ -211,7 +211,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 <span
                   className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
                     isFocused
-                      ? 'bg-white/20 text-inherit'
+                      ? 'text-inherit'
                       : 'bg-[var(--app-list-hover-background)]'
                   }`}
                 >

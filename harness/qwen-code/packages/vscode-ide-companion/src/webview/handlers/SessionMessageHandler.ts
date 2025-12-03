@@ -25,6 +25,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
       'getQwenSessions',
       'saveSession',
       'resumeSession',
+      'cancelStreaming',
       // UI action: open a new chat tab (new WebviewPanel)
       'openNewChatTab',
     ].includes(messageType);
@@ -100,6 +101,11 @@ export class SessionMessageHandler extends BaseMessageHandler {
             data: { message: `Failed to open new chat tab: ${error}` },
           });
         }
+        break;
+
+      case 'cancelStreaming':
+        // Handle cancel streaming request from webview
+        await this.handleCancelStreaming();
         break;
 
       default:
@@ -907,6 +913,34 @@ export class SessionMessageHandler extends BaseMessageHandler {
           },
         });
       }
+    }
+  }
+
+  /**
+   * Handle cancel streaming request
+   */
+  private async handleCancelStreaming(): Promise<void> {
+    try {
+      console.log('[SessionMessageHandler] Canceling streaming...');
+
+      // Cancel the current streaming operation in the agent manager
+      await this.agentManager.cancelCurrentPrompt();
+
+      // Send streamEnd message to WebView to update UI
+      this.sendToWebView({
+        type: 'streamEnd',
+        data: { timestamp: Date.now(), reason: 'user_cancelled' },
+      });
+
+      console.log('[SessionMessageHandler] Streaming cancelled successfully');
+    } catch (_error) {
+      console.log('[SessionMessageHandler] Streaming cancelled (interrupted)');
+
+      // Always send streamEnd to update UI, regardless of errors
+      this.sendToWebView({
+        type: 'streamEnd',
+        data: { timestamp: Date.now(), reason: 'user_cancelled' },
+      });
     }
   }
 

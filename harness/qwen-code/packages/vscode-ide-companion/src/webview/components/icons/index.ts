@@ -51,3 +51,6 @@ export { PlayIcon, SwitchIcon } from './ActionIcons.js';
 
 // Special icons
 export { ThinkingIcon, TerminalIcon } from './SpecialIcons.js';
+
+// Stop icon
+export { StopIcon } from './StopIcon.js';

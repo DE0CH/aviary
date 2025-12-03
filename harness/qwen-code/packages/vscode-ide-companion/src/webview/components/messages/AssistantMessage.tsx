@@ -56,7 +56,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   return (
     <div
-      className={`assistant-message-container simple-timeline-container ${getStatusClass()}`}
+      className={`qwen-message message-item assistant-message-container simple-timeline-container ${getStatusClass()}`}
       style={{
         width: '100%',
         alignItems: 'flex-start',

@@ -27,7 +27,7 @@ import type { ToolCallData } from './components/ToolCall.js';
 import { PermissionDrawer } from './components/PermissionDrawer.js';
 import { ToolCall } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
-import { InProgressToolCall } from './components/InProgressToolCall.js';
+// import { InProgressToolCall } from './components/InProgressToolCall.js';
 import { EmptyState } from './components/ui/EmptyState.js';
 import type { PlanEntry } from './components/PlanDisplay.js';
 import { type CompletionItem } from './types/CompletionTypes.js';
@@ -171,6 +171,16 @@ export const App: React.FC = () => {
     inputFieldRef,
     isStreaming: messageHandling.isStreaming,
   });
+
+  // Handle cancel streaming
+  const handleCancel = useCallback(() => {
+    if (messageHandling.isStreaming) {
+      vscode.postMessage({
+        type: 'cancelStreaming',
+        data: {},
+      });
+    }
+  }, [messageHandling.isStreaming, vscode]);
 
   // Message handling
   useWebViewMessages({
@@ -531,49 +541,47 @@ export const App: React.FC = () => {
 
                     if (msg.role === 'thinking') {
                       return (
-                        <div key={`message-${index}`} className="message-item">
-                          <ThinkingMessage
-                            content={msg.content || ''}
-                            timestamp={msg.timestamp || 0}
-                            onFileClick={handleFileClick}
-                          />
-                        </div>
+                        <ThinkingMessage
+                          key={`message-${index}`}
+                          content={msg.content || ''}
+                          timestamp={msg.timestamp || 0}
+                          onFileClick={handleFileClick}
+                        />
                       );
                     }
 
                     if (msg.role === 'user') {
                       return (
-                        <div key={`message-${index}`} className="message-item">
-                          <UserMessage
-                            content={msg.content || ''}
-                            timestamp={msg.timestamp || 0}
-                            onFileClick={handleFileClick}
-                            fileContext={msg.fileContext}
-                          />
-                        </div>
+                        <UserMessage
+                          key={`message-${index}`}
+                          content={msg.content || ''}
+                          timestamp={msg.timestamp || 0}
+                          onFileClick={handleFileClick}
+                          fileContext={msg.fileContext}
+                        />
                       );
                     }
 
                     return (
-                      <div key={`message-${index}`} className="message-item">
-                        <AssistantMessage
-                          content={msg.content || ''}
-                          timestamp={msg.timestamp || 0}
-                          onFileClick={handleFileClick}
-                        />
-                      </div>
+                      <AssistantMessage
+                        key={`message-${index}`}
+                        content={msg.content || ''}
+                        timestamp={msg.timestamp || 0}
+                        onFileClick={handleFileClick}
+                      />
                     );
                   }
 
-                  case 'in-progress-tool-call':
-                    return (
-                      <InProgressToolCall
-                        key={`in-progress-${(item.data as ToolCallData).toolCallId}`}
-                        toolCall={item.data as ToolCallData}
-                        // onFileClick={handleFileClick}
-                      />
-                    );
+                  // case 'in-progress-tool-call':
+                  //   return (
+                  //     <InProgressToolCall
+                  //       key={`in-progress-${(item.data as ToolCallData).toolCallId}`}
+                  //       toolCall={item.data as ToolCallData}
+                  //       // onFileClick={handleFileClick}
+                  //     />
+                  //   );
 
+                  case 'in-progress-tool-call':
                   case 'completed-tool-call':
                     return (
                       <ToolCall
@@ -626,6 +634,7 @@ export const App: React.FC = () => {
         onCompositionEnd={() => setIsComposing(false)}
         onKeyDown={() => {}}
         onSubmit={handleSubmit.handleSubmit}
+        onCancel={handleCancel}
         onToggleEditMode={handleToggleEditMode}
         onToggleThinking={handleToggleThinking}
         onFocusActiveEditor={fileContext.focusActiveEditor}

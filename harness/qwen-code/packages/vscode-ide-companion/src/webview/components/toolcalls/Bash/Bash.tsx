@@ -10,7 +10,9 @@ import type React from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
 import { safeTitle, groupContent } from '../shared/utils.js';
-import './ExecuteToolCall.css';
+import { useVSCode } from '../../../hooks/useVSCode.js';
+import { createAndOpenTempFile } from '../../../utils/tempFileManager.js';
+import './Bash.css';
 
 /**
  * Specialized component for Execute/Bash tool calls
@@ -19,6 +21,7 @@ import './ExecuteToolCall.css';
 export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { title, content, rawInput, toolCallId } = toolCall;
   const commandText = safeTitle(title);
+  const vscode = useVSCode();
 
   // Group content by type
   const { textOutputs, errors } = groupContent(content);
@@ -31,6 +34,24 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   } else if (typeof rawInput === 'string') {
     inputCommand = rawInput;
   }
+
+  // Handle click on IN section
+  const handleInClick = () => {
+    createAndOpenTempFile(
+      vscode.postMessage,
+      inputCommand,
+      'bash-input',
+      '.sh',
+    );
+  };
+
+  // Handle click on OUT section
+  const handleOutClick = () => {
+    if (textOutputs.length > 0) {
+      const output = textOutputs.join('\n');
+      createAndOpenTempFile(vscode.postMessage, output, 'bash-output', '.txt');
+    }
+  };
 
   // Error case
   if (errors.length > 0) {
@@ -45,7 +66,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         <div className="bash-toolcall-card">
           <div className="bash-toolcall-content">
             {/* IN row */}
-            <div className="bash-toolcall-row">
+            <div
+              className="bash-toolcall-row"
+              onClick={handleInClick}
+              style={{ cursor: 'pointer' }}
+            >
               <div className="bash-toolcall-label">IN</div>
               <div className="bash-toolcall-row-content">
                 <pre className="bash-toolcall-pre">{inputCommand}</pre>
@@ -84,7 +109,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         <div className="bash-toolcall-card">
           <div className="bash-toolcall-content">
             {/* IN row */}
-            <div className="bash-toolcall-row">
+            <div
+              className="bash-toolcall-row"
+              onClick={handleInClick}
+              style={{ cursor: 'pointer' }}
+            >
               <div className="bash-toolcall-label">IN</div>
               <div className="bash-toolcall-row-content">
                 <pre className="bash-toolcall-pre">{inputCommand}</pre>
@@ -92,7 +121,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
             </div>
 
             {/* OUT row */}
-            <div className="bash-toolcall-row">
+            <div
+              className="bash-toolcall-row"
+              onClick={handleOutClick}
+              style={{ cursor: 'pointer' }}
+            >
               <div className="bash-toolcall-label">OUT</div>
               <div className="bash-toolcall-row-content">
                 <div className="bash-toolcall-output-subtle">
@@ -109,7 +142,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Success without output: show command with branch connector
   return (
     <ToolCallContainer label="Bash" status="success" toolCallId={toolCallId}>
-      <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
+      <div
+        className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1"
+        onClick={handleInClick}
+        style={{ cursor: 'pointer' }}
+      >
         <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
         <span className="flex-shrink-0 w-full">{commandText}</span>
       </div>

@@ -14,6 +14,7 @@ import {
   SlashCommandIcon,
   LinkIcon,
   ArrowUpIcon,
+  StopIcon,
 } from './icons/index.js';
 import { CompletionMenu } from './ui/CompletionMenu.js';
 import type { CompletionItem } from '../types/CompletionTypes.js';
@@ -36,6 +37,7 @@ interface InputFormProps {
   onCompositionEnd: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   onSubmit: (e: React.FormEvent) => void;
+  onCancel: () => void;
   onToggleEditMode: () => void;
   onToggleThinking: () => void;
   onFocusActiveEditor: () => void;
@@ -91,6 +93,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   onCompositionEnd,
   onKeyDown,
   onSubmit,
+  onCancel,
   onToggleEditMode,
   onToggleThinking,
   onFocusActiveEditor,
@@ -198,17 +201,6 @@ export const InputForm: React.FC<InputFormProps> = ({
               </button>
             )}
 
-            {/* Divider */}
-            <div
-              className="w-px h-[26px] mx-0.5 flex-shrink-0"
-              style={{
-                backgroundColor: 'var(--app-transparent-inner-border)',
-              }}
-            />
-
-            {/* Spacer */}
-            <div className="flex-1 min-w-0" />
-
             {/* Thinking button */}
             <button
               type="button"
@@ -239,14 +231,25 @@ export const InputForm: React.FC<InputFormProps> = ({
               <LinkIcon />
             </button>
 
-            {/* Send button */}
-            <button
-              type="submit"
-              className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
-              disabled={isStreaming || !inputText.trim()}
-            >
-              <ArrowUpIcon />
-            </button>
+            {/* Send/Stop button */}
+            {isStreaming ? (
+              <button
+                type="button"
+                className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
+                onClick={onCancel}
+                title="Stop generation"
+              >
+                <StopIcon />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
+                disabled={!inputText.trim()}
+              >
+                <ArrowUpIcon />
+              </button>
+            )}
           </div>
         </form>
       </div>

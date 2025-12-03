@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
+import { useVSCode } from './useVSCode.js';
 import type { Conversation } from '../../storage/conversationStore.js';
 import type {
   PermissionOption,
@@ -108,6 +109,8 @@ export const useWebViewMessages = ({
   inputFieldRef,
   setInputText,
 }: UseWebViewMessagesProps) => {
+  // VS Code API for posting messages back to the extension host
+  const vscode = useVSCode();
   // Use ref to store callbacks to avoid useEffect dependency issues
   const handlersRef = useRef({
     sessionManagement,
@@ -469,6 +472,8 @@ export const useWebViewMessages = ({
               (session.name as string) ||
               'Past Conversations';
             handlers.sessionManagement.setCurrentSessionTitle(title);
+            // Update the VS Code webview tab title as well
+            vscode.postMessage({ type: 'updatePanelTitle', data: { title } });
           }
           if (message.data.messages) {
             handlers.messageHandling.setMessages(message.data.messages);
@@ -487,6 +492,11 @@ export const useWebViewMessages = ({
           handlers.sessionManagement.setCurrentSessionTitle(
             'Past Conversations',
           );
+          // Reset the VS Code tab title to default label
+          vscode.postMessage({
+            type: 'updatePanelTitle',
+            data: { title: 'Qwen Code' },
+          });
           lastPlanSnapshotRef.current = null;
           break;
 
@@ -496,6 +506,8 @@ export const useWebViewMessages = ({
           if (sessionId && title) {
             handlers.sessionManagement.setCurrentSessionId(sessionId);
             handlers.sessionManagement.setCurrentSessionTitle(title);
+            // Ask extension host to reflect this title in the tab label
+            vscode.postMessage({ type: 'updatePanelTitle', data: { title } });
           }
           break;
         }
@@ -563,11 +575,23 @@ export const useWebViewMessages = ({
           break;
         }
 
+        case 'cancelStreaming':
+          // Handle cancel streaming request from webview
+          handlers.messageHandling.endStreaming();
+          handlers.messageHandling.clearWaitingForResponse();
+          // Add interrupted message
+          handlers.messageHandling.addMessage({
+            role: 'assistant',
+            content: 'Interrupted',
+            timestamp: Date.now(),
+          });
+          break;
+
         default:
           break;
       }
     },
-    [inputFieldRef, setInputText],
+    [inputFieldRef, setInputText, vscode],
   );
 
   useEffect(() => {
