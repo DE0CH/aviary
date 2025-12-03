@@ -13,6 +13,8 @@ export const AGENT_METHODS = {
   session_load: 'session/load',
   session_new: 'session/new',
   session_prompt: 'session/prompt',
+  session_list: 'session/list',
+  session_set_mode: 'session/set_mode',
 };
 
 export const CLIENT_METHODS = {
@@ -47,6 +49,9 @@ export type ReadTextFileResponse = z.infer<typeof readTextFileResponseSchema>;
 export type RequestPermissionOutcome = z.infer<
   typeof requestPermissionOutcomeSchema
 >;
+export type SessionListItem = z.infer<typeof sessionListItemSchema>;
+export type ListSessionsRequest = z.infer<typeof listSessionsRequestSchema>;
+export type ListSessionsResponse = z.infer<typeof listSessionsResponseSchema>;
 
 export type CancelNotification = z.infer<typeof cancelNotificationSchema>;
 
@@ -83,6 +88,12 @@ export type McpServer = z.infer<typeof mcpServerSchema>;
 export type AgentCapabilities = z.infer<typeof agentCapabilitiesSchema>;
 
 export type AuthMethod = z.infer<typeof authMethodSchema>;
+
+export type ModeInfo = z.infer<typeof modeInfoSchema>;
+
+export type ModesData = z.infer<typeof modesDataSchema>;
+
+export type AgentInfo = z.infer<typeof agentInfoSchema>;
 
 export type PromptCapabilities = z.infer<typeof promptCapabilitiesSchema>;
 
@@ -127,6 +138,12 @@ export type ClientRequest = z.infer<typeof clientRequestSchema>;
 export type AgentRequest = z.infer<typeof agentRequestSchema>;
 
 export type AgentNotification = z.infer<typeof agentNotificationSchema>;
+
+export type ApprovalModeValue = z.infer<typeof approvalModeValueSchema>;
+
+export type SetModeRequest = z.infer<typeof setModeRequestSchema>;
+
+export type SetModeResponse = z.infer<typeof setModeResponseSchema>;
 
 export type AvailableCommandInput = z.infer<typeof availableCommandInputSchema>;
 
@@ -179,6 +196,7 @@ export const toolKindSchema = z.union([
   z.literal('execute'),
   z.literal('think'),
   z.literal('fetch'),
+  z.literal('switch_mode'),
   z.literal('other'),
 ]);
 
@@ -209,6 +227,22 @@ export const cancelNotificationSchema = z.object({
   sessionId: z.string(),
 });
 
+export const approvalModeValueSchema = z.union([
+  z.literal('plan'),
+  z.literal('default'),
+  z.literal('auto-edit'),
+  z.literal('yolo'),
+]);
+
+export const setModeRequestSchema = z.object({
+  sessionId: z.string(),
+  modeId: approvalModeValueSchema,
+});
+
+export const setModeResponseSchema = z.object({
+  modeId: approvalModeValueSchema,
+});
+
 export const authenticateRequestSchema = z.object({
   methodId: z.string(),
 });
@@ -220,6 +254,29 @@ export const newSessionResponseSchema = z.object({
 });
 
 export const loadSessionResponseSchema = z.null();
+
+export const sessionListItemSchema = z.object({
+  cwd: z.string(),
+  filePath: z.string(),
+  gitBranch: z.string().optional(),
+  messageCount: z.number(),
+  mtime: z.number(),
+  prompt: z.string(),
+  sessionId: z.string(),
+  startTime: z.string(),
+});
+
+export const listSessionsResponseSchema = z.object({
+  hasMore: z.boolean(),
+  items: z.array(sessionListItemSchema),
+  nextCursor: z.number().optional(),
+});
+
+export const listSessionsRequestSchema = z.object({
+  cursor: z.number().optional(),
+  cwd: z.string(),
+  size: z.number().optional(),
+});
 
 export const stopReasonSchema = z.union([
   z.literal('end_turn'),
@@ -321,9 +378,28 @@ export const loadSessionRequestSchema = z.object({
   sessionId: z.string(),
 });
 
+export const modeInfoSchema = z.object({
+  id: approvalModeValueSchema,
+  name: z.string(),
+  description: z.string(),
+});
+
+export const modesDataSchema = z.object({
+  currentModeId: approvalModeValueSchema,
+  availableModes: z.array(modeInfoSchema),
+});
+
+export const agentInfoSchema = z.object({
+  name: z.string(),
+  title: z.string(),
+  version: z.string(),
+});
+
 export const initializeResponseSchema = z.object({
   agentCapabilities: agentCapabilitiesSchema,
+  agentInfo: agentInfoSchema,
   authMethods: z.array(authMethodSchema),
+  modes: modesDataSchema,
   protocolVersion: z.number(),
 });
 
@@ -409,6 +485,13 @@ export const availableCommandsUpdateSchema = z.object({
   sessionUpdate: z.literal('available_commands_update'),
 });
 
+export const currentModeUpdateSchema = z.object({
+  sessionUpdate: z.literal('current_mode_update'),
+  modeId: approvalModeValueSchema,
+});
+
+export type CurrentModeUpdate = z.infer<typeof currentModeUpdateSchema>;
+
 export const sessionUpdateSchema = z.union([
   z.object({
     content: contentBlockSchema,
@@ -437,6 +520,7 @@ export const sessionUpdateSchema = z.union([
     kind: toolKindSchema.optional().nullable(),
     locations: z.array(toolCallLocationSchema).optional().nullable(),
     rawInput: z.unknown().optional(),
+    rawOutput: z.unknown().optional(),
     sessionUpdate: z.literal('tool_call_update'),
     status: toolCallStatusSchema.optional().nullable(),
     title: z.string().optional().nullable(),
@@ -446,6 +530,7 @@ export const sessionUpdateSchema = z.union([
     entries: z.array(planEntrySchema),
     sessionUpdate: z.literal('plan'),
   }),
+  currentModeUpdateSchema,
   availableCommandsUpdateSchema,
 ]);
 
@@ -455,6 +540,8 @@ export const agentResponseSchema = z.union([
   newSessionResponseSchema,
   loadSessionResponseSchema,
   promptResponseSchema,
+  listSessionsResponseSchema,
+  setModeResponseSchema,
 ]);
 
 export const requestPermissionRequestSchema = z.object({
@@ -485,6 +572,8 @@ export const agentRequestSchema = z.union([
   newSessionRequestSchema,
   loadSessionRequestSchema,
   promptRequestSchema,
+  listSessionsRequestSchema,
+  setModeRequestSchema,
 ]);
 
 export const agentNotificationSchema = sessionNotificationSchema;

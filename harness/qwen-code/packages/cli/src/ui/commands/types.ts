@@ -37,7 +37,7 @@ export interface CommandContext {
     config: Config | null;
     settings: LoadedSettings;
     git: GitService | undefined;
-    logger: Logger;
+    logger: Logger | null;
   };
   // UI state and history management
   ui: {
@@ -78,6 +78,8 @@ export interface CommandContext {
     stats: SessionStatsState;
     /** A transient list of shell commands the user has approved for this session. */
     sessionShellAllowlist: Set<string>;
+    /** Reset session metrics and prompt counters for a fresh session. */
+    startNewSession?: (sessionId: string) => void;
   };
   // Flag to indicate if an overwrite has been confirmed
   overwriteConfirmed?: boolean;
@@ -214,7 +216,7 @@ export interface SlashCommand {
     | SlashCommandActionReturn
     | Promise<void | SlashCommandActionReturn>;
 
-  // Provides argument completion (e.g., completing a tag for `/chat resume <tag>`).
+  // Provides argument completion
   completion?: (
     context: CommandContext,
     partialArg: string,

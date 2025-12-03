@@ -39,8 +39,8 @@ import type {
   ExtensionDisableEvent,
   AuthEvent,
   RipgrepFallbackEvent,
+  EndSessionEvent,
 } from '../types.js';
-import { EndSessionEvent } from '../types.js';
 import type {
   RumEvent,
   RumViewEvent,
@@ -102,6 +102,7 @@ export class QwenLogger {
   private lastFlushTime: number = Date.now();
 
   private userId: string;
+
   private sessionId: string;
 
   /**
@@ -115,17 +116,12 @@ export class QwenLogger {
    */
   private pendingFlush: boolean = false;
 
-  private isShutdown: boolean = false;
-
-  private constructor(config?: Config) {
+  private constructor(config: Config) {
     this.config = config;
     this.events = new FixedDeque<RumEvent>(Array, MAX_EVENTS);
     this.installationManager = new InstallationManager();
     this.userId = this.generateUserId();
-    this.sessionId =
-      typeof this.config?.getSessionId === 'function'
-        ? this.config.getSessionId()
-        : '';
+    this.sessionId = config.getSessionId();
   }
 
   private generateUserId(): string {
@@ -139,10 +135,6 @@ export class QwenLogger {
       return undefined;
     if (!QwenLogger.instance) {
       QwenLogger.instance = new QwenLogger(config);
-      process.on(
-        'exit',
-        QwenLogger.instance.shutdown.bind(QwenLogger.instance),
-      );
     }
 
     return QwenLogger.instance;
@@ -241,10 +233,10 @@ export class QwenLogger {
         id: this.userId,
       },
       session: {
-        id: this.sessionId,
+        id: this.sessionId || this.config?.getSessionId(),
       },
       view: {
-        id: this.sessionId,
+        id: this.sessionId || this.config?.getSessionId(),
         name: 'qwen-code-cli',
       },
       os: osMetadata,
@@ -364,7 +356,24 @@ export class QwenLogger {
   }
 
   // session events
-  logStartSessionEvent(event: StartSessionEvent): void {
+  async logStartSessionEvent(event: StartSessionEvent): Promise<void> {
+    // Flush all pending events with the old session ID first.
+    // If flush fails, discard the pending events to avoid mixing sessions.
+    await this.flushToRum().catch((error: unknown) => {
+      if (this.config?.getDebugMode()) {
+        console.debug(
+          'Error flushing pending events before session start:',
+          error,
+        );
+      }
+    });
+
+    // Clear any remaining events (discard if flush failed)
+    this.events.clear();
+
+    // Now set the new session ID
+    this.sessionId = event.session_id;
+
     const applicationEvent = this.createViewEvent('session', 'session_start', {
       properties: {
         model: event.model,
@@ -850,14 +859,6 @@ export class QwenLogger {
     } else {
       throw new Error('Unsupported proxy type');
     }
-  }
-
-  shutdown() {
-    if (this.isShutdown) return;
-
-    this.isShutdown = true;
-    const event = new EndSessionEvent(this.config);
-    this.logEndSessionEvent(event);
   }
 
   private requeueFailedEvents(eventsToSend: RumEvent[]): void {

@@ -124,9 +124,13 @@ export const useGeminiStream = (
   const [pendingHistoryItem, pendingHistoryItemRef, setPendingHistoryItem] =
     useStateAndRef<HistoryItemWithoutId | null>(null);
   const processedMemoryToolsRef = useRef<Set<string>>(new Set());
-  const { startNewPrompt, getPromptCount } = useSessionStats();
+  const {
+    startNewPrompt,
+    getPromptCount,
+    stats: sessionStates,
+  } = useSessionStats();
   const storage = config.storage;
-  const logger = useLogger(storage);
+  const logger = useLogger(storage, sessionStates.sessionId);
   const gitService = useMemo(() => {
     if (!config.getProjectRoot()) {
       return;
@@ -849,21 +853,24 @@ export const useGeminiStream = (
         const finalQueryToSend = queryToSend;
 
         if (!options?.isContinuation) {
+          // trigger new prompt event for session stats in CLI
+          startNewPrompt();
+
+          // log user prompt event for telemetry, only text prompts for now
           if (typeof queryToSend === 'string') {
-            // logging the text prompts only for now
-            const promptText = queryToSend;
             logUserPrompt(
               config,
               new UserPromptEvent(
-                promptText.length,
+                queryToSend.length,
                 prompt_id,
                 config.getContentGeneratorConfig()?.authType,
-                promptText,
+                queryToSend,
               ),
             );
           }
-          startNewPrompt();
-          setThought(null); // Reset thought when starting a new prompt
+
+          // Reset thought when starting a new prompt
+          setThought(null);
         }
 
         setIsResponding(true);
@@ -874,6 +881,7 @@ export const useGeminiStream = (
             finalQueryToSend,
             abortSignal,
             prompt_id!,
+            options,
           );
           const processingStatus = await processGeminiStreamEvents(
             stream,

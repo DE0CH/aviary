@@ -42,6 +42,14 @@ export class AgentSideConnection implements Client {
           const validatedParams = schema.loadSessionRequestSchema.parse(params);
           return agent.loadSession(validatedParams);
         }
+        case schema.AGENT_METHODS.session_list: {
+          if (!agent.listSessions) {
+            throw RequestError.methodNotFound();
+          }
+          const validatedParams =
+            schema.listSessionsRequestSchema.parse(params);
+          return agent.listSessions(validatedParams);
+        }
         case schema.AGENT_METHODS.authenticate: {
           const validatedParams =
             schema.authenticateRequestSchema.parse(params);
@@ -54,6 +62,13 @@ export class AgentSideConnection implements Client {
         case schema.AGENT_METHODS.session_cancel: {
           const validatedParams = schema.cancelNotificationSchema.parse(params);
           return agent.cancel(validatedParams);
+        }
+        case schema.AGENT_METHODS.session_set_mode: {
+          if (!agent.setMode) {
+            throw RequestError.methodNotFound();
+          }
+          const validatedParams = schema.setModeRequestSchema.parse(params);
+          return agent.setMode(validatedParams);
         }
         default:
           throw RequestError.methodNotFound(method);
@@ -360,7 +375,11 @@ export interface Agent {
   loadSession?(
     params: schema.LoadSessionRequest,
   ): Promise<schema.LoadSessionResponse>;
+  listSessions?(
+    params: schema.ListSessionsRequest,
+  ): Promise<schema.ListSessionsResponse>;
   authenticate(params: schema.AuthenticateRequest): Promise<void>;
   prompt(params: schema.PromptRequest): Promise<schema.PromptResponse>;
   cancel(params: schema.CancelNotification): Promise<void>;
+  setMode?(params: schema.SetModeRequest): Promise<schema.SetModeResponse>;
 }
