@@ -30,7 +30,7 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const queryText = safeTitle(title);
 
   // Group content by type
-  const { errors } = groupContent(content);
+  const { errors, textOutputs } = groupContent(content);
 
   // Error case: show search query + error in card layout
   if (errors.length > 0) {
@@ -73,6 +73,31 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         {/* <span className="font-mono">{queryText}</span> */}
         <span className="mx-2 opacity-50">→</span>
         <LocationsList locations={locations} />
+      </ToolCallContainer>
+    );
+  }
+
+  // Show content text if available (e.g., "Listed 4 item(s).")
+  if (textOutputs.length > 0) {
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
+    return (
+      <ToolCallContainer
+        label="Search"
+        status={containerStatus}
+        className="search-toolcall"
+        labelSuffix={queryText ? `(${queryText})` : undefined}
+      >
+        <div className="flex flex-col">
+          {textOutputs.map((text, index) => (
+            <div
+              key={index}
+              className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1"
+            >
+              <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
+              <span className="flex-shrink-0 w-full">{text}</span>
+            </div>
+          ))}
+        </div>
       </ToolCallContainer>
     );
   }

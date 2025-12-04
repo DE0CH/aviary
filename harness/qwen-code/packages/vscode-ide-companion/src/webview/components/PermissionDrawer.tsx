@@ -145,16 +145,13 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
       >
         {/* Background layer */}
         <div
-          className="absolute inset-0 rounded-large"
+          className="p-2 absolute inset-0 rounded-large"
           style={{ backgroundColor: 'var(--app-input-background)' }}
         />
 
         {/* Title */}
-        <div className="relative z-[1] px-3 py-3">
-          <div
-            className="text-sm font-medium"
-            style={{ color: 'var(--app-secondary-foreground)' }}
-          >
+        <div className="relative z-[1] px-1 text-[1.1em] text-[var(--app-primary-foreground)] flex flex-col min-h-0">
+          <div className="font-bold text-[var(--app-primary-foreground)] mb-1">
             {getTitle()}
           </div>
         </div>
@@ -169,20 +166,20 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 key={option.optionId}
                 className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] ${
                   isFocused
-                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)]'
-                    : 'hover:bg-[var(--app-list-hover-background)]'
+                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
+                    : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                 }`}
                 onClick={() => onResponse(option.optionId)}
                 onMouseEnter={() => setFocusedIndex(index)}
               >
                 {/* Number badge */}
                 {/* Plain number badge without hover background */}
-                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded">
+                <span className="inline-flex items-center justify-center min-w-[10px] h-5 font-semibold">
                   {index + 1}
                 </span>
 
                 {/* Option text */}
-                <span className="text-sm">{option.name}</span>
+                <span className="font-semibold">{option.name}</span>
 
                 {/* Always badge */}
                 {/* {isAlways && <span className="text-sm">⚡</span>} */}
@@ -197,8 +194,8 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
               <div
                 className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 cursor-text text-[var(--app-primary-foreground)] ${
                   isFocused
-                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)]'
-                    : 'hover:bg-[var(--app-list-hover-background)]'
+                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
+                    : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                 }`}
                 onMouseEnter={() => setFocusedIndex(options.length)}
                 onClick={() => customInputRef.current?.focus()}

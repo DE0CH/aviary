@@ -63,7 +63,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
       {/* File context indicator */}
       {fileContextDisplay && (
-        <div className="mt-6">
+        <div className="mt-1">
           <div
             role="button"
             tabIndex={0}

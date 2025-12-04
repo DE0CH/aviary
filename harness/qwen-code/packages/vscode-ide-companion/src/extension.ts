@@ -5,6 +5,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { IDEServer } from './ide-server.js';
 import semver from 'semver';
 import { DiffContentProvider, DiffManager } from './diff-manager.js';
@@ -164,6 +165,45 @@ export async function activate(context: vscode.ExtensionContext) {
     diffManager,
     () => webViewProviders,
     createWebViewProvider,
+  );
+
+  // Relay diff accept/cancel events to the chat webview as assistant notices
+  // so the user sees immediate feedback in the chat thread (Claude Code style).
+  context.subscriptions.push(
+    diffManager.onDidChange((notification) => {
+      try {
+        const method = (notification as { method?: string }).method;
+        if (method !== 'ide/diffAccepted' && method !== 'ide/diffClosed') {
+          return;
+        }
+
+        const params = (
+          notification as unknown as {
+            params?: { filePath?: string };
+          }
+        ).params;
+        const filePath = params?.filePath ?? '';
+        const fileBase = filePath ? path.basename(filePath) : '';
+        const text =
+          method === 'ide/diffAccepted'
+            ? `Accepted changes${fileBase ? ` to ${fileBase}` : ''}.`
+            : `Cancelled changes${fileBase ? ` to ${fileBase}` : ''}.`;
+
+        for (const provider of webViewProviders) {
+          const panel = provider.getPanel();
+          panel?.webview.postMessage({
+            type: 'message',
+            data: {
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+            },
+          });
+        }
+      } catch (e) {
+        console.warn('[Extension] Failed to relay diff event to chat:', e);
+      }
+    }),
   );
 
   context.subscriptions.push(
