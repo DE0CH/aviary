@@ -57,3 +57,6 @@ gha-creds-*.json
 
 # Log files
 patch_output.log
+
+# test files
+demo-app
