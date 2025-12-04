@@ -1,8 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type {
-  MCPServerConfig,
-  SubagentConfig,
-} from '@qwen-code/qwen-code-core';
+import type { SubagentConfig } from '@qwen-code/qwen-code-core';
 
 /**
  * Annotation for attaching metadata to content blocks
@@ -298,11 +295,68 @@ export interface CLIControlPermissionRequest {
   blocked_path: string | null;
 }
 
+/**
+ * Wire format for SDK MCP server config in initialization request.
+ * The actual Server instance stays in the SDK process.
+ */
+export interface SDKMcpServerConfig {
+  type: 'sdk';
+  name: string;
+}
+
+/**
+ * Wire format for external MCP server config in initialization request.
+ * Represents stdio/SSE/HTTP/TCP transports that must run in the CLI process.
+ */
+export interface CLIMcpServerConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  httpUrl?: string;
+  headers?: Record<string, string>;
+  tcp?: string;
+  timeout?: number;
+  trust?: boolean;
+  description?: string;
+  includeTools?: string[];
+  excludeTools?: string[];
+  extensionName?: string;
+  oauth?: {
+    enabled?: boolean;
+    clientId?: string;
+    clientSecret?: string;
+    authorizationUrl?: string;
+    tokenUrl?: string;
+    scopes?: string[];
+    audiences?: string[];
+    redirectUri?: string;
+    tokenParamName?: string;
+    registrationUrl?: string;
+  };
+  authProviderType?:
+    | 'dynamic_discovery'
+    | 'google_credentials'
+    | 'service_account_impersonation';
+  targetAudience?: string;
+  targetServiceAccount?: string;
+}
+
 export interface CLIControlInitializeRequest {
   subtype: 'initialize';
   hooks?: HookRegistration[] | null;
-  sdkMcpServers?: Record<string, MCPServerConfig>;
-  mcpServers?: Record<string, MCPServerConfig>;
+  /**
+   * SDK MCP servers config
+   * These are MCP servers running in the SDK process, connected via control plane.
+   * External MCP servers are configured separately in settings, not via initialization.
+   */
+  sdkMcpServers?: Record<string, Omit<SDKMcpServerConfig, 'instance'>>;
+  /**
+   * External MCP servers that the SDK wants the CLI to manage.
+   * These run outside the SDK process and require CLI-side transport setup.
+   */
+  mcpServers?: Record<string, CLIMcpServerConfig>;
   agents?: SubagentConfig[];
 }
 

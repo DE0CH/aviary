@@ -44,15 +44,23 @@ export class PermissionController extends BaseController {
    */
   protected async handleRequestPayload(
     payload: ControlRequestPayload,
-    _signal: AbortSignal,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     switch (payload.subtype) {
       case 'can_use_tool':
-        return this.handleCanUseTool(payload as CLIControlPermissionRequest);
+        return this.handleCanUseTool(
+          payload as CLIControlPermissionRequest,
+          signal,
+        );
 
       case 'set_permission_mode':
         return this.handleSetPermissionMode(
           payload as CLIControlSetPermissionModeRequest,
+          signal,
         );
 
       default:
@@ -70,7 +78,12 @@ export class PermissionController extends BaseController {
    */
   private async handleCanUseTool(
     payload: CLIControlPermissionRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const toolName = payload.tool_name;
     if (
       !toolName ||
@@ -192,7 +205,12 @@ export class PermissionController extends BaseController {
    */
   private async handleSetPermissionMode(
     payload: CLIControlSetPermissionModeRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const mode = payload.mode;
     const validModes: PermissionMode[] = [
       'default',
@@ -373,6 +391,14 @@ export class PermissionController extends BaseController {
     toolCall: WaitingToolCall,
   ): Promise<void> {
     try {
+      // Check if already aborted
+      if (this.context.abortSignal?.aborted) {
+        await toolCall.confirmationDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+        );
+        return;
+      }
+
       const inputFormat = this.context.config.getInputFormat?.();
       const isStreamJsonMode = inputFormat === InputFormat.STREAM_JSON;
 
@@ -392,14 +418,18 @@ export class PermissionController extends BaseController {
         toolCall.confirmationDetails,
       );
 
-      const response = await this.sendControlRequest({
-        subtype: 'can_use_tool',
-        tool_name: toolCall.request.name,
-        tool_use_id: toolCall.request.callId,
-        input: toolCall.request.args,
-        permission_suggestions: permissionSuggestions,
-        blocked_path: null,
-      } as CLIControlPermissionRequest);
+      const response = await this.sendControlRequest(
+        {
+          subtype: 'can_use_tool',
+          tool_name: toolCall.request.name,
+          tool_use_id: toolCall.request.callId,
+          input: toolCall.request.args,
+          permission_suggestions: permissionSuggestions,
+          blocked_path: null,
+        } as CLIControlPermissionRequest,
+        undefined, // use default timeout
+        this.context.abortSignal,
+      );
 
       if (response.subtype !== 'success') {
         await toolCall.confirmationDetails.onConfirm(

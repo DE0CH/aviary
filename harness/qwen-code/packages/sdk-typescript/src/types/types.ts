@@ -2,24 +2,10 @@ import type {
   PermissionMode,
   PermissionSuggestion,
   SubagentConfig,
+  SDKMcpServerConfig,
 } from './protocol.js';
 
 export type { PermissionMode };
-
-type JSONSchema = {
-  type: string;
-  properties?: Record<string, unknown>;
-  required?: string[];
-  description?: string;
-  [key: string]: unknown;
-};
-
-export type ToolDefinition<TInput = unknown, TOutput = unknown> = {
-  name: string;
-  description: string;
-  inputSchema: JSONSchema;
-  handler: (input: TInput) => Promise<TOutput>;
-};
 
 export type TransportOptions = {
   pathToQwenExecutable: string;
@@ -61,14 +47,115 @@ export type PermissionResult =
       interrupt?: boolean;
     };
 
-export interface ExternalMcpServerConfig {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
+/**
+ * OAuth configuration for MCP servers
+ */
+export interface McpOAuthConfig {
+  enabled?: boolean;
+  clientId?: string;
+  clientSecret?: string;
+  scopes?: string[];
+  redirectUri?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  audiences?: string[];
+  tokenParamName?: string;
+  registrationUrl?: string;
 }
 
-export interface SdkMcpServerConfig {
-  connect: (transport: unknown) => Promise<void>;
+/**
+ * Auth provider type for MCP servers
+ */
+export type McpAuthProviderType =
+  | 'dynamic_discovery'
+  | 'google_credentials'
+  | 'service_account_impersonation';
+
+/**
+ * CLI MCP Server configuration
+ *
+ * Supports multiple transport types:
+ * - stdio: command, args, env, cwd
+ * - SSE: url
+ * - Streamable HTTP: httpUrl, headers
+ * - WebSocket: tcp
+ *
+ * This interface aligns with MCPServerConfig in @qwen-code/qwen-code-core.
+ */
+export interface CLIMcpServerConfig {
+  // For stdio transport
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  // For SSE transport
+  url?: string;
+  // For streamable HTTP transport
+  httpUrl?: string;
+  headers?: Record<string, string>;
+  // For WebSocket transport
+  tcp?: string;
+  // Common
+  timeout?: number;
+  trust?: boolean;
+  // Metadata
+  description?: string;
+  includeTools?: string[];
+  excludeTools?: string[];
+  extensionName?: string;
+  // OAuth configuration
+  oauth?: McpOAuthConfig;
+  authProviderType?: McpAuthProviderType;
+  // Service Account Configuration
+  /** targetAudience format: CLIENT_ID.apps.googleusercontent.com */
+  targetAudience?: string;
+  /** targetServiceAccount format: <service-account-name>@<project-num>.iam.gserviceaccount.com */
+  targetServiceAccount?: string;
+}
+
+/**
+ * Unified MCP Server configuration
+ *
+ * Supports both external MCP servers (stdio/SSE/HTTP/WebSocket) and SDK-embedded MCP servers.
+ *
+ * @example External MCP server (stdio)
+ * ```typescript
+ * mcpServers: {
+ *   'my-server': { command: 'node', args: ['server.js'] }
+ * }
+ * ```
+ *
+ * @example External MCP server (SSE)
+ * ```typescript
+ * mcpServers: {
+ *   'remote-server': { url: 'http://localhost:3000/sse' }
+ * }
+ * ```
+ *
+ * @example External MCP server (Streamable HTTP)
+ * ```typescript
+ * mcpServers: {
+ *   'http-server': { httpUrl: 'http://localhost:3000/mcp', headers: { 'Authorization': 'Bearer token' } }
+ * }
+ * ```
+ *
+ * @example SDK MCP server
+ * ```typescript
+ * const server = createSdkMcpServer('weather', '1.0.0', [weatherTool]);
+ * mcpServers: {
+ *   'weather': { type: 'sdk', name: 'weather', instance: server }
+ * }
+ * ```
+ */
+export type McpServerConfig = CLIMcpServerConfig | SDKMcpServerConfig;
+
+/**
+ * Type guard to check if a config is an SDK MCP server
+ */
+export function isSdkMcpServerConfig(
+  config: McpServerConfig,
+): config is SDKMcpServerConfig {
+  return 'type' in config && config.type === 'sdk';
 }
 
 /**
@@ -174,11 +261,36 @@ export interface QueryOptions {
   canUseTool?: CanUseTool;
 
   /**
-   * External MCP (Model Context Protocol) servers to connect to.
-   * Each server is identified by a unique name and configured with command, args, and environment.
-   * @example { 'my-server': { command: 'node', args: ['server.js'], env: { PORT: '3000' } } }
+   * MCP (Model Context Protocol) servers to connect to.
+   *
+   * Supports both external MCP servers and SDK-embedded MCP servers:
+   *
+   * **External MCP servers** - Run in separate processes, connected via stdio/SSE/HTTP:
+   * ```typescript
+   * mcpServers: {
+   *   'stdio-server': { command: 'node', args: ['server.js'], env: { PORT: '3000' } },
+   *   'sse-server': { url: 'http://localhost:3000/sse' },
+   *   'http-server': { httpUrl: 'http://localhost:3000/mcp' }
+   * }
+   * ```
+   *
+   * **SDK MCP servers** - Run in the SDK process, connected via in-memory transport:
+   * ```typescript
+   * const myTool = tool({
+   *   name: 'my_tool',
+   *   description: 'My custom tool',
+   *   inputSchema: { type: 'object', properties: { input: { type: 'string' } } },
+   *   handler: async (input) => ({ result: input.input.toUpperCase() }),
+   * });
+   *
+   * const server = createSdkMcpServer('my-server', '1.0.0', [myTool]);
+   *
+   * mcpServers: {
+   *   'my-server': { type: 'sdk', name: 'my-server', instance: server }
+   * }
+   * ```
    */
-  mcpServers?: Record<string, ExternalMcpServerConfig>;
+  mcpServers?: Record<string, McpServerConfig>;
 
   /**
    * AbortController to cancel the query session.
@@ -294,4 +406,43 @@ export interface QueryOptions {
    * @default false
    */
   includePartialMessages?: boolean;
+
+  /**
+   * Timeout configuration for various SDK operations.
+   * All values are in milliseconds.
+   */
+  timeout?: {
+    /**
+     * Timeout for the `canUseTool` callback.
+     * If the callback doesn't resolve within this time, the permission request
+     * will be denied with a timeout error (fail-safe behavior).
+     * @default 60000 (1 minute)
+     */
+    canUseTool?: number;
+
+    /**
+     * Timeout for SDK MCP tool calls.
+     * This applies to tool calls made to SDK-embedded MCP servers.
+     * @default 60000 (1 minute)
+     */
+    mcpRequest?: number;
+
+    /**
+     * Timeout for SDK→CLI control requests.
+     * This applies to internal control operations like initialize, interrupt,
+     * setPermissionMode, setModel, etc.
+     * @default 60000 (1 minute)
+     */
+    controlRequest?: number;
+
+    /**
+     * Timeout for waiting before closing CLI's stdin after user messages are sent.
+     * In multi-turn mode with SDK MCP servers, after all user messages are processed,
+     * the SDK waits for the first result message to ensure all initialization
+     * (control responses, MCP server setup, etc.) is complete before closing stdin.
+     * This timeout is a fallback to avoid hanging indefinitely.
+     * @default 60000 (1 minute)
+     */
+    streamClose?: number;
+  };
 }

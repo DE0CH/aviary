@@ -532,7 +532,6 @@ describe('Configuration Options (E2E)', () => {
           cwd: testDir,
           authType: 'openai',
           debug: true,
-          logLevel: 'debug',
           stderr: (msg: string) => {
             stderrMessages.push(msg);
           },

@@ -1,97 +1,122 @@
 /**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * Unit tests for createSdkMcpServer
  *
  * Tests MCP server creation and tool registration.
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { createSdkMcpServer } from '../../src/mcp/createSdkMcpServer.js';
 import { tool } from '../../src/mcp/tool.js';
-import type { ToolDefinition } from '../../src/types/config.js';
+import type { SdkMcpToolDefinition } from '../../src/mcp/tool.js';
 
 describe('createSdkMcpServer', () => {
   describe('Server Creation', () => {
     it('should create server with name and version', () => {
-      const server = createSdkMcpServer('test-server', '1.0.0', []);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [],
+      });
 
       expect(server).toBeDefined();
+      expect(server.type).toBe('sdk');
+      expect(server.name).toBe('test-server');
+      expect(server.instance).toBeDefined();
+    });
+
+    it('should create server with default version', () => {
+      const server = createSdkMcpServer({
+        name: 'test-server',
+      });
+
+      expect(server).toBeDefined();
+      expect(server.name).toBe('test-server');
     });
 
     it('should throw error with invalid name', () => {
-      expect(() => createSdkMcpServer('', '1.0.0', [])).toThrow(
-        'name must be a non-empty string',
+      expect(() => createSdkMcpServer({ name: '', version: '1.0.0' })).toThrow(
+        'MCP server name must be a non-empty string',
       );
     });
 
     it('should throw error with invalid version', () => {
-      expect(() => createSdkMcpServer('test', '', [])).toThrow(
-        'version must be a non-empty string',
+      expect(() => createSdkMcpServer({ name: 'test', version: '' })).toThrow(
+        'MCP server version must be a non-empty string',
       );
     });
 
     it('should throw error with non-array tools', () => {
       expect(() =>
-        createSdkMcpServer('test', '1.0.0', {} as unknown as ToolDefinition[]),
+        createSdkMcpServer({
+          name: 'test',
+          version: '1.0.0',
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          tools: {} as unknown as SdkMcpToolDefinition<any>[],
+        }),
       ).toThrow('Tools must be an array');
     });
   });
 
   describe('Tool Registration', () => {
     it('should register single tool', () => {
-      const testTool = tool({
-        name: 'test_tool',
-        description: 'A test tool',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            input: { type: 'string' },
-          },
-        },
-        handler: async () => 'result',
-      });
+      const testTool = tool(
+        'test_tool',
+        'A test tool',
+        { input: z.string() },
+        async () => ({
+          content: [{ type: 'text', text: 'result' }],
+        }),
+      );
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [testTool]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [testTool],
+      });
 
       expect(server).toBeDefined();
     });
 
     it('should register multiple tools', () => {
-      const tool1 = tool({
-        name: 'tool1',
-        description: 'Tool 1',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result1',
-      });
+      const tool1 = tool('tool1', 'Tool 1', {}, async () => ({
+        content: [{ type: 'text', text: 'result1' }],
+      }));
 
-      const tool2 = tool({
-        name: 'tool2',
-        description: 'Tool 2',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result2',
-      });
+      const tool2 = tool('tool2', 'Tool 2', {}, async () => ({
+        content: [{ type: 'text', text: 'result2' }],
+      }));
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [tool1, tool2]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [tool1, tool2],
+      });
 
       expect(server).toBeDefined();
     });
 
     it('should throw error for duplicate tool names', () => {
-      const tool1 = tool({
-        name: 'duplicate',
-        description: 'Tool 1',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result1',
-      });
+      const tool1 = tool('duplicate', 'Tool 1', {}, async () => ({
+        content: [{ type: 'text', text: 'result1' }],
+      }));
 
-      const tool2 = tool({
-        name: 'duplicate',
-        description: 'Tool 2',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result2',
-      });
+      const tool2 = tool('duplicate', 'Tool 2', {}, async () => ({
+        content: [{ type: 'text', text: 'result2' }],
+      }));
 
       expect(() =>
-        createSdkMcpServer('test-server', '1.0.0', [tool1, tool2]),
+        createSdkMcpServer({
+          name: 'test-server',
+          version: '1.0.0',
+          tools: [tool1, tool2],
+        }),
       ).toThrow("Duplicate tool name 'duplicate'");
     });
 
@@ -99,36 +124,41 @@ describe('createSdkMcpServer', () => {
       const invalidTool = {
         name: '123invalid', // Starts with number
         description: 'Invalid tool',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result',
+        inputSchema: {},
+        handler: async () => ({
+          content: [{ type: 'text' as const, text: 'result' }],
+        }),
       };
 
       expect(() =>
-        createSdkMcpServer('test-server', '1.0.0', [
-          invalidTool as unknown as ToolDefinition,
-        ]),
+        createSdkMcpServer({
+          name: 'test-server',
+          version: '1.0.0',
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          tools: [invalidTool as unknown as SdkMcpToolDefinition<any>],
+        }),
       ).toThrow('Tool name');
     });
   });
 
   describe('Tool Handler Invocation', () => {
     it('should invoke tool handler with correct input', async () => {
-      const handler = vi.fn().mockResolvedValue({ result: 'success' });
-
-      const testTool = tool({
-        name: 'test_tool',
-        description: 'A test tool',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            value: { type: 'string' },
-          },
-          required: ['value'],
-        },
-        handler,
+      const handler = vi.fn().mockResolvedValue({
+        content: [{ type: 'text', text: 'success' }],
       });
 
-      createSdkMcpServer('test-server', '1.0.0', [testTool]);
+      const testTool = tool(
+        'test_tool',
+        'A test tool',
+        { value: z.string() },
+        handler,
+      );
+
+      createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [testTool],
+      });
 
       // Note: Actual invocation testing requires MCP SDK integration
       // This test verifies the handler was properly registered
@@ -140,17 +170,18 @@ describe('createSdkMcpServer', () => {
         .fn()
         .mockImplementation(async (input: { value: string }) => {
           await new Promise((resolve) => setTimeout(resolve, 10));
-          return { processed: input.value };
+          return {
+            content: [{ type: 'text', text: `processed: ${input.value}` }],
+          };
         });
 
-      const testTool = tool({
-        name: 'async_tool',
-        description: 'An async tool',
-        inputSchema: { type: 'object' },
-        handler,
-      });
+      const testTool = tool('async_tool', 'An async tool', {}, handler);
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [testTool]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [testTool],
+      });
 
       expect(server).toBeDefined();
     });
@@ -158,40 +189,29 @@ describe('createSdkMcpServer', () => {
 
   describe('Type Safety', () => {
     it('should preserve input type in handler', async () => {
-      type ToolInput = {
-        name: string;
-        age: number;
-      };
-
-      type ToolOutput = {
-        greeting: string;
-      };
-
-      const handler = vi
-        .fn()
-        .mockImplementation(async (input: ToolInput): Promise<ToolOutput> => {
-          return {
-            greeting: `Hello ${input.name}, age ${input.age}`,
-          };
-        });
-
-      const typedTool = tool<ToolInput, ToolOutput>({
-        name: 'typed_tool',
-        description: 'A typed tool',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            age: { type: 'number' },
-          },
-          required: ['name', 'age'],
-        },
-        handler,
+      const handler = vi.fn().mockImplementation(async (input) => {
+        return {
+          content: [
+            { type: 'text', text: `Hello ${input.name}, age ${input.age}` },
+          ],
+        };
       });
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [
-        typedTool as ToolDefinition,
-      ]);
+      const typedTool = tool(
+        'typed_tool',
+        'A typed tool',
+        {
+          name: z.string(),
+          age: z.number(),
+        },
+        handler,
+      );
+
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [typedTool],
+      });
 
       expect(server).toBeDefined();
     });
@@ -201,14 +221,13 @@ describe('createSdkMcpServer', () => {
     it('should handle tool handler errors gracefully', async () => {
       const handler = vi.fn().mockRejectedValue(new Error('Tool failed'));
 
-      const errorTool = tool({
-        name: 'error_tool',
-        description: 'A tool that errors',
-        inputSchema: { type: 'object' },
-        handler,
-      });
+      const errorTool = tool('error_tool', 'A tool that errors', {}, handler);
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [errorTool]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [errorTool],
+      });
 
       expect(server).toBeDefined();
       // Error handling occurs during tool invocation
@@ -219,14 +238,18 @@ describe('createSdkMcpServer', () => {
         throw new Error('Sync error');
       });
 
-      const errorTool = tool({
-        name: 'sync_error_tool',
-        description: 'A tool that errors synchronously',
-        inputSchema: { type: 'object' },
+      const errorTool = tool(
+        'sync_error_tool',
+        'A tool that errors synchronously',
+        {},
         handler,
-      });
+      );
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [errorTool]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [errorTool],
+      });
 
       expect(server).toBeDefined();
     });
@@ -234,69 +257,76 @@ describe('createSdkMcpServer', () => {
 
   describe('Complex Tool Scenarios', () => {
     it('should support tool with complex input schema', () => {
-      const complexTool = tool({
-        name: 'complex_tool',
-        description: 'A tool with complex schema',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: { type: 'string' },
-            filters: {
-              type: 'object',
-              properties: {
-                category: { type: 'string' },
-                minPrice: { type: 'number' },
-              },
-            },
-            options: {
-              type: 'array',
-              items: { type: 'string' },
-            },
-          },
-          required: ['query'],
+      const complexTool = tool(
+        'complex_tool',
+        'A tool with complex schema',
+        {
+          query: z.string(),
+          filters: z
+            .object({
+              category: z.string().optional(),
+              minPrice: z.number().optional(),
+            })
+            .optional(),
+          options: z.array(z.string()).optional(),
         },
-        handler: async (input: { filters?: unknown[] }) => {
+        async (input) => {
           return {
-            results: [],
-            filters: input.filters,
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ results: [], filters: input.filters }),
+              },
+            ],
           };
         },
-      });
+      );
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [
-        complexTool as ToolDefinition,
-      ]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [complexTool],
+      });
 
       expect(server).toBeDefined();
     });
 
     it('should support tool returning complex output', () => {
-      const complexOutputTool = tool({
-        name: 'complex_output_tool',
-        description: 'Returns complex data',
-        inputSchema: { type: 'object' },
-        handler: async () => {
+      const complexOutputTool = tool(
+        'complex_output_tool',
+        'Returns complex data',
+        {},
+        async () => {
           return {
-            data: [
-              { id: 1, name: 'Item 1' },
-              { id: 2, name: 'Item 2' },
-            ],
-            metadata: {
-              total: 2,
-              page: 1,
-            },
-            nested: {
-              deep: {
-                value: 'test',
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  data: [
+                    { id: 1, name: 'Item 1' },
+                    { id: 2, name: 'Item 2' },
+                  ],
+                  metadata: {
+                    total: 2,
+                    page: 1,
+                  },
+                  nested: {
+                    deep: {
+                      value: 'test',
+                    },
+                  },
+                }),
               },
-            },
+            ],
           };
         },
-      });
+      );
 
-      const server = createSdkMcpServer('test-server', '1.0.0', [
-        complexOutputTool,
-      ]);
+      const server = createSdkMcpServer({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: [complexOutputTool],
+      });
 
       expect(server).toBeDefined();
     });
@@ -304,44 +334,50 @@ describe('createSdkMcpServer', () => {
 
   describe('Multiple Servers', () => {
     it('should create multiple independent servers', () => {
-      const tool1 = tool({
-        name: 'tool1',
-        description: 'Tool in server 1',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result1',
-      });
+      const tool1 = tool('tool1', 'Tool in server 1', {}, async () => ({
+        content: [{ type: 'text', text: 'result1' }],
+      }));
 
-      const tool2 = tool({
-        name: 'tool2',
-        description: 'Tool in server 2',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result2',
-      });
+      const tool2 = tool('tool2', 'Tool in server 2', {}, async () => ({
+        content: [{ type: 'text', text: 'result2' }],
+      }));
 
-      const server1 = createSdkMcpServer('server1', '1.0.0', [tool1]);
-      const server2 = createSdkMcpServer('server2', '1.0.0', [tool2]);
+      const server1 = createSdkMcpServer({
+        name: 'server1',
+        version: '1.0.0',
+        tools: [tool1],
+      });
+      const server2 = createSdkMcpServer({
+        name: 'server2',
+        version: '1.0.0',
+        tools: [tool2],
+      });
 
       expect(server1).toBeDefined();
       expect(server2).toBeDefined();
+      expect(server1.name).toBe('server1');
+      expect(server2.name).toBe('server2');
     });
 
     it('should allow same tool name in different servers', () => {
-      const tool1 = tool({
-        name: 'shared_name',
-        description: 'Tool in server 1',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result1',
-      });
+      const tool1 = tool('shared_name', 'Tool in server 1', {}, async () => ({
+        content: [{ type: 'text', text: 'result1' }],
+      }));
 
-      const tool2 = tool({
-        name: 'shared_name',
-        description: 'Tool in server 2',
-        inputSchema: { type: 'object' },
-        handler: async () => 'result2',
-      });
+      const tool2 = tool('shared_name', 'Tool in server 2', {}, async () => ({
+        content: [{ type: 'text', text: 'result2' }],
+      }));
 
-      const server1 = createSdkMcpServer('server1', '1.0.0', [tool1]);
-      const server2 = createSdkMcpServer('server2', '1.0.0', [tool2]);
+      const server1 = createSdkMcpServer({
+        name: 'server1',
+        version: '1.0.0',
+        tools: [tool1],
+      });
+      const server2 = createSdkMcpServer({
+        name: 'server2',
+        version: '1.0.0',
+        tools: [tool2],
+      });
 
       expect(server1).toBeDefined();
       expect(server2).toBeDefined();

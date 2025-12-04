@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Config } from '@qwen-code/qwen-code-core';
+import type {
+  Config,
+  ConfigInitializeOptions,
+} from '@qwen-code/qwen-code-core';
 import { StreamJsonInputReader } from './io/StreamJsonInputReader.js';
 import { StreamJsonOutputAdapter } from './io/StreamJsonOutputAdapter.js';
 import { ControlContext } from './control/ControlContext.js';
@@ -50,6 +53,12 @@ class Session {
   private isShuttingDown: boolean = false;
   private configInitialized: boolean = false;
 
+  // Single initialization promise that resolves when session is ready for user messages.
+  // Created lazily once initialization actually starts.
+  private initializationPromise: Promise<void> | null = null;
+  private initializationResolve: (() => void) | null = null;
+  private initializationReject: ((error: Error) => void) | null = null;
+
   constructor(config: Config, initialPrompt?: CLIUserMessage) {
     this.config = config;
     this.sessionId = config.getSessionId();
@@ -66,12 +75,32 @@ class Session {
     this.setupSignalHandlers();
   }
 
+  private ensureInitializationPromise(): void {
+    if (this.initializationPromise) {
+      return;
+    }
+    this.initializationPromise = new Promise<void>((resolve, reject) => {
+      this.initializationResolve = () => {
+        resolve();
+        this.initializationResolve = null;
+        this.initializationReject = null;
+      };
+      this.initializationReject = (error: Error) => {
+        reject(error);
+        this.initializationResolve = null;
+        this.initializationReject = null;
+      };
+    });
+  }
+
   private getNextPromptId(): string {
     this.promptIdCounter++;
     return `${this.sessionId}########${this.promptIdCounter}`;
   }
 
-  private async ensureConfigInitialized(): Promise<void> {
+  private async ensureConfigInitialized(
+    options?: ConfigInitializeOptions,
+  ): Promise<void> {
     if (this.configInitialized) {
       return;
     }
@@ -81,7 +110,7 @@ class Session {
     }
 
     try {
-      await this.config.initialize();
+      await this.config.initialize(options);
       this.configInitialized = true;
     } catch (error) {
       if (this.debugMode) {
@@ -89,6 +118,44 @@ class Session {
       }
       throw error;
     }
+  }
+
+  /**
+   * Mark initialization as complete
+   */
+  private completeInitialization(): void {
+    if (this.initializationResolve) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization complete');
+      }
+      this.initializationResolve();
+      this.initializationResolve = null;
+      this.initializationReject = null;
+    }
+  }
+
+  /**
+   * Mark initialization as failed
+   */
+  private failInitialization(error: Error): void {
+    if (this.initializationReject) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization failed:', error);
+      }
+      this.initializationReject(error);
+      this.initializationResolve = null;
+      this.initializationReject = null;
+    }
+  }
+
+  /**
+   * Wait for session to be ready for user messages
+   */
+  private async waitForInitialization(): Promise<void> {
+    if (!this.initializationPromise) {
+      return;
+    }
+    await this.initializationPromise;
   }
 
   private ensureControlSystem(): void {
@@ -120,49 +187,114 @@ class Session {
     return this.dispatcher;
   }
 
-  private async handleFirstMessage(
+  /**
+   * Handle the first message to determine session mode (SDK vs direct).
+   * This is synchronous from the message loop's perspective - it starts
+   * async work but does not return a promise that the loop awaits.
+   *
+   * The initialization completes asynchronously and resolves initializationPromise
+   * when ready for user messages.
+   */
+  private handleFirstMessage(
     message:
       | CLIMessage
       | CLIControlRequest
       | CLIControlResponse
       | ControlCancelRequest,
-  ): Promise<boolean> {
+  ): void {
     if (isControlRequest(message)) {
       const request = message as CLIControlRequest;
       this.controlSystemEnabled = true;
       this.ensureControlSystem();
-      if (request.request.subtype === 'initialize') {
-        // Dispatch the initialize request first
-        await this.dispatcher?.dispatch(request);
 
-        // After handling initialize control request, initialize the config
-        // This is the SDK mode where config initialization is deferred
-        await this.ensureConfigInitialized();
-        return true;
+      if (request.request.subtype === 'initialize') {
+        // Start SDK mode initialization (fire-and-forget from loop perspective)
+        void this.initializeSdkMode(request);
+        return;
       }
+
       if (this.debugMode) {
         console.error(
           '[Session] Ignoring non-initialize control request during initialization',
         );
       }
-      return true;
+      return;
     }
 
     if (isCLIUserMessage(message)) {
       this.controlSystemEnabled = false;
-      // For non-SDK mode (direct user message), initialize config if not already done
-      await this.ensureConfigInitialized();
-      this.enqueueUserMessage(message as CLIUserMessage);
-      return true;
+      // Start direct mode initialization (fire-and-forget from loop perspective)
+      void this.initializeDirectMode(message as CLIUserMessage);
+      return;
     }
 
     this.controlSystemEnabled = false;
-    return false;
   }
 
-  private async handleControlRequest(
-    request: CLIControlRequest,
+  /**
+   * SDK mode initialization flow
+   * Dispatches initialize request and initializes config with MCP support
+   */
+  private async initializeSdkMode(request: CLIControlRequest): Promise<void> {
+    this.ensureInitializationPromise();
+    try {
+      // Dispatch the initialize request first
+      // This registers SDK MCP servers in the control context
+      await this.dispatcher?.dispatch(request);
+
+      // Get sendSdkMcpMessage callback from SdkMcpController
+      // This callback is used by McpClientManager to send MCP messages
+      // from CLI MCP clients to SDK MCP servers via the control plane
+      const sendSdkMcpMessage =
+        this.dispatcher?.sdkMcpController.createSendSdkMcpMessage();
+
+      // Initialize config with SDK MCP message support
+      await this.ensureConfigInitialized({ sendSdkMcpMessage });
+
+      // Initialization complete!
+      this.completeInitialization();
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] SDK mode initialization failed:', error);
+      }
+      this.failInitialization(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  /**
+   * Direct mode initialization flow
+   * Initializes config and enqueues the first user message
+   */
+  private async initializeDirectMode(
+    userMessage: CLIUserMessage,
   ): Promise<void> {
+    this.ensureInitializationPromise();
+    try {
+      // Initialize config
+      await this.ensureConfigInitialized();
+
+      // Initialization complete!
+      this.completeInitialization();
+
+      // Enqueue the first user message for processing
+      this.enqueueUserMessage(userMessage);
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] Direct mode initialization failed:', error);
+      }
+      this.failInitialization(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  /**
+   * Handle control request asynchronously (fire-and-forget from main loop).
+   * Errors are handled internally and responses sent by dispatcher.
+   */
+  private handleControlRequestAsync(request: CLIControlRequest): void {
     const dispatcher = this.getDispatcher();
     if (!dispatcher) {
       if (this.debugMode) {
@@ -171,9 +303,20 @@ class Session {
       return;
     }
 
-    await dispatcher.dispatch(request);
+    // Fire-and-forget: dispatch runs concurrently
+    // The dispatcher's pendingIncomingRequests tracks completion
+    void dispatcher.dispatch(request).catch((error) => {
+      if (this.debugMode) {
+        console.error('[Session] Control request dispatch error:', error);
+      }
+      // Error response is already sent by dispatcher.dispatch()
+    });
   }
 
+  /**
+   * Handle control response - MUST be synchronous
+   * This resolves pending outgoing requests, breaking the deadlock cycle.
+   */
   private handleControlResponse(response: CLIControlResponse): void {
     const dispatcher = this.getDispatcher();
     if (!dispatcher) {
@@ -201,8 +344,8 @@ class Session {
       return;
     }
 
-    // Ensure config is initialized before processing user messages
-    await this.ensureConfigInitialized();
+    // Wait for initialization to complete before processing user messages
+    await this.waitForInitialization();
 
     const promptId = this.getNextPromptId();
 
@@ -307,6 +450,45 @@ class Session {
     process.on('SIGTERM', this.shutdownHandler);
   }
 
+  /**
+   * Wait for all pending work to complete before shutdown
+   */
+  private async waitForAllPendingWork(): Promise<void> {
+    // 1. Wait for initialization to complete (or fail)
+    try {
+      await this.waitForInitialization();
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization error during shutdown:', error);
+      }
+    }
+
+    // 2. Wait for all control request handlers using dispatcher's tracking
+    if (this.dispatcher) {
+      const pendingCount = this.dispatcher.getPendingIncomingRequestCount();
+      if (pendingCount > 0 && this.debugMode) {
+        console.error(
+          `[Session] Waiting for ${pendingCount} pending control request handlers`,
+        );
+      }
+      await this.dispatcher.waitForPendingIncomingRequests();
+    }
+
+    // 3. Wait for user message processing queue
+    while (this.processingPromise) {
+      if (this.debugMode) {
+        console.error('[Session] Waiting for user message processing');
+      }
+      try {
+        await this.processingPromise;
+      } catch (error) {
+        if (this.debugMode) {
+          console.error('[Session] Error in user message processing:', error);
+        }
+      }
+    }
+  }
+
   private async shutdown(): Promise<void> {
     if (this.debugMode) {
       console.error('[Session] Shutting down');
@@ -314,18 +496,8 @@ class Session {
 
     this.isShuttingDown = true;
 
-    if (this.processingPromise) {
-      try {
-        await this.processingPromise;
-      } catch (error) {
-        if (this.debugMode) {
-          console.error(
-            '[Session] Error waiting for processing to complete:',
-            error,
-          );
-        }
-      }
-    }
+    // Wait for all pending work
+    await this.waitForAllPendingWork();
 
     this.dispatcher?.shutdown();
     this.cleanupSignalHandlers();
@@ -339,18 +511,30 @@ class Session {
     }
   }
 
+  /**
+   * Main message processing loop
+   *
+   * CRITICAL: This loop must NEVER await handlers that might need to
+   * send control requests and wait for responses. Such handlers must
+   * be started in fire-and-forget mode, allowing the loop to continue
+   * reading responses that resolve pending requests.
+   *
+   * Message handling order:
+   * 1. control_response - FIRST, synchronously resolves pending requests
+   * 2. First message - determines mode, starts async initialization
+   * 3. control_request - fire-and-forget, tracked by dispatcher
+   * 4. control_cancel - synchronous
+   * 5. user_message - enqueued for processing
+   */
   async run(): Promise<void> {
     try {
       if (this.debugMode) {
         console.error('[Session] Starting session', this.sessionId);
       }
 
+      // Handle initial prompt if provided (fire-and-forget)
       if (this.initialPrompt !== null) {
-        const handled = await this.handleFirstMessage(this.initialPrompt);
-        if (handled && this.isShuttingDown) {
-          await this.shutdown();
-          return;
-        }
+        this.handleFirstMessage(this.initialPrompt);
       }
 
       try {
@@ -359,23 +543,33 @@ class Session {
             break;
           }
 
-          if (this.controlSystemEnabled === null) {
-            const handled = await this.handleFirstMessage(message);
-            if (handled) {
-              if (this.isShuttingDown) {
-                break;
-              }
-              continue;
-            }
+          // ============================================================
+          // CRITICAL: Handle control_response FIRST and SYNCHRONOUSLY
+          // This resolves pending outgoing requests, breaking deadlock.
+          // ============================================================
+          if (isControlResponse(message)) {
+            this.handleControlResponse(message as CLIControlResponse);
+            continue;
           }
 
+          // Handle first message to determine session mode
+          if (this.controlSystemEnabled === null) {
+            this.handleFirstMessage(message);
+            continue;
+          }
+
+          // ============================================================
+          // CRITICAL: Handle control_request in FIRE-AND-FORGET mode
+          // DON'T await - let handler run concurrently while loop continues
+          // Dispatcher's pendingIncomingRequests tracks completion
+          // ============================================================
           if (isControlRequest(message)) {
-            await this.handleControlRequest(message as CLIControlRequest);
-          } else if (isControlResponse(message)) {
-            this.handleControlResponse(message as CLIControlResponse);
+            this.handleControlRequestAsync(message as CLIControlRequest);
           } else if (isControlCancel(message)) {
+            // Cancel is synchronous - OK to handle inline
             this.handleControlCancel(message as ControlCancelRequest);
           } else if (isCLIUserMessage(message)) {
+            // User messages are enqueued, processing runs separately
             this.enqueueUserMessage(message as CLIUserMessage);
           } else if (this.debugMode) {
             if (
@@ -402,19 +596,8 @@ class Session {
         throw streamError;
       }
 
-      while (this.processingPromise) {
-        if (this.debugMode) {
-          console.error('[Session] Waiting for final processing to complete');
-        }
-        try {
-          await this.processingPromise;
-        } catch (error) {
-          if (this.debugMode) {
-            console.error('[Session] Error in final processing:', error);
-          }
-        }
-      }
-
+      // Stream ended - wait for all pending work before shutdown
+      await this.waitForAllPendingWork();
       await this.shutdown();
     } catch (error) {
       if (this.debugMode) {
