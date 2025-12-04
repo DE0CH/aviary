@@ -272,7 +272,7 @@ describe('gemini.tsx main function', () => {
     );
 
     vi.mocked(cleanupModule.cleanupCheckpoints).mockResolvedValue(undefined);
-    vi.mocked(cleanupModule.registerCleanup).mockImplementation(() => { });
+    vi.mocked(cleanupModule.registerCleanup).mockImplementation(() => {});
     const runExitCleanupMock = vi.mocked(cleanupModule.runExitCleanup);
     runExitCleanupMock.mockResolvedValue(undefined);
     vi.spyOn(extensionModule, 'loadExtensions').mockReturnValue([]);
@@ -498,7 +498,7 @@ describe('validateDnsResolutionOrder', () => {
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
