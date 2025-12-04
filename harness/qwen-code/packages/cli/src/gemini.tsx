@@ -383,7 +383,18 @@ export async function main() {
 
     setMaxSizedBoxDebugging(isDebugMode);
 
-    const initializationResult = await initializeApp(config, settings);
+    // Check input format early to determine initialization flow
+    const inputFormat =
+      typeof config.getInputFormat === 'function'
+        ? config.getInputFormat()
+        : InputFormat.TEXT;
+
+    // For stream-json mode, defer config.initialize() until after the initialize control request
+    // For other modes, initialize normally
+    let initializationResult: InitializationResult | undefined;
+    if (inputFormat !== InputFormat.STREAM_JSON) {
+      initializationResult = await initializeApp(config, settings);
+    }
 
     if (
       settings.merged.security?.auth?.selectedType ===
@@ -417,19 +428,15 @@ export async function main() {
         settings,
         startupWarnings,
         process.cwd(),
-        initializationResult,
+        initializationResult!,
       );
       return;
     }
 
-    await config.initialize();
-
-    // Check input format BEFORE reading stdin
-    // In STREAM_JSON mode, stdin should be left for StreamJsonInputReader
-    const inputFormat =
-      typeof config.getInputFormat === 'function'
-        ? config.getInputFormat()
-        : InputFormat.TEXT;
+    // For non-stream-json mode, initialize config here
+    if (inputFormat !== InputFormat.STREAM_JSON) {
+      await config.initialize();
+    }
 
     // Only read stdin if NOT in stream-json mode
     // In stream-json mode, stdin is used for protocol messages (control requests, etc.)
@@ -442,7 +449,8 @@ export async function main() {
     }
 
     const nonInteractiveConfig = await validateNonInteractiveAuth(
-      settings.merged.security?.auth?.selectedType,
+      settings.merged.security?.auth?.selectedType ||
+        (argv.authType as AuthType),
       settings.merged.security?.auth?.useExternal,
       config,
       settings,

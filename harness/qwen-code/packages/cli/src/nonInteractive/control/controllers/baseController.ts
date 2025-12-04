@@ -174,7 +174,5 @@ export abstract class BaseController {
   /**
    * Cleanup resources
    */
-  cleanup(): void {
-    // Subclasses can override to add cleanup logic
-  }
+  cleanup(): void {}
 }

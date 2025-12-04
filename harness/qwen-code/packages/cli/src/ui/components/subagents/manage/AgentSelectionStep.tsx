@@ -218,7 +218,7 @@ export const AgentSelectionStep = ({
   const renderAgentItem = (
     agent: {
       name: string;
-      level: 'project' | 'user' | 'builtin';
+      level: 'project' | 'user' | 'builtin' | 'session';
       isBuiltin?: boolean;
     },
     index: number,
@@ -267,7 +267,7 @@ export const AgentSelectionStep = ({
         <Box flexDirection="column" marginBottom={1}>
           <Text color={theme.text.primary} bold>
             {t('Project Level ({{path}})', {
-              path: projectAgents[0].filePath.replace(/\/[^/]+$/, ''),
+              path: projectAgents[0].filePath?.replace(/\/[^/]+$/, '') || '',
             })}
           </Text>
           <Box marginTop={1} flexDirection="column">
@@ -289,7 +289,7 @@ export const AgentSelectionStep = ({
         >
           <Text color={theme.text.primary} bold>
             {t('User Level ({{path}})', {
-              path: userAgents[0].filePath.replace(/\/[^/]+$/, ''),
+              path: userAgents[0].filePath?.replace(/\/[^/]+$/, '') || '',
             })}
           </Text>
           <Box marginTop={1} flexDirection="column">

@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type {
+  MCPServerConfig,
+  SubagentConfig,
+} from '@qwen-code/qwen-code-core';
 
 /**
  * Annotation for attaching metadata to content blocks
@@ -137,9 +141,8 @@ export interface CLISystemMessage {
     status: string;
   }>;
   model?: string;
-  permissionMode?: string;
+  permission_mode?: string;
   slash_commands?: string[];
-  apiKeySource?: string;
   qwen_code_version?: string;
   output_style?: string;
   agents?: string[];
@@ -298,7 +301,9 @@ export interface CLIControlPermissionRequest {
 export interface CLIControlInitializeRequest {
   subtype: 'initialize';
   hooks?: HookRegistration[] | null;
-  sdkMcpServers?: string[];
+  sdkMcpServers?: Record<string, MCPServerConfig>;
+  mcpServers?: Record<string, MCPServerConfig>;
+  agents?: SubagentConfig[];
 }
 
 export interface CLIControlSetPermissionModeRequest {

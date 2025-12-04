@@ -19,6 +19,8 @@ import type {
   CLIControlInitializeRequest,
   CLIControlSetModelRequest,
 } from '../../types.js';
+import { CommandService } from '../../../services/CommandService.js';
+import { BuiltinCommandLoader } from '../../../services/BuiltinCommandLoader.js';
 
 export class SystemController extends BaseController {
   /**
@@ -54,10 +56,61 @@ export class SystemController extends BaseController {
   private async handleInitialize(
     payload: CLIControlInitializeRequest,
   ): Promise<Record<string, unknown>> {
-    // Register SDK MCP servers if provided
-    if (payload.sdkMcpServers && Array.isArray(payload.sdkMcpServers)) {
-      for (const serverName of payload.sdkMcpServers) {
+    this.context.config.setSdkMode(true);
+
+    if (payload.sdkMcpServers && typeof payload.sdkMcpServers === 'object') {
+      for (const serverName of Object.keys(payload.sdkMcpServers)) {
         this.context.sdkMcpServers.add(serverName);
+      }
+
+      try {
+        this.context.config.addMcpServers(payload.sdkMcpServers);
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${Object.keys(payload.sdkMcpServers).length} SDK MCP servers to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error(
+            '[SystemController] Failed to add SDK MCP servers:',
+            error,
+          );
+        }
+      }
+    }
+
+    if (payload.mcpServers && typeof payload.mcpServers === 'object') {
+      try {
+        this.context.config.addMcpServers(payload.mcpServers);
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${Object.keys(payload.mcpServers).length} MCP servers to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error('[SystemController] Failed to add MCP servers:', error);
+        }
+      }
+    }
+
+    if (payload.agents && Array.isArray(payload.agents)) {
+      try {
+        this.context.config.setSessionSubagents(payload.agents);
+
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Added ${payload.agents.length} session subagents to config`,
+          );
+        }
+      } catch (error) {
+        if (this.context.debugMode) {
+          console.error(
+            '[SystemController] Failed to add session subagents:',
+            error,
+          );
+        }
       }
     }
 
@@ -86,34 +139,13 @@ export class SystemController extends BaseController {
   buildControlCapabilities(): Record<string, unknown> {
     const capabilities: Record<string, unknown> = {
       can_handle_can_use_tool: true,
-      can_handle_hook_callback: true,
+      can_handle_hook_callback: false,
       can_set_permission_mode:
         typeof this.context.config.setApprovalMode === 'function',
       can_set_model: typeof this.context.config.setModel === 'function',
+      /* TODO: sdkMcpServers support */
+      can_handle_mcp_message: false,
     };
-
-    // Check if MCP message handling is available
-    try {
-      const mcpProvider = this.context.config as unknown as {
-        getMcpServers?: () => Record<string, unknown> | undefined;
-      };
-      if (typeof mcpProvider.getMcpServers === 'function') {
-        const servers = mcpProvider.getMcpServers();
-        capabilities['can_handle_mcp_message'] = Boolean(
-          servers && Object.keys(servers).length > 0,
-        );
-      } else {
-        capabilities['can_handle_mcp_message'] = false;
-      }
-    } catch (error) {
-      if (this.context.debugMode) {
-        console.error(
-          '[SystemController] Failed to determine MCP capability:',
-          error,
-        );
-      }
-      capabilities['can_handle_mcp_message'] = false;
-    }
 
     return capabilities;
   }
@@ -189,27 +221,45 @@ export class SystemController extends BaseController {
   /**
    * Handle supported_commands request
    *
-   * Returns list of supported control commands
-   *
-   * Note: This list should match the ControlRequestType enum in
-   * packages/sdk/typescript/src/types/controlRequests.ts
+   * Returns list of supported slash commands loaded dynamically
    */
   private async handleSupportedCommands(): Promise<Record<string, unknown>> {
-    const commands = [
-      'initialize',
-      'interrupt',
-      'set_model',
-      'supported_commands',
-      'can_use_tool',
-      'set_permission_mode',
-      'mcp_message',
-      'mcp_server_status',
-      'hook_callback',
-    ];
+    const slashCommands = await this.loadSlashCommandNames();
 
     return {
       subtype: 'supported_commands',
-      commands,
+      commands: slashCommands,
     };
+  }
+
+  /**
+   * Load slash command names using CommandService
+   *
+   * @returns Promise resolving to array of slash command names
+   */
+  private async loadSlashCommandNames(): Promise<string[]> {
+    const controller = new AbortController();
+    try {
+      const service = await CommandService.create(
+        [new BuiltinCommandLoader(this.context.config)],
+        controller.signal,
+      );
+      const names = new Set<string>();
+      const commands = service.getCommands();
+      for (const command of commands) {
+        names.add(command.name);
+      }
+      return Array.from(names).sort();
+    } catch (error) {
+      if (this.context.debugMode) {
+        console.error(
+          '[SystemController] Failed to load slash commands:',
+          error,
+        );
+      }
+      return [];
+    } finally {
+      controller.abort();
+    }
   }
 }
