@@ -4,21 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Simplified timeline styles for tool calls and messages
- * Merged version of both SimpleTimeline.css files
+ * Only keeping actually used styles
  */
 
-/* Basic timeline container */
-.simple-toolcall-container,
-.simple-timeline-container {
+/* ToolCallContainer timeline styles (from LayoutComponents.css) */
+.toolcall-container {
   position: relative;
   padding-left: 30px;
   padding-top: 8px;
   padding-bottom: 8px;
 }
 
-/* Timeline connector - simple version */
-.simple-toolcall-container::after,
-.simple-timeline-container::after {
+/* ToolCallContainer timeline connector */
+.toolcall-container::after {
   content: '';
   position: absolute;
   left: 12px;
@@ -28,28 +26,45 @@
   background-color: var(--app-primary-border-color);
 }
 
-/* First item connector starts lower */
-.simple-toolcall-container:first-child::after,
-.simple-timeline-container:first-child::after {
+/* First item: connector starts from status point position */
+.toolcall-container:first-child::after {
   top: 24px;
 }
 
-/* Last item connector ends higher */
-.simple-toolcall-container:last-child::after,
-.simple-timeline-container:last-child::after {
+/* Last item: connector shows only upper part */
+.toolcall-container:last-child::after {
   height: calc(100% - 24px);
   top: 0;
   bottom: auto;
 }
 
-/* Bullet point */
-.simple-toolcall-container::before,
-.simple-timeline-container::before {
-  content: '\25cf';
+/* AssistantMessage timeline styles */
+.assistant-message-container {
+  position: relative;
+  padding-left: 30px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* AssistantMessage timeline connector */
+.assistant-message-container::after {
+  content: '';
   position: absolute;
-  left: 8px;
-  padding-top: 2px;
-  font-size: 10px;
-  color: var(--app-secondary-foreground);
-  z-index: 2;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--app-primary-border-color);
+}
+
+/* First item: connector starts from status point position */
+.assistant-message-container:first-child::after {
+  top: 24px;
+}
+
+/* Last item: connector shows only upper part */
+.assistant-message-container:last-child::after {
+  height: calc(100% - 24px);
+  top: 0;
+  bottom: auto;
 }

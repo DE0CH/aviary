@@ -15,7 +15,6 @@ export default {
     './src/webview/components/toolcalls/**/*.{js,jsx,ts,tsx}',
     './src/webview/components/InProgressToolCall.tsx',
     './src/webview/components/MessageContent.tsx',
-    './src/webview/components/InfoBanner.tsx',
     './src/webview/components/InputForm.tsx',
     './src/webview/components/PermissionDrawer.tsx',
     './src/webview/components/PlanDisplay.tsx',

@@ -10,8 +10,9 @@
 /* Import component styles */
 @import '../components/toolcalls/shared/DiffDisplay.css';
 @import '../components/messages/AssistantMessage.css';
-@import '../components/toolcalls/shared/MergedSimpleTimeline.css';
+@import '../components/toolcalls/shared/SimpleTimeline.css';
 @import '../components/messages/QwenMessageTimeline.css';
+@import '../components/MarkdownRenderer.css';
 
 
 /* ===========================

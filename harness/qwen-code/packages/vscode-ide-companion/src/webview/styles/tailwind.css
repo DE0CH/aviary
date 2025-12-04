@@ -95,7 +95,8 @@
     color: var(--app-secondary-foreground);
   }
   .btn-text-compact--primary {
-    color: var(--app-primary-foreground);
+    color: var(--app-secondary-foreground);
+    /* color: var(--app-primary-foreground); */
   }
   .btn-text-compact:hover {
     background-color: var(--app-ghost-button-hover-background);

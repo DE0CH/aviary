@@ -66,11 +66,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         paddingBottom: '8px',
       }}
     >
-      <span style={{ color: 'var(--app-secondary-foreground)', width: '100%' }}>
+      <span style={{ width: '100%' }}>
         <p
           style={{
             margin: 0,
-            color: 'var(--app-secondary-foreground)',
             width: '100%',
             wordWrap: 'break-word',
             overflowWrap: 'break-word',

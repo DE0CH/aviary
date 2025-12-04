@@ -201,6 +201,9 @@ export const InputForm: React.FC<InputFormProps> = ({
               </button>
             )}
 
+            {/* Spacer */}
+            <div className="flex-1 min-w-0" />
+
             {/* Thinking button */}
             <button
               type="button"

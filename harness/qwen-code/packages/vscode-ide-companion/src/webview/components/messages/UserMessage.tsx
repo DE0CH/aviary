@@ -45,7 +45,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   return (
     <div
-      className="qwen-message message-item user-message-container flex gap-0 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]"
+      className="qwen-message user-message-container flex gap-0 my-1 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]"
       style={{ position: 'relative' }}
     >
       <div
