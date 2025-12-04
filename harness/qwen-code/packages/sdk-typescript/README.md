@@ -227,7 +227,7 @@ const result = query({
 });
 ```
 
-### With MCP Servers
+### With External MCP Servers
 
 ```typescript
 import { query } from '@qwen-code/sdk-typescript';
@@ -244,6 +244,84 @@ const result = query({
     },
   },
 });
+```
+
+### With SDK-Embedded MCP Servers
+
+The SDK provides `tool` and `createSdkMcpServer` to create MCP servers that run in the same process as your SDK application. This is useful when you want to expose custom tools to the AI without running a separate server process.
+
+#### `tool(name, description, inputSchema, handler)`
+
+Creates a tool definition with Zod schema type inference.
+
+| Parameter     | Type                               | Description                                                              |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| `name`        | `string`                           | Tool name (1-64 chars, starts with letter, alphanumeric and underscores) |
+| `description` | `string`                           | Human-readable description of what the tool does                         |
+| `inputSchema` | `ZodRawShape`                      | Zod schema object defining the tool's input parameters                   |
+| `handler`     | `(args, extra) => Promise<Result>` | Async function that executes the tool and returns MCP content blocks     |
+
+The handler must return a `CallToolResult` object with the following structure:
+
+```typescript
+{
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; data: string; mimeType: string }
+    | { type: 'resource'; uri: string; mimeType?: string; text?: string }
+  >;
+  isError?: boolean;
+}
+```
+
+#### `createSdkMcpServer(options)`
+
+Creates an SDK-embedded MCP server instance.
+
+| Option    | Type                     | Default   | Description                          |
+| --------- | ------------------------ | --------- | ------------------------------------ |
+| `name`    | `string`                 | Required  | Unique name for the MCP server       |
+| `version` | `string`                 | `'1.0.0'` | Server version                       |
+| `tools`   | `SdkMcpToolDefinition[]` | -         | Array of tools created with `tool()` |
+
+Returns a `McpSdkServerConfigWithInstance` object that can be passed directly to the `mcpServers` option.
+
+#### Example
+
+```typescript
+import { z } from 'zod';
+import { query, tool, createSdkMcpServer } from '@qwen-code/sdk-typescript';
+
+// Define a tool with Zod schema
+const calculatorTool = tool(
+  'calculate_sum',
+  'Add two numbers',
+  { a: z.number(), b: z.number() },
+  async (args) => ({
+    content: [{ type: 'text', text: String(args.a + args.b) }],
+  }),
+);
+
+// Create the MCP server
+const server = createSdkMcpServer({
+  name: 'calculator',
+  tools: [calculatorTool],
+});
+
+// Use the server in a query
+const result = query({
+  prompt: 'What is 42 + 17?',
+  options: {
+    permissionMode: 'yolo',
+    mcpServers: {
+      calculator: server,
+    },
+  },
+});
+
+for await (const message of result) {
+  console.log(message);
+}
 ```
 
 ### Abort a Query
