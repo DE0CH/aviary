@@ -39,8 +39,7 @@ jobs:
     environment:
       name: 'production-release'
       url: '${{ github.server_url }}/${{ github.repository }}/releases/tag/sdk-typescript-${{ steps.version.outputs.RELEASE_TAG }}'
-    if: |-
-      ${{ github.repository == 'QwenLM/qwen-code' }}
+    if: github.repository == 'QwenLM/qwen-code'
     permissions:
       contents: 'write'
       packages: 'write'
@@ -60,19 +59,17 @@ jobs:
         env:
           CREATE_NIGHTLY_RELEASE: '${{ github.event.inputs.create_nightly_release }}'
           CREATE_PREVIEW_RELEASE: '${{ github.event.inputs.create_preview_release }}'
-          EVENT_NAME: '${{ github.event_name }}'
-          CRON: '${{ github.event.schedule }}'
           DRY_RUN_INPUT: '${{ github.event.inputs.dry_run }}'
         id: 'vars'
         run: |-
           is_nightly="false"
-          if [[ "${CRON}" == "0 1 * * *" || "${CREATE_NIGHTLY_RELEASE}" == "true" ]]; then
+          if [[ "${CREATE_NIGHTLY_RELEASE}" == "true" ]]; then
             is_nightly="true"
           fi
           echo "is_nightly=${is_nightly}" >> "${GITHUB_OUTPUT}"
 
           is_preview="false"
-          if [[ "${CRON}" == "59 0 * * 3" || "${CREATE_PREVIEW_RELEASE}" == "true" ]]; then
+          if [[ "${CREATE_PREVIEW_RELEASE}" == "true" ]]; then
             is_preview="true"
           fi
           echo "is_preview=${is_preview}" >> "${GITHUB_OUTPUT}"
@@ -124,8 +121,7 @@ jobs:
           MANUAL_VERSION: '${{ inputs.version }}'
 
       - name: 'Run Tests'
-        if: |-
-          ${{ github.event.inputs.force_skip_tests != 'true' }}
+        if: github.event.inputs.force_skip_tests != 'true'
         working-directory: 'packages/sdk-typescript'
         run: |
           npm run test:ci
@@ -182,7 +178,7 @@ jobs:
       - name: 'Configure npm for publishing'
         uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           registry-url: 'https://registry.npmjs.org'
           scope: '@qwen-code'
 
@@ -194,8 +190,7 @@ jobs:
           NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}'
 
       - name: 'Create GitHub Release and Tag'
-        if: |-
-          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+        if: steps.vars.outputs.is_dry_run == 'false'
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           RELEASE_BRANCH: '${{ steps.release_branch.outputs.BRANCH_NAME }}'
@@ -209,11 +204,10 @@ jobs:
             --generate-notes
 
       - name: 'Create Issue on Failure'
-        if: |-
-          ${{ failure() }}
+        if: failure()
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-          RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }} || "N/A"'
+          RELEASE_TAG: "${{ steps.version.outputs.RELEASE_TAG || 'N/A' }}"
           DETAILS_URL: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
         run: |-
           gh issue create \
