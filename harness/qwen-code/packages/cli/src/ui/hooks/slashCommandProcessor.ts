@@ -18,7 +18,6 @@ import {
   IdeClient,
 } from '@qwen-code/qwen-code-core';
 import { useSessionStats } from '../contexts/SessionContext.js';
-import { formatDuration } from '../utils/formatters.js';
 import type {
   Message,
   HistoryItemWithoutId,
@@ -53,7 +52,6 @@ function serializeHistoryItemForRecording(
 
 const SLASH_COMMANDS_SKIP_RECORDING = new Set([
   'quit',
-  'quit-confirm',
   'exit',
   'clear',
   'reset',
@@ -75,7 +73,6 @@ interface SlashCommandProcessorActions {
   addConfirmUpdateExtensionRequest: (request: ConfirmationRequest) => void;
   openSubagentCreateDialog: () => void;
   openAgentsManagerDialog: () => void;
-  _showQuitConfirmation: () => void;
 }
 
 /**
@@ -115,10 +112,6 @@ export const useSlashCommandProcessor = (
     prompt: React.ReactNode;
     onConfirm: (confirmed: boolean) => void;
   }>(null);
-  const [quitConfirmationRequest, setQuitConfirmationRequest] =
-    useState<null | {
-      onConfirm: (shouldQuit: boolean, action?: string) => void;
-    }>(null);
 
   const [sessionShellAllowlist, setSessionShellAllowlist] = useState(
     new Set<string>(),
@@ -172,11 +165,6 @@ export const useSlashCommandProcessor = (
       } else if (message.type === MessageType.QUIT) {
         historyItemContent = {
           type: 'quit',
-          duration: message.duration,
-        };
-      } else if (message.type === MessageType.QUIT_CONFIRMATION) {
-        historyItemContent = {
-          type: 'quit_confirmation',
           duration: message.duration,
         };
       } else if (message.type === MessageType.COMPRESSION) {
@@ -449,66 +437,6 @@ export const useSlashCommandProcessor = (
                   });
                   return { type: 'handled' };
                 }
-                case 'quit_confirmation':
-                  // Show quit confirmation dialog instead of immediately quitting
-                  setQuitConfirmationRequest({
-                    onConfirm: (shouldQuit: boolean, action?: string) => {
-                      setQuitConfirmationRequest(null);
-                      if (!shouldQuit) {
-                        // User cancelled the quit operation - do nothing
-                        return;
-                      }
-                      if (shouldQuit) {
-                        if (action === 'summary_and_quit') {
-                          // Generate summary and then quit
-                          handleSlashCommand('/summary')
-                            .then(() => {
-                              // Wait for user to see the summary result
-                              setTimeout(() => {
-                                handleSlashCommand('/quit');
-                              }, 1200);
-                            })
-                            .catch((error) => {
-                              // If summary fails, still quit but show error
-                              addItemWithRecording(
-                                {
-                                  type: 'error',
-                                  text: `Failed to generate summary before quit: ${
-                                    error instanceof Error
-                                      ? error.message
-                                      : String(error)
-                                  }`,
-                                },
-                                Date.now(),
-                              );
-                              // Give user time to see the error message
-                              setTimeout(() => {
-                                handleSlashCommand('/quit');
-                              }, 1000);
-                            });
-                        } else {
-                          // Just quit immediately - trigger the actual quit action
-                          const now = Date.now();
-                          const { sessionStartTime } = sessionStats;
-                          const wallDuration = now - sessionStartTime.getTime();
-
-                          actions.quit([
-                            {
-                              type: 'user',
-                              text: `/quit`,
-                              id: now - 1,
-                            },
-                            {
-                              type: 'quit',
-                              duration: formatDuration(wallDuration),
-                              id: now,
-                            },
-                          ]);
-                        }
-                      }
-                    },
-                  });
-                  return { type: 'handled' };
 
                 case 'quit':
                   actions.quit(result.messages);
@@ -692,7 +620,6 @@ export const useSlashCommandProcessor = (
       setSessionShellAllowlist,
       setIsProcessing,
       setConfirmationRequest,
-      sessionStats,
     ],
   );
 
@@ -703,6 +630,5 @@ export const useSlashCommandProcessor = (
     commandContext,
     shellConfirmationRequest,
     confirmationRequest,
-    quitConfirmationRequest,
   };
 };

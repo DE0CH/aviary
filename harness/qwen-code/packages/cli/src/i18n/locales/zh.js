@@ -108,7 +108,6 @@ export default {
     '在浏览器中打开完整的 Qwen Code 文档',
   'Configuration not available.': '配置不可用',
   'change the auth method': '更改认证方法',
-  'Show quit confirmation dialog': '显示退出确认对话框',
   'Copy the last result or code snippet to clipboard':
     '将最后的结果或代码片段复制到剪贴板',
 
@@ -654,15 +653,6 @@ export default {
   'Shell Command Execution': 'Shell 命令执行',
   'A custom command wants to run the following shell commands:':
     '自定义命令想要运行以下 shell 命令：',
-
-  // ============================================================================
-  // Dialogs - Quit Confirmation
-  // ============================================================================
-  'What would you like to do before exiting?': '退出前您想要做什么？',
-  'Quit immediately (/quit)': '立即退出 (/quit)',
-  'Generate summary and quit (/summary)': '生成摘要并退出 (/summary)',
-  'Save conversation and quit (/chat save)': '保存对话并退出 (/chat save)',
-  'Cancel (stay in application)': '取消（留在应用程序中）',
 
   // ============================================================================
   // Dialogs - Pro Quota
