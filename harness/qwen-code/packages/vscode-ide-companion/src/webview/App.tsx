@@ -624,6 +624,7 @@ export const App: React.FC = () => {
         inputText={inputText}
         inputFieldRef={inputFieldRef}
         isStreaming={messageHandling.isStreaming}
+        isWaitingForResponse={messageHandling.isWaitingForResponse}
         isComposing={isComposing}
         editMode={editMode}
         thinkingEnabled={thinkingEnabled}

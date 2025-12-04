@@ -27,6 +27,7 @@ interface InputFormProps {
   // generic should be `HTMLDivElement` (not `HTMLDivElement | null`).
   inputFieldRef: React.RefObject<HTMLDivElement>;
   isStreaming: boolean;
+  isWaitingForResponse: boolean;
   isComposing: boolean;
   editMode: EditMode;
   thinkingEnabled: boolean;
@@ -235,7 +236,7 @@ export const InputForm: React.FC<InputFormProps> = ({
             </button>
 
             {/* Send/Stop button */}
-            {isStreaming ? (
+            {isStreaming || isWaitingForResponse ? (
               <button
                 type="button"
                 className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
