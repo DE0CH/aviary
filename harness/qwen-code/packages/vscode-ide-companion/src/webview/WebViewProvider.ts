@@ -799,6 +799,16 @@ export class WebViewProvider {
     );
     this.panelManager.setPanel(panel);
 
+    // Ensure restored tab title starts from default label
+    try {
+      panel.title = 'Qwen Code';
+    } catch (e) {
+      console.warn(
+        '[WebViewProvider] Failed to reset restored panel title:',
+        e,
+      );
+    }
+
     panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
 
     // Handle messages from WebView (restored panel)
