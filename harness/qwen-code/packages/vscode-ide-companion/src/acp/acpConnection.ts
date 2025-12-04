@@ -50,11 +50,9 @@ export class AcpConnection {
   private nextRequestId = { value: 0 };
   private backend: AcpBackend | null = null;
 
-  // Module instances
   private messageHandler: AcpMessageHandler;
   private sessionManager: AcpSessionManager;
 
-  // Callback functions
   onSessionUpdate: (data: AcpSessionUpdate) => void = () => {};
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
@@ -206,7 +204,7 @@ export class AcpConnection {
             const message = JSON.parse(line) as AcpMessage;
             console.log(
               '[ACP] <<< Received message:',
-              JSON.stringify(message).substring(0, 500),
+              JSON.stringify(message).substring(0, 500 * 3),
             );
             this.handleMessage(message);
           } catch (_error) {

@@ -181,12 +181,16 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.acceptDiff(docUri);
       }
+      // TODO: 如果 webview 在 request_permission 需要回复 cli
+      console.log('[Extension] Diff accepted');
     }),
     vscode.commands.registerCommand('qwen.diff.cancel', (uri?: vscode.Uri) => {
       const docUri = uri ?? vscode.window.activeTextEditor?.document.uri;
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(docUri);
       }
+      // TODO: 如果 webview 在 request_permission 需要回复 cli
+      console.log('[Extension] Diff cancelled');
     }),
   );
 

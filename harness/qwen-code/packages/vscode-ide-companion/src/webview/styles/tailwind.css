@@ -155,4 +155,21 @@
     background-color: var(--app-qwen-clay-button-orange);
     color: var(--app-qwen-ivory);
   }
+
+  /*
+   * File path styling inside tool call content
+   * Applies to: .toolcall-content-wrapper .file-link-path
+   * - Use monospace editor font
+   * - Slightly smaller size
+   * - Link color
+   * - Tighten top alignment and allow aggressive breaking for long paths
+   */
+  .toolcall-content-wrapper .file-link-path {
+    /* Tailwind utilities where possible */
+    @apply text-[0.85em] pt-px break-all min-w-0;
+    /* Not covered by Tailwind defaults: use CSS vars / properties */
+    font-family: var(--app-monospace-font-family);
+    color: var(--app-link-color);
+    overflow-wrap: anywhere;
+  }
 }

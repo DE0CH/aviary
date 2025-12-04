@@ -104,8 +104,16 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
 
     // Short output - compact format
+    const statusFlag: 'success' | 'error' | 'warning' | 'loading' | 'default' =
+      toolCall.status === 'in_progress' || toolCall.status === 'pending'
+        ? 'loading'
+        : 'success';
     return (
-      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label={kind}
+        status={statusFlag}
+        toolCallId={toolCallId}
+      >
         {operationText || output}
       </ToolCallContainer>
     );
@@ -113,8 +121,16 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success with files: show operation + file list in compact format
   if (locations && locations.length > 0) {
+    const statusFlag: 'success' | 'error' | 'warning' | 'loading' | 'default' =
+      toolCall.status === 'in_progress' || toolCall.status === 'pending'
+        ? 'loading'
+        : 'success';
     return (
-      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label={kind}
+        status={statusFlag}
+        toolCallId={toolCallId}
+      >
         <LocationsList locations={locations} />
       </ToolCallContainer>
     );
@@ -122,8 +138,16 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // No output - show just the operation
   if (operationText) {
+    const statusFlag: 'success' | 'error' | 'warning' | 'loading' | 'default' =
+      toolCall.status === 'in_progress' || toolCall.status === 'pending'
+        ? 'loading'
+        : 'success';
     return (
-      <ToolCallContainer label={kind} status="success" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label={kind}
+        status={statusFlag}
+        toolCallId={toolCallId}
+      >
         {operationText}
       </ToolCallContainer>
     );

@@ -16,7 +16,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({
   content,
   onFileClick,
 }) => (
-  <div className="flex gap-0 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]">
+  <div className="flex gap-0 items-start text-left flex-col relative">
     <div
       className="inline-block my-1 relative whitespace-pre-wrap rounded-md max-w-full overflow-x-auto overflow-y-hidden select-text leading-[1.5]"
       style={{
@@ -30,7 +30,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({
       <MessageContent content={content} onFileClick={onFileClick} />
     </div>
     <div
-      className="absolute right-3 bottom-3 animate-[pulse_1.5s_ease-in-out_infinite]"
+      className="absolute right-3 bottom-3"
       style={{ color: 'var(--app-primary-foreground)' }}
     >
       ●

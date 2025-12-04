@@ -9,7 +9,10 @@
 import type React from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
-import { groupContent } from '../shared/utils.js';
+import {
+  groupContent,
+  mapToolStatusToContainerStatus,
+} from '../shared/utils.js';
 import { FileLink } from '../../ui/FileLink.js';
 
 /**
@@ -22,6 +25,14 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Group content by type
   const { errors } = groupContent(content);
+
+  // Compute container status based on toolCall.status (pending/in_progress -> loading)
+  const containerStatus:
+    | 'success'
+    | 'error'
+    | 'warning'
+    | 'loading'
+    | 'default' = mapToolStatusToContainerStatus(toolCall.status);
 
   // Error case: show error
   if (errors.length > 0) {
@@ -54,7 +65,7 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
       <ToolCallContainer
         label={'Read'}
         className="read-tool-call-success"
-        status="success"
+        status={containerStatus}
         toolCallId={toolCallId}
         labelSuffix={
           path ? (

@@ -84,6 +84,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   inputText,
   inputFieldRef,
   isStreaming,
+  isWaitingForResponse,
   isComposing,
   editMode,
   thinkingEnabled,
@@ -109,6 +110,12 @@ export const InputForm: React.FC<InputFormProps> = ({
   const editModeInfo = getEditModeInfo(editMode);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // ESC should cancel the current interaction (stop generation)
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+      return;
+    }
     // If composing (Chinese IME input), don't process Enter key
     if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       // If CompletionMenu is open, let it handle Enter key

@@ -7,7 +7,7 @@
  */
 
 import type React from 'react';
-import { MarkdownRenderer } from './MarkdownRenderer.tsx';
+import { MarkdownRenderer } from './MarkdownRenderer/MarkdownRenderer.js';
 
 interface MessageContentProps {
   content: string;

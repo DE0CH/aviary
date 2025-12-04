@@ -19,6 +19,7 @@ export default {
     './src/webview/components/PermissionDrawer.tsx',
     './src/webview/components/PlanDisplay.tsx',
     './src/webview/components/session/SessionSelector.tsx',
+    './src/webview/components/messages/UserMessage.tsx',
   ],
   theme: {
     extend: {

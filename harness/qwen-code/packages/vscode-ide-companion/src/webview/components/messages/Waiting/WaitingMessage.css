@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+@import url('../Assistant/AssistantMessage.css');
+
 /* Subtle shimmering highlight across the loading text */
 @keyframes waitingMessageShimmer {
   0% {
@@ -31,3 +33,6 @@
   animation: waitingMessageShimmer 1.6s linear infinite;
 }
 
+.interrupted-item::after {
+  display: none;
+}

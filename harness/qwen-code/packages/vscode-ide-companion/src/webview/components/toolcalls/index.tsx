@@ -11,15 +11,14 @@ import type { BaseToolCallProps } from './shared/types.js';
 import { shouldShowToolCall } from './shared/utils.js';
 import { GenericToolCall } from './GenericToolCall.js';
 import { ReadToolCall } from './Read/ReadToolCall.js';
-import { WriteToolCall } from './WriteToolCall.js';
+import { WriteToolCall } from './Write/WriteToolCall.js';
 import { EditToolCall } from './Edit/EditToolCall.js';
 import { ExecuteToolCall as BashExecuteToolCall } from './Bash/Bash.js';
 import { ExecuteToolCall } from './Execute/Execute.js';
 import { UpdatedPlanToolCall } from './UpdatedPlan/UpdatedPlanToolCall.js';
 import { ExecuteNodeToolCall } from './ExecuteNode/ExecuteNodeToolCall.js';
-import { SearchToolCall } from './SearchToolCall.js';
-import { ThinkToolCall } from './ThinkToolCall.js';
-import { TodoWriteToolCall } from './TodoWriteToolCall.js';
+import { SearchToolCall } from './Search/SearchToolCall.js';
+import { ThinkToolCall } from './Think/ThinkToolCall.js';
 
 /**
  * Factory function that returns the appropriate tool call component based on kind
@@ -69,7 +68,10 @@ export const getToolCallComponent = (
     case 'updated_plan':
     case 'updatedplan':
     case 'todo_write':
+    case 'update_todos':
+    case 'todowrite':
       return UpdatedPlanToolCall;
+    // return TodoWriteToolCall;
 
     case 'search':
     case 'grep':
@@ -80,18 +82,6 @@ export const getToolCallComponent = (
     case 'think':
     case 'thinking':
       return ThinkToolCall;
-
-    case 'todowrite':
-      return TodoWriteToolCall;
-    // case 'todo_write':
-    case 'update_todos':
-      return TodoWriteToolCall;
-
-    // Add more specialized components as needed
-    // case 'fetch':
-    //   return FetchToolCall;
-    // case 'delete':
-    //   return DeleteToolCall;
 
     default:
       // Fallback to generic component

@@ -45,7 +45,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   return (
     <div
-      className="qwen-message user-message-container flex gap-0 my-1 items-start text-left flex-col relative animate-[fadeIn_0.2s_ease-in]"
+      className="qwen-message user-message-container flex gap-0 my-1 items-start text-left flex-col relative"
       style={{ position: 'relative' }}
     >
       <div
@@ -60,20 +60,20 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       >
         <MessageContent content={content} onFileClick={onFileClick} />
       </div>
+
       {/* File context indicator */}
       {fileContextDisplay && (
-        <div>
+        <div className="mt-6">
           <div
             role="button"
             tabIndex={0}
-            className="mr"
+            className="mr inline-flex items-center py-0 pl-1 pr-2 ml-1 gap-1 rounded-sm cursor-pointer relative opacity-50 hover:opacity-100"
             onClick={() => fileContext && onFileClick?.(fileContext.filePath)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 fileContext && onFileClick?.(fileContext.filePath);
               }
             }}
-            style={{ cursor: 'pointer' }}
           >
             <div
               className="gr"
@@ -81,7 +81,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
               style={{
                 fontSize: '12px',
                 color: 'var(--app-secondary-foreground)',
-                opacity: 0.8,
               }}
             >
               {fileContextDisplay}

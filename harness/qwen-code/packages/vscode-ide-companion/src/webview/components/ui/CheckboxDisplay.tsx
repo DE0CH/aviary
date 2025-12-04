@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import type React from 'react';
 
 export interface CheckboxDisplayProps {
   checked?: boolean;
@@ -29,44 +29,54 @@ export const CheckboxDisplay: React.FC<CheckboxDisplayProps> = ({
   style,
   title,
 }) => {
-  const ref = React.useRef<HTMLInputElement | null>(null);
-
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el) {
-      return;
-    }
-    el.indeterminate = !!indeterminate;
-    if (indeterminate) {
-      el.setAttribute('data-indeterminate', 'true');
-    } else {
-      el.removeAttribute('data-indeterminate');
-    }
-  }, [indeterminate, checked]);
+  // Render as a span (not <input>) so we can draw a checkmark with CSS.
+  // Pseudo-elements do not reliably render on <input> in Chromium (VS Code webviews),
+  // which caused the missing icon. This version is font-free and uses borders.
+  const showCheck = !!checked && !indeterminate;
+  const showDash = !!indeterminate;
 
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      disabled={disabled}
-      checked={checked}
-      readOnly
-      aria-checked={indeterminate ? 'mixed' : checked}
+    <span
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : !!checked}
+      aria-disabled={disabled || undefined}
       title={title}
       style={style}
       className={[
-        // Base box style (equivalent to .q)
-        'q appearance-none m-[2px] shrink-0 w-4 h-4 relative rounded-[2px] box-border',
-        'border border-[var(--app-input-border)] bg-[var(--app-input-background)] text-[var(--app-primary-foreground)]',
+        'q m-[2px] shrink-0 w-4 h-4 relative rounded-[2px] box-border',
+        'border border-[var(--app-input-border)] bg-[var(--app-input-background)]',
         'inline-flex items-center justify-center',
-        // Checked visual state
-        'checked:opacity-70 checked:text-[#74c991]',
-        // Checkmark / indeterminate symbol via pseudo-element
-        'after:absolute after:left-1/2 after:top-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:opacity-0 after:pointer-events-none after:antialiased',
-        'checked:after:content-["\\2713"] checked:after:text-[0.9em] checked:after:opacity-100',
-        'data-[indeterminate=true]:text-[#e1c08d] data-[indeterminate=true]:after:content-["\\273d"] data-[indeterminate=true]:after:text-[0.8em] data-[indeterminate=true]:after:opacity-100',
+        showCheck ? 'opacity-70' : '',
         className,
       ].join(' ')}
-    />
+    >
+      {showCheck ? (
+        <span
+          aria-hidden
+          className={[
+            'absolute block',
+            // Place the check slightly to the left/top so rotated arms stay inside the 16x16 box
+            'left-[3px] top-[3px]',
+            // 10x6 shape works well for a 16x16 checkbox
+            'w-2.5 h-1.5',
+            // Draw the L-corner and rotate to form a check
+            'border-l-2 border-b-2',
+            'border-[#74c991]',
+            '-rotate-45',
+          ].join(' ')}
+        />
+      ) : null}
+      {showDash ? (
+        <span
+          aria-hidden
+          className={[
+            'absolute block',
+            'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
+            'w-2 h-[2px] rounded-sm',
+            'bg-[#e1c08d]',
+          ].join(' ')}
+        />
+      ) : null}
+    </span>
   );
 };

@@ -7,14 +7,18 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from './shared/types.js';
+import type { BaseToolCallProps } from '../shared/types.js';
 import {
   ToolCallContainer,
   ToolCallCard,
   ToolCallRow,
   LocationsList,
-} from './shared/LayoutComponents.js';
-import { safeTitle, groupContent } from './shared/utils.js';
+} from '../shared/LayoutComponents.js';
+import {
+  safeTitle,
+  groupContent,
+  mapToolStatusToContainerStatus,
+} from '../shared/utils.js';
 
 /**
  * Specialized component for Search tool calls
@@ -44,6 +48,7 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success case with results: show search query + file list
   if (locations && locations.length > 0) {
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     // If multiple results, use card layout; otherwise use compact format
     if (locations.length > 1) {
       return (
@@ -59,8 +64,13 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
     // Single result - compact format
     return (
-      <ToolCallContainer label="Search" status="success">
-        <span className="font-mono">{queryText}</span>
+      <ToolCallContainer
+        label="Search"
+        status={containerStatus}
+        className="search-toolcall"
+        labelSuffix={`(${queryText})`}
+      >
+        {/* <span className="font-mono">{queryText}</span> */}
         <span className="mx-2 opacity-50">→</span>
         <LocationsList locations={locations} />
       </ToolCallContainer>
@@ -69,8 +79,13 @@ export const SearchToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // No results - show query only
   if (queryText) {
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     return (
-      <ToolCallContainer label="Search" status="success">
+      <ToolCallContainer
+        label="Search"
+        status={containerStatus}
+        className="search-toolcall"
+      >
         <span className="font-mono">{queryText}</span>
       </ToolCallContainer>
     );

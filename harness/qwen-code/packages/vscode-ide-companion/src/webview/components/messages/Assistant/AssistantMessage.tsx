@@ -5,7 +5,7 @@
  */
 
 import type React from 'react';
-import { MessageContent } from '../MessageContent.js';
+import { MessageContent } from '../../MessageContent.js';
 import './AssistantMessage.css';
 
 interface AssistantMessageProps {
@@ -13,6 +13,8 @@ interface AssistantMessageProps {
   timestamp: number;
   onFileClick?: (path: string) => void;
   status?: 'default' | 'success' | 'error' | 'warning' | 'loading';
+  // When true, render without the left status bullet (no ::before dot)
+  hideStatusIcon?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   timestamp: _timestamp,
   onFileClick,
   status = 'default',
+  hideStatusIcon = false,
 }) => {
   // Empty content not rendered directly, avoid poor visual experience from only showing ::before dot
   if (!content || content.trim().length === 0) {
@@ -39,6 +42,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   // Map status to CSS class (only for ::before pseudo-element)
   const getStatusClass = () => {
+    if (hideStatusIcon) {
+      return '';
+    }
     switch (status) {
       case 'success':
         return 'assistant-message-success';

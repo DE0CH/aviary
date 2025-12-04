@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
+import { FileOperations } from '../FileOperations.js';
 import { getFileName } from '../utils/webviewUtils.js';
 
 /**
@@ -322,11 +323,7 @@ export class FileMessageHandler extends BaseMessageHandler {
     }
 
     try {
-      const uri = vscode.Uri.file(path);
-      await vscode.window.showTextDocument(uri, {
-        preview: false,
-        preserveFocus: false,
-      });
+      await FileOperations.openFile(path);
     } catch (error) {
       console.error('[FileMessageHandler] Failed to open file:', error);
       vscode.window.showErrorMessage(`Failed to open file: ${error}`);

@@ -7,13 +7,13 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from './shared/types.js';
+import type { BaseToolCallProps } from '../shared/types.js';
 import {
   ToolCallContainer,
   ToolCallCard,
   ToolCallRow,
-} from './shared/LayoutComponents.js';
-import { groupContent } from './shared/utils.js';
+} from '../shared/LayoutComponents.js';
+import { groupContent } from '../shared/utils.js';
 
 /**
  * Specialized component for Think tool calls
@@ -56,8 +56,12 @@ export const ThinkToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
 
     // Short thoughts - compact format
+    const status =
+      toolCall.status === 'pending' || toolCall.status === 'in_progress'
+        ? 'loading'
+        : 'default';
     return (
-      <ToolCallContainer label="Thinking" status="default">
+      <ToolCallContainer label="Thinking" status={status}>
         <span className="italic opacity-90">{thoughts}</span>
       </ToolCallContainer>
     );

@@ -39,6 +39,7 @@ import {
   AssistantMessage,
   ThinkingMessage,
   WaitingMessage,
+  InterruptedMessage,
 } from './components/messages/index.js';
 import { InputForm } from './components/InputForm.js';
 import { SessionSelector } from './components/session/SessionSelector.js';
@@ -172,15 +173,33 @@ export const App: React.FC = () => {
     isStreaming: messageHandling.isStreaming,
   });
 
-  // Handle cancel streaming
+  // Handle cancel/stop from the input bar
+  // Emit a cancel to the extension and immediately reflect interruption locally.
   const handleCancel = useCallback(() => {
-    if (messageHandling.isStreaming) {
-      vscode.postMessage({
-        type: 'cancelStreaming',
-        data: {},
+    if (messageHandling.isStreaming || messageHandling.isWaitingForResponse) {
+      // Proactively end local states and add an 'Interrupted' line
+      try {
+        messageHandling.endStreaming?.();
+      } catch {
+        /* no-op */
+      }
+      try {
+        messageHandling.clearWaitingForResponse?.();
+      } catch {
+        /* no-op */
+      }
+      messageHandling.addMessage({
+        role: 'assistant',
+        content: 'Interrupted',
+        timestamp: Date.now(),
       });
     }
-  }, [messageHandling.isStreaming, vscode]);
+    // Notify extension/agent to cancel server-side work
+    vscode.postMessage({
+      type: 'cancelStreaming',
+      data: {},
+    });
+  }, [messageHandling, vscode]);
 
   // Message handling
   useWebViewMessages({
@@ -562,14 +581,28 @@ export const App: React.FC = () => {
                       );
                     }
 
-                    return (
-                      <AssistantMessage
-                        key={`message-${index}`}
-                        content={msg.content || ''}
-                        timestamp={msg.timestamp || 0}
-                        onFileClick={handleFileClick}
-                      />
-                    );
+                    {
+                      const content = (msg.content || '').trim();
+                      if (
+                        content === 'Interrupted' ||
+                        content === 'Tool interrupted'
+                      ) {
+                        return (
+                          <InterruptedMessage
+                            key={`message-${index}`}
+                            text={content}
+                          />
+                        );
+                      }
+                      return (
+                        <AssistantMessage
+                          key={`message-${index}`}
+                          content={content}
+                          timestamp={msg.timestamp || 0}
+                          onFileClick={handleFileClick}
+                        />
+                      );
+                    }
                   }
 
                   // case 'in-progress-tool-call':

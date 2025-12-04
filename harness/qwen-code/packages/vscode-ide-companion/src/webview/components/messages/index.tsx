@@ -5,8 +5,9 @@
  */
 
 export { UserMessage } from './UserMessage.js';
-export { AssistantMessage } from './AssistantMessage.js';
+export { AssistantMessage } from './Assistant/AssistantMessage.js';
 export { ThinkingMessage } from './ThinkingMessage.js';
 export { StreamingMessage } from './StreamingMessage.js';
-export { WaitingMessage } from './WaitingMessage.js';
+export { WaitingMessage } from './Waiting/WaitingMessage.js';
+export { InterruptedMessage } from './Waiting/InterruptedMessage.js';
 export { PlanDisplay } from '../PlanDisplay.js';

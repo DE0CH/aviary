@@ -31,6 +31,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLDivElement>(null);
 
+  console.log('PermissionDrawer rendered with isOpen:', isOpen, toolCall);
   // Get the title for the permission request
   const getTitle = () => {
     if (toolCall.kind === 'edit' || toolCall.kind === 'write') {
@@ -47,7 +48,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
       );
     }
     if (toolCall.kind === 'execute' || toolCall.kind === 'bash') {
-      return 'Allow command execution?';
+      return 'Allow this bash command?';
     }
     if (toolCall.kind === 'read') {
       const fileName =
@@ -175,13 +176,8 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 onMouseEnter={() => setFocusedIndex(index)}
               >
                 {/* Number badge */}
-                <span
-                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
-                    isFocused
-                      ? 'text-inherit'
-                      : 'bg-[var(--app-list-hover-background)]'
-                  }`}
-                >
+                {/* Plain number badge without hover background */}
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded">
                   {index + 1}
                 </span>
 
@@ -208,13 +204,8 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 onClick={() => customInputRef.current?.focus()}
               >
                 {/* Number badge (N+1) */}
-                <span
-                  className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded ${
-                    isFocused
-                      ? 'text-inherit'
-                      : 'bg-[var(--app-list-hover-background)]'
-                  }`}
-                >
+                {/* Plain number badge without hover background */}
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold rounded">
                   {options.length + 1}
                 </span>
 

@@ -6,7 +6,11 @@
  * Shared utility functions for tool call components
  */
 
-import type { ToolCallContent, GroupedContent } from './types.js';
+import type {
+  ToolCallContent,
+  GroupedContent,
+  ToolCallStatus,
+} from './types.js';
 
 /**
  * Format any value to a string for display
@@ -193,4 +197,27 @@ export const groupContent = (content?: ToolCallContent[]): GroupedContent => {
   });
 
   return { textOutputs, errors, diffs, otherData };
+};
+
+/**
+ * Map a tool call status to a ToolCallContainer status (bullet color)
+ * - pending/in_progress -> loading
+ * - completed -> success
+ * - failed -> error
+ * - default fallback
+ */
+export const mapToolStatusToContainerStatus = (
+  status: ToolCallStatus,
+): 'success' | 'error' | 'warning' | 'loading' | 'default' => {
+  switch (status) {
+    case 'pending':
+    case 'in_progress':
+      return 'loading';
+    case 'failed':
+      return 'error';
+    case 'completed':
+      return 'success';
+    default:
+      return 'default';
+  }
 };

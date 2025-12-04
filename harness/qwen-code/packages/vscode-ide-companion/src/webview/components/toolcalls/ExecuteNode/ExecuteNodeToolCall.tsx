@@ -9,7 +9,11 @@
 import type React from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
-import { safeTitle, groupContent } from '../shared/utils.js';
+import {
+  safeTitle,
+  groupContent,
+  mapToolStatusToContainerStatus,
+} from '../shared/utils.js';
 import './ExecuteNode.css';
 
 /**
@@ -60,7 +64,11 @@ export const ExecuteNodeToolCall: React.FC<BaseToolCallProps> = ({
 
   // Success case: show command with branch connector (similar to the example)
   return (
-    <ToolCallContainer label="Execute" status="success" toolCallId={toolCallId}>
+    <ToolCallContainer
+      label="Execute"
+      status={mapToolStatusToContainerStatus(toolCall.status)}
+      toolCallId={toolCallId}
+    >
       <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
         <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
         <span className="flex-shrink-0 w-full">{commandText}</span>

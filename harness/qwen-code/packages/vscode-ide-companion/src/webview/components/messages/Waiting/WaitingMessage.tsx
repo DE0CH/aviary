@@ -6,9 +6,8 @@
 
 import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import './AssistantMessage.css';
 import './WaitingMessage.css';
-import { WITTY_LOADING_PHRASES } from '../../../constants/loadingMessages.js';
+import { WITTY_LOADING_PHRASES } from '../../../../constants/loadingMessages.js';
 
 interface WaitingMessageProps {
   loadingMessage: string;
@@ -66,7 +65,7 @@ export const WaitingMessage: React.FC<WaitingMessageProps> = ({
   }, [phrases]);
 
   return (
-    <div className="flex gap-0 items-start text-left py-2 flex-col opacity-85 animate-[fadeIn_0.2s_ease-in]">
+    <div className="flex gap-0 items-start text-left py-2 flex-col opacity-85">
       {/* Use the same left status icon (pseudo-element) style as assistant-message-container */}
       <div
         className="assistant-message-container assistant-message-loading"

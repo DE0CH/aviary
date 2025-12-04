@@ -7,10 +7,10 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from './shared/types.js';
-import { ToolCallContainer } from './shared/LayoutComponents.js';
-import { groupContent, safeTitle } from './shared/utils.js';
-import { CheckboxDisplay } from '../ui/CheckboxDisplay.js';
+import type { BaseToolCallProps } from '../shared/types.js';
+import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import { groupContent, safeTitle } from '../shared/utils.js';
+import { CheckboxDisplay } from '../../ui/CheckboxDisplay.js';
 
 type EntryStatus = 'pending' | 'in_progress' | 'completed';
 
@@ -20,7 +20,7 @@ interface TodoEntry {
 }
 
 const mapToolStatusToBullet = (
-  status: import('./shared/types.js').ToolCallStatus,
+  status: import('../shared/types.js').ToolCallStatus,
 ): 'success' | 'error' | 'warning' | 'loading' | 'default' => {
   switch (status) {
     case 'completed':

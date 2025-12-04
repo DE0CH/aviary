@@ -112,7 +112,6 @@ export const FileLink: React.FC<FileLinkProps> = ({
     <a
       href="#"
       className={[
-        // Keep a semantic handle for scoped overrides (e.g. DiffDisplay.css)
         'file-link',
         // Layout + interaction
         // Use items-center + leading-none to vertically center within surrounding rows

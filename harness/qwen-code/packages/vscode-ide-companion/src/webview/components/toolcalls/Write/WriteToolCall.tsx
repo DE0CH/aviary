@@ -7,10 +7,13 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from './shared/types.js';
-import { ToolCallContainer } from './shared/LayoutComponents.js';
-import { groupContent } from './shared/utils.js';
-import { FileLink } from '../ui/FileLink.js';
+import type { BaseToolCallProps } from '../shared/types.js';
+import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import {
+  groupContent,
+  mapToolStatusToContainerStatus,
+} from '../shared/utils.js';
+import { FileLink } from '../../ui/FileLink.js';
 
 /**
  * Specialized component for Write tool calls
@@ -79,10 +82,11 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   if (locations && locations.length > 0) {
     const path = locations[0].path;
     const lineCount = writeContent.split('\n').length;
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     return (
       <ToolCallContainer
         label={'Created'}
-        status="success"
+        status={containerStatus}
         toolCallId={toolCallId}
         labelSuffix={
           path ? (
@@ -104,8 +108,13 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Fallback: show generic success
   if (textOutputs.length > 0) {
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     return (
-      <ToolCallContainer label="Write" status="success" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label="Write"
+        status={containerStatus}
+        toolCallId={toolCallId}
+      >
         {textOutputs.join('\n')}
       </ToolCallContainer>
     );

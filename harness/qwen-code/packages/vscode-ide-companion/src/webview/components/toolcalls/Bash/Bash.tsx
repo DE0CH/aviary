@@ -53,10 +53,27 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     }
   };
 
+  // Map tool status to container status for proper bullet coloring
+  const containerStatus:
+    | 'success'
+    | 'error'
+    | 'warning'
+    | 'loading'
+    | 'default' =
+    errors.length > 0
+      ? 'error'
+      : toolCall.status === 'in_progress' || toolCall.status === 'pending'
+        ? 'loading'
+        : 'success';
+
   // Error case
   if (errors.length > 0) {
     return (
-      <ToolCallContainer label="Bash" status="error" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label="Bash"
+        status={containerStatus}
+        toolCallId={toolCallId}
+      >
         {/* Branch connector summary (Claude-like) */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
@@ -99,7 +116,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
       output.length > 500 ? output.substring(0, 500) + '...' : output;
 
     return (
-      <ToolCallContainer label="Bash" status="success" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label="Bash"
+        status={containerStatus}
+        toolCallId={toolCallId}
+      >
         {/* Branch connector summary (Claude-like) */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
@@ -141,7 +162,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success without output: show command with branch connector
   return (
-    <ToolCallContainer label="Bash" status="success" toolCallId={toolCallId}>
+    <ToolCallContainer
+      label="Bash"
+      status={containerStatus}
+      toolCallId={toolCallId}
+    >
       <div
         className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1"
         onClick={handleInClick}

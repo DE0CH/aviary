@@ -73,6 +73,7 @@ interface UseWebViewMessagesProps {
     breakAssistantSegment: () => void;
     appendThinkingChunk: (chunk: string) => void;
     clearThinking: () => void;
+    setWaitingForResponse: (message: string) => void;
     clearWaitingForResponse: () => void;
   };
 
@@ -421,6 +422,7 @@ export const useWebViewMessages = ({
             toolCallData.type = toolCallData.sessionUpdate;
           }
           handlers.handleToolCallUpdate(toolCallData);
+
           // Split assistant stream at tool boundaries similar to Claude/GPT rhythm
           const status = (toolCallData.status || '').toString();
           const isStart = toolCallData.type === 'tool_call';
@@ -429,6 +431,31 @@ export const useWebViewMessages = ({
             (status === 'completed' || status === 'failed');
           if (isStart || isFinalUpdate) {
             handlers.messageHandling.breakAssistantSegment();
+          }
+
+          // While long-running tools (e.g., execute/bash/command) are in progress,
+          // surface a lightweight loading indicator and expose the Stop button.
+          try {
+            const kind = (toolCallData.kind || '').toString().toLowerCase();
+            const isExec =
+              kind === 'execute' || kind === 'bash' || kind === 'command';
+            if (isExec && (status === 'pending' || status === 'in_progress')) {
+              const rawInput = toolCallData.rawInput;
+              let cmd = '';
+              if (typeof rawInput === 'string') {
+                cmd = rawInput;
+              } else if (rawInput && typeof rawInput === 'object') {
+                const maybe = rawInput as { command?: string };
+                cmd = maybe.command || '';
+              }
+              const hint = cmd ? `Running: ${cmd}` : 'Running command...';
+              handlers.messageHandling.setWaitingForResponse(hint);
+            }
+            if (status === 'completed' || status === 'failed') {
+              handlers.messageHandling.clearWaitingForResponse();
+            }
+          } catch (_err) {
+            // Best-effort UI hint; ignore errors
           }
           break;
         }

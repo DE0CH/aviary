@@ -32,12 +32,25 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     inputCommand = rawInput;
   }
 
+  // Map tool status to container status for proper bullet coloring
+  const containerStatus:
+    | 'success'
+    | 'error'
+    | 'warning'
+    | 'loading'
+    | 'default' =
+    errors.length > 0 || toolCall.status === 'failed'
+      ? 'error'
+      : toolCall.status === 'in_progress' || toolCall.status === 'pending'
+        ? 'loading'
+        : 'success';
+
   // Error case
   if (errors.length > 0) {
     return (
       <ToolCallContainer
         label="Execute"
-        status="error"
+        status={containerStatus}
         toolCallId={toolCallId}
         className="execute-default-toolcall"
       >
@@ -81,7 +94,7 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     return (
       <ToolCallContainer
         label="Execute"
-        status="success"
+        status={containerStatus}
         toolCallId={toolCallId}
       >
         {/* Branch connector summary (Claude-like) */}
@@ -117,7 +130,11 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success without output: show command with branch connector
   return (
-    <ToolCallContainer label="Execute" status="success" toolCallId={toolCallId}>
+    <ToolCallContainer
+      label="Execute"
+      status={containerStatus}
+      toolCallId={toolCallId}
+    >
       <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
         <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
         <span className="flex-shrink-0 w-full">{commandText}</span>

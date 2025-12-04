@@ -55,9 +55,42 @@
 
 .markdown-content ul,
 .markdown-content ol {
-  margin-top: 0;
+  margin-top: 1em;
   margin-bottom: 1em;
   padding-left: 2em;
+}
+
+/* Ensure list markers are visible even with global CSS resets */
+.markdown-content ul {
+  list-style-type: disc;
+  list-style-position: outside;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+  list-style-position: outside;
+}
+
+/* Nested list styles */
+.markdown-content ul ul {
+  list-style-type: circle;
+}
+
+.markdown-content ul ul ul {
+  list-style-type: square;
+}
+
+.markdown-content ol ol {
+  list-style-type: lower-alpha;
+}
+
+.markdown-content ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/* Style the marker explicitly so themes don't hide it */
+.markdown-content li::marker {
+  color: var(--app-secondary-foreground);
 }
 
 .markdown-content li {

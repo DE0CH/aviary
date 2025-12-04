@@ -217,7 +217,8 @@ export class AcpMessageHandler {
       return {
         outcome: {
           outcome,
-          optionId: optionId === 'cancel' ? 'reject_once' : optionId,
+          // optionId: optionId === 'cancel' ? 'reject_once' : optionId,
+          optionId: optionId === 'reject_once' ? 'cancel' : optionId,
         },
       };
     } catch (_error) {
@@ -230,3 +231,21 @@ export class AcpMessageHandler {
     }
   }
 }
+
+// [
+//   {
+//     received: 'reject_once',
+//     code: 'invalid_enum_value',
+//     options: [
+//       'proceed_once',
+//       'proceed_always',
+//       'proceed_always_server',
+//       'proceed_always_tool',
+//       'modify_with_editor',
+//       'cancel',
+//     ],
+//     path: [],
+//     message:
+//       "Invalid enum value. Expected 'proceed_once' | 'proceed_always' | 'proceed_always_server' | 'proceed_always_tool' | 'modify_with_editor' | 'cancel', received 'reject_once'",
+//   },
+// ];

@@ -41,20 +41,12 @@
   color: #e1c08d;
 }
 
-/* Loading state - animated bullet (maps to .he) */
+/* Loading state - static bullet (maps to .he) */
 .assistant-message-container.assistant-message-loading::before {
   color: var(--app-secondary-foreground);
   background-color: var(--app-secondary-background);
-  animation: assistantMessagePulse 1s linear infinite;
 }
 
-/* Pulse animation for loading state */
-@keyframes assistantMessagePulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+.assistant-message-container.assistant-message-loading::after {
+  display: none
 }
