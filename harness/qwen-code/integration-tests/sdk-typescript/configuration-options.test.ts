@@ -438,10 +438,15 @@ describe('Configuration Options (E2E)', () => {
       }
     });
 
-    it('should accept authType: qwen-oauth', async () => {
-      // Note: qwen-oauth requires credentials in ~/.qwen
-      // This test may fail if credentials are not configured
-      // The test verifies the option is accepted and passed correctly
+    // Skip in containerized sandbox environments - qwen-oauth requires user interaction
+    // which is not possible in Docker/Podman CI environments
+    it.skipIf(
+      process.env['SANDBOX'] === 'sandbox:docker' ||
+        process.env['SANDBOX'] === 'sandbox:podman',
+    )('should accept authType: qwen-oauth', async () => {
+      // Note: qwen-oauth requires credentials in ~/.qwen and user interaction
+      // Without credentials, the auth process will timeout waiting for user
+      // This test verifies the option is accepted and passed correctly to CLI
 
       const stderrMessages: string[] = [];
 
@@ -452,6 +457,7 @@ describe('Configuration Options (E2E)', () => {
           cwd: testDir,
           authType: 'qwen-oauth',
           debug: true,
+          logLevel: 'debug',
           stderr: (msg: string) => {
             stderrMessages.push(msg);
           },
@@ -461,16 +467,31 @@ describe('Configuration Options (E2E)', () => {
       const messages: SDKMessage[] = [];
 
       try {
-        for await (const message of q) {
-          messages.push(message);
-        }
+        // Use a timeout to avoid hanging when credentials are not configured
+        const timeoutPromise = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), 20000),
+        );
 
-        // The query should at least start (may fail due to missing credentials)
-        expect(messages.length).toBeGreaterThan(0);
-      } catch (error) {
-        // qwen-oauth may fail if credentials are not configured
-        // This is acceptable - we're testing that the option is passed correctly
-        expect(error).toBeDefined();
+        const collectMessages = async () => {
+          for await (const message of q) {
+            messages.push(message);
+          }
+          return 'completed';
+        };
+
+        const result = await Promise.race([collectMessages(), timeoutPromise]);
+
+        if (result === 'timeout') {
+          // Timeout is expected when OAuth credentials are not configured
+          // Verify that CLI was spawned with correct --auth-type argument
+          const hasAuthTypeArg = stderrMessages.some((msg) =>
+            msg.includes('--auth-type'),
+          );
+          expect(hasAuthTypeArg).toBe(true);
+        } else {
+          // If credentials exist and auth completed, verify we got messages
+          expect(messages.length).toBeGreaterThan(0);
+        }
       } finally {
         await q.close();
       }
