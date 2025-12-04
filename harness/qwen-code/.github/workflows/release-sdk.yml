@@ -39,7 +39,8 @@ jobs:
     environment:
       name: 'production-release'
       url: '${{ github.server_url }}/${{ github.repository }}/releases/tag/sdk-typescript-${{ steps.version.outputs.RELEASE_TAG }}'
-    if: github.repository == 'QwenLM/qwen-code'
+    if: |-
+      ${{ github.repository == 'QwenLM/qwen-code' }}
     permissions:
       contents: 'write'
       packages: 'write'
@@ -121,7 +122,8 @@ jobs:
           MANUAL_VERSION: '${{ inputs.version }}'
 
       - name: 'Run Tests'
-        if: github.event.inputs.force_skip_tests != 'true'
+        if: |-
+          ${{ github.event.inputs.force_skip_tests != 'true' }}
         working-directory: 'packages/sdk-typescript'
         run: |
           npm run test:ci
@@ -190,7 +192,8 @@ jobs:
           NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}'
 
       - name: 'Create GitHub Release and Tag'
-        if: steps.vars.outputs.is_dry_run == 'false'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           RELEASE_BRANCH: '${{ steps.release_branch.outputs.BRANCH_NAME }}'
@@ -204,7 +207,8 @@ jobs:
             --generate-notes
 
       - name: 'Create Issue on Failure'
-        if: failure()
+        if: |-
+          ${{ failure() }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           RELEASE_TAG: "${{ steps.version.outputs.RELEASE_TAG || 'N/A' }}"
