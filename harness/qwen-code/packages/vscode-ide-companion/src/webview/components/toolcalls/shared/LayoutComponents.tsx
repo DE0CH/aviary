@@ -25,6 +25,8 @@ interface ToolCallContainerProps {
   toolCallId?: string;
   /** Optional trailing content rendered next to label (e.g., clickable filename) */
   labelSuffix?: React.ReactNode;
+  /** Optional custom class name */
+  className?: string;
 }
 
 // NOTE: We previously computed a bullet color class in JS, but the current
@@ -40,9 +42,10 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   children,
   toolCallId: _toolCallId,
   labelSuffix,
+  className: _className,
 }) => (
   <div
-    className={`qwen-message relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+    className={`qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
   >
     {/* Timeline connector line using ::after pseudo-element */}
     <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
@@ -50,15 +53,18 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>
-        {/* {toolCallId && (
+        {/* TODO: for 调试 */}
+        {_toolCallId && (
           <span className="text-[10px] opacity-30">
-            [{toolCallId.slice(-8)}]
+            [{_toolCallId.slice(-8)}]
           </span>
-        )} */}
+        )}
         {labelSuffix}
       </div>
       {children && (
-        <div className="text-[var(--app-secondary-foreground)]">{children}</div>
+        <div className="text-[var(--app-secondary-foreground)] py-2">
+          {children}
+        </div>
       )}
     </div>
   </div>

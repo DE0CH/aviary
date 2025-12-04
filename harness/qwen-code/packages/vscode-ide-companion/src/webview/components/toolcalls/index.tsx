@@ -10,11 +10,13 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { shouldShowToolCall } from './shared/utils.js';
 import { GenericToolCall } from './GenericToolCall.js';
-import { ReadToolCall } from './ReadToolCall.js';
+import { ReadToolCall } from './Read/ReadToolCall.js';
 import { WriteToolCall } from './WriteToolCall.js';
 import { EditToolCall } from './Edit/EditToolCall.js';
 import { ExecuteToolCall as BashExecuteToolCall } from './Bash/Bash.js';
 import { ExecuteToolCall } from './Execute/Execute.js';
+import { UpdatedPlanToolCall } from './UpdatedPlan/UpdatedPlanToolCall.js';
+import { ExecuteNodeToolCall } from './ExecuteNode/ExecuteNodeToolCall.js';
 import { SearchToolCall } from './SearchToolCall.js';
 import { ThinkToolCall } from './ThinkToolCall.js';
 import { TodoWriteToolCall } from './TodoWriteToolCall.js';
@@ -24,6 +26,7 @@ import { TodoWriteToolCall } from './TodoWriteToolCall.js';
  */
 export const getToolCallComponent = (
   kind: string,
+  toolCall?: import('./shared/types.js').ToolCallData,
 ): React.FC<BaseToolCallProps> => {
   const normalizedKind = kind.toLowerCase();
 
@@ -39,11 +42,34 @@ export const getToolCallComponent = (
       return EditToolCall;
 
     case 'execute':
+      // Check if this is a node/npm version check command
+      if (toolCall) {
+        const commandText =
+          typeof toolCall.rawInput === 'string'
+            ? toolCall.rawInput
+            : typeof toolCall.rawInput === 'object' &&
+                toolCall.rawInput !== null
+              ? (toolCall.rawInput as { command?: string }).command || ''
+              : '';
+
+        // TODO:
+        if (
+          commandText.includes('node --version') ||
+          commandText.includes('npm --version')
+        ) {
+          return ExecuteNodeToolCall;
+        }
+      }
       return ExecuteToolCall;
 
     case 'bash':
     case 'command':
       return BashExecuteToolCall;
+
+    case 'updated_plan':
+    case 'updatedplan':
+    case 'todo_write':
+      return UpdatedPlanToolCall;
 
     case 'search':
     case 'grep':
@@ -56,7 +82,8 @@ export const getToolCallComponent = (
       return ThinkToolCall;
 
     case 'todowrite':
-    case 'todo_write':
+      return TodoWriteToolCall;
+    // case 'todo_write':
     case 'update_todos':
       return TodoWriteToolCall;
 
@@ -82,7 +109,7 @@ export const ToolCallRouter: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   }
 
   // Get the appropriate component for this kind
-  const Component = getToolCallComponent(toolCall.kind);
+  const Component = getToolCallComponent(toolCall.kind, toolCall);
 
   // Render the specialized component
   return <Component toolCall={toolCall} />;

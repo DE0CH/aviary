@@ -35,7 +35,12 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Error case
   if (errors.length > 0) {
     return (
-      <ToolCallContainer label="Execute" status="error" toolCallId={toolCallId}>
+      <ToolCallContainer
+        label="Execute"
+        status="error"
+        toolCallId={toolCallId}
+        className="execute-default-toolcall"
+      >
         {/* Branch connector summary (Claude-like) */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
