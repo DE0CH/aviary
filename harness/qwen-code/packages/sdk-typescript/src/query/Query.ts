@@ -620,6 +620,10 @@ export class Query implements AsyncIterable<SDKMessage> {
     subtype: string,
     data: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
+    if (this.closed) {
+      return Promise.reject(new Error('Query is closed'));
+    }
+
     const requestId = randomUUID();
 
     const request: CLIControlRequest = {
@@ -688,12 +692,13 @@ export class Query implements AsyncIterable<SDKMessage> {
     for (const pending of this.pendingControlRequests.values()) {
       pending.abortController.abort();
       clearTimeout(pending.timeout);
+      pending.reject(new Error('Query is closed'));
     }
     this.pendingControlRequests.clear();
 
     // Clean up pending MCP responses
     for (const pending of this.pendingMcpResponses.values()) {
-      pending.reject(new Error('Query closed'));
+      pending.reject(new Error('Query is closed'));
     }
     this.pendingMcpResponses.clear();
 
@@ -719,7 +724,7 @@ export class Query implements AsyncIterable<SDKMessage> {
       }
     }
     this.sdkMcpTransports.clear();
-    logger.info('Query closed');
+    logger.info('Query is closed');
   }
 
   private async *readSdkMessages(): AsyncGenerator<SDKMessage> {
@@ -821,28 +826,16 @@ export class Query implements AsyncIterable<SDKMessage> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.INTERRUPT);
   }
 
   async setPermissionMode(mode: string): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.SET_PERMISSION_MODE, {
       mode,
     });
   }
 
   async setModel(model: string): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.SET_MODEL, { model });
   }
 
@@ -853,10 +846,6 @@ export class Query implements AsyncIterable<SDKMessage> {
    * @throws Error if query is closed
    */
   async supportedCommands(): Promise<Record<string, unknown> | null> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     return this.sendControlRequest(ControlRequestType.SUPPORTED_COMMANDS);
   }
 
@@ -867,10 +856,6 @@ export class Query implements AsyncIterable<SDKMessage> {
    * @throws Error if query is closed
    */
   async mcpServerStatus(): Promise<Record<string, unknown> | null> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     return this.sendControlRequest(ControlRequestType.MCP_SERVER_STATUS);
   }
 
