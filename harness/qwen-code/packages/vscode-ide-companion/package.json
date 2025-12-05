@@ -72,35 +72,10 @@
     "configuration": {
       "title": "Qwen Code",
       "properties": {
-        "qwenCode.qwen.enabled": {
+        "qwenCode.useTerminal": {
           "type": "boolean",
-          "default": true,
-          "description": "Enable Qwen agent integration"
-        },
-        "qwenCode.qwen.cliPath": {
-          "type": "string",
-          "default": "qwen",
-          "description": "Path to Qwen CLI executable"
-        },
-        "qwenCode.qwen.openaiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API key for Qwen (optional, if not using Code Assist)"
-        },
-        "qwenCode.qwen.openaiBaseUrl": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI base URL for custom endpoints (optional)"
-        },
-        "qwenCode.qwen.model": {
-          "type": "string",
-          "default": "",
-          "description": "Model to use (optional)"
-        },
-        "qwenCode.qwen.proxy": {
-          "type": "string",
-          "default": "",
-          "description": "Proxy for Qwen client (format: schema://user:password@host:port, e.g., http://127.0.0.1:7890)"
+          "default": "false",
+          "description": "Use terminal to run Qwen Code"
         }
       }
     },

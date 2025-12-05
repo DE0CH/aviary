@@ -50,11 +50,3 @@ export const CLIENT_METHODS = {
   session_request_permission: 'session/request_permission',
   session_update: 'session/update',
 } as const;
-
-/**
- * Custom methods (not in standard ACP protocol)
- * These are VSCode extension specific extensions
- */
-export const CUSTOM_METHODS = {
-  session_list: 'session/list',
-} as const;

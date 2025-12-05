@@ -17,6 +17,7 @@ import {
 import { DiffDisplay } from './shared/DiffDisplay.js';
 import { safeTitle, groupContent } from './shared/utils.js';
 import { useVSCode } from '../../hooks/useVSCode.js';
+import { handleOpenDiff } from '../../utils/diffUtils.js';
 
 /**
  * Generic tool call component that can display any tool call type
@@ -30,19 +31,6 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Group content by type
   const { textOutputs, errors, diffs } = groupContent(content);
-
-  const handleOpenDiff = (
-    path: string | undefined,
-    oldText: string | null | undefined,
-    newText: string | undefined,
-  ) => {
-    if (path) {
-      vscode.postMessage({
-        type: 'openDiff',
-        data: { path, oldText: oldText || '', newText: newText || '' },
-      });
-    }
-  };
 
   // Error case: show operation + error in card layout
   if (errors.length > 0) {
@@ -70,7 +58,7 @@ export const GenericToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
                 oldText={item.oldText}
                 newText={item.newText}
                 onOpenDiff={() =>
-                  handleOpenDiff(item.path, item.oldText, item.newText)
+                  handleOpenDiff(vscode, item.path, item.oldText, item.newText)
                 }
               />
             </div>

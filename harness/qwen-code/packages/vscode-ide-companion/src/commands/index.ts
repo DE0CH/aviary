@@ -4,6 +4,9 @@ import type { WebViewProvider } from '../webview/WebViewProvider.js';
 
 type Logger = (message: string) => void;
 
+export const showDiffCommand = 'qwenCode.showDiff';
+export const openChatCommand = 'qwenCode.openChat';
+
 export function registerNewCommands(
   context: vscode.ExtensionContext,
   log: Logger,
@@ -13,10 +16,33 @@ export function registerNewCommands(
 ): void {
   const disposables: vscode.Disposable[] = [];
 
-  // qwenCode.showDiff
+  disposables.push(
+    vscode.commands.registerCommand(openChatCommand, async () => {
+      const config = vscode.workspace.getConfiguration('qwenCode');
+      const useTerminal = config.get<boolean>('useTerminal', false);
+      console.log('[Command] Using terminal mode:', useTerminal);
+      if (useTerminal) {
+        // 使用终端模式
+        await vscode.commands.executeCommand(
+          'qwen-code.runQwenCode',
+          vscode.TerminalLocation.Editor, // 在编辑器区域创建终端,
+        );
+      } else {
+        // 使用 WebView 模式
+        const providers = getWebViewProviders();
+        if (providers.length > 0) {
+          await providers[providers.length - 1].show();
+        } else {
+          const provider = createWebViewProvider();
+          await provider.show();
+        }
+      }
+    }),
+  );
+
   disposables.push(
     vscode.commands.registerCommand(
-      'qwenCode.showDiff',
+      showDiffCommand,
       async (args: { path: string; oldText: string; newText: string }) => {
         log(`[Command] showDiff called for: ${args.path}`);
         try {
@@ -40,28 +66,14 @@ export function registerNewCommands(
     ),
   );
 
-  // qwenCode.openChat
+  // TODO: qwenCode.openNewChatTab (not contributed in package.json; used programmatically)
   disposables.push(
-    vscode.commands.registerCommand('qwenCode.openChat', () => {
-      const providers = getWebViewProviders();
-      if (providers.length > 0) {
-        providers[providers.length - 1].show();
-      } else {
-        const provider = createWebViewProvider();
-        provider.show();
-      }
-    }),
-  );
-
-  // qwenCode.openNewChatTab (not contributed in package.json; used programmatically)
-  disposables.push(
-    vscode.commands.registerCommand('qwenCode.openNewChatTab', () => {
+    vscode.commands.registerCommand('qwenCode.openNewChatTab', async () => {
       const provider = createWebViewProvider();
-      provider.show();
+      await provider.show();
     }),
   );
 
-  // qwenCode.clearAuthCache
   disposables.push(
     vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
       const providers = getWebViewProviders();
@@ -75,7 +87,6 @@ export function registerNewCommands(
     }),
   );
 
-  // qwenCode.login
   disposables.push(
     vscode.commands.registerCommand('qwenCode.login', async () => {
       const providers = getWebViewProviders();

@@ -5,7 +5,6 @@
  */
 
 import * as vscode from 'vscode';
-// import * as path from 'node:path'; // TODO: 没有生效 - temporarily disabled due to commented out usage
 import { IDEServer } from './ide-server.js';
 import semver from 'semver';
 import { DiffContentProvider, DiffManager } from './diff-manager.js';
@@ -167,46 +166,6 @@ export async function activate(context: vscode.ExtensionContext) {
     createWebViewProvider,
   );
 
-  // TODO: 没有生效
-  // Relay diff accept/cancel events to the chat webview as assistant notices
-  // so the user sees immediate feedback in the chat thread (Claude Code style).
-  // context.subscriptions.push(
-  //   diffManager.onDidChange((notification) => {
-  //     try {
-  //       const method = (notification as { method?: string }).method;
-  //       if (method !== 'ide/diffAccepted' && method !== 'ide/diffClosed') {
-  //         return;
-  //       }
-
-  //       const params = (
-  //         notification as unknown as {
-  //           params?: { filePath?: string };
-  //         }
-  //       ).params;
-  //       const filePath = params?.filePath ?? '';
-  //       const fileBase = filePath ? path.basename(filePath) : '';
-  //       const text =
-  //         method === 'ide/diffAccepted'
-  //           ? `Accepted changes${fileBase ? ` to ${fileBase}` : ''}.`
-  //           : `Cancelled changes${fileBase ? ` to ${fileBase}` : ''}.`;
-
-  //       for (const provider of webViewProviders) {
-  //         const panel = provider.getPanel();
-  //         panel?.webview.postMessage({
-  //           type: 'message',
-  //           data: {
-  //             role: 'assistant',
-  //             content: text,
-  //             timestamp: Date.now(),
-  //           },
-  //         });
-  //       }
-  //     } catch (e) {
-  //       console.warn('[Extension] Failed to relay diff event to chat:', e);
-  //     }
-  //   }),
-  // );
-
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.uri.scheme === DIFF_SCHEME) {
@@ -261,34 +220,42 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidGrantWorkspaceTrust(() => {
       ideServer.syncEnvVars();
     }),
-    vscode.commands.registerCommand('qwen-code.runQwenCode', async () => {
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showInformationMessage(
-          'No folder open. Please open a folder to run Qwen Code.',
-        );
-        return;
-      }
+    vscode.commands.registerCommand(
+      'qwen-code.runQwenCode',
+      async (
+        location?:
+          | vscode.TerminalLocation
+          | vscode.TerminalEditorLocationOptions,
+      ) => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+          vscode.window.showInformationMessage(
+            'No folder open. Please open a folder to run Qwen Code.',
+          );
+          return;
+        }
 
-      let selectedFolder: vscode.WorkspaceFolder | undefined;
-      if (workspaceFolders.length === 1) {
-        selectedFolder = workspaceFolders[0];
-      } else {
-        selectedFolder = await vscode.window.showWorkspaceFolderPick({
-          placeHolder: 'Select a folder to run Qwen Code in',
-        });
-      }
+        let selectedFolder: vscode.WorkspaceFolder | undefined;
+        if (workspaceFolders.length === 1) {
+          selectedFolder = workspaceFolders[0];
+        } else {
+          selectedFolder = await vscode.window.showWorkspaceFolderPick({
+            placeHolder: 'Select a folder to run Qwen Code in',
+          });
+        }
 
-      if (selectedFolder) {
-        const qwenCmd = 'qwen';
-        const terminal = vscode.window.createTerminal({
-          name: `Qwen Code (${selectedFolder.name})`,
-          cwd: selectedFolder.uri.fsPath,
-        });
-        terminal.show();
-        terminal.sendText(qwenCmd);
-      }
-    }),
+        if (selectedFolder) {
+          const qwenCmd = 'qwen';
+          const terminal = vscode.window.createTerminal({
+            name: `Qwen Code (${selectedFolder.name})`,
+            cwd: selectedFolder.uri.fsPath,
+            location,
+          });
+          terminal.show();
+          terminal.sendText(qwenCmd);
+        }
+      },
+    ),
     vscode.commands.registerCommand('qwen-code.showNotices', async () => {
       const noticePath = vscode.Uri.joinPath(
         context.extensionUri,

@@ -5,6 +5,7 @@
  */
 
 import * as vscode from 'vscode';
+import { openChatCommand } from '../commands/index.js';
 
 /**
  * Find the editor group immediately to the left of the Qwen chat webview.
@@ -90,7 +91,7 @@ export async function ensureLeftGroupOfChatWebview(): Promise<
 
   // Make the chat group active by revealing the panel
   try {
-    await vscode.commands.executeCommand('qwenCode.openChat');
+    await vscode.commands.executeCommand(openChatCommand);
   } catch {
     // Best-effort; continue even if this fails
   }
@@ -105,7 +106,7 @@ export async function ensureLeftGroupOfChatWebview(): Promise<
 
   // Restore focus to chat (optional), so we don't disturb user focus
   try {
-    await vscode.commands.executeCommand('qwenCode.openChat');
+    await vscode.commands.executeCommand(openChatCommand);
   } catch {
     // Ignore
   }

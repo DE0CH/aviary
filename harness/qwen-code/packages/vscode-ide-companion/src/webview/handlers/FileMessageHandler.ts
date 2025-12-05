@@ -9,8 +9,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
-import { FileOperations } from '../FileOperations.js';
 import { getFileName } from '../utils/webviewUtils.js';
+import { showDiffCommand } from '../../commands/index.js';
 
 /**
  * File message handler
@@ -316,14 +316,56 @@ export class FileMessageHandler extends BaseMessageHandler {
   /**
    * Open file
    */
-  private async handleOpenFile(path?: string): Promise<void> {
-    if (!path) {
+  private async handleOpenFile(filePath?: string): Promise<void> {
+    if (!filePath) {
       console.warn('[FileMessageHandler] No path provided for openFile');
       return;
     }
 
     try {
-      await FileOperations.openFile(path);
+      console.log('[FileOperations] Opening file:', filePath);
+
+      // Parse file path, line number, and column number
+      // Formats: path/to/file.ts, path/to/file.ts:123, path/to/file.ts:123:45
+      const match = filePath.match(/^(.+?)(?::(\d+))?(?::(\d+))?$/);
+      if (!match) {
+        console.warn('[FileOperations] Invalid file path format:', filePath);
+        return;
+      }
+
+      const [, path, lineStr, columnStr] = match;
+      const lineNumber = lineStr ? parseInt(lineStr, 10) - 1 : 0; // VS Code uses 0-based line numbers
+      const columnNumber = columnStr ? parseInt(columnStr, 10) - 1 : 0; // VS Code uses 0-based column numbers
+
+      // Convert to absolute path if relative
+      let absolutePath = path;
+      if (!path.startsWith('/') && !path.match(/^[a-zA-Z]:/)) {
+        // Relative path - resolve against workspace
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          absolutePath = vscode.Uri.joinPath(workspaceFolder.uri, path).fsPath;
+        }
+      }
+
+      // Open the document
+      const uri = vscode.Uri.file(absolutePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document, {
+        preview: false,
+        preserveFocus: false,
+      });
+
+      // Navigate to line and column if specified
+      if (lineStr) {
+        const position = new vscode.Position(lineNumber, columnNumber);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter,
+        );
+      }
+
+      console.log('[FileOperations] File opened successfully:', absolutePath);
     } catch (error) {
       console.error('[FileMessageHandler] Failed to open file:', error);
       vscode.window.showErrorMessage(`Failed to open file: ${error}`);
@@ -342,7 +384,7 @@ export class FileMessageHandler extends BaseMessageHandler {
     }
 
     try {
-      await vscode.commands.executeCommand('qwenCode.showDiff', {
+      await vscode.commands.executeCommand(showDiffCommand, {
         path: (data.path as string) || '',
         oldText: (data.oldText as string) || '',
         newText: (data.newText as string) || '',

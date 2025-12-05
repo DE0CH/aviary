@@ -3,7 +3,6 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
-import * as vscode from 'vscode';
 import { AcpConnection } from '../acp/acpConnection.js';
 import type {
   AcpSessionUpdate,
@@ -24,6 +23,7 @@ import type {
 import { QwenConnectionHandler } from './qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
+import { authMethod } from '../auth/index.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -682,9 +682,6 @@ export class QwenAgentManager {
 
     // Check if we have valid cached authentication
     let hasValidAuth = false;
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
     // Prefer the provided authStateManager, otherwise fall back to the one
     // remembered during connect(). This prevents accidental re-auth in
     // fallback paths (e.g. session switching) when the handler didn't pass it.

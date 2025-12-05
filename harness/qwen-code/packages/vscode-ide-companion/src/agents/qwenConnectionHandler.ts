@@ -16,6 +16,7 @@ import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import type { AuthStateManager } from '../auth/authStateManager.js';
 import { CliVersionManager } from '../cli/cliVersionManager.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
+import { authMethod } from '../auth/index.js';
 
 /**
  * Qwen Connection Handler class
@@ -66,47 +67,23 @@ export class QwenConnectionHandler {
     // Use the provided CLI path if available, otherwise use the configured path
     const effectiveCliPath =
       cliPath || config.get<string>('qwen.cliPath', 'qwen');
-    const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-    const openaiBaseUrl = config.get<string>('qwen.openaiBaseUrl', '');
-    const model = config.get<string>('qwen.model', '');
-    const proxy = config.get<string>('qwen.proxy', '');
 
-    // Build extra CLI arguments
+    // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
-    if (openaiApiKey) {
-      extraArgs.push('--openai-api-key', openaiApiKey);
-    }
-    if (openaiBaseUrl) {
-      extraArgs.push('--openai-base-url', openaiBaseUrl);
-    }
-    if (model) {
-      extraArgs.push('--model', model);
-    }
-    if (proxy) {
-      extraArgs.push('--proxy', proxy);
-      console.log('[QwenAgentManager] Using proxy:', proxy);
-    }
 
     await connection.connect('qwen', effectiveCliPath, workingDir, extraArgs);
-
-    // Determine authentication method
-    const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
 
     // Check if we have valid cached authentication
     if (authStateManager) {
       console.log('[QwenAgentManager] Checking for cached authentication...');
       console.log('[QwenAgentManager] Working dir:', workingDir);
       console.log('[QwenAgentManager] Auth method:', authMethod);
+
       const hasValidAuth = await authStateManager.hasValidAuth(
         workingDir,
         authMethod,
       );
       console.log('[QwenAgentManager] Has valid auth:', hasValidAuth);
-      if (hasValidAuth) {
-        console.log('[QwenAgentManager] Using cached authentication');
-      } else {
-        console.log('[QwenAgentManager] No valid cached authentication found');
-      }
     } else {
       console.log('[QwenAgentManager] No authStateManager provided');
     }

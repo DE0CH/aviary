@@ -10,6 +10,7 @@ import React from 'react';
 import type { ToolCallData } from './toolcalls/shared/types.js';
 import { FileLink } from './ui/FileLink.js';
 import { useVSCode } from '../hooks/useVSCode.js';
+import { handleOpenDiff } from '../utils/diffUtils.js';
 
 interface InProgressToolCallProps {
   toolCall: ToolCallData;
@@ -138,19 +139,12 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
   }
 
   // Handle open diff
-  const handleOpenDiff = () => {
+  const handleOpenDiffInternal = () => {
     if (!diffData) {
       return;
     }
     const path = diffData.path || filePath || '';
-    vscode.postMessage({
-      type: 'openDiff',
-      data: {
-        path,
-        oldText: diffData.oldText || '',
-        newText: diffData.newText || '',
-      },
-    });
+    handleOpenDiff(vscode, path, diffData.oldText, diffData.newText);
   };
 
   return (
@@ -179,7 +173,7 @@ export const InProgressToolCall: React.FC<InProgressToolCallProps> = ({
           {diffData && (
             <button
               type="button"
-              onClick={handleOpenDiff}
+              onClick={handleOpenDiffInternal}
               className="text-[11px] px-2 py-0.5 border border-[var(--app-input-border)] rounded-small text-[var(--app-primary-foreground)] bg-transparent hover:bg-[var(--app-ghost-button-hover-background)] cursor-pointer"
             >
               Open Diff

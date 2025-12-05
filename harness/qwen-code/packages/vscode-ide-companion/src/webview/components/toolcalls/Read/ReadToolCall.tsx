@@ -16,6 +16,7 @@ import {
 } from '../shared/utils.js';
 import { FileLink } from '../../ui/FileLink.js';
 import { useVSCode } from '../../../hooks/useVSCode.js';
+import { handleOpenDiff } from '../../../utils/diffUtils.js';
 
 /**
  * Specialized component for Read tool calls
@@ -30,18 +31,13 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { errors, diffs } = useMemo(() => groupContent(content), [content]);
 
   // Post a message to the extension host to open a VS Code diff tab
-  const handleOpenDiff = useCallback(
+  const handleOpenDiffInternal = useCallback(
     (
       path: string | undefined,
       oldText: string | null | undefined,
       newText: string | undefined,
     ) => {
-      if (path) {
-        vscode.postMessage({
-          type: 'openDiff',
-          data: { path, oldText: oldText || '', newText: newText || '' },
-        });
-      }
+      handleOpenDiff(vscode, path, oldText, newText);
     },
     [vscode],
   );
@@ -59,7 +55,7 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         firstDiff.newText !== undefined
       ) {
         const timer = setTimeout(() => {
-          handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
+          handleOpenDiffInternal(path, firstDiff.oldText, firstDiff.newText);
         }, 100);
         return () => timer && clearTimeout(timer);
       }

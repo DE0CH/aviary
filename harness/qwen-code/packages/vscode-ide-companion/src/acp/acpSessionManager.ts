@@ -16,7 +16,7 @@ import type {
   AcpNotification,
   AcpResponse,
 } from '../constants/acpTypes.js';
-import { AGENT_METHODS, CUSTOM_METHODS } from '../constants/acpSchema.js';
+import { AGENT_METHODS } from '../constants/acpSchema.js';
 import type { PendingRequest } from './connectionTypes.js';
 import type { ChildProcess } from 'child_process';
 
@@ -306,7 +306,7 @@ export class AcpSessionManager {
     console.log('[ACP] Requesting session list...');
     try {
       const response = await this.sendRequest<AcpResponse>(
-        CUSTOM_METHODS.session_list,
+        AGENT_METHODS.session_list,
         {},
         child,
         pendingRequests,

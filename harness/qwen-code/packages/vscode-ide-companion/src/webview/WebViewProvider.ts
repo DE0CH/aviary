@@ -15,6 +15,7 @@ import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
+import { authMethod } from '../auth/index.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -150,8 +151,85 @@ export class WebViewProvider {
             type: string;
             data: { optionId: string };
           }) => {
-            if (message.type === 'permissionResponse') {
-              resolve(message.data.optionId);
+            if (message.type !== 'permissionResponse') return;
+
+            const optionId = message.data.optionId || '';
+
+            // 1) First resolve the optionId back to ACP so the agent isn't blocked
+            resolve(optionId);
+
+            // 2) If user cancelled/rejected, proactively stop current generation
+            const isCancel =
+              optionId === 'cancel' ||
+              optionId.toLowerCase().includes('reject');
+
+            if (isCancel) {
+              // Fire and forget – do not block the ACP resolve
+              (async () => {
+                try {
+                  // Stop server-side generation
+                  await this.agentManager.cancelCurrentPrompt();
+                } catch (err) {
+                  console.warn(
+                    '[WebViewProvider] cancelCurrentPrompt error:',
+                    err,
+                  );
+                }
+
+                // Ensure the webview exits streaming state immediately
+                this.sendMessageToWebView({
+                  type: 'streamEnd',
+                  data: { timestamp: Date.now(), reason: 'user_cancelled' },
+                });
+
+                // Synthesize a failed tool_call_update to match Claude/CLI UX
+                try {
+                  const toolCallId =
+                    (request.toolCall as { toolCallId?: string } | undefined)
+                      ?.toolCallId || '';
+                  const title =
+                    (request.toolCall as { title?: string } | undefined)
+                      ?.title || '';
+                  // Normalize kind for UI – fall back to 'execute'
+                  let kind = ((
+                    request.toolCall as { kind?: string } | undefined
+                  )?.kind || 'execute') as string;
+                  if (!kind && title) {
+                    const t = title.toLowerCase();
+                    if (t.includes('read') || t.includes('cat')) kind = 'read';
+                    else if (t.includes('write') || t.includes('edit'))
+                      kind = 'edit';
+                    else kind = 'execute';
+                  }
+
+                  this.sendMessageToWebView({
+                    type: 'toolCall',
+                    data: {
+                      type: 'tool_call_update',
+                      toolCallId,
+                      title,
+                      kind,
+                      status: 'failed',
+                      // Best-effort pass-through (used by UI hints)
+                      rawInput: (request.toolCall as { rawInput?: unknown })
+                        ?.rawInput,
+                      locations: (
+                        request.toolCall as {
+                          locations?: Array<{
+                            path: string;
+                            line?: number | null;
+                          }>;
+                        }
+                      )?.locations,
+                    },
+                  });
+                } catch (err) {
+                  console.warn(
+                    '[WebViewProvider] failed to synthesize failed tool_call_update:',
+                    err,
+                  );
+                }
+              })();
             }
           };
           // Store handler in message handler
@@ -339,10 +417,6 @@ export class WebViewProvider {
 
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-        const config = vscode.workspace.getConfiguration('qwenCode');
-        const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-        const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
         const hasValidAuth = await this.authStateManager.hasValidAuth(
           workingDir,
           authMethod,
@@ -392,83 +466,71 @@ export class WebViewProvider {
       !!this.authStateManager,
     );
 
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    const qwenEnabled = config.get<boolean>('qwen.enabled', true);
+    // Check if CLI is installed before attempting to connect
+    const cliDetection = await CliDetector.detectQwenCli();
 
-    if (qwenEnabled) {
-      // Check if CLI is installed before attempting to connect
-      const cliDetection = await CliDetector.detectQwenCli();
+    if (!cliDetection.isInstalled) {
+      console.log(
+        '[WebViewProvider] Qwen CLI not detected, skipping agent connection',
+      );
+      console.log('[WebViewProvider] CLI detection error:', cliDetection.error);
 
-      if (!cliDetection.isInstalled) {
-        console.log(
-          '[WebViewProvider] Qwen CLI not detected, skipping agent connection',
-        );
-        console.log(
-          '[WebViewProvider] CLI detection error:',
-          cliDetection.error,
-        );
+      // Show VSCode notification with installation option
+      await CliInstaller.promptInstallation();
 
-        // Show VSCode notification with installation option
-        await CliInstaller.promptInstallation();
-
-        // Initialize empty conversation (can still browse history)
-        await this.initializeEmptyConversation();
-      } else {
-        console.log(
-          '[WebViewProvider] Qwen CLI detected, attempting connection...',
-        );
-        console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
-        console.log('[WebViewProvider] CLI version:', cliDetection.version);
-
-        try {
-          console.log('[WebViewProvider] Connecting to agent...');
-          console.log(
-            '[WebViewProvider] Using authStateManager:',
-            !!this.authStateManager,
-          );
-          const authInfo = await this.authStateManager.getAuthInfo();
-          console.log('[WebViewProvider] Auth cache status:', authInfo);
-
-          // Pass the detected CLI path to ensure we use the correct installation
-          await this.agentManager.connect(
-            workingDir,
-            this.authStateManager,
-            cliDetection.cliPath,
-          );
-          console.log('[WebViewProvider] Agent connected successfully');
-          this.agentInitialized = true;
-
-          // Load messages from the current Qwen session
-          await this.loadCurrentSessionMessages();
-
-          // Notify webview that agent is connected
-          this.sendMessageToWebView({
-            type: 'agentConnected',
-            data: {},
-          });
-        } catch (error) {
-          console.error('[WebViewProvider] Agent connection error:', error);
-          // Clear auth cache on error (might be auth issue)
-          await this.authStateManager.clearAuthState();
-          vscode.window.showWarningMessage(
-            `Failed to connect to Qwen CLI: ${error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
-          );
-          // Fallback to empty conversation
-          await this.initializeEmptyConversation();
-
-          // Notify webview that agent connection failed
-          this.sendMessageToWebView({
-            type: 'agentConnectionError',
-            data: {
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
-        }
-      }
-    } else {
-      console.log('[WebViewProvider] Qwen agent is disabled in settings');
-      // Fallback to ConversationStore
+      // Initialize empty conversation (can still browse history)
       await this.initializeEmptyConversation();
+    } else {
+      console.log(
+        '[WebViewProvider] Qwen CLI detected, attempting connection...',
+      );
+      console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
+      console.log('[WebViewProvider] CLI version:', cliDetection.version);
+
+      try {
+        console.log('[WebViewProvider] Connecting to agent...');
+        console.log(
+          '[WebViewProvider] Using authStateManager:',
+          !!this.authStateManager,
+        );
+        const authInfo = await this.authStateManager.getAuthInfo();
+        console.log('[WebViewProvider] Auth cache status:', authInfo);
+
+        // Pass the detected CLI path to ensure we use the correct installation
+        await this.agentManager.connect(
+          workingDir,
+          this.authStateManager,
+          cliDetection.cliPath,
+        );
+        console.log('[WebViewProvider] Agent connected successfully');
+        this.agentInitialized = true;
+
+        // Load messages from the current Qwen session
+        await this.loadCurrentSessionMessages();
+
+        // Notify webview that agent is connected
+        this.sendMessageToWebView({
+          type: 'agentConnected',
+          data: {},
+        });
+      } catch (error) {
+        console.error('[WebViewProvider] Agent connection error:', error);
+        // Clear auth cache on error (might be auth issue)
+        await this.authStateManager.clearAuthState();
+        vscode.window.showWarningMessage(
+          `Failed to connect to Qwen CLI: ${error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
+        );
+        // Fallback to empty conversation
+        await this.initializeEmptyConversation();
+
+        // Notify webview that agent connection failed
+        this.sendMessageToWebView({
+          type: 'agentConnectionError',
+          data: {
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
     }
   }
 
@@ -614,10 +676,6 @@ export class WebViewProvider {
 
       // First, try to restore an existing session if we have cached auth
       if (this.authStateManager) {
-        const config = vscode.workspace.getConfiguration('qwenCode');
-        const openaiApiKey = config.get<string>('qwen.openaiApiKey', '');
-        const authMethod = openaiApiKey ? 'openai' : 'qwen-oauth';
-
         const hasValidAuth = await this.authStateManager.hasValidAuth(
           workingDir,
           authMethod,
@@ -1001,6 +1059,29 @@ export class WebViewProvider {
    */
   async createNewSession(): Promise<void> {
     console.log('[WebViewProvider] Creating new session in current panel');
+
+    // Check if terminal mode is enabled
+    const config = vscode.workspace.getConfiguration('qwenCode');
+    const useTerminal = config.get<boolean>('useTerminal', false);
+
+    if (useTerminal) {
+      // In terminal mode, execute the runQwenCode command to open a new terminal
+      try {
+        await vscode.commands.executeCommand('qwen-code.runQwenCode');
+        console.log('[WebViewProvider] Opened new terminal session');
+      } catch (error) {
+        console.error(
+          '[WebViewProvider] Failed to open new terminal session:',
+          error,
+        );
+        vscode.window.showErrorMessage(
+          `Failed to open new terminal session: ${error}`,
+        );
+      }
+      return;
+    }
+
+    // WebView mode - create new session via agent manager
     try {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();

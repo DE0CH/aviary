@@ -9,7 +9,6 @@
 
 import type React from 'react';
 import { FileLink } from '../../ui/FileLink.js';
-import { isDevelopmentMode } from '../../../utils/envUtils.js';
 import './LayoutComponents.css';
 
 /**
@@ -63,13 +62,6 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
         <div className="text-[var(--app-secondary-foreground)] py-1">
           {children}
         </div>
-      )}
-
-      {/* Show toolCallId only in development/debug mode */}
-      {_toolCallId && isDevelopmentMode() && (
-        <span className="text-[10px] opacity-30">
-          [{_toolCallId.slice(-8)}]
-        </span>
       )}
     </div>
   </div>

@@ -46,7 +46,9 @@ export class DiffContentProvider implements vscode.TextDocumentContentProvider {
 // Information about a diff view that is currently open.
 interface DiffInfo {
   originalFilePath: string;
+  oldContent: string;
   newContent: string;
+  leftDocUri: vscode.Uri;
   rightDocUri: vscode.Uri;
 }
 
@@ -79,12 +81,80 @@ export class DiffManager {
   }
 
   /**
+   * Checks if a diff view already exists for the given file path and content
+   * @param filePath Path to the file being diffed
+   * @param oldContent The original content (left side)
+   * @param newContent The modified content (right side)
+   * @returns True if a diff view with the same content already exists, false otherwise
+   */
+  private hasExistingDiff(
+    filePath: string,
+    oldContent: string,
+    newContent: string,
+  ): boolean {
+    for (const diffInfo of this.diffDocuments.values()) {
+      if (
+        diffInfo.originalFilePath === filePath &&
+        diffInfo.oldContent === oldContent &&
+        diffInfo.newContent === newContent
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Finds an existing diff view for the given file path and focuses it
+   * @param filePath Path to the file being diffed
+   * @returns True if an existing diff view was found and focused, false otherwise
+   */
+  private async focusExistingDiff(filePath: string): Promise<boolean> {
+    for (const [uriString, diffInfo] of this.diffDocuments.entries()) {
+      if (diffInfo.originalFilePath === filePath) {
+        const rightDocUri = vscode.Uri.parse(uriString);
+        const leftDocUri = diffInfo.leftDocUri;
+
+        const diffTitle = `${path.basename(filePath)} (Before ↔ After)`;
+
+        try {
+          await vscode.commands.executeCommand(
+            'vscode.diff',
+            leftDocUri,
+            rightDocUri,
+            diffTitle,
+            {
+              viewColumn: vscode.ViewColumn.Beside,
+              preview: false,
+              preserveFocus: false,
+            },
+          );
+          return true;
+        } catch (error) {
+          this.log(`Failed to focus existing diff: ${error}`);
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Creates and shows a new diff view.
    * @param filePath Path to the file being diffed
    * @param oldContent The original content (left side)
    * @param newContent The modified content (right side)
    */
   async showDiff(filePath: string, oldContent: string, newContent: string) {
+    // Check if a diff view with the same content already exists
+    if (this.hasExistingDiff(filePath, oldContent, newContent)) {
+      this.log(
+        `Diff view already exists for ${filePath}, focusing existing view`,
+      );
+      // Focus the existing diff view
+      await this.focusExistingDiff(filePath);
+      return;
+    }
     // Left side: old content using qwen-diff scheme
     const leftDocUri = vscode.Uri.from({
       scheme: DIFF_SCHEME,
@@ -103,7 +173,9 @@ export class DiffManager {
 
     this.addDiffDocument(rightDocUri, {
       originalFilePath: filePath,
+      oldContent,
       newContent,
+      leftDocUri,
       rightDocUri,
     });
 

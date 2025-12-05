@@ -43,34 +43,78 @@ export class PanelManager {
       return false; // Panel already exists
     }
 
-    // We want the chat webview to live in a dedicated, locked group on the
-    // left. Create a new group on the far left and open the panel there.
-    try {
-      // Make sure we start from the first group, then create a group to its left
-      await vscode.commands.executeCommand(
-        'workbench.action.focusFirstEditorGroup',
-      );
-      await vscode.commands.executeCommand('workbench.action.newGroupLeft');
-    } catch (error) {
-      console.warn(
-        '[PanelManager] Failed to pre-create left editor group (continuing):',
-        error,
-      );
-    }
+    // First, check if there's an existing Qwen Code group
+    const existingGroup = this.findExistingQwenCodeGroup();
 
-    this.panel = vscode.window.createWebviewPanel(
-      'qwenCode.chat',
-      'Qwen Code',
-      { viewColumn: vscode.ViewColumn.One, preserveFocus: false }, // Focus and place in leftmost group
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(this.extensionUri, 'dist'),
-          vscode.Uri.joinPath(this.extensionUri, 'assets'),
-        ],
-      },
-    );
+    if (existingGroup) {
+      // If Qwen Code webview already exists in a locked group, create the new panel in that same group
+      console.log(
+        '[PanelManager] Found existing Qwen Code group, creating panel in same group',
+      );
+      this.panel = vscode.window.createWebviewPanel(
+        'qwenCode.chat',
+        'Qwen Code',
+        { viewColumn: existingGroup.viewColumn, preserveFocus: false },
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          localResourceRoots: [
+            vscode.Uri.joinPath(this.extensionUri, 'dist'),
+            vscode.Uri.joinPath(this.extensionUri, 'assets'),
+          ],
+        },
+      );
+    } else {
+      // If no existing Qwen Code group, create a new group to the right of the active editor group
+      try {
+        // Create a new group to the right of the current active group
+        await vscode.commands.executeCommand('workbench.action.newGroupRight');
+      } catch (error) {
+        console.warn(
+          '[PanelManager] Failed to create right editor group (continuing):',
+          error,
+        );
+        // Fallback: create in current group
+        const activeColumn =
+          vscode.window.activeTextEditor?.viewColumn || vscode.ViewColumn.One;
+        this.panel = vscode.window.createWebviewPanel(
+          'qwenCode.chat',
+          'Qwen Code',
+          { viewColumn: activeColumn, preserveFocus: false },
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: [
+              vscode.Uri.joinPath(this.extensionUri, 'dist'),
+              vscode.Uri.joinPath(this.extensionUri, 'assets'),
+            ],
+          },
+        );
+        // Lock the group after creation
+        await this.autoLockEditorGroup();
+        return true;
+      }
+
+      // Get the new group's view column (should be the active one after creating right)
+      const newGroupColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
+
+      this.panel = vscode.window.createWebviewPanel(
+        'qwenCode.chat',
+        'Qwen Code',
+        { viewColumn: newGroupColumn, preserveFocus: false },
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          localResourceRoots: [
+            vscode.Uri.joinPath(this.extensionUri, 'dist'),
+            vscode.Uri.joinPath(this.extensionUri, 'assets'),
+          ],
+        },
+      );
+
+      // Lock the group after creation
+      await this.autoLockEditorGroup();
+    }
 
     // Set panel icon to Qwen logo
     this.panel.iconPath = vscode.Uri.joinPath(

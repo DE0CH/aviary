@@ -131,9 +131,15 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
         }
       }
 
-      // Escape to close
-      if (e.key === 'Escape' && onClose) {
-        onClose();
+      // Escape to cancel permission and close (align with CLI/Claude behavior)
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        const rejectOptionId =
+          options.find((o) => o.kind.includes('reject'))?.optionId ||
+          options.find((o) => o.optionId === 'cancel')?.optionId ||
+          'cancel';
+        onResponse(rejectOptionId);
+        if (onClose) onClose();
       }
     };
 
@@ -207,10 +213,10 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
             return (
               <button
                 key={option.optionId}
-                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] hover:bg-[var(--app-input-background)] ${
+                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] hover:bg-[var(--app-list-hover-background)] ${
                   isFocused
-                    ? 'text-[var(--app-list-active-foreground)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
-                    : 'hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
+                    ? 'text-[var(--app-list-active-foreground)] bg-[var(--app-list-active-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
+                    : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
                 }`}
                 onClick={() => onResponse(option.optionId)}
                 onMouseEnter={() => setFocusedIndex(index)}
