@@ -378,7 +378,29 @@ export class SessionMessageHandler extends BaseMessageHandler {
     } catch (error) {
       console.error('[SessionMessageHandler] Error sending message:', error);
 
+      const err = error as unknown as Error;
       const errorMsg = String(error);
+      const lower = errorMsg.toLowerCase();
+
+      // Suppress user-cancelled/aborted errors (ESC/Stop button)
+      const isAbortLike =
+        (err && (err as Error).name === 'AbortError') ||
+        lower.includes('abort') ||
+        lower.includes('aborted') ||
+        lower.includes('request was aborted') ||
+        lower.includes('canceled') ||
+        lower.includes('cancelled') ||
+        lower.includes('user_cancelled');
+
+      if (isAbortLike) {
+        // Do not show VS Code error popup for intentional cancellations.
+        // Ensure the webview knows the stream ended due to user action.
+        this.sendToWebView({
+          type: 'streamEnd',
+          data: { timestamp: Date.now(), reason: 'user_cancelled' },
+        });
+        return;
+      }
       // Check for session not found error and handle it appropriately
       if (
         errorMsg.includes('Session not found') ||

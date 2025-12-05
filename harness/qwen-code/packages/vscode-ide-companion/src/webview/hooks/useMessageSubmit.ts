@@ -14,6 +14,8 @@ interface UseMessageSubmitProps {
   setInputText: (text: string) => void;
   inputFieldRef: React.RefObject<HTMLDivElement>;
   isStreaming: boolean;
+  // When true, do NOT auto-attach the active editor file/selection to context
+  skipAutoActiveContext?: boolean;
 
   fileContext: {
     getFileReference: (fileName: string) => string | undefined;
@@ -38,6 +40,7 @@ export const useMessageSubmit = ({
   setInputText,
   inputFieldRef,
   isStreaming,
+  skipAutoActiveContext = false,
   fileContext,
   messageHandling,
 }: UseMessageSubmitProps) => {
@@ -94,8 +97,8 @@ export const useMessageSubmit = ({
         }
       }
 
-      // Add active file selection context if present
-      if (fileContext.activeFilePath) {
+      // Add active file selection context if present and not skipped
+      if (fileContext.activeFilePath && !skipAutoActiveContext) {
         const fileName = fileContext.activeFileName || 'current file';
         context.push({
           type: 'file',
@@ -115,7 +118,11 @@ export const useMessageSubmit = ({
           }
         | undefined;
 
-      if (fileContext.activeFilePath && fileContext.activeFileName) {
+      if (
+        fileContext.activeFilePath &&
+        fileContext.activeFileName &&
+        !skipAutoActiveContext
+      ) {
         fileContextForMessage = {
           fileName: fileContext.activeFileName,
           filePath: fileContext.activeFilePath,
@@ -146,6 +153,7 @@ export const useMessageSubmit = ({
       inputFieldRef,
       vscode,
       fileContext,
+      skipAutoActiveContext,
       messageHandling,
     ],
   );

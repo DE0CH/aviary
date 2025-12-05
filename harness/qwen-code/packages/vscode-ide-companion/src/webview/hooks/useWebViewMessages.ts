@@ -112,6 +112,9 @@ export const useWebViewMessages = ({
 }: UseWebViewMessagesProps) => {
   // VS Code API for posting messages back to the extension host
   const vscode = useVSCode();
+  // Track active long-running tool calls (execute/bash/command) so we can
+  // keep the bottom "waiting" message visible until all of them complete.
+  const activeExecToolCallsRef = useRef<Set<string>>(new Set());
   // Use ref to store callbacks to avoid useEffect dependency issues
   const handlersRef = useRef({
     sessionManagement,
@@ -260,14 +263,19 @@ export const useWebViewMessages = ({
               // no-op: stream might not have been started
               console.warn('[PanelManager] Failed to end streaming:', err);
             }
-            try {
-              handlers.messageHandling.clearWaitingForResponse();
-            } catch (err) {
-              // no-op: already cleared
-              console.warn(
-                '[PanelManager] Failed to clear waiting for response:',
-                err,
-              );
+            // Important: Do NOT blindly clear the waiting message if there are
+            // still active tool calls running. We keep the waiting indicator
+            // tied to tool-call lifecycle instead.
+            if (activeExecToolCallsRef.current.size === 0) {
+              try {
+                handlers.messageHandling.clearWaitingForResponse();
+              } catch (err) {
+                // no-op: already cleared
+                console.warn(
+                  '[PanelManager] Failed to clear waiting for response:',
+                  err,
+                );
+              }
             }
           }
           break;
@@ -293,6 +301,11 @@ export const useWebViewMessages = ({
         case 'streamEnd':
           handlers.messageHandling.endStreaming();
           handlers.messageHandling.clearThinking();
+          // Clear the generic waiting indicator only if there are no active
+          // long-running tool calls. Otherwise, keep it visible.
+          if (activeExecToolCallsRef.current.size === 0) {
+            handlers.messageHandling.clearWaitingForResponse();
+          }
           break;
 
         case 'error':
@@ -439,20 +452,33 @@ export const useWebViewMessages = ({
             const kind = (toolCallData.kind || '').toString().toLowerCase();
             const isExec =
               kind === 'execute' || kind === 'bash' || kind === 'command';
-            if (isExec && (status === 'pending' || status === 'in_progress')) {
-              const rawInput = toolCallData.rawInput;
-              let cmd = '';
-              if (typeof rawInput === 'string') {
-                cmd = rawInput;
-              } else if (rawInput && typeof rawInput === 'object') {
-                const maybe = rawInput as { command?: string };
-                cmd = maybe.command || '';
+
+            if (isExec) {
+              const id = (toolCallData.toolCallId || '').toString();
+
+              // Maintain the active set by status
+              if (status === 'pending' || status === 'in_progress') {
+                activeExecToolCallsRef.current.add(id);
+
+                // Build a helpful hint from rawInput
+                const rawInput = toolCallData.rawInput;
+                let cmd = '';
+                if (typeof rawInput === 'string') {
+                  cmd = rawInput;
+                } else if (rawInput && typeof rawInput === 'object') {
+                  const maybe = rawInput as { command?: string };
+                  cmd = maybe.command || '';
+                }
+                const hint = cmd ? `Running: ${cmd}` : 'Running command...';
+                handlers.messageHandling.setWaitingForResponse(hint);
+              } else if (status === 'completed' || status === 'failed') {
+                activeExecToolCallsRef.current.delete(id);
               }
-              const hint = cmd ? `Running: ${cmd}` : 'Running command...';
-              handlers.messageHandling.setWaitingForResponse(hint);
-            }
-            if (status === 'completed' || status === 'failed') {
-              handlers.messageHandling.clearWaitingForResponse();
+
+              // If no active exec tool remains, clear the waiting message.
+              if (activeExecToolCallsRef.current.size === 0) {
+                handlers.messageHandling.clearWaitingForResponse();
+              }
             }
           } catch (_err) {
             // Best-effort UI hint; ignore errors

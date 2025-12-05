@@ -105,7 +105,6 @@ export const useMessageHandling = () => {
   const endStreaming = useCallback(() => {
     // Finalize streaming; content already lives in the placeholder message
     setIsStreaming(false);
-    setIsWaitingForResponse(false);
     streamingMessageIndexRef.current = null;
     // Remove the thinking message if it exists (collapse thoughts)
     setMessages((prev) => {
