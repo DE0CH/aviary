@@ -148,4 +148,32 @@ describe('MessageEmitter', () => {
       });
     });
   });
+
+  describe('emitUsageMetadata', () => {
+    it('should emit agent_message_chunk with _meta.usage containing token counts', async () => {
+      const usageMetadata = {
+        promptTokenCount: 100,
+        candidatesTokenCount: 50,
+        thoughtsTokenCount: 25,
+        totalTokenCount: 175,
+        cachedContentTokenCount: 10,
+      };
+
+      await emitter.emitUsageMetadata(usageMetadata);
+
+      expect(sendUpdateSpy).toHaveBeenCalledWith({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: '' },
+        _meta: {
+          usage: {
+            promptTokens: 100,
+            completionTokens: 50,
+            thoughtsTokens: 25,
+            totalTokens: 175,
+            cachedTokens: 10,
+          },
+        },
+      });
+    });
+  });
 });

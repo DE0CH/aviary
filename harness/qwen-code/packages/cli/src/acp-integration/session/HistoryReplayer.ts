@@ -5,7 +5,10 @@
  */
 
 import type { ChatRecord } from '@qwen-code/qwen-code-core';
-import type { Content } from '@google/genai';
+import type {
+  Content,
+  GenerateContentResponseUsageMetadata,
+} from '@google/genai';
 import type { SessionContext } from './types.js';
 import { MessageEmitter } from './emitters/MessageEmitter.js';
 import { ToolCallEmitter } from './emitters/ToolCallEmitter.js';
@@ -52,6 +55,9 @@ export class HistoryReplayer {
         if (record.message) {
           await this.replayContent(record.message, 'assistant');
         }
+        if (record.usageMetadata) {
+          await this.replayUsageMetadata(record.usageMetadata);
+        }
         break;
 
       case 'tool_result':
@@ -88,9 +94,20 @@ export class HistoryReplayer {
           toolName: functionName,
           callId,
           args: part.functionCall.args as Record<string, unknown>,
+          status: 'in_progress',
         });
       }
     }
+  }
+
+  /**
+   * Replays usage metadata.
+   * @param usageMetadata - The usage metadata to replay
+   */
+  private async replayUsageMetadata(
+    usageMetadata: GenerateContentResponseUsageMetadata,
+  ): Promise<void> {
+    await this.messageEmitter.emitUsageMetadata(usageMetadata);
   }
 
   /**

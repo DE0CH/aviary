@@ -55,6 +55,7 @@ import type { SessionContext, ToolCallStartParams } from './types.js';
 import { HistoryReplayer } from './HistoryReplayer.js';
 import { ToolCallEmitter } from './emitters/ToolCallEmitter.js';
 import { PlanEmitter } from './emitters/PlanEmitter.js';
+import { MessageEmitter } from './emitters/MessageEmitter.js';
 import { SubAgentTracker } from './SubAgentTracker.js';
 
 /**
@@ -79,6 +80,7 @@ export class Session implements SessionContext {
   private readonly historyReplayer: HistoryReplayer;
   private readonly toolCallEmitter: ToolCallEmitter;
   private readonly planEmitter: PlanEmitter;
+  private readonly messageEmitter: MessageEmitter;
 
   // Implement SessionContext interface
   readonly sessionId: string;
@@ -96,6 +98,7 @@ export class Session implements SessionContext {
     this.toolCallEmitter = new ToolCallEmitter(this);
     this.planEmitter = new PlanEmitter(this);
     this.historyReplayer = new HistoryReplayer(this);
+    this.messageEmitter = new MessageEmitter(this);
   }
 
   getId(): string {
@@ -234,6 +237,10 @@ export class Session implements SessionContext {
                 content,
               });
             }
+          }
+
+          if (resp.type === StreamEventType.CHUNK && resp.value.usageMetadata) {
+            this.messageEmitter.emitUsageMetadata(resp.value.usageMetadata);
           }
 
           if (resp.type === StreamEventType.CHUNK && resp.value.functionCalls) {
@@ -444,7 +451,9 @@ export class Session implements SessionContext {
       }
 
       const confirmationDetails =
-        await invocation.shouldConfirmExecute(abortSignal);
+        this.config.getApprovalMode() !== ApprovalMode.YOLO
+          ? await invocation.shouldConfirmExecute(abortSignal)
+          : false;
 
       if (confirmationDetails) {
         const content: acp.ToolCallContent[] = [];
@@ -522,6 +531,7 @@ export class Session implements SessionContext {
           callId,
           toolName: fc.name,
           args,
+          status: 'in_progress',
         };
         await this.toolCallEmitter.emitStart(startParams);
       }

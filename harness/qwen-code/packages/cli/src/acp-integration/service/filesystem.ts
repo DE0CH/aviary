@@ -30,6 +30,14 @@ export class AcpFileSystemService implements FileSystemService {
       limit: null,
     });
 
+    if (response.content.startsWith('ERROR: ENOENT:')) {
+      const err = new Error(response.content) as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      err.errno = -2;
+      err.path = filePath;
+      throw err;
+    }
+
     return response.content;
   }
 
