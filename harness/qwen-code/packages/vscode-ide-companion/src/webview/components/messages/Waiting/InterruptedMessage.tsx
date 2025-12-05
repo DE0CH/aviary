@@ -20,7 +20,7 @@ export const InterruptedMessage: React.FC<InterruptedMessageProps> = ({
       style={{
         width: '100%',
         alignItems: 'flex-start',
-        paddingLeft: '30px', // keep alignment with other assistant messages, but no status icon
+        paddingLeft: '10px', // keep alignment with other assistant messages, but no status icon
         position: 'relative',
         paddingTop: '8px',
         paddingBottom: '8px',

@@ -33,7 +33,7 @@ export const CheckboxDisplay: React.FC<CheckboxDisplayProps> = ({
   // Pseudo-elements do not reliably render on <input> in Chromium (VS Code webviews),
   // which caused the missing icon. This version is font-free and uses borders.
   const showCheck = !!checked && !indeterminate;
-  const showDash = !!indeterminate;
+  const showInProgress = !!indeterminate;
 
   return (
     <span
@@ -66,16 +66,18 @@ export const CheckboxDisplay: React.FC<CheckboxDisplayProps> = ({
           ].join(' ')}
         />
       ) : null}
-      {showDash ? (
+      {showInProgress ? (
         <span
           aria-hidden
           className={[
-            'absolute block',
+            'absolute inline-block',
             'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-            'w-2 h-[2px] rounded-sm',
-            'bg-[#e1c08d]',
+            // Use a literal star; no icon font needed
+            'text-[11px] leading-none text-[#e1c08d] select-none',
           ].join(' ')}
-        />
+        >
+          *
+        </span>
       ) : null}
     </span>
   );

@@ -51,7 +51,8 @@
   .composer-form:focus-within {
     /* match existing highlight behavior */
     border-color: var(--app-input-highlight);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--app-input-highlight), transparent 80%);
+    box-shadow: 0 1px 2px
+      color-mix(in srgb, var(--app-input-highlight), transparent 80%);
   }
 
   /* Composer: input editable area */
@@ -62,7 +63,11 @@
     font-size: var(--vscode-chat-font-size, 13px);
     color: var(--app-input-foreground);
   }
-  .composer-input:empty:before {
+  /* Show placeholder when truly empty OR when flagged as empty via data attribute.
+     The data attribute is needed because some browsers insert a <br> in
+     contentEditable, which breaks :empty matching. */
+  .composer-input:empty:before,
+  .composer-input[data-empty='true']::before {
     content: attr(data-placeholder);
     color: var(--app-input-placeholder-foreground);
     pointer-events: none;
@@ -76,7 +81,7 @@
     outline: none;
   }
   .composer-input:disabled,
-  .composer-input[contenteditable="false"] {
+  .composer-input[contenteditable='false'] {
     color: #999;
     cursor: not-allowed;
   }
@@ -105,7 +110,8 @@
     filter: brightness(1.1);
   }
   .btn-text-compact > svg {
-    height: 1em; /* match font size */
+    height: 1em;
+    width: 1em; 
     flex-shrink: 0;
   }
   .btn-text-compact > span {
@@ -119,7 +125,9 @@
   }
 
   @media screen and (max-width: 300px) {
-    .btn-text-compact > svg { display: none; }
+    .btn-text-compact > svg {
+      display: none;
+    }
   }
 
   /* Icon-only button, compact square (26x26) */
@@ -171,5 +179,18 @@
     font-family: var(--app-monospace-font-family);
     color: var(--app-link-color);
     overflow-wrap: anywhere;
+  }
+}
+
+/* ===========================
+   Utilities
+   =========================== */
+@layer utilities {
+  /* Multi-line clamp with ellipsis (Chromium-based webview supported) */
+  .q-line-clamp-3 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
   }
 }

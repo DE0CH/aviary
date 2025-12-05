@@ -42,7 +42,8 @@ const parseTodoEntries = (textOutputs: string[]): TodoEntry[] => {
   const lines = text.split(/\r?\n/);
   const entries: TodoEntry[] = [];
 
-  const todoRe = /^(?:\s*(?:[-*]|\d+[.)])\s*)?\[( |x|X|-)\]\s+(.*)$/;
+  // Accept [ ], [x]/[X] and in-progress markers [-] or [*]
+  const todoRe = /^(?:\s*(?:[-*]|\d+[.)])\s*)?\[( |x|X|-|\*)\]\s+(.*)$/;
   for (const line of lines) {
     const m = line.match(todoRe);
     if (m) {
@@ -51,7 +52,7 @@ const parseTodoEntries = (textOutputs: string[]): TodoEntry[] => {
       const status: EntryStatus =
         mark === 'x' || mark === 'X'
           ? 'completed'
-          : mark === '-'
+          : mark === '-' || mark === '*'
             ? 'in_progress'
             : 'pending';
       if (title) {
