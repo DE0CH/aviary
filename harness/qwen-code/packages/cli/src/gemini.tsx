@@ -276,8 +276,11 @@ export async function main() {
           process.exit(1);
         }
       }
+      // For stream-json mode, don't read stdin here - it should be forwarded to the sandbox
+      // and consumed by StreamJsonInputReader inside the container
+      const inputFormat = argv.inputFormat as string | undefined;
       let stdinData = '';
-      if (!process.stdin.isTTY) {
+      if (!process.stdin.isTTY && inputFormat !== 'stream-json') {
         stdinData = await readStdin();
       }
 
