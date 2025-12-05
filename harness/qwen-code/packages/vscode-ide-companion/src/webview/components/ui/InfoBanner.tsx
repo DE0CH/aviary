@@ -71,7 +71,7 @@ export const InfoBanner: React.FC<InfoBannerProps> = ({
                 <a
                   href="#"
                   className="no-underline hover:underline cursor-pointer outline-none"
-                  style={{ color: 'var(--app-qwen-orange)' }}
+                  style={{ color: 'var(--app-secondary-foreground)' }}
                   onClick={onLinkClick}
                 >
                   {linkText}

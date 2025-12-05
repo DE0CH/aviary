@@ -77,10 +77,21 @@ export const App: React.FC = () => {
   const inputFieldRef = useRef<HTMLDivElement>(
     null,
   ) as React.RefObject<HTMLDivElement>;
-  const [showBanner, setShowBanner] = useState(true);
+  // Persist the dismissal of the info banner across webview reloads
+  // Use VS Code webview state to avoid flicker on first render.
+  const [showBanner, setShowBanner] = useState<boolean>(() => {
+    try {
+      const state = (vscode.getState?.() as Record<string, unknown>) || {};
+      return state.infoBannerDismissed !== true; // show unless explicitly dismissed
+    } catch {
+      return true;
+    }
+  });
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  // When true, do NOT auto-attach the active editor file/selection to message context
+  const [skipAutoActiveContext, setSkipAutoActiveContext] = useState(false);
 
   // Completion system
   const getCompletionItems = React.useCallback(
@@ -168,6 +179,7 @@ export const App: React.FC = () => {
     setInputText,
     messageHandling,
     fileContext,
+    skipAutoActiveContext,
     vscode,
     inputFieldRef,
     isStreaming: messageHandling.isStreaming,
@@ -646,7 +658,16 @@ export const App: React.FC = () => {
 
       <InfoBanner
         visible={showBanner}
-        onDismiss={() => setShowBanner(false)}
+        onDismiss={() => {
+          setShowBanner(false);
+          // merge with existing webview state so we don't clobber other keys
+          try {
+            const prev = (vscode.getState?.() as Record<string, unknown>) || {};
+            vscode.setState?.({ ...prev, infoBannerDismissed: true });
+          } catch {
+            /* no-op */
+          }
+        }}
         onLinkClick={(e) => {
           e.preventDefault();
           vscode.postMessage({ type: 'openSettings', data: {} });
@@ -663,6 +684,7 @@ export const App: React.FC = () => {
         thinkingEnabled={thinkingEnabled}
         activeFileName={fileContext.activeFileName}
         activeSelection={fileContext.activeSelection}
+        skipAutoActiveContext={skipAutoActiveContext}
         onInputChange={setInputText}
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
@@ -672,6 +694,9 @@ export const App: React.FC = () => {
         onToggleEditMode={handleToggleEditMode}
         onToggleThinking={handleToggleThinking}
         onFocusActiveEditor={fileContext.focusActiveEditor}
+        onToggleSkipAutoActiveContext={() =>
+          setSkipAutoActiveContext((v) => !v)
+        }
         onShowCommandMenu={async () => {
           if (inputFieldRef.current) {
             inputFieldRef.current.focus();
