@@ -30,6 +30,7 @@ export {
   AutoEditIcon,
   PlanModeIcon,
   CodeBracketsIcon,
+  HideContextIcon,
   SlashCommandIcon,
   LinkIcon,
   OpenDiffIcon,

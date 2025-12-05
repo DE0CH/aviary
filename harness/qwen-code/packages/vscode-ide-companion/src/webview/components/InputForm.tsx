@@ -10,6 +10,7 @@ import {
   AutoEditIcon,
   PlanModeIcon,
   CodeBracketsIcon,
+  HideContextIcon,
   ThinkingIcon,
   SlashCommandIcon,
   LinkIcon,
@@ -33,6 +34,8 @@ interface InputFormProps {
   thinkingEnabled: boolean;
   activeFileName: string | null;
   activeSelection: { startLine: number; endLine: number } | null;
+  // Whether to auto-load the active editor selection/path into context
+  skipAutoActiveContext: boolean;
   onInputChange: (text: string) => void;
   onCompositionStart: () => void;
   onCompositionEnd: () => void;
@@ -42,6 +45,7 @@ interface InputFormProps {
   onToggleEditMode: () => void;
   onToggleThinking: () => void;
   onFocusActiveEditor: () => void;
+  onToggleSkipAutoActiveContext: () => void;
   onShowCommandMenu: () => void;
   onAttachContext: () => void;
   completionIsOpen: boolean;
@@ -90,6 +94,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   thinkingEnabled,
   activeFileName,
   activeSelection,
+  skipAutoActiveContext,
   onInputChange,
   onCompositionStart,
   onCompositionEnd,
@@ -98,7 +103,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   onCancel,
   onToggleEditMode,
   onToggleThinking,
-  onFocusActiveEditor,
+  onToggleSkipAutoActiveContext,
   onShowCommandMenu,
   onAttachContext,
   completionIsOpen,
@@ -127,6 +132,15 @@ export const InputForm: React.FC<InputFormProps> = ({
     }
     onKeyDown(e);
   };
+
+  // Selection label like "6 lines selected" (Claude-style); no line numbers
+  const selectedLinesCount = activeSelection
+    ? Math.max(1, activeSelection.endLine - activeSelection.startLine + 1)
+    : 0;
+  const selectedLinesText =
+    selectedLinesCount > 0
+      ? `${selectedLinesCount} ${selectedLinesCount === 1 ? 'line' : 'lines'} selected`
+      : '';
 
   return (
     <div
@@ -166,6 +180,9 @@ export const InputForm: React.FC<InputFormProps> = ({
               aria-label="Message input"
               aria-multiline="true"
               data-placeholder="Ask Qwen Code …"
+              // Use a data flag so CSS can show placeholder even if the browser
+              // inserts an invisible <br> into contentEditable (so :empty no longer matches)
+              data-empty={inputText.trim().length === 0 ? 'true' : 'false'}
               onInput={(e) => {
                 const target = e.target as HTMLDivElement;
                 onInputChange(target.textContent || '');
@@ -196,15 +213,26 @@ export const InputForm: React.FC<InputFormProps> = ({
               <button
                 type="button"
                 className="btn-text-compact btn-text-compact--primary"
-                title={`Showing Qwen Code your current file selection: ${activeFileName}${activeSelection ? `#${activeSelection.startLine}-${activeSelection.endLine}` : ''}`}
-                onClick={onFocusActiveEditor}
+                title={(() => {
+                  if (skipAutoActiveContext) {
+                    return selectedLinesText
+                      ? `Active selection will NOT be auto-loaded into context: ${selectedLinesText}`
+                      : `Active file will NOT be auto-loaded into context: ${activeFileName}`;
+                  }
+                  return selectedLinesText
+                    ? `Showing Qwen Code your current selection: ${selectedLinesText}`
+                    : `Showing Qwen Code your current file: ${activeFileName}`;
+                })()}
+                onClick={onToggleSkipAutoActiveContext}
               >
-                <CodeBracketsIcon />
+                {skipAutoActiveContext ? (
+                  <HideContextIcon />
+                ) : (
+                  <CodeBracketsIcon />
+                )}
                 {/* Truncate file path/selection; hide label on very small screens */}
                 <span className="hidden sm:inline">
-                  {activeFileName}
-                  {activeSelection &&
-                    ` #${activeSelection.startLine}${activeSelection.startLine !== activeSelection.endLine ? `-${activeSelection.endLine}` : ''}`}
+                  {selectedLinesText || activeFileName}
                 </span>
               </button>
             )}
