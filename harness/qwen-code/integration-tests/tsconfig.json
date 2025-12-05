@@ -5,9 +5,7 @@
     "allowJs": true,
     "baseUrl": ".",
     "paths": {
-      "@qwen-code/sdk-typescript": [
-        "../packages/sdk-typescript/dist/index.d.ts"
-      ]
+      "@qwen-code/sdk": ["../packages/sdk-typescript/dist/index.d.ts"]
     }
   },
   "include": ["**/*.ts"],
