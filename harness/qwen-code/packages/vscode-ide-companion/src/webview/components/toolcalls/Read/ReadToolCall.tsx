@@ -7,6 +7,7 @@
  */
 
 import type React from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
 import {
@@ -14,6 +15,7 @@ import {
   mapToolStatusToContainerStatus,
 } from '../shared/utils.js';
 import { FileLink } from '../../ui/FileLink.js';
+import { useVSCode } from '../../../hooks/useVSCode.js';
 
 /**
  * Specialized component for Read tool calls
@@ -22,9 +24,48 @@ import { FileLink } from '../../ui/FileLink.js';
  */
 export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { content, locations, toolCallId } = toolCall;
+  const vscode = useVSCode();
 
-  // Group content by type
-  const { errors } = groupContent(content);
+  // Group content by type; memoize to avoid new array identities on every render
+  const { errors, diffs } = useMemo(() => groupContent(content), [content]);
+
+  // Post a message to the extension host to open a VS Code diff tab
+  const handleOpenDiff = useCallback(
+    (
+      path: string | undefined,
+      oldText: string | null | undefined,
+      newText: string | undefined,
+    ) => {
+      if (path) {
+        vscode.postMessage({
+          type: 'openDiff',
+          data: { path, oldText: oldText || '', newText: newText || '' },
+        });
+      }
+    },
+    [vscode],
+  );
+
+  // Auto-open diff (Claude-style) when a read call returns diff content.
+  // Only trigger once per toolCallId so we don't spam as in-progress updates stream in.
+  useEffect(() => {
+    if (diffs.length > 0) {
+      const firstDiff = diffs[0];
+      const path = firstDiff.path || (locations && locations[0]?.path) || '';
+
+      if (
+        path &&
+        firstDiff.oldText !== undefined &&
+        firstDiff.newText !== undefined
+      ) {
+        const timer = setTimeout(() => {
+          handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
+        }, 100);
+        return () => timer && clearTimeout(timer);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toolCallId]);
 
   // Compute container status based on toolCall.status (pending/in_progress -> loading)
   const containerStatus:
@@ -54,6 +95,30 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         }
       >
         {errors.join('\n')}
+      </ToolCallContainer>
+    );
+  }
+
+  // Success case with diff: keep UI compact; VS Code diff is auto-opened above
+  if (diffs.length > 0) {
+    const path = diffs[0]?.path || locations?.[0]?.path || '';
+    return (
+      <ToolCallContainer
+        label={'Read'}
+        className="read-tool-call-success"
+        status={containerStatus}
+        toolCallId={toolCallId}
+        labelSuffix={
+          path ? (
+            <FileLink
+              path={path}
+              showFullPath={false}
+              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+            />
+          ) : undefined
+        }
+      >
+        {null}
       </ToolCallContainer>
     );
   }
