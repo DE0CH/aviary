@@ -5,10 +5,10 @@
  * Implements AsyncIterator protocol for message consumption.
  */
 
-const PERMISSION_CALLBACK_TIMEOUT = 30000;
-const MCP_REQUEST_TIMEOUT = 30000;
-const CONTROL_REQUEST_TIMEOUT = 30000;
-const STREAM_CLOSE_TIMEOUT = 10000;
+const DEFAULT_CAN_USE_TOOL_TIMEOUT = 30_000;
+const DEFAULT_MCP_REQUEST_TIMEOUT = 60_000;
+const DEFAULT_CONTROL_REQUEST_TIMEOUT = 30_000;
+const DEFAULT_STREAM_CLOSE_TIMEOUT = 60_000;
 
 import { randomUUID } from 'node:crypto';
 import { SdkLogger } from '../utils/logger.js';
@@ -19,6 +19,7 @@ import type {
   CLIControlResponse,
   ControlCancelRequest,
   PermissionSuggestion,
+  WireSDKMcpServerConfig,
 } from '../types/protocol.js';
 import {
   isSDKUserMessage,
@@ -31,12 +32,17 @@ import {
   isControlCancel,
 } from '../types/protocol.js';
 import type { Transport } from '../transport/Transport.js';
-import type { QueryOptions } from '../types/types.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { QueryOptions, CLIMcpServerConfig } from '../types/types.js';
+import { isSdkMcpServerConfig } from '../types/types.js';
 import { Stream } from '../utils/Stream.js';
 import { serializeJsonLine } from '../utils/jsonLines.js';
 import { AbortError } from '../types/errors.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import type { SdkControlServerTransport } from '../mcp/SdkControlServerTransport.js';
+import {
+  SdkControlServerTransport,
+  type SdkControlServerTransportOptions,
+} from '../mcp/SdkControlServerTransport.js';
 import { ControlRequestType } from '../types/protocol.js';
 
 interface PendingControlRequest {
@@ -44,6 +50,11 @@ interface PendingControlRequest {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
   abortController: AbortController;
+}
+
+interface PendingMcpResponse {
+  resolve: (response: JSONRPCMessage) => void;
+  reject: (error: Error) => void;
 }
 
 interface TransportWithEndInput extends Transport {
@@ -61,7 +72,9 @@ export class Query implements AsyncIterable<SDKMessage> {
   private abortController: AbortController;
   private pendingControlRequests: Map<string, PendingControlRequest> =
     new Map();
+  private pendingMcpResponses: Map<string, PendingMcpResponse> = new Map();
   private sdkMcpTransports: Map<string, SdkControlServerTransport> = new Map();
+  private sdkMcpServers: Map<string, McpServer> = new Map();
   readonly initialized: Promise<void>;
   private closed = false;
   private messageRouterStarted = false;
@@ -92,6 +105,11 @@ export class Query implements AsyncIterable<SDKMessage> {
      */
     this.sdkMessages = this.readSdkMessages();
 
+    /**
+     * Promise that resolves when the first SDKResultMessage is received.
+     * Used to coordinate endInput() timing - ensures all initialization
+     * (SDK MCP servers, control responses) is complete before closing CLI stdin.
+     */
     this.firstResultReceivedPromise = new Promise((resolve) => {
       this.firstResultReceivedResolve = resolve;
     });
@@ -121,17 +139,152 @@ export class Query implements AsyncIterable<SDKMessage> {
     this.startMessageRouter();
   }
 
+  private async initializeSdkMcpServers(): Promise<void> {
+    if (!this.options.mcpServers) {
+      return;
+    }
+
+    const connectionPromises: Array<Promise<void>> = [];
+
+    // Extract SDK MCP servers from the unified mcpServers config
+    for (const [key, config] of Object.entries(this.options.mcpServers)) {
+      if (!isSdkMcpServerConfig(config)) {
+        continue; // Skip external MCP servers
+      }
+
+      // Use the name from SDKMcpServerConfig, fallback to key for backwards compatibility
+      const serverName = config.name || key;
+      const server = config.instance;
+
+      // Create transport options with callback to route MCP server responses
+      const transportOptions: SdkControlServerTransportOptions = {
+        sendToQuery: async (message: JSONRPCMessage) => {
+          this.handleMcpServerResponse(serverName, message);
+        },
+        serverName,
+      };
+
+      const sdkTransport = new SdkControlServerTransport(transportOptions);
+
+      // Connect server to transport and only register on success
+      const connectionPromise = server
+        .connect(sdkTransport)
+        .then(() => {
+          // Only add to maps after successful connection
+          this.sdkMcpServers.set(serverName, server);
+          this.sdkMcpTransports.set(serverName, sdkTransport);
+          logger.debug(`SDK MCP server '${serverName}' connected to transport`);
+        })
+        .catch((error) => {
+          logger.error(
+            `Failed to connect SDK MCP server '${serverName}' to transport:`,
+            error,
+          );
+          // Don't throw - one failed server shouldn't prevent others
+        });
+
+      connectionPromises.push(connectionPromise);
+    }
+
+    // Wait for all connection attempts to complete
+    await Promise.all(connectionPromises);
+
+    if (this.sdkMcpServers.size > 0) {
+      logger.info(
+        `Initialized ${this.sdkMcpServers.size} SDK MCP server(s): ${Array.from(this.sdkMcpServers.keys()).join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * Handle response messages from SDK MCP servers
+   *
+   * When an MCP server sends a response via transport.send(), this callback
+   * routes it back to the pending request that's waiting for it.
+   */
+  private handleMcpServerResponse(
+    serverName: string,
+    message: JSONRPCMessage,
+  ): void {
+    // Check if this is a response with an id
+    if ('id' in message && message.id !== null && message.id !== undefined) {
+      const key = `${serverName}:${message.id}`;
+      const pending = this.pendingMcpResponses.get(key);
+      if (pending) {
+        logger.debug(
+          `Routing MCP response for server '${serverName}', id: ${message.id}`,
+        );
+        pending.resolve(message);
+        this.pendingMcpResponses.delete(key);
+        return;
+      }
+    }
+
+    // If no pending request found, log a warning (this shouldn't happen normally)
+    logger.warn(
+      `Received MCP server response with no pending request: server='${serverName}'`,
+      message,
+    );
+  }
+
+  /**
+   * Get SDK MCP servers config for CLI initialization
+   *
+   * Only SDK servers are sent in the initialize request.
+   */
+  private getSdkMcpServersForCli(): Record<string, WireSDKMcpServerConfig> {
+    const sdkServers: Record<string, WireSDKMcpServerConfig> = {};
+
+    for (const [name] of this.sdkMcpServers.entries()) {
+      sdkServers[name] = { type: 'sdk', name };
+    }
+
+    return sdkServers;
+  }
+
+  /**
+   * Get external MCP servers (non-SDK) that should be managed by the CLI
+   */
+  private getMcpServersForCli(): Record<string, CLIMcpServerConfig> {
+    if (!this.options.mcpServers) {
+      return {};
+    }
+
+    const externalServers: Record<string, CLIMcpServerConfig> = {};
+
+    for (const [name, config] of Object.entries(this.options.mcpServers)) {
+      if (isSdkMcpServerConfig(config)) {
+        continue;
+      }
+      externalServers[name] = config as CLIMcpServerConfig;
+    }
+
+    return externalServers;
+  }
+
   private async initialize(): Promise<void> {
     try {
       logger.debug('Initializing Query');
 
-      const sdkMcpServerNames = Array.from(this.sdkMcpTransports.keys());
+      // Initialize SDK MCP servers and wait for connections
+      await this.initializeSdkMcpServers();
+
+      // Get only successfully connected SDK servers for CLI
+      const sdkMcpServersForCli = this.getSdkMcpServersForCli();
+      const mcpServersForCli = this.getMcpServersForCli();
+      logger.debug('SDK MCP servers for CLI:', sdkMcpServersForCli);
+      logger.debug('External MCP servers for CLI:', mcpServersForCli);
 
       await this.sendControlRequest(ControlRequestType.INITIALIZE, {
         hooks: null,
         sdkMcpServers:
-          sdkMcpServerNames.length > 0 ? sdkMcpServerNames : undefined,
-        mcpServers: this.options.mcpServers,
+          Object.keys(sdkMcpServersForCli).length > 0
+            ? sdkMcpServersForCli
+            : undefined,
+        mcpServers:
+          Object.keys(mcpServersForCli).length > 0
+            ? mcpServersForCli
+            : undefined,
         agents: this.options.agents,
       });
       logger.info('Query initialized successfully');
@@ -279,10 +432,12 @@ export class Query implements AsyncIterable<SDKMessage> {
     }
 
     try {
+      const canUseToolTimeout =
+        this.options.timeout?.canUseTool ?? DEFAULT_CAN_USE_TOOL_TIMEOUT;
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(
           () => reject(new Error('Permission callback timeout')),
-          PERMISSION_CALLBACK_TIMEOUT,
+          canUseToolTimeout,
         );
       });
 
@@ -361,32 +516,45 @@ export class Query implements AsyncIterable<SDKMessage> {
   }
 
   private handleMcpRequest(
-    _serverName: string,
+    serverName: string,
     message: JSONRPCMessage,
     transport: SdkControlServerTransport,
   ): Promise<JSONRPCMessage> {
+    const messageId = 'id' in message ? message.id : null;
+    const key = `${serverName}:${messageId}`;
+
     return new Promise((resolve, reject) => {
+      const mcpRequestTimeout =
+        this.options.timeout?.mcpRequest ?? DEFAULT_MCP_REQUEST_TIMEOUT;
       const timeout = setTimeout(() => {
+        this.pendingMcpResponses.delete(key);
         reject(new Error('MCP request timeout'));
-      }, MCP_REQUEST_TIMEOUT);
+      }, mcpRequestTimeout);
 
-      const messageId = 'id' in message ? message.id : null;
-
-      /**
-       * Hook into transport to capture response.
-       * Temporarily replace sendToQuery to intercept the response message
-       * matching this request's ID, then restore the original handler.
-       */
-      const originalSend = transport.sendToQuery;
-      transport.sendToQuery = async (responseMessage: JSONRPCMessage) => {
-        if ('id' in responseMessage && responseMessage.id === messageId) {
-          clearTimeout(timeout);
-          transport.sendToQuery = originalSend;
-          resolve(responseMessage);
-        }
-        return originalSend(responseMessage);
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.pendingMcpResponses.delete(key);
       };
 
+      const resolveAndCleanup = (response: JSONRPCMessage) => {
+        cleanup();
+        resolve(response);
+      };
+
+      const rejectAndCleanup = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      // Register pending response handler
+      this.pendingMcpResponses.set(key, {
+        resolve: resolveAndCleanup,
+        reject: rejectAndCleanup,
+      });
+
+      // Deliver message to MCP server via transport.onmessage
+      // The server will process it and call transport.send() with the response,
+      // which triggers handleMcpServerResponse to resolve our pending promise
       transport.handleMessage(message);
     });
   }
@@ -452,6 +620,10 @@ export class Query implements AsyncIterable<SDKMessage> {
     subtype: string,
     data: Record<string, unknown> = {},
   ): Promise<Record<string, unknown> | null> {
+    if (this.closed) {
+      return Promise.reject(new Error('Query is closed'));
+    }
+
     const requestId = randomUUID();
 
     const request: CLIControlRequest = {
@@ -466,10 +638,13 @@ export class Query implements AsyncIterable<SDKMessage> {
     const responsePromise = new Promise<Record<string, unknown> | null>(
       (resolve, reject) => {
         const abortController = new AbortController();
+        const controlRequestTimeout =
+          this.options.timeout?.controlRequest ??
+          DEFAULT_CONTROL_REQUEST_TIMEOUT;
         const timeout = setTimeout(() => {
           this.pendingControlRequests.delete(requestId);
           reject(new Error(`Control request timeout: ${subtype}`));
-        }, CONTROL_REQUEST_TIMEOUT);
+        }, controlRequestTimeout);
 
         this.pendingControlRequests.set(requestId, {
           resolve,
@@ -517,8 +692,15 @@ export class Query implements AsyncIterable<SDKMessage> {
     for (const pending of this.pendingControlRequests.values()) {
       pending.abortController.abort();
       clearTimeout(pending.timeout);
+      pending.reject(new Error('Query is closed'));
     }
     this.pendingControlRequests.clear();
+
+    // Clean up pending MCP responses
+    for (const pending of this.pendingMcpResponses.values()) {
+      pending.reject(new Error('Query is closed'));
+    }
+    this.pendingMcpResponses.clear();
 
     await this.transport.close();
 
@@ -542,7 +724,7 @@ export class Query implements AsyncIterable<SDKMessage> {
       }
     }
     this.sdkMcpTransports.clear();
-    logger.info('Query closed');
+    logger.info('Query is closed');
   }
 
   private async *readSdkMessages(): AsyncGenerator<SDKMessage> {
@@ -588,22 +770,31 @@ export class Query implements AsyncIterable<SDKMessage> {
       }
 
       /**
-       * In multi-turn mode with MCP servers, wait for first result
-       * to ensure MCP servers have time to process before next input.
-       * This prevents race conditions where the next input arrives before
-       * MCP servers have finished processing the current request.
+       * After all user messages are sent (for-await loop ended), determine when to
+       * close the CLI's stdin via endInput().
+       *
+       * - If a result message was already received: All initialization (SDK MCP servers,
+       *   control responses, etc.) is complete, safe to close stdin immediately.
+       * - If no result yet: Wait for either the result to arrive, or the timeout to expire.
+       *   This gives pending control_responses from SDK MCP servers or other modules
+       *   time to complete their initialization before we close the input stream.
+       *
+       * The timeout ensures we don't hang indefinitely - either the turn proceeds
+       * normally, or it fails with a timeout, but Promise.race will always resolve.
        */
       if (
         !this.isSingleTurn &&
         this.sdkMcpTransports.size > 0 &&
         this.firstResultReceivedPromise
       ) {
+        const streamCloseTimeout =
+          this.options.timeout?.streamClose ?? DEFAULT_STREAM_CLOSE_TIMEOUT;
         await Promise.race([
           this.firstResultReceivedPromise,
           new Promise<void>((resolve) => {
             setTimeout(() => {
               resolve();
-            }, STREAM_CLOSE_TIMEOUT);
+            }, streamCloseTimeout);
           }),
         ]);
       }
@@ -635,28 +826,16 @@ export class Query implements AsyncIterable<SDKMessage> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.INTERRUPT);
   }
 
   async setPermissionMode(mode: string): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.SET_PERMISSION_MODE, {
       mode,
     });
   }
 
   async setModel(model: string): Promise<void> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     await this.sendControlRequest(ControlRequestType.SET_MODEL, { model });
   }
 
@@ -667,10 +846,6 @@ export class Query implements AsyncIterable<SDKMessage> {
    * @throws Error if query is closed
    */
   async supportedCommands(): Promise<Record<string, unknown> | null> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     return this.sendControlRequest(ControlRequestType.SUPPORTED_COMMANDS);
   }
 
@@ -681,10 +856,6 @@ export class Query implements AsyncIterable<SDKMessage> {
    * @throws Error if query is closed
    */
   async mcpServerStatus(): Promise<Record<string, unknown> | null> {
-    if (this.closed) {
-      throw new Error('Query is closed');
-    }
-
     return this.sendControlRequest(ControlRequestType.MCP_SERVER_STATUS);
   }
 

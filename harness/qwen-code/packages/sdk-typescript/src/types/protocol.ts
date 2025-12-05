@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 export interface Annotation {
   type: string;
   value: string;
@@ -293,10 +294,44 @@ export interface MCPServerConfig {
   targetServiceAccount?: string;
 }
 
+/**
+ * SDK MCP Server configuration
+ *
+ * SDK MCP servers run in the SDK process and are connected via in-memory transport.
+ * Tool calls are routed through the control plane between SDK and CLI.
+ */
+export interface SDKMcpServerConfig {
+  /**
+   * Type identifier for SDK MCP servers
+   */
+  type: 'sdk';
+  /**
+   * Server name for identification and routing
+   */
+  name: string;
+  /**
+   * The MCP Server instance created by createSdkMcpServer()
+   */
+  instance: McpServer;
+}
+
+/**
+ * Wire format for SDK MCP servers sent to the CLI
+ */
+export type WireSDKMcpServerConfig = Omit<SDKMcpServerConfig, 'instance'>;
+
 export interface CLIControlInitializeRequest {
   subtype: 'initialize';
   hooks?: HookRegistration[] | null;
-  sdkMcpServers?: Record<string, MCPServerConfig>;
+  /**
+   * SDK MCP servers config
+   * These are MCP servers running in the SDK process, connected via control plane.
+   * External MCP servers are configured separately in settings, not via initialization.
+   */
+  sdkMcpServers?: Record<string, WireSDKMcpServerConfig>;
+  /**
+   * External MCP servers that should be managed by the CLI.
+   */
   mcpServers?: Record<string, MCPServerConfig>;
   agents?: SubagentConfig[];
 }

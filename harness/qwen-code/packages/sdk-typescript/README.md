@@ -13,7 +13,7 @@ npm install @qwen-code/sdk-typescript
 ## Requirements
 
 - Node.js >= 20.0.0
-- [Qwen Code](https://github.com/QwenLM/qwen-code) installed and accessible in PATH
+- [Qwen Code](https://github.com/QwenLM/qwen-code) >= 0.4.0 (stable) installed and accessible in PATH
 
 > **Note for nvm users**: If you use nvm to manage Node.js versions, the SDK may not be able to auto-detect the Qwen Code executable. You should explicitly set the `pathToQwenExecutable` option to the full path of the `qwen` binary.
 
@@ -61,7 +61,7 @@ Creates a new query session with the Qwen Code.
 | `permissionMode`         | `'default' \| 'plan' \| 'auto-edit' \| 'yolo'` | `'default'`      | Permission mode controlling tool execution approval. See [Permission Modes](#permission-modes) for details.                                                                                                                                                                                                                                                                                                                                                                           |
 | `canUseTool`             | `CanUseTool`                                   | -                | Custom permission handler for tool execution approval. Invoked when a tool requires confirmation. Must respond within 30 seconds or the request will be auto-denied. See [Custom Permission Handler](#custom-permission-handler).                                                                                                                                                                                                                                                     |
 | `env`                    | `Record<string, string>`                       | -                | Environment variables to pass to the Qwen Code process. Merged with the current process environment.                                                                                                                                                                                                                                                                                                                                                                                  |
-| `mcpServers`             | `Record<string, ExternalMcpServerConfig>`      | -                | External MCP (Model Context Protocol) servers to connect. Each server is identified by a unique name and configured with `command`, `args`, and `env`.                                                                                                                                                                                                                                                                                                                                |
+| `mcpServers`             | `Record<string, McpServerConfig>`              | -                | MCP (Model Context Protocol) servers to connect. Supports external servers (stdio/SSE/HTTP) and SDK-embedded servers. External servers are configured with transport options like `command`, `args`, `url`, `httpUrl`, etc. SDK servers use `{ type: 'sdk', name: string, instance: Server }`.                                                                                                                                                                                        |
 | `abortController`        | `AbortController`                              | -                | Controller to cancel the query session. Call `abortController.abort()` to terminate the session and cleanup resources.                                                                                                                                                                                                                                                                                                                                                                |
 | `debug`                  | `boolean`                                      | `false`          | Enable debug mode for verbose logging from the CLI process.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `maxSessionTurns`        | `number`                                       | `-1` (unlimited) | Maximum number of conversation turns before the session automatically terminates. A turn consists of a user message and an assistant response.                                                                                                                                                                                                                                                                                                                                        |
@@ -74,12 +74,27 @@ Creates a new query session with the Qwen Code.
 
 ### Timeouts
 
-The SDK enforces the following timeouts:
+The SDK enforces the following default timeouts:
 
-| Timeout             | Duration   | Description                                                                                                                  |
-| ------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Permission Callback | 30 seconds | Maximum time for `canUseTool` callback to respond. If exceeded, the tool request is auto-denied.                             |
-| Control Request     | 30 seconds | Maximum time for control operations like `initialize()`, `setModel()`, `setPermissionMode()`, and `interrupt()` to complete. |
+| Timeout          | Default    | Description                                                                                                                  |
+| ---------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `canUseTool`     | 30 seconds | Maximum time for `canUseTool` callback to respond. If exceeded, the tool request is auto-denied.                             |
+| `mcpRequest`     | 1 minute   | Maximum time for SDK MCP tool calls to complete.                                                                             |
+| `controlRequest` | 30 seconds | Maximum time for control operations like `initialize()`, `setModel()`, `setPermissionMode()`, and `interrupt()` to complete. |
+| `streamClose`    | 1 minute   | Maximum time to wait for initialization to complete before closing CLI stdin in multi-turn mode with SDK MCP servers.        |
+
+You can customize these timeouts via the `timeout` option:
+
+```typescript
+const query = qwen.query('Your prompt', {
+  timeout: {
+    canUseTool: 60000, // 60 seconds for permission callback
+    mcpRequest: 600000, // 10 minutes for MCP tool calls
+    controlRequest: 60000, // 60 seconds for control requests
+    streamClose: 15000, // 15 seconds for stream close wait
+  },
+});
+```
 
 ### Message Types
 
@@ -212,7 +227,7 @@ const result = query({
 });
 ```
 
-### With MCP Servers
+### With External MCP Servers
 
 ```typescript
 import { query } from '@qwen-code/sdk-typescript';
@@ -229,6 +244,84 @@ const result = query({
     },
   },
 });
+```
+
+### With SDK-Embedded MCP Servers
+
+The SDK provides `tool` and `createSdkMcpServer` to create MCP servers that run in the same process as your SDK application. This is useful when you want to expose custom tools to the AI without running a separate server process.
+
+#### `tool(name, description, inputSchema, handler)`
+
+Creates a tool definition with Zod schema type inference.
+
+| Parameter     | Type                               | Description                                                              |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| `name`        | `string`                           | Tool name (1-64 chars, starts with letter, alphanumeric and underscores) |
+| `description` | `string`                           | Human-readable description of what the tool does                         |
+| `inputSchema` | `ZodRawShape`                      | Zod schema object defining the tool's input parameters                   |
+| `handler`     | `(args, extra) => Promise<Result>` | Async function that executes the tool and returns MCP content blocks     |
+
+The handler must return a `CallToolResult` object with the following structure:
+
+```typescript
+{
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; data: string; mimeType: string }
+    | { type: 'resource'; uri: string; mimeType?: string; text?: string }
+  >;
+  isError?: boolean;
+}
+```
+
+#### `createSdkMcpServer(options)`
+
+Creates an SDK-embedded MCP server instance.
+
+| Option    | Type                     | Default   | Description                          |
+| --------- | ------------------------ | --------- | ------------------------------------ |
+| `name`    | `string`                 | Required  | Unique name for the MCP server       |
+| `version` | `string`                 | `'1.0.0'` | Server version                       |
+| `tools`   | `SdkMcpToolDefinition[]` | -         | Array of tools created with `tool()` |
+
+Returns a `McpSdkServerConfigWithInstance` object that can be passed directly to the `mcpServers` option.
+
+#### Example
+
+```typescript
+import { z } from 'zod';
+import { query, tool, createSdkMcpServer } from '@qwen-code/sdk-typescript';
+
+// Define a tool with Zod schema
+const calculatorTool = tool(
+  'calculate_sum',
+  'Add two numbers',
+  { a: z.number(), b: z.number() },
+  async (args) => ({
+    content: [{ type: 'text', text: String(args.a + args.b) }],
+  }),
+);
+
+// Create the MCP server
+const server = createSdkMcpServer({
+  name: 'calculator',
+  tools: [calculatorTool],
+});
+
+// Use the server in a query
+const result = query({
+  prompt: 'What is 42 + 17?',
+  options: {
+    permissionMode: 'yolo',
+    mcpServers: {
+      calculator: server,
+    },
+  },
+});
+
+for await (const message of result) {
+  console.log(message);
+}
 ```
 
 ### Abort a Query
