@@ -43,68 +43,25 @@ export class PanelManager {
       return false; // Panel already exists
     }
 
-    // Find if there's already a Qwen Code webview tab open and get its view column
-    const existingQwenInfo = this.findExistingQwenCodeGroup();
-
-    // If we found an existing Qwen Code tab, open in the same view column
-    // Otherwise, open beside the active editor
-    const targetViewColumn =
-      existingQwenInfo?.viewColumn ?? vscode.ViewColumn.Beside;
-    console.log('[PanelManager] existingQwenInfo', existingQwenInfo);
-    console.log('[PanelManager] targetViewColumn', targetViewColumn);
-
-    // If there's an existing Qwen Code group, ensure it's unlocked so we can add new tabs
-    // We try to unlock regardless of current state - if already unlocked, this is a no-op
-    if (existingQwenInfo?.group) {
-      console.log(
-        "[PanelManager] Found existing Qwen Code group, ensuring it's unlocked...",
+    // We want the chat webview to live in a dedicated, locked group on the
+    // left. Create a new group on the far left and open the panel there.
+    try {
+      // Make sure we start from the first group, then create a group to its left
+      await vscode.commands.executeCommand(
+        'workbench.action.focusFirstEditorGroup',
       );
-
-      try {
-        // We need to make the target group active first
-        // Find a Qwen Code tab in that group
-        const firstQwenTab = existingQwenInfo.group.tabs.find((tab) => {
-          const input: unknown = (tab as { input?: unknown }).input;
-          const isWebviewInput = (inp: unknown): inp is { viewType: string } =>
-            !!inp && typeof inp === 'object' && 'viewType' in inp;
-          return (
-            isWebviewInput(input) &&
-            input.viewType === 'mainThreadWebview-qwenCode.chat'
-          );
-        });
-
-        if (firstQwenTab) {
-          // Make the group active by focusing on one of its tabs
-          const activeTabGroup = vscode.window.tabGroups.activeTabGroup;
-          if (activeTabGroup !== existingQwenInfo.group) {
-            // Switch to the target group
-            await vscode.commands.executeCommand(
-              'workbench.action.focusFirstEditorGroup',
-            );
-          }
-        }
-
-        // Try to unlock the group (will be no-op if already unlocked)
-        await vscode.commands.executeCommand(
-          'workbench.action.unlockEditorGroup',
-        );
-        console.log('[PanelManager] Unlock command executed');
-      } catch (error) {
-        console.warn(
-          '[PanelManager] Failed to unlock group, continuing anyway:',
-          error,
-        );
-        // Continue anyway - the group might not be locked
-      }
+      await vscode.commands.executeCommand('workbench.action.newGroupLeft');
+    } catch (error) {
+      console.warn(
+        '[PanelManager] Failed to pre-create left editor group (continuing):',
+        error,
+      );
     }
 
     this.panel = vscode.window.createWebviewPanel(
       'qwenCode.chat',
       'Qwen Code',
-      {
-        viewColumn: targetViewColumn,
-        preserveFocus: false, // Focus the new tab
-      },
+      { viewColumn: vscode.ViewColumn.One, preserveFocus: false }, // Focus and place in leftmost group
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -187,7 +144,8 @@ export class PanelManager {
    */
   revealPanel(preserveFocus: boolean = true): void {
     if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.Beside, preserveFocus);
+      // Reveal without forcing a specific column to avoid reflowing groups.
+      this.panel.reveal(undefined, preserveFocus);
     }
   }
 
