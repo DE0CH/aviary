@@ -166,7 +166,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 key={option.optionId}
                 className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] ${
                   isFocused
-                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
+                    ? 'text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                     : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                 }`}
                 onClick={() => onResponse(option.optionId)}
@@ -194,7 +194,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
               <div
                 className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 cursor-text text-[var(--app-primary-foreground)] ${
                   isFocused
-                    ? 'bg-[var(--app-list-active-background)] text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
+                    ? 'text-[var(--app-list-active-foreground)] hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                     : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0 hover:border-[var(--app-button-background)]'
                 }`}
                 onMouseEnter={() => setFocusedIndex(options.length)}
