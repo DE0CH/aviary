@@ -98,7 +98,7 @@ export const WriteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
           ) : undefined
         }
       >
-        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1">
+        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{lineCount} lines</span>
         </div>

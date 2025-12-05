@@ -50,14 +50,16 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   >
     {/* Timeline connector line using ::after pseudo-element */}
     <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
-      <div className="flex items-center gap-2 relative min-w-0">
+      <div className="flex items-center gap-1 relative min-w-0">
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>
-        {labelSuffix}
+        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
+          {labelSuffix}
+        </span>
       </div>
       {children && (
-        <div className="text-[var(--app-secondary-foreground)] py-2">
+        <div className="text-[var(--app-secondary-foreground)] py-1">
           {children}
         </div>
       )}

@@ -218,7 +218,7 @@ export class AcpMessageHandler {
         outcome: {
           outcome,
           // optionId: optionId === 'cancel' ? 'reject_once' : optionId,
-          optionId: optionId === 'reject_once' ? 'cancel' : optionId,
+          optionId,
         },
       };
     } catch (_error) {

@@ -6,7 +6,7 @@
  * Edit tool call component - specialized for file editing operations
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
 import {
@@ -45,9 +45,16 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { content, locations, toolCallId } = toolCall;
   const vscode = useVSCode();
 
-  // Group content by type
-  const { errors, diffs } = groupContent(content);
-
+  // Group content by type; memoize to avoid new array identities on every render
+  const { errors, diffs } = useMemo(() => groupContent(content), [content]);
+  // TODO:
+  // console.log('EditToolCall', {
+  //   content,
+  //   locations,
+  //   toolCallId,
+  //   errors,
+  //   diffs,
+  // });
   const handleOpenDiff = useCallback(
     (
       path: string | undefined,
@@ -67,9 +74,24 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Extract filename from path
   const getFileName = (path: string): string => path.split('/').pop() || path;
 
+  // Keep a module-scoped set to ensure auto-open fires once per toolCallId across re-renders
+  // const autoOpenedToolCallIds =
+  //   (
+  //     globalThis as unknown as {
+  //       __qwenAutoOpenedDiffIds?: Set<string>;
+  //     }
+  //   ).__qwenAutoOpenedDiffIds || new Set<string>();
+  // (
+  //   globalThis as unknown as { __qwenAutoOpenedDiffIds: Set<string> }
+  // ).__qwenAutoOpenedDiffIds = autoOpenedToolCallIds;
+
   // Automatically trigger openDiff when diff content is detected (Claude Code style)
   // Only trigger once per tool call by checking toolCallId
   useEffect(() => {
+    // Guard: already auto-opened for this toolCallId in this webview session
+    // if (autoOpenedToolCallIds.has(toolCallId)) {
+    //   return;
+    // }
     // Only auto-open if there are diffs and we have the required data
     if (diffs.length > 0) {
       const firstDiff = diffs[0];
@@ -80,16 +102,17 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         firstDiff.oldText !== undefined &&
         firstDiff.newText !== undefined
       ) {
-        // TODO: 暂时注释自动打开功能，避免频繁触发
         // Add a small delay to ensure the component is fully rendered
         const timer = setTimeout(() => {
           handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
+          // autoOpenedToolCallIds.add(toolCallId);
         }, 100);
         // Proper cleanup function
         return () => timer && clearTimeout(timer);
       }
     }
-  }, [diffs, handleOpenDiff, locations]); // Add missing dependencies
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toolCallId]);
 
   // Error case: show error
   if (errors.length > 0) {
@@ -122,14 +145,14 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     // const fileName = path ? getFileName(path) : '';
     const summary = getDiffSummary(firstDiff.oldText, firstDiff.newText);
     // No hooks here; define a simple click handler scoped to this block
-    const openFirstDiff = () =>
-      handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
+    // const openFirstDiff = () =>
+    //   handleOpenDiff(path, firstDiff.oldText, firstDiff.newText);
 
     const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     return (
       <div
         className={`qwen-message message-item relative py-2 select-text cursor-pointer hover:bg-[var(--app-input-background)] toolcall-container toolcall-status-${containerStatus}`}
-        onClick={openFirstDiff}
+        // onClick={openFirstDiff}
         title="Open diff in VS Code"
       >
         {/* IMPORTANT: Always include min-w-0/max-w-full on inner wrappers to prevent overflow. */}
@@ -149,7 +172,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
               )}
             </div>
           </div>
-          <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1">
+          <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
             <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
             <span className="flex-shrink-0 w-full">{summary}</span>
           </div>
@@ -175,7 +198,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         status={containerStatus}
         toolCallId={toolCallId}
       >
-        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1">
+        <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <FileLink
             path={locations[0].path}
