@@ -10,9 +10,9 @@ import type { Conversation } from '../../storage/conversationStore.js';
 import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
-} from '../components/PermissionRequest.js';
-import type { PlanEntry } from '../components/PlanDisplay.js';
+} from '../components/PermissionDrawer/PermissionRequest.js';
 import type { ToolCallUpdate } from '../types/toolCall.js';
+import type { PlanEntry } from '../../agents/qwenTypes.js';
 
 interface UseWebViewMessagesProps {
   // Session management

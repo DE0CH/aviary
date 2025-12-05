@@ -21,15 +21,14 @@ import { useMessageSubmit } from './hooks/useMessageSubmit.js';
 import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
-} from './components/PermissionRequest.js';
+} from './components/PermissionDrawer/PermissionRequest.js';
 import type { TextMessage } from './hooks/message/useMessageHandling.js';
 import type { ToolCallData } from './components/ToolCall.js';
-import { PermissionDrawer } from './components/PermissionDrawer.js';
+import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer.js';
 import { ToolCall } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
 // import { InProgressToolCall } from './components/InProgressToolCall.js';
 import { EmptyState } from './components/ui/EmptyState.js';
-import type { PlanEntry } from './components/PlanDisplay.js';
 import { type CompletionItem } from './types/CompletionTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { InfoBanner } from './components/ui/InfoBanner.js';
@@ -45,6 +44,7 @@ import { InputForm } from './components/InputForm.js';
 import { SessionSelector } from './components/session/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
 import type { EditMode } from './types/toolCall.js';
+import type { PlanEntry } from '../agents/qwenTypes.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();

@@ -19,11 +19,12 @@ interface MarkdownRendererProps {
 /**
  * Regular expressions for parsing content
  */
+// Match absolute file paths like: /path/to/file.ts or C:\path\to\file.ts
 const FILE_PATH_REGEX =
-  /([a-zA-Z]:)?([/\\][\w\-. ]+)+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)/gi;
-// Match file paths with optional line numbers like: path/file.ts#7-14 or path/file.ts#7
+  /(?:[a-zA-Z]:)?[/\\](?:[\w\-. ]+[/\\])+[\w\-. ]+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)/gi;
+// Match file paths with optional line numbers like: /path/to/file.ts#7-14 or C:\path\to\file.ts#7
 const FILE_PATH_WITH_LINES_REGEX =
-  /([a-zA-Z]:)?([/\\][\w\-. ]+)+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)#(\d+)(?:-(\d+))?/gi;
+  /(?:[a-zA-Z]:)?[/\\](?:[\w\-. ]+[/\\])+[\w\-. ]+\.(tsx?|jsx?|css|scss|json|md|py|java|go|rs|c|cpp|h|hpp|sh|yaml|yml|toml|xml|html|vue|svelte)#(\d+)(?:-(\d+))?/gi;
 
 /**
  * MarkdownRenderer component - renders markdown content with enhanced features
@@ -166,9 +167,22 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       const href = a.getAttribute('href') || '';
       const text = (a.textContent || '').trim();
 
+      // Helper function to check if a string looks like a code reference
+      const isCodeReference = (str: string): boolean => {
+        // Check if it looks like a code reference (e.g., module.property)
+        // Patterns like "vscode.contribution", "module.submodule.function"
+        const codeRefPattern = /^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)+$/;
+        return codeRefPattern.test(str);
+      };
+
       // If linkify turned a bare filename into http://<filename>, convert it back
       const httpMatch = href.match(/^https?:\/\/(.+)$/i);
       if (httpMatch && BARE_FILE_REGEX.test(text) && httpMatch[1] === text) {
+        // Skip if it looks like a code reference
+        if (isCodeReference(text)) {
+          return;
+        }
+
         // Treat as a file link instead of external URL
         const filePath = text; // no leading slash
         a.classList.add('file-path-link');
@@ -182,6 +196,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       if (/^(https?|mailto|ftp|data):/i.test(href)) return;
 
       const candidate = href || text;
+
+      // Skip if it looks like a code reference
+      if (isCodeReference(candidate)) {
+        return;
+      }
+
       if (
         FILE_PATH_WITH_LINES_NO_G.test(candidate) ||
         FILE_PATH_NO_G.test(candidate)
@@ -192,6 +212,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         a.setAttribute('title', `Open ${text || href}`);
         a.setAttribute('data-file-path', filePath);
       }
+    };
+
+    // Helper function to check if a string looks like a code reference
+    const isCodeReference = (str: string): boolean => {
+      // Check if it looks like a code reference (e.g., module.property)
+      // Patterns like "vscode.contribution", "module.submodule.function"
+      const codeRefPattern = /^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*)+$/;
+      return codeRefPattern.test(str);
     };
 
     const walk = (node: Node) => {
@@ -218,6 +246,20 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             while ((m = union.exec(text))) {
               const matchText = m[0];
               const idx = m.index;
+
+              // Skip if it looks like a code reference
+              if (isCodeReference(matchText)) {
+                // Just add the text as-is without creating a link
+                if (idx > lastIndex) {
+                  frag.appendChild(
+                    document.createTextNode(text.slice(lastIndex, idx)),
+                  );
+                }
+                frag.appendChild(document.createTextNode(matchText));
+                lastIndex = idx + matchText.length;
+                continue;
+              }
+
               if (idx > lastIndex) {
                 frag.appendChild(
                   document.createTextNode(text.slice(lastIndex, idx)),

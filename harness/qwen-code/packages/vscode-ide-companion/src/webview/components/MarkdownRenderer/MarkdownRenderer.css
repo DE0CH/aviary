@@ -135,7 +135,8 @@
   border: 1px solid var(--app-primary-border-color);
   border-radius: var(--corner-radius-small, 4px);
   padding: 0.2em 0.4em;
-  white-space: nowrap;
+  white-space: pre-wrap; /* 支持自动换行 */
+  word-break: break-word; /* 在必要时断词 */
 }
 
 .markdown-content pre {
@@ -207,7 +208,8 @@
   background: none;
   border: none;
   padding: 0;
-  white-space: pre;
+  white-space: pre-wrap; /* 支持自动换行 */
+  word-break: break-word; /* 在必要时断词 */
 }
 
 .markdown-content .file-path-link {

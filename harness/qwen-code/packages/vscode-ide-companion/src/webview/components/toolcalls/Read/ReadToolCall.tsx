@@ -101,7 +101,7 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     return (
       <ToolCallContainer
         label={'Read'}
-        className="read-tool-call-success"
+        className={`read-tool-call-${containerStatus}`}
         status={containerStatus}
         toolCallId={toolCallId}
         labelSuffix={
@@ -125,7 +125,7 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     return (
       <ToolCallContainer
         label={'Read'}
-        className="read-tool-call-success"
+        className={`read-tool-call-${containerStatus}`}
         status={containerStatus}
         toolCallId={toolCallId}
         labelSuffix={

@@ -280,7 +280,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           vscode.window.showInformationMessage(
             'Please wait while we connect to Qwen Code...',
           );
-          await vscode.commands.executeCommand('qwenCode.login');
+          await vscode.commands.executeCommand('qwen-code.login');
         }
       }
       return;
@@ -306,7 +306,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           vscode.window.showInformationMessage(
             'Please wait while we connect to Qwen Code...',
           );
-          await vscode.commands.executeCommand('qwenCode.login');
+          await vscode.commands.executeCommand('qwen-code.login');
         }
       }
       return;
@@ -420,7 +420,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -456,7 +456,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else {
           return;
@@ -514,7 +514,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -551,7 +551,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else if (selection === 'View Offline') {
           // Show messages from local cache only
@@ -653,7 +653,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -709,7 +709,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
                 if (this.loginHandler) {
                   await this.loginHandler();
                 } else {
-                  await vscode.commands.executeCommand('qwenCode.login');
+                  await vscode.commands.executeCommand('qwen-code.login');
                 }
               }
 
@@ -757,7 +757,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -807,7 +807,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -870,7 +870,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -917,7 +917,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -983,7 +983,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else if (selection === 'View Offline') {
           const messages =
@@ -1034,7 +1034,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -1084,7 +1084,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 

@@ -6,9 +6,6 @@
 
 import { CliDetector, type CliDetectionResult } from './cliDetector.js';
 
-/**
- * Minimum CLI version that supports session/list and session/load ACP methods
- */
 export const MIN_CLI_VERSION_FOR_SESSION_METHODS = '0.4.0';
 
 /**

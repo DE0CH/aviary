@@ -9,17 +9,17 @@
 export default {
   content: [
     // Progressive adoption strategy: Only scan newly created Tailwind components
-    // './src/webview/App.tsx',
+    './src/webview/App.tsx',
     './src/webview/**/*.{js,jsx,ts,tsx}',
-    // './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
-    // './src/webview/components/toolcalls/**/*.{js,jsx,ts,tsx}',
-    // './src/webview/components/InProgressToolCall.tsx',
-    // './src/webview/components/MessageContent.tsx',
-    // './src/webview/components/InputForm.tsx',
-    // './src/webview/components/PermissionDrawer.tsx',
-    // './src/webview/components/PlanDisplay.tsx',
-    // './src/webview/components/session/SessionSelector.tsx',
-    // './src/webview/components/messages/UserMessage.tsx',
+    './src/webview/components/messages/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/toolcalls/**/*.{js,jsx,ts,tsx}',
+    './src/webview/components/InProgressToolCall.tsx',
+    './src/webview/components/MessageContent.tsx',
+    './src/webview/components/InputForm.tsx',
+    './src/webview/components/PermissionDrawer.tsx',
+    './src/webview/components/PlanDisplay.tsx',
+    './src/webview/components/session/SessionSelector.tsx',
+    './src/webview/components/messages/UserMessage.tsx',
   ],
   theme: {
     extend: {

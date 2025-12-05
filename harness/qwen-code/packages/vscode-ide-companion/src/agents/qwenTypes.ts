@@ -18,7 +18,7 @@ export interface PlanEntry {
   /** Entry content */
   content: string;
   /** Priority */
-  priority: 'high' | 'medium' | 'low';
+  priority?: 'high' | 'medium' | 'low';
   /** Status */
   status: 'pending' | 'in_progress' | 'completed';
 }

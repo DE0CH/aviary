@@ -16,6 +16,7 @@ import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { authMethod } from '../auth/index.js';
+import { runQwenCodeCommand } from '../commands/index.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -1067,7 +1068,7 @@ export class WebViewProvider {
     if (useTerminal) {
       // In terminal mode, execute the runQwenCode command to open a new terminal
       try {
-        await vscode.commands.executeCommand('qwen-code.runQwenCode');
+        await vscode.commands.executeCommand(runQwenCodeCommand);
         console.log('[WebViewProvider] Opened new terminal session');
       } catch (error) {
         console.error(

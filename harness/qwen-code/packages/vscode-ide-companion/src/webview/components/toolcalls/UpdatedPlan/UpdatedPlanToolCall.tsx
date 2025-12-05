@@ -11,13 +11,9 @@ import type { BaseToolCallProps } from '../shared/types.js';
 import { ToolCallContainer } from '../shared/LayoutComponents.js';
 import { groupContent, safeTitle } from '../shared/utils.js';
 import { CheckboxDisplay } from '../../ui/CheckboxDisplay.js';
+import type { PlanEntry } from '../../../../agents/qwenTypes.js';
 
 type EntryStatus = 'pending' | 'in_progress' | 'completed';
-
-interface PlanEntry {
-  content: string;
-  status: EntryStatus;
-}
 
 const mapToolStatusToBullet = (
   status: import('../shared/types.js').ToolCallStatus,
