@@ -159,6 +159,47 @@
   line-height: 1.5;
 }
 
+.markdown-content .code-block-wrapper {
+  position: relative;
+}
+
+.markdown-content .code-block-wrapper pre {
+  /* Reserve space so the copy button never overlaps code text */
+  padding-top: 2rem; /* room for the button height */
+  padding-right: 2.4rem; /* room for the button width */
+}
+
+.markdown-content .code-block-wrapper .copy-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  border-radius: 4px;
+  border: 1px solid var(--app-primary-border-color);
+  background-color: var(--app-elevated-background, rgba(255, 255, 255, 0.06));
+  color: var(--app-secondary-foreground);
+  cursor: pointer;
+  z-index: 1;
+  opacity: 0; /* show on hover to reduce visual noise */
+  transition: opacity 100ms ease-in-out;
+}
+
+.markdown-content .code-block-wrapper:hover .copy-button,
+.markdown-content .code-block-wrapper .copy-button:focus {
+  opacity: 1;
+}
+
+.markdown-content .code-block-wrapper .copy-button:hover {
+  background-color: var(--app-list-hover-background, rgba(127, 127, 127, 0.1));
+}
+
+.markdown-content .code-block-wrapper .copy-button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
 .markdown-content pre code {
   background: none;
   border: none;
