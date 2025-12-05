@@ -51,6 +51,8 @@ export const InfoBanner: React.FC<InfoBannerProps> = ({
       style={{
         gap: '12px',
         padding: '8px 16px',
+        maxWidth: '500px',
+        margin: '0 auto',
       }}
     >
       <div className="flex items-center flex-1 min-w-0" style={{ gap: '8px' }}>
