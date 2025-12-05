@@ -1,8 +1,15 @@
 export default {
   subagents: 'Subagents',
-  checkpointing: 'Checkpointing',
-  sandbox: 'Sandbox Support',
+  'sub-commands': 'Sub Commands',
+  checkpointing: {
+    display: 'hidden',
+  },
   headless: 'Headless Mode',
-  'welcome-back': 'Welcome Back',
+  'welcome-back': {
+    display: 'hidden',
+  },
+  'approval-mode': 'Approval Mode',
   'token-caching': 'Token Caching',
+  mcp: 'MCP',
+  sandbox: 'Sandboxing',
 };
