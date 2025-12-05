@@ -22,7 +22,7 @@ import {
   isSDKSystemMessage,
   type SDKMessage,
   type SDKSystemMessage,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   extractText,
@@ -51,12 +51,6 @@ describe('SDK MCP Server Integration (E2E)', () => {
   describe('Basic SDK MCP Tool Usage', () => {
     it('should use SDK MCP tool to perform a simple calculation', async () => {
       // Define a simple calculator tool using the tool() API with Zod schema
-      console.log(
-        z.object({
-          a: z.number().describe('First number'),
-          b: z.number().describe('Second number'),
-        }),
-      );
       const calculatorTool = tool(
         'calculate_sum',
         'Calculate the sum of two numbers',
@@ -82,7 +76,6 @@ describe('SDK MCP Server Integration (E2E)', () => {
         options: {
           ...SHARED_TEST_OPTIONS,
           cwd: testDir,
-          stderr: (message) => console.error(message),
           mcpServers: {
             'sdk-calculator': serverConfig,
           },
@@ -96,7 +89,6 @@ describe('SDK MCP Server Integration (E2E)', () => {
       try {
         for await (const message of q) {
           messages.push(message);
-          console.log(JSON.stringify(message, null, 2));
 
           if (isSDKAssistantMessage(message)) {
             const toolUseBlocks = findToolUseBlocks(message, 'calculate_sum');
@@ -172,7 +164,6 @@ describe('SDK MCP Server Integration (E2E)', () => {
             assistantText += extractText(message.message.content);
           }
         }
-        console.log(JSON.stringify(messages, null, 2));
 
         // Validate tool was called
         expect(foundToolUse).toBe(true);

@@ -19,7 +19,7 @@ import {
   type SDKMessage,
   type ToolUseBlock,
   type SDKSystemMessage,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   createMCPServer,
