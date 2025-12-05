@@ -900,6 +900,35 @@ export class WebViewProvider {
       });
     }
 
+    // Listen for text selection changes (restore path)
+    const selectionChangeDisposableRestore =
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        const editor = event.textEditor;
+        if (editor === vscode.window.activeTextEditor) {
+          const filePath = editor.document.uri.fsPath || null;
+          const fileName = filePath ? getFileName(filePath) : null;
+
+          // Get selection info if there is any selected text
+          let selectionInfo = null;
+          if (!event.selections[0].isEmpty) {
+            const selection = event.selections[0];
+            selectionInfo = {
+              startLine: selection.start.line + 1,
+              endLine: selection.end.line + 1,
+            };
+          }
+
+          // Update last known state
+          _lastEditorState = { fileName, filePath, selection: selectionInfo };
+
+          this.sendMessageToWebView({
+            type: 'activeEditorChanged',
+            data: { fileName, filePath, selection: selectionInfo },
+          });
+        }
+      });
+    this.disposables.push(selectionChangeDisposableRestore);
+
     // Capture the tab reference on restore
     this.panelManager.captureTab();
 
