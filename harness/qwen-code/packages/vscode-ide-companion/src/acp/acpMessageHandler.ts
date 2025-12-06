@@ -107,7 +107,8 @@ export class AcpMessageHandler {
     if ('result' in message) {
       console.log(
         `[ACP] Response for ${method}:`,
-        JSON.stringify(message.result).substring(0, 200),
+        // JSON.stringify(message.result).substring(0, 200),
+        message.result,
       );
       if (
         message.result &&
@@ -204,11 +205,11 @@ export class AcpMessageHandler {
   }> {
     try {
       const response = await callbacks.onPermissionRequest(params);
-      const optionId = response.optionId;
+      const optionId = response?.optionId;
       console.log('[ACP] Permission request:', optionId);
       // Handle cancel, deny, or allow
       let outcome: string;
-      if (optionId.includes('reject') || optionId === 'cancel') {
+      if (optionId && (optionId.includes('reject') || optionId === 'cancel')) {
         outcome = 'cancelled';
       } else {
         outcome = 'selected';

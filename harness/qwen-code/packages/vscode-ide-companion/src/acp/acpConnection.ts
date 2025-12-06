@@ -26,29 +26,15 @@ import { determineNodePathForCli } from '../cli/cliPathDetector.js';
  * ACP Connection Handler for VSCode Extension
  *
  * This class implements the client side of the ACP (Agent Communication Protocol).
- *
- * Implementation Status:
- *
- * Client Methods (Methods this class implements, called by CLI):
- * ✅ session/update - Handle session updates via onSessionUpdate callback
- * ✅ session/request_permission - Request user permission for tool execution
- * ✅ fs/read_text_file - Read file from workspace
- * ✅ fs/write_text_file - Write file to workspace
- *
- * Agent Methods (Methods CLI implements, called by this class):
- * ✅ initialize - Initialize ACP protocol connection
- * ✅ authenticate - Authenticate with selected auth method
- * ✅ session/new - Create new chat session
- * ✅ session/prompt - Send user message to agent
- * ✅ session/cancel - Cancel current generation
- * ✅ session/load - Load previous session
- * ✅ session/save - Save current session
  */
 export class AcpConnection {
   private child: ChildProcess | null = null;
   private pendingRequests = new Map<number, PendingRequest<unknown>>();
   private nextRequestId = { value: 0 };
   private backend: AcpBackend | null = null;
+  // Remember the working dir provided at connect() so later ACP calls
+  // that require cwd (e.g. session/list) can include it.
+  private workingDir: string = process.cwd();
 
   private messageHandler: AcpMessageHandler;
   private sessionManager: AcpSessionManager;
@@ -83,6 +69,7 @@ export class AcpConnection {
     }
 
     this.backend = backend;
+    this.workingDir = workingDir;
 
     const isWindows = process.platform === 'win32';
     const env = { ...process.env };
@@ -327,12 +314,16 @@ export class AcpConnection {
    * @param sessionId - Session ID
    * @returns Load response
    */
-  async loadSession(sessionId: string): Promise<AcpResponse> {
+  async loadSession(
+    sessionId: string,
+    cwdOverride?: string,
+  ): Promise<AcpResponse> {
     return this.sessionManager.loadSession(
       sessionId,
       this.child,
       this.pendingRequests,
       this.nextRequestId,
+      cwdOverride || this.workingDir,
     );
   }
 
@@ -341,11 +332,16 @@ export class AcpConnection {
    *
    * @returns Session list response
    */
-  async listSessions(): Promise<AcpResponse> {
+  async listSessions(options?: {
+    cursor?: number;
+    size?: number;
+  }): Promise<AcpResponse> {
     return this.sessionManager.listSessions(
       this.child,
       this.pendingRequests,
       this.nextRequestId,
+      this.workingDir,
+      options,
     );
   }
 

@@ -196,7 +196,7 @@ export class AcpSessionManager {
       nextRequestId,
     );
 
-    this.sessionId = response.sessionId || null;
+    this.sessionId = (response && response.sessionId) || null;
     console.log('[ACP] Session created with ID:', this.sessionId);
     return response;
   }
@@ -247,11 +247,12 @@ export class AcpSessionManager {
     child: ChildProcess | null,
     pendingRequests: Map<number, PendingRequest<unknown>>,
     nextRequestId: { value: number },
+    cwd: string = process.cwd(),
   ): Promise<AcpResponse> {
     console.log('[ACP] Sending session/load request for session:', sessionId);
     console.log('[ACP] Request parameters:', {
       sessionId,
-      cwd: process.cwd(),
+      cwd,
       mcpServers: [],
     });
 
@@ -260,7 +261,7 @@ export class AcpSessionManager {
         AGENT_METHODS.session_load,
         {
           sessionId,
-          cwd: process.cwd(),
+          cwd,
           mcpServers: [],
         },
         child,
@@ -274,10 +275,13 @@ export class AcpSessionManager {
       );
 
       // Check if response contains an error
-      if (response.error) {
+      if (response && response.error) {
         console.error('[ACP] Session load returned error:', response.error);
       } else {
         console.log('[ACP] Session load succeeded');
+        // session/load returns null on success per schema; update local sessionId
+        // so subsequent prompts use the loaded session.
+        this.sessionId = sessionId;
       }
 
       return response;
@@ -302,12 +306,19 @@ export class AcpSessionManager {
     child: ChildProcess | null,
     pendingRequests: Map<number, PendingRequest<unknown>>,
     nextRequestId: { value: number },
+    cwd: string = process.cwd(),
+    options?: { cursor?: number; size?: number },
   ): Promise<AcpResponse> {
     console.log('[ACP] Requesting session list...');
     try {
+      // session/list requires cwd in params per ACP schema
+      const params: Record<string, unknown> = { cwd };
+      if (options?.cursor !== undefined) params.cursor = options.cursor;
+      if (options?.size !== undefined) params.size = options.size;
+
       const response = await this.sendRequest<AcpResponse>(
         AGENT_METHODS.session_list,
-        {},
+        params,
         child,
         pendingRequests,
         nextRequestId,
