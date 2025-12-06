@@ -13,7 +13,9 @@ import { BaseMessageHandler } from './BaseMessageHandler.js';
  */
 export class SettingsMessageHandler extends BaseMessageHandler {
   canHandle(messageType: string): boolean {
-    return ['openSettings', 'recheckCli'].includes(messageType);
+    return ['openSettings', 'recheckCli', 'setApprovalMode'].includes(
+      messageType,
+    );
   }
 
   async handle(message: { type: string; data?: unknown }): Promise<void> {
@@ -24,6 +26,14 @@ export class SettingsMessageHandler extends BaseMessageHandler {
 
       case 'recheckCli':
         await this.handleRecheckCli();
+        break;
+
+      case 'setApprovalMode':
+        await this.handleSetApprovalMode(
+          message.data as {
+            modeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+          },
+        );
         break;
 
       default:
@@ -65,6 +75,31 @@ export class SettingsMessageHandler extends BaseMessageHandler {
       this.sendToWebView({
         type: 'error',
         data: { message: `Failed to recheck CLI: ${error}` },
+      });
+    }
+  }
+
+  /**
+   * Set approval mode via agent (ACP session/set_mode)
+   */
+  private async handleSetApprovalMode(data?: {
+    modeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+  }): Promise<void> {
+    try {
+      const modeId = (data?.modeId || 'default') as
+        | 'plan'
+        | 'default'
+        | 'auto-edit'
+        | 'yolo';
+      await this.agentManager.setApprovalModeFromUi(
+        modeId === 'plan' ? 'plan' : modeId === 'auto-edit' ? 'auto' : 'ask',
+      );
+      // No explicit response needed; WebView listens for modeChanged
+    } catch (error) {
+      console.error('[SettingsMessageHandler] Failed to set mode:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to set mode: ${error}` },
       });
     }
   }

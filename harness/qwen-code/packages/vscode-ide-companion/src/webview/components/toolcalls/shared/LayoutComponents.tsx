@@ -47,10 +47,8 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   <div
     className={`qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
   >
-    {/* Timeline connector line using ::after pseudo-element */}
-    {/* TODO: gap-0 */}
-    <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
-      <div className="flex items-center gap-1 relative min-w-0">
+    <div className="toolcall-content-wrapper flex flex-col gap-2 min-w-0 max-w-full">
+      <div className="flex items-baseline gap-1 relative min-w-0">
         <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
           {label}
         </span>

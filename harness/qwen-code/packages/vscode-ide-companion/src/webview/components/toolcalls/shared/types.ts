@@ -56,6 +56,7 @@ export interface ToolCallData {
  */
 export interface BaseToolCallProps {
   toolCall: ToolCallData;
+  // Optional timeline flags for rendering connector line cropping
   isFirst?: boolean;
   isLast?: boolean;
 }

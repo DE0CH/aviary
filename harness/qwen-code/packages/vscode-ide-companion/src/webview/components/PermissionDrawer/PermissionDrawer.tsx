@@ -185,7 +185,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
         />
 
         {/* Title + Description (from toolCall.title) */}
-        <div className="relative z-[1] px-1 text-[1.1em] text-[var(--app-primary-foreground)] flex flex-col min-h-0">
+        <div className="relative z-[1] text-[1.1em] text-[var(--app-primary-foreground)] flex flex-col min-h-0">
           <div className="font-bold text-[var(--app-primary-foreground)] mb-0.5">
             {getTitle()}
           </div>
@@ -198,6 +198,11 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
               <div
                 /* 13px，常规字重；正常空白折行 + 长词断行；最多 3 行溢出省略 */
                 className="text-[13px] font-normal text-[var(--app-secondary-foreground)] opacity-90 font-mono whitespace-normal break-words q-line-clamp-3 mb-2"
+                style={{
+                  fontSize: '.9em',
+                  color: 'var(--app-secondary-foreground)',
+                  marginBottom: '6px',
+                }}
                 title={toolCall.title}
               >
                 {toolCall.title}
@@ -206,14 +211,14 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
         </div>
 
         {/* Options */}
-        <div className="relative z-[1] flex flex-col gap-1 px-1 pb-1">
+        <div className="relative z-[1] flex flex-col gap-1 pb-1">
           {options.map((option, index) => {
             const isFocused = focusedIndex === index;
 
             return (
               <button
                 key={option.optionId}
-                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] hover:bg-[var(--app-list-hover-background)] ${
+                className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] transition-colors duration-150 text-[var(--app-primary-foreground)] hover:bg-[var(--app-button-background)] ${
                   isFocused
                     ? 'text-[var(--app-list-active-foreground)] bg-[var(--app-list-active-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
                     : 'hover:bg-[var(--app-button-background)] hover:text-[var(--app-button-foreground)] hover:font-bold hover:relative hover:border-0'
@@ -222,15 +227,11 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 onMouseEnter={() => setFocusedIndex(index)}
               >
                 {/* Number badge */}
-                {/* Plain number badge without hover background */}
-                <span className="inline-flex items-center justify-center min-w-[10px] h-5 font-semibold">
+                <span className="inline-flex items-center justify-center min-w-[10px] h-5 font-semibold opacity-60">
                   {index + 1}
                 </span>
                 {/* Option text */}
                 <span className="font-semibold">{option.name}</span>
-
-                {/* Always badge */}
-                {/* {isAlways && <span className="text-sm">⚡</span>} */}
               </button>
             );
           })}
@@ -283,15 +284,12 @@ const CustomMessageInputRow: React.FC<CustomMessageInputRowProps> = ({
   inputRef,
 }) => (
   <div
-    // 无过渡：hover 样式立即生效；输入行不加 hover 背景，也不加粗文字
     className={`flex items-center gap-2 px-2 py-1.5 text-left w-full box-border rounded-[4px] border-0 shadow-[inset_0_0_0_1px_var(--app-transparent-inner-border)] cursor-text text-[var(--app-primary-foreground)] ${
       isFocused ? 'text-[var(--app-list-active-foreground)]' : ''
     }`}
     onMouseEnter={onFocusRow}
     onClick={() => inputRef.current?.focus()}
   >
-    {/* 输入行不显示序号徽标 */}
-    {/* Input field */}
     <input
       ref={inputRef}
       type="text"

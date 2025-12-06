@@ -16,6 +16,7 @@ import { FileLink } from '../../../ui/FileLink.js';
 import type { ToolCallContainerProps } from '../../shared/LayoutComponents.js';
 import { useVSCode } from '../../../../hooks/useVSCode.js';
 import { handleOpenDiff } from '../../../../utils/diffUtils.js';
+import { DiffDisplay } from '../../shared/DiffDisplay.js';
 
 export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   label,
@@ -109,6 +110,64 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toolCallId]);
 
+  // Failed case: show explicit failed message and render inline diffs
+  if (toolCall.status === 'failed') {
+    const firstDiff = diffs[0];
+    const path = firstDiff?.path || locations?.[0]?.path || '';
+    const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
+    return (
+      <div
+        className={`qwen-message message-item relative py-2 select-text toolcall-container toolcall-status-${containerStatus}`}
+      >
+        <div className="toolcall-edit-content flex flex-col gap-1 min-w-0 max-w-full">
+          <div className="flex items-center justify-between min-w-0">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="text-[13px] leading-none font-bold text-[var(--app-primary-foreground)]">
+                Edit
+              </span>
+              {path && (
+                <FileLink
+                  path={path}
+                  showFullPath={false}
+                  className="font-mono text-[var(--app-secondary-foreground)] hover:underline"
+                />
+              )}
+            </div>
+          </div>
+          {/* Failed state text (replace summary) */}
+          <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
+            <span className="flex-shrink-0 w-full">edit failed</span>
+          </div>
+          {/* Inline diff preview(s) */}
+          {diffs.length > 0 && (
+            <div className="flex flex-col gap-2 mt-1">
+              {diffs.map(
+                (
+                  item: import('../../shared/types.js').ToolCallContent,
+                  idx: number,
+                ) => (
+                  <DiffDisplay
+                    key={`diff-${idx}`}
+                    path={item.path}
+                    oldText={item.oldText}
+                    newText={item.newText}
+                    onOpenDiff={() =>
+                      handleOpenDiffInternal(
+                        item.path || path,
+                        item.oldText,
+                        item.newText,
+                      )
+                    }
+                  />
+                ),
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Error case: show error
   if (errors.length > 0) {
     const path = diffs[0]?.path || locations?.[0]?.path || '';
@@ -122,7 +181,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
             <FileLink
               path={path}
               showFullPath={false}
-              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+              className="text-xs font-mono hover:underline"
             />
           ) : undefined
         }
@@ -141,21 +200,19 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     return (
       <div
         className={`qwen-message message-item relative py-2 select-text toolcall-container toolcall-status-${containerStatus}`}
-        title="Open diff in VS Code"
       >
-        {/* IMPORTANT: Always include min-w-0/max-w-full on inner wrappers to prevent overflow. */}
         <div className="toolcall-edit-content flex flex-col gap-1 min-w-0 max-w-full">
           <div className="flex items-center justify-between min-w-0">
             <div className="flex items-baseline gap-1.5 min-w-0">
               {/* Align the inline Edit label styling with shared toolcall label: larger + bold */}
-              <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+              <span className="text-[13px] leading-none font-bold text-[var(--app-primary-foreground)]">
                 Edit
               </span>
               {path && (
                 <FileLink
                   path={path}
                   showFullPath={false}
-                  className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+                  className="font-mono text-[var(--app-secondary-foreground)] hover:underline"
                 />
               )}
             </div>

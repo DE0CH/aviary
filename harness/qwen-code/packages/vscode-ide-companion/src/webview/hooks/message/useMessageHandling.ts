@@ -70,26 +70,32 @@ export const useMessageHandling = () => {
   /**
    * Add stream chunk
    */
-  const appendStreamChunk = useCallback((chunk: string) => {
-    setMessages((prev) => {
-      let idx = streamingMessageIndexRef.current;
-      const next = prev.slice();
+  const appendStreamChunk = useCallback(
+    (chunk: string) => {
+      // Ignore late chunks after user cancelled streaming (until next streamStart)
+      if (!isStreaming) return;
 
-      // If there is no active placeholder (e.g., after a tool call), start a new one
-      if (idx === null) {
-        idx = next.length;
-        streamingMessageIndexRef.current = idx;
-        next.push({ role: 'assistant', content: '', timestamp: Date.now() });
-      }
+      setMessages((prev) => {
+        let idx = streamingMessageIndexRef.current;
+        const next = prev.slice();
 
-      if (idx < 0 || idx >= next.length) {
-        return prev;
-      }
-      const target = next[idx];
-      next[idx] = { ...target, content: (target.content || '') + chunk };
-      return next;
-    });
-  }, []);
+        // If there is no active placeholder (e.g., after a tool call), start a new one
+        if (idx === null) {
+          idx = next.length;
+          streamingMessageIndexRef.current = idx;
+          next.push({ role: 'assistant', content: '', timestamp: Date.now() });
+        }
+
+        if (idx < 0 || idx >= next.length) {
+          return prev;
+        }
+        const target = next[idx];
+        next[idx] = { ...target, content: (target.content || '') + chunk };
+        return next;
+      });
+    },
+    [isStreaming],
+  );
 
   /**
    * Break current assistant stream segment (e.g., when a tool call starts/updates)
@@ -150,6 +156,8 @@ export const useMessageHandling = () => {
     endStreaming,
     // Thought handling
     appendThinkingChunk: (chunk: string) => {
+      // Ignore late thoughts after user cancelled streaming
+      if (!isStreaming) return;
       setMessages((prev) => {
         let idx = thinkingMessageIndexRef.current;
         const next = prev.slice();

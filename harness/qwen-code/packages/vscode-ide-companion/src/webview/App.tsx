@@ -224,6 +224,7 @@ export const App: React.FC = () => {
     handlePermissionRequest: setPermissionRequest,
     inputFieldRef,
     setInputText,
+    setEditMode,
   });
 
   // Auto-scroll handling: keep the view pinned to bottom when new content arrives,
@@ -473,15 +474,22 @@ export const App: React.FC = () => {
   // Handle toggle edit mode
   const handleToggleEditMode = useCallback(() => {
     setEditMode((prev) => {
-      if (prev === 'ask') {
-        return 'auto';
+      const next: EditMode =
+        prev === 'ask' ? 'auto' : prev === 'auto' ? 'plan' : 'ask';
+      // Notify extension to set approval mode via ACP
+      try {
+        const toAcp =
+          next === 'plan' ? 'plan' : next === 'auto' ? 'auto-edit' : 'default';
+        vscode.postMessage({
+          type: 'setApprovalMode',
+          data: { modeId: toAcp },
+        });
+      } catch {
+        /* no-op */
       }
-      if (prev === 'auto') {
-        return 'plan';
-      }
-      return 'ask';
+      return next;
     });
-  }, []);
+  }, [vscode]);
 
   // Handle toggle thinking
   const handleToggleThinking = () => {

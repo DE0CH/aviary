@@ -15,17 +15,7 @@ export const InterruptedMessage: React.FC<InterruptedMessageProps> = ({
   text = 'Interrupted',
 }) => (
   <div className="flex gap-0 items-start text-left py-2 flex-col opacity-85">
-    <div
-      className="qwen-message message-item interrupted-item"
-      style={{
-        width: '100%',
-        alignItems: 'flex-start',
-        paddingLeft: '10px', // keep alignment with other assistant messages, but no status icon
-        position: 'relative',
-        paddingTop: '8px',
-        paddingBottom: '8px',
-      }}
-    >
+    <div className="interrupted-item w-full relative">
       <span className="opacity-70 italic">{text}</span>
     </div>
   </div>

@@ -43,6 +43,11 @@ export default {
           ivory: '#f5f5ff',
           slate: '#141420',
           green: '#6bcf7f',
+          // Status colors used by toolcall components
+          success: '#74c991',
+          error: '#c74e39',
+          warning: '#e1c08d',
+          loading: 'var(--app-secondary-foreground)',
         },
       },
       borderRadius: {

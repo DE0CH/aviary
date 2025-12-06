@@ -67,7 +67,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           <div
             role="button"
             tabIndex={0}
-            className="mr inline-flex items-center py-0 pl-1 pr-2 ml-1 gap-1 rounded-sm cursor-pointer relative opacity-50"
+            className="mr inline-flex items-center py-0 pr-2 gap-1 rounded-sm cursor-pointer relative opacity-50"
             onClick={() => fileContext && onFileClick?.(fileContext.filePath)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {

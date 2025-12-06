@@ -8,16 +8,41 @@
 
 import type React from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
-import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import type { ToolCallContainerProps } from '../shared/LayoutComponents.js';
 import { groupContent, safeTitle } from '../shared/utils.js';
 import { CheckboxDisplay } from '../../ui/CheckboxDisplay.js';
+import type { PlanEntry } from '../../../../agents/qwenTypes.js';
 
 type EntryStatus = 'pending' | 'in_progress' | 'completed';
 
-interface PlanEntry {
-  content: string;
-  status: EntryStatus;
-}
+export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
+  label,
+  status = 'success',
+  children,
+  toolCallId: _toolCallId,
+  labelSuffix,
+  className: _className,
+}) => (
+  <div
+    className={`qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+  >
+    <div className="UpdatedPlanToolCall toolcall-content-wrapper flex flex-col gap-2 min-w-0 max-w-full">
+      <div className="flex items-baseline gap-1 relative min-w-0">
+        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+          {label}
+        </span>
+        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
+          {labelSuffix}
+        </span>
+      </div>
+      {children && (
+        <div className="text-[var(--app-secondary-foreground)] py-1">
+          {children}
+        </div>
+      )}
+    </div>
+  </div>
+);
 
 const mapToolStatusToBullet = (
   status: import('../shared/types.js').ToolCallStatus,
