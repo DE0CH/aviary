@@ -56,17 +56,17 @@
         "title": "Qwen Code: View Third-Party Notices"
       },
       {
-        "command": "qwenCode.openChat",
+        "command": "qwen-code.openChat",
         "title": "Qwen Code: Open Chat",
         "icon": "./assets/icon.png"
       },
       {
-        "command": "qwenCode.clearAuthCache",
-        "title": "Qwen Code: Clear Authentication Cache"
+        "command": "qwen-code.login",
+        "title": "Qwen Code: Login"
       },
       {
-        "command": "qwenCode.login",
-        "title": "Qwen Code: Login"
+        "command": "qwen-code.clearAuthCache",
+        "title": "Qwen Code: Clear Authentication Cache"
       }
     ],
     "configuration": {
@@ -90,7 +90,7 @@
           "when": "qwen.diff.isVisible"
         },
         {
-          "command": "qwenCode.login",
+          "command": "qwen-code.login",
           "when": "false"
         }
       ],
@@ -106,7 +106,7 @@
           "group": "navigation"
         },
         {
-          "command": "qwenCode.openChat",
+          "command": "qwen-code.openChat",
           "group": "navigation"
         }
       ]
@@ -123,7 +123,7 @@
         "when": "qwen.diff.isVisible"
       },
       {
-        "command": "qwenCode.openChat",
+        "command": "qwen-code.openChat",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a"
       }
