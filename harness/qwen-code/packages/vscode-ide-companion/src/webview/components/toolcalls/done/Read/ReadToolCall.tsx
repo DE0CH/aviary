@@ -8,15 +8,44 @@
 
 import type React from 'react';
 import { useCallback, useEffect, useMemo } from 'react';
-import type { BaseToolCallProps } from '../shared/types.js';
-import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import type { BaseToolCallProps } from '../../shared/types.js';
 import {
   groupContent,
   mapToolStatusToContainerStatus,
-} from '../shared/utils.js';
-import { FileLink } from '../../ui/FileLink.js';
-import { useVSCode } from '../../../hooks/useVSCode.js';
-import { handleOpenDiff } from '../../../utils/diffUtils.js';
+} from '../../shared/utils.js';
+import { FileLink } from '../../../ui/FileLink.js';
+import { useVSCode } from '../../../../hooks/useVSCode.js';
+import { handleOpenDiff } from '../../../../utils/diffUtils.js';
+import type { ToolCallContainerProps } from '../../shared/LayoutComponents.js';
+
+export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
+  label,
+  status = 'success',
+  children,
+  toolCallId: _toolCallId,
+  labelSuffix,
+  className: _className,
+}) => (
+  <div
+    className={`ReadToolCall qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+  >
+    <div className="toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
+      <div className="flex items-baseline gap-1.5 relative min-w-0">
+        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+          {label}
+        </span>
+        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
+          {labelSuffix}
+        </span>
+      </div>
+      {children && (
+        <div className="text-[var(--app-secondary-foreground)] py-1">
+          {children}
+        </div>
+      )}
+    </div>
+  </div>
+);
 
 /**
  * Specialized component for Read tool calls

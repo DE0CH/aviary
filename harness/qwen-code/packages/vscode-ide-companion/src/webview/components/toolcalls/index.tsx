@@ -10,14 +10,14 @@ import type React from 'react';
 import type { BaseToolCallProps } from './shared/types.js';
 import { shouldShowToolCall } from './shared/utils.js';
 import { GenericToolCall } from './GenericToolCall.js';
-import { ReadToolCall } from './Read/ReadToolCall.js';
+import { ReadToolCall } from './done/Read/ReadToolCall.js';
 import { WriteToolCall } from './Write/WriteToolCall.js';
-import { EditToolCall } from './Edit/EditToolCall.js';
+import { EditToolCall } from './done/Edit/EditToolCall.js';
 import { ExecuteToolCall as BashExecuteToolCall } from './Bash/Bash.js';
-import { ExecuteToolCall } from './Execute/Execute.js';
+import { ExecuteToolCall } from './done/Execute/Execute.js';
 import { UpdatedPlanToolCall } from './UpdatedPlan/UpdatedPlanToolCall.js';
 import { ExecuteNodeToolCall } from './ExecuteNode/ExecuteNodeToolCall.js';
-import { SearchToolCall } from './Search/SearchToolCall.js';
+import { SearchToolCall } from './done/Search/SearchToolCall.js';
 import { ThinkToolCall } from './Think/ThinkToolCall.js';
 
 /**
@@ -92,7 +92,9 @@ export const getToolCallComponent = (
 /**
  * Main tool call component that routes to specialized implementations
  */
-export const ToolCallRouter: React.FC<BaseToolCallProps> = ({ toolCall }) => {
+export const ToolCallRouter: React.FC<
+  BaseToolCallProps & { isFirst?: boolean; isLast?: boolean }
+> = ({ toolCall, isFirst, isLast }) => {
   // Check if we should show this tool call (hide internal ones)
   if (!shouldShowToolCall(toolCall.kind)) {
     return null;
@@ -102,7 +104,7 @@ export const ToolCallRouter: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const Component = getToolCallComponent(toolCall.kind, toolCall);
 
   // Render the specialized component
-  return <Component toolCall={toolCall} />;
+  return <Component toolCall={toolCall} isFirst={isFirst} isLast={isLast} />;
 };
 
 // Re-export types for convenience

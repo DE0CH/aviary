@@ -7,18 +7,46 @@
  */
 
 import type React from 'react';
-import type { BaseToolCallProps } from '../shared/types.js';
+import type { BaseToolCallProps } from '../../shared/types.js';
 import {
-  ToolCallContainer,
   ToolCallCard,
   ToolCallRow,
   LocationsList,
-} from '../shared/LayoutComponents.js';
+} from '../../shared/LayoutComponents.js';
 import {
   safeTitle,
   groupContent,
   mapToolStatusToContainerStatus,
-} from '../shared/utils.js';
+} from '../../shared/utils.js';
+
+import type { ToolCallContainerProps } from '../../shared/LayoutComponents.js';
+
+export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
+  label,
+  status = 'success',
+  children,
+  toolCallId: _toolCallId,
+  labelSuffix,
+  className: _className,
+}) => (
+  <div
+    className={`SearchToolCall qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+  >
+    <div className="toolcall-content-wrapper flex flex-col gap-0 min-w-0 max-w-full">
+      <div className="flex items-baseline gap-1.5 relative min-w-0">
+        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+          {label}
+        </span>
+        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
+          {labelSuffix}
+        </span>
+      </div>
+      {children && (
+        <div className="text-[var(--app-secondary-foreground)]">{children}</div>
+      )}
+    </div>
+  </div>
+);
 
 /**
  * Specialized component for Search tool calls

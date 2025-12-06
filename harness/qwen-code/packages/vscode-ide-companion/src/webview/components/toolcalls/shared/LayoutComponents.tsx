@@ -14,7 +14,7 @@ import './LayoutComponents.css';
 /**
  * Props for ToolCallContainer - Claude Code style layout
  */
-interface ToolCallContainerProps {
+export interface ToolCallContainerProps {
   /** Operation label (e.g., "Read", "Write", "Search") */
   label: string;
   /** Status for bullet color: 'success' | 'error' | 'warning' | 'loading' | 'default' */

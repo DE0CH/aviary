@@ -20,7 +20,13 @@ export const formatValue = (value: unknown): string => {
     return '';
   }
   if (typeof value === 'string') {
-    return value;
+    // TODO: 尝试从 string 取出 Output 部分
+    try {
+      value = (JSON.parse(value) as { output?: unknown }).output ?? value;
+    } catch (_error) {
+      // ignore JSON parse errors
+    }
+    return value as string;
   }
   // Handle Error objects specially
   if (value instanceof Error) {

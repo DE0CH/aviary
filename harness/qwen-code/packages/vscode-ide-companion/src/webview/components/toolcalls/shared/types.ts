@@ -56,6 +56,8 @@ export interface ToolCallData {
  */
 export interface BaseToolCallProps {
   toolCall: ToolCallData;
+  isFirst?: boolean;
+  isLast?: boolean;
 }
 
 /**

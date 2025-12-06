@@ -7,15 +7,42 @@
  */
 
 import { useEffect, useCallback, useMemo } from 'react';
-import type { BaseToolCallProps } from '../shared/types.js';
-import { ToolCallContainer } from '../shared/LayoutComponents.js';
+import type { BaseToolCallProps } from '../../shared/types.js';
 import {
   groupContent,
   mapToolStatusToContainerStatus,
-} from '../shared/utils.js';
-import { useVSCode } from '../../../hooks/useVSCode.js';
-import { FileLink } from '../../ui/FileLink.js';
-import { handleOpenDiff } from '../../../utils/diffUtils.js';
+} from '../../shared/utils.js';
+import { FileLink } from '../../../ui/FileLink.js';
+import type { ToolCallContainerProps } from '../../shared/LayoutComponents.js';
+import { useVSCode } from '../../../../hooks/useVSCode.js';
+import { handleOpenDiff } from '../../../../utils/diffUtils.js';
+
+export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
+  label,
+  status = 'success',
+  children,
+  toolCallId: _toolCallId,
+  labelSuffix,
+  className: _className,
+}) => (
+  <div
+    className={`qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
+  >
+    <div className="EditToolCall toolcall-content-wrapper flex flex-col gap-1 min-w-0 max-w-full">
+      <div className="flex items-baseline gap-1.5 relative min-w-0">
+        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+          {label}
+        </span>
+        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
+          {labelSuffix}
+        </span>
+      </div>
+      {children && (
+        <div className="text-[var(--app-secondary-foreground)]">{children}</div>
+      )}
+    </div>
+  </div>
+);
 
 /**
  * Calculate diff summary (added/removed lines)
@@ -58,9 +85,6 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     [vscode],
   );
 
-  // Extract filename from path
-  const getFileName = (path: string): string => path.split('/').pop() || path;
-
   // Automatically trigger openDiff when diff content is detected
   // Only trigger once per tool call by checking toolCallId
   useEffect(() => {
@@ -88,10 +112,9 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   // Error case: show error
   if (errors.length > 0) {
     const path = diffs[0]?.path || locations?.[0]?.path || '';
-    const fileName = path ? getFileName(path) : '';
     return (
       <ToolCallContainer
-        label={fileName ? 'Edit' : 'Edit'}
+        label={'Edit'}
         status="error"
         toolCallId={toolCallId}
         labelSuffix={
@@ -123,7 +146,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         {/* IMPORTANT: Always include min-w-0/max-w-full on inner wrappers to prevent overflow. */}
         <div className="toolcall-edit-content flex flex-col gap-1 min-w-0 max-w-full">
           <div className="flex items-center justify-between min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-baseline gap-1.5 min-w-0">
               {/* Align the inline Edit label styling with shared toolcall label: larger + bold */}
               <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
                 Edit
@@ -137,7 +160,7 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
               )}
             </div>
           </div>
-          <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
+          <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-baseline">
             <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
             <span className="flex-shrink-0 w-full">{summary}</span>
           </div>
@@ -148,13 +171,19 @@ export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
 
   // Success case without diff: show file in compact format
   if (locations && locations.length > 0) {
-    const fileName = getFileName(locations[0].path);
     const containerStatus = mapToolStatusToContainerStatus(toolCall.status);
     return (
       <ToolCallContainer
-        label={`Edited ${fileName}`}
+        label={`Edit`}
         status={containerStatus}
         toolCallId={toolCallId}
+        labelSuffix={
+          <FileLink
+            path={locations[0].path}
+            showFullPath={false}
+            className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+          />
+        }
       >
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 flex-row items-start w-full gap-1 flex items-center">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
