@@ -316,7 +316,7 @@ export interface QueryOptions {
   /**
    * Logging level for the SDK.
    * Controls the verbosity of log messages output by the SDK.
-   * @default 'info'
+   * @default 'error'
    */
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
 

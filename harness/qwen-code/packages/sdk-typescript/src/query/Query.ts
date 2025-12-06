@@ -5,9 +5,9 @@
  * Implements AsyncIterator protocol for message consumption.
  */
 
-const DEFAULT_CAN_USE_TOOL_TIMEOUT = 30_000;
+const DEFAULT_CAN_USE_TOOL_TIMEOUT = 60_000;
 const DEFAULT_MCP_REQUEST_TIMEOUT = 60_000;
-const DEFAULT_CONTROL_REQUEST_TIMEOUT = 30_000;
+const DEFAULT_CONTROL_REQUEST_TIMEOUT = 60_000;
 const DEFAULT_STREAM_CLOSE_TIMEOUT = 60_000;
 
 import { randomUUID } from 'node:crypto';
@@ -434,8 +434,9 @@ export class Query implements AsyncIterable<SDKMessage> {
     try {
       const canUseToolTimeout =
         this.options.timeout?.canUseTool ?? DEFAULT_CAN_USE_TOOL_TIMEOUT;
+      let timeoutId: NodeJS.Timeout | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(
+        timeoutId = setTimeout(
           () => reject(new Error('Permission callback timeout')),
           canUseToolTimeout,
         );
@@ -450,6 +451,10 @@ export class Query implements AsyncIterable<SDKMessage> {
         ),
         timeoutPromise,
       ]);
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
 
       if (result.behavior === 'allow') {
         return {
@@ -789,14 +794,20 @@ export class Query implements AsyncIterable<SDKMessage> {
       ) {
         const streamCloseTimeout =
           this.options.timeout?.streamClose ?? DEFAULT_STREAM_CLOSE_TIMEOUT;
-        await Promise.race([
-          this.firstResultReceivedPromise,
-          new Promise<void>((resolve) => {
-            setTimeout(() => {
-              resolve();
-            }, streamCloseTimeout);
-          }),
-        ]);
+        let timeoutId: NodeJS.Timeout | undefined;
+
+        const timeoutPromise = new Promise<void>((resolve) => {
+          timeoutId = setTimeout(() => {
+            logger.info('streamCloseTimeout resolved');
+            resolve();
+          }, streamCloseTimeout);
+        });
+
+        await Promise.race([this.firstResultReceivedPromise, timeoutPromise]);
+
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
 
       this.endInput();
