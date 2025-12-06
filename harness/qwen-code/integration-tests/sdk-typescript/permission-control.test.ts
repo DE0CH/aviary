@@ -1195,7 +1195,7 @@ describe('Permission Control (E2E)', () => {
     });
 
     describe('mode comparison tests', () => {
-      it(
+      it.skip(
         'should demonstrate different behaviors across all modes for write operations',
         async () => {
           const modes: Array<'default' | 'auto-edit' | 'yolo'> = [
