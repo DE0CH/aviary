@@ -220,16 +220,28 @@ export class QwenAgentManager {
         const response = await this.connection.listSessions();
         console.log('[QwenAgentManager] ACP session list response:', response);
 
-        if (response.result && Array.isArray(response.result)) {
-          const sessions = response.result.map((session) => ({
-            id: session.sessionId || session.id,
-            sessionId: session.sessionId || session.id,
-            title: session.title || session.name || 'Untitled Session',
-            name: session.title || session.name || 'Untitled Session',
-            startTime: session.startTime,
-            lastUpdated: session.lastUpdated,
-            messageCount: session.messageCount || 0,
-            projectHash: session.projectHash,
+        // sendRequest resolves with the JSON-RPC "result" directly
+        // Newer CLI returns an object: { items: [...], nextCursor?, hasMore }
+        // Older prototypes might return an array. Support both.
+        const res: any = response as any;
+        const items: any[] = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.items)
+          ? res.items
+          : [];
+
+        if (items.length > 0) {
+          const sessions = items.map((item) => ({
+            id: item.sessionId || item.id,
+            sessionId: item.sessionId || item.id,
+            title: item.title || item.name || item.prompt || 'Untitled Session',
+            name: item.title || item.name || item.prompt || 'Untitled Session',
+            startTime: item.startTime,
+            lastUpdated: item.mtime || item.lastUpdated,
+            messageCount: item.messageCount || 0,
+            projectHash: item.projectHash,
+            filePath: item.filePath,
+            cwd: item.cwd,
           }));
 
           console.log(
@@ -283,6 +295,100 @@ export class QwenAgentManager {
   }
 
   /**
+   * Get session list (paged)
+   * Uses ACP session/list with cursor-based pagination when available.
+   * Falls back to file system scan with equivalent pagination semantics.
+   */
+  async getSessionListPaged(params?: {
+    cursor?: number;
+    size?: number;
+  }): Promise<{
+    sessions: Array<Record<string, unknown>>;
+    nextCursor?: number;
+    hasMore: boolean;
+  }> {
+    const size = params?.size ?? 20;
+    const cursor = params?.cursor;
+
+    const cliContextManager = CliContextManager.getInstance();
+    const supportsSessionList = cliContextManager.supportsSessionList();
+
+    if (supportsSessionList) {
+      try {
+        const response = await this.connection.listSessions({
+          size,
+          ...(cursor !== undefined ? { cursor } : {}),
+        });
+        // sendRequest resolves with the JSON-RPC "result" directly
+        const res: any = response as any;
+        const items: any[] = Array.isArray(res)
+          ? res
+          : Array.isArray(res?.items)
+          ? res.items
+          : [];
+
+        const mapped = items.map((item) => ({
+          id: item.sessionId || item.id,
+          sessionId: item.sessionId || item.id,
+          title: item.title || item.name || item.prompt || 'Untitled Session',
+          name: item.title || item.name || item.prompt || 'Untitled Session',
+          startTime: item.startTime,
+          lastUpdated: item.mtime || item.lastUpdated,
+          messageCount: item.messageCount || 0,
+          projectHash: item.projectHash,
+          filePath: item.filePath,
+          cwd: item.cwd,
+        }));
+
+        const nextCursor: number | undefined = Array.isArray(res?.items)
+          ? (res.nextCursor as number | undefined)
+          : undefined;
+        const hasMore: boolean = Array.isArray(res?.items)
+          ? Boolean(res.hasMore)
+          : false;
+
+        return { sessions: mapped, nextCursor, hasMore };
+      } catch (error) {
+        console.warn('[QwenAgentManager] Paged ACP session list failed:', error);
+        // fall through to file system
+      }
+    }
+
+    // Fallback: file system for current project only (to match ACP semantics)
+    try {
+      const all = await this.sessionReader.getAllSessions(
+        this.currentWorkingDir,
+        false,
+      );
+      // Sorted by lastUpdated desc already per reader
+      const allWithMtime = all.map((s) => ({
+        raw: s,
+        mtime: new Date(s.lastUpdated).getTime(),
+      }));
+      const filtered = cursor !== undefined
+        ? allWithMtime.filter((x) => x.mtime < cursor)
+        : allWithMtime;
+      const page = filtered.slice(0, size);
+      const sessions = page.map((x) => ({
+        id: x.raw.sessionId,
+        sessionId: x.raw.sessionId,
+        title: this.sessionReader.getSessionTitle(x.raw),
+        name: this.sessionReader.getSessionTitle(x.raw),
+        startTime: x.raw.startTime,
+        lastUpdated: x.raw.lastUpdated,
+        messageCount: x.raw.messages.length,
+        projectHash: x.raw.projectHash,
+      }));
+      const nextCursorVal = page.length > 0 ? page[page.length - 1].mtime : undefined;
+      const hasMore = filtered.length > size;
+      return { sessions, nextCursor: nextCursorVal, hasMore };
+    } catch (error) {
+      console.error('[QwenAgentManager] File system paged list failed:', error);
+      return { sessions: [], hasMore: false };
+    }
+  }
+
+  /**
    * Get session messages (read from disk)
    *
    * @param sessionId - Session ID
@@ -290,6 +396,24 @@ export class QwenAgentManager {
    */
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
+      // Prefer reading CLI's JSONL if we can find filePath from session/list
+      const cliContextManager = CliContextManager.getInstance();
+      if (cliContextManager.supportsSessionList()) {
+        try {
+          const list = await this.getSessionList();
+          const item = list.find(
+            (s) => s.sessionId === sessionId || s.id === sessionId,
+          ) as { filePath?: string } | undefined;
+          if (item?.filePath) {
+            const messages = await this.readJsonlMessages(item.filePath);
+            if (messages.length > 0) return messages;
+          }
+        } catch (e) {
+          console.warn('[QwenAgentManager] JSONL read path lookup failed:', e);
+        }
+      }
+
+      // Fallback: legacy JSON session files
       const session = await this.sessionReader.getSession(
         sessionId,
         this.currentWorkingDir,
@@ -297,21 +421,71 @@ export class QwenAgentManager {
       if (!session) {
         return [];
       }
-
       return session.messages.map(
         (msg: { type: string; content: string; timestamp: string }) => ({
-          role:
-            msg.type === 'user' ? ('user' as const) : ('assistant' as const),
+          role: msg.type === 'user' ? 'user' : 'assistant',
           content: msg.content,
           timestamp: new Date(msg.timestamp).getTime(),
         }),
       );
     } catch (error) {
-      console.error(
-        '[QwenAgentManager] Failed to get session messages:',
-        error,
-      );
+      console.error('[QwenAgentManager] Failed to get session messages:', error);
       return [];
+    }
+  }
+
+  // Read CLI JSONL session file and convert to ChatMessage[] for UI
+  private async readJsonlMessages(filePath: string): Promise<ChatMessage[]> {
+    const fs = await import('fs');
+    const readline = await import('readline');
+    try {
+      if (!fs.existsSync(filePath)) return [];
+      const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+      const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+      const records: Array<any> = [];
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const obj = JSON.parse(trimmed);
+          records.push(obj);
+        } catch {
+          /* ignore */
+        }
+      }
+      // Simple linear reconstruction: filter user/assistant and sort by timestamp
+      console.log('[QwenAgentManager] JSONL records read:', records.length, filePath);
+      const msgs = records
+        .filter((r) => r && (r.type === 'user' || r.type === 'assistant') && r.message)
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        .map((r) => ({
+          role: r.type === 'user' ? ('user' as const) : ('assistant' as const),
+          content: this.contentToText(r.message),
+          timestamp: new Date(r.timestamp).getTime(),
+        }));
+      console.log('[QwenAgentManager] JSONL messages reconstructed:', msgs.length);
+      return msgs;
+    } catch (err) {
+      console.warn('[QwenAgentManager] Failed to read JSONL messages:', err);
+      return [];
+    }
+  }
+
+  // Extract plain text from Content (genai Content)
+  private contentToText(message: any): string {
+    try {
+      const parts = Array.isArray(message?.parts) ? message.parts : [];
+      const texts: string[] = [];
+      for (const p of parts) {
+        if (typeof p?.text === 'string') {
+          texts.push(p.text);
+        } else if (typeof p?.data === 'string') {
+          texts.push(p.data);
+        }
+      }
+      return texts.join('\n');
+    } catch {
+      return '';
     }
   }
 
@@ -497,7 +671,7 @@ export class QwenAgentManager {
    * @param sessionId - Session ID
    * @returns Load response or error
    */
-  async loadSessionViaAcp(sessionId: string): Promise<unknown> {
+  async loadSessionViaAcp(sessionId: string, cwdOverride?: string): Promise<unknown> {
     // Check if CLI supports session/load method
     const cliContextManager = CliContextManager.getInstance();
     const supportsSessionLoad = cliContextManager.supportsSessionLoad();
@@ -513,7 +687,7 @@ export class QwenAgentManager {
         '[QwenAgentManager] Attempting session/load via ACP for session:',
         sessionId,
       );
-      const response = await this.connection.loadSession(sessionId);
+      const response = await this.connection.loadSession(sessionId, cwdOverride);
       console.log(
         '[QwenAgentManager] Session load succeeded. Response:',
         JSON.stringify(response).substring(0, 200),

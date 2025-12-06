@@ -9,7 +9,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo } from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
-import { ToolCallContainer } from '../shared/LayoutComponents.js';
 import {
   groupContent,
   mapToolStatusToContainerStatus,
@@ -23,7 +22,11 @@ import { handleOpenDiff } from '../../../utils/diffUtils.js';
  * Optimized for displaying file reading operations
  * Shows: Read filename (no content preview)
  */
-export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
+export const ReadToolCall: React.FC<BaseToolCallProps> = ({
+  toolCall,
+  isFirst,
+  isLast,
+}) => {
   const { content, locations, toolCallId } = toolCall;
   const vscode = useVSCode();
 
@@ -71,76 +74,85 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     | 'loading'
     | 'default' = mapToolStatusToContainerStatus(toolCall.status);
 
+  // Compute pseudo-element classes for status dot (use ::before per requirement)
+  const beforeStatusClass =
+    containerStatus === 'success'
+      ? 'before:text-qwen-success'
+      : containerStatus === 'error'
+        ? 'before:text-qwen-error'
+        : containerStatus === 'warning'
+          ? 'before:text-qwen-warning'
+          : 'before:text-qwen-loading before:opacity-70 before:animate-pulse-slow';
+
+  const ReadContainer: React.FC<{
+    status: typeof containerStatus;
+    path?: string;
+    children?: React.ReactNode;
+    isError?: boolean;
+  }> = ({ status, path, children, isError }) => {
+    // Adjust the connector line to crop for first/last items
+    const lineCropTop = isFirst ? 'top-[24px]' : 'top-0';
+    const lineCropBottom = isLast ? 'bottom-auto h-[calc(100%-24px)]' : 'bottom-0';
+    return (
+      <div
+        className={
+          `qwen-message message-item relative pl-[30px] py-2 select-text ` +
+          `before:absolute before:left-[8px] before:top-2 before:content-["\\25cf"] before:text-[10px] before:z-[1] ` +
+          beforeStatusClass
+        }
+      >
+        {/* timeline vertical line */}
+        <div
+          className={`absolute left-[12px] ${lineCropTop} ${lineCropBottom} w-px bg-[var(--app-primary-border-color)]`}
+          aria-hidden
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
+              Read
+            </span>
+            {path ? (
+              <FileLink
+                path={path}
+                showFullPath={false}
+                className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
+              />
+            ) : null}
+          </div>
+          {children ? (
+            <div
+              className={`mt-1 text-[var(--app-secondary-foreground)] ${
+                isError ? 'text-qwen-error' : ''
+              }`}
+            >
+              {children}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   // Error case: show error
   if (errors.length > 0) {
     const path = locations?.[0]?.path || '';
     return (
-      <ToolCallContainer
-        label={'Read'}
-        className="read-tool-call-error"
-        status="error"
-        toolCallId={toolCallId}
-        labelSuffix={
-          path ? (
-            <FileLink
-              path={path}
-              showFullPath={false}
-              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
-            />
-          ) : undefined
-        }
-      >
+      <ReadContainer status="error" path={path} isError>
         {errors.join('\n')}
-      </ToolCallContainer>
+      </ReadContainer>
     );
   }
 
   // Success case with diff: keep UI compact; VS Code diff is auto-opened above
   if (diffs.length > 0) {
     const path = diffs[0]?.path || locations?.[0]?.path || '';
-    return (
-      <ToolCallContainer
-        label={'Read'}
-        className={`read-tool-call-${containerStatus}`}
-        status={containerStatus}
-        toolCallId={toolCallId}
-        labelSuffix={
-          path ? (
-            <FileLink
-              path={path}
-              showFullPath={false}
-              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
-            />
-          ) : undefined
-        }
-      >
-        {null}
-      </ToolCallContainer>
-    );
+    return <ReadContainer status={containerStatus} path={path} />;
   }
 
   // Success case: show which file was read with filename in label
   if (locations && locations.length > 0) {
     const path = locations[0].path;
-    return (
-      <ToolCallContainer
-        label={'Read'}
-        className={`read-tool-call-${containerStatus}`}
-        status={containerStatus}
-        toolCallId={toolCallId}
-        labelSuffix={
-          path ? (
-            <FileLink
-              path={path}
-              showFullPath={false}
-              className="text-xs font-mono text-[var(--app-secondary-foreground)] hover:underline"
-            />
-          ) : undefined
-        }
-      >
-        {null}
-      </ToolCallContainer>
-    );
+    return <ReadContainer status={containerStatus} path={path} />;
   }
 
   // No file info, don't show

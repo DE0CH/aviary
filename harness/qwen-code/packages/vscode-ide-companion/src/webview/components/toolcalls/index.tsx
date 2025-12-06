@@ -92,7 +92,11 @@ export const getToolCallComponent = (
 /**
  * Main tool call component that routes to specialized implementations
  */
-export const ToolCallRouter: React.FC<BaseToolCallProps> = ({ toolCall }) => {
+export const ToolCallRouter: React.FC<BaseToolCallProps> = ({
+  toolCall,
+  isFirst,
+  isLast,
+}) => {
   // Check if we should show this tool call (hide internal ones)
   if (!shouldShowToolCall(toolCall.kind)) {
     return null;
@@ -102,7 +106,7 @@ export const ToolCallRouter: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const Component = getToolCallComponent(toolCall.kind, toolCall);
 
   // Render the specialized component
-  return <Component toolCall={toolCall} />;
+  return <Component toolCall={toolCall} isFirst={isFirst} isLast={isLast} />;
 };
 
 // Re-export types for convenience

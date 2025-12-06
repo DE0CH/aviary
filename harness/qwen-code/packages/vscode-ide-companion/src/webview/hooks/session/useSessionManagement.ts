@@ -21,6 +21,11 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
   const [showSessionSelector, setShowSessionSelector] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [savedSessionTags, setSavedSessionTags] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState<number | undefined>(undefined);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const PAGE_SIZE = 20;
 
   /**
    * Filter session list
@@ -44,9 +49,23 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
    * Load session list
    */
   const handleLoadQwenSessions = useCallback(() => {
-    vscode.postMessage({ type: 'getQwenSessions', data: {} });
+    // Reset pagination state and load first page
+    setQwenSessions([]);
+    setNextCursor(undefined);
+    setHasMore(true);
+    setIsLoading(true);
+    vscode.postMessage({ type: 'getQwenSessions', data: { size: PAGE_SIZE } });
     setShowSessionSelector(true);
   }, [vscode]);
+
+  const handleLoadMoreSessions = useCallback(() => {
+    if (!hasMore || isLoading || nextCursor === undefined) return;
+    setIsLoading(true);
+    vscode.postMessage({
+      type: 'getQwenSessions',
+      data: { cursor: nextCursor, size: PAGE_SIZE },
+    });
+  }, [hasMore, isLoading, nextCursor, vscode]);
 
   /**
    * Create new session
@@ -117,6 +136,9 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
     sessionSearchQuery,
     filteredSessions,
     savedSessionTags,
+    nextCursor,
+    hasMore,
+    isLoading,
 
     // State setters
     setQwenSessions,
@@ -125,6 +147,9 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
     setShowSessionSelector,
     setSessionSearchQuery,
     setSavedSessionTags,
+    setNextCursor,
+    setHasMore,
+    setIsLoading,
 
     // Operations
     handleLoadQwenSessions,
@@ -132,5 +157,6 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
     handleSwitchSession,
     handleSaveSession,
     handleSaveSessionResponse,
+    handleLoadMoreSessions,
   };
 };

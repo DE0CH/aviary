@@ -508,6 +508,9 @@ export const App: React.FC = () => {
           sessionManagement.setSessionSearchQuery('');
         }}
         onClose={() => sessionManagement.setShowSessionSelector(false)}
+        hasMore={sessionManagement.hasMore}
+        isLoading={sessionManagement.isLoading}
+        onLoadMore={sessionManagement.handleLoadMoreSessions}
       />
 
       <ChatHeader
@@ -627,14 +630,26 @@ export const App: React.FC = () => {
                   //   );
 
                   case 'in-progress-tool-call':
-                  case 'completed-tool-call':
+                  case 'completed-tool-call': {
+                    const prev = allMessages[index - 1];
+                    const next = allMessages[index + 1];
+                    const isToolCallType = (x: unknown) =>
+                      x &&
+                      typeof x === 'object' &&
+                      'type' in (x as Record<string, unknown>) &&
+                      ((x as { type: string }).type === 'in-progress-tool-call' ||
+                        (x as { type: string }).type === 'completed-tool-call');
+                    const isFirst = !isToolCallType(prev);
+                    const isLast = !isToolCallType(next);
                     return (
                       <ToolCall
                         key={`completed-${(item.data as ToolCallData).toolCallId}`}
                         toolCall={item.data as ToolCallData}
-                        // onFileClick={handleFileClick}
+                        isFirst={isFirst}
+                        isLast={isLast}
                       />
                     );
+                  }
 
                   default:
                     return null;

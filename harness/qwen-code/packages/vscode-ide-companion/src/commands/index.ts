@@ -73,6 +73,12 @@ export function registerNewCommands(
   disposables.push(
     vscode.commands.registerCommand(openNewChatTabCommand, async () => {
       const provider = createWebViewProvider();
+      // Suppress auto-restore for this newly created tab so it starts clean
+      try {
+        provider.suppressAutoRestoreOnce?.();
+      } catch {
+        // ignore if older provider does not implement the method
+      }
       await provider.show();
     }),
   );

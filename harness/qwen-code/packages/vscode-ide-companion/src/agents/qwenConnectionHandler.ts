@@ -89,54 +89,10 @@ export class QwenConnectionHandler {
     }
 
     // Try to restore existing session or create new session
+    // Note: Auto-restore on connect is disabled to avoid surprising loads
+    // when user opens a "New Chat" tab. Restoration is now an explicit action
+    // (session selector → session/load) or handled by higher-level flows.
     let sessionRestored = false;
-
-    // Try to get session from local files
-    console.log('[QwenAgentManager] Reading local session files...');
-    try {
-      const sessions = await sessionReader.getAllSessions(workingDir);
-
-      if (sessions.length > 0) {
-        console.log(
-          '[QwenAgentManager] Found existing sessions:',
-          sessions.length,
-        );
-        const lastSession = sessions[0]; // Already sorted by lastUpdated
-
-        try {
-          await connection.switchSession(lastSession.sessionId);
-          console.log(
-            '[QwenAgentManager] Restored session:',
-            lastSession.sessionId,
-          );
-          sessionRestored = true;
-
-          // Save auth state after successful session restore
-          if (authStateManager) {
-            console.log(
-              '[QwenAgentManager] Saving auth state after successful session restore',
-            );
-            await authStateManager.saveAuthState(workingDir, authMethod);
-          }
-        } catch (switchError) {
-          console.log(
-            '[QwenAgentManager] session/switch not supported or failed:',
-            switchError instanceof Error
-              ? switchError.message
-              : String(switchError),
-          );
-        }
-      } else {
-        console.log('[QwenAgentManager] No existing sessions found');
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.log(
-        '[QwenAgentManager] Failed to read local sessions:',
-        errorMessage,
-      );
-    }
 
     // Create new session if unable to restore
     if (!sessionRestored) {
@@ -190,9 +146,7 @@ export class QwenConnectionHandler {
       }
 
       try {
-        console.log(
-          '[QwenAgentManager] Creating new session after authentication...',
-        );
+      console.log('[QwenAgentManager] Creating new session after authentication...');
         await this.newSessionWithRetry(
           connection,
           workingDir,

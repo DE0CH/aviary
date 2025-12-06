@@ -74,7 +74,10 @@ export class SessionMessageHandler extends BaseMessageHandler {
         break;
 
       case 'getQwenSessions':
-        await this.handleGetQwenSessions();
+        await this.handleGetQwenSessions(
+          (data?.cursor as number | undefined) ?? undefined,
+          (data?.size as number | undefined) ?? undefined,
+        );
         break;
 
       case 'saveSession':
@@ -593,8 +596,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
         }
       }
 
-      // Get session details
-      let sessionDetails = null;
+      // Get session details (includes cwd and filePath when using ACP)
+      let sessionDetails: Record<string, unknown> | null = null;
       try {
         const allSessions = await this.agentManager.getSessionList();
         sessionDetails = allSessions.find(
@@ -613,8 +616,10 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // Try to load session via ACP (now we should be connected)
       try {
-        const loadResponse =
-          await this.agentManager.loadSessionViaAcp(sessionId);
+        const loadResponse = await this.agentManager.loadSessionViaAcp(
+          sessionId,
+          (sessionDetails?.cwd as string | undefined) || undefined,
+        );
         console.log(
           '[SessionMessageHandler] session/load succeeded:',
           loadResponse,
@@ -778,12 +783,22 @@ export class SessionMessageHandler extends BaseMessageHandler {
   /**
    * Handle get Qwen sessions request
    */
-  private async handleGetQwenSessions(): Promise<void> {
+  private async handleGetQwenSessions(
+    cursor?: number,
+    size?: number,
+  ): Promise<void> {
     try {
-      const sessions = await this.agentManager.getSessionList();
+      // Paged when possible; falls back to full list if ACP not supported
+      const page = await this.agentManager.getSessionListPaged({ cursor, size });
+      const append = typeof cursor === 'number';
       this.sendToWebView({
         type: 'qwenSessionList',
-        data: { sessions },
+        data: {
+          sessions: page.sessions,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          append,
+        },
       });
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to get sessions:', error);

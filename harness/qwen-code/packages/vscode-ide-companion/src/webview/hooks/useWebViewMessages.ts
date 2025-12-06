@@ -18,10 +18,17 @@ interface UseWebViewMessagesProps {
   // Session management
   sessionManagement: {
     currentSessionId: string | null;
-    setQwenSessions: (sessions: Array<Record<string, unknown>>) => void;
+    setQwenSessions: (
+      sessions:
+        | Array<Record<string, unknown>>
+        | ((prev: Array<Record<string, unknown>>) => Array<Record<string, unknown>>),
+    ) => void;
     setCurrentSessionId: (id: string | null) => void;
     setCurrentSessionTitle: (title: string) => void;
     setShowSessionSelector: (show: boolean) => void;
+    setNextCursor: (cursor: number | undefined) => void;
+    setHasMore: (hasMore: boolean) => void;
+    setIsLoading: (loading: boolean) => void;
     handleSaveSessionResponse: (response: {
       success: boolean;
       message?: string;
@@ -487,8 +494,17 @@ export const useWebViewMessages = ({
         }
 
         case 'qwenSessionList': {
-          const sessions = message.data.sessions || [];
-          handlers.sessionManagement.setQwenSessions(sessions);
+          const sessions = (message.data.sessions as any[]) || [];
+          const append = Boolean(message.data.append);
+          const nextCursor = message.data.nextCursor as number | undefined;
+          const hasMore = Boolean(message.data.hasMore);
+
+          handlers.sessionManagement.setQwenSessions((prev: any[]) =>
+            append ? [...prev, ...sessions] : sessions,
+          );
+          handlers.sessionManagement.setNextCursor(nextCursor);
+          handlers.sessionManagement.setHasMore(hasMore);
+          handlers.sessionManagement.setIsLoading(false);
           if (
             handlers.sessionManagement.currentSessionId &&
             sessions.length > 0
