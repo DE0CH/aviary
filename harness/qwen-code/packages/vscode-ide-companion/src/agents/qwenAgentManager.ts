@@ -148,50 +148,6 @@ export class QwenAgentManager {
   }
 
   /**
-   * Check if the current session is valid and can send messages
-   * This performs a lightweight validation by sending a test prompt
-   *
-   * @returns True if session is valid, false otherwise
-   */
-  async checkSessionValidity(): Promise<boolean> {
-    try {
-      // If we don't have a current session, it's definitely not valid
-      if (!this.connection.currentSessionId) {
-        return false;
-      }
-
-      // Try to send a lightweight test prompt to validate the session
-      // We use a simple prompt that should return quickly
-      await this.connection.sendPrompt('test session validity');
-      return true;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.warn(
-        '[QwenAgentManager] Session validity check failed:',
-        errorMsg,
-      );
-
-      // Check for common authentication/session expiration errors
-      const isAuthError =
-        errorMsg.includes('Authentication required') ||
-        errorMsg.includes('(code: -32000)') ||
-        errorMsg.includes('No active ACP session') ||
-        errorMsg.includes('Session not found');
-
-      if (isAuthError) {
-        console.log(
-          '[QwenAgentManager] Detected authentication/session expiration',
-        );
-        return false;
-      }
-
-      // For other errors, we can't determine validity definitively
-      // Assume session is still valid unless we know it's not
-      return true;
-    }
-  }
-
-  /**
    * Get session list with version-aware strategy
    * First tries ACP method if CLI version supports it, falls back to file system method
    *
@@ -220,16 +176,42 @@ export class QwenAgentManager {
         const response = await this.connection.listSessions();
         console.log('[QwenAgentManager] ACP session list response:', response);
 
-        if (response.result && Array.isArray(response.result)) {
-          const sessions = response.result.map((session) => ({
-            id: session.sessionId || session.id,
-            sessionId: session.sessionId || session.id,
-            title: session.title || session.name || 'Untitled Session',
-            name: session.title || session.name || 'Untitled Session',
-            startTime: session.startTime,
-            lastUpdated: session.lastUpdated,
-            messageCount: session.messageCount || 0,
-            projectHash: session.projectHash,
+        // sendRequest resolves with the JSON-RPC "result" directly
+        // Newer CLI returns an object: { items: [...], nextCursor?, hasMore }
+        // Older prototypes might return an array. Support both.
+        const res: unknown = response;
+        let items: Array<Record<string, unknown>> = [];
+
+        if (
+          typeof response === 'object' &&
+          response !== null &&
+          'items' in response
+        ) {
+          // Type guard to safely access items property
+          const responseObject: Record<string, unknown> = response;
+          if ('items' in responseObject) {
+            const itemsValue = responseObject.items;
+            items = Array.isArray(itemsValue) ? itemsValue : [];
+          }
+        }
+
+        console.log(
+          '[QwenAgentManager] Sessions retrieved via ACP:',
+          res,
+          items.length,
+        );
+        if (items.length > 0) {
+          const sessions = items.map((item) => ({
+            id: item.sessionId || item.id,
+            sessionId: item.sessionId || item.id,
+            title: item.title || item.name || item.prompt || 'Untitled Session',
+            name: item.title || item.name || item.prompt || 'Untitled Session',
+            startTime: item.startTime,
+            lastUpdated: item.mtime || item.lastUpdated,
+            messageCount: item.messageCount || 0,
+            projectHash: item.projectHash,
+            filePath: item.filePath,
+            cwd: item.cwd,
           }));
 
           console.log(
@@ -283,6 +265,116 @@ export class QwenAgentManager {
   }
 
   /**
+   * Get session list (paged)
+   * Uses ACP session/list with cursor-based pagination when available.
+   * Falls back to file system scan with equivalent pagination semantics.
+   */
+  async getSessionListPaged(params?: {
+    cursor?: number;
+    size?: number;
+  }): Promise<{
+    sessions: Array<Record<string, unknown>>;
+    nextCursor?: number;
+    hasMore: boolean;
+  }> {
+    const size = params?.size ?? 20;
+    const cursor = params?.cursor;
+
+    const cliContextManager = CliContextManager.getInstance();
+    const supportsSessionList = cliContextManager.supportsSessionList();
+
+    if (supportsSessionList) {
+      try {
+        const response = await this.connection.listSessions({
+          size,
+          ...(cursor !== undefined ? { cursor } : {}),
+        });
+        // sendRequest resolves with the JSON-RPC "result" directly
+        const res: unknown = response;
+        let items: Array<Record<string, unknown>> = [];
+
+        if (Array.isArray(res)) {
+          items = res;
+        } else if (typeof res === 'object' && res !== null && 'items' in res) {
+          const responseObject = res as {
+            items?: Array<Record<string, unknown>>;
+          };
+          items = Array.isArray(responseObject.items)
+            ? responseObject.items
+            : [];
+        }
+
+        const mapped = items.map((item) => ({
+          id: item.sessionId || item.id,
+          sessionId: item.sessionId || item.id,
+          title: item.title || item.name || item.prompt || 'Untitled Session',
+          name: item.title || item.name || item.prompt || 'Untitled Session',
+          startTime: item.startTime,
+          lastUpdated: item.mtime || item.lastUpdated,
+          messageCount: item.messageCount || 0,
+          projectHash: item.projectHash,
+          filePath: item.filePath,
+          cwd: item.cwd,
+        }));
+
+        const nextCursor: number | undefined =
+          typeof res === 'object' && res !== null && 'nextCursor' in res
+            ? typeof res.nextCursor === 'number'
+              ? res.nextCursor
+              : undefined
+            : undefined;
+        const hasMore: boolean =
+          typeof res === 'object' && res !== null && 'hasMore' in res
+            ? Boolean(res.hasMore)
+            : false;
+
+        return { sessions: mapped, nextCursor, hasMore };
+      } catch (error) {
+        console.warn(
+          '[QwenAgentManager] Paged ACP session list failed:',
+          error,
+        );
+        // fall through to file system
+      }
+    }
+
+    // Fallback: file system for current project only (to match ACP semantics)
+    try {
+      const all = await this.sessionReader.getAllSessions(
+        this.currentWorkingDir,
+        false,
+      );
+      // Sorted by lastUpdated desc already per reader
+      const allWithMtime = all.map((s) => ({
+        raw: s,
+        mtime: new Date(s.lastUpdated).getTime(),
+      }));
+      const filtered =
+        cursor !== undefined
+          ? allWithMtime.filter((x) => x.mtime < cursor)
+          : allWithMtime;
+      const page = filtered.slice(0, size);
+      const sessions = page.map((x) => ({
+        id: x.raw.sessionId,
+        sessionId: x.raw.sessionId,
+        title: this.sessionReader.getSessionTitle(x.raw),
+        name: this.sessionReader.getSessionTitle(x.raw),
+        startTime: x.raw.startTime,
+        lastUpdated: x.raw.lastUpdated,
+        messageCount: x.raw.messages.length,
+        projectHash: x.raw.projectHash,
+      }));
+      const nextCursorVal =
+        page.length > 0 ? page[page.length - 1].mtime : undefined;
+      const hasMore = filtered.length > size;
+      return { sessions, nextCursor: nextCursorVal, hasMore };
+    } catch (error) {
+      console.error('[QwenAgentManager] File system paged list failed:', error);
+      return { sessions: [], hasMore: false };
+    }
+  }
+
+  /**
    * Get session messages (read from disk)
    *
    * @param sessionId - Session ID
@@ -290,6 +382,35 @@ export class QwenAgentManager {
    */
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
+      // Prefer reading CLI's JSONL if we can find filePath from session/list
+      const cliContextManager = CliContextManager.getInstance();
+      if (cliContextManager.supportsSessionList()) {
+        try {
+          const list = await this.getSessionList();
+          const item = list.find(
+            (s) => s.sessionId === sessionId || s.id === sessionId,
+          );
+          console.log(
+            '[QwenAgentManager] Session list item for filePath lookup:',
+            item,
+          );
+          if (
+            typeof item === 'object' &&
+            item !== null &&
+            'filePath' in item &&
+            typeof item.filePath === 'string'
+          ) {
+            const messages = await this.readJsonlMessages(item.filePath);
+            // Even if messages array is empty, we should return it rather than falling back
+            // This ensures we don't accidentally show messages from a different session format
+            return messages;
+          }
+        } catch (e) {
+          console.warn('[QwenAgentManager] JSONL read path lookup failed:', e);
+        }
+      }
+
+      // Fallback: legacy JSON session files
       const session = await this.sessionReader.getSession(
         sessionId,
         this.currentWorkingDir,
@@ -297,11 +418,9 @@ export class QwenAgentManager {
       if (!session) {
         return [];
       }
-
       return session.messages.map(
         (msg: { type: string; content: string; timestamp: string }) => ({
-          role:
-            msg.type === 'user' ? ('user' as const) : ('assistant' as const),
+          role: msg.type === 'user' ? 'user' : 'assistant',
           content: msg.content,
           timestamp: new Date(msg.timestamp).getTime(),
         }),
@@ -312,6 +431,265 @@ export class QwenAgentManager {
         error,
       );
       return [];
+    }
+  }
+
+  // Read CLI JSONL session file and convert to ChatMessage[] for UI
+  private async readJsonlMessages(filePath: string): Promise<ChatMessage[]> {
+    const fs = await import('fs');
+    const readline = await import('readline');
+    try {
+      if (!fs.existsSync(filePath)) return [];
+      const fileStream = fs.createReadStream(filePath, { encoding: 'utf-8' });
+      const rl = readline.createInterface({
+        input: fileStream,
+        crlfDelay: Infinity,
+      });
+      const records: unknown[] = [];
+      for await (const line of rl) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const obj = JSON.parse(trimmed);
+          records.push(obj);
+        } catch {
+          /* ignore */
+        }
+      }
+      // Simple linear reconstruction: filter user/assistant and sort by timestamp
+      console.log(
+        '[QwenAgentManager] JSONL records read:',
+        records.length,
+        filePath,
+      );
+
+      // Include all types of records, not just user/assistant
+      const allRecords = records
+        .filter((r) => r && r.type && r.timestamp)
+        .sort(
+          (a, b) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
+
+      const msgs: ChatMessage[] = [];
+      for (const r of allRecords) {
+        // Handle user and assistant messages
+        if ((r.type === 'user' || r.type === 'assistant') && r.message) {
+          msgs.push({
+            role:
+              r.type === 'user' ? ('user' as const) : ('assistant' as const),
+            content: this.contentToText(r.message),
+            timestamp: new Date(r.timestamp).getTime(),
+          });
+        }
+        // Handle tool call records that might have content we want to show
+        else if (r.type === 'tool_call' || r.type === 'tool_call_update') {
+          // Convert tool calls to messages if they have relevant content
+          const toolContent = this.extractToolCallContent(r);
+          if (toolContent) {
+            msgs.push({
+              role: 'assistant',
+              content: toolContent,
+              timestamp: new Date(r.timestamp).getTime(),
+            });
+          }
+        }
+        // Handle tool result records
+        else if (r.type === 'tool_result' && r.toolCallResult) {
+          const toolResult = r.toolCallResult;
+          const callId = toolResult.callId || 'unknown';
+          const status = toolResult.status || 'unknown';
+          const resultText = `Tool Result (${callId}): ${status}`;
+          msgs.push({
+            role: 'assistant',
+            content: resultText,
+            timestamp: new Date(r.timestamp).getTime(),
+          });
+        }
+        // Handle system telemetry records
+        else if (
+          r.type === 'system' &&
+          r.subtype === 'ui_telemetry' &&
+          r.systemPayload?.uiEvent
+        ) {
+          const uiEvent = r.systemPayload.uiEvent;
+          let telemetryText = '';
+
+          if (
+            uiEvent['event.name'] &&
+            uiEvent['event.name'].includes('tool_call')
+          ) {
+            const functionName = uiEvent.function_name || 'Unknown tool';
+            const status = uiEvent.status || 'unknown';
+            const duration = uiEvent.duration_ms
+              ? ` (${uiEvent.duration_ms}ms)`
+              : '';
+            telemetryText = `Tool Call: ${functionName} - ${status}${duration}`;
+          } else if (
+            uiEvent['event.name'] &&
+            uiEvent['event.name'].includes('api_response')
+          ) {
+            const statusCode = uiEvent.status_code || 'unknown';
+            const duration = uiEvent.duration_ms
+              ? ` (${uiEvent.duration_ms}ms)`
+              : '';
+            telemetryText = `API Response: Status ${statusCode}${duration}`;
+          } else {
+            // Generic system telemetry
+            const eventName = uiEvent['event.name'] || 'Unknown event';
+            telemetryText = `System Event: ${eventName}`;
+          }
+
+          if (telemetryText) {
+            msgs.push({
+              role: 'assistant',
+              content: telemetryText,
+              timestamp: new Date(r.timestamp).getTime(),
+            });
+          }
+        }
+        // Handle plan entries
+        else if (r.type === 'plan' && r.plan) {
+          const planEntries = r.plan.entries || [];
+          if (planEntries.length > 0) {
+            const planText = planEntries
+              .map(
+                (entry: Record<string, unknown>, index: number) =>
+                  `${index + 1}. ${entry.description || entry.title || 'Unnamed step'}`,
+              )
+              .join('\n');
+            msgs.push({
+              role: 'assistant',
+              content: `Plan:\n${planText}`,
+              timestamp: new Date(r.timestamp).getTime(),
+            });
+          }
+        }
+        // Handle other types if needed
+      }
+
+      console.log(
+        '[QwenAgentManager] JSONL messages reconstructed:',
+        msgs.length,
+      );
+      return msgs;
+    } catch (err) {
+      console.warn('[QwenAgentManager] Failed to read JSONL messages:', err);
+      return [];
+    }
+  }
+
+  // Extract meaningful content from tool call records
+  private extractToolCallContent(record: unknown): string | null {
+    try {
+      // Type guard for record
+      if (typeof record !== 'object' || record === null) {
+        return null;
+      }
+
+      // Cast to a more specific type for easier handling
+      const typedRecord = record as Record<string, unknown>;
+
+      // If the tool call has a result or output, include it
+      if ('toolCallResult' in typedRecord && typedRecord.toolCallResult) {
+        return `Tool result: ${this.formatValue(typedRecord.toolCallResult)}`;
+      }
+
+      // If the tool call has content, include it
+      if ('content' in typedRecord && typedRecord.content) {
+        return this.formatValue(typedRecord.content);
+      }
+
+      // If the tool call has a title or name, include it
+      if (
+        ('title' in typedRecord && typedRecord.title) ||
+        ('name' in typedRecord && typedRecord.name)
+      ) {
+        return `Tool: ${typedRecord.title || typedRecord.name}`;
+      }
+
+      // Handle tool_call records with more details
+      if (
+        typedRecord.type === 'tool_call' &&
+        'toolCall' in typedRecord &&
+        typedRecord.toolCall
+      ) {
+        const toolCall = typedRecord.toolCall as Record<string, unknown>;
+        if (
+          ('title' in toolCall && toolCall.title) ||
+          ('name' in toolCall && toolCall.name)
+        ) {
+          return `Tool call: ${toolCall.title || toolCall.name}`;
+        }
+        if ('rawInput' in toolCall && toolCall.rawInput) {
+          return `Tool input: ${this.formatValue(toolCall.rawInput)}`;
+        }
+      }
+
+      // Handle tool_call_update records with status
+      if (typedRecord.type === 'tool_call_update') {
+        const status =
+          ('status' in typedRecord && typedRecord.status) || 'unknown';
+        const title =
+          ('title' in typedRecord && typedRecord.title) ||
+          ('name' in typedRecord && typedRecord.name) ||
+          'Unknown tool';
+        return `Tool ${status}: ${title}`;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Format any value to a string for display
+  private formatValue(value: unknown): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch (_e) {
+        return String(value);
+      }
+    }
+    return String(value);
+  }
+
+  // Extract plain text from Content (genai Content)
+  private contentToText(message: unknown): string {
+    try {
+      // Type guard for message
+      if (typeof message !== 'object' || message === null) {
+        return '';
+      }
+
+      // Cast to a more specific type for easier handling
+      const typedMessage = message as Record<string, unknown>;
+
+      const parts = Array.isArray(typedMessage.parts) ? typedMessage.parts : [];
+      const texts: string[] = [];
+      for (const p of parts) {
+        // Type guard for part
+        if (typeof p !== 'object' || p === null) {
+          continue;
+        }
+
+        const typedPart = p as Record<string, unknown>;
+        if (typeof typedPart.text === 'string') {
+          texts.push(typedPart.text);
+        } else if (typeof typedPart.data === 'string') {
+          texts.push(typedPart.data);
+        }
+      }
+      return texts.join('\n');
+    } catch {
+      return '';
     }
   }
 
@@ -497,7 +875,10 @@ export class QwenAgentManager {
    * @param sessionId - Session ID
    * @returns Load response or error
    */
-  async loadSessionViaAcp(sessionId: string): Promise<unknown> {
+  async loadSessionViaAcp(
+    sessionId: string,
+    cwdOverride?: string,
+  ): Promise<unknown> {
     // Check if CLI supports session/load method
     const cliContextManager = CliContextManager.getInstance();
     const supportsSessionLoad = cliContextManager.supportsSessionLoad();
@@ -513,7 +894,10 @@ export class QwenAgentManager {
         '[QwenAgentManager] Attempting session/load via ACP for session:',
         sessionId,
       );
-      const response = await this.connection.loadSession(sessionId);
+      const response = await this.connection.loadSession(
+        sessionId,
+        cwdOverride,
+      );
       console.log(
         '[QwenAgentManager] Session load succeeded. Response:',
         JSON.stringify(response).substring(0, 200),
@@ -530,19 +914,24 @@ export class QwenAgentManager {
       console.error('[QwenAgentManager] Error message:', errorMessage);
 
       // Check if error is from ACP response
-      if (error && typeof error === 'object' && 'error' in error) {
-        const acpError = error as {
-          error?: { code?: number; message?: string };
-        };
-        if (acpError.error) {
-          console.error(
-            '[QwenAgentManager] ACP error code:',
-            acpError.error.code,
-          );
-          console.error(
-            '[QwenAgentManager] ACP error message:',
-            acpError.error.message,
-          );
+      if (error && typeof error === 'object') {
+        // Safely check if 'error' property exists
+        if ('error' in error) {
+          const acpError = error as {
+            error?: { code?: number; message?: string };
+          };
+          if (acpError.error) {
+            console.error(
+              '[QwenAgentManager] ACP error code:',
+              acpError.error.code,
+            );
+            console.error(
+              '[QwenAgentManager] ACP error message:',
+              acpError.error.message,
+            );
+          }
+        } else {
+          console.error('[QwenAgentManager] Non-ACPIf error details:', error);
         }
       }
 

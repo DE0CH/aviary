@@ -68,12 +68,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         paddingLeft: '30px',
         userSelect: 'text',
         position: 'relative',
-        paddingTop: '8px',
-        paddingBottom: '8px',
+        // paddingTop: '8px',
+        // paddingBottom: '8px',
       }}
     >
       <span style={{ width: '100%' }}>
-        <p
+        <div
           style={{
             margin: 0,
             width: '100%',
@@ -83,7 +83,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           }}
         >
           <MessageContent content={content} onFileClick={onFileClick} />
-        </p>
+        </div>
       </span>
     </div>
   );

@@ -9,6 +9,7 @@ import React, {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   useLayoutEffect,
 } from 'react';
 import { useVSCode } from './hooks/useVSCode.js';
@@ -21,15 +22,13 @@ import { useMessageSubmit } from './hooks/useMessageSubmit.js';
 import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
-} from './components/PermissionRequest.js';
+} from './components/PermissionDrawer/PermissionRequest.js';
 import type { TextMessage } from './hooks/message/useMessageHandling.js';
 import type { ToolCallData } from './components/ToolCall.js';
-import { PermissionDrawer } from './components/PermissionDrawer.js';
+import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer.js';
 import { ToolCall } from './components/ToolCall.js';
 import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
-// import { InProgressToolCall } from './components/InProgressToolCall.js';
 import { EmptyState } from './components/ui/EmptyState.js';
-import type { PlanEntry } from './components/PlanDisplay.js';
 import { type CompletionItem } from './types/CompletionTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { InfoBanner } from './components/ui/InfoBanner.js';
@@ -45,6 +44,7 @@ import { InputForm } from './components/InputForm.js';
 import { SessionSelector } from './components/session/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
 import type { EditMode } from './types/toolCall.js';
+import type { PlanEntry } from '../agents/qwenTypes.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
@@ -488,12 +488,138 @@ export const App: React.FC = () => {
     setThinkingEnabled((prev) => !prev);
   };
 
+  // Create unified message array containing all types of messages and tool calls
+  const allMessages = useMemo<
+    Array<{
+      type: 'message' | 'in-progress-tool-call' | 'completed-tool-call';
+      data: TextMessage | ToolCallData;
+      timestamp: number;
+    }>
+  >(() => {
+    // Regular messages
+    const regularMessages = messageHandling.messages.map((msg) => ({
+      type: 'message' as const,
+      data: msg,
+      timestamp: msg.timestamp,
+    }));
+
+    // In-progress tool calls
+    const inProgressTools = inProgressToolCalls.map((toolCall) => ({
+      type: 'in-progress-tool-call' as const,
+      data: toolCall,
+      timestamp: toolCall.timestamp || Date.now(),
+    }));
+
+    // Completed tool calls
+    const completedTools = completedToolCalls
+      .filter(hasToolCallOutput)
+      .map((toolCall) => ({
+        type: 'completed-tool-call' as const,
+        data: toolCall,
+        timestamp: toolCall.timestamp || Date.now(),
+      }));
+
+    // Merge and sort by timestamp to ensure messages and tool calls are interleaved
+    return [...regularMessages, ...inProgressTools, ...completedTools].sort(
+      (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+    );
+  }, [messageHandling.messages, inProgressToolCalls, completedToolCalls]);
+
+  console.log('[App] Rendering messages:', allMessages);
+
+  // Render all messages and tool calls
+  const renderMessages = useCallback<() => React.ReactNode>(
+    () =>
+      allMessages.map((item, index) => {
+        switch (item.type) {
+          case 'message': {
+            const msg = item.data as TextMessage;
+            const handleFileClick = (path: string): void => {
+              vscode.postMessage({
+                type: 'openFile',
+                data: { path },
+              });
+            };
+
+            if (msg.role === 'thinking') {
+              return (
+                <ThinkingMessage
+                  key={`message-${index}`}
+                  content={msg.content || ''}
+                  timestamp={msg.timestamp || 0}
+                  onFileClick={handleFileClick}
+                />
+              );
+            }
+
+            if (msg.role === 'user') {
+              return (
+                <UserMessage
+                  key={`message-${index}`}
+                  content={msg.content || ''}
+                  timestamp={msg.timestamp || 0}
+                  onFileClick={handleFileClick}
+                  fileContext={msg.fileContext}
+                />
+              );
+            }
+
+            {
+              const content = (msg.content || '').trim();
+              if (content === 'Interrupted' || content === 'Tool interrupted') {
+                return (
+                  <InterruptedMessage key={`message-${index}`} text={content} />
+                );
+              }
+              return (
+                <AssistantMessage
+                  key={`message-${index}`}
+                  content={content}
+                  timestamp={msg.timestamp || 0}
+                  onFileClick={handleFileClick}
+                />
+              );
+            }
+          }
+
+          case 'in-progress-tool-call':
+          case 'completed-tool-call': {
+            const prev = allMessages[index - 1];
+            const next = allMessages[index + 1];
+            const isToolCallType = (
+              x: unknown,
+            ): x is { type: 'in-progress-tool-call' | 'completed-tool-call' } =>
+              x &&
+              typeof x === 'object' &&
+              'type' in (x as Record<string, unknown>) &&
+              ((x as { type: string }).type === 'in-progress-tool-call' ||
+                (x as { type: string }).type === 'completed-tool-call');
+            const isFirst = !isToolCallType(prev);
+            const isLast = !isToolCallType(next);
+            return (
+              <ToolCall
+                key={`toolcall-${(item.data as ToolCallData).toolCallId}-${item.type}`}
+                toolCall={item.data as ToolCallData}
+                isFirst={isFirst}
+                isLast={isLast}
+              />
+            );
+          }
+
+          default:
+            return null;
+        }
+      }),
+    [allMessages, vscode],
+  );
+
   const hasContent =
     messageHandling.messages.length > 0 ||
     messageHandling.isStreaming ||
     inProgressToolCalls.length > 0 ||
     completedToolCalls.length > 0 ||
-    planEntries.length > 0;
+    planEntries.length > 0 ||
+    allMessages.length > 0;
 
   return (
     <div className="chat-container">
@@ -508,6 +634,9 @@ export const App: React.FC = () => {
           sessionManagement.setSessionSearchQuery('');
         }}
         onClose={() => sessionManagement.setShowSessionSelector(false)}
+        hasMore={sessionManagement.hasMore}
+        isLoading={sessionManagement.isLoading}
+        onLoadMore={sessionManagement.handleLoadMoreSessions}
       />
 
       <ChatHeader
@@ -525,122 +654,8 @@ export const App: React.FC = () => {
           <EmptyState />
         ) : (
           <>
-            {/* Create unified message array containing all types of messages and tool calls */}
-            {(() => {
-              // Regular messages
-              const regularMessages = messageHandling.messages.map((msg) => ({
-                type: 'message' as const,
-                data: msg,
-                timestamp: msg.timestamp,
-              }));
-
-              // In-progress tool calls
-              const inProgressTools = inProgressToolCalls.map((toolCall) => ({
-                type: 'in-progress-tool-call' as const,
-                data: toolCall,
-                timestamp: toolCall.timestamp || Date.now(),
-              }));
-
-              // Completed tool calls
-              const completedTools = completedToolCalls
-                .filter(hasToolCallOutput)
-                .map((toolCall) => ({
-                  type: 'completed-tool-call' as const,
-                  data: toolCall,
-                  timestamp: toolCall.timestamp || Date.now(),
-                }));
-
-              // Merge and sort by timestamp to ensure messages and tool calls are interleaved
-              const allMessages = [
-                ...regularMessages,
-                ...inProgressTools,
-                ...completedTools,
-              ].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-              console.log('[App] allMessages:', allMessages);
-
-              return allMessages.map((item, index) => {
-                switch (item.type) {
-                  case 'message': {
-                    const msg = item.data as TextMessage;
-                    const handleFileClick = (path: string) => {
-                      vscode.postMessage({
-                        type: 'openFile',
-                        data: { path },
-                      });
-                    };
-
-                    if (msg.role === 'thinking') {
-                      return (
-                        <ThinkingMessage
-                          key={`message-${index}`}
-                          content={msg.content || ''}
-                          timestamp={msg.timestamp || 0}
-                          onFileClick={handleFileClick}
-                        />
-                      );
-                    }
-
-                    if (msg.role === 'user') {
-                      return (
-                        <UserMessage
-                          key={`message-${index}`}
-                          content={msg.content || ''}
-                          timestamp={msg.timestamp || 0}
-                          onFileClick={handleFileClick}
-                          fileContext={msg.fileContext}
-                        />
-                      );
-                    }
-
-                    {
-                      const content = (msg.content || '').trim();
-                      if (
-                        content === 'Interrupted' ||
-                        content === 'Tool interrupted'
-                      ) {
-                        return (
-                          <InterruptedMessage
-                            key={`message-${index}`}
-                            text={content}
-                          />
-                        );
-                      }
-                      return (
-                        <AssistantMessage
-                          key={`message-${index}`}
-                          content={content}
-                          timestamp={msg.timestamp || 0}
-                          onFileClick={handleFileClick}
-                        />
-                      );
-                    }
-                  }
-
-                  // case 'in-progress-tool-call':
-                  //   return (
-                  //     <InProgressToolCall
-                  //       key={`in-progress-${(item.data as ToolCallData).toolCallId}`}
-                  //       toolCall={item.data as ToolCallData}
-                  //       // onFileClick={handleFileClick}
-                  //     />
-                  //   );
-
-                  case 'in-progress-tool-call':
-                  case 'completed-tool-call':
-                    return (
-                      <ToolCall
-                        key={`completed-${(item.data as ToolCallData).toolCallId}`}
-                        toolCall={item.data as ToolCallData}
-                        // onFileClick={handleFileClick}
-                      />
-                    );
-
-                  default:
-                    return null;
-                }
-              });
-            })()}
+            {/* Render all messages and tool calls */}
+            {renderMessages()}
 
             {/* Changed to push each plan as a historical toolcall in useWebViewMessages to avoid duplicate display of the latest block */}
 

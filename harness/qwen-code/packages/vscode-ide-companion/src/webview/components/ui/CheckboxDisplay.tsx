@@ -71,9 +71,9 @@ export const CheckboxDisplay: React.FC<CheckboxDisplayProps> = ({
           aria-hidden
           className={[
             'absolute inline-block',
-            'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
+            'left-1/2 top-[10px] -translate-x-1/2 -translate-y-1/2',
             // Use a literal star; no icon font needed
-            'text-[11px] leading-none text-[#e1c08d] select-none',
+            'text-[16px] leading-none text-[#e1c08d] select-none',
           ].join(' ')}
         >
           *

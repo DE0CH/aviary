@@ -4,8 +4,12 @@ import type { WebViewProvider } from '../webview/WebViewProvider.js';
 
 type Logger = (message: string) => void;
 
+export const runQwenCodeCommand = 'qwen-code.runQwenCode';
 export const showDiffCommand = 'qwenCode.showDiff';
-export const openChatCommand = 'qwenCode.openChat';
+export const openChatCommand = 'qwen-code.openChat';
+export const openNewChatTabCommand = 'qwenCode.openNewChatTab';
+export const loginCommand = 'qwen-code.login';
+export const clearAuthCacheCommand = 'qwen-code.clearAuthCache';
 
 export function registerNewCommands(
   context: vscode.ExtensionContext,
@@ -20,15 +24,15 @@ export function registerNewCommands(
     vscode.commands.registerCommand(openChatCommand, async () => {
       const config = vscode.workspace.getConfiguration('qwenCode');
       const useTerminal = config.get<boolean>('useTerminal', false);
-      console.log('[Command] Using terminal mode:', useTerminal);
+
+      // Use terminal mode
       if (useTerminal) {
-        // 使用终端模式
         await vscode.commands.executeCommand(
-          'qwen-code.runQwenCode',
-          vscode.TerminalLocation.Editor, // 在编辑器区域创建终端,
+          runQwenCodeCommand,
+          vscode.TerminalLocation.Editor, // create a terminal in the editor area,
         );
       } else {
-        // 使用 WebView 模式
+        // Use WebView mode
         const providers = getWebViewProviders();
         if (providers.length > 0) {
           await providers[providers.length - 1].show();
@@ -44,7 +48,6 @@ export function registerNewCommands(
     vscode.commands.registerCommand(
       showDiffCommand,
       async (args: { path: string; oldText: string; newText: string }) => {
-        log(`[Command] showDiff called for: ${args.path}`);
         try {
           let absolutePath = args.path;
           if (!args.path.startsWith('/') && !args.path.match(/^[a-zA-Z]:/)) {
@@ -68,27 +71,20 @@ export function registerNewCommands(
 
   // TODO: qwenCode.openNewChatTab (not contributed in package.json; used programmatically)
   disposables.push(
-    vscode.commands.registerCommand('qwenCode.openNewChatTab', async () => {
+    vscode.commands.registerCommand(openNewChatTabCommand, async () => {
       const provider = createWebViewProvider();
+      // Suppress auto-restore for this newly created tab so it starts clean
+      try {
+        provider.suppressAutoRestoreOnce?.();
+      } catch {
+        // ignore if older provider does not implement the method
+      }
       await provider.show();
     }),
   );
 
   disposables.push(
-    vscode.commands.registerCommand('qwenCode.clearAuthCache', async () => {
-      const providers = getWebViewProviders();
-      for (const provider of providers) {
-        await provider.clearAuthCache();
-      }
-      vscode.window.showInformationMessage(
-        'Qwen Code authentication cache cleared. You will need to login again on next connection.',
-      );
-      log('Auth cache cleared by user');
-    }),
-  );
-
-  disposables.push(
-    vscode.commands.registerCommand('qwenCode.login', async () => {
+    vscode.commands.registerCommand(loginCommand, async () => {
       const providers = getWebViewProviders();
       if (providers.length > 0) {
         await providers[providers.length - 1].forceReLogin();
@@ -97,6 +93,19 @@ export function registerNewCommands(
           'Please open Qwen Code chat first before logging in.',
         );
       }
+    }),
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand(clearAuthCacheCommand, async () => {
+      const providers = getWebViewProviders();
+      for (const provider of providers) {
+        await provider.clearAuthCache();
+      }
+      vscode.window.showInformationMessage(
+        'Qwen Code authentication cache cleared. You will need to login again on next connection.',
+      );
+      log('Auth cache cleared by user');
     }),
   );
 

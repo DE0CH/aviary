@@ -16,6 +16,7 @@ import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { authMethod } from '../auth/index.js';
+import { runQwenCodeCommand } from '../commands/index.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -25,6 +26,8 @@ export class WebViewProvider {
   private authStateManager: AuthStateManager;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
+  // Control whether to auto-restore last session on the very first connect of this panel
+  private autoRestoreOnFirstConnect = true;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -237,6 +240,13 @@ export class WebViewProvider {
         });
       },
     );
+  }
+
+  /**
+   * Suppress auto-restore once for this panel (used by "New Chat Tab").
+   */
+  suppressAutoRestoreOnce(): void {
+    this.autoRestoreOnFirstConnect = false;
   }
 
   async show(): Promise<void> {
@@ -587,6 +597,14 @@ export class WebViewProvider {
             '[WebViewProvider] Force re-login completed successfully',
           );
 
+          // Ensure auth state is saved after successful re-login
+          if (this.authStateManager) {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+            await this.authStateManager.saveAuthState(workingDir, authMethod);
+            console.log('[WebViewProvider] Auth state saved after re-login');
+          }
+
           // Send success notification to WebView
           this.sendMessageToWebView({
             type: 'loginSuccess',
@@ -681,53 +699,139 @@ export class WebViewProvider {
           authMethod,
         );
         if (hasValidAuth) {
-          console.log(
-            '[WebViewProvider] Found valid cached auth, attempting session restoration',
-          );
+          const allowAutoRestore = this.autoRestoreOnFirstConnect;
+          // Reset for subsequent connects (only once per panel lifecycle unless set again)
+          this.autoRestoreOnFirstConnect = true;
 
+          if (allowAutoRestore) {
+            console.log(
+              '[WebViewProvider] Valid auth found, attempting auto-restore of last session...',
+            );
+            try {
+              const page = await this.agentManager.getSessionListPaged({
+                size: 1,
+              });
+              const item = page.sessions[0] as
+                | { sessionId?: string; id?: string; cwd?: string }
+                | undefined;
+              if (item && (item.sessionId || item.id)) {
+                const targetId = (item.sessionId || item.id) as string;
+                await this.agentManager.loadSessionViaAcp(
+                  targetId,
+                  (item.cwd as string | undefined) ?? workingDir,
+                );
+
+                this.messageHandler.setCurrentConversationId(targetId);
+                const messages =
+                  await this.agentManager.getSessionMessages(targetId);
+
+                // Even if messages array is empty, we should still switch to the session
+                // This ensures we don't lose the session context
+                this.sendMessageToWebView({
+                  type: 'qwenSessionSwitched',
+                  data: { sessionId: targetId, messages },
+                });
+                console.log(
+                  '[WebViewProvider] Auto-restored last session:',
+                  targetId,
+                );
+
+                // Ensure auth state is saved after successful session restore
+                if (this.authStateManager) {
+                  await this.authStateManager.saveAuthState(
+                    workingDir,
+                    authMethod,
+                  );
+                  console.log(
+                    '[WebViewProvider] Auth state saved after session restore',
+                  );
+                }
+
+                return;
+              }
+              console.log(
+                '[WebViewProvider] No sessions to auto-restore, creating new session',
+              );
+            } catch (restoreError) {
+              console.warn(
+                '[WebViewProvider] Auto-restore failed, will create a new session:',
+                restoreError,
+              );
+
+              // Try to get session messages anyway, even if loadSessionViaAcp failed
+              // This can happen if the session exists locally but failed to load in the CLI
+              try {
+                const page = await this.agentManager.getSessionListPaged({
+                  size: 1,
+                });
+                const item = page.sessions[0] as
+                  | { sessionId?: string; id?: string }
+                  | undefined;
+                if (item && (item.sessionId || item.id)) {
+                  const targetId = (item.sessionId || item.id) as string;
+                  const messages =
+                    await this.agentManager.getSessionMessages(targetId);
+
+                  // Switch to the session with whatever messages we could get
+                  this.messageHandler.setCurrentConversationId(targetId);
+                  this.sendMessageToWebView({
+                    type: 'qwenSessionSwitched',
+                    data: { sessionId: targetId, messages },
+                  });
+                  console.log(
+                    '[WebViewProvider] Partially restored last session:',
+                    targetId,
+                  );
+
+                  // Ensure auth state is saved after partial session restore
+                  if (this.authStateManager) {
+                    await this.authStateManager.saveAuthState(
+                      workingDir,
+                      authMethod,
+                    );
+                    console.log(
+                      '[WebViewProvider] Auth state saved after partial session restore',
+                    );
+                  }
+
+                  return;
+                }
+              } catch (fallbackError) {
+                console.warn(
+                  '[WebViewProvider] Fallback session restore also failed:',
+                  fallbackError,
+                );
+              }
+            }
+          } else {
+            console.log(
+              '[WebViewProvider] Auto-restore suppressed for this panel',
+            );
+          }
+
+          // Create a fresh ACP session (no auto-restore or restore failed)
           try {
-            // Try to create a session (this will use cached auth)
-            const sessionId = await this.agentManager.createNewSession(
+            await this.agentManager.createNewSession(
               workingDir,
               this.authStateManager,
             );
+            console.log('[WebViewProvider] ACP session created successfully');
 
-            if (sessionId) {
+            // Ensure auth state is saved after successful session creation
+            if (this.authStateManager) {
+              await this.authStateManager.saveAuthState(workingDir, authMethod);
               console.log(
-                '[WebViewProvider] ACP session restored successfully with ID:',
-                sessionId,
-              );
-            } else {
-              console.log(
-                '[WebViewProvider] ACP session restoration returned no session ID',
+                '[WebViewProvider] Auth state saved after session creation',
               );
             }
-          } catch (restoreError) {
-            console.warn(
-              '[WebViewProvider] Failed to restore ACP session:',
-              restoreError,
+          } catch (sessionError) {
+            console.error(
+              '[WebViewProvider] Failed to create ACP session:',
+              sessionError,
             );
-            // Clear invalid auth cache
-            await this.authStateManager.clearAuthState();
-
-            // Fall back to creating a new session
-            try {
-              await this.agentManager.createNewSession(
-                workingDir,
-                this.authStateManager,
-              );
-              console.log(
-                '[WebViewProvider] ACP session created successfully after restore failure',
-              );
-            } catch (sessionError) {
-              console.error(
-                '[WebViewProvider] Failed to create ACP session:',
-                sessionError,
-              );
-              vscode.window.showWarningMessage(
-                `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
-              );
-            }
+            vscode.window.showWarningMessage(
+              `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+            );
           }
         } else {
           console.log(
@@ -1067,7 +1171,7 @@ export class WebViewProvider {
     if (useTerminal) {
       // In terminal mode, execute the runQwenCode command to open a new terminal
       try {
-        await vscode.commands.executeCommand('qwen-code.runQwenCode');
+        await vscode.commands.executeCommand(runQwenCodeCommand);
         console.log('[WebViewProvider] Opened new terminal session');
       } catch (error) {
         console.error(

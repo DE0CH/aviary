@@ -35,4 +35,8 @@ export type { ToolCallContent } from './toolcalls/shared/types.js';
  */
 export const ToolCall: React.FC<{
   toolCall: import('./toolcalls/shared/types.js').ToolCallData;
-}> = ({ toolCall }) => <ToolCallRouter toolCall={toolCall} />;
+  isFirst?: boolean;
+  isLast?: boolean;
+}> = ({ toolCall, isFirst, isLast }) => (
+  <ToolCallRouter toolCall={toolCall} isFirst={isFirst} isLast={isLast} />
+);
