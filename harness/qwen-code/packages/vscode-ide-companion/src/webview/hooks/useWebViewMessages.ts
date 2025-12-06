@@ -10,18 +10,27 @@ import type { Conversation } from '../../storage/conversationStore.js';
 import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
-} from '../components/PermissionRequest.js';
-import type { PlanEntry } from '../components/PlanDisplay.js';
+} from '../components/PermissionDrawer/PermissionRequest.js';
 import type { ToolCallUpdate } from '../types/toolCall.js';
+import type { PlanEntry } from '../../agents/qwenTypes.js';
 
 interface UseWebViewMessagesProps {
   // Session management
   sessionManagement: {
     currentSessionId: string | null;
-    setQwenSessions: (sessions: Array<Record<string, unknown>>) => void;
+    setQwenSessions: (
+      sessions:
+        | Array<Record<string, unknown>>
+        | ((
+            prev: Array<Record<string, unknown>>,
+          ) => Array<Record<string, unknown>>),
+    ) => void;
     setCurrentSessionId: (id: string | null) => void;
     setCurrentSessionTitle: (title: string) => void;
     setShowSessionSelector: (show: boolean) => void;
+    setNextCursor: (cursor: number | undefined) => void;
+    setHasMore: (hasMore: boolean) => void;
+    setIsLoading: (loading: boolean) => void;
     handleSaveSessionResponse: (response: {
       success: boolean;
       message?: string;
@@ -487,8 +496,19 @@ export const useWebViewMessages = ({
         }
 
         case 'qwenSessionList': {
-          const sessions = message.data.sessions || [];
-          handlers.sessionManagement.setQwenSessions(sessions);
+          const sessions =
+            (message.data.sessions as Array<Record<string, unknown>>) || [];
+          const append = Boolean(message.data.append);
+          const nextCursor = message.data.nextCursor as number | undefined;
+          const hasMore = Boolean(message.data.hasMore);
+
+          handlers.sessionManagement.setQwenSessions(
+            (prev: Array<Record<string, unknown>>) =>
+              append ? [...prev, ...sessions] : sessions,
+          );
+          handlers.sessionManagement.setNextCursor(nextCursor);
+          handlers.sessionManagement.setHasMore(hasMore);
+          handlers.sessionManagement.setIsLoading(false);
           if (
             handlers.sessionManagement.currentSessionId &&
             sessions.length > 0
@@ -533,8 +553,26 @@ export const useWebViewMessages = ({
           } else {
             handlers.messageHandling.clearMessages();
           }
+
+          // Clear and restore tool calls if provided in session data
           handlers.clearToolCalls();
-          handlers.setPlanEntries([]);
+          if (message.data.toolCalls && Array.isArray(message.data.toolCalls)) {
+            message.data.toolCalls.forEach((toolCall: unknown) => {
+              if (toolCall && typeof toolCall === 'object') {
+                handlers.handleToolCallUpdate(toolCall as ToolCallUpdate);
+              }
+            });
+          }
+
+          // Restore plan entries if provided
+          if (
+            message.data.planEntries &&
+            Array.isArray(message.data.planEntries)
+          ) {
+            handlers.setPlanEntries(message.data.planEntries);
+          } else {
+            handlers.setPlanEntries([]);
+          }
           lastPlanSnapshotRef.current = null;
           break;
 

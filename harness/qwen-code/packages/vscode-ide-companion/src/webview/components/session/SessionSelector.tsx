@@ -17,6 +17,9 @@ interface SessionSelectorProps {
   onSearchChange: (query: string) => void;
   onSelectSession: (sessionId: string) => void;
   onClose: () => void;
+  hasMore?: boolean;
+  isLoading?: boolean;
+  onLoadMore?: () => void;
 }
 
 /**
@@ -31,6 +34,9 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
   onSearchChange,
   onSelectSession,
   onClose,
+  hasMore = false,
+  isLoading = false,
+  onLoadMore,
 }) => {
   if (!visible) {
     return null;
@@ -66,7 +72,17 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         </div>
 
         {/* Session List with Grouping */}
-        <div className="session-list-content overflow-y-auto flex-1 select-none p-2">
+        <div
+          className="session-list-content overflow-y-auto flex-1 select-none p-2"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const distanceToBottom =
+              el.scrollHeight - (el.scrollTop + el.clientHeight);
+            if (distanceToBottom < 48 && hasMore && !isLoading) {
+              onLoadMore?.();
+            }
+          }}
+        >
           {hasNoSessions ? (
             <div
               className="p-5 text-center text-[var(--app-secondary-foreground)]"
@@ -125,6 +141,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
                 </div>
               </React.Fragment>
             ))
+          )}
+          {hasMore && (
+            <div className="p-2 text-center opacity-60 text-[0.9em]">
+              {isLoading ? 'Loading…' : ''}
+            </div>
           )}
         </div>
       </div>

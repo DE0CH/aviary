@@ -16,6 +16,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
   private currentStreamContent = '';
   private isSavingCheckpoint = false;
   private loginHandler: (() => Promise<void>) | null = null;
+  private isTitleSet = false; // Flag to track if title has been set
 
   canHandle(messageType: string): boolean {
     return [
@@ -74,7 +75,10 @@ export class SessionMessageHandler extends BaseMessageHandler {
         break;
 
       case 'getQwenSessions':
-        await this.handleGetQwenSessions();
+        await this.handleGetQwenSessions(
+          (data?.cursor as number | undefined) ?? undefined,
+          (data?.size as number | undefined) ?? undefined,
+        );
         break;
 
       case 'saveSession':
@@ -231,8 +235,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
       );
     }
 
-    // Generate title for first message
-    if (isFirstMessage) {
+    // Generate title for first message, but only if it hasn't been set yet
+    if (isFirstMessage && !this.isTitleSet) {
       const title = text.substring(0, 50) + (text.length > 50 ? '...' : '');
       this.sendToWebView({
         type: 'sessionTitleUpdated',
@@ -241,6 +245,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           title,
         },
       });
+      this.isTitleSet = true; // Mark title as set
     }
 
     // Save user message
@@ -280,33 +285,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           vscode.window.showInformationMessage(
             'Please wait while we connect to Qwen Code...',
           );
-          await vscode.commands.executeCommand('qwenCode.login');
-        }
-      }
-      return;
-    }
-
-    // Validate current session before sending message
-    const isSessionValid = await this.agentManager.checkSessionValidity();
-    if (!isSessionValid) {
-      console.warn('[SessionMessageHandler] Current session is not valid');
-
-      // Show non-modal notification with Login button
-      const result = await vscode.window.showWarningMessage(
-        'Your session has expired. Please login again to continue using Qwen Code.',
-        'Login Now',
-      );
-
-      if (result === 'Login Now') {
-        // Use login handler directly
-        if (this.loginHandler) {
-          await this.loginHandler();
-        } else {
-          // Fallback to command
-          vscode.window.showInformationMessage(
-            'Please wait while we connect to Qwen Code...',
-          );
-          await vscode.commands.executeCommand('qwenCode.login');
+          await vscode.commands.executeCommand('qwen-code.login');
         }
       }
       return;
@@ -379,7 +358,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
       console.error('[SessionMessageHandler] Error sending message:', error);
 
       const err = error as unknown as Error;
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       const lower = errorMsg.toLowerCase();
 
       // Suppress user-cancelled/aborted errors (ESC/Stop button)
@@ -420,7 +400,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -456,7 +436,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else {
           return;
@@ -489,13 +469,17 @@ export class SessionMessageHandler extends BaseMessageHandler {
         type: 'conversationCleared',
         data: {},
       });
+
+      // Reset title flag when creating a new session
+      this.isTitleSet = false;
     } catch (error) {
       console.error(
         '[SessionMessageHandler] Failed to create new session:',
         error,
       );
 
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       // Check for authentication/session expiration errors
       if (
         errorMsg.includes('Authentication required') ||
@@ -514,7 +498,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -551,7 +535,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else if (selection === 'View Offline') {
           // Show messages from local cache only
@@ -593,8 +577,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
         }
       }
 
-      // Get session details
-      let sessionDetails = null;
+      // Get session details (includes cwd and filePath when using ACP)
+      let sessionDetails: Record<string, unknown> | null = null;
       try {
         const allSessions = await this.agentManager.getSessionList();
         sessionDetails = allSessions.find(
@@ -613,8 +597,10 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // Try to load session via ACP (now we should be connected)
       try {
-        const loadResponse =
-          await this.agentManager.loadSessionViaAcp(sessionId);
+        const loadResponse = await this.agentManager.loadSessionViaAcp(
+          sessionId,
+          (sessionDetails?.cwd as string | undefined) || undefined,
+        );
         console.log(
           '[SessionMessageHandler] session/load succeeded:',
           loadResponse,
@@ -628,13 +614,21 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'qwenSessionSwitched',
           data: { sessionId, messages, session: sessionDetails },
         });
+
+        // Reset title flag when switching sessions
+        this.isTitleSet = false;
+
+        // Successfully loaded session, return early to avoid fallback logic
+        return;
       } catch (loadError) {
         console.warn(
           '[SessionMessageHandler] session/load failed, using fallback:',
           loadError,
         );
 
-        const errorMsg = String(loadError);
+        // Safely convert error to string
+        const errorMsg = loadError ? String(loadError) : 'Unknown error';
+
         // Check for authentication/session expiration errors
         if (
           errorMsg.includes('Authentication required') ||
@@ -653,7 +647,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -681,16 +675,29 @@ export class SessionMessageHandler extends BaseMessageHandler {
               data: { sessionId, messages, session: sessionDetails },
             });
 
-            vscode.window.showWarningMessage(
-              'Session restored from local cache. Some context may be incomplete.',
-            );
+            // Only show the cache warning if we actually fell back to local cache
+            // and didn't successfully load via ACP
+            // Check if we truly fell back by checking if loadError is not null/undefined
+            // and if it's not a successful response that looks like an error
+            if (
+              loadError &&
+              typeof loadError === 'object' &&
+              !('result' in loadError)
+            ) {
+              vscode.window.showWarningMessage(
+                'Session restored from local cache. Some context may be incomplete.',
+              );
+            }
           } catch (createError) {
             console.error(
               '[SessionMessageHandler] Failed to create session:',
               createError,
             );
 
-            const createErrorMsg = String(createError);
+            // Safely convert error to string
+            const createErrorMsg = createError
+              ? String(createError)
+              : 'Unknown error';
             // Check for authentication/session expiration errors in session creation
             if (
               createErrorMsg.includes('Authentication required') ||
@@ -709,7 +716,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
                 if (this.loginHandler) {
                   await this.loginHandler();
                 } else {
-                  await vscode.commands.executeCommand('qwenCode.login');
+                  await vscode.commands.executeCommand('qwen-code.login');
                 }
               }
 
@@ -738,7 +745,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to switch session:', error);
 
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       // Check for authentication/session expiration errors
       if (
         errorMsg.includes('Authentication required') ||
@@ -757,7 +765,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -778,17 +786,31 @@ export class SessionMessageHandler extends BaseMessageHandler {
   /**
    * Handle get Qwen sessions request
    */
-  private async handleGetQwenSessions(): Promise<void> {
+  private async handleGetQwenSessions(
+    cursor?: number,
+    size?: number,
+  ): Promise<void> {
     try {
-      const sessions = await this.agentManager.getSessionList();
+      // Paged when possible; falls back to full list if ACP not supported
+      const page = await this.agentManager.getSessionListPaged({
+        cursor,
+        size,
+      });
+      const append = typeof cursor === 'number';
       this.sendToWebView({
         type: 'qwenSessionList',
-        data: { sessions },
+        data: {
+          sessions: page.sessions,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          append,
+        },
       });
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to get sessions:', error);
 
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       // Check for authentication/session expiration errors
       if (
         errorMsg.includes('Authentication required') ||
@@ -807,7 +829,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -851,7 +873,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
           data: response,
         });
       } catch (acpError) {
-        const errorMsg = String(acpError);
+        // Safely convert error to string
+        const errorMsg = acpError ? String(acpError) : 'Unknown error';
         // Check for authentication/session expiration errors
         if (
           errorMsg.includes('Authentication required') ||
@@ -870,7 +893,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -898,7 +921,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to save session:', error);
 
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       // Check for authentication/session expiration errors
       if (
         errorMsg.includes('Authentication required') ||
@@ -917,7 +941,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
@@ -983,7 +1007,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         } else if (selection === 'View Offline') {
           const messages =
@@ -1014,8 +1038,16 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'qwenSessionSwitched',
           data: { sessionId, messages },
         });
+
+        // Reset title flag when resuming sessions
+        this.isTitleSet = false;
+
+        // Successfully loaded session, return early to avoid fallback logic
+        await this.handleGetQwenSessions();
+        return;
       } catch (acpError) {
-        const errorMsg = String(acpError);
+        // Safely convert error to string
+        const errorMsg = acpError ? String(acpError) : 'Unknown error';
         // Check for authentication/session expiration errors
         if (
           errorMsg.includes('Authentication required') ||
@@ -1034,7 +1066,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             if (this.loginHandler) {
               await this.loginHandler();
             } else {
-              await vscode.commands.executeCommand('qwenCode.login');
+              await vscode.commands.executeCommand('qwen-code.login');
             }
           }
 
@@ -1065,7 +1097,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
     } catch (error) {
       console.error('[SessionMessageHandler] Failed to resume session:', error);
 
-      const errorMsg = String(error);
+      // Safely convert error to string
+      const errorMsg = error ? String(error) : 'Unknown error';
       // Check for authentication/session expiration errors
       if (
         errorMsg.includes('Authentication required') ||
@@ -1084,7 +1117,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
           if (this.loginHandler) {
             await this.loginHandler();
           } else {
-            await vscode.commands.executeCommand('qwenCode.login');
+            await vscode.commands.executeCommand('qwen-code.login');
           }
         }
 
