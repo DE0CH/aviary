@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
-import type { ChatMessage } from '../../agents/qwenAgentManager.js';
+import type { ChatMessage } from '../../services/qwenAgentManager.js';
 
 /**
  * Session message handler
@@ -581,10 +581,11 @@ export class SessionMessageHandler extends BaseMessageHandler {
       let sessionDetails: Record<string, unknown> | null = null;
       try {
         const allSessions = await this.agentManager.getSessionList();
-        sessionDetails = allSessions.find(
-          (s: { id?: string; sessionId?: string }) =>
-            s.id === sessionId || s.sessionId === sessionId,
-        );
+        sessionDetails =
+          allSessions.find(
+            (s: { id?: string; sessionId?: string }) =>
+              s.id === sessionId || s.sessionId === sessionId,
+          ) || null;
       } catch (err) {
         console.log(
           '[SessionMessageHandler] Could not get session details:',

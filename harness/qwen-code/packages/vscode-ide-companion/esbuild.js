@@ -46,8 +46,8 @@ const cssInjectPlugin = {
 
       let css = await fs.promises.readFile(args.path, 'utf8');
 
-      // For ClaudeCodeStyles.css, we need to resolve @import statements
-      if (args.path.endsWith('ClaudeCodeStyles.css')) {
+      // For styles.css, we need to resolve @import statements
+      if (args.path.endsWith('styles.css')) {
         // Read all imported CSS files and inline them
         const importRegex = /@import\s+'([^']+)';/g;
         let match;

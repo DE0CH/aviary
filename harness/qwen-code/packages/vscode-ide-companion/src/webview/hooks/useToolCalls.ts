@@ -5,8 +5,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { ToolCallData } from '../components/ToolCall.js';
-import type { ToolCallUpdate } from '../types/toolCall.js';
+import type { ToolCallData } from '../components/messages/toolcalls/ToolCall.js';
+import type { ToolCallUpdate } from '../../types/qwenTypes.js';
 
 /**
  * Tool call management Hook

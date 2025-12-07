@@ -29,7 +29,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [customMessage, setCustomMessage] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
-  // 将自定义输入的 ref 类型修正为 HTMLInputElement，避免后续强转
+  // Correct the ref type for custom input to HTMLInputElement to avoid subsequent forced casting
   const customInputRef = useRef<HTMLInputElement>(null);
 
   console.log('PermissionDrawer rendered with isOpen:', isOpen, toolCall);
@@ -139,7 +139,9 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
           options.find((o) => o.optionId === 'cancel')?.optionId ||
           'cancel';
         onResponse(rejectOptionId);
-        if (onClose) onClose();
+        if (onClose) {
+          onClose();
+        }
       }
     };
 
@@ -196,7 +198,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
             toolCall.kind === 'bash') &&
             toolCall.title && (
               <div
-                /* 13px，常规字重；正常空白折行 + 长词断行；最多 3 行溢出省略 */
+                /* 13px, normal font weight; normal whitespace wrapping + long word breaking; maximum 3 lines with overflow ellipsis */
                 className="text-[13px] font-normal text-[var(--app-secondary-foreground)] opacity-90 font-mono whitespace-normal break-words q-line-clamp-3 mb-2"
                 style={{
                   fontSize: '.9em',
@@ -249,7 +251,9 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
                 setCustomMessage={setCustomMessage}
                 onFocusRow={() => setFocusedIndex(options.length)}
                 onSubmitReject={() => {
-                  if (rejectOptionId) onResponse(rejectOptionId);
+                  if (rejectOptionId) {
+                    onResponse(rejectOptionId);
+                  }
                 }}
                 inputRef={customInputRef}
               />
@@ -264,14 +268,14 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
 };
 
 /**
- * CustomMessageInputRow: 复用的自定义输入行组件（无 hooks）
+ * CustomMessageInputRow: Reusable custom input row component (without hooks)
  */
 interface CustomMessageInputRowProps {
   isFocused: boolean;
   customMessage: string;
   setCustomMessage: (val: string) => void;
-  onFocusRow: () => void; // 鼠标移入或输入框 focus 时设置焦点
-  onSubmitReject: () => void; // Enter 提交时触发（选择 reject 选项）
+  onFocusRow: () => void; // Set focus when mouse enters or input box is focused
+  onSubmitReject: () => void; // Triggered when Enter is pressed (selecting reject option)
   inputRef: React.RefObject<HTMLInputElement>;
 }
 

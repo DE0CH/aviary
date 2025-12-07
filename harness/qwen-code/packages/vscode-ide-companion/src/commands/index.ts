@@ -68,7 +68,6 @@ export function registerNewCommands(
     ),
   );
 
-  // TODO: qwenCode.openNewChatTab (not contributed in package.json; used programmatically)
   disposables.push(
     vscode.commands.registerCommand(openNewChatTabCommand, async () => {
       const provider = createWebViewProvider();

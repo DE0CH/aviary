@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { QwenAgentManager } from '../agents/qwenAgentManager.js';
-import type { ConversationStore } from '../storage/conversationStore.js';
+import type { QwenAgentManager } from '../services/qwenAgentManager.js';
+import type { ConversationStore } from '../services/conversationStore.js';
 import { MessageRouter } from './handlers/MessageRouter.js';
 
 /**

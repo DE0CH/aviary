@@ -121,7 +121,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const providers = webViewProviders.filter(
         (p) => typeof p.shouldSuppressDiff === 'function',
       );
-      if (providers.length === 0) return false;
+      if (providers.length === 0) {
+        return false;
+      }
       return providers.every((p) => p.shouldSuppressDiff());
     },
   );
@@ -194,7 +196,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.acceptDiff(docUri);
       }
-      // 如果 WebView 正在 request_permission，主动选择一个允许选项（优先 once）
+      // If WebView is requesting permission, actively select an allow option (prefer once)
       try {
         for (const provider of webViewProviders) {
           if (provider?.hasPendingPermission()) {
@@ -211,7 +213,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(docUri);
       }
-      // 如果 WebView 正在 request_permission，主动选择拒绝/取消
+      // If WebView is requesting permission, actively select reject/cancel
       try {
         for (const provider of webViewProviders) {
           if (provider?.hasPendingPermission()) {

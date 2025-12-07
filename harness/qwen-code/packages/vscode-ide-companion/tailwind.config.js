@@ -7,11 +7,7 @@
 /* eslint-env node */
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    // Progressive adoption strategy: Only scan newly created Tailwind components
-    './src/webview/**/**/*.{js,jsx,ts,tsx}',
-    './src/webview/components/ui/CheckboxDisplay.tsx',
-  ],
+  content: ['./src/webview/**/**/*.{js,jsx,ts,tsx}'],
   theme: {
     extend: {
       keyframes: {

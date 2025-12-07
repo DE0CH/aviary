@@ -59,7 +59,9 @@ export const useSessionManagement = (vscode: VSCodeAPI) => {
   }, [vscode]);
 
   const handleLoadMoreSessions = useCallback(() => {
-    if (!hasMore || isLoading || nextCursor === undefined) return;
+    if (!hasMore || isLoading || nextCursor === undefined) {
+      return;
+    }
     setIsLoading(true);
     vscode.postMessage({
       type: 'getQwenSessions',

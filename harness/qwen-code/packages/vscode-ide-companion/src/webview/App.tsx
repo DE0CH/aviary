@@ -24,15 +24,15 @@ import type {
   ToolCall as PermissionToolCall,
 } from './components/PermissionDrawer/PermissionRequest.js';
 import type { TextMessage } from './hooks/message/useMessageHandling.js';
-import type { ToolCallData } from './components/ToolCall.js';
+import type { ToolCallData } from './components/messages/toolcalls/ToolCall.js';
 import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer.js';
-import { ToolCall } from './components/ToolCall.js';
-import { hasToolCallOutput } from './components/toolcalls/shared/utils.js';
-import { EmptyState } from './components/ui/EmptyState.js';
-import { type CompletionItem } from './types/CompletionTypes.js';
+import { ToolCall } from './components/messages/toolcalls/ToolCall.js';
+import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.js';
+import { EmptyState } from './components/layout/EmptyState.js';
+import { type CompletionItem } from '../types/completionItemTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
-import { InfoBanner } from './components/ui/InfoBanner.js';
-import { ChatHeader } from './components/ui/layouts/ChatHeader.js';
+import { InfoBanner } from './components/layout/InfoBanner.js';
+import { ChatHeader } from './components/layout/ChatHeader.js';
 import {
   UserMessage,
   AssistantMessage,
@@ -40,11 +40,11 @@ import {
   WaitingMessage,
   InterruptedMessage,
 } from './components/messages/index.js';
-import { InputForm } from './components/InputForm.js';
-import { SessionSelector } from './components/session/SessionSelector.js';
+import { InputForm } from './components/layout/InputForm.js';
+import { SessionSelector } from './components/layout/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
-import type { EditMode } from './types/toolCall.js';
-import type { PlanEntry } from '../agents/qwenTypes.js';
+import type { EditMode } from '../types/qwenTypes.js';
+import type { PlanEntry } from '../types/qwenTypes.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
@@ -609,7 +609,7 @@ export const App: React.FC = () => {
             const isToolCallType = (
               x: unknown,
             ): x is { type: 'in-progress-tool-call' | 'completed-tool-call' } =>
-              x &&
+              !!x &&
               typeof x === 'object' &&
               'type' in (x as Record<string, unknown>) &&
               ((x as { type: string }).type === 'in-progress-tool-call' ||
@@ -782,8 +782,6 @@ export const App: React.FC = () => {
           onClose={() => setPermissionRequest(null)}
         />
       )}
-
-      {/* Claude-style dropdown is rendered inside InputForm for proper anchoring */}
     </div>
   );
 };

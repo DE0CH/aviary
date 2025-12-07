@@ -6,13 +6,13 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useVSCode } from './useVSCode.js';
-import type { Conversation } from '../../storage/conversationStore.js';
+import type { Conversation } from '../../services/conversationStore.js';
 import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
 } from '../components/PermissionDrawer/PermissionRequest.js';
-import type { ToolCallUpdate, EditMode } from '../types/toolCall.js';
-import type { PlanEntry } from '../../agents/qwenTypes.js';
+import type { ToolCallUpdate, EditMode } from '../../types/qwenTypes.js';
+import type { PlanEntry } from '../../types/qwenTypes.js';
 
 interface UseWebViewMessagesProps {
   // Session management

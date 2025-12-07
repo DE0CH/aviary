@@ -5,8 +5,8 @@
  */
 
 import type { IMessageHandler } from './BaseMessageHandler.js';
-import type { QwenAgentManager } from '../../agents/qwenAgentManager.js';
-import type { ConversationStore } from '../../storage/conversationStore.js';
+import type { QwenAgentManager } from '../../services/qwenAgentManager.js';
+import type { ConversationStore } from '../../services/conversationStore.js';
 import { SessionMessageHandler } from './SessionMessageHandler.js';
 import { FileMessageHandler } from './FileMessageHandler.js';
 import { EditorMessageHandler } from './EditorMessageHandler.js';

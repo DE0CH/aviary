@@ -6,11 +6,6 @@
 
 import type { CliFeatureFlags, CliVersionInfo } from './cliVersionManager.js';
 
-/**
- * CLI Context Manager
- *
- * Manages the current CLI context including version information and feature availability
- */
 export class CliContextManager {
   private static instance: CliContextManager;
   private currentVersionInfo: CliVersionInfo | null = null;

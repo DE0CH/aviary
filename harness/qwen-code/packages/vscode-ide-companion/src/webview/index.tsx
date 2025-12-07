@@ -11,7 +11,7 @@ import './styles/tailwind.css';
 // eslint-disable-next-line import/no-internal-modules
 import './styles/App.css';
 // eslint-disable-next-line import/no-internal-modules
-import './styles/ClaudeCodeStyles.css';
+import './styles/styles.css';
 
 const container = document.getElementById('root');
 if (container) {

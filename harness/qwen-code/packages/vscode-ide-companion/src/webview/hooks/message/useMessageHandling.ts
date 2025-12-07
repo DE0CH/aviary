@@ -73,7 +73,9 @@ export const useMessageHandling = () => {
   const appendStreamChunk = useCallback(
     (chunk: string) => {
       // Ignore late chunks after user cancelled streaming (until next streamStart)
-      if (!isStreaming) return;
+      if (!isStreaming) {
+        return;
+      }
 
       setMessages((prev) => {
         let idx = streamingMessageIndexRef.current;
@@ -157,7 +159,9 @@ export const useMessageHandling = () => {
     // Thought handling
     appendThinkingChunk: (chunk: string) => {
       // Ignore late thoughts after user cancelled streaming
-      if (!isStreaming) return;
+      if (!isStreaming) {
+        return;
+      }
       setMessages((prev) => {
         let idx = thinkingMessageIndexRef.current;
         const next = prev.slice();

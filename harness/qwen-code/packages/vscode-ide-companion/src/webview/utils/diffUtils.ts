@@ -6,7 +6,7 @@
  * Shared utilities for handling diff operations in the webview
  */
 
-import type { WebviewApi } from 'vscode-webview';
+import type { VSCodeAPI } from '../hooks/useVSCode.js';
 
 /**
  * Handle opening a diff view for a file
@@ -16,7 +16,7 @@ import type { WebviewApi } from 'vscode-webview';
  * @param newText New content (right side)
  */
 export const handleOpenDiff = (
-  vscode: WebviewApi<unknown>,
+  vscode: VSCodeAPI,
   path: string | undefined,
   oldText: string | null | undefined,
   newText: string | undefined,

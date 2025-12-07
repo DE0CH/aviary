@@ -5,7 +5,7 @@
  */
 
 import type React from 'react';
-import { MessageContent } from '../MessageContent.js';
+import { MessageContent } from './MessageContent.js';
 
 interface ThinkingMessageProps {
   content: string;

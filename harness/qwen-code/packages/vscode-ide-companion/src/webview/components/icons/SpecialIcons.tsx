@@ -16,10 +16,6 @@ interface ThinkingIconProps extends IconProps {
   enabled?: boolean;
 }
 
-/**
- * Thinking/brain wave icon (16x16)
- * Used for thinking mode toggle
- */
 export const ThinkingIcon: React.FC<ThinkingIconProps> = ({
   size = 16,
   className,
@@ -53,10 +49,6 @@ export const ThinkingIcon: React.FC<ThinkingIconProps> = ({
   </svg>
 );
 
-/**
- * Terminal/code editor icon (20x20)
- * Used for terminal preference info banner
- */
 export const TerminalIcon: React.FC<IconProps> = ({
   size = 20,
   className,

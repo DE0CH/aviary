@@ -5,17 +5,17 @@
  */
 
 import * as vscode from 'vscode';
-import { QwenAgentManager } from '../agents/qwenAgentManager.js';
-import { ConversationStore } from '../storage/conversationStore.js';
-import type { AcpPermissionRequest } from '../constants/acpTypes.js';
+import { QwenAgentManager } from '../services/qwenAgentManager.js';
+import { ConversationStore } from '../services/conversationStore.js';
+import type { AcpPermissionRequest } from '../types/acpTypes.js';
 import { CliDetector } from '../cli/cliDetector.js';
-import { AuthStateManager } from '../auth/authStateManager.js';
+import { AuthStateManager } from '../services/authStateManager.js';
 import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
-import { authMethod } from '../auth/index.js';
+import { authMethod } from '../constants/auth.js';
 import { runQwenCodeCommand } from '../commands/index.js';
 
 export class WebViewProvider {
