@@ -89,7 +89,6 @@ import { useSessionStats } from './contexts/SessionContext.js';
 import { useGitBranchName } from './hooks/useGitBranchName.js';
 import { useExtensionUpdates } from './hooks/useExtensionUpdates.js';
 import { ShellFocusContext } from './contexts/ShellFocusContext.js';
-import { useQuitConfirmation } from './hooks/useQuitConfirmation.js';
 import { t } from '../i18n/index.js';
 import { useWelcomeBack } from './hooks/useWelcomeBack.js';
 import { useDialogClose } from './hooks/useDialogClose.js';
@@ -446,8 +445,6 @@ export const AppContainer = (props: AppContainerProps) => {
 
   const { toggleVimEnabled } = useVimMode();
 
-  const { showQuitConfirmation } = useQuitConfirmation();
-
   const {
     isSubagentCreateDialogOpen,
     openSubagentCreateDialog,
@@ -493,7 +490,6 @@ export const AppContainer = (props: AppContainerProps) => {
       addConfirmUpdateExtensionRequest,
       openSubagentCreateDialog,
       openAgentsManagerDialog,
-      _showQuitConfirmation: showQuitConfirmation,
     }),
     [
       openAuthDialog,
@@ -507,7 +503,6 @@ export const AppContainer = (props: AppContainerProps) => {
       openPermissionsDialog,
       openApprovalModeDialog,
       addConfirmUpdateExtensionRequest,
-      showQuitConfirmation,
       openSubagentCreateDialog,
       openAgentsManagerDialog,
     ],
@@ -520,7 +515,6 @@ export const AppContainer = (props: AppContainerProps) => {
     commandContext,
     shellConfirmationRequest,
     confirmationRequest,
-    quitConfirmationRequest,
   } = useSlashCommandProcessor(
     config,
     settings,
@@ -969,7 +963,6 @@ export const AppContainer = (props: AppContainerProps) => {
     isFolderTrustDialogOpen,
     showWelcomeBackDialog,
     handleWelcomeBackClose,
-    quitConfirmationRequest,
   });
 
   const handleExit = useCallback(
@@ -983,25 +976,18 @@ export const AppContainer = (props: AppContainerProps) => {
         if (timerRef.current) {
           clearTimeout(timerRef.current);
         }
-        // Exit directly without showing confirmation dialog
+        // Exit directly
         handleSlashCommand('/quit');
         return;
       }
 
       // First press: Prioritize cleanup tasks
 
-      // Special case: If quit-confirm dialog is open, Ctrl+C means "quit immediately"
-      if (quitConfirmationRequest) {
-        handleSlashCommand('/quit');
-        return;
-      }
-
       // 1. Close other dialogs (highest priority)
       /**
        * For AuthDialog it is required to complete the authentication process,
        * otherwise user cannot proceed to the next step.
-       * So a quit on AuthDialog should go with normal two press quit
-       * and without quit-confirm dialog.
+       * So a quit on AuthDialog should go with normal two press quit.
        */
       if (isAuthDialogOpen) {
         setPressedOnce(true);
@@ -1022,14 +1008,17 @@ export const AppContainer = (props: AppContainerProps) => {
         return; // Request cancelled, end processing
       }
 
-      // 3. Clear input buffer (if has content)
+      // 4. Clear input buffer (if has content)
       if (buffer.text.length > 0) {
         buffer.setText('');
         return; // Input cleared, end processing
       }
 
-      // All cleanup tasks completed, show quit confirmation dialog
-      handleSlashCommand('/quit-confirm');
+      // All cleanup tasks completed, set flag for double-press to quit
+      setPressedOnce(true);
+      timerRef.current = setTimeout(() => {
+        setPressedOnce(false);
+      }, CTRL_EXIT_PROMPT_DURATION_MS);
     },
     [
       isAuthDialogOpen,
@@ -1037,7 +1026,6 @@ export const AppContainer = (props: AppContainerProps) => {
       closeAnyOpenDialog,
       streamingState,
       cancelOngoingRequest,
-      quitConfirmationRequest,
       buffer,
     ],
   );
@@ -1054,8 +1042,8 @@ export const AppContainer = (props: AppContainerProps) => {
           return;
         }
 
-        // On first press: set flag, start timer, and call handleExit for cleanup/quit-confirm
-        // On second press (within 500ms): handleExit sees flag and does fast quit
+        // On first press: set flag, start timer, and call handleExit for cleanup
+        // On second press (within timeout): handleExit sees flag and does fast quit
         if (!ctrlCPressedOnce) {
           setCtrlCPressedOnce(true);
           ctrlCTimerRef.current = setTimeout(() => {
@@ -1196,7 +1184,6 @@ export const AppContainer = (props: AppContainerProps) => {
     !!confirmationRequest ||
     confirmUpdateExtensionRequests.length > 0 ||
     !!loopDetectionConfirmationRequest ||
-    !!quitConfirmationRequest ||
     isThemeDialogOpen ||
     isSettingsDialogOpen ||
     isModelDialogOpen ||
@@ -1245,7 +1232,6 @@ export const AppContainer = (props: AppContainerProps) => {
       confirmationRequest,
       confirmUpdateExtensionRequests,
       loopDetectionConfirmationRequest,
-      quitConfirmationRequest,
       geminiMdFileCount,
       streamingState,
       initError,
@@ -1337,7 +1323,6 @@ export const AppContainer = (props: AppContainerProps) => {
       confirmationRequest,
       confirmUpdateExtensionRequests,
       loopDetectionConfirmationRequest,
-      quitConfirmationRequest,
       geminiMdFileCount,
       streamingState,
       initError,

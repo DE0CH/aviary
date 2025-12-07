@@ -145,16 +145,6 @@ Slash commands provide meta-level control over the CLI itself.
     - **`nodesc`** or **`nodescriptions`**:
       - **Description:** Hide tool descriptions, showing only the tool names.
 
-- **`/quit-confirm`**
-  - **Description:** Show a confirmation dialog before exiting Qwen Code, allowing you to choose how to handle your current session.
-  - **Usage:** `/quit-confirm`
-  - **Features:**
-    - **Quit immediately:** Exit without saving anything (equivalent to `/quit`)
-    - **Generate summary and quit:** Create a project summary using `/summary` before exiting
-    - **Save conversation and quit:** Save the current conversation with an auto-generated tag before exiting
-  - **Keyboard shortcut:** Press **Ctrl+C** twice to trigger the quit confirmation dialog
-  - **Note:** This command is automatically triggered when you press Ctrl+C once, providing a safety mechanism to prevent accidental exits.
-
 - **`/quit`** (or **`/exit`**)
   - **Description:** Exit Qwen Code immediately without any confirmation dialog.
 

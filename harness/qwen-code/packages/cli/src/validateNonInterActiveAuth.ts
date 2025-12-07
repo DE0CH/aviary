@@ -41,7 +41,7 @@ export async function validateNonInteractiveAuth(
     }
 
     const effectiveAuthType =
-      enforcedType || getAuthTypeFromEnv() || configuredAuthType;
+      enforcedType || configuredAuthType || getAuthTypeFromEnv();
 
     if (!effectiveAuthType) {
       const message = `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: QWEN_OAUTH, OPENAI_API_KEY`;

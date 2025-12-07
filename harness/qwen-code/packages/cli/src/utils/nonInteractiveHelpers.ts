@@ -275,7 +275,7 @@ export async function buildSystemMessage(
     tools,
     mcp_servers: mcpServerList,
     model: config.getModel(),
-    permissionMode,
+    permission_mode: permissionMode,
     slash_commands: slashCommands,
     qwen_code_version: config.getCliVersion() || 'unknown',
     agents: agentNames,

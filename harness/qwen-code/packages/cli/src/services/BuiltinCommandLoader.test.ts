@@ -71,7 +71,6 @@ vi.mock('../ui/commands/modelCommand.js', () => ({
 }));
 vi.mock('../ui/commands/quitCommand.js', () => ({
   quitCommand: {},
-  quitConfirmCommand: {},
 }));
 vi.mock('../ui/commands/statsCommand.js', () => ({ statsCommand: {} }));
 vi.mock('../ui/commands/themeCommand.js', () => ({ themeCommand: {} }));
