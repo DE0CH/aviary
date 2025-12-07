@@ -13,6 +13,7 @@ export const AGENT_METHODS = {
   session_new: 'session/new',
   session_prompt: 'session/prompt',
   session_save: 'session/save',
+  session_set_mode: 'session/set_mode',
 } as const;
 
 export const CLIENT_METHODS = {

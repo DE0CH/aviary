@@ -335,6 +335,32 @@ export class AcpSessionManager {
   }
 
   /**
+   * Set approval mode for current session (ACP session/set_mode)
+   *
+   * @param modeId - 'plan' | 'default' | 'auto-edit' | 'yolo'
+   */
+  async setMode(
+    modeId: 'plan' | 'default' | 'auto-edit' | 'yolo',
+    child: ChildProcess | null,
+    pendingRequests: Map<number, PendingRequest<unknown>>,
+    nextRequestId: { value: number },
+  ): Promise<AcpResponse> {
+    if (!this.sessionId) {
+      throw new Error('No active ACP session');
+    }
+    console.log('[ACP] Sending session/set_mode:', modeId);
+    const res = await this.sendRequest<AcpResponse>(
+      AGENT_METHODS.session_set_mode,
+      { sessionId: this.sessionId, modeId },
+      child,
+      pendingRequests,
+      nextRequestId,
+    );
+    console.log('[ACP] set_mode response:', res);
+    return res;
+  }
+
+  /**
    * Switch to specified session
    *
    * @param sessionId - Session ID

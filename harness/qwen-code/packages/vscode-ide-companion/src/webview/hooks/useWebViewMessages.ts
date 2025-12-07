@@ -11,7 +11,7 @@ import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
 } from '../components/PermissionDrawer/PermissionRequest.js';
-import type { ToolCallUpdate } from '../types/toolCall.js';
+import type { ToolCallUpdate, EditMode } from '../types/toolCall.js';
 import type { PlanEntry } from '../../agents/qwenTypes.js';
 
 interface UseWebViewMessagesProps {
@@ -94,14 +94,20 @@ interface UseWebViewMessagesProps {
   setPlanEntries: (entries: PlanEntry[]) => void;
 
   // Permission
-  handlePermissionRequest: (request: {
-    options: PermissionOption[];
-    toolCall: PermissionToolCall;
-  }) => void;
+  // When request is non-null, open/update the permission drawer.
+  // When null, close the drawer (used when extension simulates a choice).
+  handlePermissionRequest: (
+    request: {
+      options: PermissionOption[];
+      toolCall: PermissionToolCall;
+    } | null,
+  ) => void;
 
   // Input
   inputFieldRef: React.RefObject<HTMLDivElement>;
   setInputText: (text: string) => void;
+  // Edit mode setter (maps ACP modes to UI modes)
+  setEditMode?: (mode: EditMode) => void;
 }
 
 /**
@@ -118,6 +124,7 @@ export const useWebViewMessages = ({
   handlePermissionRequest,
   inputFieldRef,
   setInputText,
+  setEditMode,
 }: UseWebViewMessagesProps) => {
   // VS Code API for posting messages back to the extension host
   const vscode = useVSCode();
@@ -186,6 +193,50 @@ export const useWebViewMessages = ({
       const handlers = handlersRef.current;
 
       switch (message.type) {
+        case 'modeInfo': {
+          // Initialize UI mode from ACP initialize
+          try {
+            const current = (message.data?.currentModeId || 'default') as
+              | 'plan'
+              | 'default'
+              | 'auto-edit'
+              | 'yolo';
+            setEditMode?.(
+              (current === 'plan'
+                ? 'plan'
+                : current === 'auto-edit'
+                  ? 'auto'
+                  : current === 'yolo'
+                    ? 'yolo'
+                    : 'ask') as EditMode,
+            );
+          } catch (_error) {
+            // best effort
+          }
+          break;
+        }
+
+        case 'modeChanged': {
+          try {
+            const modeId = (message.data?.modeId || 'default') as
+              | 'plan'
+              | 'default'
+              | 'auto-edit'
+              | 'yolo';
+            setEditMode?.(
+              (modeId === 'plan'
+                ? 'plan'
+                : modeId === 'auto-edit'
+                  ? 'auto'
+                  : modeId === 'yolo'
+                    ? 'yolo'
+                    : 'ask') as EditMode,
+            );
+          } catch (_error) {
+            // Ignore error when setting mode
+          }
+          break;
+        }
         case 'loginSuccess': {
           // Clear loading state and show a short assistant notice
           handlers.messageHandling.clearWaitingForResponse();
@@ -268,9 +319,9 @@ export const useWebViewMessages = ({
           if (msg.role === 'assistant') {
             try {
               handlers.messageHandling.endStreaming();
-            } catch (err) {
+            } catch (_error) {
               // no-op: stream might not have been started
-              console.warn('[PanelManager] Failed to end streaming:', err);
+              console.warn('[PanelManager] Failed to end streaming:', _error);
             }
             // Important: Do NOT blindly clear the waiting message if there are
             // still active tool calls running. We keep the waiting indicator
@@ -278,11 +329,11 @@ export const useWebViewMessages = ({
             if (activeExecToolCallsRef.current.size === 0) {
               try {
                 handlers.messageHandling.clearWaitingForResponse();
-              } catch (err) {
+              } catch (_error) {
                 // no-op: already cleared
                 console.warn(
                   '[PanelManager] Failed to clear waiting for response:',
-                  err,
+                  _error,
                 );
               }
             }
@@ -307,15 +358,36 @@ export const useWebViewMessages = ({
           break;
         }
 
-        case 'streamEnd':
+        case 'streamEnd': {
+          // Always end local streaming state and collapse any thoughts
           handlers.messageHandling.endStreaming();
           handlers.messageHandling.clearThinking();
-          // Clear the generic waiting indicator only if there are no active
-          // long-running tool calls. Otherwise, keep it visible.
+
+          // If the stream ended due to explicit user cancel, proactively
+          // clear the waiting indicator and reset any tracked exec calls.
+          // This avoids the UI being stuck with the Stop button visible
+          // after rejecting a permission request.
+          try {
+            const reason = (
+              (message.data as { reason?: string } | undefined)?.reason || ''
+            ).toLowerCase();
+            if (reason === 'user_cancelled') {
+              activeExecToolCallsRef.current.clear();
+              handlers.messageHandling.clearWaitingForResponse();
+              break;
+            }
+          } catch (_error) {
+            // best-effort
+          }
+
+          // Otherwise, clear the generic waiting indicator only if there are
+          // no active long-running tool calls. If there are still active
+          // execute/bash/command calls, keep the hint visible.
           if (activeExecToolCallsRef.current.size === 0) {
             handlers.messageHandling.clearWaitingForResponse();
           }
           break;
+        }
 
         case 'error':
           handlers.messageHandling.clearWaitingForResponse();
@@ -334,8 +406,22 @@ export const useWebViewMessages = ({
           };
 
           if (permToolCall?.toolCallId) {
+            // Infer kind more robustly for permission preview:
+            // - If content contains a diff entry, force 'edit' so the EditToolCall auto-opens VS Code diff
+            // - Else try title-based hints; fall back to provided kind or 'execute'
             let kind = permToolCall.kind || 'execute';
-            if (permToolCall.title) {
+            const contentArr = (permToolCall.content as unknown[]) || [];
+            const hasDiff = Array.isArray(contentArr)
+              ? contentArr.some(
+                  (c: unknown) =>
+                    !!c &&
+                    typeof c === 'object' &&
+                    (c as { type?: string }).type === 'diff',
+                )
+              : false;
+            if (hasDiff) {
+              kind = 'edit';
+            } else if (permToolCall.title) {
               const title = permToolCall.title.toLowerCase();
               if (title.includes('touch') || title.includes('echo')) {
                 kind = 'execute';
@@ -367,6 +453,19 @@ export const useWebViewMessages = ({
 
             // Split assistant stream so subsequent chunks start a new assistant message
             handlers.messageHandling.breakAssistantSegment();
+          }
+          break;
+        }
+
+        case 'permissionResolved': {
+          // Extension proactively resolved a pending permission; close drawer.
+          try {
+            handlers.handlePermissionRequest(null);
+          } catch (_error) {
+            console.warn(
+              '[useWebViewMessages] failed to close permission UI:',
+              _error,
+            );
           }
           break;
         }
@@ -428,10 +527,10 @@ export const useWebViewMessages = ({
 
               // Split assistant message segments, keep rendering blocks independent
               handlers.messageHandling.breakAssistantSegment?.();
-            } catch (err) {
+            } catch (_error) {
               console.warn(
                 '[useWebViewMessages] failed to push/merge plan snapshot toolcall:',
-                err,
+                _error,
               );
             }
           }
@@ -489,7 +588,7 @@ export const useWebViewMessages = ({
                 handlers.messageHandling.clearWaitingForResponse();
               }
             }
-          } catch (_err) {
+          } catch (_error) {
             // Best-effort UI hint; ignore errors
           }
           break;
@@ -553,6 +652,12 @@ export const useWebViewMessages = ({
           } else {
             handlers.messageHandling.clearMessages();
           }
+
+          // Clear any waiting message that might be displayed from previous session
+          handlers.messageHandling.clearWaitingForResponse();
+
+          // Clear active tool calls tracking
+          activeExecToolCallsRef.current.clear();
 
           // Clear and restore tool calls if provided in session data
           handlers.clearToolCalls();
@@ -682,7 +787,7 @@ export const useWebViewMessages = ({
           break;
       }
     },
-    [inputFieldRef, setInputText, vscode],
+    [inputFieldRef, setInputText, vscode, setEditMode],
   );
 
   useEffect(() => {

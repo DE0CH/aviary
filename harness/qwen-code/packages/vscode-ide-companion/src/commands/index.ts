@@ -9,7 +9,6 @@ export const showDiffCommand = 'qwenCode.showDiff';
 export const openChatCommand = 'qwen-code.openChat';
 export const openNewChatTabCommand = 'qwenCode.openNewChatTab';
 export const loginCommand = 'qwen-code.login';
-export const clearAuthCacheCommand = 'qwen-code.clearAuthCache';
 
 export function registerNewCommands(
   context: vscode.ExtensionContext,
@@ -90,19 +89,5 @@ export function registerNewCommands(
       }
     }),
   );
-
-  disposables.push(
-    vscode.commands.registerCommand(clearAuthCacheCommand, async () => {
-      const providers = getWebViewProviders();
-      for (const provider of providers) {
-        await provider.clearAuthCache();
-      }
-      vscode.window.showInformationMessage(
-        'Qwen Code authentication cache cleared. You will need to login again on next connection.',
-      );
-      log('Auth cache cleared by user');
-    }),
-  );
-
   context.subscriptions.push(...disposables);
 }

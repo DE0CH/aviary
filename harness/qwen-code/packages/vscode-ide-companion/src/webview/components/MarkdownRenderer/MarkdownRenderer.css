@@ -165,8 +165,7 @@
 }
 
 .markdown-content .code-block-wrapper pre {
-  /* Reserve space so the copy button never overlaps code text */
-  padding-top: 1.5rem; /* Reduced padding - room for the button height */
+  padding-top: 1rem; /* Reduced padding - room for the button height */
   padding-right: 2rem; /* Reduced padding - room for the button width */
 }
 

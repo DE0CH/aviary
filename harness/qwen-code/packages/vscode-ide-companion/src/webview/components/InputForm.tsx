@@ -20,7 +20,7 @@ import {
 import { CompletionMenu } from './ui/CompletionMenu.js';
 import type { CompletionItem } from '../types/CompletionTypes.js';
 
-type EditMode = 'ask' | 'auto' | 'plan';
+type EditMode = 'ask' | 'auto' | 'plan' | 'yolo';
 
 interface InputFormProps {
   inputText: string;
@@ -74,6 +74,13 @@ const getEditModeInfo = (editMode: EditMode) => {
         text: 'Plan mode',
         title: 'Qwen will plan before executing. Click to switch modes.',
         icon: <PlanModeIcon />,
+      };
+    case 'yolo':
+      return {
+        text: 'YOLO',
+        title: 'Automatically approve all tools. Click to switch modes.',
+        // Reuse Auto icon for simplicity; can swap to a distinct icon later.
+        icon: <AutoEditIcon />,
       };
     default:
       return {

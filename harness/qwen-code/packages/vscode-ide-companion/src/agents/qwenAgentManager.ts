@@ -80,6 +80,31 @@ export class QwenAgentManager {
         console.warn('[QwenAgentManager] onEndTurn callback error:', err);
       }
     };
+
+    // Initialize callback to surface available modes and current mode to UI
+    this.connection.onInitialized = (init: unknown) => {
+      try {
+        const obj = (init || {}) as Record<string, unknown>;
+        const modes = obj['modes'] as
+          | {
+              currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+              availableModes?: Array<{
+                id: 'plan' | 'default' | 'auto-edit' | 'yolo';
+                name: string;
+                description: string;
+              }>;
+            }
+          | undefined;
+        if (modes && this.callbacks.onModeInfo) {
+          this.callbacks.onModeInfo({
+            currentModeId: modes.currentModeId,
+            availableModes: modes.availableModes,
+          });
+        }
+      } catch (err) {
+        console.warn('[QwenAgentManager] onInitialized parse error:', err);
+      }
+    };
   }
 
   /**
@@ -113,6 +138,41 @@ export class QwenAgentManager {
    */
   async sendMessage(message: string): Promise<void> {
     await this.connection.sendPrompt(message);
+  }
+
+  /**
+   * Set approval mode from UI (maps UI edit mode -> ACP mode id)
+   */
+  async setApprovalModeFromUi(
+    uiMode: 'ask' | 'auto' | 'plan' | 'yolo',
+  ): Promise<'plan' | 'default' | 'auto-edit' | 'yolo'> {
+    const map: Record<
+      'ask' | 'auto' | 'plan' | 'yolo',
+      'plan' | 'default' | 'auto-edit' | 'yolo'
+    > = {
+      plan: 'plan',
+      ask: 'default',
+      auto: 'auto-edit',
+      yolo: 'yolo',
+    } as const;
+    const modeId = map[uiMode];
+    try {
+      const res = await this.connection.setMode(modeId);
+      // Optimistically notify UI using response
+      const result = (res?.result || {}) as { modeId?: string };
+      const confirmed =
+        (result.modeId as
+          | 'plan'
+          | 'default'
+          | 'auto-edit'
+          | 'yolo'
+          | undefined) || modeId;
+      this.callbacks.onModeChanged?.(confirmed);
+      return confirmed;
+    } catch (err) {
+      console.error('[QwenAgentManager] Failed to set mode:', err);
+      throw err;
+    }
   }
 
   /**
@@ -182,17 +242,14 @@ export class QwenAgentManager {
         const res: unknown = response;
         let items: Array<Record<string, unknown>> = [];
 
-        if (
-          typeof response === 'object' &&
-          response !== null &&
-          'items' in response
-        ) {
-          // Type guard to safely access items property
-          const responseObject: Record<string, unknown> = response;
-          if ('items' in responseObject) {
-            const itemsValue = responseObject.items;
-            items = Array.isArray(itemsValue) ? itemsValue : [];
-          }
+        // Note: AcpSessionManager resolves `sendRequest` with the JSON-RPC
+        // "result" directly (not the full AcpResponse). Treat it as unknown
+        // and carefully narrow before accessing `items` to satisfy strict TS.
+        if (res && typeof res === 'object' && 'items' in res) {
+          const itemsValue = (res as { items?: unknown }).items;
+          items = Array.isArray(itemsValue)
+            ? (itemsValue as Array<Record<string, unknown>>)
+            : [];
         }
 
         console.log(
@@ -464,8 +521,25 @@ export class QwenAgentManager {
       );
 
       // Include all types of records, not just user/assistant
+      // Narrow unknown JSONL rows into a minimal shape we can work with.
+      type JsonlRecord = {
+        type: string;
+        timestamp: string;
+        message?: unknown;
+        toolCallResult?: { callId?: string; status?: string } | unknown;
+        subtype?: string;
+        systemPayload?: { uiEvent?: Record<string, unknown> } | unknown;
+        plan?: { entries?: Array<Record<string, unknown>> } | unknown;
+      };
+
+      const isJsonlRecord = (x: unknown): x is JsonlRecord =>
+        typeof x === 'object' &&
+        x !== null &&
+        typeof (x as Record<string, unknown>).type === 'string' &&
+        typeof (x as Record<string, unknown>).timestamp === 'string';
+
       const allRecords = records
-        .filter((r) => r && r.type && r.timestamp)
+        .filter(isJsonlRecord)
         .sort(
           (a, b) =>
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
@@ -485,7 +559,7 @@ export class QwenAgentManager {
         // Handle tool call records that might have content we want to show
         else if (r.type === 'tool_call' || r.type === 'tool_call_update') {
           // Convert tool calls to messages if they have relevant content
-          const toolContent = this.extractToolCallContent(r);
+          const toolContent = this.extractToolCallContent(r as unknown);
           if (toolContent) {
             msgs.push({
               role: 'assistant',
@@ -495,10 +569,17 @@ export class QwenAgentManager {
           }
         }
         // Handle tool result records
-        else if (r.type === 'tool_result' && r.toolCallResult) {
-          const toolResult = r.toolCallResult;
-          const callId = toolResult.callId || 'unknown';
-          const status = toolResult.status || 'unknown';
+        else if (
+          r.type === 'tool_result' &&
+          r.toolCallResult &&
+          typeof r.toolCallResult === 'object'
+        ) {
+          const toolResult = r.toolCallResult as {
+            callId?: string;
+            status?: string;
+          };
+          const callId = toolResult.callId ?? 'unknown';
+          const status = toolResult.status ?? 'unknown';
           const resultText = `Tool Result (${callId}): ${status}`;
           msgs.push({
             role: 'assistant',
@@ -510,33 +591,48 @@ export class QwenAgentManager {
         else if (
           r.type === 'system' &&
           r.subtype === 'ui_telemetry' &&
-          r.systemPayload?.uiEvent
+          r.systemPayload &&
+          typeof r.systemPayload === 'object' &&
+          'uiEvent' in r.systemPayload &&
+          (r.systemPayload as { uiEvent?: Record<string, unknown> }).uiEvent
         ) {
-          const uiEvent = r.systemPayload.uiEvent;
+          const uiEvent = (
+            r.systemPayload as {
+              uiEvent?: Record<string, unknown>;
+            }
+          ).uiEvent as Record<string, unknown>;
           let telemetryText = '';
 
           if (
-            uiEvent['event.name'] &&
-            uiEvent['event.name'].includes('tool_call')
+            typeof uiEvent['event.name'] === 'string' &&
+            (uiEvent['event.name'] as string).includes('tool_call')
           ) {
-            const functionName = uiEvent.function_name || 'Unknown tool';
-            const status = uiEvent.status || 'unknown';
-            const duration = uiEvent.duration_ms
-              ? ` (${uiEvent.duration_ms}ms)`
-              : '';
+            const functionName =
+              (uiEvent['function_name'] as string | undefined) ||
+              'Unknown tool';
+            const status =
+              (uiEvent['status'] as string | undefined) || 'unknown';
+            const duration =
+              typeof uiEvent['duration_ms'] === 'number'
+                ? ` (${uiEvent['duration_ms']}ms)`
+                : '';
             telemetryText = `Tool Call: ${functionName} - ${status}${duration}`;
           } else if (
-            uiEvent['event.name'] &&
-            uiEvent['event.name'].includes('api_response')
+            typeof uiEvent['event.name'] === 'string' &&
+            (uiEvent['event.name'] as string).includes('api_response')
           ) {
-            const statusCode = uiEvent.status_code || 'unknown';
-            const duration = uiEvent.duration_ms
-              ? ` (${uiEvent.duration_ms}ms)`
-              : '';
+            const statusCode =
+              (uiEvent['status_code'] as string | number | undefined) ||
+              'unknown';
+            const duration =
+              typeof uiEvent['duration_ms'] === 'number'
+                ? ` (${uiEvent['duration_ms']}ms)`
+                : '';
             telemetryText = `API Response: Status ${statusCode}${duration}`;
           } else {
             // Generic system telemetry
-            const eventName = uiEvent['event.name'] || 'Unknown event';
+            const eventName =
+              (uiEvent['event.name'] as string | undefined) || 'Unknown event';
             telemetryText = `System Event: ${eventName}`;
           }
 
@@ -549,8 +645,15 @@ export class QwenAgentManager {
           }
         }
         // Handle plan entries
-        else if (r.type === 'plan' && r.plan) {
-          const planEntries = r.plan.entries || [];
+        else if (
+          r.type === 'plan' &&
+          r.plan &&
+          typeof r.plan === 'object' &&
+          'entries' in r.plan
+        ) {
+          const planEntries =
+            ((r.plan as { entries?: Array<Record<string, unknown>> })
+              .entries as Array<Record<string, unknown>> | undefined) || [];
           if (planEntries.length > 0) {
             const planText = planEntries
               .map(
@@ -1242,6 +1345,33 @@ export class QwenAgentManager {
    */
   onEndTurn(callback: () => void): void {
     this.callbacks.onEndTurn = callback;
+    this.sessionUpdateHandler.updateCallbacks(this.callbacks);
+  }
+
+  /**
+   * Register initialize mode info callback
+   */
+  onModeInfo(
+    callback: (info: {
+      currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+      availableModes?: Array<{
+        id: 'plan' | 'default' | 'auto-edit' | 'yolo';
+        name: string;
+        description: string;
+      }>;
+    }) => void,
+  ): void {
+    this.callbacks.onModeInfo = callback;
+    this.sessionUpdateHandler.updateCallbacks(this.callbacks);
+  }
+
+  /**
+   * Register mode changed callback
+   */
+  onModeChanged(
+    callback: (modeId: 'plan' | 'default' | 'auto-edit' | 'yolo') => void,
+  ): void {
+    this.callbacks.onModeChanged = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }
 

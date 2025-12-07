@@ -61,4 +61,15 @@ export interface QwenAgentCallbacks {
   onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string>;
   /** End of turn callback (e.g., stopReason === 'end_turn') */
   onEndTurn?: () => void;
+  /** Initialize modes & capabilities info from ACP initialize */
+  onModeInfo?: (info: {
+    currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+    availableModes?: Array<{
+      id: 'plan' | 'default' | 'auto-edit' | 'yolo';
+      name: string;
+      description: string;
+    }>;
+  }) => void;
+  /** Mode changed notification */
+  onModeChanged?: (modeId: 'plan' | 'default' | 'auto-edit' | 'yolo') => void;
 }

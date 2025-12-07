@@ -92,7 +92,13 @@ export class SettingsMessageHandler extends BaseMessageHandler {
         | 'auto-edit'
         | 'yolo';
       await this.agentManager.setApprovalModeFromUi(
-        modeId === 'plan' ? 'plan' : modeId === 'auto-edit' ? 'auto' : 'ask',
+        modeId === 'plan'
+          ? 'plan'
+          : modeId === 'auto-edit'
+            ? 'auto'
+            : modeId === 'yolo'
+              ? 'yolo'
+              : 'ask',
       );
       // No explicit response needed; WebView listens for modeChanged
     } catch (error) {

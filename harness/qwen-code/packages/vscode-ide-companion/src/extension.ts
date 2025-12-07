@@ -111,7 +111,20 @@ export async function activate(context: vscode.ExtensionContext) {
   checkForUpdates(context, log);
 
   const diffContentProvider = new DiffContentProvider();
-  const diffManager = new DiffManager(log, diffContentProvider);
+  const diffManager = new DiffManager(
+    log,
+    diffContentProvider,
+    // Delay when any chat tab has a pending permission drawer
+    () => webViewProviders.some((p) => p.hasPendingPermission()),
+    // Suppress diffs when active mode is auto or yolo in any chat tab
+    () => {
+      const providers = webViewProviders.filter(
+        (p) => typeof p.shouldSuppressDiff === 'function',
+      );
+      if (providers.length === 0) return false;
+      return providers.every((p) => p.shouldSuppressDiff());
+    },
+  );
 
   // Helper function to create a new WebView provider instance
   const createWebViewProvider = (): WebViewProvider => {
@@ -176,12 +189,21 @@ export async function activate(context: vscode.ExtensionContext) {
       DIFF_SCHEME,
       diffContentProvider,
     ),
-    vscode.commands.registerCommand('qwen.diff.accept', (uri?: vscode.Uri) => {
+    (vscode.commands.registerCommand('qwen.diff.accept', (uri?: vscode.Uri) => {
       const docUri = uri ?? vscode.window.activeTextEditor?.document.uri;
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.acceptDiff(docUri);
       }
-      // TODO: 如果 webview 在 request_permission 需要回复 cli
+      // 如果 WebView 正在 request_permission，主动选择一个允许选项（优先 once）
+      try {
+        for (const provider of webViewProviders) {
+          if (provider?.hasPendingPermission()) {
+            provider.respondToPendingPermission('allow');
+          }
+        }
+      } catch (err) {
+        console.warn('[Extension] Auto-allow on diff.accept failed:', err);
+      }
       console.log('[Extension] Diff accepted');
     }),
     vscode.commands.registerCommand('qwen.diff.cancel', (uri?: vscode.Uri) => {
@@ -189,8 +211,31 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(docUri);
       }
-      // TODO: 如果 webview 在 request_permission 需要回复 cli
+      // 如果 WebView 正在 request_permission，主动选择拒绝/取消
+      try {
+        for (const provider of webViewProviders) {
+          if (provider?.hasPendingPermission()) {
+            provider.respondToPendingPermission('cancel');
+          }
+        }
+      } catch (err) {
+        console.warn('[Extension] Auto-reject on diff.cancel failed:', err);
+      }
       console.log('[Extension] Diff cancelled');
+    })),
+    vscode.commands.registerCommand('qwen.diff.closeAll', async () => {
+      try {
+        await diffManager.closeAll();
+      } catch (err) {
+        console.warn('[Extension] qwen.diff.closeAll failed:', err);
+      }
+    }),
+    vscode.commands.registerCommand('qwen.diff.suppressBriefly', async () => {
+      try {
+        diffManager.suppressFor(1200);
+      } catch (err) {
+        console.warn('[Extension] qwen.diff.suppressBriefly failed:', err);
+      }
     }),
   );
 

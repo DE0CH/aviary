@@ -153,6 +153,17 @@ export interface PlanUpdate extends BaseSessionUpdate {
   };
 }
 
+// Approval/Mode values as defined by ACP schema
+export type ApprovalModeValue = 'plan' | 'default' | 'auto-edit' | 'yolo';
+
+// Current mode update (sent by agent when mode changes)
+export interface CurrentModeUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'current_mode_update';
+    modeId: ApprovalModeValue;
+  };
+}
+
 // Union type for all session updates
 export type AcpSessionUpdate =
   | UserMessageChunkUpdate
@@ -160,7 +171,8 @@ export type AcpSessionUpdate =
   | AgentThoughtChunkUpdate
   | ToolCallUpdate
   | ToolCallStatusUpdate
-  | PlanUpdate;
+  | PlanUpdate
+  | CurrentModeUpdate;
 
 // Permission request (simplified version, use schema.RequestPermissionRequest for validation)
 export interface AcpPermissionRequest {

@@ -471,15 +471,27 @@ export const App: React.FC = () => {
     });
   }, [vscode]);
 
-  // Handle toggle edit mode
+  // Handle toggle edit mode (Ask -> Auto -> Plan -> YOLO -> Ask)
   const handleToggleEditMode = useCallback(() => {
     setEditMode((prev) => {
       const next: EditMode =
-        prev === 'ask' ? 'auto' : prev === 'auto' ? 'plan' : 'ask';
+        prev === 'ask'
+          ? 'auto'
+          : prev === 'auto'
+            ? 'plan'
+            : prev === 'plan'
+              ? 'yolo'
+              : 'ask';
       // Notify extension to set approval mode via ACP
       try {
         const toAcp =
-          next === 'plan' ? 'plan' : next === 'auto' ? 'auto-edit' : 'default';
+          next === 'plan'
+            ? 'plan'
+            : next === 'auto'
+              ? 'auto-edit'
+              : next === 'yolo'
+                ? 'yolo'
+                : 'default';
         vscode.postMessage({
           type: 'setApprovalMode',
           data: { modeId: toAcp },

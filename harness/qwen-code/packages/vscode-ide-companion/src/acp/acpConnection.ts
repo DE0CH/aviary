@@ -44,6 +44,8 @@ export class AcpConnection {
     optionId: string;
   }> = () => Promise.resolve({ optionId: 'allow' });
   onEndTurn: () => void = () => {};
+  // Called after successful initialize() with the initialize result
+  onInitialized: (init: unknown) => void = () => {};
 
   constructor() {
     this.messageHandler = new AcpMessageHandler();
@@ -213,6 +215,11 @@ export class AcpConnection {
     );
 
     console.log('[ACP] Initialization response:', res);
+    try {
+      this.onInitialized(res);
+    } catch (err) {
+      console.warn('[ACP] onInitialized callback error:', err);
+    }
   }
 
   /**
@@ -371,6 +378,20 @@ export class AcpConnection {
   async saveSession(tag: string): Promise<AcpResponse> {
     return this.sessionManager.saveSession(
       tag,
+      this.child,
+      this.pendingRequests,
+      this.nextRequestId,
+    );
+  }
+
+  /**
+   * Set approval mode
+   */
+  async setMode(
+    modeId: 'plan' | 'default' | 'auto-edit' | 'yolo',
+  ): Promise<AcpResponse> {
+    return this.sessionManager.setMode(
+      modeId,
       this.child,
       this.pendingRequests,
       this.nextRequestId,

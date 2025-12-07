@@ -26,6 +26,14 @@ export class WebViewProvider {
   private authStateManager: AuthStateManager;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
+  // Track a pending permission request and its resolver so extension commands
+  // can "simulate" user choice from the command palette (e.g. after accepting
+  // a diff, auto-allow read/execute, or auto-reject on cancel).
+  private pendingPermissionRequest: AcpPermissionRequest | null = null;
+  private pendingPermissionResolve: ((optionId: string) => void) | null = null;
+  // Track current ACP mode id to influence permission/diff behavior
+  private currentModeId: 'plan' | 'default' | 'auto-edit' | 'yolo' | null =
+    null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -81,6 +89,38 @@ export class WebViewProvider {
       this.sendMessageToWebView({
         type: 'thoughtChunk',
         data: { chunk },
+      });
+    });
+
+    // Surface available modes and current mode (from ACP initialize)
+    this.agentManager.onModeInfo((info) => {
+      try {
+        const current = (info?.currentModeId || null) as
+          | 'plan'
+          | 'default'
+          | 'auto-edit'
+          | 'yolo'
+          | null;
+        this.currentModeId = current;
+      } catch (_error) {
+        // Ignore error when parsing mode info
+      }
+      this.sendMessageToWebView({
+        type: 'modeInfo',
+        data: info || {},
+      });
+    });
+
+    // Surface mode changes (from ACP or immediate set_mode response)
+    this.agentManager.onModeChanged((modeId) => {
+      try {
+        this.currentModeId = modeId;
+      } catch (_error) {
+        // Ignore error when setting mode id
+      }
+      this.sendMessageToWebView({
+        type: 'modeChanged',
+        data: { modeId },
       });
     });
 
@@ -140,6 +180,25 @@ export class WebViewProvider {
 
     this.agentManager.onPermissionRequest(
       async (request: AcpPermissionRequest) => {
+        // Auto-approve in auto/yolo mode (no UI, no diff)
+        if (this.isAutoMode()) {
+          const options = request.options || [];
+          const pick = (substr: string) =>
+            options.find((o) =>
+              (o.optionId || '').toLowerCase().includes(substr),
+            )?.optionId;
+          const pickByKind = (k: string) =>
+            options.find((o) => (o.kind || '').toLowerCase().includes(k))
+              ?.optionId;
+          const optionId =
+            pick('allow_once') ||
+            pickByKind('allow') ||
+            pick('proceed') ||
+            options[0]?.optionId ||
+            'allow_once';
+          return optionId;
+        }
+
         // Send permission request to WebView
         this.sendMessageToWebView({
           type: 'permissionRequest',
@@ -148,16 +207,58 @@ export class WebViewProvider {
 
         // Wait for user response
         return new Promise((resolve) => {
+          // cache the pending request and its resolver so commands can resolve it
+          this.pendingPermissionRequest = request;
+          this.pendingPermissionResolve = (optionId: string) => {
+            try {
+              resolve(optionId);
+            } finally {
+              // Always clear pending state
+              this.pendingPermissionRequest = null;
+              this.pendingPermissionResolve = null;
+              // Also instruct the webview UI to close its drawer if it is open
+              this.sendMessageToWebView({
+                type: 'permissionResolved',
+                data: { optionId },
+              });
+              // If allowed/proceeded, close any open qwen-diff editors and suppress re-open briefly
+              const isCancel =
+                optionId === 'cancel' ||
+                optionId.toLowerCase().includes('reject');
+              if (!isCancel) {
+                try {
+                  void vscode.commands.executeCommand('qwen.diff.closeAll');
+                } catch (err) {
+                  console.warn(
+                    '[WebViewProvider] Failed to close diffs after allow (resolver):',
+                    err,
+                  );
+                }
+                try {
+                  void vscode.commands.executeCommand(
+                    'qwen.diff.suppressBriefly',
+                  );
+                } catch (err) {
+                  console.warn(
+                    '[WebViewProvider] Failed to suppress diffs briefly:',
+                    err,
+                  );
+                }
+              }
+            }
+          };
           const handler = (message: {
             type: string;
             data: { optionId: string };
           }) => {
-            if (message.type !== 'permissionResponse') return;
+            if (message.type !== 'permissionResponse') {
+              return;
+            }
 
             const optionId = message.data.optionId || '';
 
             // 1) First resolve the optionId back to ACP so the agent isn't blocked
-            resolve(optionId);
+            this.pendingPermissionResolve?.(optionId);
 
             // 2) If user cancelled/rejected, proactively stop current generation
             const isCancel =
@@ -197,10 +298,13 @@ export class WebViewProvider {
                   )?.kind || 'execute') as string;
                   if (!kind && title) {
                     const t = title.toLowerCase();
-                    if (t.includes('read') || t.includes('cat')) kind = 'read';
-                    else if (t.includes('write') || t.includes('edit'))
+                    if (t.includes('read') || t.includes('cat')) {
+                      kind = 'read';
+                    } else if (t.includes('write') || t.includes('edit')) {
                       kind = 'edit';
-                    else kind = 'execute';
+                    } else {
+                      kind = 'execute';
+                    }
                   }
 
                   this.sendMessageToWebView({
@@ -231,6 +335,27 @@ export class WebViewProvider {
                   );
                 }
               })();
+            }
+            // If user allowed/proceeded, proactively close any open qwen-diff editors and suppress re-open briefly
+            else {
+              try {
+                void vscode.commands.executeCommand('qwen.diff.closeAll');
+              } catch (err) {
+                console.warn(
+                  '[WebViewProvider] Failed to close diffs after allow:',
+                  err,
+                );
+              }
+              try {
+                void vscode.commands.executeCommand(
+                  'qwen.diff.suppressBriefly',
+                );
+              } catch (err) {
+                console.warn(
+                  '[WebViewProvider] Failed to suppress diffs briefly:',
+                  err,
+                );
+              }
             }
           };
           // Store handler in message handler
@@ -283,6 +408,10 @@ export class WebViewProvider {
     // Handle messages from WebView
     newPanel.webview.onDidReceiveMessage(
       async (message: { type: string; data?: unknown }) => {
+        // Suppress UI-originated diff opens in auto/yolo mode
+        if (message.type === 'openDiff' && this.isAutoMode()) {
+          return;
+        }
         // Allow webview to request updating the VS Code tab title
         if (message.type === 'updatePanelTitle') {
           const title = String(
@@ -305,16 +434,6 @@ export class WebViewProvider {
 
     // Register panel dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
-
-    // Track last known editor state (to preserve when switching to webview)
-    let _lastEditorState: {
-      fileName: string | null;
-      filePath: string | null;
-      selection: {
-        startLine: number;
-        endLine: number;
-      } | null;
-    } | null = null;
 
     // Listen for active editor changes and notify WebView
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
@@ -339,7 +458,6 @@ export class WebViewProvider {
         }
 
         // Update last known state
-        _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
@@ -368,28 +486,13 @@ export class WebViewProvider {
           }
 
           // Update last known state
-          _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
           this.sendMessageToWebView({
             type: 'activeEditorChanged',
             data: { fileName, filePath, selection: selectionInfo },
           });
 
-          // Surface available modes and current mode (from ACP initialize)
-          this.agentManager.onModeInfo((info) => {
-            this.sendMessageToWebView({
-              type: 'modeInfo',
-              data: info || {},
-            });
-          });
-
-          // Surface mode changes (from ACP or immediate set_mode response)
-          this.agentManager.onModeChanged((modeId) => {
-            this.sendMessageToWebView({
-              type: 'modeChanged',
-              data: { modeId },
-            });
-          });
+          // Mode callbacks are registered in constructor; no-op here
         }
       });
     this.disposables.push(selectionChangeDisposable);
@@ -459,8 +562,8 @@ export class WebViewProvider {
         );
         await this.initializeEmptyConversation();
       }
-    } catch (error) {
-      console.error('[WebViewProvider] Auth state restoration failed:', error);
+    } catch (_error) {
+      console.error('[WebViewProvider] Auth state restoration failed:', _error);
       // Fallback to rendering empty conversation
       await this.initializeEmptyConversation();
     }
@@ -530,12 +633,12 @@ export class WebViewProvider {
           type: 'agentConnected',
           data: {},
         });
-      } catch (error) {
-        console.error('[WebViewProvider] Agent connection error:', error);
+      } catch (_error) {
+        console.error('[WebViewProvider] Agent connection error:', _error);
         // Clear auth cache on error (might be auth issue)
         await this.authStateManager.clearAuthState();
         vscode.window.showWarningMessage(
-          `Failed to connect to Qwen CLI: ${error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
+          `Failed to connect to Qwen CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
         );
         // Fallback to empty conversation
         await this.initializeEmptyConversation();
@@ -544,7 +647,7 @@ export class WebViewProvider {
         this.sendMessageToWebView({
           type: 'agentConnectionError',
           data: {
-            message: error instanceof Error ? error.message : String(error),
+            message: _error instanceof Error ? _error.message : String(_error),
           },
         });
       }
@@ -585,8 +688,8 @@ export class WebViewProvider {
             try {
               this.agentManager.disconnect();
               console.log('[WebViewProvider] Existing connection disconnected');
-            } catch (error) {
-              console.log('[WebViewProvider] Error disconnecting:', error);
+            } catch (_error) {
+              console.log('[WebViewProvider] Error disconnecting:', _error);
             }
             this.agentInitialized = false;
           }
@@ -617,22 +720,22 @@ export class WebViewProvider {
             type: 'loginSuccess',
             data: { message: 'Successfully logged in!' },
           });
-        } catch (error) {
-          console.error('[WebViewProvider] Force re-login failed:', error);
+        } catch (_error) {
+          console.error('[WebViewProvider] Force re-login failed:', _error);
           console.error(
             '[WebViewProvider] Error stack:',
-            error instanceof Error ? error.stack : 'N/A',
+            _error instanceof Error ? _error.stack : 'N/A',
           );
 
           // Send error notification to WebView
           this.sendMessageToWebView({
             type: 'loginError',
             data: {
-              message: `Login failed: ${error instanceof Error ? error.message : String(error)}`,
+              message: `Login failed: ${_error instanceof Error ? _error.message : String(_error)}`,
             },
           });
 
-          throw error;
+          throw _error;
         }
       },
     );
@@ -650,8 +753,8 @@ export class WebViewProvider {
       try {
         this.agentManager.disconnect();
         console.log('[WebViewProvider] Existing connection disconnected');
-      } catch (error) {
-        console.log('[WebViewProvider] Error disconnecting:', error);
+      } catch (_error) {
+        console.log('[WebViewProvider] Error disconnecting:', _error);
       }
       this.agentInitialized = false;
     }
@@ -671,18 +774,18 @@ export class WebViewProvider {
         type: 'agentConnected',
         data: {},
       });
-    } catch (error) {
-      console.error('[WebViewProvider] Connection refresh failed:', error);
+    } catch (_error) {
+      console.error('[WebViewProvider] Connection refresh failed:', _error);
 
       // Notify webview that agent connection failed after refresh
       this.sendMessageToWebView({
         type: 'agentConnectionError',
         data: {
-          message: error instanceof Error ? error.message : String(error),
+          message: _error instanceof Error ? _error.message : String(_error),
         },
       });
 
-      throw error;
+      throw _error;
     }
   }
 
@@ -725,13 +828,13 @@ export class WebViewProvider {
       }
 
       await this.initializeEmptyConversation();
-    } catch (error) {
+    } catch (_error) {
       console.error(
         '[WebViewProvider] Failed to load session messages:',
-        error,
+        _error,
       );
       vscode.window.showErrorMessage(
-        `Failed to load session messages: ${error}`,
+        `Failed to load session messages: ${_error}`,
       );
       await this.initializeEmptyConversation();
     }
@@ -754,10 +857,10 @@ export class WebViewProvider {
         '[WebViewProvider] Empty conversation initialized:',
         this.messageHandler.getCurrentConversationId(),
       );
-    } catch (error) {
+    } catch (_error) {
       console.error(
         '[WebViewProvider] Failed to initialize conversation:',
-        error,
+        _error,
       );
       // Send empty state to WebView as fallback
       this.sendMessageToWebView({
@@ -773,6 +876,100 @@ export class WebViewProvider {
   private sendMessageToWebView(message: unknown): void {
     const panel = this.panelManager.getPanel();
     panel?.webview.postMessage(message);
+  }
+
+  /**
+   * Whether there is a pending permission decision awaiting an option.
+   */
+  hasPendingPermission(): boolean {
+    return !!this.pendingPermissionResolve;
+  }
+
+  /** Get current ACP mode id (if known). */
+  getCurrentModeId(): 'plan' | 'default' | 'auto-edit' | 'yolo' | null {
+    return this.currentModeId;
+  }
+
+  /** True if diffs/permissions should be auto-handled without prompting. */
+  isAutoMode(): boolean {
+    return this.currentModeId === 'auto-edit' || this.currentModeId === 'yolo';
+  }
+
+  /** Used by extension to decide if diffs should be suppressed. */
+  shouldSuppressDiff(): boolean {
+    return this.isAutoMode();
+  }
+
+  /**
+   * Simulate selecting a permission option while a request drawer is open.
+   * The choice can be a concrete optionId or a shorthand intent.
+   */
+  respondToPendingPermission(
+    choice: { optionId: string } | 'accept' | 'allow' | 'reject' | 'cancel',
+  ): void {
+    if (!this.pendingPermissionResolve || !this.pendingPermissionRequest) {
+      return; // nothing to do
+    }
+
+    const options = this.pendingPermissionRequest.options || [];
+
+    const pickByKind = (substr: string, preferOnce = false) => {
+      const lc = substr.toLowerCase();
+      const filtered = options.filter((o) =>
+        (o.kind || '').toLowerCase().includes(lc),
+      );
+      if (preferOnce) {
+        const once = filtered.find((o) =>
+          (o.optionId || '').toLowerCase().includes('once'),
+        );
+        if (once) {
+          return once.optionId;
+        }
+      }
+      return filtered[0]?.optionId;
+    };
+
+    const pickByOptionId = (substr: string) =>
+      options.find((o) => (o.optionId || '').toLowerCase().includes(substr))
+        ?.optionId;
+
+    let optionId: string | undefined;
+
+    if (typeof choice === 'object') {
+      optionId = choice.optionId;
+    } else {
+      const c = choice.toLowerCase();
+      if (c === 'accept' || c === 'allow') {
+        // Prefer an allow_once/proceed_once style option, then any allow/proceed
+        optionId =
+          pickByKind('allow', true) ||
+          pickByOptionId('proceed_once') ||
+          pickByKind('allow') ||
+          pickByOptionId('proceed') ||
+          options[0]?.optionId; // last resort: first option
+      } else if (c === 'cancel' || c === 'reject') {
+        // Prefer explicit cancel, then a reject option
+        optionId =
+          options.find((o) => o.optionId === 'cancel')?.optionId ||
+          pickByKind('reject') ||
+          pickByOptionId('cancel') ||
+          pickByOptionId('reject') ||
+          'cancel';
+      }
+    }
+
+    if (!optionId) {
+      return;
+    }
+
+    try {
+      this.pendingPermissionResolve(optionId);
+    } catch (_error) {
+      console.warn(
+        '[WebViewProvider] respondToPendingPermission failed:',
+        _error,
+      );
+    }
   }
 
   /**
@@ -824,6 +1021,10 @@ export class WebViewProvider {
     // Handle messages from WebView (restored panel)
     panel.webview.onDidReceiveMessage(
       async (message: { type: string; data?: unknown }) => {
+        // Suppress UI-originated diff opens in auto/yolo mode
+        if (message.type === 'openDiff' && this.isAutoMode()) {
+          return;
+        }
         if (message.type === 'updatePanelTitle') {
           const title = String(
             (message.data as { title?: unknown } | undefined)?.title ?? '',
@@ -845,16 +1046,6 @@ export class WebViewProvider {
 
     // Register dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
-
-    // Track last known editor state (to preserve when switching to webview)
-    let _lastEditorState: {
-      fileName: string | null;
-      filePath: string | null;
-      selection: {
-        startLine: number;
-        endLine: number;
-      } | null;
-    } | null = null;
 
     // Listen for active editor changes and notify WebView
     const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
@@ -879,7 +1070,6 @@ export class WebViewProvider {
         }
 
         // Update last known state
-        _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
         this.sendMessageToWebView({
           type: 'activeEditorChanged',
@@ -929,7 +1119,6 @@ export class WebViewProvider {
           }
 
           // Update last known state
-          _lastEditorState = { fileName, filePath, selection: selectionInfo };
 
           this.sendMessageToWebView({
             type: 'activeEditorChanged',
@@ -1021,13 +1210,13 @@ export class WebViewProvider {
       try {
         await vscode.commands.executeCommand(runQwenCodeCommand);
         console.log('[WebViewProvider] Opened new terminal session');
-      } catch (error) {
+      } catch (_error) {
         console.error(
           '[WebViewProvider] Failed to open new terminal session:',
-          error,
+          _error,
         );
         vscode.window.showErrorMessage(
-          `Failed to open new terminal session: ${error}`,
+          `Failed to open new terminal session: ${_error}`,
         );
       }
       return;
@@ -1051,9 +1240,9 @@ export class WebViewProvider {
       });
 
       console.log('[WebViewProvider] New session created successfully');
-    } catch (error) {
-      console.error('[WebViewProvider] Failed to create new session:', error);
-      vscode.window.showErrorMessage(`Failed to create new session: ${error}`);
+    } catch (_error) {
+      console.error('[WebViewProvider] Failed to create new session:', _error);
+      vscode.window.showErrorMessage(`Failed to create new session: ${_error}`);
     }
   }
 

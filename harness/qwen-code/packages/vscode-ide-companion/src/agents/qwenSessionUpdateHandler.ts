@@ -10,7 +10,10 @@
  * Handles session updates from ACP and dispatches them to appropriate callbacks
  */
 
-import type { AcpSessionUpdate } from '../constants/acpTypes.js';
+import type {
+  AcpSessionUpdate,
+  ApprovalModeValue,
+} from '../constants/acpTypes.js';
 import type { QwenAgentCallbacks } from './qwenTypes.js';
 
 /**
@@ -145,6 +148,23 @@ export class QwenSessionUpdateHandler {
                 .join('\n');
             this.callbacks.onStreamChunk(planText);
           }
+        }
+        break;
+      }
+
+      case 'current_mode_update': {
+        // Notify UI about mode change
+        try {
+          const modeId = (update as unknown as { modeId?: ApprovalModeValue })
+            .modeId;
+          if (modeId && this.callbacks.onModeChanged) {
+            this.callbacks.onModeChanged(modeId);
+          }
+        } catch (err) {
+          console.warn(
+            '[SessionUpdateHandler] Failed to handle mode update',
+            err,
+          );
         }
         break;
       }

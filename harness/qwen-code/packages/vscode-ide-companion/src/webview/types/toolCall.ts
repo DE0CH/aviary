@@ -36,4 +36,4 @@ export interface ToolCallUpdate {
 /**
  * Edit mode type
  */
-export type EditMode = 'ask' | 'auto' | 'plan';
+export type EditMode = 'ask' | 'auto' | 'plan' | 'yolo';

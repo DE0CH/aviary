@@ -61,11 +61,26 @@ export class DiffManager {
   readonly onDidChange = this.onDidChangeEmitter.event;
   private diffDocuments = new Map<string, DiffInfo>();
   private readonly subscriptions: vscode.Disposable[] = [];
+  // Dedupe: remember recent showDiff calls keyed by (file+content)
+  private recentlyShown = new Map<string, number>();
+  private pendingDelayTimers = new Map<string, NodeJS.Timeout>();
+  private static readonly DEDUPE_WINDOW_MS = 1500;
+  // Optional hooks from extension to influence diff behavior
+  // - shouldDelay: when true, we defer opening diffs briefly (e.g., while a permission drawer is open)
+  // - shouldSuppress: when true, we skip opening diffs entirely (e.g., in auto/yolo mode)
+  private shouldDelay?: () => boolean;
+  private shouldSuppress?: () => boolean;
+  // Timed suppression window (e.g. immediately after permission allow)
+  private suppressUntil: number | null = null;
 
   constructor(
     private readonly log: (message: string) => void,
     private readonly diffContentProvider: DiffContentProvider,
+    shouldDelay?: () => boolean,
+    shouldSuppress?: () => boolean,
   ) {
+    this.shouldDelay = shouldDelay;
+    this.shouldSuppress = shouldSuppress;
     this.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         this.onActiveEditorChange(editor);
@@ -110,9 +125,10 @@ export class DiffManager {
    * @returns True if an existing diff view was found and focused, false otherwise
    */
   private async focusExistingDiff(filePath: string): Promise<boolean> {
-    for (const [uriString, diffInfo] of this.diffDocuments.entries()) {
-      if (diffInfo.originalFilePath === filePath) {
-        const rightDocUri = vscode.Uri.parse(uriString);
+    const normalizedPath = path.normalize(filePath);
+    for (const [, diffInfo] of this.diffDocuments.entries()) {
+      if (diffInfo.originalFilePath === normalizedPath) {
+        const rightDocUri = diffInfo.rightDocUri;
         const leftDocUri = diffInfo.leftDocUri;
 
         const diffTitle = `${path.basename(filePath)} (Before ↔ After)`;
@@ -126,7 +142,7 @@ export class DiffManager {
             {
               viewColumn: vscode.ViewColumn.Beside,
               preview: false,
-              preserveFocus: false,
+              preserveFocus: true,
             },
           );
           return true;
@@ -146,19 +162,70 @@ export class DiffManager {
    * @param newContent The modified content (right side)
    */
   async showDiff(filePath: string, oldContent: string, newContent: string) {
+    const normalizedPath = path.normalize(filePath);
+    const key = this.makeKey(normalizedPath, oldContent, newContent);
+
+    // Suppress entirely when the extension indicates diffs should not be shown
+    if (this.shouldSuppress && this.shouldSuppress()) {
+      this.log(`showDiff suppressed by policy for ${filePath}`);
+      return;
+    }
+
+    // Suppress during timed window
+    if (this.suppressUntil && Date.now() < this.suppressUntil) {
+      this.log(`showDiff suppressed by timed window for ${filePath}`);
+      return;
+    }
+
+    // If permission drawer is currently open, delay to avoid double-open
+    if (this.shouldDelay && this.shouldDelay()) {
+      if (!this.pendingDelayTimers.has(key)) {
+        const timer = setTimeout(() => {
+          this.pendingDelayTimers.delete(key);
+          // Fire and forget; rely on dedupe below to avoid double focus
+          void this.showDiff(filePath, oldContent, newContent);
+        }, 300);
+        this.pendingDelayTimers.set(key, timer);
+      }
+      return;
+    }
+
+    // If a diff tab for the same file is already open, update its content instead of opening a new one
+    for (const [, diffInfo] of this.diffDocuments.entries()) {
+      if (diffInfo.originalFilePath === normalizedPath) {
+        // Update left/right contents
+        this.diffContentProvider.setContent(diffInfo.leftDocUri, oldContent);
+        this.diffContentProvider.setContent(diffInfo.rightDocUri, newContent);
+        // Update stored snapshot for future comparisons
+        diffInfo.oldContent = oldContent;
+        diffInfo.newContent = newContent;
+        this.recentlyShown.set(key, Date.now());
+        // Soft focus existing (preserve chat focus)
+        await this.focusExistingDiff(normalizedPath);
+        return;
+      }
+    }
+
     // Check if a diff view with the same content already exists
-    if (this.hasExistingDiff(filePath, oldContent, newContent)) {
-      this.log(
-        `Diff view already exists for ${filePath}, focusing existing view`,
-      );
-      // Focus the existing diff view
-      await this.focusExistingDiff(filePath);
+    if (this.hasExistingDiff(normalizedPath, oldContent, newContent)) {
+      const last = this.recentlyShown.get(key) || 0;
+      const now = Date.now();
+      if (now - last < DiffManager.DEDUPE_WINDOW_MS) {
+        // Within dedupe window: ignore the duplicate request entirely
+        this.log(
+          `Duplicate showDiff suppressed for ${filePath} (within ${DiffManager.DEDUPE_WINDOW_MS}ms)`,
+        );
+        return;
+      }
+      // Outside the dedupe window: softly focus the existing diff
+      await this.focusExistingDiff(normalizedPath);
+      this.recentlyShown.set(key, now);
       return;
     }
     // Left side: old content using qwen-diff scheme
     const leftDocUri = vscode.Uri.from({
       scheme: DIFF_SCHEME,
-      path: filePath,
+      path: normalizedPath,
       query: `old&rand=${Math.random()}`,
     });
     this.diffContentProvider.setContent(leftDocUri, oldContent);
@@ -166,20 +233,20 @@ export class DiffManager {
     // Right side: new content using qwen-diff scheme
     const rightDocUri = vscode.Uri.from({
       scheme: DIFF_SCHEME,
-      path: filePath,
+      path: normalizedPath,
       query: `new&rand=${Math.random()}`,
     });
     this.diffContentProvider.setContent(rightDocUri, newContent);
 
     this.addDiffDocument(rightDocUri, {
-      originalFilePath: filePath,
+      originalFilePath: normalizedPath,
       oldContent,
       newContent,
       leftDocUri,
       rightDocUri,
     });
 
-    const diffTitle = `${path.basename(filePath)} (Before ↔ After)`;
+    const diffTitle = `${path.basename(normalizedPath)} (Before ↔ After)`;
     await vscode.commands.executeCommand(
       'setContext',
       'qwen.diff.isVisible',
@@ -215,16 +282,19 @@ export class DiffManager {
     await vscode.commands.executeCommand(
       'workbench.action.files.setActiveEditorWriteableInSession',
     );
+
+    this.recentlyShown.set(key, Date.now());
   }
 
   /**
    * Closes an open diff view for a specific file.
    */
   async closeDiff(filePath: string, suppressNotification = false) {
+    const normalizedPath = path.normalize(filePath);
     let uriToClose: vscode.Uri | undefined;
-    for (const [uriString, diffInfo] of this.diffDocuments.entries()) {
-      if (diffInfo.originalFilePath === filePath) {
-        uriToClose = vscode.Uri.parse(uriString);
+    for (const [, diffInfo] of this.diffDocuments.entries()) {
+      if (diffInfo.originalFilePath === normalizedPath) {
+        uriToClose = diffInfo.rightDocUri;
         break;
       }
     }
@@ -354,5 +424,30 @@ export class DiffManager {
         }
       }
     }
+  }
+
+  /** Close all open qwen-diff editors */
+  async closeAll(): Promise<void> {
+    // Collect keys first to avoid iterator invalidation while closing
+    const uris = Array.from(this.diffDocuments.keys()).map((k) =>
+      vscode.Uri.parse(k),
+    );
+    for (const uri of uris) {
+      try {
+        await this.closeDiffEditor(uri);
+      } catch (err) {
+        this.log(`Failed to close diff editor: ${err}`);
+      }
+    }
+  }
+
+  private makeKey(filePath: string, oldContent: string, newContent: string) {
+    // Simple stable key; content could be large but kept transiently
+    return `${filePath}\u241F${oldContent}\u241F${newContent}`;
+  }
+
+  /** Temporarily suppress opening diffs for a short duration. */
+  suppressFor(durationMs: number): void {
+    this.suppressUntil = Date.now() + Math.max(0, durationMs);
   }
 }
