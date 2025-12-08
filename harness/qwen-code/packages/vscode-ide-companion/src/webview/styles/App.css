@@ -2,8 +2,6 @@
  * @license
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
- *
- * Styles inspired by Claude Code's UI design, adapted for Qwen
  */
 
 /* ===========================
@@ -67,17 +65,17 @@
   /* Border Transparency */
   --app-transparent-inner-border: rgba(255, 255, 255, 0.1);
 
-  /* Header (from Claude Code) */
+  /* Header */
   --app-header-background: var(--vscode-sideBar-background);
 
-  /* List Styles (from Claude Code) */
+  /* List Styles*/
   --app-list-padding: 0px;
   --app-list-item-padding: 4px 8px;
   --app-list-border-color: transparent;
   --app-list-border-radius: 4px;
   --app-list-gap: 2px;
 
-  /* Menu Colors (from Claude Code) */
+  /* Menu Colors*/
   --app-menu-background: var(--vscode-menu-background);
   --app-menu-border: var(--vscode-menu-border);
   --app-menu-foreground: var(--vscode-menu-foreground);

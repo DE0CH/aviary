@@ -16,9 +16,6 @@ interface PermissionDrawerProps {
   onClose?: () => void;
 }
 
-/**
- * Permission drawer component - Claude Code style bottom sheet
- */
 export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
   isOpen,
   options,
@@ -131,7 +128,7 @@ export const PermissionDrawer: React.FC<PermissionDrawerProps> = ({
         }
       }
 
-      // Escape to cancel permission and close (align with CLI/Claude behavior)
+      // Escape to cancel permission and close (align with CLI behavior)
       if (e.key === 'Escape') {
         e.preventDefault();
         const rejectOptionId =

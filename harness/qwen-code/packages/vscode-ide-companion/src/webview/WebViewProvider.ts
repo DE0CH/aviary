@@ -283,7 +283,7 @@ export class WebViewProvider {
                   data: { timestamp: Date.now(), reason: 'user_cancelled' },
                 });
 
-                // Synthesize a failed tool_call_update to match Claude/CLI UX
+                // Synthesize a failed tool_call_update to match CLI UX
                 try {
                   const toolCallId =
                     (request.toolCall as { toolCallId?: string } | undefined)

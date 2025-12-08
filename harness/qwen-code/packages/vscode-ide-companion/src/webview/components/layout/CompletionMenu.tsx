@@ -16,10 +16,6 @@ interface CompletionMenuProps {
   selectedIndex?: number;
 }
 
-/**
- * Claude Code-like anchored dropdown rendered above the input field.
- * Keyboard: Up/Down to move, Enter to select, Esc to close.
- */
 export const CompletionMenu: React.FC<CompletionMenuProps> = ({
   items,
   onSelect,

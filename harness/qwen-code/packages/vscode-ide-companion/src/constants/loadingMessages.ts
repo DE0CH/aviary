@@ -5,7 +5,7 @@
  */
 
 /**
- * Loading messages from Claude Code CLI
+ * Loading messages from Qwen Code CLI
  * Source: packages/cli/src/ui/hooks/usePhraseCycler.ts
  */
 export const WITTY_LOADING_PHRASES = [

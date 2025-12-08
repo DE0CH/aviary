@@ -36,7 +36,7 @@
     @apply w-4 h-4;
   }
 
-  /* Composer: root container anchored to bottom (Claude-style) */
+  /* Composer: root container anchored to bottom*/
   .composer-root {
     @apply absolute bottom-4 left-4 right-4 flex flex-col z-20;
   }
@@ -89,12 +89,12 @@
   /* Composer: actions row (more compact) */
   .composer-actions {
     @apply flex items-center gap-1 min-w-0 z-[1];
-    padding: 5px; /* Claude: padding: 5px */
+    padding: 5px;
     color: var(--app-secondary-foreground);
     border-top: 0.5px solid var(--app-input-border);
   }
 
-  /* Text button (icon + label), compact like Claude `.s` */
+  /* Text button (icon + label) */
   .btn-text-compact {
     @apply inline-flex items-center gap-1 px-1 py-0.5 rounded-[2px] cursor-pointer appearance-none bg-transparent border-0 min-w-0 shrink text-[0.85em] transition-colors duration-150;
     color: var(--app-secondary-foreground);
@@ -151,7 +151,6 @@
     fill: var(--app-qwen-ivory);
   }
 
-  /* Optional: overlay background layer matching Claude `.si` */
   .composer-overlay {
     @apply absolute inset-0 rounded-large z-0;
     background: var(--app-input-background);

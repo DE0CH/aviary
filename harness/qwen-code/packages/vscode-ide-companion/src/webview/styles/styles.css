@@ -2,9 +2,6 @@
  * @license
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
- *
- * Styles extracted from Claude Code extension (v2.0.43)
- * Path: /Users/jinjing/Downloads/Anthropic.claude-code-2.0.43/extension/webview/index.css
  */
 
 /* Import component styles */
@@ -13,7 +10,7 @@
 @import '../components/messages/MarkdownRenderer/MarkdownRenderer.css';
 
 /* ===========================
-   CSS Variables (from Claude Code root styles)
+   CSS Variables
    =========================== */
 :root {
   /* Colors */

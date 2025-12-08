@@ -10,7 +10,7 @@ export interface SessionGroup {
 }
 
 /**
- * Group sessions by date (matching Claude Code)
+ * Group sessions by date
  *
  * @param sessions - Array of session objects
  * @returns Array of grouped sessions

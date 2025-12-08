@@ -113,7 +113,6 @@ export const InputForm: React.FC<InputFormProps> = ({
   onShowCommandMenu,
   onAttachContext,
   completionIsOpen,
-  // Claude-style completion dropdown (optional)
   completionItems,
   onCompletionSelect,
   onCompletionClose,
@@ -139,7 +138,7 @@ export const InputForm: React.FC<InputFormProps> = ({
     onKeyDown(e);
   };
 
-  // Selection label like "6 lines selected" (Claude-style); no line numbers
+  // Selection label like "6 lines selected"; no line numbers
   const selectedLinesCount = activeSelection
     ? Math.max(1, activeSelection.endLine - activeSelection.startLine + 1)
     : 0;
@@ -161,15 +160,12 @@ export const InputForm: React.FC<InputFormProps> = ({
           {/* Banner area */}
           <div className="input-banner" />
 
-          {/* Input wrapper (Claude-style anchor container) */}
           <div className="relative flex z-[1]">
-            {/* Claude-style anchored dropdown */}
             {completionIsOpen &&
               completionItems &&
               completionItems.length > 0 &&
               onCompletionSelect &&
               onCompletionClose && (
-                // Render dropdown above the input, matching Claude Code
                 <CompletionMenu
                   items={completionItems}
                   onSelect={onCompletionSelect}
@@ -200,7 +196,6 @@ export const InputForm: React.FC<InputFormProps> = ({
             />
           </div>
 
-          {/* Actions row (compact, Claude-style) */}
           <div className="composer-actions">
             {/* Edit mode button */}
             <button

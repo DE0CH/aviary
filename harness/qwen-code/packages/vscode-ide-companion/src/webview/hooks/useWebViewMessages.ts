@@ -544,7 +544,7 @@ export const useWebViewMessages = ({
           }
           handlers.handleToolCallUpdate(toolCallData);
 
-          // Split assistant stream at tool boundaries similar to Claude/GPT rhythm
+          // Split assistant stream
           const status = (toolCallData.status || '').toString();
           const isStart = toolCallData.type === 'tool_call';
           const isFinalUpdate =

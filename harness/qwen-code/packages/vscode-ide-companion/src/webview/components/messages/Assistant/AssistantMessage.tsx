@@ -18,15 +18,8 @@ interface AssistantMessageProps {
 }
 
 /**
- * AssistantMessage component - renders AI responses with Claude Code styling
+ * AssistantMessage component - renders AI responses with Qwen Code styling
  * Supports different states: default, success, error, warning, loading
- *
- * Claude Code DOM structure:
- * <div class="K o"><span class="i"><p>...</p></span></div>
- *
- * Styles:
- * .o - outer container with padding-left: 30px and ::before for bullet
- * .i - inner span wrapper
  */
 export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   content,

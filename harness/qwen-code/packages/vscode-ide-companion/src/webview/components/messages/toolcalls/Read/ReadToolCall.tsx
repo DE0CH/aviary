@@ -71,7 +71,7 @@ export const ReadToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
     [vscode],
   );
 
-  // Auto-open diff (Claude-style) when a read call returns diff content.
+  // Auto-open diff when a read call returns diff content.
   // Only trigger once per toolCallId so we don't spam as in-progress updates stream in.
   useEffect(() => {
     if (diffs.length > 0) {

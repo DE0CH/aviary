@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Shared layout components for tool call UI
- * Uses Claude Code style: bullet point + label + content
  */
 
 import type React from 'react';
@@ -12,7 +11,7 @@ import { FileLink } from '../../../layout/FileLink.js';
 import './LayoutComponents.css';
 
 /**
- * Props for ToolCallContainer - Claude Code style layout
+ * Props for ToolCallContainer
  */
 export interface ToolCallContainerProps {
   /** Operation label (e.g., "Read", "Write", "Search") */
@@ -29,13 +28,6 @@ export interface ToolCallContainerProps {
   className?: string;
 }
 
-// NOTE: We previously computed a bullet color class in JS, but the current
-// implementation uses CSS classes (e.g. `.toolcall-status-success`) with
-// pseudo-elements. Remove the unused helper to satisfy ESLint.
-
-/**
- * Main container with Claude Code style bullet point and timeline
- */
 export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   label,
   status = 'success',
@@ -65,9 +57,6 @@ export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   </div>
 );
 
-/**
- * Props for ToolCallCard wrapper (legacy - for complex layouts)
- */
 interface ToolCallCardProps {
   icon: string;
   children: React.ReactNode;
@@ -85,9 +74,6 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({
   </div>
 );
 
-/**
- * Props for ToolCallRow
- */
 interface ToolCallRowProps {
   label: string;
   children: React.ReactNode;
@@ -153,9 +139,6 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   </div>
 );
 
-/**
- * Props for CodeBlock
- */
 interface CodeBlockProps {
   children: string;
 }

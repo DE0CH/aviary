@@ -5,7 +5,7 @@
  */
 
 /**
- * Time ago formatter (matching Claude Code)
+ * Time ago formatter
  *
  * @param timestamp - ISO timestamp string
  * @returns Formatted time string

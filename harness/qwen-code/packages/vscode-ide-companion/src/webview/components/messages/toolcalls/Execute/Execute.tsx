@@ -83,7 +83,7 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         toolCallId={toolCallId}
         className="execute-default-toolcall"
       >
-        {/* Branch connector summary (Claude-like) */}
+        {/* Branch connector summary */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
@@ -126,7 +126,7 @@ export const ExecuteToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
         status={containerStatus}
         toolCallId={toolCallId}
       >
-        {/* Branch connector summary (Claude-like) */}
+        {/* Branch connector summary */}
         <div className="inline-flex text-[var(--app-secondary-foreground)] text-[0.85em] opacity-70 mt-[2px] mb-[2px] flex-row items-start w-full gap-1">
           <span className="flex-shrink-0 relative top-[-0.1em]">⎿</span>
           <span className="flex-shrink-0 w-full">{commandText}</span>
