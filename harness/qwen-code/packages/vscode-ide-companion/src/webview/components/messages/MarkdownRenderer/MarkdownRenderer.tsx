@@ -46,46 +46,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       typographer: true,
     } as MarkdownItOptions);
 
-    // Add syntax highlighting + a copy button for code blocks
-    md.use((md) => {
-      const renderWithCopy = (token: {
-        info: string;
-        content: string;
-      }): string => {
-        const lang = (token.info || 'plaintext').trim();
-        const content = token.content;
-
-        // Wrap in a container so we can position a copy button
-        return (
-          `<div class="code-block-wrapper">` +
-          `<button class="copy-button" data-lang="${md.utils.escapeHtml(lang)}" aria-label="Copy code block">Copy</button>` +
-          `<pre class="code-block language-${md.utils.escapeHtml(lang)}"><code class="language-${md.utils.escapeHtml(lang)}">${md.utils.escapeHtml(content)}</code></pre>` +
-          `</div>`
-        );
-      };
-
-      md.renderer.rules.code_block = function (
-        tokens,
-        idx: number,
-        _options,
-        _env,
-      ) {
-        const token = tokens[idx] as unknown as {
-          info: string;
-          content: string;
-        };
-        return renderWithCopy(token);
-      };
-
-      md.renderer.rules.fence = function (tokens, idx: number, _options, _env) {
-        const token = tokens[idx] as unknown as {
-          info: string;
-          content: string;
-        };
-        return renderWithCopy(token);
-      };
-    });
-
     return md;
   };
 
@@ -288,40 +248,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     return container.innerHTML;
   };
 
-  // Event delegation: intercept clicks on copy buttons and generated file-path links
+  // Event delegation: intercept clicks on generated file-path links
   const handleContainerClick = (
     e: React.MouseEvent<HTMLDivElement, MouseEvent>,
   ) => {
     const target = e.target as HTMLElement | null;
     if (!target) {
-      return;
-    }
-
-    // Handle copy button clicks for fenced code blocks
-    const copyBtn = (target.closest &&
-      target.closest('button.copy-button')) as HTMLButtonElement | null;
-    if (copyBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-
-      try {
-        const wrapper = copyBtn.closest('.code-block-wrapper');
-        const codeEl = wrapper?.querySelector('pre code');
-        const text = codeEl?.textContent ?? '';
-        if (text) {
-          void navigator.clipboard.writeText(text);
-          // Quick feedback
-          const original = copyBtn.textContent || 'Copy';
-          copyBtn.textContent = 'Copied';
-          copyBtn.disabled = true;
-          setTimeout(() => {
-            copyBtn.textContent = original;
-            copyBtn.disabled = false;
-          }, 1200);
-        }
-      } catch (err) {
-        console.warn('Copy failed:', err);
-      }
       return;
     }
 
