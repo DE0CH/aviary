@@ -135,7 +135,9 @@ class GlobToolInvocation extends BaseToolInvocation<
       );
 
       const normalizePathForComparison = (p: string) =>
-        process.platform === 'win32' ? p.toLowerCase() : p;
+        process.platform === 'win32' || process.platform === 'darwin'
+          ? p.toLowerCase()
+          : p;
 
       const filteredAbsolutePaths = new Set(
         filteredPaths.map((p) =>
