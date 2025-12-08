@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
+import type { ApprovalModeValue } from '../../types/acpTypes.js';
 
 /**
  * Settings message handler
@@ -31,7 +32,7 @@ export class SettingsMessageHandler extends BaseMessageHandler {
       case 'setApprovalMode':
         await this.handleSetApprovalMode(
           message.data as {
-            modeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+            modeId?: ApprovalModeValue;
           },
         );
         break;
@@ -83,23 +84,11 @@ export class SettingsMessageHandler extends BaseMessageHandler {
    * Set approval mode via agent (ACP session/set_mode)
    */
   private async handleSetApprovalMode(data?: {
-    modeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+    modeId?: ApprovalModeValue;
   }): Promise<void> {
     try {
-      const modeId = (data?.modeId || 'default') as
-        | 'plan'
-        | 'default'
-        | 'auto-edit'
-        | 'yolo';
-      await this.agentManager.setApprovalModeFromUi(
-        modeId === 'plan'
-          ? 'plan'
-          : modeId === 'auto-edit'
-            ? 'auto'
-            : modeId === 'yolo'
-              ? 'yolo'
-              : 'ask',
-      );
+      const modeId = data?.modeId || 'default';
+      await this.agentManager.setApprovalModeFromUi(modeId);
       // No explicit response needed; WebView listens for modeChanged
     } catch (error) {
       console.error('[SettingsMessageHandler] Failed to set mode:', error);

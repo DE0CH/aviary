@@ -47,30 +47,20 @@ export class QwenSessionUpdateHandler {
 
     switch (update.sessionUpdate) {
       case 'user_message_chunk':
-        // Handle user message chunk
         if (update.content?.text && this.callbacks.onStreamChunk) {
           this.callbacks.onStreamChunk(update.content.text);
         }
         break;
 
       case 'agent_message_chunk':
-        // Handle assistant message chunk
         if (update.content?.text && this.callbacks.onStreamChunk) {
           this.callbacks.onStreamChunk(update.content.text);
         }
         break;
 
       case 'agent_thought_chunk':
-        // Handle thought chunk - use special callback
-        console.log(
-          '[SessionUpdateHandler] 🧠 THOUGHT CHUNK:',
-          update.content?.text,
-        );
         if (update.content?.text) {
           if (this.callbacks.onThoughtChunk) {
-            console.log(
-              '[SessionUpdateHandler] 🧠 Calling onThoughtChunk callback',
-            );
             this.callbacks.onThoughtChunk(update.content.text);
           } else if (this.callbacks.onStreamChunk) {
             // Fallback to regular stream processing
@@ -103,7 +93,6 @@ export class QwenSessionUpdateHandler {
       }
 
       case 'tool_call_update': {
-        // Handle tool call status update
         if (this.callbacks.onToolCall && 'toolCallId' in update) {
           this.callbacks.onToolCall({
             toolCallId: update.toolCallId as string,
@@ -123,7 +112,6 @@ export class QwenSessionUpdateHandler {
       }
 
       case 'plan': {
-        // Handle plan update
         if ('entries' in update) {
           const entries = update.entries as Array<{
             content: string;
