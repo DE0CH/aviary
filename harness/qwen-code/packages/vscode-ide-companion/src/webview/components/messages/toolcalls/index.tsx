@@ -80,7 +80,7 @@ export const ToolCallRouter: React.FC<
   }
 
   // Get the appropriate component for this kind
-  const Component = getToolCallComponent(toolCall.kind, toolCall);
+  const Component = getToolCallComponent(toolCall.kind);
 
   // Render the specialized component
   return <Component toolCall={toolCall} isFirst={isFirst} isLast={isLast} />;

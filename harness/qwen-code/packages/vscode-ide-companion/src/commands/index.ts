@@ -58,7 +58,7 @@ export function registerNewCommands(
               ).fsPath;
             }
           }
-
+          log(`[Command] Showing diff for ${absolutePath}`);
           await diffManager.showDiff(absolutePath, args.oldText, args.newText);
         } catch (error) {
           log(`[Command] Error showing diff: ${error}`);

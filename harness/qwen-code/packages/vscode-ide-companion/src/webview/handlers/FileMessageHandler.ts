@@ -49,6 +49,7 @@ export class FileMessageHandler extends BaseMessageHandler {
         break;
 
       case 'openDiff':
+        console.log('[FileMessageHandler ===== ] openDiff called with:', data);
         await this.handleOpenDiff(data);
         break;
 

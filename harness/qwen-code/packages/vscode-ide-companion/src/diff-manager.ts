@@ -165,46 +165,47 @@ export class DiffManager {
     const normalizedPath = path.normalize(filePath);
     const key = this.makeKey(normalizedPath, oldContent, newContent);
 
-    // Suppress entirely when the extension indicates diffs should not be shown
-    if (this.shouldSuppress && this.shouldSuppress()) {
-      this.log(`showDiff suppressed by policy for ${filePath}`);
-      return;
-    }
+    // TODO:
+    // // Suppress entirely when the extension indicates diffs should not be shown
+    // if (this.shouldSuppress && this.shouldSuppress()) {
+    //   this.log(`showDiff suppressed by policy for ${filePath}`);
+    //   return;
+    // }
 
-    // Suppress during timed window
-    if (this.suppressUntil && Date.now() < this.suppressUntil) {
-      this.log(`showDiff suppressed by timed window for ${filePath}`);
-      return;
-    }
+    // // Suppress during timed window
+    // if (this.suppressUntil && Date.now() < this.suppressUntil) {
+    //   this.log(`showDiff suppressed by timed window for ${filePath}`);
+    //   return;
+    // }
 
-    // If permission drawer is currently open, delay to avoid double-open
-    if (this.shouldDelay && this.shouldDelay()) {
-      if (!this.pendingDelayTimers.has(key)) {
-        const timer = setTimeout(() => {
-          this.pendingDelayTimers.delete(key);
-          // Fire and forget; rely on dedupe below to avoid double focus
-          void this.showDiff(filePath, oldContent, newContent);
-        }, 300);
-        this.pendingDelayTimers.set(key, timer);
-      }
-      return;
-    }
+    // // If permission drawer is currently open, delay to avoid double-open
+    // if (this.shouldDelay && this.shouldDelay()) {
+    //   if (!this.pendingDelayTimers.has(key)) {
+    //     const timer = setTimeout(() => {
+    //       this.pendingDelayTimers.delete(key);
+    //       // Fire and forget; rely on dedupe below to avoid double focus
+    //       void this.showDiff(filePath, oldContent, newContent);
+    //     }, 300);
+    //     this.pendingDelayTimers.set(key, timer);
+    //   }
+    //   return;
+    // }
 
-    // If a diff tab for the same file is already open, update its content instead of opening a new one
-    for (const [, diffInfo] of this.diffDocuments.entries()) {
-      if (diffInfo.originalFilePath === normalizedPath) {
-        // Update left/right contents
-        this.diffContentProvider.setContent(diffInfo.leftDocUri, oldContent);
-        this.diffContentProvider.setContent(diffInfo.rightDocUri, newContent);
-        // Update stored snapshot for future comparisons
-        diffInfo.oldContent = oldContent;
-        diffInfo.newContent = newContent;
-        this.recentlyShown.set(key, Date.now());
-        // Soft focus existing (preserve chat focus)
-        await this.focusExistingDiff(normalizedPath);
-        return;
-      }
-    }
+    // // If a diff tab for the same file is already open, update its content instead of opening a new one
+    // for (const [, diffInfo] of this.diffDocuments.entries()) {
+    //   if (diffInfo.originalFilePath === normalizedPath) {
+    //     // Update left/right contents
+    //     this.diffContentProvider.setContent(diffInfo.leftDocUri, oldContent);
+    //     this.diffContentProvider.setContent(diffInfo.rightDocUri, newContent);
+    //     // Update stored snapshot for future comparisons
+    //     diffInfo.oldContent = oldContent;
+    //     diffInfo.newContent = newContent;
+    //     this.recentlyShown.set(key, Date.now());
+    //     // Soft focus existing (preserve chat focus)
+    //     await this.focusExistingDiff(normalizedPath);
+    //     return;
+    //   }
+    // }
 
     // Check if a diff view with the same content already exists
     if (this.hasExistingDiff(normalizedPath, oldContent, newContent)) {
