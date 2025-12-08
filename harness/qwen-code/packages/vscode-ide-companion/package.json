@@ -65,16 +65,6 @@
         "title": "Qwen Code: Login"
       }
     ],
-    "configuration": {
-      "title": "Qwen Code",
-      "properties": {
-        "qwenCode.useTerminal": {
-          "type": "boolean",
-          "default": "false",
-          "description": "Use terminal to run Qwen Code"
-        }
-      }
-    },
     "menus": {
       "commandPalette": [
         {

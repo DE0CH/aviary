@@ -31,7 +31,6 @@ import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.
 import { EmptyState } from './components/layout/EmptyState.js';
 import { type CompletionItem } from '../types/completionItemTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
-import { InfoBanner } from './components/layout/InfoBanner.js';
 import { ChatHeader } from './components/layout/ChatHeader.js';
 import {
   UserMessage,
@@ -43,8 +42,8 @@ import {
 import { InputForm } from './components/layout/InputForm.js';
 import { SessionSelector } from './components/layout/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
-import type { EditMode } from '../types/qwenTypes.js';
-import type { PlanEntry } from '../types/qwenTypes.js';
+import type { EditMode } from '../types/chatTypes.js';
+import type { PlanEntry } from '../types/chatTypes.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
@@ -77,16 +76,7 @@ export const App: React.FC = () => {
   const inputFieldRef = useRef<HTMLDivElement>(
     null,
   ) as React.RefObject<HTMLDivElement>;
-  // Persist the dismissal of the info banner across webview reloads
-  // Use VS Code webview state to avoid flicker on first render.
-  const [showBanner, setShowBanner] = useState<boolean>(() => {
-    try {
-      const state = (vscode.getState?.() as Record<string, unknown>) || {};
-      return state.infoBannerDismissed !== true; // show unless explicitly dismissed
-    } catch {
-      return true;
-    }
-  });
+
   const [editMode, setEditMode] = useState<EditMode>('ask');
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
@@ -690,24 +680,6 @@ export const App: React.FC = () => {
           </>
         )}
       </div>
-
-      <InfoBanner
-        visible={showBanner}
-        onDismiss={() => {
-          setShowBanner(false);
-          // merge with existing webview state so we don't clobber other keys
-          try {
-            const prev = (vscode.getState?.() as Record<string, unknown>) || {};
-            vscode.setState?.({ ...prev, infoBannerDismissed: true });
-          } catch {
-            /* no-op */
-          }
-        }}
-        onLinkClick={(e) => {
-          e.preventDefault();
-          vscode.postMessage({ type: 'openSettings', data: {} });
-        }}
-      />
 
       <InputForm
         inputText={inputText}

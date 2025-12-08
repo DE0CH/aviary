@@ -21,24 +21,12 @@ export function registerNewCommands(
 
   disposables.push(
     vscode.commands.registerCommand(openChatCommand, async () => {
-      const config = vscode.workspace.getConfiguration('qwenCode');
-      const useTerminal = config.get<boolean>('useTerminal', false);
-
-      // Use terminal mode
-      if (useTerminal) {
-        await vscode.commands.executeCommand(
-          runQwenCodeCommand,
-          vscode.TerminalLocation.Editor, // create a terminal in the editor area,
-        );
+      const providers = getWebViewProviders();
+      if (providers.length > 0) {
+        await providers[providers.length - 1].show();
       } else {
-        // Use WebView mode
-        const providers = getWebViewProviders();
-        if (providers.length > 0) {
-          await providers[providers.length - 1].show();
-        } else {
-          const provider = createWebViewProvider();
-          await provider.show();
-        }
+        const provider = createWebViewProvider();
+        await provider.show();
       }
     }),
   );

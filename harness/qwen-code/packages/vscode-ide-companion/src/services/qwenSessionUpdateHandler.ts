@@ -11,7 +11,7 @@
  */
 
 import type { AcpSessionUpdate, ApprovalModeValue } from '../types/acpTypes.js';
-import type { QwenAgentCallbacks } from '../types/qwenTypes.js';
+import type { QwenAgentCallbacks } from '../types/chatTypes.js';
 
 /**
  * Qwen Session Update Handler class

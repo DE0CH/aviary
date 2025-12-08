@@ -11,7 +11,7 @@ import type { BaseToolCallProps } from '../shared/types.js';
 import type { ToolCallContainerProps } from '../shared/LayoutComponents.js';
 import { groupContent, safeTitle } from '../shared/utils.js';
 import { CheckboxDisplay } from './CheckboxDisplay.js';
-import type { PlanEntry } from '../../../../../types/qwenTypes.js';
+import type { PlanEntry } from '../../../../../types/chatTypes.js';
 
 type EntryStatus = 'pending' | 'in_progress' | 'completed';
 

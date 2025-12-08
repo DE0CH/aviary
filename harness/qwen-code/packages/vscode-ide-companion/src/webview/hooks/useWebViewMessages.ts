@@ -11,8 +11,8 @@ import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
 } from '../components/PermissionDrawer/PermissionRequest.js';
-import type { ToolCallUpdate, EditMode } from '../../types/qwenTypes.js';
-import type { PlanEntry } from '../../types/qwenTypes.js';
+import type { ToolCallUpdate, EditMode } from '../../types/chatTypes.js';
+import type { PlanEntry } from '../../types/chatTypes.js';
 
 interface UseWebViewMessagesProps {
   // Session management

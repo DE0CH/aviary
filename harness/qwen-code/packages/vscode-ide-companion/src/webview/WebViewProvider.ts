@@ -16,7 +16,6 @@ import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { authMethod } from '../constants/auth.js';
-import { runQwenCodeCommand } from '../commands/index.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -1199,29 +1198,6 @@ export class WebViewProvider {
    * This is called when the user clicks the "New Session" button
    */
   async createNewSession(): Promise<void> {
-    console.log('[WebViewProvider] Creating new session in current panel');
-
-    // Check if terminal mode is enabled
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    const useTerminal = config.get<boolean>('useTerminal', false);
-
-    if (useTerminal) {
-      // In terminal mode, execute the runQwenCode command to open a new terminal
-      try {
-        await vscode.commands.executeCommand(runQwenCodeCommand);
-        console.log('[WebViewProvider] Opened new terminal session');
-      } catch (_error) {
-        console.error(
-          '[WebViewProvider] Failed to open new terminal session:',
-          _error,
-        );
-        vscode.window.showErrorMessage(
-          `Failed to open new terminal session: ${_error}`,
-        );
-      }
-      return;
-    }
-
     // WebView mode - create new session via agent manager
     try {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];

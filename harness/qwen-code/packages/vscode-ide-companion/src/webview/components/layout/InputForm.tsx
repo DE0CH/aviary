@@ -19,7 +19,7 @@ import {
 } from '../icons/index.js';
 import { CompletionMenu } from '../layout/CompletionMenu.js';
 import type { CompletionItem } from '../../../types/completionItemTypes.js';
-import type { EditMode } from '../../../types/qwenTypes.js';
+import type { EditMode } from '../../../types/chatTypes.js';
 
 interface InputFormProps {
   inputText: string;

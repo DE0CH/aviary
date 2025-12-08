@@ -16,7 +16,7 @@ import type {
   PlanEntry,
   ToolCallUpdateData,
   QwenAgentCallbacks,
-} from '../types/qwenTypes.js';
+} from '../types/chatTypes.js';
 import { QwenConnectionHandler } from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
