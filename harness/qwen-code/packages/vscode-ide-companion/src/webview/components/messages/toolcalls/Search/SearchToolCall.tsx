@@ -15,41 +15,11 @@ import {
   mapToolStatusToContainerStatus,
 } from '../shared/utils.js';
 
-import type { ToolCallContainerProps } from '../shared/LayoutComponents.js';
-
-export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
-  label,
-  status = 'success',
-  children,
-  toolCallId: _toolCallId,
-  labelSuffix,
-  className: _className,
-}) => (
-  <div
-    className={`SearchToolCall qwen-message message-item ${_className || ''} relative pl-[30px] py-2 select-text toolcall-container toolcall-status-${status}`}
-  >
-    <div className="toolcall-content-wrapper flex flex-col gap-0 min-w-0 max-w-full">
-      <div className="flex items-baseline gap-1.5 relative min-w-0">
-        <span className="text-[14px] leading-none font-bold text-[var(--app-primary-foreground)]">
-          {label}
-        </span>
-        <span className="text-[11px] text-[var(--app-secondary-foreground)]">
-          {labelSuffix}
-        </span>
-      </div>
-      {children && (
-        <div className="text-[var(--app-secondary-foreground)]">{children}</div>
-      )}
-    </div>
-  </div>
-);
-
 /**
  * Specialized component for Search tool calls
  * Optimized for displaying search operations and results
  * Shows query + result count or file list
  */
-// Local, scoped inline container for compact search rows (single result/text-only)
 const InlineContainer: React.FC<{
   status: 'success' | 'error' | 'warning' | 'loading' | 'default';
   labelSuffix?: string;
@@ -57,14 +27,7 @@ const InlineContainer: React.FC<{
   isFirst?: boolean;
   isLast?: boolean;
 }> = ({ status, labelSuffix, children, isFirst, isLast }) => {
-  const beforeStatusClass =
-    status === 'success'
-      ? 'before:text-qwen-success'
-      : status === 'error'
-        ? 'before:text-qwen-error'
-        : status === 'warning'
-          ? 'before:text-qwen-warning'
-          : 'before:text-qwen-loading before:opacity-70 before:animate-pulse-slow';
+  const beforeStatusClass = `toolcall-container toolcall-status-${status}`;
   const lineCropTop = isFirst ? 'top-[24px]' : 'top-0';
   const lineCropBottom = isLast
     ? 'bottom-auto h-[calc(100%-24px)]'
