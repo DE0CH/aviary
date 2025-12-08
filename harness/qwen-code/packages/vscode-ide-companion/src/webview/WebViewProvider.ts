@@ -57,6 +57,20 @@ export class WebViewProvider {
     });
 
     // Setup agent callbacks
+    this.agentManager.onMessage((message) => {
+      // Ignore history replay while background /chat save is running
+      if (this.messageHandler.getIsSavingCheckpoint()) {
+        console.log(
+          '[WebViewProvider] Ignoring message during checkpoint save',
+        );
+        return;
+      }
+      this.sendMessageToWebView({
+        type: 'message',
+        data: message,
+      });
+    });
+
     this.agentManager.onStreamChunk((chunk: string) => {
       // Ignore stream chunks from background /chat save commands
       if (this.messageHandler.getIsSavingCheckpoint()) {

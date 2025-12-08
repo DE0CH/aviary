@@ -386,7 +386,7 @@ export const useWebViewMessages = ({
 
           if (permToolCall?.toolCallId) {
             // Infer kind more robustly for permission preview:
-            // - If content contains a diff entry, force 'edit' so the EditToolCall auto-opens VS Code diff
+            // - If content contains a diff entry, force 'edit' so the EditToolCall can handle it properly
             // - Else try title-based hints; fall back to provided kind or 'execute'
             let kind = permToolCall.kind || 'execute';
             const contentArr = (permToolCall.content as unknown[]) || [];
@@ -400,6 +400,32 @@ export const useWebViewMessages = ({
               : false;
             if (hasDiff) {
               kind = 'edit';
+
+              // Auto-open diff view for edit operations with diff content
+              // This replaces the useEffect auto-trigger in EditToolCall component
+              const diffContent = contentArr.find(
+                (c: unknown) =>
+                  !!c &&
+                  typeof c === 'object' &&
+                  (c as { type?: string }).type === 'diff',
+              ) as
+                | { path?: string; oldText?: string; newText?: string }
+                | undefined;
+
+              if (
+                diffContent?.path &&
+                diffContent?.oldText !== undefined &&
+                diffContent?.newText !== undefined
+              ) {
+                vscode.postMessage({
+                  type: 'openDiff',
+                  data: {
+                    path: diffContent.path,
+                    oldText: diffContent.oldText,
+                    newText: diffContent.newText,
+                  },
+                });
+              }
             } else if (permToolCall.title) {
               const title = permToolCall.title.toLowerCase();
               if (title.includes('touch') || title.includes('echo')) {

@@ -6,7 +6,7 @@
  * Edit tool call component - specialized for file editing operations
  */
 
-import { useEffect, useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { BaseToolCallProps } from '../shared/types.js';
 import {
   groupContent,
@@ -14,8 +14,6 @@ import {
 } from '../shared/utils.js';
 import { FileLink } from '../../../layout/FileLink.js';
 import type { ToolCallContainerProps } from '../shared/LayoutComponents.js';
-import { useVSCode } from '../../../../hooks/useVSCode.js';
-import { handleOpenDiff } from '../../../../utils/diffUtils.js';
 
 export const ToolCallContainer: React.FC<ToolCallContainerProps> = ({
   label,
@@ -70,44 +68,9 @@ const getDiffSummary = (
  */
 export const EditToolCall: React.FC<BaseToolCallProps> = ({ toolCall }) => {
   const { content, locations, toolCallId } = toolCall;
-  const vscode = useVSCode();
 
   // Group content by type; memoize to avoid new array identities on every render
   const { errors, diffs } = useMemo(() => groupContent(content), [content]);
-  const handleOpenDiffInternal = useCallback(
-    (
-      path: string | undefined,
-      oldText: string | null | undefined,
-      newText: string | undefined,
-    ) => {
-      handleOpenDiff(vscode, path, oldText, newText);
-    },
-    [vscode],
-  );
-
-  // Automatically trigger openDiff when diff content is detected
-  // Only trigger once per tool call by checking toolCallId
-  useEffect(() => {
-    // Only auto-open if there are diffs and we have the required data
-    if (diffs.length > 0) {
-      const firstDiff = diffs[0];
-      const path = firstDiff.path || (locations && locations[0]?.path) || '';
-
-      if (
-        path &&
-        firstDiff.oldText !== undefined &&
-        firstDiff.newText !== undefined
-      ) {
-        // Add a small delay to ensure the component is fully rendered
-        const timer = setTimeout(() => {
-          handleOpenDiffInternal(path, firstDiff.oldText, firstDiff.newText);
-        }, 100);
-        // Proper cleanup function
-        return () => timer && clearTimeout(timer);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolCallId]);
 
   // Failed case: show explicit failed message and render inline diffs
   if (toolCall.status === 'failed') {
