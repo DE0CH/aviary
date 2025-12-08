@@ -6,7 +6,6 @@
 
 import { JSONRPC_VERSION } from '../types/acpTypes.js';
 import type {
-  AcpBackend,
   AcpMessage,
   AcpPermissionRequest,
   AcpResponse,
@@ -31,7 +30,6 @@ export class AcpConnection {
   private child: ChildProcess | null = null;
   private pendingRequests = new Map<number, PendingRequest<unknown>>();
   private nextRequestId = { value: 0 };
-  private backend: AcpBackend | null = null;
   // Remember the working dir provided at connect() so later ACP calls
   // that require cwd (e.g. session/list) can include it.
   private workingDir: string = process.cwd();
@@ -53,15 +51,13 @@ export class AcpConnection {
   }
 
   /**
-   * Connect to ACP backend
+   * Connect to Qwen ACP
    *
-   * @param backend - Backend type
    * @param cliPath - CLI path
    * @param workingDir - Working directory
    * @param extraArgs - Extra command line arguments
    */
   async connect(
-    backend: AcpBackend,
     cliPath: string,
     workingDir: string = process.cwd(),
     extraArgs: string[] = [],
@@ -70,7 +66,6 @@ export class AcpConnection {
       this.disconnect();
     }
 
-    this.backend = backend;
     this.workingDir = workingDir;
 
     const isWindows = process.platform === 'win32';
@@ -136,15 +131,13 @@ export class AcpConnection {
     };
 
     this.child = spawn(spawnCommand, spawnArgs, options);
-    await this.setupChildProcessHandlers(backend);
+    await this.setupChildProcessHandlers();
   }
 
   /**
    * Set up child process handlers
-   *
-   * @param backend - Backend name
    */
-  private async setupChildProcessHandlers(backend: string): Promise<void> {
+  private async setupChildProcessHandlers(): Promise<void> {
     let spawnError: Error | null = null;
 
     this.child!.stderr?.on('data', (data) => {
@@ -153,9 +146,9 @@ export class AcpConnection {
         message.toLowerCase().includes('error') &&
         !message.includes('Loaded cached')
       ) {
-        console.error(`[ACP ${backend}]:`, message);
+        console.error(`[ACP qwen]:`, message);
       } else {
-        console.log(`[ACP ${backend}]:`, message);
+        console.log(`[ACP qwen]:`, message);
       }
     });
 
@@ -165,7 +158,7 @@ export class AcpConnection {
 
     this.child!.on('exit', (code, signal) => {
       console.error(
-        `[ACP ${backend}] Process exited with code: ${code}, signal: ${signal}`,
+        `[ACP qwen] Process exited with code: ${code}, signal: ${signal}`,
       );
     });
 
@@ -177,7 +170,7 @@ export class AcpConnection {
     }
 
     if (!this.child || this.child.killed) {
-      throw new Error(`${backend} ACP process failed to start`);
+      throw new Error(`Qwen ACP process failed to start`);
     }
 
     // Handle messages from ACP server
@@ -409,7 +402,6 @@ export class AcpConnection {
 
     this.pendingRequests.clear();
     this.sessionManager.reset();
-    this.backend = null;
   }
 
   /**

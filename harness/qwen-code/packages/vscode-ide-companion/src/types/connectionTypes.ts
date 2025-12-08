@@ -28,5 +28,4 @@ export interface AcpConnectionState {
   nextRequestId: number;
   sessionId: string | null;
   isInitialized: boolean;
-  backend: string | null;
 }

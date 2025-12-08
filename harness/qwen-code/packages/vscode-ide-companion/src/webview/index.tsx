@@ -6,6 +6,7 @@
 
 import ReactDOM from 'react-dom/client';
 import { App } from './App.js';
+
 // eslint-disable-next-line import/no-internal-modules
 import './styles/tailwind.css';
 // eslint-disable-next-line import/no-internal-modules

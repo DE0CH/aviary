@@ -5,8 +5,9 @@
  */
 
 export const JSONRPC_VERSION = '2.0' as const;
+export const authMethod = 'qwen-oauth';
 
-export type AcpBackend = 'qwen' | 'claude' | 'gemini' | 'codex';
+export type AcpBackend = 'qwen';
 
 export interface AcpRequest {
   jsonrpc: typeof JSONRPC_VERSION;

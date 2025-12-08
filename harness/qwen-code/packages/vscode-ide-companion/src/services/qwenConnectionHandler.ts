@@ -16,7 +16,7 @@ import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import type { AuthStateManager } from '../services/authStateManager.js';
 import { CliVersionManager } from '../cli/cliVersionManager.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
-import { authMethod } from '../constants/auth.js';
+import { authMethod } from '../types/acpTypes.js';
 
 /**
  * Qwen Connection Handler class
@@ -71,7 +71,7 @@ export class QwenConnectionHandler {
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    await connection.connect('qwen', effectiveCliPath, workingDir, extraArgs);
+    await connection.connect(effectiveCliPath, workingDir, extraArgs);
 
     // Check if we have valid cached authentication
     if (authStateManager) {
@@ -214,14 +214,14 @@ export class QwenConnectionHandler {
           errorMessage,
         );
 
-        // If the backend reports that authentication is required, try to
+        // If Qwen reports that authentication is required, try to
         // authenticate on-the-fly once and retry without waiting.
         const requiresAuth =
           errorMessage.includes('Authentication required') ||
           errorMessage.includes('(code: -32000)');
         if (requiresAuth) {
           console.log(
-            '[QwenAgentManager] Backend requires authentication. Authenticating and retrying session/new...',
+            '[QwenAgentManager] Qwen requires authentication. Authenticating and retrying session/new...',
           );
           try {
             await connection.authenticate(authMethod);

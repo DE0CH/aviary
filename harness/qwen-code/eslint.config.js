@@ -120,7 +120,7 @@ export default tseslint.config(
             '**/generated/**',
             './styles/tailwind.css',
             './styles/App.css',
-            './styles/ClaudeCodeStyles.css'
+            './styles/style.css'
           ],
         },
       ],

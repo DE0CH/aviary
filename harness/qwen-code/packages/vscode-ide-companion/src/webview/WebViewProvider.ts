@@ -15,7 +15,7 @@ import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
-import { authMethod } from '../constants/auth.js';
+import { authMethod } from '../types/acpTypes.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;

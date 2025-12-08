@@ -20,7 +20,7 @@ import type {
 import { QwenConnectionHandler } from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
-import { authMethod } from '../constants/auth.js';
+import { authMethod } from '../types/acpTypes.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -1220,7 +1220,7 @@ export class QwenAgentManager {
       );
     }
 
-    // Try to create a new ACP session. If the backend asks for auth despite our
+    // Try to create a new ACP session. If Qwen asks for auth despite our
     // cached flag (e.g. fresh process or expired tokens), re-authenticate and retry.
     try {
       await this.connection.newSession(workingDir);

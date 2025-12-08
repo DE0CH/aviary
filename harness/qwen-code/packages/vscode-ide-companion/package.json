@@ -57,7 +57,7 @@
       },
       {
         "command": "qwen-code.openChat",
-        "title": "Qwen Code: Open Chat",
+        "title": "Qwen Code: Open",
         "icon": "./assets/icon.png"
       },
       {
@@ -107,11 +107,6 @@
         "command": "qwen.diff.accept",
         "key": "cmd+s",
         "when": "qwen.diff.isVisible"
-      },
-      {
-        "command": "qwen-code.openChat",
-        "key": "ctrl+shift+a",
-        "mac": "cmd+shift+a"
       }
     ]
   },
