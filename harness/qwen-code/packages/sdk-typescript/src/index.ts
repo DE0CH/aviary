@@ -3,6 +3,17 @@ export { AbortError, isAbortError } from './types/errors.js';
 export { Query } from './query/Query.js';
 export { SdkLogger } from './utils/logger.js';
 
+// SDK MCP Server exports
+export { tool } from './mcp/tool.js';
+export { createSdkMcpServer } from './mcp/createSdkMcpServer.js';
+
+export type { SdkMcpToolDefinition } from './mcp/tool.js';
+
+export type {
+  CreateSdkMcpServerOptions,
+  McpSdkServerConfigWithInstance,
+} from './mcp/createSdkMcpServer.js';
+
 export type { QueryOptions } from './query/createQuery.js';
 export type { LogLevel, LoggerConfig, ScopedLogger } from './utils/logger.js';
 
@@ -18,6 +29,7 @@ export type {
   SDKResultMessage,
   SDKPartialAssistantMessage,
   SDKMessage,
+  SDKMcpServerConfig,
   ControlMessage,
   CLIControlRequest,
   CLIControlResponse,
@@ -43,6 +55,10 @@ export type {
   PermissionMode,
   CanUseTool,
   PermissionResult,
-  ExternalMcpServerConfig,
-  SdkMcpServerConfig,
+  CLIMcpServerConfig,
+  McpServerConfig,
+  McpOAuthConfig,
+  McpAuthProviderType,
 } from './types/types.js';
+
+export { isSdkMcpServerConfig } from './types/types.js';

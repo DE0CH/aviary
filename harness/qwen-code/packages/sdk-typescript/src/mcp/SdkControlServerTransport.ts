@@ -103,9 +103,3 @@ export class SdkControlServerTransport {
     return this.serverName;
   }
 }
-
-export function createSdkControlServerTransport(
-  options: SdkControlServerTransportOptions,
-): SdkControlServerTransport {
-  return new SdkControlServerTransport(options);
-}

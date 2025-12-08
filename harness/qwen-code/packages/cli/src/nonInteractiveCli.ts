@@ -172,6 +172,7 @@ export async function runNonInteractive(
         adapter.emitMessage(systemMessage);
       }
 
+      let isFirstTurn = true;
       while (true) {
         turnCount++;
         if (
@@ -187,7 +188,9 @@ export async function runNonInteractive(
           currentMessages[0]?.parts || [],
           abortController.signal,
           prompt_id,
+          { isContinuation: !isFirstTurn },
         );
+        isFirstTurn = false;
 
         // Start assistant message for this turn
         if (adapter) {
@@ -207,7 +210,9 @@ export async function runNonInteractive(
             }
           } else {
             // Text output mode - direct stdout
-            if (event.type === GeminiEventType.Content) {
+            if (event.type === GeminiEventType.Thought) {
+              process.stdout.write(event.value.description);
+            } else if (event.type === GeminiEventType.Content) {
               process.stdout.write(event.value);
             } else if (event.type === GeminiEventType.ToolCallRequest) {
               toolCallRequests.push(event.value);

@@ -17,7 +17,7 @@ import {
   type SubagentConfig,
   type ContentBlock,
   type ToolUseBlock,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   extractText,

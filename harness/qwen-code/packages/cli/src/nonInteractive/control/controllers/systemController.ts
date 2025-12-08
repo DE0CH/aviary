@@ -18,9 +18,15 @@ import type {
   ControlRequestPayload,
   CLIControlInitializeRequest,
   CLIControlSetModelRequest,
+  CLIMcpServerConfig,
 } from '../../types.js';
 import { CommandService } from '../../../services/CommandService.js';
 import { BuiltinCommandLoader } from '../../../services/BuiltinCommandLoader.js';
+import {
+  MCPServerConfig,
+  AuthProviderType,
+  type MCPOAuthConfig,
+} from '@qwen-code/qwen-code-core';
 
 export class SystemController extends BaseController {
   /**
@@ -28,20 +34,30 @@ export class SystemController extends BaseController {
    */
   protected async handleRequestPayload(
     payload: ControlRequestPayload,
-    _signal: AbortSignal,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     switch (payload.subtype) {
       case 'initialize':
-        return this.handleInitialize(payload as CLIControlInitializeRequest);
+        return this.handleInitialize(
+          payload as CLIControlInitializeRequest,
+          signal,
+        );
 
       case 'interrupt':
         return this.handleInterrupt();
 
       case 'set_model':
-        return this.handleSetModel(payload as CLIControlSetModelRequest);
+        return this.handleSetModel(
+          payload as CLIControlSetModelRequest,
+          signal,
+        );
 
       case 'supported_commands':
-        return this.handleSupportedCommands();
+        return this.handleSupportedCommands(signal);
 
       default:
         throw new Error(`Unsupported request subtype in SystemController`);
@@ -51,46 +67,110 @@ export class SystemController extends BaseController {
   /**
    * Handle initialize request
    *
-   * Registers SDK MCP servers and returns capabilities
+   * Processes SDK MCP servers config.
+   * SDK servers are registered in context.sdkMcpServers
+   * and added to config.mcpServers with the sdk type flag.
+   * External MCP servers are configured separately in settings.
    */
   private async handleInitialize(
     payload: CLIControlInitializeRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     this.context.config.setSdkMode(true);
 
-    if (payload.sdkMcpServers && typeof payload.sdkMcpServers === 'object') {
-      for (const serverName of Object.keys(payload.sdkMcpServers)) {
-        this.context.sdkMcpServers.add(serverName);
+    // Process SDK MCP servers
+    if (
+      payload.sdkMcpServers &&
+      typeof payload.sdkMcpServers === 'object' &&
+      payload.sdkMcpServers !== null
+    ) {
+      const sdkServers: Record<string, MCPServerConfig> = {};
+      for (const [key, wireConfig] of Object.entries(payload.sdkMcpServers)) {
+        const name =
+          typeof wireConfig?.name === 'string' && wireConfig.name.trim().length
+            ? wireConfig.name
+            : key;
+
+        this.context.sdkMcpServers.add(name);
+        sdkServers[name] = new MCPServerConfig(
+          undefined, // command
+          undefined, // args
+          undefined, // env
+          undefined, // cwd
+          undefined, // url
+          undefined, // httpUrl
+          undefined, // headers
+          undefined, // tcp
+          undefined, // timeout
+          true, // trust - SDK servers are trusted
+          undefined, // description
+          undefined, // includeTools
+          undefined, // excludeTools
+          undefined, // extensionName
+          undefined, // oauth
+          undefined, // authProviderType
+          undefined, // targetAudience
+          undefined, // targetServiceAccount
+          'sdk', // type
+        );
       }
 
-      try {
-        this.context.config.addMcpServers(payload.sdkMcpServers);
-        if (this.context.debugMode) {
-          console.error(
-            `[SystemController] Added ${Object.keys(payload.sdkMcpServers).length} SDK MCP servers to config`,
-          );
-        }
-      } catch (error) {
-        if (this.context.debugMode) {
-          console.error(
-            '[SystemController] Failed to add SDK MCP servers:',
-            error,
-          );
+      const sdkServerCount = Object.keys(sdkServers).length;
+      if (sdkServerCount > 0) {
+        try {
+          this.context.config.addMcpServers(sdkServers);
+          if (this.context.debugMode) {
+            console.error(
+              `[SystemController] Added ${sdkServerCount} SDK MCP servers to config`,
+            );
+          }
+        } catch (error) {
+          if (this.context.debugMode) {
+            console.error(
+              '[SystemController] Failed to add SDK MCP servers:',
+              error,
+            );
+          }
         }
       }
     }
 
-    if (payload.mcpServers && typeof payload.mcpServers === 'object') {
-      try {
-        this.context.config.addMcpServers(payload.mcpServers);
-        if (this.context.debugMode) {
-          console.error(
-            `[SystemController] Added ${Object.keys(payload.mcpServers).length} MCP servers to config`,
-          );
+    if (
+      payload.mcpServers &&
+      typeof payload.mcpServers === 'object' &&
+      payload.mcpServers !== null
+    ) {
+      const externalServers: Record<string, MCPServerConfig> = {};
+      for (const [name, serverConfig] of Object.entries(payload.mcpServers)) {
+        const normalized = this.normalizeMcpServerConfig(
+          name,
+          serverConfig as CLIMcpServerConfig | undefined,
+        );
+        if (normalized) {
+          externalServers[name] = normalized;
         }
-      } catch (error) {
-        if (this.context.debugMode) {
-          console.error('[SystemController] Failed to add MCP servers:', error);
+      }
+
+      const externalCount = Object.keys(externalServers).length;
+      if (externalCount > 0) {
+        try {
+          this.context.config.addMcpServers(externalServers);
+          if (this.context.debugMode) {
+            console.error(
+              `[SystemController] Added ${externalCount} external MCP servers to config`,
+            );
+          }
+        } catch (error) {
+          if (this.context.debugMode) {
+            console.error(
+              '[SystemController] Failed to add external MCP servers:',
+              error,
+            );
+          }
         }
       }
     }
@@ -143,11 +223,94 @@ export class SystemController extends BaseController {
       can_set_permission_mode:
         typeof this.context.config.setApprovalMode === 'function',
       can_set_model: typeof this.context.config.setModel === 'function',
-      /* TODO: sdkMcpServers support */
-      can_handle_mcp_message: false,
+      // SDK MCP servers are supported - messages routed through control plane
+      can_handle_mcp_message: true,
     };
 
     return capabilities;
+  }
+
+  private normalizeMcpServerConfig(
+    serverName: string,
+    config?: CLIMcpServerConfig,
+  ): MCPServerConfig | null {
+    if (!config || typeof config !== 'object') {
+      if (this.context.debugMode) {
+        console.error(
+          `[SystemController] Ignoring invalid MCP server config for '${serverName}'`,
+        );
+      }
+      return null;
+    }
+
+    const authProvider = this.normalizeAuthProviderType(
+      config.authProviderType,
+    );
+    const oauthConfig = this.normalizeOAuthConfig(config.oauth);
+
+    return new MCPServerConfig(
+      config.command,
+      config.args,
+      config.env,
+      config.cwd,
+      config.url,
+      config.httpUrl,
+      config.headers,
+      config.tcp,
+      config.timeout,
+      config.trust,
+      config.description,
+      config.includeTools,
+      config.excludeTools,
+      config.extensionName,
+      oauthConfig,
+      authProvider,
+      config.targetAudience,
+      config.targetServiceAccount,
+    );
+  }
+
+  private normalizeAuthProviderType(
+    value?: string,
+  ): AuthProviderType | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    switch (value) {
+      case AuthProviderType.DYNAMIC_DISCOVERY:
+      case AuthProviderType.GOOGLE_CREDENTIALS:
+      case AuthProviderType.SERVICE_ACCOUNT_IMPERSONATION:
+        return value;
+      default:
+        if (this.context.debugMode) {
+          console.error(
+            `[SystemController] Unsupported authProviderType '${value}', skipping`,
+          );
+        }
+        return undefined;
+    }
+  }
+
+  private normalizeOAuthConfig(
+    oauth?: CLIMcpServerConfig['oauth'],
+  ): MCPOAuthConfig | undefined {
+    if (!oauth) {
+      return undefined;
+    }
+
+    return {
+      enabled: oauth.enabled,
+      clientId: oauth.clientId,
+      clientSecret: oauth.clientSecret,
+      authorizationUrl: oauth.authorizationUrl,
+      tokenUrl: oauth.tokenUrl,
+      scopes: oauth.scopes,
+      audiences: oauth.audiences,
+      redirectUri: oauth.redirectUri,
+      tokenParamName: oauth.tokenParamName,
+      registrationUrl: oauth.registrationUrl,
+    };
   }
 
   /**
@@ -183,7 +346,12 @@ export class SystemController extends BaseController {
    */
   private async handleSetModel(
     payload: CLIControlSetModelRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const model = payload.model;
 
     // Validate model parameter
@@ -223,8 +391,14 @@ export class SystemController extends BaseController {
    *
    * Returns list of supported slash commands loaded dynamically
    */
-  private async handleSupportedCommands(): Promise<Record<string, unknown>> {
-    const slashCommands = await this.loadSlashCommandNames();
+  private async handleSupportedCommands(
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
+    const slashCommands = await this.loadSlashCommandNames(signal);
 
     return {
       subtype: 'supported_commands',
@@ -235,15 +409,24 @@ export class SystemController extends BaseController {
   /**
    * Load slash command names using CommandService
    *
+   * @param signal - AbortSignal to respect for cancellation
    * @returns Promise resolving to array of slash command names
    */
-  private async loadSlashCommandNames(): Promise<string[]> {
-    const controller = new AbortController();
+  private async loadSlashCommandNames(signal: AbortSignal): Promise<string[]> {
+    if (signal.aborted) {
+      return [];
+    }
+
     try {
       const service = await CommandService.create(
         [new BuiltinCommandLoader(this.context.config)],
-        controller.signal,
+        signal,
       );
+
+      if (signal.aborted) {
+        return [];
+      }
+
       const names = new Set<string>();
       const commands = service.getCommands();
       for (const command of commands) {
@@ -251,6 +434,11 @@ export class SystemController extends BaseController {
       }
       return Array.from(names).sort();
     } catch (error) {
+      // Check if the error is due to abort
+      if (signal.aborted) {
+        return [];
+      }
+
       if (this.context.debugMode) {
         console.error(
           '[SystemController] Failed to load slash commands:',
@@ -258,8 +446,6 @@ export class SystemController extends BaseController {
         );
       }
       return [];
-    } finally {
-      controller.abort();
     }
   }
 }

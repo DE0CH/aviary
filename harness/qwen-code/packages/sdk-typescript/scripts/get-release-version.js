@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const PACKAGE_NAME = '@qwen-code/sdk-typescript';
+const PACKAGE_NAME = '@qwen-code/sdk';
 const TAG_PREFIX = 'sdk-typescript-v';
 
 function readJson(filePath) {

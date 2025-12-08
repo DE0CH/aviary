@@ -17,7 +17,7 @@ import {
   isSDKAssistantMessage,
   isSDKSystemMessage,
   type SDKMessage,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   extractText,
@@ -532,7 +532,6 @@ describe('Configuration Options (E2E)', () => {
           cwd: testDir,
           authType: 'openai',
           debug: true,
-          logLevel: 'debug',
           stderr: (msg: string) => {
             stderrMessages.push(msg);
           },

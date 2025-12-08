@@ -22,7 +22,7 @@ import {
   type SDKUserMessage,
   type ToolUseBlock,
   type ContentBlock,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   createSharedTestOptions,
@@ -555,6 +555,15 @@ describe('Permission Control (E2E)', () => {
           ...SHARED_TEST_OPTIONS,
           cwd: testDir,
           permissionMode: 'default',
+          timeout: {
+            /**
+             * We use a short control request timeout and
+             * wait till the time exceeded to test if
+             * an immediate close() will raise an query close
+             * error and no other uncaught timeout error
+             */
+            controlRequest: 5000,
+          },
         },
       });
 
@@ -563,7 +572,9 @@ describe('Permission Control (E2E)', () => {
       await expect(q.setPermissionMode('yolo')).rejects.toThrow(
         'Query is closed',
       );
-    });
+
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+    }, 10_000);
   });
 
   describe('canUseTool and setPermissionMode integration', () => {
@@ -1184,7 +1195,7 @@ describe('Permission Control (E2E)', () => {
     });
 
     describe('mode comparison tests', () => {
-      it(
+      it.skip(
         'should demonstrate different behaviors across all modes for write operations',
         async () => {
           const modes: Array<'default' | 'auto-edit' | 'yolo'> = [

@@ -542,13 +542,16 @@ describe('Query', () => {
       const canUseTool = vi.fn().mockImplementation(
         () =>
           new Promise((resolve) => {
-            setTimeout(() => resolve({ behavior: 'allow' }), 35000); // Exceeds 30s timeout
+            setTimeout(() => resolve({ behavior: 'allow' }), 15000);
           }),
       );
 
       const query = new Query(transport, {
         cwd: '/test',
         canUseTool,
+        timeout: {
+          canUseTool: 10000,
+        },
       });
 
       const controlReq = createControlRequest('can_use_tool', 'perm-req-4');
@@ -567,7 +570,7 @@ describe('Query', () => {
             });
           }
         },
-        { timeout: 35000 },
+        { timeout: 15000 },
       );
 
       await query.close();
@@ -1204,7 +1207,12 @@ describe('Query', () => {
     });
 
     it('should handle control request timeout', async () => {
-      const query = new Query(transport, { cwd: '/test' });
+      const query = new Query(transport, {
+        cwd: '/test',
+        timeout: {
+          controlRequest: 10000,
+        },
+      });
 
       // Respond to initialize
       await vi.waitFor(() => {
@@ -1224,7 +1232,7 @@ describe('Query', () => {
       await expect(interruptPromise).rejects.toThrow(/timeout/i);
 
       await query.close();
-    }, 35000);
+    }, 15000);
 
     it('should handle malformed control responses', async () => {
       const query = new Query(transport, { cwd: '/test' });
