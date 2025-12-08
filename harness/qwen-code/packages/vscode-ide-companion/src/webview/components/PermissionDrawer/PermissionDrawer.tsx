@@ -276,7 +276,7 @@ interface CustomMessageInputRowProps {
   setCustomMessage: (val: string) => void;
   onFocusRow: () => void; // Set focus when mouse enters or input box is focused
   onSubmitReject: () => void; // Triggered when Enter is pressed (selecting reject option)
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
 }
 
 const CustomMessageInputRow: React.FC<CustomMessageInputRowProps> = ({
@@ -295,7 +295,7 @@ const CustomMessageInputRow: React.FC<CustomMessageInputRowProps> = ({
     onClick={() => inputRef.current?.focus()}
   >
     <input
-      ref={inputRef}
+      ref={inputRef as React.LegacyRef<HTMLInputElement> | undefined}
       type="text"
       placeholder="Tell Qwen what to do instead"
       spellCheck={false}
