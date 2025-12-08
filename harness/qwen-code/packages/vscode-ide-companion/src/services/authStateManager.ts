@@ -17,10 +17,28 @@ interface AuthState {
  * Manages authentication state caching to avoid repeated logins
  */
 export class AuthStateManager {
+  private static instance: AuthStateManager | null = null;
+  private static context: vscode.ExtensionContext | null = null;
   private static readonly AUTH_STATE_KEY = 'qwen.authState';
   private static readonly AUTH_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 
-  constructor(private context: vscode.ExtensionContext) {}
+  private constructor() {}
+
+  /**
+   * Get singleton instance of AuthStateManager
+   */
+  static getInstance(context?: vscode.ExtensionContext): AuthStateManager {
+    if (!AuthStateManager.instance) {
+      AuthStateManager.instance = new AuthStateManager();
+    }
+
+    // If a context is provided, update the static context
+    if (context) {
+      AuthStateManager.context = context;
+    }
+
+    return AuthStateManager.instance;
+  }
 
   /**
    * Check if there's a valid cached authentication
@@ -104,6 +122,13 @@ export class AuthStateManager {
    * Save successful authentication state
    */
   async saveAuthState(workingDir: string, authMethod: string): Promise<void> {
+    // Ensure we have a valid context
+    if (!AuthStateManager.context) {
+      throw new Error(
+        '[AuthStateManager] No context available for saving auth state',
+      );
+    }
+
     const state: AuthState = {
       isAuthenticated: true,
       authMethod,
@@ -117,7 +142,7 @@ export class AuthStateManager {
       timestamp: new Date(state.timestamp).toISOString(),
     });
 
-    await this.context.globalState.update(
+    await AuthStateManager.context.globalState.update(
       AuthStateManager.AUTH_STATE_KEY,
       state,
     );
@@ -132,6 +157,13 @@ export class AuthStateManager {
    * Clear authentication state
    */
   async clearAuthState(): Promise<void> {
+    // Ensure we have a valid context
+    if (!AuthStateManager.context) {
+      throw new Error(
+        '[AuthStateManager] No context available for clearing auth state',
+      );
+    }
+
     console.log('[AuthStateManager] Clearing auth state');
     const currentState = await this.getAuthState();
     console.log(
@@ -139,7 +171,7 @@ export class AuthStateManager {
       currentState,
     );
 
-    await this.context.globalState.update(
+    await AuthStateManager.context.globalState.update(
       AuthStateManager.AUTH_STATE_KEY,
       undefined,
     );
@@ -154,7 +186,15 @@ export class AuthStateManager {
    * Get current auth state
    */
   private async getAuthState(): Promise<AuthState | undefined> {
-    const a = this.context.globalState.get<AuthState>(
+    // Ensure we have a valid context
+    if (!AuthStateManager.context) {
+      console.log(
+        '[AuthStateManager] No context available for getting auth state',
+      );
+      return undefined;
+    }
+
+    const a = AuthStateManager.context.globalState.get<AuthState>(
       AuthStateManager.AUTH_STATE_KEY,
     );
     console.log('[AuthStateManager] Auth state:', a);
