@@ -42,7 +42,8 @@ import {
 import { InputForm } from './components/layout/InputForm.js';
 import { SessionSelector } from './components/layout/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
-import type { EditMode } from '../types/chatTypes.js';
+import { ApprovalMode } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/acpTypes.js';
 import type { PlanEntry } from '../types/chatTypes.js';
 
 export const App: React.FC = () => {
@@ -77,7 +78,9 @@ export const App: React.FC = () => {
     null,
   ) as React.RefObject<HTMLDivElement>;
 
-  const [editMode, setEditMode] = useState<EditMode>('ask');
+  const [editMode, setEditMode] = useState<ApprovalModeValue>(
+    ApprovalMode.DEFAULT,
+  );
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   // When true, do NOT auto-attach the active editor file/selection to message context
@@ -461,30 +464,22 @@ export const App: React.FC = () => {
     });
   }, [vscode]);
 
-  // Handle toggle edit mode (Ask -> Auto -> Plan -> YOLO -> Ask)
+  // Handle toggle edit mode (Default -> Auto-edit -> Plan -> YOLO -> Default)
   const handleToggleEditMode = useCallback(() => {
     setEditMode((prev) => {
-      const next: EditMode =
-        prev === 'ask'
-          ? 'auto'
-          : prev === 'auto'
-            ? 'plan'
-            : prev === 'plan'
-              ? 'yolo'
-              : 'ask';
+      const next: ApprovalModeValue =
+        prev === ApprovalMode.DEFAULT
+          ? ApprovalMode.AUTO_EDIT
+          : prev === ApprovalMode.AUTO_EDIT
+            ? ApprovalMode.PLAN
+            : prev === ApprovalMode.PLAN
+              ? ApprovalMode.YOLO
+              : ApprovalMode.DEFAULT;
       // Notify extension to set approval mode via ACP
       try {
-        const toAcp =
-          next === 'plan'
-            ? 'plan'
-            : next === 'auto'
-              ? 'auto-edit'
-              : next === 'yolo'
-                ? 'yolo'
-                : 'default';
         vscode.postMessage({
           type: 'setApprovalMode',
-          data: { modeId: toAcp },
+          data: { modeId: next },
         });
       } catch {
         /* no-op */

@@ -3,7 +3,7 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { AcpPermissionRequest } from './acpTypes.js';
+import type { AcpPermissionRequest, ApprovalModeValue } from './acpTypes.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -66,15 +66,15 @@ export interface QwenAgentCallbacks {
   onEndTurn?: () => void;
   /** Callback for receiving mode information after ACP initialization */
   onModeInfo?: (info: {
-    currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
+    currentModeId?: ApprovalModeValue;
     availableModes?: Array<{
-      id: 'plan' | 'default' | 'auto-edit' | 'yolo';
+      id: ApprovalModeValue;
       name: string;
       description: string;
     }>;
   }) => void;
   /** Callback for receiving notifications when the mode changes */
-  onModeChanged?: (modeId: 'plan' | 'default' | 'auto-edit' | 'yolo') => void;
+  onModeChanged?: (modeId: ApprovalModeValue) => void;
 }
 
 /**
@@ -105,8 +105,3 @@ export interface ToolCallUpdate {
   }>;
   timestamp?: number; // Add timestamp field for message ordering
 }
-
-/**
- * Edit mode type
- */
-export type EditMode = 'ask' | 'auto' | 'plan' | 'yolo';

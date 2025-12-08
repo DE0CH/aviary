@@ -7,8 +7,6 @@
 export const JSONRPC_VERSION = '2.0' as const;
 export const authMethod = 'qwen-oauth';
 
-export type AcpBackend = 'qwen';
-
 export interface AcpRequest {
   jsonrpc: typeof JSONRPC_VERSION;
   id: number;
@@ -36,7 +34,6 @@ export interface AcpNotification {
   params?: unknown;
 }
 
-// Base interface for all session updates
 export interface BaseSessionUpdate {
   sessionId: string;
 }
@@ -50,7 +47,6 @@ export interface ContentBlock {
   uri?: string;
 }
 
-// User message chunk update
 export interface UserMessageChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'user_message_chunk';
@@ -58,7 +54,6 @@ export interface UserMessageChunkUpdate extends BaseSessionUpdate {
   };
 }
 
-// Agent message chunk update
 export interface AgentMessageChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'agent_message_chunk';
@@ -66,7 +61,6 @@ export interface AgentMessageChunkUpdate extends BaseSessionUpdate {
   };
 }
 
-// Agent thought chunk update
 export interface AgentThoughtChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'agent_thought_chunk';
@@ -74,7 +68,6 @@ export interface AgentThoughtChunkUpdate extends BaseSessionUpdate {
   };
 }
 
-// Tool call update
 export interface ToolCallUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'tool_call';
@@ -109,7 +102,6 @@ export interface ToolCallUpdate extends BaseSessionUpdate {
   };
 }
 
-// Tool call status update
 export interface ToolCallStatusUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'tool_call_update';
@@ -135,7 +127,6 @@ export interface ToolCallStatusUpdate extends BaseSessionUpdate {
   };
 }
 
-// Plan update
 export interface PlanUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'plan';
@@ -147,8 +138,14 @@ export interface PlanUpdate extends BaseSessionUpdate {
   };
 }
 
-// Approval/Mode values as defined by ACP schema
 export type ApprovalModeValue = 'plan' | 'default' | 'auto-edit' | 'yolo';
+
+export {
+  ApprovalMode,
+  APPROVAL_MODE_MAP,
+  APPROVAL_MODE_INFO,
+  getApprovalModeInfoFromString,
+} from './approvalModeTypes.js';
 
 // Current mode update (sent by agent when mode changes)
 export interface CurrentModeUpdate extends BaseSessionUpdate {
@@ -158,7 +155,6 @@ export interface CurrentModeUpdate extends BaseSessionUpdate {
   };
 }
 
-// Union type for all session updates
 export type AcpSessionUpdate =
   | UserMessageChunkUpdate
   | AgentMessageChunkUpdate

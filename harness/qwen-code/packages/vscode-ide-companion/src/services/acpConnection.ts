@@ -10,6 +10,7 @@ import type {
   AcpPermissionRequest,
   AcpResponse,
   AcpSessionUpdate,
+  ApprovalModeValue,
 } from '../types/acpTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { spawn } from 'child_process';
@@ -380,9 +381,7 @@ export class AcpConnection {
   /**
    * Set approval mode
    */
-  async setMode(
-    modeId: 'plan' | 'default' | 'auto-edit' | 'yolo',
-  ): Promise<AcpResponse> {
+  async setMode(modeId: ApprovalModeValue): Promise<AcpResponse> {
     return this.sessionManager.setMode(
       modeId,
       this.child,

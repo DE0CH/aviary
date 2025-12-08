@@ -15,7 +15,7 @@ import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
-import { authMethod } from '../types/acpTypes.js';
+import { authMethod, type ApprovalModeValue } from '../types/acpTypes.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -31,8 +31,7 @@ export class WebViewProvider {
   private pendingPermissionRequest: AcpPermissionRequest | null = null;
   private pendingPermissionResolve: ((optionId: string) => void) | null = null;
   // Track current ACP mode id to influence permission/diff behavior
-  private currentModeId: 'plan' | 'default' | 'auto-edit' | 'yolo' | null =
-    null;
+  private currentModeId: ApprovalModeValue | null = null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -885,7 +884,7 @@ export class WebViewProvider {
   }
 
   /** Get current ACP mode id (if known). */
-  getCurrentModeId(): 'plan' | 'default' | 'auto-edit' | 'yolo' | null {
+  getCurrentModeId(): ApprovalModeValue | null {
     return this.currentModeId;
   }
 

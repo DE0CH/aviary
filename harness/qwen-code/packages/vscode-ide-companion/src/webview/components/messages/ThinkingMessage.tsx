@@ -37,12 +37,5 @@ export const ThinkingMessage: React.FC<ThinkingMessageProps> = ({
       </span>
       <MessageContent content={content} onFileClick={onFileClick} />
     </div>
-    {/* Timestamp - temporarily hidden */}
-    {/* <div
-        className="text-xs opacity-60"
-        style={{ color: 'var(--app-secondary-foreground)' }}
-      >
-        {new Date(timestamp).toLocaleTimeString()}
-      </div> */}
   </div>
 );

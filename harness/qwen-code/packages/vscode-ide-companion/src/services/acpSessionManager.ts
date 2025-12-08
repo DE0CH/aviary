@@ -15,6 +15,7 @@ import type {
   AcpRequest,
   AcpNotification,
   AcpResponse,
+  ApprovalModeValue,
 } from '../types/acpTypes.js';
 import { AGENT_METHODS } from '../constants/acpSchema.js';
 import type { PendingRequest } from '../types/connectionTypes.js';
@@ -341,10 +342,10 @@ export class AcpSessionManager {
   /**
    * Set approval mode for current session (ACP session/set_mode)
    *
-   * @param modeId - 'plan' | 'default' | 'auto-edit' | 'yolo'
+   * @param modeId - Approval mode value
    */
   async setMode(
-    modeId: 'plan' | 'default' | 'auto-edit' | 'yolo',
+    modeId: ApprovalModeValue,
     child: ChildProcess | null,
     pendingRequests: Map<number, PendingRequest<unknown>>,
     nextRequestId: { value: number },

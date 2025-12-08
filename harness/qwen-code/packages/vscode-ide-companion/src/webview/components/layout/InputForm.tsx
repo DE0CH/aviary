@@ -19,7 +19,8 @@ import {
 } from '../icons/index.js';
 import { CompletionMenu } from '../layout/CompletionMenu.js';
 import type { CompletionItem } from '../../../types/completionItemTypes.js';
-import type { EditMode } from '../../../types/chatTypes.js';
+import { getApprovalModeInfoFromString } from '../../../types/acpTypes.js';
+import type { ApprovalModeValue } from '../../../types/acpTypes.js';
 
 interface InputFormProps {
   inputText: string;
@@ -29,7 +30,7 @@ interface InputFormProps {
   isStreaming: boolean;
   isWaitingForResponse: boolean;
   isComposing: boolean;
-  editMode: EditMode;
+  editMode: ApprovalModeValue;
   thinkingEnabled: boolean;
   activeFileName: string | null;
   activeSelection: { startLine: number; endLine: number } | null;
@@ -53,41 +54,35 @@ interface InputFormProps {
   onCompletionClose?: () => void;
 }
 
-// Get edit mode display info
-const getEditModeInfo = (editMode: EditMode) => {
-  switch (editMode) {
-    case 'ask':
-      return {
-        text: 'Ask before edits',
-        title: 'Qwen will ask before each edit. Click to switch modes.',
-        icon: <EditPencilIcon />,
-      };
+// Get edit mode display info using helper function
+const getEditModeInfo = (editMode: ApprovalModeValue) => {
+  const info = getApprovalModeInfoFromString(editMode);
+
+  // Map icon types to actual icons
+  let icon = null;
+  switch (info.iconType) {
+    case 'edit':
+      icon = <EditPencilIcon />;
+      break;
     case 'auto':
-      return {
-        text: 'Edit automatically',
-        title: 'Qwen will edit files automatically. Click to switch modes.',
-        icon: <AutoEditIcon />,
-      };
+      icon = <AutoEditIcon />;
+      break;
     case 'plan':
-      return {
-        text: 'Plan mode',
-        title: 'Qwen will plan before executing. Click to switch modes.',
-        icon: <PlanModeIcon />,
-      };
+      icon = <PlanModeIcon />;
+      break;
     case 'yolo':
-      return {
-        text: 'YOLO',
-        title: 'Automatically approve all tools. Click to switch modes.',
-        // Reuse Auto icon for simplicity; can swap to a distinct icon later.
-        icon: <AutoEditIcon />,
-      };
+      icon = <AutoEditIcon />;
+      break;
     default:
-      return {
-        text: 'Unknown mode',
-        title: 'Unknown edit mode',
-        icon: null,
-      };
+      icon = null;
+      break;
   }
+
+  return {
+    text: info.label,
+    title: info.title,
+    icon,
+  };
 };
 
 export const InputForm: React.FC<InputFormProps> = ({

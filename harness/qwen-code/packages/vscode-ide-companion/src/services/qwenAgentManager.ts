@@ -7,6 +7,7 @@ import { AcpConnection } from './acpConnection.js';
 import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
+  ApprovalModeValue,
 } from '../types/acpTypes.js';
 import { QwenSessionReader, type QwenSession } from './qwenSessionReader.js';
 import { QwenSessionManager } from './qwenSessionManager.js';
@@ -138,21 +139,12 @@ export class QwenAgentManager {
   }
 
   /**
-   * Set approval mode from UI (maps UI edit mode -> ACP mode id)
+   * Set approval mode from UI
    */
   async setApprovalModeFromUi(
-    uiMode: 'ask' | 'auto' | 'plan' | 'yolo',
-  ): Promise<'plan' | 'default' | 'auto-edit' | 'yolo'> {
-    const map: Record<
-      'ask' | 'auto' | 'plan' | 'yolo',
-      'plan' | 'default' | 'auto-edit' | 'yolo'
-    > = {
-      plan: 'plan',
-      ask: 'default',
-      auto: 'auto-edit',
-      yolo: 'yolo',
-    } as const;
-    const modeId = map[uiMode];
+    mode: ApprovalModeValue,
+  ): Promise<ApprovalModeValue> {
+    const modeId = mode;
     try {
       const res = await this.connection.setMode(modeId);
       // Optimistically notify UI using response

@@ -11,7 +11,8 @@ import type {
   PermissionOption,
   ToolCall as PermissionToolCall,
 } from '../components/PermissionDrawer/PermissionRequest.js';
-import type { ToolCallUpdate, EditMode } from '../../types/chatTypes.js';
+import type { ToolCallUpdate } from '../../types/chatTypes.js';
+import type { ApprovalModeValue } from '../../types/acpTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
 
 interface UseWebViewMessagesProps {
@@ -107,7 +108,7 @@ interface UseWebViewMessagesProps {
   inputFieldRef: React.RefObject<HTMLDivElement>;
   setInputText: (text: string) => void;
   // Edit mode setter (maps ACP modes to UI modes)
-  setEditMode?: (mode: EditMode) => void;
+  setEditMode?: (mode: ApprovalModeValue) => void;
 }
 
 /**
@@ -196,20 +197,9 @@ export const useWebViewMessages = ({
         case 'modeInfo': {
           // Initialize UI mode from ACP initialize
           try {
-            const current = (message.data?.currentModeId || 'default') as
-              | 'plan'
-              | 'default'
-              | 'auto-edit'
-              | 'yolo';
-            setEditMode?.(
-              (current === 'plan'
-                ? 'plan'
-                : current === 'auto-edit'
-                  ? 'auto'
-                  : current === 'yolo'
-                    ? 'yolo'
-                    : 'ask') as EditMode,
-            );
+            const current = (message.data?.currentModeId ||
+              'default') as ApprovalModeValue;
+            setEditMode?.(current);
           } catch (_error) {
             // best effort
           }
@@ -218,20 +208,9 @@ export const useWebViewMessages = ({
 
         case 'modeChanged': {
           try {
-            const modeId = (message.data?.modeId || 'default') as
-              | 'plan'
-              | 'default'
-              | 'auto-edit'
-              | 'yolo';
-            setEditMode?.(
-              (modeId === 'plan'
-                ? 'plan'
-                : modeId === 'auto-edit'
-                  ? 'auto'
-                  : modeId === 'yolo'
-                    ? 'yolo'
-                    : 'ask') as EditMode,
-            );
+            const modeId = (message.data?.modeId ||
+              'default') as ApprovalModeValue;
+            setEditMode?.(modeId);
           } catch (_error) {
             // Ignore error when setting mode
           }
