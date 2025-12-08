@@ -15,6 +15,10 @@ import type { QwenSession, QwenMessage } from './qwenSessionReader.js';
  *
  * This service provides direct filesystem access to save and load sessions
  * without relying on the CLI's ACP session/save method.
+ *
+ * Note: This is primarily used as a fallback mechanism when ACP methods are
+ * unavailable or fail. In normal operation, ACP session/list and session/load
+ * should be preferred for consistency with the CLI.
  */
 export class QwenSessionManager {
   private qwenDir: string;

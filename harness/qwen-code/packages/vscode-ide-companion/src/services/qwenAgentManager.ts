@@ -37,6 +37,10 @@ export class QwenAgentManager {
   private connectionHandler: QwenConnectionHandler;
   private sessionUpdateHandler: QwenSessionUpdateHandler;
   private currentWorkingDir: string = process.cwd();
+  // When loading a past session via ACP, the CLI replays history through
+  // session/update notifications. We set this flag to route message chunks
+  // (user/assistant) as discrete chat messages instead of live streaming.
+  private rehydratingSessionId: string | null = null;
   // Cache the last used AuthStateManager so internal calls (e.g. fallback paths)
   // can reuse it and avoid forcing a fresh authentication unnecessarily.
   private defaultAuthStateManager?: AuthStateManager;
@@ -53,6 +57,55 @@ export class QwenAgentManager {
 
     // Set ACP connection callbacks
     this.connection.onSessionUpdate = (data: AcpSessionUpdate) => {
+      // If we are rehydrating a loaded session, map message chunks into
+      // full messages for the UI, instead of streaming behavior.
+      try {
+        const targetId = this.rehydratingSessionId;
+        if (
+          targetId &&
+          typeof data === 'object' &&
+          data &&
+          'update' in data &&
+          (data as { sessionId?: string }).sessionId === targetId
+        ) {
+          const update = (
+            data as unknown as {
+              update: { sessionUpdate: string; content?: { text?: string } };
+            }
+          ).update;
+          const text = update?.content?.text || '';
+          if (update?.sessionUpdate === 'user_message_chunk' && text) {
+            console.log(
+              '[QwenAgentManager] Rehydration: routing user message chunk',
+            );
+            this.callbacks.onMessage?.({
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+            });
+            return;
+          }
+          if (update?.sessionUpdate === 'agent_message_chunk' && text) {
+            console.log(
+              '[QwenAgentManager] Rehydration: routing agent message chunk',
+            );
+            this.callbacks.onMessage?.({
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+            });
+            return;
+          }
+          // For other types during rehydration, fall through to normal handler
+          console.log(
+            '[QwenAgentManager] Rehydration: non-text update, forwarding to handler',
+          );
+        }
+      } catch (err) {
+        console.warn('[QwenAgentManager] Rehydration routing failed:', err);
+      }
+
+      // Default handling path
       this.sessionUpdateHandler.handleSessionUpdate(data);
     };
 
@@ -986,6 +1039,12 @@ export class QwenAgentManager {
     }
 
     try {
+      // Route upcoming session/update messages as discrete messages for replay
+      this.rehydratingSessionId = sessionId;
+      console.log(
+        '[QwenAgentManager] Rehydration start for session:',
+        sessionId,
+      );
       console.log(
         '[QwenAgentManager] Attempting session/load via ACP for session:',
         sessionId,
@@ -1032,6 +1091,10 @@ export class QwenAgentManager {
       }
 
       throw error;
+    } finally {
+      // End rehydration routing regardless of outcome
+      console.log('[QwenAgentManager] Rehydration end for session:', sessionId);
+      this.rehydratingSessionId = null;
     }
   }
 

@@ -598,23 +598,21 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // Try to load session via ACP (now we should be connected)
       try {
+        // Set current id and clear UI first so replayed updates append afterwards
+        this.currentConversationId = sessionId;
+        this.sendToWebView({
+          type: 'qwenSessionSwitched',
+          data: { sessionId, messages: [], session: sessionDetails },
+        });
+
         const loadResponse = await this.agentManager.loadSessionViaAcp(
           sessionId,
           (sessionDetails?.cwd as string | undefined) || undefined,
         );
         console.log(
-          '[SessionMessageHandler] session/load succeeded:',
+          '[SessionMessageHandler] session/load succeeded (per ACP spec result is null; actual history comes via session/update):',
           loadResponse,
         );
-
-        this.currentConversationId = sessionId;
-
-        const messages = await this.agentManager.getSessionMessages(sessionId);
-
-        this.sendToWebView({
-          type: 'qwenSessionSwitched',
-          data: { sessionId, messages, session: sessionDetails },
-        });
 
         // Reset title flag when switching sessions
         this.isTitleSet = false;
@@ -1029,16 +1027,14 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // Try ACP load first
       try {
-        await this.agentManager.loadSessionViaAcp(sessionId);
-
+        // Pre-clear UI so replayed updates append afterwards
         this.currentConversationId = sessionId;
-
-        const messages = await this.agentManager.getSessionMessages(sessionId);
-
         this.sendToWebView({
           type: 'qwenSessionSwitched',
-          data: { sessionId, messages },
+          data: { sessionId, messages: [] },
         });
+
+        await this.agentManager.loadSessionViaAcp(sessionId);
 
         // Reset title flag when resuming sessions
         this.isTitleSet = false;
