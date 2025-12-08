@@ -134,12 +134,19 @@ class GlobToolInvocation extends BaseToolInvocation<
         this.getFileFilteringOptions(),
       );
 
+      const normalizePathForComparison = (p: string) =>
+        process.platform === 'win32' ? p.toLowerCase() : p;
+
       const filteredAbsolutePaths = new Set(
-        filteredPaths.map((p) => path.resolve(this.config.getTargetDir(), p)),
+        filteredPaths.map((p) =>
+          normalizePathForComparison(
+            path.resolve(this.config.getTargetDir(), p),
+          ),
+        ),
       );
 
       const filteredEntries = allEntries.filter((entry) =>
-        filteredAbsolutePaths.has(entry.fullpath()),
+        filteredAbsolutePaths.has(normalizePathForComparison(entry.fullpath())),
       );
 
       if (!filteredEntries || filteredEntries.length === 0) {
