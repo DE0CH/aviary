@@ -198,23 +198,33 @@ describe('GlobTool', () => {
       );
     });
 
-    it('should find files even if workspace path casing differs from glob results (Windows)', async () => {
-      // Only relevant for Windows
-      if (process.platform !== 'win32') {
+    it('should find files even if workspace path casing differs from glob results (Windows/macOS)', async () => {
+      // Only relevant for Windows and macOS
+      if (process.platform !== 'win32' && process.platform !== 'darwin') {
         return;
       }
 
-      // 1. Create a path with mismatched casing for the workspace root
-      // e.g., if tempRootDir is "C:\Users\...", make it "c:\Users\..."
-      const drive = path.parse(tempRootDir).root;
-      if (!drive || !drive.match(/^[A-Z]:\\/)) {
-        // Skip if we can't determine/manipulate the drive letter easily
-        return;
-      }
+      let mismatchedRootDir = tempRootDir;
 
-      const lowerDrive = drive.toLowerCase();
-      const mismatchedRootDir =
-        lowerDrive + tempRootDir.substring(drive.length);
+      if (process.platform === 'win32') {
+        // 1. Create a path with mismatched casing for the workspace root
+        // e.g., if tempRootDir is "C:\Users\...", make it "c:\Users\..."
+        const drive = path.parse(tempRootDir).root;
+        if (!drive || !drive.match(/^[A-Z]:\\/)) {
+          // Skip if we can't determine/manipulate the drive letter easily
+          return;
+        }
+
+        const lowerDrive = drive.toLowerCase();
+        mismatchedRootDir = lowerDrive + tempRootDir.substring(drive.length);
+      } else {
+        // macOS: change the casing of the path
+        if (tempRootDir === tempRootDir.toLowerCase()) {
+          mismatchedRootDir = tempRootDir.toUpperCase();
+        } else {
+          mismatchedRootDir = tempRootDir.toLowerCase();
+        }
+      }
 
       // 2. Create a new GlobTool instance with this mismatched root
       const mismatchedConfig = {
