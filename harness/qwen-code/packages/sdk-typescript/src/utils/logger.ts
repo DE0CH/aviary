@@ -22,7 +22,7 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
 
 export class SdkLogger {
   private static config: LoggerConfig = {};
-  private static effectiveLevel: LogLevel = 'info';
+  private static effectiveLevel: LogLevel = 'error';
 
   static configure(config: LoggerConfig): void {
     this.config = config;
@@ -47,7 +47,7 @@ export class SdkLogger {
       return 'debug';
     }
 
-    return 'info';
+    return 'error';
   }
 
   private static isValidLogLevel(level: string): boolean {

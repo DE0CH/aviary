@@ -13,7 +13,7 @@ import {
   type SDKMessage,
   type SDKSystemMessage,
   type SDKAssistantMessage,
-} from '@qwen-code/sdk-typescript';
+} from '@qwen-code/sdk';
 import {
   SDKTestHelper,
   extractText,
@@ -44,7 +44,6 @@ describe('Single-Turn Query (E2E)', () => {
           ...SHARED_TEST_OPTIONS,
           cwd: testDir,
           debug: true,
-          logLevel: 'debug',
         },
       });
 

@@ -1,39 +1,76 @@
 /**
- * Tool definition helper for SDK-embedded MCP servers
- *
- * Provides type-safe tool definitions with generic input/output types.
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ToolDefinition } from '../types/types.js';
+/**
+ * Tool definition helper for SDK-embedded MCP servers
+ */
 
-export function tool<TInput = unknown, TOutput = unknown>(
-  def: ToolDefinition<TInput, TOutput>,
-): ToolDefinition<TInput, TOutput> {
-  // Validate tool definition
-  if (!def.name || typeof def.name !== 'string') {
-    throw new Error('Tool definition must have a name (string)');
+import type { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { z, ZodRawShape, ZodObject, ZodTypeAny } from 'zod';
+
+type CallToolResult = z.infer<typeof CallToolResultSchema>;
+
+/**
+ * SDK MCP Tool Definition with Zod schema type inference
+ */
+export type SdkMcpToolDefinition<Schema extends ZodRawShape = ZodRawShape> = {
+  name: string;
+  description: string;
+  inputSchema: Schema;
+  handler: (
+    args: z.infer<ZodObject<Schema, 'strip', ZodTypeAny>>,
+    extra: unknown,
+  ) => Promise<CallToolResult>;
+};
+
+/**
+ * Create an SDK MCP tool definition with Zod schema inference
+ *
+ * @example
+ * ```typescript
+ * import { z } from 'zod';
+ * import { tool } from '@qwen-code/sdk';
+ *
+ * const calculatorTool = tool(
+ *   'calculate_sum',
+ *   'Calculate the sum of two numbers',
+ *   { a: z.number(), b: z.number() },
+ *   async (args) => {
+ *     // args is inferred as { a: number, b: number }
+ *     return { content: [{ type: 'text', text: String(args.a + args.b) }] };
+ *   }
+ * );
+ * ```
+ */
+export function tool<Schema extends ZodRawShape>(
+  name: string,
+  description: string,
+  inputSchema: Schema,
+  handler: (
+    args: z.infer<ZodObject<Schema, 'strip', ZodTypeAny>>,
+    extra: unknown,
+  ) => Promise<CallToolResult>,
+): SdkMcpToolDefinition<Schema> {
+  if (!name || typeof name !== 'string') {
+    throw new Error('Tool name must be a non-empty string');
   }
 
-  if (!def.description || typeof def.description !== 'string') {
-    throw new Error(
-      `Tool definition for '${def.name}' must have a description (string)`,
-    );
+  if (!description || typeof description !== 'string') {
+    throw new Error(`Tool '${name}' must have a description (string)`);
   }
 
-  if (!def.inputSchema || typeof def.inputSchema !== 'object') {
-    throw new Error(
-      `Tool definition for '${def.name}' must have an inputSchema (object)`,
-    );
+  if (!inputSchema || typeof inputSchema !== 'object') {
+    throw new Error(`Tool '${name}' must have an inputSchema (object)`);
   }
 
-  if (!def.handler || typeof def.handler !== 'function') {
-    throw new Error(
-      `Tool definition for '${def.name}' must have a handler (function)`,
-    );
+  if (!handler || typeof handler !== 'function') {
+    throw new Error(`Tool '${name}' must have a handler (function)`);
   }
 
-  // Return definition (pass-through for type safety)
-  return def;
+  return { name, description, inputSchema, handler };
 }
 
 export function validateToolName(name: string): void {
@@ -52,40 +89,4 @@ export function validateToolName(name: string): void {
       `Tool name '${name}' is invalid. Must start with a letter and contain only letters, numbers, and underscores.`,
     );
   }
-}
-
-export function validateInputSchema(schema: unknown): void {
-  if (!schema || typeof schema !== 'object') {
-    throw new Error('Input schema must be an object');
-  }
-
-  const schemaObj = schema as Record<string, unknown>;
-
-  if (!schemaObj.type) {
-    throw new Error('Input schema must have a type field');
-  }
-
-  // For object schemas, validate properties
-  if (schemaObj.type === 'object') {
-    if (schemaObj.properties && typeof schemaObj.properties !== 'object') {
-      throw new Error('Input schema properties must be an object');
-    }
-
-    if (schemaObj.required && !Array.isArray(schemaObj.required)) {
-      throw new Error('Input schema required must be an array');
-    }
-  }
-}
-
-export function createTool<TInput = unknown, TOutput = unknown>(
-  def: ToolDefinition<TInput, TOutput>,
-): ToolDefinition<TInput, TOutput> {
-  // Validate via tool() function
-  const validated = tool(def);
-
-  // Additional validation
-  validateToolName(validated.name);
-  validateInputSchema(validated.inputSchema);
-
-  return validated;
 }

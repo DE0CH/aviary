@@ -46,6 +46,7 @@ import { ExitPlanModeTool } from '../tools/exitPlanMode.js';
 import { GlobTool } from '../tools/glob.js';
 import { GrepTool } from '../tools/grep.js';
 import { LSTool } from '../tools/ls.js';
+import type { SendSdkMcpMessage } from '../tools/mcp-client.js';
 import { MemoryTool, setGeminiMdFilename } from '../tools/memoryTool.js';
 import { ReadFileTool } from '../tools/read-file.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
@@ -239,7 +240,16 @@ export class MCPServerConfig {
     readonly targetAudience?: string,
     /* targetServiceAccount format: <service-account-name>@<project-num>.iam.gserviceaccount.com */
     readonly targetServiceAccount?: string,
+    // SDK MCP server type - 'sdk' indicates server runs in SDK process
+    readonly type?: 'sdk',
   ) {}
+}
+
+/**
+ * Check if an MCP server config represents an SDK server
+ */
+export function isSdkMcpServerConfig(config: MCPServerConfig): boolean {
+  return config.type === 'sdk';
 }
 
 export enum AuthProviderType {
@@ -358,6 +368,17 @@ function normalizeConfigOutputFormat(
     default:
       return OutputFormat.TEXT;
   }
+}
+
+/**
+ * Options for Config.initialize()
+ */
+export interface ConfigInitializeOptions {
+  /**
+   * Callback for sending MCP messages to SDK servers via control plane.
+   * Required for SDK MCP server support in SDK mode.
+   */
+  sendSdkMcpMessage?: SendSdkMcpMessage;
 }
 
 export class Config {
@@ -599,8 +620,9 @@ export class Config {
 
   /**
    * Must only be called once, throws if called again.
+   * @param options Optional initialization options including sendSdkMcpMessage callback
    */
-  async initialize(): Promise<void> {
+  async initialize(options?: ConfigInitializeOptions): Promise<void> {
     if (this.initialized) {
       throw Error('Config was already initialized');
     }
@@ -619,7 +641,9 @@ export class Config {
       this.subagentManager.loadSessionSubagents(this.sessionSubagents);
     }
 
-    this.toolRegistry = await this.createToolRegistry();
+    this.toolRegistry = await this.createToolRegistry(
+      options?.sendSdkMcpMessage,
+    );
 
     await this.geminiClient.initialize();
 
@@ -1261,8 +1285,14 @@ export class Config {
     return this.subagentManager;
   }
 
-  async createToolRegistry(): Promise<ToolRegistry> {
-    const registry = new ToolRegistry(this, this.eventEmitter);
+  async createToolRegistry(
+    sendSdkMcpMessage?: SendSdkMcpMessage,
+  ): Promise<ToolRegistry> {
+    const registry = new ToolRegistry(
+      this,
+      this.eventEmitter,
+      sendSdkMcpMessage,
+    );
 
     const coreToolsConfig = this.getCoreTools();
     const excludeToolsConfig = this.getExcludeTools();
@@ -1347,6 +1377,7 @@ export class Config {
     }
 
     await registry.discoverAllTools();
+    console.debug('ToolRegistry created', registry.getAllToolNames());
     return registry;
   }
 }
