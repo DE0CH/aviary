@@ -13,7 +13,7 @@ export const EmptyState: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-5 md:p-10">
-      <div className="flex flex-col items-center gap-8 max-w-[600px] w-full">
+      <div className="flex flex-col items-center gap-8 w-full">
         {/* Qwen Logo */}
         <div className="flex flex-col items-center gap-6">
           <img
