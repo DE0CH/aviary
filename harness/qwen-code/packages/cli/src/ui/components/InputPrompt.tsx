@@ -707,15 +707,20 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     statusText = t('Accepting edits');
   }
 
+  const borderColor =
+    isShellFocused && !isEmbeddedShellFocused
+      ? (statusColor ?? theme.border.focused)
+      : theme.border.default;
+
   return (
     <>
       <Box
-        borderStyle="round"
-        borderColor={
-          isShellFocused && !isEmbeddedShellFocused
-            ? (statusColor ?? theme.border.focused)
-            : theme.border.default
-        }
+        borderStyle="single"
+        borderTop={true}
+        borderBottom={true}
+        borderLeft={false}
+        borderRight={false}
+        borderColor={borderColor}
         paddingX={1}
       >
         <Text
