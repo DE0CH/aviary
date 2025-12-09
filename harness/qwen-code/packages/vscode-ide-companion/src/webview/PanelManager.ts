@@ -13,6 +13,10 @@ import * as vscode from 'vscode';
 export class PanelManager {
   private panel: vscode.WebviewPanel | null = null;
   private panelTab: vscode.Tab | null = null;
+  // Best-effort tracking of the group (by view column) that currently hosts
+  // the Qwen webview. We update this when creating/revealing the panel and
+  // whenever we can capture the Tab from the tab model.
+  private panelGroupViewColumn: vscode.ViewColumn | null = null;
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -64,6 +68,8 @@ export class PanelManager {
           ],
         },
       );
+      // Track the group column hosting this panel
+      this.panelGroupViewColumn = existingGroup.viewColumn;
     } else {
       // If no existing Qwen Code group, create a new group to the right of the active editor group
       try {
@@ -114,6 +120,9 @@ export class PanelManager {
 
       // Lock the group after creation
       await this.autoLockEditorGroup();
+
+      // Track the newly created group's column
+      this.panelGroupViewColumn = newGroupColumn;
     }
 
     // Set panel icon to Qwen logo
@@ -122,6 +131,10 @@ export class PanelManager {
       'assets',
       'icon.png',
     );
+
+    // Try to capture Tab info shortly after creation so we can track the
+    // precise group even if the user later drags the tab between groups.
+    this.captureTab();
 
     return true; // New panel created
   }
@@ -216,6 +229,19 @@ export class PanelManager {
         return !!(sameViewType || sameLabel);
       });
       this.panelTab = match ?? null;
+      // Update last-known group column if we can read it from the captured tab
+      try {
+        const groupViewColumn = (
+          this.panelTab as unknown as {
+            group?: { viewColumn?: vscode.ViewColumn };
+          }
+        )?.group?.viewColumn;
+        if (groupViewColumn != null) {
+          this.panelGroupViewColumn = groupViewColumn as vscode.ViewColumn;
+        }
+      } catch {
+        // Best effort only; ignore if the API shape differs
+      }
     }, 50);
   }
 
@@ -230,13 +256,92 @@ export class PanelManager {
 
     this.panel.onDidDispose(
       () => {
+        // Capture the group we intend to clean up before we clear fields
+        const targetColumn =
+          // Prefer the group from the captured tab if available
+          ((
+            this.panelTab as unknown as {
+              group?: { viewColumn?: vscode.ViewColumn };
+            }
+          )?.group?.viewColumn as vscode.ViewColumn | undefined) ??
+          // Fall back to our last-known group column
+          this.panelGroupViewColumn ??
+          undefined;
+
         this.panel = null;
         this.panelTab = null;
         this.onPanelDispose();
+
+        // After VS Code updates its tab model, check if that group is now
+        // empty (and typically locked for Qwen). If so, close the group to
+        // avoid leaving an empty locked column when the user closes Qwen.
+        if (targetColumn != null) {
+          setTimeout(async () => {
+            try {
+              const groups = vscode.window.tabGroups.all;
+              const group = groups.find((g) => g.viewColumn === targetColumn);
+              // If the group that hosted Qwen is now empty, close it to avoid
+              // leaving an empty locked column around. VS Code's stable API
+              // does not expose the lock state on TabGroup, so we only check
+              // for emptiness here.
+              if (group && group.tabs.length === 0) {
+                // Focus the group we want to close
+                await this.focusGroupByColumn(targetColumn);
+                // Try closeGroup first; fall back to removeActiveEditorGroup
+                try {
+                  await vscode.commands.executeCommand(
+                    'workbench.action.closeGroup',
+                  );
+                } catch {
+                  try {
+                    await vscode.commands.executeCommand(
+                      'workbench.action.removeActiveEditorGroup',
+                    );
+                  } catch (err) {
+                    console.warn(
+                      '[PanelManager] Failed to close empty group after Qwen panel disposed:',
+                      err,
+                    );
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn(
+                '[PanelManager] Error while trying to close empty Qwen group:',
+                err,
+              );
+            }
+          }, 50);
+        }
       },
       null,
       disposables,
     );
+  }
+
+  /**
+   * Focus the editor group at the given view column by stepping left/right.
+   * This avoids depending on Nth-group focus commands that may not exist.
+   */
+  private async focusGroupByColumn(target: vscode.ViewColumn): Promise<void> {
+    const maxHops = 20; // safety guard for unusual layouts
+    let hops = 0;
+    while (
+      vscode.window.tabGroups.activeTabGroup.viewColumn !== target &&
+      hops < maxHops
+    ) {
+      const current = vscode.window.tabGroups.activeTabGroup.viewColumn;
+      if (current < target) {
+        await vscode.commands.executeCommand(
+          'workbench.action.focusRightGroup',
+        );
+      } else if (current > target) {
+        await vscode.commands.executeCommand('workbench.action.focusLeftGroup');
+      } else {
+        break;
+      }
+      hops++;
+    }
   }
 
   /**
