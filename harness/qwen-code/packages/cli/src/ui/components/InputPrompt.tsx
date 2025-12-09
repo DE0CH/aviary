@@ -834,9 +834,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
                 isOnCursorLine &&
                 cursorVisualColAbsolute === cpLen(lineText)
               ) {
+                // Add zero-width space after cursor to prevent Ink from trimming trailing whitespace
                 renderedLine.push(
                   <Text key={`cursor-end-${cursorVisualColAbsolute}`}>
-                    {showCursor ? chalk.inverse(' ') : ' '}
+                    {showCursor ? chalk.inverse(' ') + '\u200B' : ' \u200B'}
                   </Text>,
                 );
               }
