@@ -193,6 +193,16 @@ const SETTINGS_SCHEMA = {
           { value: 'zh', label: '中文 (Chinese)' },
         ],
       },
+      terminalBell: {
+        type: 'boolean',
+        label: 'Terminal Bell',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Play terminal bell sound when response completes or needs approval.',
+        showInDialog: true,
+      },
     },
   },
   output: {
