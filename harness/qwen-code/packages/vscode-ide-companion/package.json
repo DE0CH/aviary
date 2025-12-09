@@ -152,6 +152,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "semver": "^7.7.2",
     "@modelcontextprotocol/sdk": "^1.15.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",

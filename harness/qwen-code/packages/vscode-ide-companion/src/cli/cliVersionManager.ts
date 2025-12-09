@@ -4,47 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import semver from 'semver';
 import { CliDetector, type CliDetectionResult } from './cliDetector.js';
 
 export const MIN_CLI_VERSION_FOR_SESSION_METHODS = '0.4.0';
 
-/**
- * CLI Feature Flags based on version
- */
 export interface CliFeatureFlags {
-  /**
-   * Whether the CLI supports session/list ACP method
-   */
   supportsSessionList: boolean;
-
-  /**
-   * Whether the CLI supports session/load ACP method
-   */
   supportsSessionLoad: boolean;
 }
 
-/**
- * CLI Version Information
- */
 export interface CliVersionInfo {
-  /**
-   * Detected version string
-   */
   version: string | undefined;
-
-  /**
-   * Whether the version meets the minimum requirement
-   */
   isSupported: boolean;
-
-  /**
-   * Feature flags based on version
-   */
   features: CliFeatureFlags;
-
-  /**
-   * Raw detection result
-   */
   detectionResult: CliDetectionResult;
 }
 
@@ -86,30 +59,19 @@ export class CliVersionManager {
       return false;
     }
 
-    // TODO:
-    // Simple version comparison (assuming semantic versioning)
-    try {
-      const versionParts = version.split('.').map(Number);
-      const minVersionParts = minVersion.split('.').map(Number);
+    // Use semver for robust comparison (handles v-prefix, pre-release, etc.)
+    const v = semver.valid(version) ?? semver.coerce(version)?.version ?? null;
+    const min =
+      semver.valid(minVersion) ?? semver.coerce(minVersion)?.version ?? null;
 
-      for (
-        let i = 0;
-        i < Math.min(versionParts.length, minVersionParts.length);
-        i++
-      ) {
-        if (versionParts[i] > minVersionParts[i]) {
-          return true;
-        } else if (versionParts[i] < minVersionParts[i]) {
-          return false;
-        }
-      }
-
-      // If all compared parts are equal, check if version has more parts
-      return versionParts.length >= minVersionParts.length;
-    } catch (error) {
-      console.error('[CliVersionManager] Failed to parse version:', error);
+    if (!v || !min) {
+      console.warn(
+        `[CliVersionManager] Invalid semver: version=${version}, min=${minVersion}`,
+      );
       return false;
     }
+    console.log(`[CliVersionManager] Version ${v} meets requirements: ${min}`);
+    return semver.gte(v, min);
   }
 
   /**

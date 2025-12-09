@@ -56,10 +56,6 @@ export class QwenConnectionHandler {
 
     // Show warning if CLI version is below minimum requirement
     if (!versionInfo.isSupported) {
-      console.warn(
-        `[QwenAgentManager] CLI version ${versionInfo.version} is below minimum required version ${MIN_CLI_VERSION_FOR_SESSION_METHODS}`,
-      );
-
       // Wait to determine release version number
       vscode.window.showWarningMessage(
         `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
