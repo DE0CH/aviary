@@ -58,13 +58,12 @@ export class WebViewProvider {
 
     // Setup agent callbacks
     this.agentManager.onMessage((message) => {
-      // Ignore history replay while background /chat save is running
-      if (this.messageHandler.getIsSavingCheckpoint()) {
-        console.log(
-          '[WebViewProvider] Ignoring message during checkpoint save',
-        );
-        return;
-      }
+      // Do not suppress messages during checkpoint saves.
+      // Checkpoint persistence now writes directly to disk and should not
+      // generate ACP session/update traffic. Suppressing here could drop
+      // legitimate history replay messages (e.g., session/load) or
+      // assistant replies when a new prompt starts while an async save is
+      // still finishing.
       this.sendMessageToWebView({
         type: 'message',
         data: message,
@@ -72,14 +71,8 @@ export class WebViewProvider {
     });
 
     this.agentManager.onStreamChunk((chunk: string) => {
-      // Ignore stream chunks from background /chat save commands
-      if (this.messageHandler.getIsSavingCheckpoint()) {
-        console.log(
-          '[WebViewProvider] Ignoring stream chunk from /chat save command',
-        );
-        return;
-      }
-
+      // Always forward stream chunks; do not gate on checkpoint saves.
+      // See note in onMessage() above.
       this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'streamChunk',
@@ -89,14 +82,7 @@ export class WebViewProvider {
 
     // Setup thought chunk handler
     this.agentManager.onThoughtChunk((chunk: string) => {
-      // Ignore thought chunks from background /chat save commands
-      if (this.messageHandler.getIsSavingCheckpoint()) {
-        console.log(
-          '[WebViewProvider] Ignoring thought chunk from /chat save command',
-        );
-        return;
-      }
-
+      // Always forward thought chunks; do not gate on checkpoint saves.
       this.messageHandler.appendStreamContent(chunk);
       this.sendMessageToWebView({
         type: 'thoughtChunk',
@@ -148,14 +134,7 @@ export class WebViewProvider {
     // Note: Tool call updates are handled in handleSessionUpdate within QwenAgentManager
     // and sent via onStreamChunk callback
     this.agentManager.onToolCall((update) => {
-      // Ignore tool calls from background /chat save commands
-      if (this.messageHandler.getIsSavingCheckpoint()) {
-        console.log(
-          '[WebViewProvider] Ignoring tool call from /chat save command',
-        );
-        return;
-      }
-
+      // Always surface tool calls; they are part of the live assistant flow.
       // Cast update to access sessionUpdate property
       const updateData = update as unknown as Record<string, unknown>;
 

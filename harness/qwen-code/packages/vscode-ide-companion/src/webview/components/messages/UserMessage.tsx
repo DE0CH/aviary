@@ -58,7 +58,12 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           color: 'var(--app-primary-foreground)',
         }}
       >
-        <MessageContent content={content} onFileClick={onFileClick} />
+        {/* For user messages, do NOT convert filenames to clickable links */}
+        <MessageContent
+          content={content}
+          onFileClick={onFileClick}
+          enableFileLinks={false}
+        />
       </div>
 
       {/* File context indicator */}

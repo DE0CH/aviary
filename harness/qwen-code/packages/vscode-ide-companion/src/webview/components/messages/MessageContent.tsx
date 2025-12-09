@@ -10,9 +10,17 @@ import { MarkdownRenderer } from './MarkdownRenderer/MarkdownRenderer.js';
 interface MessageContentProps {
   content: string;
   onFileClick?: (filePath: string) => void;
+  enableFileLinks?: boolean;
 }
 
 export const MessageContent: React.FC<MessageContentProps> = ({
   content,
   onFileClick,
-}) => <MarkdownRenderer content={content} onFileClick={onFileClick} />;
+  enableFileLinks,
+}) => (
+  <MarkdownRenderer
+    content={content}
+    onFileClick={onFileClick}
+    enableFileLinks={enableFileLinks}
+  />
+);

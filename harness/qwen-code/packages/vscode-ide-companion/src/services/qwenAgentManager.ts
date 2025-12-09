@@ -901,50 +901,6 @@ export class QwenAgentManager {
   }
 
   /**
-   * Save session via /chat save command (CLI way)
-   * Calls CLI's native save function to ensure complete content is saved
-   *
-   * @param tag - Checkpoint tag
-   * @returns Save result
-   */
-  async saveCheckpointViaCommand(
-    tag: string,
-  ): Promise<{ success: boolean; tag?: string; message?: string }> {
-    try {
-      console.log(
-        '[QwenAgentManager] ===== SAVING VIA /chat save COMMAND =====',
-      );
-      console.log('[QwenAgentManager] Tag:', tag);
-
-      // Send /chat save command as a prompt
-      // The CLI will handle this as a special command and save the checkpoint
-      const command = `/chat save "${tag}"`;
-      console.log('[QwenAgentManager] Sending command:', command);
-
-      await this.connection.sendPrompt(command);
-
-      console.log(
-        '[QwenAgentManager] Command sent, checkpoint should be saved by CLI',
-      );
-
-      // Wait a bit for CLI to process the command
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      return {
-        success: true,
-        tag,
-        message: `Checkpoint saved via CLI: ${tag}`,
-      };
-    } catch (error) {
-      console.error('[QwenAgentManager] /chat save command failed:', error);
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  /**
    * Save session as checkpoint (using CLI format)
    * Saves to ~/.qwen/tmp/{projectHash}/checkpoint-{tag}.json
    * Saves two copies with sessionId and conversationId to ensure recovery via either ID
