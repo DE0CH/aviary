@@ -201,8 +201,17 @@ export class PanelManager {
    */
   revealPanel(preserveFocus: boolean = true): void {
     if (this.panel) {
-      // Reveal without forcing a specific column to avoid reflowing groups.
-      this.panel.reveal(undefined, preserveFocus);
+      // Prefer revealing in the currently tracked group to avoid reflowing groups.
+      const trackedColumn = (
+        this.panelTab as unknown as {
+          group?: { viewColumn?: vscode.ViewColumn };
+        }
+      )?.group?.viewColumn as vscode.ViewColumn | undefined;
+      const targetColumn: vscode.ViewColumn =
+        trackedColumn ??
+        this.panelGroupViewColumn ??
+        vscode.window.tabGroups.activeTabGroup.viewColumn;
+      this.panel.reveal(targetColumn, preserveFocus);
     }
   }
 
@@ -236,7 +245,7 @@ export class PanelManager {
             group?: { viewColumn?: vscode.ViewColumn };
           }
         )?.group?.viewColumn;
-        if (groupViewColumn != null) {
+        if (groupViewColumn !== null) {
           this.panelGroupViewColumn = groupViewColumn as vscode.ViewColumn;
         }
       } catch {
@@ -257,7 +266,7 @@ export class PanelManager {
     this.panel.onDidDispose(
       () => {
         // Capture the group we intend to clean up before we clear fields
-        const targetColumn =
+        const targetColumn: vscode.ViewColumn | null =
           // Prefer the group from the captured tab if available
           ((
             this.panelTab as unknown as {
@@ -266,7 +275,7 @@ export class PanelManager {
           )?.group?.viewColumn as vscode.ViewColumn | undefined) ??
           // Fall back to our last-known group column
           this.panelGroupViewColumn ??
-          undefined;
+          null;
 
         this.panel = null;
         this.panelTab = null;
@@ -275,18 +284,19 @@ export class PanelManager {
         // After VS Code updates its tab model, check if that group is now
         // empty (and typically locked for Qwen). If so, close the group to
         // avoid leaving an empty locked column when the user closes Qwen.
-        if (targetColumn != null) {
+        if (targetColumn !== null) {
+          const column: vscode.ViewColumn = targetColumn;
           setTimeout(async () => {
             try {
               const groups = vscode.window.tabGroups.all;
-              const group = groups.find((g) => g.viewColumn === targetColumn);
+              const group = groups.find((g) => g.viewColumn === column);
               // If the group that hosted Qwen is now empty, close it to avoid
               // leaving an empty locked column around. VS Code's stable API
               // does not expose the lock state on TabGroup, so we only check
               // for emptiness here.
               if (group && group.tabs.length === 0) {
                 // Focus the group we want to close
-                await this.focusGroupByColumn(targetColumn);
+                await this.focusGroupByColumn(column);
                 // Try closeGroup first; fall back to removeActiveEditorGroup
                 try {
                   await vscode.commands.executeCommand(

@@ -47,9 +47,15 @@
   --app-input-highlight: var(--app-qwen-theme);
 
   /* Code Highlighting */
-  --app-code-background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.05));
-  --app-link-foreground: var(--vscode-textLink-foreground, #007ACC);
-  --app-link-active-foreground: var(--vscode-textLink-activeForeground, #005A9E);
+  --app-code-background: var(
+    --vscode-textCodeBlock-background,
+    rgba(0, 0, 0, 0.05)
+  );
+  --app-link-foreground: var(--vscode-textLink-foreground, #007acc);
+  --app-link-active-foreground: var(
+    --vscode-textLink-activeForeground,
+    #005a9e
+  );
 
   /* List Styles */
   --app-list-hover-background: var(--vscode-list-hoverBackground);
@@ -167,7 +173,8 @@ button {
 }
 
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -176,7 +183,9 @@ button {
 }
 
 @keyframes typingPulse {
-  0%, 60%, 100% {
+  0%,
+  60%,
+  100% {
     transform: scale(0.7);
     opacity: 0.6;
   }
@@ -251,7 +260,8 @@ button {
 
 /* Animation for in-progress status (used by pseudo bullets and spinners) */
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {

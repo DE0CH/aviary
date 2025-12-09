@@ -21,7 +21,6 @@ export class AuthStateManager {
   private static context: vscode.ExtensionContext | null = null;
   private static readonly AUTH_STATE_KEY = 'qwen.authState';
   private static readonly AUTH_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-  //TODO:
   private constructor() {}
 
   /**

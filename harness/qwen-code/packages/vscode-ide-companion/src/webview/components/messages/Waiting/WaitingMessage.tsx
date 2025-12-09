@@ -65,20 +65,10 @@ export const WaitingMessage: React.FC<WaitingMessageProps> = ({
   }, [phrases]);
 
   return (
-    <div className="flex gap-0 items-start text-left py-2 flex-col opacity-85">
+    <div className="waiting-message-outer flex gap-0 items-start text-left py-2 flex-col opacity-85">
       {/* Use the same left status icon (pseudo-element) style as assistant-message-container */}
-      <div
-        className="assistant-message-container assistant-message-loading"
-        style={{
-          width: '100%',
-          alignItems: 'flex-start',
-          paddingLeft: '30px', // reserve space for ::before bullet
-          position: 'relative',
-          paddingTop: '8px',
-          paddingBottom: '8px',
-        }}
-      >
-        <span className="opacity-70 italic loading-text-shimmer">
+      <div className="assistant-message-container assistant-message-loading waiting-message-inner w-full items-start pl-[30px] relative">
+        <span className="waiting-message-text opacity-70 italic loading-text-shimmer">
           {phrases[index]}
         </span>
       </div>
