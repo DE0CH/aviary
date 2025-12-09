@@ -833,6 +833,41 @@ describe('ShellTool', () => {
   });
 
   describe('Windows background execution', () => {
+    it('should append keep-alive ping with && on Windows for background tasks', async () => {
+      vi.mocked(os.platform).mockReturnValue('win32');
+      const mockAbortSignal = new AbortController().signal;
+
+      const invocation = shellTool.build({
+        command: 'npm start',
+        is_background: true,
+      });
+
+      const promise = invocation.execute(mockAbortSignal);
+
+      // Simulate immediate success (process started)
+      resolveExecutionPromise({
+        rawOutput: Buffer.from(''),
+        output: '',
+        exitCode: 0,
+        signal: null,
+        error: null,
+        aborted: false,
+        pid: 12345,
+        executionMethod: 'child_process',
+      });
+
+      await promise;
+
+      expect(mockShellExecutionService).toHaveBeenCalledWith(
+        expect.stringContaining('npm start && ping -n 86400 127.0.0.1 >nul'),
+        expect.any(String),
+        expect.any(Function),
+        expect.any(AbortSignal),
+        false,
+        {},
+      );
+    });
+
     it('should detect immediate failure in Windows background task', async () => {
       vi.mocked(os.platform).mockReturnValue('win32');
       const mockAbortSignal = new AbortController().signal;

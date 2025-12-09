@@ -174,7 +174,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
         while (cmd.endsWith('&')) {
           cmd = cmd.slice(0, -1).trim();
         }
-        finalCommand = cmd + ' & ping -n 86400 127.0.0.1 >nul';
+        finalCommand = cmd + ' && ping -n 86400 127.0.0.1 >nul';
       }
 
       // pgrep is not available on Windows, so we can't get background PIDs
