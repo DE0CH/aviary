@@ -157,11 +157,21 @@ export class DiffManager {
 
   /**
    * Creates and shows a new diff view.
-   * @param filePath Path to the file being diffed
-   * @param oldContent The original content (left side)
-   * @param newContent The modified content (right side)
+   * - Overload 1: showDiff(filePath, newContent)
+   * - Overload 2: showDiff(filePath, oldContent, newContent)
+   * If only newContent is provided, the old content will be read from the
+   * filesystem (empty string when file does not exist).
    */
-  async showDiff(filePath: string, oldContent: string, newContent: string) {
+  async showDiff(filePath: string, newContent: string): Promise<void>;
+  async showDiff(
+    filePath: string,
+    oldContent: string,
+    newContent: string,
+  ): Promise<void>;
+  async showDiff(filePath: string, a: string, b?: string): Promise<void> {
+    const haveOld = typeof b === 'string';
+    const oldContent = haveOld ? a : await this.readOldContentFromFs(filePath);
+    const newContent = haveOld ? (b as string) : a;
     const normalizedPath = path.normalize(filePath);
     const key = this.makeKey(normalizedPath, oldContent, newContent);
 
@@ -397,6 +407,17 @@ export class DiffManager {
       } catch (err) {
         this.log(`Failed to close diff editor: ${err}`);
       }
+    }
+  }
+
+  // Read the current content of file from the workspace; return empty string if not found
+  private async readOldContentFromFs(filePath: string): Promise<string> {
+    try {
+      const fileUri = vscode.Uri.file(filePath);
+      const document = await vscode.workspace.openTextDocument(fileUri);
+      return document.getText();
+    } catch {
+      return '';
     }
   }
 
