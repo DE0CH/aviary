@@ -220,7 +220,7 @@ Stage 4: Publishing to NPM
 
 Summary of File Flow
 
-```mermaid
+```bash
 graph TD
     subgraph "Source Files"
         A["packages/core/src/*.ts<br/>packages/cli/src/*.ts"]

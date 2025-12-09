@@ -1,5 +1,5 @@
 export default {
-  subagents: 'Subagents',
+  'sub-agents': 'Sub Agents',
   'sub-commands': 'Sub Commands',
   checkpointing: {
     display: 'hidden',

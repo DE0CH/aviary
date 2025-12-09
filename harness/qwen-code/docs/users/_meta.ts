@@ -4,7 +4,7 @@ export default {
     title: 'Getting started', // Title is optional
   },
   overview: 'Overview',
-  'quick-start': 'QuickStart',
+  quickstart: 'QuickStart',
   'common-workflow': 'Command Workflows',
   'Outside of the terminal': {
     type: 'separator',
