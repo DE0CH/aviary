@@ -194,16 +194,16 @@ export class ShellToolInvocation extends BaseToolInvocation<
           commandToExecute,
           cwd,
           (event: ShellOutputEvent) => {
-            if (!updateOutput) {
-              return;
-            }
-
             let shouldUpdate = false;
 
             switch (event.type) {
               case 'data':
                 if (isBinaryStream) break;
-                cumulativeOutput = event.chunk;
+                if (typeof cumulativeOutput === 'string') {
+                  cumulativeOutput += event.chunk;
+                } else {
+                  cumulativeOutput = event.chunk;
+                }
                 shouldUpdate = true;
                 break;
               case 'binary_detected':
@@ -226,7 +226,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
               }
             }
 
-            if (shouldUpdate) {
+            if (shouldUpdate && updateOutput) {
               updateOutput(
                 typeof cumulativeOutput === 'string'
                   ? cumulativeOutput
@@ -258,6 +258,32 @@ export class ShellToolInvocation extends BaseToolInvocation<
 
         if (raceResult === null) {
           // Timeout reached, process is still running.
+          // throw new Error(`DEBUG: raceResult is null. Output: ${JSON.stringify(cumulativeOutput)}`);
+
+          // Check for common Windows error messages in the output
+          const outputStr =
+            typeof cumulativeOutput === 'string'
+              ? cumulativeOutput
+              : JSON.stringify(cumulativeOutput);
+          console.log('DEBUG: outputStr:', outputStr);
+          const errorPatterns = [
+            'is not recognized as an internal or external command',
+            'The system cannot find the path specified',
+            'Access is denied',
+          ];
+
+          if (errorPatterns.some((pattern) => outputStr.includes(pattern))) {
+            abortController.abort();
+            return {
+              llmContent: `Command failed to start: ${outputStr}`,
+              returnDisplay: `Command failed to start: ${outputStr}`,
+              error: {
+                type: ToolErrorType.EXECUTION_FAILED,
+                message: `Command failed to start: ${outputStr}`,
+              },
+            };
+          }
+
           const pidMsg = pid ? ` PID: ${pid}` : '';
           const winHint = isWindows
             ? ' (Note: Use taskkill /F /T /PID <pid> to stop)'

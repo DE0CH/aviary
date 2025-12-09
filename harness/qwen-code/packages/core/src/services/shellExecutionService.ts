@@ -108,47 +108,38 @@ export class ShellExecutionService {
   private static activePtys = new Map<number, ActivePty>();
   private static activeChildProcesses = new Set<number>();
 
-  static {
-    const cleanup = () => {
-      // Cleanup PTYs
-      for (const [pid, pty] of this.activePtys) {
-        try {
-          if (os.platform() === 'win32') {
-            pty.ptyProcess.kill();
-          } else {
-            process.kill(-pid, 'SIGKILL');
-          }
-        } catch {
-          // ignore
+  static cleanup() {
+    // Cleanup PTYs
+    for (const [pid, pty] of this.activePtys) {
+      try {
+        if (os.platform() === 'win32') {
+          pty.ptyProcess.kill();
+        } else {
+          process.kill(-pid, 'SIGKILL');
         }
+      } catch {
+        // ignore
       }
-
-      // Cleanup child processes
-      for (const pid of this.activeChildProcesses) {
-        try {
-          if (os.platform() === 'win32') {
-            spawnSync('taskkill', ['/pid', pid.toString(), '/f', '/t']);
-          } else {
-            process.kill(-pid, 'SIGKILL');
-          }
-        } catch {
-          // ignore
-        }
-      }
-    };
-
-    process.on('exit', cleanup);
-
-    // Ensure cleanup happens on SIGINT/SIGTERM
-    const signalHandler = () => {
-      process.exit();
-    };
-
-    // We only attach these if we are in a node environment where we can control the process
-    if (typeof process !== 'undefined' && process.on) {
-      process.on('SIGINT', signalHandler);
-      process.on('SIGTERM', signalHandler);
     }
+
+    // Cleanup child processes
+    for (const pid of this.activeChildProcesses) {
+      try {
+        if (os.platform() === 'win32') {
+          spawnSync('taskkill', ['/pid', pid.toString(), '/f', '/t']);
+        } else {
+          process.kill(-pid, 'SIGKILL');
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  static {
+    process.on('exit', () => {
+      ShellExecutionService.cleanup();
+    });
   }
 
   /**
