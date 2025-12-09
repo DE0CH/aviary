@@ -918,7 +918,6 @@ describe('useSlashCommandProcessor', () => {
           vi.fn(), // toggleVimEnabled
           vi.fn(), // setIsProcessing
           vi.fn(), // setGeminiMdFileCount
-          vi.fn(), // _showQuitConfirmation
         ),
       );
 

@@ -22,6 +22,7 @@ export default tseslint.config(
       'bundle/**',
       'package/bundle/**',
       '.integration-tests/**',
+      'packages/**/.integration-test/**',
       'dist/**',
     ],
   },
@@ -150,7 +151,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['packages/*/src/**/*.test.{ts,tsx}'],
+    files: ['packages/*/src/**/*.test.{ts,tsx}', 'packages/**/test/**/*.test.{ts,tsx}'],
     plugins: {
       vitest,
     },
@@ -158,11 +159,19 @@ export default tseslint.config(
       ...vitest.configs.recommended.rules,
       'vitest/expect-expect': 'off',
       'vitest/no-commented-out-tests': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
     },
   },
   // extra settings for scripts that we run directly with node
   {
-    files: ['./scripts/**/*.js', 'esbuild.config.js'],
+    files: ['./scripts/**/*.js', 'esbuild.config.js', 'packages/*/scripts/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -229,7 +238,7 @@ export default tseslint.config(
   prettierConfig,
   // extra settings for scripts that we run directly with node
   {
-    files: ['./integration-tests/**/*.js'],
+    files: ['./integration-tests/**/*.{js,ts,tsx}'],
     languageOptions: {
       globals: {
         ...globals.node,

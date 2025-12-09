@@ -419,6 +419,9 @@ export class GeminiClient {
 
       // record user message for session management
       this.config.getChatRecordingService()?.recordUserMessage(request);
+
+      // strip thoughts from history before sending the message
+      this.stripThoughtsFromHistory();
     }
     this.sessionTurnCount++;
     if (
@@ -542,7 +545,9 @@ export class GeminiClient {
 
       // add plan mode system reminder if approval mode is plan
       if (this.config.getApprovalMode() === ApprovalMode.PLAN) {
-        systemReminders.push(getPlanModeSystemReminder());
+        systemReminders.push(
+          getPlanModeSystemReminder(this.config.getSdkMode()),
+        );
       }
 
       requestToSent = [...systemReminders, ...requestToSent];

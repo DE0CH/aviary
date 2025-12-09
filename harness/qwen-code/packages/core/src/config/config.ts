@@ -46,6 +46,7 @@ import { ExitPlanModeTool } from '../tools/exitPlanMode.js';
 import { GlobTool } from '../tools/glob.js';
 import { GrepTool } from '../tools/grep.js';
 import { LSTool } from '../tools/ls.js';
+import type { SendSdkMcpMessage } from '../tools/mcp-client.js';
 import { MemoryTool, setGeminiMdFilename } from '../tools/memoryTool.js';
 import { ReadFileTool } from '../tools/read-file.js';
 import { ReadManyFilesTool } from '../tools/read-many-files.js';
@@ -65,6 +66,7 @@ import { ideContextStore } from '../ide/ideContext.js';
 import { InputFormat, OutputFormat } from '../output/types.js';
 import { PromptRegistry } from '../prompts/prompt-registry.js';
 import { SubagentManager } from '../subagents/subagent-manager.js';
+import type { SubagentConfig } from '../subagents/types.js';
 import {
   DEFAULT_OTLP_ENDPOINT,
   DEFAULT_TELEMETRY_TARGET,
@@ -238,7 +240,16 @@ export class MCPServerConfig {
     readonly targetAudience?: string,
     /* targetServiceAccount format: <service-account-name>@<project-num>.iam.gserviceaccount.com */
     readonly targetServiceAccount?: string,
+    // SDK MCP server type - 'sdk' indicates server runs in SDK process
+    readonly type?: 'sdk',
   ) {}
+}
+
+/**
+ * Check if an MCP server config represents an SDK server
+ */
+export function isSdkMcpServerConfig(config: MCPServerConfig): boolean {
+  return config.type === 'sdk';
 }
 
 export enum AuthProviderType {
@@ -333,9 +344,11 @@ export interface ConfigParameters {
   eventEmitter?: EventEmitter;
   useSmartEdit?: boolean;
   output?: OutputSettings;
-  skipStartupContext?: boolean;
   inputFormat?: InputFormat;
   outputFormat?: OutputFormat;
+  skipStartupContext?: boolean;
+  sdkMode?: boolean;
+  sessionSubagents?: SubagentConfig[];
 }
 
 function normalizeConfigOutputFormat(
@@ -355,6 +368,17 @@ function normalizeConfigOutputFormat(
     default:
       return OutputFormat.TEXT;
   }
+}
+
+/**
+ * Options for Config.initialize()
+ */
+export interface ConfigInitializeOptions {
+  /**
+   * Callback for sending MCP messages to SDK servers via control plane.
+   * Required for SDK MCP server support in SDK mode.
+   */
+  sendSdkMcpMessage?: SendSdkMcpMessage;
 }
 
 export class Config {
@@ -383,8 +407,10 @@ export class Config {
   private readonly toolDiscoveryCommand: string | undefined;
   private readonly toolCallCommand: string | undefined;
   private readonly mcpServerCommand: string | undefined;
-  private readonly mcpServers: Record<string, MCPServerConfig> | undefined;
+  private mcpServers: Record<string, MCPServerConfig> | undefined;
+  private sessionSubagents: SubagentConfig[];
   private userMemory: string;
+  private sdkMode: boolean;
   private geminiMdFileCount: number;
   private approvalMode: ApprovalMode;
   private readonly showMemoryUsage: boolean;
@@ -487,6 +513,8 @@ export class Config {
     this.toolCallCommand = params.toolCallCommand;
     this.mcpServerCommand = params.mcpServerCommand;
     this.mcpServers = params.mcpServers;
+    this.sessionSubagents = params.sessionSubagents ?? [];
+    this.sdkMode = params.sdkMode ?? false;
     this.userMemory = params.userMemory ?? '';
     this.geminiMdFileCount = params.geminiMdFileCount ?? 0;
     this.approvalMode = params.approvalMode ?? ApprovalMode.DEFAULT;
@@ -592,8 +620,9 @@ export class Config {
 
   /**
    * Must only be called once, throws if called again.
+   * @param options Optional initialization options including sendSdkMcpMessage callback
    */
-  async initialize(): Promise<void> {
+  async initialize(options?: ConfigInitializeOptions): Promise<void> {
     if (this.initialized) {
       throw Error('Config was already initialized');
     }
@@ -606,7 +635,15 @@ export class Config {
     }
     this.promptRegistry = new PromptRegistry();
     this.subagentManager = new SubagentManager(this);
-    this.toolRegistry = await this.createToolRegistry();
+
+    // Load session subagents if they were provided before initialization
+    if (this.sessionSubagents.length > 0) {
+      this.subagentManager.loadSessionSubagents(this.sessionSubagents);
+    }
+
+    this.toolRegistry = await this.createToolRegistry(
+      options?.sendSdkMcpMessage,
+    );
 
     await this.geminiClient.initialize();
 
@@ -840,6 +877,32 @@ export class Config {
 
   getMcpServers(): Record<string, MCPServerConfig> | undefined {
     return this.mcpServers;
+  }
+
+  addMcpServers(servers: Record<string, MCPServerConfig>): void {
+    if (this.initialized) {
+      throw new Error('Cannot modify mcpServers after initialization');
+    }
+    this.mcpServers = { ...this.mcpServers, ...servers };
+  }
+
+  getSessionSubagents(): SubagentConfig[] {
+    return this.sessionSubagents;
+  }
+
+  setSessionSubagents(subagents: SubagentConfig[]): void {
+    if (this.initialized) {
+      throw new Error('Cannot modify sessionSubagents after initialization');
+    }
+    this.sessionSubagents = subagents;
+  }
+
+  getSdkMode(): boolean {
+    return this.sdkMode;
+  }
+
+  setSdkMode(value: boolean): void {
+    this.sdkMode = value;
   }
 
   getUserMemory(): string {
@@ -1222,8 +1285,14 @@ export class Config {
     return this.subagentManager;
   }
 
-  async createToolRegistry(): Promise<ToolRegistry> {
-    const registry = new ToolRegistry(this, this.eventEmitter);
+  async createToolRegistry(
+    sendSdkMcpMessage?: SendSdkMcpMessage,
+  ): Promise<ToolRegistry> {
+    const registry = new ToolRegistry(
+      this,
+      this.eventEmitter,
+      sendSdkMcpMessage,
+    );
 
     const coreToolsConfig = this.getCoreTools();
     const excludeToolsConfig = this.getExcludeTools();
@@ -1298,7 +1367,7 @@ export class Config {
     registerCoreTool(ShellTool, this);
     registerCoreTool(MemoryTool);
     registerCoreTool(TodoWriteTool, this);
-    registerCoreTool(ExitPlanModeTool, this);
+    !this.sdkMode && registerCoreTool(ExitPlanModeTool, this);
     registerCoreTool(WebFetchTool, this);
     // Conditionally register web search tool if web search provider is configured
     // buildWebSearchConfig ensures qwen-oauth users get dashscope provider, so
@@ -1308,6 +1377,7 @@ export class Config {
     }
 
     await registry.discoverAllTools();
+    console.debug('ToolRegistry created', registry.getAllToolNames());
     return registry;
   }
 }

@@ -182,7 +182,7 @@ You are a helpful assistant.
     it('should parse valid markdown content', () => {
       const config = manager.parseSubagentContent(
         validMarkdown,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -207,7 +207,7 @@ You are a helpful assistant.
 
       const config = manager.parseSubagentContent(
         markdownWithTools,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -228,7 +228,7 @@ You are a helpful assistant.
 
       const config = manager.parseSubagentContent(
         markdownWithModel,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -249,7 +249,7 @@ You are a helpful assistant.
 
       const config = manager.parseSubagentContent(
         markdownWithRun,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -267,7 +267,7 @@ You are a helpful assistant.
 
       const config = manager.parseSubagentContent(
         markdownWithNumeric,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -288,7 +288,7 @@ You are a helpful assistant.
 
       const config = manager.parseSubagentContent(
         markdownWithBoolean,
-        validConfig.filePath,
+        validConfig.filePath!,
         'project',
       );
 
@@ -324,7 +324,7 @@ Just content`;
       expect(() =>
         manager.parseSubagentContent(
           invalidMarkdown,
-          validConfig.filePath,
+          validConfig.filePath!,
           'project',
         ),
       ).toThrow(SubagentError);
@@ -341,7 +341,7 @@ You are a helpful assistant.
       expect(() =>
         manager.parseSubagentContent(
           markdownWithoutName,
-          validConfig.filePath,
+          validConfig.filePath!,
           'project',
         ),
       ).toThrow(SubagentError);
@@ -358,7 +358,7 @@ You are a helpful assistant.
       expect(() =>
         manager.parseSubagentContent(
           markdownWithoutDescription,
-          validConfig.filePath,
+          validConfig.filePath!,
           'project',
         ),
       ).toThrow(SubagentError);
@@ -438,7 +438,7 @@ You are a helpful assistant.
       await manager.createSubagent(validConfig, { level: 'project' });
 
       expect(fs.mkdir).toHaveBeenCalledWith(
-        path.normalize(path.dirname(validConfig.filePath)),
+        path.normalize(path.dirname(validConfig.filePath!)),
         { recursive: true },
       );
       expect(fs.writeFile).toHaveBeenCalledWith(

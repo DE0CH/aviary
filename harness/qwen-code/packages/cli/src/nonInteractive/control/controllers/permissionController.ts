@@ -15,8 +15,10 @@
  */
 
 import type {
-  ToolCallRequestInfo,
   WaitingToolCall,
+  ToolExecuteConfirmationDetails,
+  ToolMcpConfirmationDetails,
+  ApprovalMode,
 } from '@qwen-code/qwen-code-core';
 import {
   InputFormat,
@@ -42,15 +44,23 @@ export class PermissionController extends BaseController {
    */
   protected async handleRequestPayload(
     payload: ControlRequestPayload,
-    _signal: AbortSignal,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     switch (payload.subtype) {
       case 'can_use_tool':
-        return this.handleCanUseTool(payload as CLIControlPermissionRequest);
+        return this.handleCanUseTool(
+          payload as CLIControlPermissionRequest,
+          signal,
+        );
 
       case 'set_permission_mode':
         return this.handleSetPermissionMode(
           payload as CLIControlSetPermissionModeRequest,
+          signal,
         );
 
       default:
@@ -68,7 +78,12 @@ export class PermissionController extends BaseController {
    */
   private async handleCanUseTool(
     payload: CLIControlPermissionRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const toolName = payload.tool_name;
     if (
       !toolName ||
@@ -190,7 +205,12 @@ export class PermissionController extends BaseController {
    */
   private async handleSetPermissionMode(
     payload: CLIControlSetPermissionModeRequest,
+    signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    if (signal.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const mode = payload.mode;
     const validModes: PermissionMode[] = [
       'default',
@@ -206,6 +226,7 @@ export class PermissionController extends BaseController {
     }
 
     this.context.permissionMode = mode;
+    this.context.config.setApprovalMode(mode as ApprovalMode);
 
     if (this.context.debugMode) {
       console.error(
@@ -335,47 +356,6 @@ export class PermissionController extends BaseController {
   }
 
   /**
-   * Check if a tool should be executed based on current permission settings
-   *
-   * This is a convenience method for direct tool execution checks without
-   * going through the control request flow.
-   */
-  async shouldAllowTool(
-    toolRequest: ToolCallRequestInfo,
-    confirmationDetails?: unknown,
-  ): Promise<{
-    allowed: boolean;
-    message?: string;
-    updatedArgs?: Record<string, unknown>;
-  }> {
-    // Check permission mode
-    const modeResult = this.checkPermissionMode();
-    if (!modeResult.allowed) {
-      return {
-        allowed: false,
-        message: modeResult.message,
-      };
-    }
-
-    // Check tool registry
-    const registryResult = this.checkToolRegistry(toolRequest.name);
-    if (!registryResult.allowed) {
-      return {
-        allowed: false,
-        message: registryResult.message,
-      };
-    }
-
-    // If we have confirmation details, we could potentially modify args
-    // This is a hook for future enhancement
-    if (confirmationDetails) {
-      // Future: handle argument modifications based on confirmation details
-    }
-
-    return { allowed: true };
-  }
-
-  /**
    * Get callback for monitoring tool calls and handling outgoing permission requests
    * This is passed to executeToolCall to hook into CoreToolScheduler updates
    */
@@ -411,6 +391,14 @@ export class PermissionController extends BaseController {
     toolCall: WaitingToolCall,
   ): Promise<void> {
     try {
+      // Check if already aborted
+      if (this.context.abortSignal?.aborted) {
+        await toolCall.confirmationDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+        );
+        return;
+      }
+
       const inputFormat = this.context.config.getInputFormat?.();
       const isStreamJsonMode = inputFormat === InputFormat.STREAM_JSON;
 
@@ -439,7 +427,8 @@ export class PermissionController extends BaseController {
           permission_suggestions: permissionSuggestions,
           blocked_path: null,
         } as CLIControlPermissionRequest,
-        30000,
+        undefined, // use default timeout
+        this.context.abortSignal,
       );
 
       if (response.subtype !== 'success') {
@@ -462,8 +451,15 @@ export class PermissionController extends BaseController {
           ToolConfirmationOutcome.ProceedOnce,
         );
       } else {
+        // Extract cancel message from response if available
+        const cancelMessage =
+          typeof payload['message'] === 'string'
+            ? payload['message']
+            : undefined;
+
         await toolCall.confirmationDetails.onConfirm(
           ToolConfirmationOutcome.Cancel,
+          cancelMessage ? { cancelMessage } : undefined,
         );
       }
     } catch (error) {
@@ -473,9 +469,23 @@ export class PermissionController extends BaseController {
           error,
         );
       }
-      await toolCall.confirmationDetails.onConfirm(
-        ToolConfirmationOutcome.Cancel,
-      );
+      // On error, use default cancel message
+      // Only pass payload for exec and mcp types that support it
+      const confirmationType = toolCall.confirmationDetails.type;
+      if (['edit', 'exec', 'mcp'].includes(confirmationType)) {
+        const execOrMcpDetails = toolCall.confirmationDetails as
+          | ToolExecuteConfirmationDetails
+          | ToolMcpConfirmationDetails;
+        await execOrMcpDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+          undefined,
+        );
+      } else {
+        // For other types, don't pass payload (backward compatible)
+        await toolCall.confirmationDetails.onConfirm(
+          ToolConfirmationOutcome.Cancel,
+        );
+      }
     } finally {
       this.pendingOutgoingRequests.delete(toolCall.request.callId);
     }

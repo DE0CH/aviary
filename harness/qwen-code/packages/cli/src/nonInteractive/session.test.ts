@@ -69,6 +69,7 @@ function createConfig(overrides: ConfigOverrides = {}): Config {
     getDebugMode: () => false,
     getApprovalMode: () => 'auto',
     getOutputFormat: () => 'stream-json',
+    initialize: vi.fn(),
   };
   return { ...base, ...overrides } as unknown as Config;
 }
@@ -152,6 +153,11 @@ describe('runNonInteractiveStreamJson', () => {
     handleControlResponse: ReturnType<typeof vi.fn>;
     handleCancel: ReturnType<typeof vi.fn>;
     shutdown: ReturnType<typeof vi.fn>;
+    getPendingIncomingRequestCount: ReturnType<typeof vi.fn>;
+    waitForPendingIncomingRequests: ReturnType<typeof vi.fn>;
+    sdkMcpController: {
+      createSendSdkMcpMessage: ReturnType<typeof vi.fn>;
+    };
   };
   let mockConsolePatcher: {
     patch: ReturnType<typeof vi.fn>;
@@ -186,6 +192,11 @@ describe('runNonInteractiveStreamJson', () => {
       handleControlResponse: vi.fn(),
       handleCancel: vi.fn(),
       shutdown: vi.fn(),
+      getPendingIncomingRequestCount: vi.fn().mockReturnValue(0),
+      waitForPendingIncomingRequests: vi.fn().mockResolvedValue(undefined),
+      sdkMcpController: {
+        createSendSdkMcpMessage: vi.fn().mockReturnValue(vi.fn()),
+      },
     };
     (
       ControlDispatcher as unknown as ReturnType<typeof vi.fn>
