@@ -147,6 +147,18 @@ export {
   getApprovalModeInfoFromString,
 } from './approvalModeTypes.js';
 
+// Cyclic next-mode mapping used by UI toggles and other consumers
+export const NEXT_APPROVAL_MODE: {
+  [k in ApprovalModeValue]: ApprovalModeValue;
+} = {
+  // Hide "plan" from the public toggle sequence for now
+  // Cycle: default -> auto-edit -> yolo -> default
+  default: 'auto-edit',
+  'auto-edit': 'yolo',
+  plan: 'yolo',
+  yolo: 'default',
+};
+
 // Current mode update (sent by agent when mode changes)
 export interface CurrentModeUpdate extends BaseSessionUpdate {
   update: {

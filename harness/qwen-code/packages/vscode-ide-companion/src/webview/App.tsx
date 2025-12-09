@@ -42,7 +42,7 @@ import {
 import { InputForm } from './components/layout/InputForm.js';
 import { SessionSelector } from './components/layout/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
-import { ApprovalMode } from '../types/acpTypes.js';
+import { ApprovalMode, NEXT_APPROVAL_MODE } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/acpTypes.js';
 import type { PlanEntry } from '../types/chatTypes.js';
 
@@ -464,17 +464,11 @@ export const App: React.FC = () => {
     });
   }, [vscode]);
 
-  // Handle toggle edit mode (Default -> Auto-edit -> Plan -> YOLO -> Default)
+  // Handle toggle edit mode (Default -> Auto-edit -> YOLO -> Default)
   const handleToggleEditMode = useCallback(() => {
     setEditMode((prev) => {
-      const next: ApprovalModeValue =
-        prev === ApprovalMode.DEFAULT
-          ? ApprovalMode.AUTO_EDIT
-          : prev === ApprovalMode.AUTO_EDIT
-            ? ApprovalMode.PLAN
-            : prev === ApprovalMode.PLAN
-              ? ApprovalMode.YOLO
-              : ApprovalMode.DEFAULT;
+      const next: ApprovalModeValue = NEXT_APPROVAL_MODE[prev];
+
       // Notify extension to set approval mode via ACP
       try {
         vscode.postMessage({
@@ -661,9 +655,6 @@ export const App: React.FC = () => {
           <>
             {/* Render all messages and tool calls */}
             {renderMessages()}
-
-            {/* Changed to push each plan as a historical toolcall in useWebViewMessages to avoid duplicate display of the latest block */}
-
             {messageHandling.isWaitingForResponse &&
               messageHandling.loadingMessage && (
                 <WaitingMessage
