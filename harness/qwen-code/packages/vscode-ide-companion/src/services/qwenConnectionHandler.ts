@@ -14,7 +14,10 @@ import * as vscode from 'vscode';
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import type { AuthStateManager } from '../services/authStateManager.js';
-import { CliVersionManager } from '../cli/cliVersionManager.js';
+import {
+  CliVersionManager,
+  MIN_CLI_VERSION_FOR_SESSION_METHODS,
+} from '../cli/cliVersionManager.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
 
@@ -54,13 +57,13 @@ export class QwenConnectionHandler {
     // Show warning if CLI version is below minimum requirement
     if (!versionInfo.isSupported) {
       console.warn(
-        `[QwenAgentManager] CLI version ${versionInfo.version} is below minimum required version ${'0.4.0'}`,
+        `[QwenAgentManager] CLI version ${versionInfo.version} is below minimum required version ${MIN_CLI_VERSION_FOR_SESSION_METHODS}`,
       );
 
-      // TODO: Wait to determine release version number
-      // vscode.window.showWarningMessage(
-      //   `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version 0.4.0 or later.`,
-      // );
+      // Wait to determine release version number
+      vscode.window.showWarningMessage(
+        `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
+      );
     }
 
     const config = vscode.workspace.getConfiguration('qwenCode');

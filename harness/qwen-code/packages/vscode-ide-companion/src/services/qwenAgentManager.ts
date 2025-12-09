@@ -22,6 +22,7 @@ import { QwenConnectionHandler } from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
+import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliVersionManager.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -1034,7 +1035,7 @@ export class QwenAgentManager {
 
     if (!supportsSessionLoad) {
       throw new Error(
-        `CLI version does not support session/load method. Please upgrade to version 0.4.0 or later.`,
+        `CLI version does not support session/load method. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
       );
     }
 

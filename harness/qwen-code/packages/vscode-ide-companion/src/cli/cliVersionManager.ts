@@ -21,11 +21,6 @@ export interface CliFeatureFlags {
    * Whether the CLI supports session/load ACP method
    */
   supportsSessionLoad: boolean;
-
-  /**
-   * Whether the CLI supports session/save ACP method
-   */
-  supportsSessionSave: boolean;
 }
 
 /**
@@ -91,6 +86,7 @@ export class CliVersionManager {
       return false;
     }
 
+    // TODO:
     // Simple version comparison (assuming semantic versioning)
     try {
       const versionParts = version.split('.').map(Number);
@@ -131,7 +127,6 @@ export class CliVersionManager {
     return {
       supportsSessionList: isSupportedVersion,
       supportsSessionLoad: isSupportedVersion,
-      supportsSessionSave: false, // Not yet supported in any version
     };
   }
 
@@ -190,7 +185,6 @@ export class CliVersionManager {
         features: {
           supportsSessionList: false,
           supportsSessionLoad: false,
-          supportsSessionSave: false,
         },
         detectionResult: {
           isInstalled: false,
@@ -231,16 +225,5 @@ export class CliVersionManager {
   async supportsSessionLoad(forceRefresh = false): Promise<boolean> {
     const versionInfo = await this.detectCliVersion(forceRefresh);
     return versionInfo.features.supportsSessionLoad;
-  }
-
-  /**
-   * Check if CLI supports session/save method
-   *
-   * @param forceRefresh - Force a new check, ignoring cache
-   * @returns Whether session/save is supported
-   */
-  async supportsSessionSave(forceRefresh = false): Promise<boolean> {
-    const versionInfo = await this.detectCliVersion(forceRefresh);
-    return versionInfo.features.supportsSessionSave;
   }
 }

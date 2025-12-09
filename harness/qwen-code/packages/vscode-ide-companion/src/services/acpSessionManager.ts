@@ -9,7 +9,6 @@
  *
  * Responsible for managing ACP protocol session operations, including initialization, authentication, session creation, and switching
  */
-
 import { JSONRPC_VERSION } from '../types/acpTypes.js';
 import type {
   AcpRequest,
