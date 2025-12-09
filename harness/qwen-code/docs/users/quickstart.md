@@ -91,10 +91,6 @@ You'll see the Qwen Code welcome screen with your session information, recent co
 
 ![](https://img.alicdn.com/imgextra/i3/O1CN01PwceZB1esA42wuQQH_!!6000000003926-2-tps-2104-1592.png)
 
-> [!caution]
->
-> After logging in (Step 2), your credentials are stored on your system. If you need OpenAI API authentication, you can refer to [Authentication](/authentication).
-
 ## Chat with Qwen Code
 
 ### Ask your first question
@@ -238,17 +234,25 @@ review my changes and suggest improvements
 
 Here are the most important commands for daily use:
 
-| Command             | What it does                      | Example                             |
-| ------------------- | --------------------------------- | ----------------------------------- |
-| `qwen`            | Start interactive mode            | `qwen`                            |
-| `qwen-code "task"`     | Run a one-time task               | `qwen-code "fix the build error"`      |
-| `qwen-code -p "query"` | Run one-off query, then exit      | `qwen-code -p "explain this function"` |
-| `qwen-code -c`         | Continue most recent conversation | `qwen-code -c`                         |
-| `qwen-code -r`         | Resume a previous conversation    | `qwen-code -r`                         |
-| `qwen-code commit`     | Create a Git commit               | `qwen-code commit`                     |
-| `/clear`            | Clear conversation history        | `/clear`                          |
-| `/help`             | Show available commands           | `/help`                           |
-| `quit` or Ctrl+C    | Exit Qwen Code                  | `/quit`                            |
+| Command               | What it does                                           | Example                            |
+| --------------------- | ------------------------------------------------------ | ---------------------------------- |
+| `qwen`                | start Qwen Code                                        | `qwen`                             |
+| `/chat`               | Manually save and restore conversation history         | Requires sub-commands              |
+| → `save <label>`      | Save current conversation state                        | `/chat save Feature Ideation`      |
+| → `resume <label>`    | Restore conversation from saved point                  | `/chat resume Feature Ideation`    |
+| → `list`              | List all recoverable conversation labels               | `/chat list`                       |
+| → `delete <label>`    | Delete saved conversation checkpoint                   | `/chat delete Feature Ideation`    |
+| → `share [file]`      | Export conversation as Markdown or JSON                | `/chat share Discussion Record.md` |
+| `/summary`            | Generate project summary based on conversation history | `/summary`                         |
+| `/compress`           | Replace chat history with summary to save Tokens       | `/compress`                        |
+| `/clear`              | Clear terminal screen content                          | `/clear` (shortcut: `Ctrl+L`)      |
+| `/theme`              | Change Qwen Code visual theme                          | `/theme`                           |
+| `/language`           | View or change language settings                       | `/language`                        |
+| → `ui [language]`     | Set UI interface language                              | `/language ui zh-CN`               |
+| → `output [language]` | Set LLM output language                                | `/language output Chinese`         |
+| `/help`               | Display help information for available commands        | `/help` or `/?`                    |
+| `/auth`               | Change authentication method                           | `/auth`                            |
+| `/quit`               | Exit Qwen Code immediately                             | `/quit` or `/exit`                 |
 
 See the [CLI reference](/cli-reference) for a complete list of commands.
 
@@ -280,30 +284,6 @@ See the [CLI reference](/cli-reference) for a complete list of commands.
 	- Use Tab for command completion
     - Press ↑ for command history
     - Type `/` to see all slash commands
-
-## What's next?
-
-Now that you've learned the basics, explore more advanced features:
-
-
-<CardGroup cols={3}>
-  <Card title="Common workflows" icon="graduation-cap" href="/en/common-workflows">
-    Step-by-step guides for common tasks
-  </Card>
-
-  <Card title="CLI reference" icon="terminal" href="/en/cli-reference">
-    Master all commands and options
-  </Card>
-
-  <Card title="Configuration" icon="gear" href="/en/settings">
-    Customize Qwen Code for your workflow
-  </Card>
-
-  <Card title="Qwen Code on the web" icon="cloud" href="/en/claude-code-on-the-web">
-    Run tasks asynchronously in the cloud
-  </Card>
-</CardGroup>
-
 
 ## Getting help
 

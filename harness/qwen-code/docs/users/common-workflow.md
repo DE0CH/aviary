@@ -49,7 +49,6 @@ how is authentication handled?
 >   - Ask about coding conventions and patterns used in the project
 >   - Request a glossary of project-specific terms
 
-
 ### Find relevant code
 
 Suppose you need to locate code related to a specific feature or functionality.
@@ -88,12 +87,12 @@ I'm seeing an error when I run npm test
 
 2. Ask for fix recommendations
 ```
-suggest a few ways to fix the @ts-ignore in user. ts 
+suggest a few ways to fix the @ts-ignore in user.ts
 ```
 
 3. Apply the fix
 ```
-update user. ts to add the null check you suggested 
+update user.tsto add the null check you suggested 
 ```
 
 > [!tip] Tips:
@@ -185,15 +184,15 @@ Then select "Create New subagent" and follow the prompts to define:
 
 > [!tip] Tips:
 > 
-> - Create project-specific subagents in `.qwen-code/agents/` for team sharing
+> - Create project-specific subagents in `.qwen/agents/` for team sharing
 >  - Use descriptive `description` fields to enable automatic delegation
 >  - Limit tool access to what each subagent actually needs
-> - Check the [subagents documentation](/sub-agents) for detailed examples
+>  - Know more [Sub Agents](/sub-agents)
 
 
 ## Use Plan Mode for safe code analysis
 
-Plan Mode instructs Claude to create a plan by analyzing the codebase with read-only operations, perfect for exploring codebases, planning complex changes, or reviewing code safely.
+Plan Mode instructs Qwen Code to create a plan by analyzing the codebase with read-only operations, perfect for exploring codebases, planning complex changes, or reviewing code safely.
 
 ### When to use Plan Mode
 
@@ -219,10 +218,10 @@ To start a new session in Plan Mode, use the `/approval-mode` then select `plan`
 
 **Run "headless" queries in Plan Mode**
 
-You can also run a query in Plan Mode directly with `-p` (that is, in ["headless mode"](/en/headless)):
+You can also run a query in Plan Mode directly with `-p` or `prompt`:
 
 ```bash  
-/approval-mode plan -p "Analyze the authentication system and suggest improvements"
+qwen --prompt "What is machine learning?"
 ```
 
 ### Example: Planning a complex refactor
@@ -245,15 +244,13 @@ How should we handle database migration?
 ### Configure Plan Mode as default
 
 ```json  
-// .qwen-code/settings.json
+// .qwen/settings.json
 {
   "permissions": {
     "defaultMode": "plan"
   }
 }
 ```
-
-See [settings documentation](/en/settings#available-settings) for more configuration options.
 
 ## Work with tests
 
@@ -335,7 +332,7 @@ improve the generated documentation with more context and examples
 
   4. Verify documentation
 ```
-> check if the documentation follows our project standards 
+check if the documentation follows our project standards 
 ```
 
 > [!tip] Tips:
@@ -354,9 +351,9 @@ You can use any of these methods:
 
 1) Drag and drop an image into the Qwen Code window
 2) Copy an image and paste it into the CLI with ctrl+v (Do not use cmd+v)
-3) Provide an image path to Claude. E.g., "Analyze this image: /path/to/your/image. png"
+3) Provide an image path to Qwen Code. E.g., "Analyze this image: /path/to/your/image. png"
 
-  3. Ask Claude to analyze the image
+  4. Ask Qwen Code to analyze the image
 ```
 What does this image show?
 ```
@@ -394,7 +391,6 @@ What HTML structure would recreate this component?
 >  - You can work with multiple images in a conversation
 >  - Image analysis works with diagrams, screenshots, mockups, and more
 
-
 ## Reference files and directories
 
 Use `@` to quickly include files or directories without waiting for Qwen Code to read them.
@@ -418,7 +414,7 @@ This provides a directory listing with file information.
 Show me the data from @github: repos/owner/repo/issues
 ```
 
-This fetches data from connected MCP servers using the format @server: resource. See [MCP resources](/en/mcp#use-mcp-resources) for details.
+This fetches data from connected MCP servers using the format @server: resource. See [MCP](/mcp) for details.
 
 > [!tip] Tips:
 > 
@@ -432,10 +428,6 @@ This fetches data from connected MCP servers using the format @server: resource.
 
 Suppose you're working on complex architectural decisions, challenging bugs, or planning multi-step implementations that require deep reasoning.
 
-> [!note]
-> 
-> [Extended thinking](https://docs.claude.com/en/docs/build-with-claude/extended-thinking) is disabled by default in Qwen Code. You can enable it on-demand by using `Tab` to toggle Thinking on, or by using prompts like "think" or "think hard". You can also enable it permanently by setting the [`MAX_THINKING_TOKENS` environment variable](/en/settings#environment-variables) in your settings.
-
 1. Provide context and ask Qwen Code to think
 ```
 I need to implement a new authentication system using OAuth 2 for our API. Think deeply about the best approach for implementing this in our codebase.
@@ -443,7 +435,8 @@ I need to implement a new authentication system using OAuth 2 for our API. Think
 
 Qwen Code gathers relevant information from your codebase and uses extended thinking, which is visible in the interface.
 
-  2. Refine the thinking with follow-up prompts
+2. Refine the thinking with follow-up prompts
+
 ```
 think about potential security vulnerabilities in this approach 
 ```
@@ -451,26 +444,6 @@ think about potential security vulnerabilities in this approach
 ```
 think hard about edge cases we should handle 
 ```
-
-> [!tip]
-> Tips to get the most value out of extended thinking:
-> 
-> [Extended thinking](https://docs.claude.com/en/docs/build-with-claude/extended-thinking) is most valuable for complex tasks such as:
-> 
->  - Planning complex architectural changes
->  - Debugging intricate issues
->  - Creating implementation plans for new features
->  - Understanding complex codebases
->  - Evaluating tradeoffs between different approaches
-> 
-> Use `Tab` to toggle Thinking on and off during a session.
-> 
-> The way you prompt for thinking results in varying levels of thinking depth:
-> 
->  - "think" triggers basic extended thinking
->  - intensifying phrases such as "keep hard", "think more", "think a lot", or "think longer" triggers deeper thinking
-> 
-> For more extended thinking prompting tips, see [Extended thinking tips](https://docs.claude.com/en/docs/build-with-claude/prompt-engineering/extended-thinking-tips).
 
 > [!note]
 > Qwen Code displays its thinking process as italic gray text above the response.
@@ -575,7 +548,7 @@ qwen
 ```
 
   
-5. Run Claude in another worktree
+5. Run Qwen Code in another worktree
 ```bash  
 cd ../project-bugfix
 qwen
@@ -594,7 +567,7 @@ git worktree remove ../project-feature-a
 > [!tip] Tips:
 > 
 > - Each worktree has its own independent file state, making it perfect for parallel Qwen Code sessions
-> - Changes made in one worktree won't affect others, preventing Claude instances from interfering with each other
+> - Changes made in one worktree won't affect others, preventing Qwen Code instances from interfering with each other
 > - All worktrees share the same Git history and remote connections
 > - For long-running tasks, you can have Qwen Code working in one worktree while you continue development in another
 > - Use descriptive directory names to easily identify which task each worktree is for
@@ -604,9 +577,9 @@ git worktree remove ../project-feature-a
 > 	- Other languages: Following your project's standard setup process
 
 
-## Use Claude as a unix-style utility
+## Use Qwen Code as a unix-style utility
 
-### Add Claude to your verification process
+### Add Qwen Code to your verification process
 
 Suppose you want to use Qwen Code as a linter or code reviewer.
 
@@ -634,7 +607,7 @@ Suppose you want to use Qwen Code as a linter or code reviewer.
 
 Suppose you want to pipe data into Qwen Code, and get back data in a structured format.
 
-**Pipe data through Claude:**
+**Pipe data through Qwen Code:**
 
 ```bash  
 cat build-error.txt | qwen-code -p 'concisely explain the root cause of this build error' > output.txt
@@ -676,101 +649,9 @@ This outputs a series of JSON objects in real-time as Qwen Code processes the re
  
 > [!tip] Tips:
 > 
-> - Use `--output-format text` for simple integrations where you just need Claude's response
+> - Use `--output-format text` for simple integrations where you just need Qwen Code's response
 > - Use `--output-format json` when you need the full conversation log
 > - Use `--output-format stream-json` for real-time output of each conversation turn
-
-## Create custom slash commands
-
-Qwen Code supports custom slash commands that you can create to quickly execute specific prompts or tasks.
-
-For more details, see the [Slash commands](/en/slash-commands) reference page.
-
-### Create project-specific commands
-
-Suppose you want to create reusable slash commands for your project that all team members can use.
-
-1. Create a commands directory in your project
-
-```bash  
-mkdir -p .qwen-code/commands
-```
-
-2. Create a Markdown file for each command
-```bash  
-echo "Analyze the performance of this code and suggest three specific optimizations: " > .qwen-code/commands/optimize.md 
-```
-
-3. Use your custom command in Qwen Code
-```
-> /optimize 
-```
-
-> [!tip] Tips:
-> 
-> - Command names are derived from the filename (for example, `optimize.md` becomes `/optimize`)
-> - You can organize commands in subdirectories (for example, `.qwen-code/commands/frontend/component.md` creates `/component` with " (project:frontend)" shown in the description)
-> - Project commands are available to everyone who clones the repository
-> - The Markdown file content becomes the prompt sent to Claude when the command is invoked
-
-### Add command arguments with \$ARGUMENTS
-
-Suppose you want to create flexible slash commands that can accept additional input from users.
-
-1. Create a command file with the $ARGUMENTS placeholder
-```bash  
-echo 'Find and fix issue #$ARGUMENTS. Follow these steps: 
-1.Understand the issue described in the ticket 
-2. Locate the relevant code in
-our codebase 
-3. Implement a solution that addresses the root cause 
-4. Add
-appropriate tests 
-5. Prepare a concise PR description' >
-.qwen-code/commands/fix-issue.md 
-```
-
-  2. Use the command with an issue number
-  In your Claude session, use the command with arguments.
-
-```
-> /fix-issue 123 
-```
-
-This replaces \$ARGUMENTS with "123" in the prompt.
-
-> [!tip] Tips:
-> 
->  - The \$ARGUMENTS placeholder is replaced with any text that follows the command
->  - You can position \$ARGUMENTS anywhere in your command template
->  - Other useful applications: generating test cases for specific functions, creating documentation for components, reviewing code in particular files, or translating content to specified languages
-
-### Create personal slash commands
-
-Suppose you want to create personal slash commands that work across all your projects.
-
-1. Create a commands directory in your home folder
-```bash  
-mkdir -p ~/.qwen-code/commands 
-```
-
-  2. Create a Markdown file for each command
-```bash  
-echo "Review this code for security vulnerabilities, focusing on: " >
-~/.qwen-code/commands/security-review.md 
-```
-
-3. Use your personal custom command
-```
-> /security-review 
-```
-
-> [!tip] Tips:
-> 
-> - Personal commands show " (user)" in their description when listed with `/help`
-> - Personal commands are only available to you and not shared with your team
-> - Personal commands work across all your projects
-> - You can use these for consistent workflows across different codebases
 
 ## Ask Qwen Code about its capabilities
 
@@ -802,6 +683,7 @@ how do I configure Qwen Code for Amazon Bedrock?
 what are the limitations of Qwen Code?
 ```
 
+
 > [!note]
 > 
 > Qwen Code provides documentation-based answers to these questions. For executable examples and hands-on demonstrations, refer to the specific workflow sections above.
@@ -811,9 +693,3 @@ what are the limitations of Qwen Code?
 > - Qwen Code always has access to the latest Qwen Code documentation, regardless of the version you're using
 > - Ask specific questions to get detailed answers
 > - Qwen Code can explain complex features like MCP integration, enterprise configurations, and advanced workflows
-
-## Next steps
-
-<Card title="Qwen Code reference implementation" icon="code" href="https://github.com/anthropics/claude-code/tree/main/.devcontainer
-  Clone our development container reference implementation.
-</Card>
