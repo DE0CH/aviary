@@ -175,5 +175,32 @@ describe('MessageEmitter', () => {
         },
       });
     });
+
+    it('should include durationMs in _meta when provided', async () => {
+      const usageMetadata = {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        thoughtsTokenCount: 2,
+        totalTokenCount: 17,
+        cachedContentTokenCount: 1,
+      };
+
+      await emitter.emitUsageMetadata(usageMetadata, 'done', 1234);
+
+      expect(sendUpdateSpy).toHaveBeenCalledWith({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'done' },
+        _meta: {
+          usage: {
+            promptTokens: 10,
+            completionTokens: 5,
+            thoughtsTokens: 2,
+            totalTokens: 17,
+            cachedTokens: 1,
+          },
+          durationMs: 1234,
+        },
+      });
+    });
   });
 });

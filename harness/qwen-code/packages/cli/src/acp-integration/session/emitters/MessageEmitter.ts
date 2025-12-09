@@ -52,6 +52,7 @@ export class MessageEmitter extends BaseEmitter {
   async emitUsageMetadata(
     usageMetadata: GenerateContentResponseUsageMetadata,
     text: string = '',
+    durationMs?: number,
   ): Promise<void> {
     const usage: Usage = {
       promptTokens: usageMetadata.promptTokenCount,
@@ -61,10 +62,13 @@ export class MessageEmitter extends BaseEmitter {
       cachedTokens: usageMetadata.cachedContentTokenCount,
     };
 
+    const meta =
+      typeof durationMs === 'number' ? { usage, durationMs } : { usage };
+
     await this.sendUpdate({
       sessionUpdate: 'agent_message_chunk',
       content: { type: 'text', text },
-      _meta: { usage },
+      _meta: meta,
     });
   }
 

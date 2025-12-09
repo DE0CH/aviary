@@ -279,10 +279,14 @@ export class ToolCallEmitter extends BaseEmitter {
             string,
             unknown
           >;
+          const outputField = resp['output'];
+          const errorField = resp['error'];
           const responseText =
-            (resp['output'] as string) ??
-            (resp['error'] as string) ??
-            JSON.stringify(resp);
+            typeof outputField === 'string'
+              ? outputField
+              : typeof errorField === 'string'
+                ? errorField
+                : JSON.stringify(resp);
           result.push({
             type: 'content',
             content: { type: 'text', text: responseText },

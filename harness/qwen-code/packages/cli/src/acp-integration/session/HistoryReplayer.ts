@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ChatRecord } from '@qwen-code/qwen-code-core';
+import type { ChatRecord, TaskResultDisplay } from '@qwen-code/qwen-code-core';
 import type {
   Content,
   GenerateContentResponseUsageMetadata,
@@ -135,6 +135,54 @@ export class HistoryReplayer {
       // Note: args aren't stored in tool_result records by default
       args: undefined,
     });
+
+    // Special handling: Task tool execution summary contains token usage
+    const { resultDisplay } = result ?? {};
+    if (
+      !!resultDisplay &&
+      typeof resultDisplay === 'object' &&
+      'type' in resultDisplay &&
+      (resultDisplay as { type?: unknown }).type === 'task_execution'
+    ) {
+      await this.emitTaskUsageFromResultDisplay(
+        resultDisplay as TaskResultDisplay,
+      );
+    }
+  }
+
+  /**
+   * Emits token usage from a TaskResultDisplay execution summary, if present.
+   */
+  private async emitTaskUsageFromResultDisplay(
+    resultDisplay: TaskResultDisplay,
+  ): Promise<void> {
+    const summary = resultDisplay.executionSummary;
+    if (!summary) {
+      return;
+    }
+
+    const usageMetadata: GenerateContentResponseUsageMetadata = {};
+
+    if (Number.isFinite(summary.inputTokens)) {
+      usageMetadata.promptTokenCount = summary.inputTokens;
+    }
+    if (Number.isFinite(summary.outputTokens)) {
+      usageMetadata.candidatesTokenCount = summary.outputTokens;
+    }
+    if (Number.isFinite(summary.thoughtTokens)) {
+      usageMetadata.thoughtsTokenCount = summary.thoughtTokens;
+    }
+    if (Number.isFinite(summary.cachedTokens)) {
+      usageMetadata.cachedContentTokenCount = summary.cachedTokens;
+    }
+    if (Number.isFinite(summary.totalTokens)) {
+      usageMetadata.totalTokenCount = summary.totalTokens;
+    }
+
+    // Only emit if we captured at least one token metric
+    if (Object.keys(usageMetadata).length > 0) {
+      await this.messageEmitter.emitUsageMetadata(usageMetadata);
+    }
   }
 
   /**

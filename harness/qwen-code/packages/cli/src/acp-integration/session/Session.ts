@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content, FunctionCall, Part } from '@google/genai';
+import type {
+  Content,
+  FunctionCall,
+  GenerateContentResponseUsageMetadata,
+  Part,
+} from '@google/genai';
 import type {
   Config,
   GeminiChat,
@@ -195,6 +200,8 @@ export class Session implements SessionContext {
       }
 
       const functionCalls: FunctionCall[] = [];
+      let usageMetadata: GenerateContentResponseUsageMetadata | null = null;
+      const streamStartTime = Date.now();
 
       try {
         const responseStream = await chat.sendMessageStream(
@@ -225,22 +232,16 @@ export class Session implements SessionContext {
                 continue;
               }
 
-              const content: acp.ContentBlock = {
-                type: 'text',
-                text: part.text,
-              };
-
-              this.sendUpdate({
-                sessionUpdate: part.thought
-                  ? 'agent_thought_chunk'
-                  : 'agent_message_chunk',
-                content,
-              });
+              this.messageEmitter.emitMessage(
+                part.text,
+                'assistant',
+                part.thought,
+              );
             }
           }
 
           if (resp.type === StreamEventType.CHUNK && resp.value.usageMetadata) {
-            this.messageEmitter.emitUsageMetadata(resp.value.usageMetadata);
+            usageMetadata = resp.value.usageMetadata;
           }
 
           if (resp.type === StreamEventType.CHUNK && resp.value.functionCalls) {
@@ -256,6 +257,15 @@ export class Session implements SessionContext {
         }
 
         throw error;
+      }
+
+      if (usageMetadata) {
+        const durationMs = Date.now() - streamStartTime;
+        await this.messageEmitter.emitUsageMetadata(
+          usageMetadata,
+          '',
+          durationMs,
+        );
       }
 
       if (functionCalls.length > 0) {

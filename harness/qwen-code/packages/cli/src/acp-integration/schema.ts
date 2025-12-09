@@ -328,6 +328,7 @@ export type Usage = z.infer<typeof usageSchema>;
 
 export const sessionUpdateMetaSchema = z.object({
   usage: usageSchema.optional().nullable(),
+  durationMs: z.number().optional().nullable(),
 });
 
 export type SessionUpdateMeta = z.infer<typeof sessionUpdateMetaSchema>;
