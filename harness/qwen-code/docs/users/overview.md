@@ -7,15 +7,11 @@
 Prerequisites:
 
 - A [Qwen Code](https://chat.qwen.ai/auth?mode=register) account
-- Requires [Node.js 20+](https://nodejs.org/download), you can use `node -v` to check the version. If it's not installed, use the following command to install it.
-
-```bash
-curl -qL https://www.npmjs.com/install.sh | sh
-```
+- Requires [Node.js 20+](https://nodejs.org/zh-cn/download), you can use `node -v` to check the version. If it's not installed, use the following command to install it.
 
 ### Install Qwen Code:
 
-**NPM**(recommended)
+⭐️ **NPM**(recommended)
 
 ```bash
 npm install -g @qwen-code/qwen-code@latest
@@ -27,6 +23,8 @@ npm install -g @qwen-code/qwen-code@latest
 brew install qwen-code
 ```
 
+![](https://gw.alicdn.com/imgextra/i4/O1CN01eBPcmt27ezX0uaIn1_!!6000000007823-1-tps-1152-646.gif)
+
 ### Start using Qwen Code:
 
 ```bash
@@ -34,7 +32,15 @@ cd your-project
 qwen
 ```
 
-You'll be prompted to log in on first use. That's it! [Continue with Quickstart (5 mins) →](/quickstart)
+Let's start with understanding your codebase. Try one of these commands:
+
+```
+what does this project do?
+```
+
+![](https://gw.alicdn.com/imgextra/i1/O1CN01KUl70h277YcVQRS0Z_!!6000000007750-1-tps-1152-646.gif)
+
+You'll be prompted to log in on first use. That's it! [Continue with Quickstart (5 mins) →](/users/quickstart)
 
 > [!tip]
 >
@@ -48,11 +54,11 @@ You'll be prompted to log in on first use. That's it! [Continue with Quickstart 
 
 * **Build features from descriptions**: Tell Qwen Code what you want to build in plain language. It will make a plan, write the code, and ensure it works.
 * **Debug and fix issues**: Describe a bug or paste an error message. Qwen Code will analyze your codebase, identify the problem, and implement a fix.
-* **Navigate any codebase**: Ask anything about your team's codebase, and get a thoughtful answer back. Qwen Code maintains awareness of your entire project structure, can find up-to-date information from the web, and with [MCP](/mcp) can pull from external datasources like Google Drive, Figma, and Slack.
+* **Navigate any codebase**: Ask anything about your team's codebase, and get a thoughtful answer back. Qwen Code maintains awareness of your entire project structure, can find up-to-date information from the web, and with [MCP](/users/features/mcp) can pull from external datasources like Google Drive, Figma, and Slack.
 * **Automate tedious tasks**: Fix fiddly lint issues, resolve merge conflicts, and write release notes. Do all this in a single command from your developer machines, or automatically in CI.
 
 ## Why developers love Qwen Code
 
 * **Works in your terminal**: Not another chat window. Not another IDE. Qwen Code meets you where you already work, with the tools you already love.
-* **Takes action**: Qwen Code can directly edit files, run commands, and create commits. Need more? [MCP](/mcp) lets Qwen Code read your design docs in Google Drive, update your tickets in Jira, or use *your* custom developer tooling.
+* **Takes action**: Qwen Code can directly edit files, run commands, and create commits. Need more? [MCP](/users/features/mcp) lets Qwen Code read your design docs in Google Drive, update your tickets in Jira, or use *your* custom developer tooling.
 * **Unix philosophy**: Qwen Code is composable and scriptable. `tail -f app.log | qwen -p "Slack me if you see any anomalies appear in this log stream"` *works*. Your CI can run `qwen -p "If there are new text strings, translate them into French and raise a PR for @lang-fr-team to review"`.

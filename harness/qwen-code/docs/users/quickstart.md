@@ -20,10 +20,6 @@ To install Qwen Code, use one of the following methods:
 
 Requires [Node.js 20+](https://nodejs.org/download), you can use `node -v` check the version. If it's not installed, use the following command to install it.
 
-```bash
-curl -qL https://www.npmjs.com/install.sh | sh
-```
-
 If you have [Node.js or newer installed](https://nodejs.org/en/download/):
 
 ```sh  
@@ -71,29 +67,13 @@ cd /path/to/your/project
 qwen
 ```
 
-You'll see the Qwen Code welcome screen with your session information, recent conversations, and latest updates. Type `/help` for available commands or `/resume` to continue a previous conversation.
-
-![](https://img.alicdn.com/imgextra/i3/O1CN01PwceZB1esA42wuQQH_!!6000000003926-2-tps-2104-1592.png)
+You'll see the Qwen Code welcome screen with your session information, recent conversations, and latest updates. Type `/help` for available commands.
 
 ## Chat with Qwen Code
 
 ### Ask your first question
 
-Let's start with understanding your codebase. Try one of these commands:
-
-```
-what does this project do?
-```
-
 Qwen Code will analyze your files and provide a summary. You can also ask more specific questions:
-
-```
-what technologies does this project use?
-```
-
-```
-where is the main entry point?
-```
 
 ```
 explain the folder structure
@@ -103,14 +83,6 @@ You can also ask Qwen Code about its own capabilities:
 
 ```
 what can Qwen Code do?
-```
-
-```
-how do I use slash commands in Qwen Code?
-```
-
-```
-can Qwen Code work with Docker?
 ```
 
 > [!note]
@@ -218,27 +190,21 @@ review my changes and suggest improvements
 
 Here are the most important commands for daily use:
 
-| Command               | What it does                                           | Example                            |
-| --------------------- | ------------------------------------------------------ | ---------------------------------- |
-| `qwen`                | start Qwen Code                                        | `qwen`                             |
-| `/chat`               | Manually save and restore conversation history         | Requires sub-commands              |
-| → `save <label>`      | Save current conversation state                        | `/chat save Feature Ideation`      |
-| → `resume <label>`    | Restore conversation from saved point                  | `/chat resume Feature Ideation`    |
-| → `list`              | List all recoverable conversation labels               | `/chat list`                       |
-| → `delete <label>`    | Delete saved conversation checkpoint                   | `/chat delete Feature Ideation`    |
-| → `share [file]`      | Export conversation as Markdown or JSON                | `/chat share Discussion Record.md` |
-| `/summary`            | Generate project summary based on conversation history | `/summary`                         |
-| `/compress`           | Replace chat history with summary to save Tokens       | `/compress`                        |
-| `/clear`              | Clear terminal screen content                          | `/clear` (shortcut: `Ctrl+L`)      |
-| `/theme`              | Change Qwen Code visual theme                          | `/theme`                           |
-| `/language`           | View or change language settings                       | `/language`                        |
-| → `ui [language]`     | Set UI interface language                              | `/language ui zh-CN`               |
-| → `output [language]` | Set LLM output language                                | `/language output Chinese`         |
-| `/help`               | Display help information for available commands        | `/help` or `/?`                    |
-| `/auth`               | Change authentication method                           | `/auth`                            |
-| `/quit`               | Exit Qwen Code immediately                             | `/quit` or `/exit`                 |
+| Command               | What it does                                           | Example                       |
+| --------------------- | ------------------------------------------------------ | ----------------------------- |
+| `qwen`                | start Qwen Code                                        | `qwen`                        |
+| `/summary`            | Generate project summary based on conversation history | `/summary`                    |
+| `/compress`           | Replace chat history with summary to save Tokens       | `/compress`                   |
+| `/clear`              | Clear terminal screen content                          | `/clear` (shortcut: `Ctrl+L`) |
+| `/theme`              | Change Qwen Code visual theme                          | `/theme`                      |
+| `/language`           | View or change language settings                       | `/language`                   |
+| → `ui [language]`     | Set UI interface language                              | `/language ui zh-CN`          |
+| → `output [language]` | Set LLM output language                                | `/language output Chinese`    |
+| `/help`               | Display help information for available commands        | `/help` or `/?`               |
+| `/auth`               | Change authentication method                           | `/auth`                       |
+| `/quit`               | Exit Qwen Code immediately                             | `/quit` or `/exit`            |
 
-See the [CLI reference](/cli-reference) for a complete list of commands.
+See the [CLI reference](/users/reference/cli-reference) for a complete list of commands.
 
 ## Pro tips for beginners
 
@@ -262,7 +228,7 @@ See the [CLI reference](/cli-reference) for a complete list of commands.
     ```
     build a dashboard showing products that are most frequently returned by our UK customers
     ```
- 
+
  - Save time with shortcuts
     - Press `?` to see all available keyboard shortcuts
 	- Use Tab for command completion

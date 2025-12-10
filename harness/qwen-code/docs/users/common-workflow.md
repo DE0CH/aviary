@@ -43,7 +43,7 @@ what are the key data models?
 how is authentication handled?
 ```
 
-> [!tip] Tips:
+>[!tip]  Tips:
 > 
 >   - Start with broad questions, then narrow down to specific areas
 >   - Ask about coding conventions and patterns used in the project
@@ -58,7 +58,7 @@ Suppose you need to locate code related to a specific feature or functionality.
 ```
 find the files that handle user authentication 
 ```
-  
+
 2. Get context on how components interact
 
 ```
@@ -95,7 +95,7 @@ suggest a few ways to fix the @ts-ignore in user.ts
 update user.tsto add the null check you suggested 
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 >   - Tell Qwen Code the command to reproduce the issue and get a stack trace
 >   - Mention any steps to reproduce the error
@@ -110,13 +110,13 @@ Suppose you need to update old code to use modern patterns and practices.
 ```
 find deprecated API usage in our codebase 
 ```
- 
+
 2. Get refactoring recommendations
 
 ```
 suggest how to refactor utils.js to use modern JavaScript features 
 ```
-  
+
 3. Apply the changes safely
 
 ```
@@ -129,7 +129,7 @@ refactor utils.js to use ES 2024 features while maintaining the same behavior
 run tests for the refactored code 
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 >   - Ask Qwen Code to explain the benefits of the modern approach
 >   - Request that changes maintain backward compatibility when needed
@@ -182,7 +182,7 @@ Then select "Create New subagent" and follow the prompts to define:
 - Which tools it can access
 - A system prompt describing the agent's role and behavior
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Create project-specific subagents in `.qwen/agents/` for team sharing
 >  - Use descriptive `description` fields to enable automatic delegation
@@ -305,7 +305,7 @@ enhance the PR description with more context about the security improvements
 add information about how these changes were tested 
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 >   - Ask Qwen Code directly to make a PR for you
 >   - Review Qwen Code's generated PR before submitting
@@ -335,7 +335,7 @@ improve the generated documentation with more context and examples
 check if the documentation follows our project standards 
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 >  - Specify the documentation style you want (JSDoc, docstrings, etc.)
 >  - Ask for examples in the documentation
@@ -384,7 +384,7 @@ Generate CSS to match this design mockup
 What HTML structure would recreate this component?
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 >  - Use images when text descriptions would be unclear or cumbersome
 > - Include screenshots of errors, UI designs, or diagrams for better context
@@ -416,7 +416,7 @@ Show me the data from @github: repos/owner/repo/issues
 
 This fetches data from connected MCP servers using the format @server: resource. See [MCP](/mcp) for details.
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - File paths can be relative or absolute
 > - @ file references add `QWEN.md` in the file's directory and parent directories to context
@@ -486,7 +486,7 @@ This displays an interactive conversation selector with a clean list view showin
 
 Use arrow keys to navigate and press Enter to select a conversation. Press Esc to exit.
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Conversation history is stored locally on your machine
 > - Use `--continue` for quick access to your most recent conversation
@@ -547,7 +547,7 @@ cd ../project-feature-a
 qwen
 ```
 
-  
+
 5. Run Qwen Code in another worktree
 ```bash  
 cd ../project-bugfix
@@ -564,7 +564,7 @@ git worktree remove ../project-feature-a
 ```
 
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Each worktree has its own independent file state, making it perfect for parallel Qwen Code sessions
 > - Changes made in one worktree won't affect others, preventing Qwen Code instances from interfering with each other
@@ -597,7 +597,7 @@ Suppose you want to use Qwen Code as a linter or code reviewer.
 ```
 
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Use Qwen Code for automated code review in your CI/CD pipeline
 > - Customize the prompt to check for specific issues relevant to your project
@@ -613,7 +613,7 @@ Suppose you want to pipe data into Qwen Code, and get back data in a structured 
 cat build-error.txt | qwen-code -p 'concisely explain the root cause of this build error' > output.txt
 ```
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Use pipes to integrate Qwen-Code into existing shell scripts
 > - Combine with other Unix tools for powerful workflows
@@ -646,8 +646,8 @@ cat log. txt | qwen-code -p 'parse this log file for errors' --output-format str
 ```
 
 This outputs a series of JSON objects in real-time as Qwen Code processes the request. Each message is a valid JSON object, but the entire output is not valid JSON if concatenated.
- 
-> [!tip] Tips:
+
+> [!tip] 
 > 
 > - Use `--output-format text` for simple integrations where you just need Qwen Code's response
 > - Use `--output-format json` when you need the full conversation log
@@ -688,7 +688,7 @@ what are the limitations of Qwen Code?
 > 
 > Qwen Code provides documentation-based answers to these questions. For executable examples and hands-on demonstrations, refer to the specific workflow sections above.
 
-> [!tip] Tips:
+> [!tip] 
 > 
 > - Qwen Code always has access to the latest Qwen Code documentation, regardless of the version you're using
 > - Ask specific questions to get detailed answers
