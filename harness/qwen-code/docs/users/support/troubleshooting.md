@@ -1,4 +1,4 @@
-# Troubleshooting guide
+# Troubleshooting
 
 This guide provides solutions to common issues and debugging tips, including topics on:
 

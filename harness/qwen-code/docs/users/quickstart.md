@@ -36,22 +36,6 @@ npm install -g @qwen-code/qwen-code@latest
 brew install qwen-code
 ```
 
-### GitHub
-
-```sh
-# clone GitHub project
-git clone https://github.com/QwenLM/qwen-code.git
-
-# go to qwen-code folder
-cd qwen-code
-
-# install npm
-npm install
-
-# install qwen-code
-npm install -g @qwen-code/qwen-code@latest
-```
-
 ## Step 2: Log in to your account
 
 Qwen Code requires an account to use. When you start an interactive session with the `qwen` command, you'll need to log in:
@@ -70,7 +54,7 @@ Select `Qwen OAuth`, log in to your account and follow the prompts to confirm. O
 
 > [!note]
 >
-> When you first authenticate Qwen Code with your Qwen account, a workspace called "qwen-code" is automatically created for you. This workspace provides centralized cost tracking and management for all Qwen Code usage in your organization.
+> When you first authenticate Qwen Code with your Qwen account, a workspace called ".qwen" is automatically created for you. This workspace provides centralized cost tracking and management for all Qwen Code usage in your organization.
 
 > [!tip]
 >

@@ -27,22 +27,6 @@ npm install -g @qwen-code/qwen-code@latest
 brew install qwen-code
 ```
 
-**GitHub**
-
-```bash
-# clone GitHub project
-git clone https://github.com/QwenLM/qwen-code.git
-
-# go to qwen-code folder
-cd qwen-code
-
-# install npm
-npm install
-
-# install qwen-code
-npm install -g @qwen-code/qwen-code@latest
-```
-
 ### Start using Qwen Code:
 
 ```bash
@@ -54,13 +38,11 @@ You'll be prompted to log in on first use. That's it! [Continue with Quickstart 
 
 > [!tip]
 >
->  See [troubleshooting](/troubleshooting) if you hit issues.
+>  See [troubleshooting](/users/support/troubleshooting) if you hit issues.
 
 > [!note]
 >
-> **New VS Code Extension (Beta)**: Prefer a graphical interface? Our new **VS Code extension** provides an easy-to-use native IDE experience without requiring terminal familiarity. Simply install from the marketplace and start coding with Qwen Code directly in your sidebar.
-> 
-> ![](https://gw.alicdn.com/imgextra/i3/O1CN01E6lixr1Ry28a3EvGw_!!6000000002179-2-tps-1198-646.png)
+> **New VS Code Extension (Beta)**: Prefer a graphical interface? Our new **VS Code extension** provides an easy-to-use native IDE experience without requiring terminal familiarity. Simply install from the marketplace and start coding with Qwen Code directly in your sidebar. You can search for **Qwen Code** in the VS Code Marketplace and download it.
 
 ## What Qwen Code does for you
 

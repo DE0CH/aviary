@@ -1,4 +1,4 @@
-# Uninstalling the CLI
+# Uninstall
 
 Your uninstall method depends on how you ran the CLI. Follow the instructions for either npx or a global npm installation.
 
