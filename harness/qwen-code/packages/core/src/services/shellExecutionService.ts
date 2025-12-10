@@ -123,15 +123,25 @@ export class ShellExecutionService {
     }
 
     // Cleanup child processes
-    for (const pid of this.activeChildProcesses) {
-      try {
-        if (os.platform() === 'win32') {
-          spawnSync('taskkill', ['/pid', pid.toString(), '/f', '/t']);
-        } else {
-          process.kill(-pid, 'SIGKILL');
+    if (os.platform() === 'win32') {
+      if (this.activeChildProcesses.size > 0) {
+        try {
+          const args = ['/f', '/t'];
+          for (const pid of this.activeChildProcesses) {
+            args.push('/pid', pid.toString());
+          }
+          spawnSync('taskkill', args);
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
+      }
+    } else {
+      for (const pid of this.activeChildProcesses) {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
       }
     }
   }

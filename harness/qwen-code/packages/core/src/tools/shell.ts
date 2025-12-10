@@ -49,7 +49,6 @@ export interface ShellToolParams {
   is_background: boolean;
   description?: string;
   directory?: string;
-  timeout?: number;
 }
 
 export class ShellToolInvocation extends BaseToolInvocation<
@@ -138,14 +137,6 @@ export class ShellToolInvocation extends BaseToolInvocation<
       .toString('hex')}.tmp`;
     const tempFilePath = path.join(os.tmpdir(), tempFileName);
 
-    const timeoutMs = this.params.timeout ?? 3600000;
-    const abortController = new AbortController();
-    const onAbort = () => abortController.abort();
-    signal.addEventListener('abort', onAbort);
-    const timeoutId = setTimeout(() => {
-      abortController.abort();
-    }, timeoutMs);
-
     try {
       // Add co-author to git commit commands
       const processedCommand = this.addCoAuthorToGitCommit(strippedCommand);
@@ -165,16 +156,15 @@ export class ShellToolInvocation extends BaseToolInvocation<
         finalCommand = finalCommand.trim() + ' &';
       }
 
-      // On Windows, append a keep-alive command to ensure the shell process
-      // stays alive even if the main command exits (e.g. spawns a detached child).
-      // This ensures we always have a valid PID for cleanup.
+      // On Windows, we rely on the race logic below to handle background tasks.
+      // We just ensure the command string is clean.
       if (isWindows && shouldRunInBackground) {
-        // Remove trailing & if present to avoid syntax errors (e.g. "cmd & & ping")
         let cmd = finalCommand.trim();
+        // Remove trailing & (common Linux habit, invalid on Windows at end of line)
         while (cmd.endsWith('&')) {
           cmd = cmd.slice(0, -1).trim();
         }
-        finalCommand = cmd + ' && ping -n 86400 127.0.0.1 >nul';
+        finalCommand = cmd;
       }
 
       // pgrep is not available on Windows, so we can't get background PIDs
@@ -239,7 +229,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
               lastUpdateTime = Date.now();
             }
           },
-          abortController.signal,
+          signal,
           this.config.getShouldUseNodePtyShell(),
           shellExecutionConfig ?? {},
         );
@@ -277,7 +267,6 @@ export class ShellToolInvocation extends BaseToolInvocation<
           ];
 
           if (errorPatterns.some((pattern) => outputStr.includes(pattern))) {
-            abortController.abort();
             return {
               llmContent: `Command failed to start: ${outputStr}`,
               returnDisplay: `Command failed to start: ${outputStr}`,
@@ -407,8 +396,6 @@ export class ShellToolInvocation extends BaseToolInvocation<
         ...executionError,
       };
     } finally {
-      clearTimeout(timeoutId);
-      signal.removeEventListener('abort', onAbort);
       if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
       }
@@ -542,11 +529,6 @@ export class ShellTool extends BaseDeclarativeTool<
             description:
               '(OPTIONAL) The absolute path of the directory to run the command in. If not provided, the project root directory is used. Must be a directory within the workspace and must already exist.',
           },
-          timeout: {
-            type: 'number',
-            description:
-              '(OPTIONAL) The timeout in milliseconds for the command. If not provided, a default timeout (1 hour) is applied.',
-          },
         },
         required: ['command', 'is_background'],
       },
@@ -570,9 +552,6 @@ export class ShellTool extends BaseDeclarativeTool<
     }
     if (!params.command.trim()) {
       return 'Command cannot be empty.';
-    }
-    if (params.timeout !== undefined && params.timeout <= 0) {
-      return 'Timeout must be a positive number.';
     }
     if (getCommandRoots(params.command).length === 0) {
       return 'Could not identify command root to obtain permission from user.';

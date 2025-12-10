@@ -833,12 +833,12 @@ describe('ShellTool', () => {
   });
 
   describe('Windows background execution', () => {
-    it('should append keep-alive ping with && on Windows for background tasks', async () => {
+    it('should clean up trailing ampersand on Windows for background tasks', async () => {
       vi.mocked(os.platform).mockReturnValue('win32');
       const mockAbortSignal = new AbortController().signal;
 
       const invocation = shellTool.build({
-        command: 'npm start',
+        command: 'npm start &',
         is_background: true,
       });
 
@@ -859,7 +859,7 @@ describe('ShellTool', () => {
       await promise;
 
       expect(mockShellExecutionService).toHaveBeenCalledWith(
-        expect.stringContaining('npm start && ping -n 86400 127.0.0.1 >nul'),
+        'npm start',
         expect.any(String),
         expect.any(Function),
         expect.any(AbortSignal),
