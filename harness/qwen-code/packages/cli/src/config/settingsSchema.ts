@@ -263,7 +263,7 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description:
-          'Show Gemini CLI status and thoughts in the terminal window title',
+          'Show Qwen Code status and thoughts in the terminal window title',
         showInDialog: true,
       },
       hideTips: {
@@ -291,7 +291,7 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description:
-          'Hide the context summary (GEMINI.md, MCP servers) above the input.',
+          'Hide the context summary (QWEN.md, MCP servers) above the input.',
         showInDialog: true,
       },
       footer: {
@@ -497,7 +497,7 @@ const SETTINGS_SCHEMA = {
         category: 'Model',
         requiresRestart: false,
         default: undefined as string | undefined,
-        description: 'The Gemini model to use for conversations.',
+        description: 'The model to use for conversations.',
         showInDialog: false,
       },
       maxSessionTurns: {
