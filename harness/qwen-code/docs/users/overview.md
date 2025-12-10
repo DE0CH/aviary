@@ -32,7 +32,7 @@ cd your-project
 qwen
 ```
 
-Let's start with understanding your codebase. Try one of these commands:
+Select **Qwen OAuth (Free)** authentication and follow the prompts to log in. Then let's start with understanding your codebase. Try one of these commands:
 
 ```
 what does this project do?
