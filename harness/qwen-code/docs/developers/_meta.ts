@@ -4,8 +4,8 @@ export default {
     type: 'separator',
   },
   architecture: 'Architecture',
-  contributing: 'Contributing Guide',
   roadmap: 'Roadmap',
+  contributing: 'Contributing Guide',
   'Qwen Code SDK': {
     title: 'Qwen Code SDK',
     type: 'separator',
