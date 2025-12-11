@@ -22,13 +22,13 @@ Requires [Node.js 20+](https://nodejs.org/download), you can use `node -v` check
 
 If you have [Node.js or newer installed](https://nodejs.org/en/download/):
 
-```sh  
+```sh
 npm install -g @qwen-code/qwen-code@latest
 ```
 
 ### Homebrew (macOS, Linux)
 
-```sh  
+```sh
 brew install qwen-code
 ```
 
@@ -36,12 +36,12 @@ brew install qwen-code
 
 Qwen Code requires an account to use. When you start an interactive session with the `qwen` command, you'll need to log in:
 
-```bash  
+```bash
 # You'll be prompted to log in on first use
 qwen
 ```
 
-```bash  
+```bash
 # Follow the prompts to log in with your account
 /auth
 ```
@@ -60,7 +60,7 @@ Select `Qwen OAuth`, log in to your account and follow the prompts to confirm. O
 
 Open your terminal in any project directory and start Qwen Code:
 
-```bash  
+```bash
 # optiona
 cd /path/to/your/project
 # start qwen
@@ -69,7 +69,7 @@ qwen
 
 You'll see the Qwen Code welcome screen with your session information, recent conversations, and latest updates. Type `/help` for available commands.
 
-## Chat with Qwen Code
+## 🤖 Chat with Qwen Code
 
 ### Ask your first question
 
@@ -150,10 +150,10 @@ there's a bug where users can submit empty forms - fix it
 
 Qwen Code will:
 
-* Locate the relevant code
-* Understand the context
-* Implement a solution
-* Run tests if available
+- Locate the relevant code
+- Understand the context
+- Implement a solution
+- Run tests if available
 
 ### Test out other common workflows
 
@@ -209,10 +209,10 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
 ## Pro tips for beginners
 
 - Be specific with your requests
-	- Instead of: "fix the bug"
-	- Try: "fix the login bug where users see a blank screen after entering wrong credentials"
+  - Instead of: "fix the bug"
+  - Try: "fix the login bug where users see a blank screen after entering wrong credentials"
 - Use step-by-step instructions
-	- Break complex tasks into steps:
+  - Break complex tasks into steps:
     ```
     1. create a new database table for user profiles
     2. create an API endpoint to get and update user profiles
@@ -220,7 +220,8 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
     ```
 
 - Let Claude explore first
-	- Before making changes, let Claude understand your code:
+  - Before making changes, let Claude understand your code:
+
     ```
     analyze the database schema
     ```
@@ -229,11 +230,11 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
     build a dashboard showing products that are most frequently returned by our UK customers
     ```
 
- - Save time with shortcuts
-    - Press `?` to see all available keyboard shortcuts
-	- Use Tab for command completion
-    - Press ↑ for command history
-    - Type `/` to see all slash commands
+- Save time with shortcuts
+  - Press `?` to see all available keyboard shortcuts
+  - Use Tab for command completion
+  - Press ↑ for command history
+  - Type `/` to see all slash commands
 
 ## Getting help
 

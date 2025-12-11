@@ -1,4 +1,4 @@
-# Sandboxing in Qwen Code
+# Sandbox
 
 This document provides a guide to sandboxing in Qwen Code, including prerequisites, quickstart, and configuration.
 
