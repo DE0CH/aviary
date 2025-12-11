@@ -5,7 +5,10 @@
  */
 
 import type React from 'react';
+import { Box, Text } from 'ink';
 import { StatsDisplay } from './StatsDisplay.js';
+import { useSessionStats } from '../contexts/SessionContext.js';
+import { theme } from '../semantic-colors.js';
 import { t } from '../../i18n/index.js';
 
 interface SessionSummaryDisplayProps {
@@ -14,9 +17,21 @@ interface SessionSummaryDisplayProps {
 
 export const SessionSummaryDisplay: React.FC<SessionSummaryDisplayProps> = ({
   duration,
-}) => (
-  <StatsDisplay
-    title={t('Agent powering down. Goodbye!')}
-    duration={duration}
-  />
-);
+}) => {
+  const { stats } = useSessionStats();
+
+  return (
+    <>
+      <StatsDisplay
+        title={t('Agent powering down. Goodbye!')}
+        duration={duration}
+      />
+      <Box marginTop={1}>
+        <Text color={theme.text.secondary}>
+          {t('To continue this session, run')}{' '}
+          <Text color={theme.text.accent}>qwen --resume {stats.sessionId}</Text>
+        </Text>
+      </Box>
+    </>
+  );
+};

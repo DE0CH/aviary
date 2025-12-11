@@ -20,9 +20,13 @@ vi.mock('../contexts/SessionContext.js', async (importOriginal) => {
 
 const useSessionStatsMock = vi.mocked(SessionContext.useSessionStats);
 
-const renderWithMockedStats = (metrics: SessionMetrics) => {
+const renderWithMockedStats = (
+  metrics: SessionMetrics,
+  sessionId: string = 'test-session-id-12345',
+) => {
   useSessionStatsMock.mockReturnValue({
     stats: {
+      sessionId,
       sessionStartTime: new Date(),
       metrics,
       lastPromptTokenCount: 0,
@@ -70,6 +74,8 @@ describe('<SessionSummaryDisplay />', () => {
     const output = lastFrame();
 
     expect(output).toContain('Agent powering down. Goodbye!');
+    expect(output).toContain('To continue this session, run');
+    expect(output).toContain('qwen --resume test-session-id-12345');
     expect(output).toMatchSnapshot();
   });
 });
