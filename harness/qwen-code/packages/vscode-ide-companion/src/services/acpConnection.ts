@@ -31,6 +31,8 @@ export class AcpConnection {
   private child: ChildProcess | null = null;
   private pendingRequests = new Map<number, PendingRequest<unknown>>();
   private nextRequestId = { value: 0 };
+  // Deduplicate concurrent authenticate calls (across retry paths)
+  private static authInFlight: Promise<AcpResponse> | null = null;
   // Remember the working dir provided at connect() so later ACP calls
   // that require cwd (e.g. session/list) can include it.
   private workingDir: string = process.cwd();
@@ -271,12 +273,23 @@ export class AcpConnection {
    * @returns Authentication response
    */
   async authenticate(methodId?: string): Promise<AcpResponse> {
-    return this.sessionManager.authenticate(
-      methodId,
-      this.child,
-      this.pendingRequests,
-      this.nextRequestId,
-    );
+    if (AcpConnection.authInFlight) {
+      return AcpConnection.authInFlight;
+    }
+
+    const p = this.sessionManager
+      .authenticate(
+        methodId,
+        this.child,
+        this.pendingRequests,
+        this.nextRequestId,
+      )
+      .finally(() => {
+        AcpConnection.authInFlight = null;
+      });
+
+    AcpConnection.authInFlight = p;
+    return p;
   }
 
   /**

@@ -5,6 +5,7 @@
  */
 
 import type * as vscode from 'vscode';
+import { createConsoleLogger, getConsoleLogger } from '../utils/logger.js';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -21,6 +22,9 @@ export class AuthStateManager {
   private static context: vscode.ExtensionContext | null = null;
   private static readonly AUTH_STATE_KEY = 'qwen.authState';
   private static readonly AUTH_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+  private static consoleLog: (...args: unknown[]) => void = getConsoleLogger();
+  // Deduplicate concurrent auth flows (e.g., multiple tabs prompting login)
+  private static authFlowInFlight: Promise<unknown> | null = null;
   private constructor() {}
 
   /**
@@ -34,9 +38,35 @@ export class AuthStateManager {
     // If a context is provided, update the static context
     if (context) {
       AuthStateManager.context = context;
+      AuthStateManager.consoleLog = createConsoleLogger(
+        context,
+        'AuthStateManager',
+      );
     }
 
     return AuthStateManager.instance;
+  }
+
+  /**
+   * Run an auth-related flow exclusively. If another flow is already running,
+   * return the same promise to prevent duplicate login prompts.
+   */
+  static runExclusiveAuth<T>(task: () => Promise<T>): Promise<T> {
+    if (AuthStateManager.authFlowInFlight) {
+      return AuthStateManager.authFlowInFlight as Promise<T>;
+    }
+
+    const p = Promise.resolve()
+      .then(task)
+      .finally(() => {
+        // Clear only if this promise is still the active one
+        if (AuthStateManager.authFlowInFlight === p) {
+          AuthStateManager.authFlowInFlight = null;
+        }
+      });
+
+    AuthStateManager.authFlowInFlight = p;
+    return p as Promise<T>;
   }
 
   /**
@@ -46,17 +76,19 @@ export class AuthStateManager {
     const state = await this.getAuthState();
 
     if (!state) {
-      console.log('[AuthStateManager] No cached auth state found');
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] No cached auth state found',
+      );
       return false;
     }
 
-    console.log('[AuthStateManager] Found cached auth state:', {
+    AuthStateManager.consoleLog('[AuthStateManager] Found cached auth state:', {
       workingDir: state.workingDir,
       authMethod: state.authMethod,
       timestamp: new Date(state.timestamp).toISOString(),
       isAuthenticated: state.isAuthenticated,
     });
-    console.log('[AuthStateManager] Checking against:', {
+    AuthStateManager.consoleLog('[AuthStateManager] Checking against:', {
       workingDir,
       authMethod,
     });
@@ -67,8 +99,8 @@ export class AuthStateManager {
       now - state.timestamp > AuthStateManager.AUTH_CACHE_DURATION;
 
     if (isExpired) {
-      console.log('[AuthStateManager] Cached auth expired');
-      console.log(
+      AuthStateManager.consoleLog('[AuthStateManager] Cached auth expired');
+      AuthStateManager.consoleLog(
         '[AuthStateManager] Cache age:',
         Math.floor((now - state.timestamp) / 1000 / 60),
         'minutes',
@@ -82,15 +114,29 @@ export class AuthStateManager {
       state.workingDir === workingDir && state.authMethod === authMethod;
 
     if (!isSameContext) {
-      console.log('[AuthStateManager] Working dir or auth method changed');
-      console.log('[AuthStateManager] Cached workingDir:', state.workingDir);
-      console.log('[AuthStateManager] Current workingDir:', workingDir);
-      console.log('[AuthStateManager] Cached authMethod:', state.authMethod);
-      console.log('[AuthStateManager] Current authMethod:', authMethod);
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] Working dir or auth method changed',
+      );
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] Cached workingDir:',
+        state.workingDir,
+      );
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] Current workingDir:',
+        workingDir,
+      );
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] Cached authMethod:',
+        state.authMethod,
+      );
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] Current authMethod:',
+        authMethod,
+      );
       return false;
     }
 
-    console.log('[AuthStateManager] Valid cached auth found');
+    AuthStateManager.consoleLog('[AuthStateManager] Valid cached auth found');
     return state.isAuthenticated;
   }
 
@@ -100,7 +146,10 @@ export class AuthStateManager {
    */
   async debugAuthState(): Promise<void> {
     const state = await this.getAuthState();
-    console.log('[AuthStateManager] DEBUG - Current auth state:', state);
+    AuthStateManager.consoleLog(
+      '[AuthStateManager] DEBUG - Current auth state:',
+      state,
+    );
 
     if (state) {
       const now = Date.now();
@@ -108,9 +157,16 @@ export class AuthStateManager {
       const isExpired =
         now - state.timestamp > AuthStateManager.AUTH_CACHE_DURATION;
 
-      console.log('[AuthStateManager] DEBUG - Auth state age:', age, 'minutes');
-      console.log('[AuthStateManager] DEBUG - Auth state expired:', isExpired);
-      console.log(
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] DEBUG - Auth state age:',
+        age,
+        'minutes',
+      );
+      AuthStateManager.consoleLog(
+        '[AuthStateManager] DEBUG - Auth state expired:',
+        isExpired,
+      );
+      AuthStateManager.consoleLog(
         '[AuthStateManager] DEBUG - Auth state valid:',
         state.isAuthenticated,
       );
@@ -135,7 +191,7 @@ export class AuthStateManager {
       timestamp: Date.now(),
     };
 
-    console.log('[AuthStateManager] Saving auth state:', {
+    AuthStateManager.consoleLog('[AuthStateManager] Saving auth state:', {
       workingDir,
       authMethod,
       timestamp: new Date(state.timestamp).toISOString(),
@@ -145,11 +201,14 @@ export class AuthStateManager {
       AuthStateManager.AUTH_STATE_KEY,
       state,
     );
-    console.log('[AuthStateManager] Auth state saved');
+    AuthStateManager.consoleLog('[AuthStateManager] Auth state saved');
 
     // Verify the state was saved correctly
     const savedState = await this.getAuthState();
-    console.log('[AuthStateManager] Verified saved state:', savedState);
+    AuthStateManager.consoleLog(
+      '[AuthStateManager] Verified saved state:',
+      savedState,
+    );
   }
 
   /**
@@ -163,9 +222,9 @@ export class AuthStateManager {
       );
     }
 
-    console.log('[AuthStateManager] Clearing auth state');
+    AuthStateManager.consoleLog('[AuthStateManager] Clearing auth state');
     const currentState = await this.getAuthState();
-    console.log(
+    AuthStateManager.consoleLog(
       '[AuthStateManager] Current state before clearing:',
       currentState,
     );
@@ -174,11 +233,14 @@ export class AuthStateManager {
       AuthStateManager.AUTH_STATE_KEY,
       undefined,
     );
-    console.log('[AuthStateManager] Auth state cleared');
+    AuthStateManager.consoleLog('[AuthStateManager] Auth state cleared');
 
     // Verify the state was cleared
     const newState = await this.getAuthState();
-    console.log('[AuthStateManager] State after clearing:', newState);
+    AuthStateManager.consoleLog(
+      '[AuthStateManager] State after clearing:',
+      newState,
+    );
   }
 
   /**
@@ -187,17 +249,15 @@ export class AuthStateManager {
   private async getAuthState(): Promise<AuthState | undefined> {
     // Ensure we have a valid context
     if (!AuthStateManager.context) {
-      console.log(
+      AuthStateManager.consoleLog(
         '[AuthStateManager] No context available for getting auth state',
       );
       return undefined;
     }
 
-    const a = AuthStateManager.context.globalState.get<AuthState>(
+    return AuthStateManager.context.globalState.get<AuthState>(
       AuthStateManager.AUTH_STATE_KEY,
     );
-    console.log('[AuthStateManager] Auth state:', a);
-    return a;
   }
 
   /**

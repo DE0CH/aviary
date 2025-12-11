@@ -8,7 +8,11 @@ import * as vscode from 'vscode';
 import { IDEServer } from './ide-server.js';
 import semver from 'semver';
 import { DiffContentProvider, DiffManager } from './diff-manager.js';
-import { createLogger } from './utils/logger.js';
+import {
+  createLogger,
+  getConsoleLogger,
+  initSharedConsoleLogger,
+} from './utils/logger.js';
 import {
   detectIdeFromEnv,
   IDE_DEFINITIONS,
@@ -105,6 +109,8 @@ async function checkForUpdates(
 
 export async function activate(context: vscode.ExtensionContext) {
   logger = vscode.window.createOutputChannel('Qwen Code Companion');
+  initSharedConsoleLogger(context);
+  const consoleLog = getConsoleLogger();
   log = createLogger(context, logger);
   log('Extension activated');
 
@@ -142,18 +148,18 @@ export async function activate(context: vscode.ExtensionContext) {
         webviewPanel: vscode.WebviewPanel,
         state: unknown,
       ) {
-        console.log(
+        consoleLog(
           '[Extension] Deserializing WebView panel with state:',
           state,
         );
 
         // Create a new provider for the restored panel
         const provider = createWebViewProvider();
-        console.log('[Extension] Provider created for deserialization');
+        consoleLog('[Extension] Provider created for deserialization');
 
         // Restore state if available BEFORE restoring the panel
         if (state && typeof state === 'object') {
-          console.log('[Extension] Restoring state:', state);
+          consoleLog('[Extension] Restoring state:', state);
           provider.restoreState(
             state as {
               conversationId: string | null;
@@ -161,11 +167,11 @@ export async function activate(context: vscode.ExtensionContext) {
             },
           );
         } else {
-          console.log('[Extension] No state to restore or invalid state');
+          consoleLog('[Extension] No state to restore or invalid state');
         }
 
         await provider.restorePanel(webviewPanel);
-        console.log('[Extension] Panel restore completed');
+        consoleLog('[Extension] Panel restore completed');
 
         log('WebView panel restored from serialization');
       },
@@ -206,7 +212,6 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         console.warn('[Extension] Auto-allow on diff.accept failed:', err);
       }
-      console.log('[Extension] Diff accepted');
     }),
     vscode.commands.registerCommand('qwen.diff.cancel', (uri?: vscode.Uri) => {
       const docUri = uri ?? vscode.window.activeTextEditor?.document.uri;
@@ -223,7 +228,6 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         console.warn('[Extension] Auto-reject on diff.cancel failed:', err);
       }
-      console.log('[Extension] Diff cancelled');
     })),
     vscode.commands.registerCommand('qwen.diff.closeAll', async () => {
       try {

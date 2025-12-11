@@ -45,9 +45,11 @@ import { FileIcon, UserIcon } from './components/icons/index.js';
 import { ApprovalMode, NEXT_APPROVAL_MODE } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/acpTypes.js';
 import type { PlanEntry } from '../types/chatTypes.js';
+import { createWebviewConsoleLogger } from './utils/logger.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
+  const consoleLog = useMemo(() => createWebviewConsoleLogger('App'), []);
 
   // Core hooks
   const sessionManagement = useSessionManagement(vscode);
@@ -167,7 +169,7 @@ export const App: React.FC = () => {
   }, [fileContext.workspaceFiles, completion.isOpen, completion.triggerChar]);
 
   // Message submission
-  const handleSubmit = useMessageSubmit({
+  const { handleSubmit: submitMessage } = useMessageSubmit({
     inputText,
     setInputText,
     messageHandling,
@@ -487,6 +489,22 @@ export const App: React.FC = () => {
     setThinkingEnabled((prev) => !prev);
   };
 
+  // When user sends a message after scrolling up, re-pin and jump to the bottom
+  const handleSubmitWithScroll = useCallback(
+    (e: React.FormEvent) => {
+      setPinnedToBottom(true);
+
+      const container = messagesContainerRef.current;
+      if (container) {
+        const top = container.scrollHeight - container.clientHeight;
+        container.scrollTo({ top });
+      }
+
+      submitMessage(e);
+    },
+    [submitMessage],
+  );
+
   // Create unified message array containing all types of messages and tool calls
   const allMessages = useMemo<
     Array<{
@@ -524,7 +542,7 @@ export const App: React.FC = () => {
     );
   }, [messageHandling.messages, inProgressToolCalls, completedToolCalls]);
 
-  console.log('[App] Rendering messages:', allMessages);
+  consoleLog('[App] Rendering messages:', allMessages);
 
   // Render all messages and tool calls
   const renderMessages = useCallback<() => React.ReactNode>(
@@ -686,7 +704,7 @@ export const App: React.FC = () => {
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
         onKeyDown={() => {}}
-        onSubmit={handleSubmit.handleSubmit}
+        onSubmit={handleSubmitWithScroll}
         onCancel={handleCancel}
         onToggleEditMode={handleToggleEditMode}
         onToggleThinking={handleToggleThinking}

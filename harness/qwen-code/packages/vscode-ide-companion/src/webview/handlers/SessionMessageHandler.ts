@@ -291,6 +291,41 @@ export class SessionMessageHandler extends BaseMessageHandler {
       return;
     }
 
+    // Ensure an ACP session exists before sending prompt
+    if (!this.agentManager.currentSessionId) {
+      try {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+        await this.agentManager.createNewSession(workingDir);
+      } catch (createErr) {
+        console.error(
+          '[SessionMessageHandler] Failed to create session before sending message:',
+          createErr,
+        );
+        const errorMsg =
+          createErr instanceof Error ? createErr.message : String(createErr);
+        if (
+          errorMsg.includes('Authentication required') ||
+          errorMsg.includes('(code: -32000)')
+        ) {
+          const result = await vscode.window.showWarningMessage(
+            'Your login session has expired or is invalid. Please login again to continue using Qwen Code.',
+            'Login Now',
+          );
+          if (result === 'Login Now') {
+            if (this.loginHandler) {
+              await this.loginHandler();
+            } else {
+              await vscode.commands.executeCommand('qwen-code.login');
+            }
+          }
+          return;
+        }
+        vscode.window.showErrorMessage(`Failed to create session: ${errorMsg}`);
+        return;
+      }
+    }
+
     // Send to agent
     try {
       this.resetStreamContent();

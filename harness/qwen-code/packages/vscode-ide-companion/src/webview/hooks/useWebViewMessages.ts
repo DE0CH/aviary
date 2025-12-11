@@ -14,6 +14,7 @@ import type {
 import type { ToolCallUpdate } from '../../types/chatTypes.js';
 import type { ApprovalModeValue } from '../../types/acpTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
+import { createWebviewConsoleLogger } from '../utils/logger.js';
 
 interface UseWebViewMessagesProps {
   // Session management
@@ -129,6 +130,7 @@ export const useWebViewMessages = ({
 }: UseWebViewMessagesProps) => {
   // VS Code API for posting messages back to the extension host
   const vscode = useVSCode();
+  const consoleLog = useRef(createWebviewConsoleLogger('WebViewMessages'));
   // Track active long-running tool calls (execute/bash/command) so we can
   // keep the bottom "waiting" message visible until all of them complete.
   const activeExecToolCallsRef = useRef<Set<string>>(new Set());
@@ -227,40 +229,26 @@ export const useWebViewMessages = ({
           break;
         }
 
-        // case 'cliNotInstalled': {
-        //   // Show CLI not installed message
-        //   const errorMsg =
-        //     (message?.data?.error as string) ||
-        //     'Qwen Code CLI is not installed. Please install it to enable full functionality.';
+        case 'agentConnected': {
+          // Agent connected successfully; clear any pending spinner
+          handlers.messageHandling.clearWaitingForResponse();
+          break;
+        }
 
-        //   handlers.messageHandling.addMessage({
-        //     role: 'assistant',
-        //     content: `Qwen CLI is not installed. Please install it to enable full functionality.\n\nError: ${errorMsg}\n\nInstallation instructions:\n1. Install via npm:\n   npm install -g @qwen-code/qwen-code@latest\n\n2. After installation, reload VS Code or restart the extension.`,
-        //     timestamp: Date.now(),
-        //   });
-        //   break;
-        // }
+        case 'agentConnectionError': {
+          // Agent connection failed; surface the error and unblock the UI
+          handlers.messageHandling.clearWaitingForResponse();
+          const errorMsg =
+            (message?.data?.message as string) ||
+            'Failed to connect to Qwen agent.';
 
-        // case 'agentConnected': {
-        //   // Agent connected successfully
-        //   handlers.messageHandling.clearWaitingForResponse();
-        //   break;
-        // }
-
-        // case 'agentConnectionError': {
-        //   // Agent connection failed
-        //   handlers.messageHandling.clearWaitingForResponse();
-        //   const errorMsg =
-        //     (message?.data?.message as string) ||
-        //     'Failed to connect to Qwen agent.';
-
-        //   handlers.messageHandling.addMessage({
-        //     role: 'assistant',
-        //     content: `Failed to connect to Qwen agent: ${errorMsg}\nYou can still use the chat UI, but messages won't be sent to AI.`,
-        //     timestamp: Date.now(),
-        //   });
-        //   break;
-        // }
+          handlers.messageHandling.addMessage({
+            role: 'assistant',
+            content: `Failed to connect to Qwen agent: ${errorMsg}\nYou can still use the chat UI, but messages won't be sent to AI.`,
+            timestamp: Date.now(),
+          });
+          break;
+        }
 
         case 'loginError': {
           // Clear loading state and show error notice
@@ -765,7 +753,10 @@ export const useWebViewMessages = ({
             path: string;
           }>;
           if (files) {
-            console.log('[WebView] Received workspaceFiles:', files.length);
+            consoleLog.current(
+              '[WebView] Received workspaceFiles:',
+              files.length,
+            );
             handlers.fileContext.setWorkspaceFiles(files);
           }
           break;
