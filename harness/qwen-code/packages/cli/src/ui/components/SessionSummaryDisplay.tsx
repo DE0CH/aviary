@@ -20,18 +20,25 @@ export const SessionSummaryDisplay: React.FC<SessionSummaryDisplayProps> = ({
 }) => {
   const { stats } = useSessionStats();
 
+  // Only show the resume message if there were messages in the session
+  const hasMessages = stats.promptCount > 0;
+
   return (
     <>
       <StatsDisplay
         title={t('Agent powering down. Goodbye!')}
         duration={duration}
       />
-      <Box marginTop={1}>
-        <Text color={theme.text.secondary}>
-          {t('To continue this session, run')}{' '}
-          <Text color={theme.text.accent}>qwen --resume {stats.sessionId}</Text>
-        </Text>
-      </Box>
+      {hasMessages && (
+        <Box marginTop={1}>
+          <Text color={theme.text.secondary}>
+            {t('To continue this session, run')}{' '}
+            <Text color={theme.text.accent}>
+              qwen --resume {stats.sessionId}
+            </Text>
+          </Text>
+        </Box>
+      )}
     </>
   );
 };

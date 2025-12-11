@@ -23,6 +23,7 @@ const useSessionStatsMock = vi.mocked(SessionContext.useSessionStats);
 const renderWithMockedStats = (
   metrics: SessionMetrics,
   sessionId: string = 'test-session-id-12345',
+  promptCount: number = 5,
 ) => {
   useSessionStatsMock.mockReturnValue({
     stats: {
@@ -30,10 +31,10 @@ const renderWithMockedStats = (
       sessionStartTime: new Date(),
       metrics,
       lastPromptTokenCount: 0,
-      promptCount: 5,
+      promptCount,
     },
 
-    getPromptCount: () => 5,
+    getPromptCount: () => promptCount,
     startNewPrompt: vi.fn(),
   });
 
@@ -77,5 +78,35 @@ describe('<SessionSummaryDisplay />', () => {
     expect(output).toContain('To continue this session, run');
     expect(output).toContain('qwen --resume test-session-id-12345');
     expect(output).toMatchSnapshot();
+  });
+
+  it('does not show resume message when there are no messages', () => {
+    const metrics: SessionMetrics = {
+      models: {},
+      tools: {
+        totalCalls: 0,
+        totalSuccess: 0,
+        totalFail: 0,
+        totalDurationMs: 0,
+        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        byName: {},
+      },
+      files: {
+        totalLinesAdded: 0,
+        totalLinesRemoved: 0,
+      },
+    };
+
+    // Pass promptCount = 0 to simulate no messages
+    const { lastFrame } = renderWithMockedStats(
+      metrics,
+      'test-session-id-12345',
+      0,
+    );
+    const output = lastFrame();
+
+    expect(output).toContain('Agent powering down. Goodbye!');
+    expect(output).not.toContain('To continue this session, run');
+    expect(output).not.toContain('qwen --resume');
   });
 });
