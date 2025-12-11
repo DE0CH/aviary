@@ -10,9 +10,9 @@ export default {
     type: 'separator',
     title: 'Outside of the terminal', // Title is optional
   },
-  'integration-github-action': 'Github Action',
-  'integration-vscode': 'VSCode Extension',
+  'integration-vscode': 'Visual Studio Code',
   'integration-zed': 'Zed IDE',
+  'integration-github-action': 'Github Actions',
   'Code with Qwen Code': {
     type: 'separator',
     title: 'Code with Qwen Code', // Title is optional
