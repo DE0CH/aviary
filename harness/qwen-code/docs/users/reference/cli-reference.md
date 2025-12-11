@@ -225,12 +225,23 @@ Review {{args}}, reference standards:
 
 #### "Pure Function Refactoring" Command Creation Steps Table
 
-| Operation                     | Command/Code                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1️⃣ Create directory structure | `mkdir -p ~/.qwen/commands/refactor`                                                                                                                                                                                                                                                                                                                      |
-| 2️⃣ Create command file        | `touch ~/.qwen/commands/refactor/pure.toml`                                                                                                                                                                                                                                                                                                               |
-| 3️⃣ Edit command content       | `<br># ~/.qwen/commands/refactor/pure.toml<br>description = "Refactor code to pure function"<br>prompt = """<br>Please analyze code in current context, refactor to pure function.<br>Requirements:<br>1. Provide refactored code<br>2. Explain key changes and pure function characteristic implementation<br>3. Maintain function unchanged<br>"""<br>` |
-| 4️⃣ Test command               | `@file.js` → `/refactor:pure`                                                                                                                                                                                                                                                                                                                             |
+| Operation                     | Command/Code                                |
+| ----------------------------- | ------------------------------------------- |
+| 1️⃣ Create directory structure | `mkdir -p ~/.qwen/commands/refactor`        |
+| 2️⃣ Create command file        | `touch ~/.qwen/commands/refactor/pure.toml` |
+| 3️⃣ Edit command content       | 参考下方代码                                |
+| 4️⃣ Test command               | `@file.js` → `/refactor:pure`               |
+
+```# ~/.qwen/commands/refactor/pure.toml
+description = "Refactor code to pure function"
+prompt = """
+	Please analyze code in current context, refactor to pure function.
+	Requirements:
+		1. Provide refactored code
+		2. Explain key changes and pure function characteristic implementation
+		3. Maintain function unchanged
+	"""
+```
 
 ### 💡 Custom Command Best Practices Summary
 

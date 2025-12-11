@@ -4,7 +4,7 @@
 
 This quickstart guide will have you using AI-powered coding assistance in just a few minutes. By the end, you'll understand how to use Qwen Code for common development tasks.
 
-## 👉 Before you begin
+## Before you begin
 
 Make sure you have:
 
@@ -16,7 +16,7 @@ Make sure you have:
 
 To install Qwen Code, use one of the following methods:
 
-### NPM(recommended)
+### NPM (recommended)
 
 Requires [Node.js 20+](https://nodejs.org/download), you can use `node -v` check the version. If it's not installed, use the following command to install it.
 
@@ -69,7 +69,7 @@ qwen
 
 You'll see the Qwen Code welcome screen with your session information, recent conversations, and latest updates. Type `/help` for available commands.
 
-## 🤖 Chat with Qwen Code
+## Chat with Qwen Code
 
 ### Ask your first question
 
