@@ -119,11 +119,6 @@ export class QwenConnectionHandler {
 
           // Save auth state
           if (authStateManager) {
-            console.log(
-              '[QwenAgentManager] Saving auth state after successful authentication',
-            );
-            console.log('[QwenAgentManager] Working dir for save:', workingDir);
-            console.log('[QwenAgentManager] Auth method for save:', authMethod);
             await authStateManager.saveAuthState(workingDir, authMethod);
             console.log('[QwenAgentManager] Auth state save completed');
           }
@@ -145,6 +140,7 @@ export class QwenConnectionHandler {
       }
 
       try {
+        await setTimeout(() => Promise.resolve(), 100); // slight delay to ensure auth state is settled
         console.log(
           '[QwenAgentManager] Creating new session after authentication...',
         );

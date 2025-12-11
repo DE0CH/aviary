@@ -134,7 +134,7 @@ export class WebViewProvider {
     // Note: Tool call updates are handled in handleSessionUpdate within QwenAgentManager
     // and sent via onStreamChunk callback
     this.agentManager.onToolCall((update) => {
-      // Always surface tool calls; they are part of the live assistant flow.
+      // Always surface tool calls; they are part of the live assistant process.
       // Cast update to access sessionUpdate property
       const updateData = update as unknown as Record<string, unknown>;
 
@@ -673,7 +673,7 @@ export class WebViewProvider {
       !!this.authStateManager,
     );
 
-    // If a login/connection flow is already running, reuse it to avoid double prompts
+    // If a login/connection process is already running, reuse it to avoid double prompts
     const p = Promise.resolve(
       vscode.window.withProgress(
         {

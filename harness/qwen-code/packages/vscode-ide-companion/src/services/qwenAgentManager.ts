@@ -1222,6 +1222,7 @@ export class QwenAgentManager {
               if (effectiveAuth) {
                 await effectiveAuth.saveAuthState(workingDir, authMethod);
               }
+              await setTimeout(() => Promise.resolve(), 100); // slight delay to ensure auth state is settled
               await this.connection.newSession(workingDir);
             } catch (reauthErr) {
               // Clear potentially stale cache on failure and rethrow

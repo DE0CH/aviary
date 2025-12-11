@@ -21,8 +21,8 @@ export class AuthStateManager {
   private static context: vscode.ExtensionContext | null = null;
   private static readonly AUTH_STATE_KEY = 'qwen.authState';
   private static readonly AUTH_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-  // Deduplicate concurrent auth flows (e.g., multiple tabs prompting login)
-  private static authFlowInFlight: Promise<unknown> | null = null;
+  // Deduplicate concurrent auth processes (e.g., multiple tabs prompting login)
+  private static authProcessInFlight: Promise<unknown> | null = null;
   private constructor() {}
 
   /**
@@ -42,24 +42,38 @@ export class AuthStateManager {
   }
 
   /**
-   * Run an auth-related flow exclusively. If another flow is already running,
-   * return the same promise to prevent duplicate login prompts.
+   * Run an auth-related flow with optional queueing.
+   * - 默认：复用在跑的 promise，避免重复弹窗。
+   * - forceNew: true 时，等待当前 flow 结束后再串行启动新的，用于强制重登。
    */
-  static runExclusiveAuth<T>(task: () => Promise<T>): Promise<T> {
-    if (AuthStateManager.authFlowInFlight) {
-      return AuthStateManager.authFlowInFlight as Promise<T>;
+  static runExclusiveAuth<T>(
+    task: () => Promise<T>,
+    options?: { forceNew?: boolean },
+  ): Promise<T> {
+    if (AuthStateManager.authProcessInFlight) {
+      if (!options?.forceNew) {
+        return AuthStateManager.authProcessInFlight as Promise<T>;
+      }
+      // queue a new flow after current finishes
+      const next = AuthStateManager.authProcessInFlight
+        .catch(() => {
+          /* ignore previous failure for next run */
+        })
+        .then(() =>
+          AuthStateManager.runExclusiveAuth(task, { forceNew: false }),
+        );
+      return next as Promise<T>;
     }
 
     const p = Promise.resolve()
       .then(task)
       .finally(() => {
-        // Clear only if this promise is still the active one
-        if (AuthStateManager.authFlowInFlight === p) {
-          AuthStateManager.authFlowInFlight = null;
+        if (AuthStateManager.authProcessInFlight === p) {
+          AuthStateManager.authProcessInFlight = null;
         }
       });
 
-    AuthStateManager.authFlowInFlight = p;
+    AuthStateManager.authProcessInFlight = p;
     return p as Promise<T>;
   }
 
