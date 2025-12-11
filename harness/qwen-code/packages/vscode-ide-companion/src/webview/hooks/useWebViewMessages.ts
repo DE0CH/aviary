@@ -14,7 +14,6 @@ import type {
 import type { ToolCallUpdate } from '../../types/chatTypes.js';
 import type { ApprovalModeValue } from '../../types/acpTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
-import { createWebviewConsoleLogger } from '../utils/logger.js';
 
 interface UseWebViewMessagesProps {
   // Session management
@@ -130,7 +129,6 @@ export const useWebViewMessages = ({
 }: UseWebViewMessagesProps) => {
   // VS Code API for posting messages back to the extension host
   const vscode = useVSCode();
-  const consoleLog = useRef(createWebviewConsoleLogger('WebViewMessages'));
   // Track active long-running tool calls (execute/bash/command) so we can
   // keep the bottom "waiting" message visible until all of them complete.
   const activeExecToolCallsRef = useRef<Set<string>>(new Set());
@@ -753,10 +751,7 @@ export const useWebViewMessages = ({
             path: string;
           }>;
           if (files) {
-            consoleLog.current(
-              '[WebView] Received workspaceFiles:',
-              files.length,
-            );
+            console.log('[WebView] Received workspaceFiles:', files.length);
             handlers.fileContext.setWorkspaceFiles(files);
           }
           break;

@@ -31,6 +31,7 @@ export class AcpConnection {
   private child: ChildProcess | null = null;
   private pendingRequests = new Map<number, PendingRequest<unknown>>();
   private nextRequestId = { value: 0 };
+
   // Deduplicate concurrent authenticate calls (across retry paths)
   private static authInFlight: Promise<AcpResponse> | null = null;
   // Remember the working dir provided at connect() so later ACP calls

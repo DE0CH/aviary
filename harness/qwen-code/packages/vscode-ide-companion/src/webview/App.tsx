@@ -45,11 +45,9 @@ import { FileIcon, UserIcon } from './components/icons/index.js';
 import { ApprovalMode, NEXT_APPROVAL_MODE } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/acpTypes.js';
 import type { PlanEntry } from '../types/chatTypes.js';
-import { createWebviewConsoleLogger } from './utils/logger.js';
 
 export const App: React.FC = () => {
   const vscode = useVSCode();
-  const consoleLog = useMemo(() => createWebviewConsoleLogger('App'), []);
 
   // Core hooks
   const sessionManagement = useSessionManagement(vscode);
@@ -542,7 +540,7 @@ export const App: React.FC = () => {
     );
   }, [messageHandling.messages, inProgressToolCalls, completedToolCalls]);
 
-  consoleLog('[App] Rendering messages:', allMessages);
+  console.log('[App] Rendering messages:', allMessages);
 
   // Render all messages and tool calls
   const renderMessages = useCallback<() => React.ReactNode>(

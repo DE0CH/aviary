@@ -23,7 +23,6 @@ import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
 import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliVersionManager.js';
-import { getConsoleLogger } from '../utils/logger.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -51,10 +50,8 @@ export class QwenAgentManager {
 
   // Callback storage
   private callbacks: QwenAgentCallbacks = {};
-  private consoleLog: (...args: unknown[]) => void;
 
-  constructor(consoleLogger = getConsoleLogger()) {
-    this.consoleLog = consoleLogger;
+  constructor() {
     this.connection = new AcpConnection();
     this.sessionReader = new QwenSessionReader();
     this.sessionManager = new QwenSessionManager();
@@ -81,7 +78,7 @@ export class QwenAgentManager {
           ).update;
           const text = update?.content?.text || '';
           if (update?.sessionUpdate === 'user_message_chunk' && text) {
-            this.consoleLog(
+            console.log(
               '[QwenAgentManager] Rehydration: routing user message chunk',
             );
             this.callbacks.onMessage?.({
@@ -92,7 +89,7 @@ export class QwenAgentManager {
             return;
           }
           if (update?.sessionUpdate === 'agent_message_chunk' && text) {
-            this.consoleLog(
+            console.log(
               '[QwenAgentManager] Rehydration: routing agent message chunk',
             );
             this.callbacks.onMessage?.({
@@ -103,7 +100,7 @@ export class QwenAgentManager {
             return;
           }
           // For other types during rehydration, fall through to normal handler
-          this.consoleLog(
+          console.log(
             '[QwenAgentManager] Rehydration: non-text update, forwarding to handler',
           );
         }
@@ -262,7 +259,7 @@ export class QwenAgentManager {
    * @returns Session list
    */
   async getSessionList(): Promise<Array<Record<string, unknown>>> {
-    this.consoleLog(
+    console.log(
       '[QwenAgentManager] Getting session list with version-aware strategy',
     );
 
@@ -270,7 +267,7 @@ export class QwenAgentManager {
     const cliContextManager = CliContextManager.getInstance();
     const supportsSessionList = cliContextManager.supportsSessionList();
 
-    this.consoleLog(
+    console.log(
       '[QwenAgentManager] CLI supports session/list:',
       supportsSessionList,
     );
@@ -278,14 +275,11 @@ export class QwenAgentManager {
     // Try ACP method first if supported
     if (supportsSessionList) {
       try {
-        this.consoleLog(
+        console.log(
           '[QwenAgentManager] Attempting to get session list via ACP method',
         );
         const response = await this.connection.listSessions();
-        this.consoleLog(
-          '[QwenAgentManager] ACP session list response:',
-          response,
-        );
+        console.log('[QwenAgentManager] ACP session list response:', response);
 
         // sendRequest resolves with the JSON-RPC "result" directly
         // Newer CLI returns an object: { items: [...], nextCursor?, hasMore }
@@ -303,7 +297,7 @@ export class QwenAgentManager {
             : [];
         }
 
-        this.consoleLog(
+        console.log(
           '[QwenAgentManager] Sessions retrieved via ACP:',
           res,
           items.length,
@@ -322,7 +316,7 @@ export class QwenAgentManager {
             cwd: item.cwd,
           }));
 
-          this.consoleLog(
+          console.log(
             '[QwenAgentManager] Sessions retrieved via ACP:',
             sessions.length,
           );
@@ -338,11 +332,9 @@ export class QwenAgentManager {
 
     // Always fall back to file system method
     try {
-      this.consoleLog(
-        '[QwenAgentManager] Getting session list from file system',
-      );
+      console.log('[QwenAgentManager] Getting session list from file system');
       const sessions = await this.sessionReader.getAllSessions(undefined, true);
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Session list from file system (all projects):',
         sessions.length,
       );
@@ -360,7 +352,7 @@ export class QwenAgentManager {
         }),
       );
 
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Sessions retrieved from file system:',
         result.length,
       );
@@ -500,7 +492,7 @@ export class QwenAgentManager {
           const item = list.find(
             (s) => s.sessionId === sessionId || s.id === sessionId,
           );
-          this.consoleLog(
+          console.log(
             '[QwenAgentManager] Session list item for filePath lookup:',
             item,
           );
@@ -571,7 +563,7 @@ export class QwenAgentManager {
         }
       }
       // Simple linear reconstruction: filter user/assistant and sort by timestamp
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] JSONL records read:',
         records.length,
         filePath,
@@ -728,7 +720,7 @@ export class QwenAgentManager {
         // Handle other types if needed
       }
 
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] JSONL messages reconstructed:',
         msgs.length,
       );
@@ -866,7 +858,7 @@ export class QwenAgentManager {
     tag: string,
   ): Promise<{ success: boolean; message?: string }> {
     try {
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Saving session via /chat save command:',
         sessionId,
         'with tag:',
@@ -877,9 +869,7 @@ export class QwenAgentManager {
       // The CLI will handle this as a special command
       await this.connection.sendPrompt(`/chat save "${tag}"`);
 
-      this.consoleLog(
-        '[QwenAgentManager] /chat save command sent successfully',
-      );
+      console.log('[QwenAgentManager] /chat save command sent successfully');
       return {
         success: true,
         message: `Session saved with tag: ${tag}`,
@@ -926,14 +916,14 @@ export class QwenAgentManager {
     conversationId: string,
   ): Promise<{ success: boolean; tag?: string; message?: string }> {
     try {
-      this.consoleLog('[QwenAgentManager] ===== CHECKPOINT SAVE START =====');
-      this.consoleLog('[QwenAgentManager] Conversation ID:', conversationId);
-      this.consoleLog('[QwenAgentManager] Message count:', messages.length);
-      this.consoleLog(
+      console.log('[QwenAgentManager] ===== CHECKPOINT SAVE START =====');
+      console.log('[QwenAgentManager] Conversation ID:', conversationId);
+      console.log('[QwenAgentManager] Message count:', messages.length);
+      console.log(
         '[QwenAgentManager] Current working dir:',
         this.currentWorkingDir,
       );
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Current session ID (from CLI):',
         this.currentSessionId,
       );
@@ -1010,11 +1000,11 @@ export class QwenAgentManager {
     try {
       // Route upcoming session/update messages as discrete messages for replay
       this.rehydratingSessionId = sessionId;
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Rehydration start for session:',
         sessionId,
       );
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Attempting session/load via ACP for session:',
         sessionId,
       );
@@ -1022,7 +1012,7 @@ export class QwenAgentManager {
         sessionId,
         cwdOverride,
       );
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Session load succeeded. Response:',
         JSON.stringify(response).substring(0, 200),
       );
@@ -1062,10 +1052,7 @@ export class QwenAgentManager {
       throw error;
     } finally {
       // End rehydration routing regardless of outcome
-      this.consoleLog(
-        '[QwenAgentManager] Rehydration end for session:',
-        sessionId,
-      );
+      console.log('[QwenAgentManager] Rehydration end for session:', sessionId);
       this.rehydratingSessionId = null;
     }
   }
@@ -1078,7 +1065,7 @@ export class QwenAgentManager {
    * @returns Loaded session messages or null
    */
   async loadSession(sessionId: string): Promise<ChatMessage[] | null> {
-    this.consoleLog(
+    console.log(
       '[QwenAgentManager] Loading session with version-aware strategy:',
       sessionId,
     );
@@ -1087,7 +1074,7 @@ export class QwenAgentManager {
     const cliContextManager = CliContextManager.getInstance();
     const supportsSessionLoad = cliContextManager.supportsSessionLoad();
 
-    this.consoleLog(
+    console.log(
       '[QwenAgentManager] CLI supports session/load:',
       supportsSessionLoad,
     );
@@ -1095,13 +1082,11 @@ export class QwenAgentManager {
     // Try ACP method first if supported
     if (supportsSessionLoad) {
       try {
-        this.consoleLog(
+        console.log(
           '[QwenAgentManager] Attempting to load session via ACP method',
         );
         await this.loadSessionViaAcp(sessionId);
-        this.consoleLog(
-          '[QwenAgentManager] Session loaded successfully via ACP',
-        );
+        console.log('[QwenAgentManager] Session loaded successfully via ACP');
 
         // After loading via ACP, we still need to get messages from file system
         // In future, we might get them directly from the ACP response
@@ -1115,11 +1100,11 @@ export class QwenAgentManager {
 
     // Always fall back to file system method
     try {
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Loading session messages from file system',
       );
       const messages = await this.loadSessionMessagesFromFile(sessionId);
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Session messages loaded successfully from file system',
       );
       return messages;
@@ -1142,7 +1127,7 @@ export class QwenAgentManager {
     sessionId: string,
   ): Promise<ChatMessage[] | null> {
     try {
-      this.consoleLog(
+      console.log(
         '[QwenAgentManager] Loading session from file system:',
         sessionId,
       );
@@ -1154,7 +1139,7 @@ export class QwenAgentManager {
       );
 
       if (!session) {
-        this.consoleLog(
+        console.log(
           '[QwenAgentManager] Session not found in file system:',
           sessionId,
         );
@@ -1209,7 +1194,7 @@ export class QwenAgentManager {
       return this.sessionCreateInFlight;
     }
 
-    this.consoleLog('[QwenAgentManager] Creating new session...');
+    console.log('[QwenAgentManager] Creating new session...');
     // Prefer the provided authStateManager, otherwise fall back to the one
     // remembered during connect(). This prevents accidental re-auth in
     // fallback paths (e.g. session switching) when the handler didn't pass it.
@@ -1250,7 +1235,7 @@ export class QwenAgentManager {
           }
         }
         const newSessionId = this.connection.currentSessionId;
-        this.consoleLog(
+        console.log(
           '[QwenAgentManager] New session created with ID:',
           newSessionId,
         );
@@ -1276,7 +1261,7 @@ export class QwenAgentManager {
    * Cancel current prompt
    */
   async cancelCurrentPrompt(): Promise<void> {
-    this.consoleLog('[QwenAgentManager] Cancelling current prompt');
+    console.log('[QwenAgentManager] Cancelling current prompt');
     await this.connection.cancelSession();
   }
 

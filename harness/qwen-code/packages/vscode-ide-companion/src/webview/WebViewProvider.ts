@@ -16,7 +16,6 @@ import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { authMethod, type ApprovalModeValue } from '../types/acpTypes.js';
-import { createConsoleLogger } from '../utils/logger.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -33,15 +32,12 @@ export class WebViewProvider {
   private pendingPermissionResolve: ((optionId: string) => void) | null = null;
   // Track current ACP mode id to influence permission/diff behavior
   private currentModeId: ApprovalModeValue | null = null;
-  private consoleLog: (...args: unknown[]) => void;
 
   constructor(
     context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
   ) {
-    const agentConsoleLogger = createConsoleLogger(context, 'QwenAgentManager');
-    this.consoleLog = createConsoleLogger(context, 'WebViewProvider');
-    this.agentManager = new QwenAgentManager(agentConsoleLogger);
+    this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
     this.authStateManager = AuthStateManager.getInstance(context);
     this.panelManager = new PanelManager(extensionUri, () => {
@@ -384,7 +380,7 @@ export class WebViewProvider {
 
     // Set up state serialization
     newPanel.onDidChangeViewState(() => {
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] Panel view state changed, triggering serialization check',
       );
     });
@@ -514,7 +510,7 @@ export class WebViewProvider {
     }
 
     // Attempt to restore authentication state and initialize connection
-    this.consoleLog(
+    console.log(
       '[WebViewProvider] Attempting to restore auth state and connection...',
     );
     await this.attemptAuthStateRestoration();
@@ -536,26 +532,23 @@ export class WebViewProvider {
           workingDir,
           authMethod,
         );
-        this.consoleLog(
-          '[WebViewProvider] Has valid cached auth:',
-          hasValidAuth,
-        );
+        console.log('[WebViewProvider] Has valid cached auth:', hasValidAuth);
 
         if (hasValidAuth) {
-          this.consoleLog(
+          console.log(
             '[WebViewProvider] Valid auth found, attempting connection...',
           );
           // Try to connect with cached auth
           await this.initializeAgentConnection();
         } else {
-          this.consoleLog(
+          console.log(
             '[WebViewProvider] No valid auth found, rendering empty conversation',
           );
           // Render the chat UI immediately without connecting
           await this.initializeEmptyConversation();
         }
       } else {
-        this.consoleLog(
+        console.log(
           '[WebViewProvider] No auth state manager, rendering empty conversation',
         );
         await this.initializeEmptyConversation();
@@ -585,11 +578,11 @@ export class WebViewProvider {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] Starting initialization, workingDir:',
         workingDir,
       );
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] AuthStateManager available:',
         !!this.authStateManager,
       );
@@ -598,10 +591,10 @@ export class WebViewProvider {
       const cliDetection = await CliDetector.detectQwenCli();
 
       if (!cliDetection.isInstalled) {
-        this.consoleLog(
+        console.log(
           '[WebViewProvider] Qwen CLI not detected, skipping agent connection',
         );
-        this.consoleLog(
+        console.log(
           '[WebViewProvider] CLI detection error:',
           cliDetection.error,
         );
@@ -612,20 +605,20 @@ export class WebViewProvider {
         // Initialize empty conversation (can still browse history)
         await this.initializeEmptyConversation();
       } else {
-        this.consoleLog(
+        console.log(
           '[WebViewProvider] Qwen CLI detected, attempting connection...',
         );
-        this.consoleLog('[WebViewProvider] CLI path:', cliDetection.cliPath);
-        this.consoleLog('[WebViewProvider] CLI version:', cliDetection.version);
+        console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
+        console.log('[WebViewProvider] CLI version:', cliDetection.version);
 
         try {
-          this.consoleLog('[WebViewProvider] Connecting to agent...');
-          this.consoleLog(
+          console.log('[WebViewProvider] Connecting to agent...');
+          console.log(
             '[WebViewProvider] Using authStateManager:',
             !!this.authStateManager,
           );
           const authInfo = await this.authStateManager.getAuthInfo();
-          this.consoleLog('[WebViewProvider] Auth cache status:', authInfo);
+          console.log('[WebViewProvider] Auth cache status:', authInfo);
 
           // Pass the detected CLI path to ensure we use the correct installation
           await this.agentManager.connect(
@@ -633,7 +626,7 @@ export class WebViewProvider {
             this.authStateManager,
             cliDetection.cliPath,
           );
-          this.consoleLog('[WebViewProvider] Agent connected successfully');
+          console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
 
           // Load messages from the current Qwen session
@@ -674,8 +667,8 @@ export class WebViewProvider {
    * Called when user explicitly uses /login command
    */
   async forceReLogin(): Promise<void> {
-    this.consoleLog('[WebViewProvider] Force re-login requested');
-    this.consoleLog(
+    console.log('[WebViewProvider] Force re-login requested');
+    console.log(
       '[WebViewProvider] Current authStateManager:',
       !!this.authStateManager,
     );
@@ -694,23 +687,20 @@ export class WebViewProvider {
             // Clear existing auth cache
             if (this.authStateManager) {
               await this.authStateManager.clearAuthState();
-              this.consoleLog('[WebViewProvider] Auth cache cleared');
+              console.log('[WebViewProvider] Auth cache cleared');
             } else {
-              this.consoleLog('[WebViewProvider] No authStateManager to clear');
+              console.log('[WebViewProvider] No authStateManager to clear');
             }
 
             // Disconnect existing connection if any
             if (this.agentInitialized) {
               try {
                 this.agentManager.disconnect();
-                this.consoleLog(
+                console.log(
                   '[WebViewProvider] Existing connection disconnected',
                 );
               } catch (_error) {
-                this.consoleLog(
-                  '[WebViewProvider] Error disconnecting:',
-                  _error,
-                );
+                console.log('[WebViewProvider] Error disconnecting:', _error);
               }
               this.agentInitialized = false;
             }
@@ -724,7 +714,7 @@ export class WebViewProvider {
 
             // Reinitialize connection (will trigger fresh authentication)
             await this.doInitializeAgentConnection();
-            this.consoleLog(
+            console.log(
               '[WebViewProvider] Force re-login completed successfully',
             );
 
@@ -733,9 +723,7 @@ export class WebViewProvider {
               const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
               const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
               await this.authStateManager.saveAuthState(workingDir, authMethod);
-              this.consoleLog(
-                '[WebViewProvider] Auth state saved after re-login',
-              );
+              console.log('[WebViewProvider] Auth state saved after re-login');
             }
 
             // Send success notification to WebView
@@ -772,15 +760,15 @@ export class WebViewProvider {
    * Called when restoring WebView after VSCode restart
    */
   async refreshConnection(): Promise<void> {
-    this.consoleLog('[WebViewProvider] Refresh connection requested');
+    console.log('[WebViewProvider] Refresh connection requested');
 
     // Disconnect existing connection if any
     if (this.agentInitialized) {
       try {
         this.agentManager.disconnect();
-        this.consoleLog('[WebViewProvider] Existing connection disconnected');
+        console.log('[WebViewProvider] Existing connection disconnected');
       } catch (_error) {
-        this.consoleLog('[WebViewProvider] Error disconnecting:', _error);
+        console.log('[WebViewProvider] Error disconnecting:', _error);
       }
       this.agentInitialized = false;
     }
@@ -791,7 +779,7 @@ export class WebViewProvider {
     // Reinitialize connection (will use cached auth if available)
     try {
       await this.initializeAgentConnection();
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] Connection refresh completed successfully',
       );
 
@@ -821,7 +809,7 @@ export class WebViewProvider {
    */
   private async loadCurrentSessionMessages(): Promise<void> {
     try {
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] Initializing with new session (skipping restoration)',
       );
 
@@ -835,12 +823,12 @@ export class WebViewProvider {
             workingDir,
             this.authStateManager,
           );
-          this.consoleLog('[WebViewProvider] ACP session created successfully');
+          console.log('[WebViewProvider] ACP session created successfully');
 
           // Ensure auth state is saved after successful session creation
           if (this.authStateManager) {
             await this.authStateManager.saveAuthState(workingDir, authMethod);
-            this.consoleLog(
+            console.log(
               '[WebViewProvider] Auth state saved after session creation',
             );
           }
@@ -854,7 +842,7 @@ export class WebViewProvider {
           );
         }
       } else {
-        this.consoleLog(
+        console.log(
           '[WebViewProvider] Existing ACP session detected, skipping new session creation',
         );
       }
@@ -878,14 +866,14 @@ export class WebViewProvider {
    */
   private async initializeEmptyConversation(): Promise<void> {
     try {
-      this.consoleLog('[WebViewProvider] Initializing empty conversation');
+      console.log('[WebViewProvider] Initializing empty conversation');
       const newConv = await this.conversationStore.createConversation();
       this.messageHandler.setCurrentConversationId(newConv.id);
       this.sendMessageToWebView({
         type: 'conversationLoaded',
         data: newConv,
       });
-      this.consoleLog(
+      console.log(
         '[WebViewProvider] Empty conversation initialized:',
         this.messageHandler.getCurrentConversationId(),
       );
@@ -1009,7 +997,7 @@ export class WebViewProvider {
    * Call this when auth cache is cleared to force re-authentication
    */
   resetAgentState(): void {
-    this.consoleLog('[WebViewProvider] Resetting agent state');
+    console.log('[WebViewProvider] Resetting agent state');
     this.agentInitialized = false;
     // Disconnect existing connection
     this.agentManager.disconnect();
@@ -1019,7 +1007,7 @@ export class WebViewProvider {
    * Clear authentication cache for this WebViewProvider instance
    */
   async clearAuthCache(): Promise<void> {
-    this.consoleLog('[WebViewProvider] Clearing auth cache for this instance');
+    console.log('[WebViewProvider] Clearing auth cache for this instance');
     if (this.authStateManager) {
       await this.authStateManager.clearAuthState();
       this.resetAgentState();
@@ -1031,8 +1019,8 @@ export class WebViewProvider {
    * This sets up the panel with all event listeners
    */
   async restorePanel(panel: vscode.WebviewPanel): Promise<void> {
-    this.consoleLog('[WebViewProvider] Restoring WebView panel');
-    this.consoleLog(
+    console.log('[WebViewProvider] Restoring WebView panel');
+    console.log(
       '[WebViewProvider] Current authStateManager in restore:',
       !!this.authStateManager,
     );
@@ -1163,10 +1151,10 @@ export class WebViewProvider {
     // Capture the tab reference on restore
     this.panelManager.captureTab();
 
-    this.consoleLog('[WebViewProvider] Panel restored successfully');
+    console.log('[WebViewProvider] Panel restored successfully');
 
     // Attempt to restore authentication state and initialize connection
-    this.consoleLog(
+    console.log(
       '[WebViewProvider] Attempting to restore auth state and connection after restore...',
     );
     await this.attemptAuthStateRestoration();
@@ -1180,12 +1168,12 @@ export class WebViewProvider {
     conversationId: string | null;
     agentInitialized: boolean;
   } {
-    this.consoleLog('[WebViewProvider] Getting state for serialization');
-    this.consoleLog(
+    console.log('[WebViewProvider] Getting state for serialization');
+    console.log(
       '[WebViewProvider] Current conversationId:',
       this.messageHandler.getCurrentConversationId(),
     );
-    this.consoleLog(
+    console.log(
       '[WebViewProvider] Current agentInitialized:',
       this.agentInitialized,
     );
@@ -1193,7 +1181,7 @@ export class WebViewProvider {
       conversationId: this.messageHandler.getCurrentConversationId(),
       agentInitialized: this.agentInitialized,
     };
-    this.consoleLog('[WebViewProvider] Returning state:', state);
+    console.log('[WebViewProvider] Returning state:', state);
     return state;
   }
 
@@ -1211,10 +1199,10 @@ export class WebViewProvider {
     conversationId: string | null;
     agentInitialized: boolean;
   }): void {
-    this.consoleLog('[WebViewProvider] Restoring state:', state);
+    console.log('[WebViewProvider] Restoring state:', state);
     this.messageHandler.setCurrentConversationId(state.conversationId);
     this.agentInitialized = state.agentInitialized;
-    this.consoleLog(
+    console.log(
       '[WebViewProvider] State restored. agentInitialized:',
       this.agentInitialized,
     );

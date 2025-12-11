@@ -62,25 +62,6 @@ export const safeTitle = (title: unknown): string => {
 };
 
 /**
- * Get icon emoji for a given tool kind
- */
-export const getKindIcon = (kind: string): string => {
-  const kindMap: Record<string, string> = {
-    edit: '✏️',
-    write: '✏️',
-    read: '📖',
-    execute: '⚡',
-    fetch: '🌐',
-    delete: '🗑️',
-    move: '📦',
-    search: '🔍',
-    think: '💭',
-    diff: '📝',
-  };
-  return kindMap[kind.toLowerCase()] || '🔧';
-};
-
-/**
  * Check if a tool call should be displayed
  * Hides internal tool calls
  */
