@@ -140,7 +140,7 @@ export class QwenConnectionHandler {
       }
 
       try {
-        await setTimeout(() => Promise.resolve(), 100); // slight delay to ensure auth state is settled
+        await setTimeout(() => Promise.resolve(), 300); // slight delay to ensure auth state is settled
         console.log(
           '[QwenAgentManager] Creating new session after authentication...',
         );

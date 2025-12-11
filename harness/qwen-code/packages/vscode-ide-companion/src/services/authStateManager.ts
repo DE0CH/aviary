@@ -43,8 +43,8 @@ export class AuthStateManager {
 
   /**
    * Run an auth-related flow with optional queueing.
-   * - 默认：复用在跑的 promise，避免重复弹窗。
-   * - forceNew: true 时，等待当前 flow 结束后再串行启动新的，用于强制重登。
+   * - Default: Reuse existing promise to avoid duplicate popups.
+   * - When forceNew: true, wait for current flow to finish before starting a new one serially, used for forced re-login.
    */
   static runExclusiveAuth<T>(
     task: () => Promise<T>,
