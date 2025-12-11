@@ -138,6 +138,7 @@ export interface CliArgs {
   coreTools: string[] | undefined;
   excludeTools: string[] | undefined;
   authType: string | undefined;
+  channel: string | undefined;
 }
 
 function normalizeOutputFormat(
@@ -296,6 +297,11 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         .option('experimental-acp', {
           type: 'boolean',
           description: 'Starts the agent in ACP mode',
+        })
+        .option('channel', {
+          type: 'string',
+          choices: ['VSCode', 'ACP', 'SDK', 'CI'],
+          description: 'Channel identifier (VSCode, ACP, SDK, CI)',
         })
         .option('allowed-mcp-server-names', {
           type: 'array',
@@ -559,6 +565,12 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
 
   // The import format is now only controlled by settings.memoryImportFormat
   // We no longer accept it as a CLI argument
+
+  // Apply ACP fallback: if experimental-acp is present but no explicit --channel, treat as ACP
+  if (result['experimentalAcp'] && !result['channel']) {
+    (result as Record<string, unknown>)['channel'] = 'ACP';
+  }
+
   return result as unknown as CliArgs;
 }
 
@@ -983,6 +995,7 @@ export async function loadCliConfig(
     output: {
       format: outputSettingsFormat,
     },
+    channel: argv.channel,
   });
 }
 

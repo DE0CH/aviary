@@ -349,6 +349,7 @@ export interface ConfigParameters {
   skipStartupContext?: boolean;
   sdkMode?: boolean;
   sessionSubagents?: SubagentConfig[];
+  channel?: string;
 }
 
 function normalizeConfigOutputFormat(
@@ -485,6 +486,7 @@ export class Config {
   private readonly enableToolOutputTruncation: boolean;
   private readonly eventEmitter?: EventEmitter;
   private readonly useSmartEdit: boolean;
+  private readonly channel: string | undefined;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId ?? randomUUID();
@@ -598,6 +600,7 @@ export class Config {
     this.enableToolOutputTruncation = params.enableToolOutputTruncation ?? true;
     this.useSmartEdit = params.useSmartEdit ?? false;
     this.extensionManagement = params.extensionManagement ?? true;
+    this.channel = params.channel;
     this.storage = new Storage(this.targetDir);
     this.vlmSwitchMode = params.vlmSwitchMode;
     this.inputFormat = params.inputFormat ?? InputFormat.TEXT;
@@ -1142,6 +1145,10 @@ export class Config {
 
   getCliVersion(): string | undefined {
     return this.cliVersion;
+  }
+
+  getChannel(): string | undefined {
+    return this.channel;
   }
 
   /**
