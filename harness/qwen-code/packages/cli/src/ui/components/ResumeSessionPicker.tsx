@@ -17,7 +17,8 @@ import { formatRelativeTime } from '../utils/formatters.js';
 
 const PAGE_SIZE = 20;
 
-interface SessionPickerProps {
+// Exported for testing
+export interface SessionPickerProps {
   sessionService: SessionService;
   currentBranch?: string;
   onSelect: (sessionId: string) => void;
@@ -33,7 +34,8 @@ function truncateText(text: string, maxWidth: number): string {
   return text.slice(0, maxWidth - 3) + '...';
 }
 
-function SessionPicker({
+// Exported for testing
+export function SessionPicker({
   sessionService,
   currentBranch,
   onSelect,
