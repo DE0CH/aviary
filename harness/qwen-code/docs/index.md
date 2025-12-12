@@ -3,8 +3,6 @@
 
 Welcome to the Qwen Code documentation. Qwen Code is an agentic coding tool that lives in your terminal and helps you turn ideas into code faster than ever before.
 
-![](https://gw.alicdn.com/imgextra/i2/O1CN01gstHL41WowLwCfCQJ_!!6000000002836-2-tps-2228-1418.png)
-
 ## Documentation Sections
 
 ### [User Guide](/users/overview)

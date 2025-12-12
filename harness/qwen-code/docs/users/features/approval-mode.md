@@ -229,7 +229,7 @@ qwen --prompt "Run the test suite, fix all failing tests, then commit changes"
 # 3. Execute git commit (auto-approved)
 ```
 
-## 🔄 Mode Switching & Configuration
+## Mode Switching & Configuration
 
 ### Keyboard Shortcut Switching
 

@@ -4,31 +4,6 @@ Headless mode allows you to run Qwen Code programmatically from command line
 scripts and automation tools without any interactive UI. This is ideal for
 scripting, automation, CI/CD pipelines, and building AI-powered tools.
 
-- [Headless Mode](#headless-mode)
-  - [Overview](#overview)
-  - [Basic Usage](#basic-usage)
-    - [Direct Prompts](#direct-prompts)
-    - [Stdin Input](#stdin-input)
-    - [Combining with File Input](#combining-with-file-input)
-  - [Output Formats](#output-formats)
-    - [Text Output (Default)](#text-output-default)
-    - [JSON Output](#json-output)
-      - [Example Usage](#example-usage)
-    - [Stream-JSON Output](#stream-json-output)
-    - [Input Format](#input-format)
-    - [File Redirection](#file-redirection)
-  - [Configuration Options](#configuration-options)
-  - [Examples](#examples)
-    - [Code review](#code-review)
-    - [Generate commit messages](#generate-commit-messages)
-    - [API documentation](#api-documentation)
-    - [Batch code analysis](#batch-code-analysis)
-    - [PR code review](#pr-code-review)
-    - [Log analysis](#log-analysis)
-    - [Release notes generation](#release-notes-generation)
-    - [Model and tool usage tracking](#model-and-tool-usage-tracking)
-  - [Resources](#resources)
-
 ## Overview
 
 The headless mode provides a headless interface to Qwen Code that:
@@ -78,10 +53,10 @@ qwen --continue -p "Run the tests again and summarize failures"
 qwen --resume 123e4567-e89b-12d3-a456-426614174000 -p "Apply the follow-up refactor"
 ```
 
-Notes:
-
-- Session data is project-scoped JSONL under `~/.qwen/projects/<sanitized-cwd>/chats`.
-- Restores conversation history, tool outputs, and chat-compression checkpoints before sending the new prompt.
+> [!note]
+>
+> - Session data is project-scoped JSONL under `~/.qwen/projects/<sanitized-cwd>/chats`.
+> - Restores conversation history, tool outputs, and chat-compression checkpoints before sending the new prompt.
 
 ## Output Formats
 
@@ -228,7 +203,7 @@ Key command-line options for headless usage:
 | `--continue`                 | Resume the most recent session for this project     | `qwen --continue -p "Pick up where we left off"`                         |
 | `--resume [sessionId]`       | Resume a specific session (or choose interactively) | `qwen --resume 123e... -p "Finish the refactor"`                         |
 
-For complete details on all available configuration options, settings files, and environment variables, see the [Configuration Guide](./cli/configuration.md).
+For complete details on all available configuration options, settings files, and environment variables, see the [Configuration Guide](/users/configuration/settings).
 
 ## Examples
 
@@ -301,7 +276,7 @@ tail -5 usage.log
 
 ## Resources
 
-- [CLI Configuration](./cli/configuration.md) - Complete configuration guide
-- [Authentication](./cli/authentication.md) - Setup authentication
-- [Commands](./cli/commands.md) - Interactive commands reference
-- [Tutorials](./cli/tutorials.md) - Step-by-step automation guides
+- [CLI Configuration](/users/configuration/settings#command-line-arguments) - Complete configuration guide
+- [Authentication](/users/configuration/settings#environment-variables-for-api-access) - Setup authentication
+- [Commands](/users/reference/cli-reference) - Interactive commands reference
+- [Tutorials](/users/quickstart) - Step-by-step automation guides
