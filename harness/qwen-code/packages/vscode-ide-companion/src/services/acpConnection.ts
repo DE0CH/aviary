@@ -94,7 +94,12 @@ export class AcpConnection {
     if (cliPath.startsWith('npx ')) {
       const parts = cliPath.split(' ');
       spawnCommand = isWindows ? 'npx.cmd' : 'npx';
-      spawnArgs = [...parts.slice(1), '--experimental-acp', ...extraArgs];
+      spawnArgs = [
+        ...parts.slice(1),
+        '--experimental-acp',
+        '--channel=VSCode',
+        ...extraArgs,
+      ];
     } else {
       // For qwen CLI, ensure we use the correct Node.js version
       // Handle various Node.js version managers (nvm, n, manual installations)
@@ -103,11 +108,16 @@ export class AcpConnection {
         const nodePathResult = determineNodePathForCli(cliPath);
         if (nodePathResult.path) {
           spawnCommand = nodePathResult.path;
-          spawnArgs = [cliPath, '--experimental-acp', ...extraArgs];
+          spawnArgs = [
+            cliPath,
+            '--experimental-acp',
+            '--channel=VSCode',
+            ...extraArgs,
+          ];
         } else {
           // Fallback to direct execution
           spawnCommand = cliPath;
-          spawnArgs = ['--experimental-acp', ...extraArgs];
+          spawnArgs = ['--experimental-acp', '--channel=VSCode', ...extraArgs];
 
           // Log any error for debugging
           if (nodePathResult.error) {
@@ -118,7 +128,7 @@ export class AcpConnection {
         }
       } else {
         spawnCommand = cliPath;
-        spawnArgs = ['--experimental-acp', ...extraArgs];
+        spawnArgs = ['--experimental-acp', '--channel=VSCode', ...extraArgs];
       }
     }
 
