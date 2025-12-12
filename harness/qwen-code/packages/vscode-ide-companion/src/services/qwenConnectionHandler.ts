@@ -140,6 +140,8 @@ export class QwenConnectionHandler {
           try {
             // Let CLI handle authentication - it's the single source of truth
             await connection.authenticate(authMethod);
+            // FIXME: @yiliang114 If there is no delay for a while, immediately executing
+            // newSession may cause the cli authorization jump to be triggered again
             // Add a slight delay to ensure auth state is settled
             await new Promise((resolve) => setTimeout(resolve, 300));
             // Retry immediately after successful auth
