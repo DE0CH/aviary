@@ -10,25 +10,25 @@ Each task in this document includes clear instructions, example commands, and be
 
 Suppose you've just joined a new project and need to understand its structure quickly.
 
-1. Navigate to the project root directory
+**1. Navigate to the project root directory**
 
 ```bash
 cd /path/to/project
 ```
 
-2. Start Qwen Code
+**2. Start Qwen Code**
 
 ```bash
 qwen
 ```
 
-3. Ask for a high-level overview
+**3. Ask for a high-level overview**
 
 ```
 give me an overview of this codebase
 ```
 
-4. Dive deeper into specific components
+**4. Dive deeper into specific components**
 
 ```
 explain the main architecture patterns used here
@@ -52,19 +52,19 @@ how is authentication handled?
 
 Suppose you need to locate code related to a specific feature or functionality.
 
-1. Ask Qwen Code to find relevant files
+**1. Ask Qwen Code to find relevant files**
 
 ```
 find the files that handle user authentication
 ```
 
-2. Get context on how components interact
+**2. Get context on how components interact**
 
 ```
 how do these authentication files work together?
 ```
 
-3. Understand the execution flow
+**3. Understand the execution flow**
 
 ```
 trace the login process from front-end to database
@@ -79,19 +79,19 @@ trace the login process from front-end to database
 
 Suppose you've encountered an error message and need to find and fix its source.
 
-1. Share the error with Qwen Code
+**1. Share the error with Qwen Code**
 
 ```
 I'm seeing an error when I run npm test
 ```
 
-2. Ask for fix recommendations
+**2. Ask for fix recommendations**
 
 ```
 suggest a few ways to fix the @ts-ignore in user.ts
 ```
 
-3. Apply the fix
+**3. Apply the fix**
 
 ```
 update user.tsto add the null check you suggested
@@ -107,25 +107,25 @@ update user.tsto add the null check you suggested
 
 Suppose you need to update old code to use modern patterns and practices.
 
-1. Identify legacy code for refactoring
+**1. Identify legacy code for refactoring**
 
 ```
 find deprecated API usage in our codebase
 ```
 
-2. Get refactoring recommendations
+**2. Get refactoring recommendations**
 
 ```
 suggest how to refactor utils.js to use modern JavaScript features
 ```
 
-3. Apply the changes safely
+**3. Apply the changes safely**
 
 ```
 refactor utils.js to use ES 2024 features while maintaining the same behavior
 ```
 
-4. Verify the refactoring
+**4. Verify the refactoring**
 
 ```
 run tests for the refactored code
@@ -141,7 +141,7 @@ run tests for the refactored code
 
 Suppose you want to use specialized AI subagents to handle specific tasks more effectively.
 
-1. View available subagents
+**1. View available subagents**
 
 ```
 /agents
@@ -149,7 +149,7 @@ Suppose you want to use specialized AI subagents to handle specific tasks more e
 
 This shows all available subagents and lets you create new ones.
 
-2. Use subagents automatically
+**2. Use subagents automatically**
 
 Qwen Code automatically delegates appropriate tasks to specialized subagents:
 
@@ -161,7 +161,7 @@ review my recent code changes for security issues
 run all tests and fix any failures
 ```
 
-3. Explicitly request specific subagents
+**3. Explicitly request specific subagents**
 
 ```
 use the code-reviewer subagent to check the auth module
@@ -171,7 +171,7 @@ use the code-reviewer subagent to check the auth module
 have the debugger subagent investigate why users can't log in
 ```
 
-4. Create custom subagents for your workflow
+**4. Create custom subagents for your workflow**
 
 ```
 /agents
@@ -196,25 +196,25 @@ Then select "create" and follow the prompts to define:
 
 Suppose you need to add tests for uncovered code.
 
-1. Identify untested code
+**1. Identify untested code**
 
 ```
 find functions in NotificationsService.swift that are not covered by tests
 ```
 
-2. Generate test scaffolding
+**2. Generate test scaffolding**
 
 ```
 add tests for the notification service
 ```
 
-3. Add meaningful test cases
+**3. Add meaningful test cases**
 
 ```
 add test cases for edge conditions in the notification service
 ```
 
-4. Run and verify tests
+**4. Run and verify tests**
 
 ```
 run the new tests and fix any failures
@@ -228,25 +228,25 @@ For comprehensive coverage, ask Qwen Code to identify edge cases you might have 
 
 Suppose you need to create a well-documented pull request for your changes.
 
-1. Summarize your changes
+**1. Summarize your changes**
 
 ```
 summarize the changes I've made to the authentication module
 ```
 
-2. Generate a pull request with Qwen Code
+**2. Generate a pull request with Qwen Code**
 
 ```
 create a pr
 ```
 
-3. Review and refine
+**3. Review and refine**
 
 ```
 enhance the PR description with more context about the security improvements
 ```
 
-4. Add testing details
+**4. Add testing details**
 
 ```
 add information about how these changes were tested
@@ -262,25 +262,25 @@ add information about how these changes were tested
 
 Suppose you need to add or update documentation for your code.
 
-1. Identify undocumented code
+**1. Identify undocumented code**
 
 ```
 find functions without proper JSDoc comments in the auth module
 ```
 
-2. Generate documentation
+**2. Generate documentation**
 
 ```
 add JSDoc comments to the undocumented functions in auth.js
 ```
 
-3. Review and enhance
+**3. Review and enhance**
 
 ```
 improve the generated documentation with more context and examples
 ```
 
-4. Verify documentation
+**4. Verify documentation**
 
 ```
 check if the documentation follows our project standards
@@ -296,7 +296,7 @@ check if the documentation follows our project standards
 
 Use `@` to quickly include files or directories without waiting for Qwen Code to read them.
 
-1. Reference a single file
+**1. Reference a single file**
 
 ```
 Explain the logic in @src/utils/auth.js
@@ -304,7 +304,7 @@ Explain the logic in @src/utils/auth.js
 
 This includes the full content of the file in the conversation.
 
-2. Reference a directory
+**2. Reference a directory**
 
 ```
 What's the structure of @src/components?
@@ -312,7 +312,7 @@ What's the structure of @src/components?
 
 This provides a directory listing with file information.
 
-3. Reference MCP resources
+**3. Reference MCP resources**
 
 ```
 Show me the data from @github: repos/owner/repo/issues
@@ -336,7 +336,7 @@ Qwen Code provides two options for resuming previous conversations:
 - `--continue` to automatically continue the most recent conversation
 - `--resume` to display a conversation picker
 
-1. Continue the most recent conversation
+**1. Continue the most recent conversation**
 
 ```bash
 qwen --continue
@@ -344,7 +344,7 @@ qwen --continue
 
 This immediately resumes your most recent conversation without any prompts.
 
-2. Continue in non-interactive mode
+**2. Continue in non-interactive mode**
 
 ```bash
 qwen --continue --p "Continue with my task"
@@ -352,7 +352,7 @@ qwen --continue --p "Continue with my task"
 
 Use `--print` with `--continue` to resume the most recent conversation in non-interactive mode, perfect for scripts or automation.
 
-3. Show conversation picker
+**3. Show conversation picker**
 
 ```bash
 qwen --resume
@@ -500,7 +500,7 @@ cat build-error.txt | qwen -p 'concisely explain the root cause of this build er
 
 Suppose you need Qwen Code's output in a specific format, especially when integrating Qwen Code into scripts or other tools.
 
-1. **Use text format (default)**
+**1. Use text format (default)**
 
 ```bash
 cat data.txt | qwen -p 'summarize this data' --output-format text > summary.txt
@@ -508,7 +508,7 @@ cat data.txt | qwen -p 'summarize this data' --output-format text > summary.txt
 
 This outputs just Qwen Code's plain text response (default behavior).
 
-2. **Use JSON format**
+**2. Use JSON format**
 
 ```bash
 cat code.py | qwen -p 'analyze this code for bugs' --output-format json > analysis.json
@@ -516,7 +516,7 @@ cat code.py | qwen -p 'analyze this code for bugs' --output-format json > analys
 
 This outputs a JSON array of messages with metadata including cost and duration.
 
-3. **Use streaming JSON format**
+**3. Use streaming JSON format**
 
 ```bash
 cat log.txt | qwen -p 'parse this log file for errors' --output-format stream-json

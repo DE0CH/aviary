@@ -86,6 +86,7 @@ what can Qwen Code do?
 ```
 
 > [!note]
+>
 > Qwen Code reads your files as needed - you don't have to manually add context. Qwen Code also has access to its own documentation and can answer questions about its features and capabilities.
 
 ### Make your first code change
@@ -104,6 +105,7 @@ Qwen Code will:
 4. Make the edit
 
 > [!note]
+>
 > Qwen Code always asks for permission before modifying files. You can approve individual changes or enable "Accept all" mode for a session.
 
 ### Use Git with Qwen Code
@@ -184,6 +186,7 @@ review my changes and suggest improvements
 ```
 
 > [!tip]
+>
 > **Remember**: Qwen Code is your AI pair programmer. Talk to it like you would a helpful colleague - describe what you want to achieve, and it will help you get there.
 
 ## Essential commands
@@ -208,33 +211,39 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
 
 ## Pro tips for beginners
 
-- Be specific with your requests
-  - Instead of: "fix the bug"
-  - Try: "fix the login bug where users see a blank screen after entering wrong credentials"
-- Use step-by-step instructions
-  - Break complex tasks into steps:
-    ```
-    1. create a new database table for user profiles
-    2. create an API endpoint to get and update user profiles
-    3. build a webpage that allows users to see and edit their information
-    ```
+**Be specific with your requests**
 
-- Let Claude explore first
-  - Before making changes, let Claude understand your code:
+- Instead of: "fix the bug"
+- Try: "fix the login bug where users see a blank screen after entering wrong credentials"
 
-    ```
-    analyze the database schema
-    ```
+**Use step-by-step instructions**
 
-    ```
-    build a dashboard showing products that are most frequently returned by our UK customers
-    ```
+- Break complex tasks into steps:
 
-- Save time with shortcuts
-  - Press `?` to see all available keyboard shortcuts
-  - Use Tab for command completion
-  - Press ↑ for command history
-  - Type `/` to see all slash commands
+```
+1. create a new database table for user profiles
+2. create an API endpoint to get and update user profiles
+3. build a webpage that allows users to see and edit their information
+```
+
+**Let Claude explore first**
+
+- Before making changes, let Claude understand your code:
+
+```
+analyze the database schema
+```
+
+```
+build a dashboard showing products that are most frequently returned by our UK customers
+```
+
+**Save time with shortcuts**
+
+- Press `?` to see all available keyboard shortcuts
+- Use Tab for command completion
+- Press ↑ for command history
+- Type `/` to see all slash commands
 
 ## Getting help
 
