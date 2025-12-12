@@ -20,7 +20,7 @@ import {
 import { CompletionMenu } from '../layout/CompletionMenu.js';
 import type { CompletionItem } from '../../../types/completionItemTypes.js';
 import { getApprovalModeInfoFromString } from '../../../types/acpTypes.js';
-import type { ApprovalModeValue } from '../../../types/acpTypes.js';
+import type { ApprovalModeValue } from '../../../types/approvalModeValueTypes.js';
 
 interface InputFormProps {
   inputText: string;

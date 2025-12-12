@@ -3,7 +3,8 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { AcpPermissionRequest, ApprovalModeValue } from './acpTypes.js';
+import type { AcpPermissionRequest } from './acpTypes.js';
+import type { ApprovalModeValue } from './approvalModeValueTypes.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';

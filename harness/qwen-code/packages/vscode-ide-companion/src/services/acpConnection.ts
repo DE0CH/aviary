@@ -10,8 +10,8 @@ import type {
   AcpPermissionRequest,
   AcpResponse,
   AcpSessionUpdate,
-  ApprovalModeValue,
 } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { spawn } from 'child_process';
 import type {

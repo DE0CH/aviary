@@ -7,8 +7,8 @@ import { AcpConnection } from './acpConnection.js';
 import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
-  ApprovalModeValue,
 } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { QwenSessionReader, type QwenSession } from './qwenSessionReader.js';
 import { QwenSessionManager } from './qwenSessionManager.js';
 import type {

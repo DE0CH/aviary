@@ -12,7 +12,7 @@ import type {
   ToolCall as PermissionToolCall,
 } from '../components/PermissionDrawer/PermissionRequest.js';
 import type { ToolCallUpdate } from '../../types/chatTypes.js';
-import type { ApprovalModeValue } from '../../types/acpTypes.js';
+import type { ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
 
 interface UseWebViewMessagesProps {

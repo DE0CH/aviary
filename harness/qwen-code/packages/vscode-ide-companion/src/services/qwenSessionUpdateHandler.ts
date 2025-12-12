@@ -10,7 +10,8 @@
  * Handles session updates from ACP and dispatches them to appropriate callbacks
  */
 
-import type { AcpSessionUpdate, ApprovalModeValue } from '../types/acpTypes.js';
+import type { AcpSessionUpdate } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type { QwenAgentCallbacks } from '../types/chatTypes.js';
 
 /**

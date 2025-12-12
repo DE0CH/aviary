@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import { BaseMessageHandler } from './BaseMessageHandler.js';
 import type { ChatMessage } from '../../services/qwenAgentManager.js';
+import type { ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
 
 /**
  * Session message handler
@@ -29,6 +30,8 @@ export class SessionMessageHandler extends BaseMessageHandler {
       'cancelStreaming',
       // UI action: open a new chat tab (new WebviewPanel)
       'openNewChatTab',
+      // Settings-related messages
+      'setApprovalMode',
     ].includes(messageType);
   }
 
@@ -110,6 +113,14 @@ export class SessionMessageHandler extends BaseMessageHandler {
       case 'cancelStreaming':
         // Handle cancel streaming request from webview
         await this.handleCancelStreaming();
+        break;
+
+      case 'setApprovalMode':
+        await this.handleSetApprovalMode(
+          message.data as {
+            modeId?: ApprovalModeValue;
+          },
+        );
         break;
 
       default:
@@ -1071,6 +1082,25 @@ export class SessionMessageHandler extends BaseMessageHandler {
           data: { message: `Failed to resume session: ${error}` },
         });
       }
+    }
+  }
+
+  /**
+   * Set approval mode via agent (ACP session/set_mode)
+   */
+  private async handleSetApprovalMode(data?: {
+    modeId?: ApprovalModeValue;
+  }): Promise<void> {
+    try {
+      const modeId = data?.modeId || 'default';
+      await this.agentManager.setApprovalModeFromUi(modeId);
+      // No explicit response needed; WebView listens for modeChanged
+    } catch (error) {
+      console.error('[SessionMessageHandler] Failed to set mode:', error);
+      this.sendToWebView({
+        type: 'error',
+        data: { message: `Failed to set mode: ${error}` },
+      });
     }
   }
 }
