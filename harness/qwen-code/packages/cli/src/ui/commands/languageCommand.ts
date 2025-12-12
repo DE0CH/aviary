@@ -128,7 +128,7 @@ async function setUiLanguage(
   context.ui.reloadCommands();
 
   // Map language codes to friendly display names
-  const langDisplayNames: Record<string, string> = {
+  const langDisplayNames: Partial<Record<SupportedLanguage, string>> = {
     zh: '中文（zh-CN）',
     en: 'English（en-US）',
   };
