@@ -72,13 +72,18 @@ function SessionPicker({
     };
   }, []);
 
-  // Filter sessions by current branch if filter is enabled
-  const filteredSessions =
-    filterByBranch && currentBranch
-      ? sessionState.sessions.filter(
-          (session) => session.gitBranch === currentBranch,
-        )
-      : sessionState.sessions;
+  // Filter sessions: exclude empty sessions (0 messages) and optionally by branch
+  const filteredSessions = sessionState.sessions.filter((session) => {
+    // Always exclude sessions with no messages
+    if (session.messageCount === 0) {
+      return false;
+    }
+    // Apply branch filter if enabled
+    if (filterByBranch && currentBranch) {
+      return session.gitBranch === currentBranch;
+    }
+    return true;
+  });
 
   const hasSentinel = sessionState.hasMore;
 
