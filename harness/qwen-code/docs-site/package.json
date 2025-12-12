@@ -8,7 +8,8 @@
   "main": "index.js",
   "scripts": {
     "link": "ln -s ../docs content",
-    "dev": "next --turbopack",
+    "clean": "rm -rf .next",
+    "dev": "npm run clean && next --turbopack",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

@@ -41,6 +41,7 @@ export default async function RootLayout({ children }) {
           pageMap={await getPageMap()}
           docsRepositoryBase="https://github.com/QwenLM/qwen-code/docs"
           footer={footer}
+          search={false}
           // ... Your additional layout options
         >
           {children}
