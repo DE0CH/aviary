@@ -13,7 +13,6 @@
 import * as vscode from 'vscode';
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
-import type { AuthStateManager } from '../services/authStateManager.js';
 import {
   CliVersionManager,
   MIN_CLI_VERSION_FOR_SESSION_METHODS,
@@ -32,14 +31,12 @@ export class QwenConnectionHandler {
    * @param connection - ACP connection instance
    * @param sessionReader - Session reader instance
    * @param workingDir - Working directory
-   * @param authStateManager - Authentication state manager (optional)
    * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
   async connect(
     connection: AcpConnection,
     sessionReader: QwenSessionReader,
     workingDir: string,
-    authStateManager?: AuthStateManager,
     cliPath?: string,
   ): Promise<void> {
     const connectId = Date.now();
@@ -72,21 +69,6 @@ export class QwenConnectionHandler {
 
     await connection.connect(effectiveCliPath, workingDir, extraArgs);
 
-    // Check if we have valid cached authentication
-    if (authStateManager) {
-      console.log('[QwenAgentManager] Checking for cached authentication...');
-      console.log('[QwenAgentManager] Working dir:', workingDir);
-      console.log('[QwenAgentManager] Auth method:', authMethod);
-
-      const hasValidAuth = await authStateManager.hasValidAuth(
-        workingDir,
-        authMethod,
-      );
-      console.log('[QwenAgentManager] Has valid auth:', hasValidAuth);
-    } else {
-      console.log('[QwenAgentManager] No authStateManager provided');
-    }
-
     // Try to restore existing session or create new session
     // Note: Auto-restore on connect is disabled to avoid surprising loads
     // when user opens a "New Chat" tab. Restoration is now an explicit action
@@ -99,81 +81,15 @@ export class QwenConnectionHandler {
         '[QwenAgentManager] no sessionRestored, Creating new session...',
       );
 
-      // Check if we have valid cached authentication
-      let hasValidAuth = false;
-      if (authStateManager) {
-        hasValidAuth = await authStateManager.hasValidAuth(
-          workingDir,
-          authMethod,
-        );
-      }
-
-      // Only authenticate if we don't have valid cached auth
-      if (!hasValidAuth) {
-        console.log(
-          '[QwenAgentManager] Authenticating before creating session...',
-        );
-        try {
-          await connection.authenticate(authMethod);
-          console.log('[QwenAgentManager] Authentication successful');
-
-          // Save auth state
-          if (authStateManager) {
-            console.log(
-              '[QwenAgentManager] Saving auth state after successful authentication',
-            );
-            console.log('[QwenAgentManager] Working dir for save:', workingDir);
-            console.log('[QwenAgentManager] Auth method for save:', authMethod);
-            await authStateManager.saveAuthState(workingDir, authMethod);
-            console.log('[QwenAgentManager] Auth state save completed');
-          }
-        } catch (authError) {
-          console.error('[QwenAgentManager] Authentication failed:', authError);
-          // Clear potentially invalid cache
-          if (authStateManager) {
-            console.log(
-              '[QwenAgentManager] Clearing auth cache due to authentication failure',
-            );
-            await authStateManager.clearAuthState();
-          }
-          throw authError;
-        }
-      } else {
-        console.log(
-          '[QwenAgentManager] Skipping authentication - using valid cached auth',
-        );
-      }
-
       try {
         console.log(
-          '[QwenAgentManager] Creating new session after authentication...',
+          '[QwenAgentManager] Creating new session (letting CLI handle authentication)...',
         );
-        await this.newSessionWithRetry(
-          connection,
-          workingDir,
-          3,
-          authMethod,
-          authStateManager,
-        );
+        await this.newSessionWithRetry(connection, workingDir, 3, authMethod);
         console.log('[QwenAgentManager] New session created successfully');
-
-        // Ensure auth state is saved (prevent repeated authentication)
-        if (authStateManager) {
-          console.log(
-            '[QwenAgentManager] Saving auth state after successful session creation',
-          );
-          await authStateManager.saveAuthState(workingDir, authMethod);
-        }
       } catch (sessionError) {
         console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
         console.log(`[QwenAgentManager] Error details:`, sessionError);
-
-        // Clear cache
-        if (authStateManager) {
-          console.log('[QwenAgentManager] Clearing auth cache due to failure');
-          await authStateManager.clearAuthState();
-        }
-
         throw sessionError;
       }
     }
@@ -195,7 +111,6 @@ export class QwenConnectionHandler {
     workingDir: string,
     maxRetries: number,
     authMethod: string,
-    authStateManager?: AuthStateManager,
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -224,9 +139,10 @@ export class QwenConnectionHandler {
           );
           try {
             await connection.authenticate(authMethod);
-            if (authStateManager) {
-              await authStateManager.saveAuthState(workingDir, authMethod);
-            }
+            // FIXME: @yiliang114 If there is no delay for a while, immediately executing
+            // newSession may cause the cli authorization jump to be triggered again
+            // Add a slight delay to ensure auth state is settled
+            await new Promise((resolve) => setTimeout(resolve, 300));
             // Retry immediately after successful auth
             await connection.newSession(workingDir);
             console.log(
@@ -238,9 +154,6 @@ export class QwenConnectionHandler {
               '[QwenAgentManager] Re-authentication failed:',
               authErr,
             );
-            if (authStateManager) {
-              await authStateManager.clearAuthState();
-            }
             // Fall through to retry logic below
           }
         }

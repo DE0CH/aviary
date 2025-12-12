@@ -167,7 +167,7 @@ export const App: React.FC = () => {
   }, [fileContext.workspaceFiles, completion.isOpen, completion.triggerChar]);
 
   // Message submission
-  const handleSubmit = useMessageSubmit({
+  const { handleSubmit: submitMessage } = useMessageSubmit({
     inputText,
     setInputText,
     messageHandling,
@@ -487,6 +487,22 @@ export const App: React.FC = () => {
     setThinkingEnabled((prev) => !prev);
   };
 
+  // When user sends a message after scrolling up, re-pin and jump to the bottom
+  const handleSubmitWithScroll = useCallback(
+    (e: React.FormEvent) => {
+      setPinnedToBottom(true);
+
+      const container = messagesContainerRef.current;
+      if (container) {
+        const top = container.scrollHeight - container.clientHeight;
+        container.scrollTo({ top });
+      }
+
+      submitMessage(e);
+    },
+    [submitMessage],
+  );
+
   // Create unified message array containing all types of messages and tool calls
   const allMessages = useMemo<
     Array<{
@@ -686,7 +702,7 @@ export const App: React.FC = () => {
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
         onKeyDown={() => {}}
-        onSubmit={handleSubmit.handleSubmit}
+        onSubmit={handleSubmitWithScroll}
         onCancel={handleCancel}
         onToggleEditMode={handleToggleEditMode}
         onToggleThinking={handleToggleThinking}

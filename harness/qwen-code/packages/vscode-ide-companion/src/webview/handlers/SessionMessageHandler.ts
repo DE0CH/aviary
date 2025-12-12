@@ -150,6 +150,50 @@ export class SessionMessageHandler extends BaseMessageHandler {
   }
 
   /**
+   * Prompt user to login and invoke the registered login handler/command.
+   * Returns true if a login was initiated.
+   */
+  private async promptLogin(message: string): Promise<boolean> {
+    const result = await vscode.window.showWarningMessage(message, 'Login Now');
+    if (result === 'Login Now') {
+      if (this.loginHandler) {
+        await this.loginHandler();
+      } else {
+        await vscode.commands.executeCommand('qwen-code.login');
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Prompt user to login or view offline. Returns 'login', 'offline', or 'dismiss'.
+   * When login is chosen, it triggers the login handler/command.
+   */
+  private async promptLoginOrOffline(
+    message: string,
+  ): Promise<'login' | 'offline' | 'dismiss'> {
+    const selection = await vscode.window.showWarningMessage(
+      message,
+      'Login Now',
+      'View Offline',
+    );
+
+    if (selection === 'Login Now') {
+      if (this.loginHandler) {
+        await this.loginHandler();
+      } else {
+        await vscode.commands.executeCommand('qwen-code.login');
+      }
+      return 'login';
+    }
+    if (selection === 'View Offline') {
+      return 'offline';
+    }
+    return 'dismiss';
+  }
+
+  /**
    * Handle send message request
    */
   private async handleSendMessage(
@@ -271,24 +315,35 @@ export class SessionMessageHandler extends BaseMessageHandler {
       console.warn('[SessionMessageHandler] Agent not connected');
 
       // Show non-modal notification with Login button
-      const result = await vscode.window.showWarningMessage(
-        'You need to login first to use Qwen Code.',
-        'Login Now',
-      );
-
-      if (result === 'Login Now') {
-        // Use login handler directly
-        if (this.loginHandler) {
-          await this.loginHandler();
-        } else {
-          // Fallback to command
-          vscode.window.showInformationMessage(
-            'Please wait while we connect to Qwen Code...',
-          );
-          await vscode.commands.executeCommand('qwen-code.login');
-        }
-      }
+      await this.promptLogin('You need to login first to use Qwen Code.');
       return;
+    }
+
+    // Ensure an ACP session exists before sending prompt
+    if (!this.agentManager.currentSessionId) {
+      try {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+        await this.agentManager.createNewSession(workingDir);
+      } catch (createErr) {
+        console.error(
+          '[SessionMessageHandler] Failed to create session before sending message:',
+          createErr,
+        );
+        const errorMsg =
+          createErr instanceof Error ? createErr.message : String(createErr);
+        if (
+          errorMsg.includes('Authentication required') ||
+          errorMsg.includes('(code: -32000)')
+        ) {
+          await this.promptLogin(
+            'Your login session has expired or is invalid. Please login again to continue using Qwen Code.',
+          );
+          return;
+        }
+        vscode.window.showErrorMessage(`Failed to create session: ${errorMsg}`);
+        return;
+      }
     }
 
     // Send to agent
@@ -391,18 +446,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('Invalid token')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to continue using Qwen Code.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
@@ -428,17 +474,10 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // Ensure connection (login) before creating a new session
       if (!this.agentManager.isConnected) {
-        const result = await vscode.window.showWarningMessage(
+        const proceeded = await this.promptLogin(
           'You need to login before creating a new session.',
-          'Login Now',
         );
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        } else {
+        if (!proceeded) {
           return;
         }
       }
@@ -489,18 +528,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('No active ACP session')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to create a new session.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
@@ -525,19 +555,11 @@ export class SessionMessageHandler extends BaseMessageHandler {
 
       // If not connected yet, offer to login or view offline
       if (!this.agentManager.isConnected) {
-        const selection = await vscode.window.showWarningMessage(
+        const choice = await this.promptLoginOrOffline(
           'You are not logged in. Login now to fully restore this session, or view it offline.',
-          'Login Now',
-          'View Offline',
         );
 
-        if (selection === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        } else if (selection === 'View Offline') {
+        if (choice === 'offline') {
           // Show messages from local cache only
           const messages =
             await this.agentManager.getSessionMessages(sessionId);
@@ -550,7 +572,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             'Showing cached session content. Login to interact with the AI.',
           );
           return;
-        } else {
+        } else if (choice !== 'login') {
           // User dismissed; do nothing
           return;
         }
@@ -637,18 +659,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
           errorMsg.includes('No active ACP session')
         ) {
           // Show a more user-friendly error message for expired sessions
-          const result = await vscode.window.showWarningMessage(
+          await this.promptLogin(
             'Your login session has expired or is invalid. Please login again to switch sessions.',
-            'Login Now',
           );
-
-          if (result === 'Login Now') {
-            if (this.loginHandler) {
-              await this.loginHandler();
-            } else {
-              await vscode.commands.executeCommand('qwen-code.login');
-            }
-          }
 
           // Send a specific error to the webview for better UI handling
           this.sendToWebView({
@@ -706,18 +719,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
               createErrorMsg.includes('No active ACP session')
             ) {
               // Show a more user-friendly error message for expired sessions
-              const result = await vscode.window.showWarningMessage(
+              await this.promptLogin(
                 'Your login session has expired or is invalid. Please login again to switch sessions.',
-                'Login Now',
               );
-
-              if (result === 'Login Now') {
-                if (this.loginHandler) {
-                  await this.loginHandler();
-                } else {
-                  await vscode.commands.executeCommand('qwen-code.login');
-                }
-              }
 
               // Send a specific error to the webview for better UI handling
               this.sendToWebView({
@@ -755,18 +759,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('No active ACP session')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to switch sessions.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
@@ -819,18 +814,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('No active ACP session')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to view sessions.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
@@ -883,18 +869,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
           errorMsg.includes('No active ACP session')
         ) {
           // Show a more user-friendly error message for expired sessions
-          const result = await vscode.window.showWarningMessage(
+          await this.promptLogin(
             'Your login session has expired or is invalid. Please login again to save sessions.',
-            'Login Now',
           );
-
-          if (result === 'Login Now') {
-            if (this.loginHandler) {
-              await this.loginHandler();
-            } else {
-              await vscode.commands.executeCommand('qwen-code.login');
-            }
-          }
 
           // Send a specific error to the webview for better UI handling
           this.sendToWebView({
@@ -931,18 +908,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('No active ACP session')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to save sessions.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
@@ -996,19 +964,11 @@ export class SessionMessageHandler extends BaseMessageHandler {
     try {
       // If not connected, offer to login or view offline
       if (!this.agentManager.isConnected) {
-        const selection = await vscode.window.showWarningMessage(
+        const choice = await this.promptLoginOrOffline(
           'You are not logged in. Login now to fully restore this session, or view it offline.',
-          'Login Now',
-          'View Offline',
         );
 
-        if (selection === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        } else if (selection === 'View Offline') {
+        if (choice === 'offline') {
           const messages =
             await this.agentManager.getSessionMessages(sessionId);
           this.currentConversationId = sessionId;
@@ -1020,7 +980,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
             'Showing cached session content. Login to interact with the AI.',
           );
           return;
-        } else {
+        } else if (choice !== 'login') {
           return;
         }
       }
@@ -1054,18 +1014,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
           errorMsg.includes('No active ACP session')
         ) {
           // Show a more user-friendly error message for expired sessions
-          const result = await vscode.window.showWarningMessage(
+          await this.promptLogin(
             'Your login session has expired or is invalid. Please login again to resume sessions.',
-            'Login Now',
           );
-
-          if (result === 'Login Now') {
-            if (this.loginHandler) {
-              await this.loginHandler();
-            } else {
-              await vscode.commands.executeCommand('qwen-code.login');
-            }
-          }
 
           // Send a specific error to the webview for better UI handling
           this.sendToWebView({
@@ -1105,18 +1056,9 @@ export class SessionMessageHandler extends BaseMessageHandler {
         errorMsg.includes('No active ACP session')
       ) {
         // Show a more user-friendly error message for expired sessions
-        const result = await vscode.window.showWarningMessage(
+        await this.promptLogin(
           'Your login session has expired or is invalid. Please login again to resume sessions.',
-          'Login Now',
         );
-
-        if (result === 'Login Now') {
-          if (this.loginHandler) {
-            await this.loginHandler();
-          } else {
-            await vscode.commands.executeCommand('qwen-code.login');
-          }
-        }
 
         // Send a specific error to the webview for better UI handling
         this.sendToWebView({
