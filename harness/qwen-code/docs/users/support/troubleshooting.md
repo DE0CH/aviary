@@ -31,7 +31,7 @@ This guide provides solutions to common issues and debugging tips, including top
     1. In your home directory: `~/.qwen/settings.json`.
     2. In your project's root directory: `./.qwen/settings.json`.
 
-    Refer to [Qwen Code Configuration](./cli/configuration.md) for more details.
+    Refer to [Qwen Code Configuration](/users/configuration/settings) for more details.
 
 - **Q: Why don't I see cached token counts in my stats output?**
   - A: Cached token information is only displayed when cached tokens are being used. This feature is available for API key users (Qwen API key or Google Cloud Vertex AI) but not for OAuth users (such as Google Personal/Enterprise accounts like Google Gmail or Google Workspace, respectively). This is because the Qwen Code Assist API does not support cached content creation. You can still view your total token usage using the `/stats` command.
@@ -48,7 +48,7 @@ This guide provides solutions to common issues and debugging tips, including top
   - **Solution:**
     The update depends on how you installed Qwen Code:
     - If you installed `qwen` globally, check that your `npm` global binary directory is in your `PATH`. You can update using the command `npm install -g @qwen-code/qwen-code@latest`.
-    - If you are running `qwen` from source, ensure you are using the correct command to invoke it (e.g., `node packages/cli/dist/index.js ...`). To update, pull the latest changes from the repository, and then rebuild using the command `npm run build`.
+    - If you are running `qwen` from source, ensure you are using the correct command to invoke it (e.g. `node packages/cli/dist/index.js ...`). To update, pull the latest changes from the repository, and then rebuild using the command `npm run build`.
 
 - **Error: `MODULE_NOT_FOUND` or import errors.**
   - **Cause:** Dependencies are not installed correctly, or the project hasn't been built.
@@ -59,12 +59,12 @@ This guide provides solutions to common issues and debugging tips, including top
 
 - **Error: "Operation not permitted", "Permission denied", or similar.**
   - **Cause:** When sandboxing is enabled, Qwen Code may attempt operations that are restricted by your sandbox configuration, such as writing outside the project directory or system temp directory.
-  - **Solution:** Refer to the [Configuration: Sandboxing](./cli/configuration.md#sandboxing) documentation for more information, including how to customize your sandbox configuration.
+  - **Solution:** Refer to the [Configuration: Sandboxing](/users/features/sandbox) documentation for more information, including how to customize your sandbox configuration.
 
 - **Qwen Code is not running in interactive mode in "CI" environments**
-  - **Issue:** Qwen Code does not enter interactive mode (no prompt appears) if an environment variable starting with `CI_` (e.g., `CI_TOKEN`) is set. This is because the `is-in-ci` package, used by the underlying UI framework, detects these variables and assumes a non-interactive CI environment.
+  - **Issue:** Qwen Code does not enter interactive mode (no prompt appears) if an environment variable starting with `CI_` (e.g. `CI_TOKEN`) is set. This is because the `is-in-ci` package, used by the underlying UI framework, detects these variables and assumes a non-interactive CI environment.
   - **Cause:** The `is-in-ci` package checks for the presence of `CI`, `CONTINUOUS_INTEGRATION`, or any environment variable with a `CI_` prefix. When any of these are found, it signals that the environment is non-interactive, which prevents the CLI from starting in its interactive mode.
-  - **Solution:** If the `CI_` prefixed variable is not needed for the CLI to function, you can temporarily unset it for the command. e.g., `env -u CI_TOKEN qwen`
+  - **Solution:** If the `CI_` prefixed variable is not needed for the CLI to function, you can temporarily unset it for the command. e.g. `env -u CI_TOKEN qwen`
 
 - **DEBUG mode not working from project .env file**
   - **Issue:** Setting `DEBUG=true` in a project's `.env` file doesn't enable debug mode for the CLI.
@@ -84,12 +84,12 @@ This guide provides solutions to common issues and debugging tips, including top
 
 The Qwen Code uses specific exit codes to indicate the reason for termination. This is especially useful for scripting and automation.
 
-| Exit Code | Error Type                 | Description                                                                                         |
-| --------- | -------------------------- | --------------------------------------------------------------------------------------------------- |
-| 41        | `FatalAuthenticationError` | An error occurred during the authentication process.                                                |
-| 42        | `FatalInputError`          | Invalid or missing input was provided to the CLI. (non-interactive mode only)                       |
-| 44        | `FatalSandboxError`        | An error occurred with the sandboxing environment (e.g., Docker, Podman, or Seatbelt).              |
-| 52        | `FatalConfigError`         | A configuration file (`settings.json`) is invalid or contains errors.                               |
+| Exit Code | Error Type                 | Description                                                  |
+| --------- | -------------------------- | ------------------------------------------------------------ |
+| 41        | `FatalAuthenticationError` | An error occurred during the authentication process.         |
+| 42        | `FatalInputError`          | Invalid or missing input was provided to the CLI. (non-interactive mode only) |
+| 44        | `FatalSandboxError`        | An error occurred with the sandboxing environment (e.g. Docker, Podman, or Seatbelt). |
+| 52        | `FatalConfigError`         | A configuration file (`settings.json`) is invalid or contains errors. |
 | 53        | `FatalTurnLimitedError`    | The maximum number of conversational turns for the session was reached. (non-interactive mode only) |
 
 ## Debugging Tips
@@ -101,7 +101,7 @@ The Qwen Code uses specific exit codes to indicate the reason for termination. T
 - **Core debugging:**
   - Check the server console output for error messages or stack traces.
   - Increase log verbosity if configurable.
-  - Use Node.js debugging tools (e.g., `node --inspect`) if you need to step through server-side code.
+  - Use Node.js debugging tools (e.g. `node --inspect`) if you need to step through server-side code.
 
 - **Tool issues:**
   - If a specific tool is failing, try to isolate the issue by running the simplest possible version of the command or operation the tool performs.

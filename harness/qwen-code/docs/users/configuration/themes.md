@@ -140,7 +140,9 @@ The theme file must be a valid JSON file that follows the same structure as a cu
 
 ### Example Custom Theme
 
-<img src="../assets/theme-custom.png" alt="Custom theme example" width="600" />
+
+
+<img src="https://gw.alicdn.com/imgextra/i1/O1CN01Em30Hc1jYXAdIgls3_!!6000000004560-2-tps-1009-629.png" alt=" " style="zoom:100%;text-align:center;margin: 0 auto;" />
 
 ### Using Your Custom Theme
 
@@ -148,56 +150,15 @@ The theme file must be a valid JSON file that follows the same structure as a cu
 - Or, set it as the default by adding `"theme": "MyCustomTheme"` to the `ui` object in your `settings.json`.
 - Custom themes can be set at the user, project, or system level, and follow the same [configuration precedence](./configuration.md) as other settings.
 
----
 
-## Dark Themes
 
-### ANSI
+## Themes Preview
 
-<img src="../assets/theme-ansi.png" alt="ANSI theme" width="600" />
-
-### Atom OneDark
-
-<img src="../assets/theme-atom-one.png" alt="Atom One theme" width="600">
-
-### Ayu
-
-<img src="../assets/theme-ayu.png" alt="Ayu theme" width="600">
-
-### Default
-
-<img src="../assets/theme-default.png" alt="Default theme" width="600">
-
-### Dracula
-
-<img src="../assets/theme-dracula.png" alt="Dracula theme" width="600">
-
-### GitHub
-
-<img src="../assets/theme-github.png" alt="GitHub theme" width="600">
-
-## Light Themes
-
-### ANSI Light
-
-<img src="../assets/theme-ansi-light.png" alt="ANSI Light theme" width="600">
-
-### Ayu Light
-
-<img src="../assets/theme-ayu-light.png" alt="Ayu Light theme" width="600">
-
-### Default Light
-
-<img src="../assets/theme-default-light.png" alt="Default Light theme" width="600">
-
-### GitHub Light
-
-<img src="../assets/theme-github-light.png" alt="GitHub Light theme" width="600">
-
-### Google Code
-
-<img src="../assets/theme-google-light.png" alt="Google Code theme" width="600">
-
-### Xcode
-
-<img src="../assets/theme-xcode-light.png" alt="Xcode Light theme" width="600">
+| Dark Theme | Preview | Light Theme | Preview |
+| :-: | :-: | :-: | :-: |
+| ANSI | <img src="https://gw.alicdn.com/imgextra/i2/O1CN01ZInJiq1GdSZc9gHsI_!!6000000000645-2-tps-1140-934.png" style="zoom:30%;text-align:center;margin: 0 auto;" /> | ANSI Light | <img src="https://gw.alicdn.com/imgextra/i2/O1CN01IiJQFC1h9E3MXQj6W_!!6000000004234-2-tps-1140-934.png" style="zoom:30%;text-align:center;margin: 0 auto;" /> |
+| Atom OneDark | <img src="https://gw.alicdn.com/imgextra/i2/O1CN01Zlx1SO1Sw21SkTKV3_!!6000000002310-2-tps-1140-934.png" style="zoom:30%;text-align:center;margin: 0 auto;" /> | Ayu Light | <img src="https://gw.alicdn.com/imgextra/i3/O1CN01zEUc1V1jeUJsnCgQb_!!6000000004573-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> |
+| Ayu | <img src="https://gw.alicdn.com/imgextra/i3/O1CN019upo6v1SmPhmRjzfN_!!6000000002289-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> | Default Light | <img src="https://gw.alicdn.com/imgextra/i4/O1CN01RHjrEs1u7TXq3M6l3_!!6000000005990-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> |
+| Default | <img src="https://gw.alicdn.com/imgextra/i4/O1CN016pIeXz1pFC8owmR4Q_!!6000000005330-2-tps-1140-934.png" style="zoom:30%;text-align:center;margin: 0 auto;" /> | GitHub Light | <img src="https://gw.alicdn.com/imgextra/i4/O1CN01US2b0g1VETCPAVWLA_!!6000000002621-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> |
+| Dracula | <img src="https://gw.alicdn.com/imgextra/i4/O1CN016htnWH20c3gd2LpUR_!!6000000006869-2-tps-1140-934.png" style="zoom:30%;text-align:center;margin: 0 auto;" /> | Google Code | <img src="https://gw.alicdn.com/imgextra/i1/O1CN01Ng29ab23iQ2BuYKz8_!!6000000007289-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> |
+| GitHub | <img src="https://gw.alicdn.com/imgextra/i4/O1CN01fFCRda1IQIQ9qDNqv_!!6000000000887-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> | Xcode | <img src="https://gw.alicdn.com/imgextra/i1/O1CN010E3QAi1Huh5o1E9LN_!!6000000000818-2-tps-1140-934.png" alt=" " style="zoom:30%;text-align:center;margin: 0 auto;" /> |

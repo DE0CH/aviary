@@ -22,8 +22,8 @@ Add the following to your user `settings.json` file:
 
 Once the feature is enabled, the first time you run the Qwen Code from a folder, a dialog will automatically appear, prompting you to make a choice:
 
-- **Trust folder**: Grants full trust to the current folder (e.g., `my-project`).
-- **Trust parent folder**: Grants trust to the parent directory (e.g., `safe-projects`), which automatically trusts all of its subdirectories as well. This is useful if you keep all your safe projects in one place.
+- **Trust folder**: Grants full trust to the current folder (e.g. `my-project`).
+- **Trust parent folder**: Grants trust to the parent directory (e.g. `safe-projects`), which automatically trusts all of its subdirectories as well. This is useful if you keep all your safe projects in one place.
 - **Don't trust**: Marks the folder as untrusted. The CLI will operate in a restricted "safe mode."
 
 Your choice is saved in a central file (`~/.qwen/trustedFolders.json`), so you will only be asked once per folder.
@@ -56,6 +56,6 @@ If you need to change a decision or see all your settings, you have a couple of 
 
 For advanced users, it's helpful to know the exact order of operations for how trust is determined:
 
-1.  **IDE Trust Signal**: If you are using the [IDE Integration](./ide-integration.md), the CLI first asks the IDE if the workspace is trusted. The IDE's response takes highest priority.
+1.  **IDE Trust Signal**: If you are using the [IDE Integration](/users/ide-integration/ide-integration), the CLI first asks the IDE if the workspace is trusted. The IDE's response takes highest priority.
 
 2.  **Local Trust File**: If the IDE is not connected, the CLI checks the central `~/.qwen/trustedFolders.json` file.

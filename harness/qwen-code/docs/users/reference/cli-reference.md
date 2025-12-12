@@ -120,7 +120,7 @@ Environment Variables: Commands executed via `!` will set the `QWEN_CODE=1` envi
 
 Save frequently used prompts as shortcut commands to improve work efficiency and ensure consistency.
 
-### 📋 Quick Overview
+### Quick Overview
 
 | Function         | Description                                | Advantages                             | Priority | Applicable Scenarios                                 |
 | ---------------- | ------------------------------------------ | -------------------------------------- | -------- | ---------------------------------------------------- |
@@ -130,7 +130,7 @@ Save frequently used prompts as shortcut commands to improve work efficiency and
 
 Priority Rules: Project commands > User commands (project command used when names are same)
 
-### 🔤 Command Naming Rules
+### Command Naming Rules
 
 #### File Path to Command Name Mapping Table
 
@@ -141,14 +141,14 @@ Priority Rules: Project commands > User commands (project command used when name
 
 Naming Rules: Path separator (`/` or `\`) converted to colon (`:`)
 
-### 📄 TOML File Format Specification
+### TOML File Format Specification
 
 | Field         | Required | Description                              | Example                                    |
 | ------------- | -------- | ---------------------------------------- | ------------------------------------------ |
 | `prompt`      | Required | Prompt content sent to model             | `prompt = "Please analyze code: {{args}}"` |
 | `description` | Optional | Command description (displayed in /help) | `description = "Code analysis tool"`       |
 
-### 🔧 Parameter Processing Mechanism
+### Parameter Processing Mechanism
 
 | Processing Method            | Syntax             | Applicable Scenarios                 | Security Features                      |
 | ---------------------------- | ------------------ | ------------------------------------ | -------------------------------------- |
@@ -182,11 +182,11 @@ Naming Rules: Path separator (`/` or `\`) converted to colon (`:`)
 
 | Operation                       | User Interaction     |
 | ------------------------------- | -------------------- |
-| 1️⃣ Parse command and parameters | -                    |
-| 2️⃣ Automatic Shell escaping     | -                    |
-| 3️⃣ Show confirmation dialog     | ✅ User confirmation |
-| 4️⃣ Execute command              | -                    |
-| 5️⃣ Inject output to prompt      | -                    |
+| 1. Parse command and parameters | -                    |
+| 2. Automatic Shell escaping   | -                    |
+| 3. Show confirmation dialog   | ✅ User confirmation |
+| 4. Execute command           | -                    |
+| 5. Inject output to prompt    | -                    |
 
 Example: Git Commit Message Generation
 
@@ -221,16 +221,16 @@ Review {{args}}, reference standards:
 """
 ```
 
-### 🛠️ Practical Creation Example
+### Practical Creation Example
 
 #### "Pure Function Refactoring" Command Creation Steps Table
 
 | Operation                     | Command/Code                                |
 | ----------------------------- | ------------------------------------------- |
-| 1️⃣ Create directory structure | `mkdir -p ~/.qwen/commands/refactor`        |
-| 2️⃣ Create command file        | `touch ~/.qwen/commands/refactor/pure.toml` |
-| 3️⃣ Edit command content       | 参考下方代码                                |
-| 4️⃣ Test command               | `@file.js` → `/refactor:pure`               |
+| 1. Create directory structure | `mkdir -p ~/.qwen/commands/refactor`        |
+| 2. Create command file     | `touch ~/.qwen/commands/refactor/pure.toml` |
+| 3. Edit command content    | Refer to the complete code below. |
+| 4. Test command            | `@file.js` → `/refactor:pure`               |
 
 ```# ~/.qwen/commands/refactor/pure.toml
 description = "Refactor code to pure function"
@@ -243,7 +243,7 @@ prompt = """
 	"""
 ```
 
-### 💡 Custom Command Best Practices Summary
+### Custom Command Best Practices Summary
 
 #### Command Design Recommendations Table
 
