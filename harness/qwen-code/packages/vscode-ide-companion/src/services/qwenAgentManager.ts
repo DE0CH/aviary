@@ -11,7 +11,6 @@ import type {
 } from '../types/acpTypes.js';
 import { QwenSessionReader, type QwenSession } from './qwenSessionReader.js';
 import { QwenSessionManager } from './qwenSessionManager.js';
-import type { AuthStateManager } from './authStateManager.js';
 import type {
   ChatMessage,
   PlanEntry,
@@ -42,9 +41,7 @@ export class QwenAgentManager {
   // session/update notifications. We set this flag to route message chunks
   // (user/assistant) as discrete chat messages instead of live streaming.
   private rehydratingSessionId: string | null = null;
-  // Cache the last used AuthStateManager so internal calls (e.g. fallback paths)
-  // can reuse it and avoid forcing a fresh authentication unnecessarily.
-  private defaultAuthStateManager?: AuthStateManager;
+  // CLI is now the single source of truth for authentication state
   // Deduplicate concurrent session/new attempts
   private sessionCreateInFlight: Promise<string | null> | null = null;
 
@@ -165,22 +162,14 @@ export class QwenAgentManager {
    * Connect to Qwen service
    *
    * @param workingDir - Working directory
-   * @param authStateManager - Authentication state manager (optional)
    * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
-  async connect(
-    workingDir: string,
-    authStateManager?: AuthStateManager,
-    _cliPath?: string,
-  ): Promise<void> {
+  async connect(workingDir: string, _cliPath?: string): Promise<void> {
     this.currentWorkingDir = workingDir;
-    // Remember the provided authStateManager for future calls
-    this.defaultAuthStateManager = authStateManager;
     await this.connectionHandler.connect(
       this.connection,
       this.sessionReader,
       workingDir,
-      authStateManager,
       _cliPath,
     );
   }
@@ -1181,10 +1170,7 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @returns Newly created session ID
    */
-  async createNewSession(
-    workingDir: string,
-    authStateManager?: AuthStateManager,
-  ): Promise<string | null> {
+  async createNewSession(workingDir: string): Promise<string | null> {
     // Reuse existing session if present
     if (this.connection.currentSessionId) {
       return this.connection.currentSessionId;
@@ -1195,15 +1181,10 @@ export class QwenAgentManager {
     }
 
     console.log('[QwenAgentManager] Creating new session...');
-    // Prefer the provided authStateManager, otherwise fall back to the one
-    // remembered during connect(). This prevents accidental re-auth in
-    // fallback paths (e.g. session switching) when the handler didn't pass it.
-    const effectiveAuth = authStateManager || this.defaultAuthStateManager;
 
     this.sessionCreateInFlight = (async () => {
       try {
-        // Try to create a new ACP session. If Qwen asks for auth despite our
-        // cached flag (e.g. fresh process or expired tokens), re-authenticate and retry.
+        // Try to create a new ACP session. If Qwen asks for auth, let it handle authentication.
         try {
           await this.connection.newSession(workingDir);
         } catch (err) {
@@ -1217,18 +1198,16 @@ export class QwenAgentManager {
               '[QwenAgentManager] session/new requires authentication. Retrying with authenticate...',
             );
             try {
+              // Let CLI handle authentication - it's the single source of truth
               await this.connection.authenticate(authMethod);
-              // Persist auth cache so subsequent calls can skip the web flow.
-              if (effectiveAuth) {
-                await effectiveAuth.saveAuthState(workingDir, authMethod);
-              }
-              await setTimeout(() => Promise.resolve(), 300); // slight delay to ensure auth state is settled
+              // Add a slight delay to ensure auth state is settled
+              await new Promise((resolve) => setTimeout(resolve, 300));
               await this.connection.newSession(workingDir);
             } catch (reauthErr) {
-              // Clear potentially stale cache on failure and rethrow
-              if (effectiveAuth) {
-                await effectiveAuth.clearAuthState();
-              }
+              console.error(
+                '[QwenAgentManager] Re-authentication failed:',
+                reauthErr,
+              );
               throw reauthErr;
             }
           } else {
