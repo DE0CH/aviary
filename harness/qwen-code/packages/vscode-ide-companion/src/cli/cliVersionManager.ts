@@ -7,7 +7,7 @@
 import semver from 'semver';
 import { CliDetector, type CliDetectionResult } from './cliDetector.js';
 
-export const MIN_CLI_VERSION_FOR_SESSION_METHODS = '0.4.0';
+export const MIN_CLI_VERSION_FOR_SESSION_METHODS = '0.5.0';
 
 export interface CliFeatureFlags {
   supportsSessionList: boolean;
