@@ -81,8 +81,9 @@ function getCurrentLlmOutputLanguage(): string | null {
   if (fs.existsSync(filePath)) {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      // Extract language name from the first line (e.g., "# Chinese Response Rules" -> "Chinese")
-      const match = content.match(/^#\s+(.+?)\s+Response Rules/i);
+      // Extract language name from the first line
+      // Template format: "# CRITICAL: Chinese Output Language Rule - HIGHEST PRIORITY"
+      const match = content.match(/^#.*?(\w+)\s+Output Language Rule/i);
       if (match) {
         return match[1];
       }
@@ -127,7 +128,7 @@ async function setUiLanguage(
   context.ui.reloadCommands();
 
   // Map language codes to friendly display names
-  const langDisplayNames: Record<SupportedLanguage, string> = {
+  const langDisplayNames: Record<string, string> = {
     zh: '中文（zh-CN）',
     en: 'English（en-US）',
   };
@@ -136,7 +137,7 @@ async function setUiLanguage(
     type: 'message',
     messageType: 'info',
     content: t('UI language changed to {{lang}}', {
-      lang: langDisplayNames[lang],
+      lang: langDisplayNames[lang] || lang,
     }),
   };
 }
