@@ -138,7 +138,6 @@ export class QwenConnectionHandler {
             '[QwenAgentManager] Qwen requires authentication. Authenticating and retrying session/new...',
           );
           try {
-            // Let CLI handle authentication - it's the single source of truth
             await connection.authenticate(authMethod);
             // FIXME: @yiliang114 If there is no delay for a while, immediately executing
             // newSession may cause the cli authorization jump to be triggered again

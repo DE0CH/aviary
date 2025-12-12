@@ -131,7 +131,7 @@ export class WebViewProvider {
     // Note: Tool call updates are handled in handleSessionUpdate within QwenAgentManager
     // and sent via onStreamChunk callback
     this.agentManager.onToolCall((update) => {
-      // Always surface tool calls; they are part of the live assistant process.
+      // Always surface tool calls; they are part of the live assistant flow.
       // Cast update to access sessionUpdate property
       const updateData = update as unknown as Record<string, unknown>;
 
@@ -516,15 +516,13 @@ export class WebViewProvider {
   /**
    * Attempt to restore authentication state and initialize connection
    * This is called when the webview is first shown
-   *
-   * In the new architecture, let CLI handle authentication state management
    */
   private async attemptAuthStateRestoration(): Promise<void> {
     try {
       console.log(
-        '[WebViewProvider] Attempting connection (letting CLI handle authentication)...',
+        '[WebViewProvider] Attempting connection (CLI handle authentication)...',
       );
-      // In the new architecture, always attempt connection and let CLI handle authentication
+      //always attempt connection and let CLI handle authentication
       await this.initializeAgentConnection();
     } catch (error) {
       console.error(
@@ -540,7 +538,6 @@ export class WebViewProvider {
    * Can be called from show() or via /login command
    */
   async initializeAgentConnection(): Promise<void> {
-    // In the new architecture, let CLI handle authentication without local state caching
     return this.doInitializeAgentConnection();
   }
 
@@ -586,7 +583,6 @@ export class WebViewProvider {
           console.log('[WebViewProvider] Connecting to agent...');
 
           // Pass the detected CLI path to ensure we use the correct installation
-          // In the new architecture, let CLI handle authentication without local state caching
           await this.agentManager.connect(workingDir, cliDetection.cliPath);
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
@@ -755,12 +751,6 @@ export class WebViewProvider {
         try {
           await this.agentManager.createNewSession(workingDir);
           console.log('[WebViewProvider] ACP session created successfully');
-
-          // In the new architecture, CLI handles authentication state
-          // No need to save auth state locally anymore
-          console.log(
-            '[WebViewProvider] Session created successfully (CLI manages auth state)',
-          );
         } catch (sessionError) {
           console.error(
             '[WebViewProvider] Failed to create ACP session:',
