@@ -137,7 +137,7 @@ const posixStrategy: ProcessCleanupStrategy = {
   },
 };
 
-const cleanupStrategy =
+const getCleanupStrategy = () =>
   os.platform() === 'win32' ? windowsStrategy : posixStrategy;
 
 /**
@@ -151,17 +151,18 @@ export class ShellExecutionService {
   private static activeChildProcesses = new Set<number>();
 
   static cleanup() {
+    const strategy = getCleanupStrategy();
     // Cleanup PTYs
     for (const [pid, pty] of this.activePtys) {
       try {
-        cleanupStrategy.killPty(pid, pty);
+        strategy.killPty(pid, pty);
       } catch {
         // ignore
       }
     }
 
     // Cleanup child processes
-    cleanupStrategy.killChildProcesses(this.activeChildProcesses);
+    strategy.killChildProcesses(this.activeChildProcesses);
   }
 
   static {
