@@ -449,15 +449,15 @@ Use arrow keys to navigate and press Enter to select a conversation. Press Esc t
 > qwen --continue --p "Run the tests again"
 > ```
 
-## Run parallel Qwen Code sessions with Git worktrees【TBD 不是特别理解创建 worktree，需要确认一下命令】
+## Run parallel Qwen Code sessions with Git worktrees
 
 Suppose you need to work on multiple tasks simultaneously with complete code isolation between Qwen Code instances.
 
-1. Understand Git worktrees
+**1. Understand Git worktrees**
 
 Git worktrees allow you to check out multiple branches from the same repository into separate directories. Each worktree has its own working directory with isolated files, while sharing the same Git history. Learn more in the [official Git worktree documentation](https://git-scm.com/docs/git-worktree).
 
-2. Create a new worktree
+**2. Create a new worktree**
 
 ```bash
 # Create a new worktree with a new branch
@@ -469,7 +469,7 @@ git worktree add ../project-bugfix bugfix-123
 
 This creates a new directory with a separate working copy of your repository.
 
-4. Run Qwen Code in each worktree
+**3. Run Qwen Code in each worktree**
 
 ```bash
 # Navigate to your worktree
@@ -479,14 +479,14 @@ cd ../project-feature-a
 qwen
 ```
 
-5. Run Qwen Code in another worktree
+**4. Run Qwen Code in another worktree**
 
 ```bash
 cd ../project-bugfix
 qwen
 ```
 
-6. Manage your worktrees
+**5. Manage your worktrees**
 
 ```bash
 # List all worktrees

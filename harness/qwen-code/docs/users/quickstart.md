@@ -186,7 +186,7 @@ review my changes and suggest improvements
 > [!tip]
 > **Remember**: Qwen Code is your AI pair programmer. Talk to it like you would a helpful colleague - describe what you want to achieve, and it will help you get there.
 
-## 🧭 Essential commands
+## Essential commands
 
 Here are the most important commands for daily use:
 
@@ -206,7 +206,7 @@ Here are the most important commands for daily use:
 
 See the [CLI reference](/users/reference/cli-reference) for a complete list of commands.
 
-## 📌 Pro tips for beginners
+## Pro tips for beginners
 
 - Be specific with your requests
   - Instead of: "fix the bug"
@@ -236,7 +236,7 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
   - Press ↑ for command history
   - Type `/` to see all slash commands
 
-## 🙋🏻 Getting help
+## Getting help
 
 - **In Qwen Code**: Type `/help` or ask "how do I..."
 - **Documentation**: You're here! Browse other guides
