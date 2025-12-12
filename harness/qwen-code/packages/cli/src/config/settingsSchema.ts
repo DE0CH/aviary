@@ -191,6 +191,7 @@ const SETTINGS_SCHEMA = {
           { value: 'auto', label: 'Auto (detect from system)' },
           { value: 'en', label: 'English' },
           { value: 'zh', label: '中文 (Chinese)' },
+          { value: 'ru', label: 'Русский (Russian)' },
         ],
       },
     },
