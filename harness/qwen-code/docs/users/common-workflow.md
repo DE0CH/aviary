@@ -292,59 +292,6 @@ check if the documentation follows our project standards
 > - Ask for examples in the documentation
 > - Request documentation for public APIs, interfaces, and complex logic
 
-## Work with images【TBD 目前读不了】
-
-Suppose you need to work with images in your codebase, and you want Qwen Code's help analyzing image content.
-
-1. Add an image to the conversation
-
-You can use any of these methods:
-
-- Drag and drop an image into the Qwen Code window
-- Copy an image and paste it into the CLI with ctrl+v (Do not use cmd+v)
-- Provide an image path to Qwen Code. E.g., "Analyze this image: @/path/to/your/image. png"
-
-2. Ask Qwen Code to analyze the image
-
-```
-What does this image show?
-```
-
-```
-Describe the UI elements in this screenshot
-```
-
-```
-Are there any problematic elements in this diagram?
-```
-
-3. Use images for context
-
-```
-Here's a screenshot of the error. What's causing it?
-```
-
-```
-This is our current database schema. How should we modify it for the new feature?
-```
-
-4. Get code suggestions from visual content
-
-```
-Generate CSS to match this design mockup
-```
-
-```
-What HTML structure would recreate this component?
-```
-
-> [!tip]
->
-> - Use images when text descriptions would be unclear or cumbersome
-> - Include screenshots of errors, UI designs, or diagrams for better context
-> - You can work with multiple images in a conversation
-> - Image analysis works with diagrams, screenshots, mockups, and more
-
 ## Reference files and directories
 
 Use `@` to quickly include files or directories without waiting for Qwen Code to read them.
