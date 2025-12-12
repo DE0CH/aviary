@@ -98,6 +98,48 @@ const getFullBufferText = (terminal: pkg.Terminal): string => {
   return lines.join('\n').trimEnd();
 };
 
+interface ProcessCleanupStrategy {
+  killPty(pid: number, pty: ActivePty): void;
+  killChildProcesses(pids: Set<number>): void;
+}
+
+const windowsStrategy: ProcessCleanupStrategy = {
+  killPty: (_pid, pty) => {
+    pty.ptyProcess.kill();
+  },
+  killChildProcesses: (pids) => {
+    if (pids.size > 0) {
+      try {
+        const args = ['/f', '/t'];
+        for (const pid of pids) {
+          args.push('/pid', pid.toString());
+        }
+        spawnSync('taskkill', args);
+      } catch {
+        // ignore
+      }
+    }
+  },
+};
+
+const posixStrategy: ProcessCleanupStrategy = {
+  killPty: (pid, _pty) => {
+    process.kill(-pid, 'SIGKILL');
+  },
+  killChildProcesses: (pids) => {
+    for (const pid of pids) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  },
+};
+
+const cleanupStrategy =
+  os.platform() === 'win32' ? windowsStrategy : posixStrategy;
+
 /**
  * A centralized service for executing shell commands with robust process
  * management, cross-platform compatibility, and streaming output capabilities.
@@ -112,38 +154,14 @@ export class ShellExecutionService {
     // Cleanup PTYs
     for (const [pid, pty] of this.activePtys) {
       try {
-        if (os.platform() === 'win32') {
-          pty.ptyProcess.kill();
-        } else {
-          process.kill(-pid, 'SIGKILL');
-        }
+        cleanupStrategy.killPty(pid, pty);
       } catch {
         // ignore
       }
     }
 
     // Cleanup child processes
-    if (os.platform() === 'win32') {
-      if (this.activeChildProcesses.size > 0) {
-        try {
-          const args = ['/f', '/t'];
-          for (const pid of this.activeChildProcesses) {
-            args.push('/pid', pid.toString());
-          }
-          spawnSync('taskkill', args);
-        } catch {
-          // ignore
-        }
-      }
-    } else {
-      for (const pid of this.activeChildProcesses) {
-        try {
-          process.kill(-pid, 'SIGKILL');
-        } catch {
-          // ignore
-        }
-      }
-    }
+    cleanupStrategy.killChildProcesses(this.activeChildProcesses);
   }
 
   static {
