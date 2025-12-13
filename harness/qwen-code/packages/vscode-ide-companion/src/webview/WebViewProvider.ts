@@ -8,11 +8,9 @@ import * as vscode from 'vscode';
 import { QwenAgentManager } from '../services/qwenAgentManager.js';
 import { ConversationStore } from '../services/conversationStore.js';
 import type { AcpPermissionRequest } from '../types/acpTypes.js';
-import { CliManager } from '../cli/cliManager.js';
 import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
-import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
@@ -564,33 +562,36 @@ export class WebViewProvider {
         `[WebViewProvider] Using CLI-managed authentication (autoAuth=${autoAuthenticate})`,
       );
 
-      // Check if CLI is installed before attempting to connect
-      const cliDetection = await CliManager.detectQwenCli();
+      const bundledCliEntry = vscode.Uri.joinPath(
+        this.extensionUri,
+        'dist',
+        'qwen-cli',
+        'cli.js',
+      ).fsPath;
 
-      if (!cliDetection.isInstalled) {
-        console.log(
-          '[WebViewProvider] Qwen CLI not detected, skipping agent connection',
+      try {
+        console.log('[WebViewProvider] Connecting to bundled agent...');
+        console.log('[WebViewProvider] Bundled CLI entry:', bundledCliEntry);
+
+        await this.agentManager.connect(workingDir, bundledCliEntry);
+        console.log('[WebViewProvider] Agent connected successfully');
+        this.agentInitialized = true;
+
+        // Load messages from the current Qwen session
+        await this.loadCurrentSessionMessages();
+
+        // Notify webview that agent is connected
+        this.sendMessageToWebView({
+          type: 'agentConnected',
+          data: {},
+        });
+      } catch (_error) {
+        console.error('[WebViewProvider] Agent connection error:', _error);
+        vscode.window.showWarningMessage(
+          `Failed to start bundled Qwen Code CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
         );
-        console.log(
-          '[WebViewProvider] CLI detection error:',
-          cliDetection.error,
-        );
-
-        // Show VSCode notification with installation option
-        await CliInstaller.promptInstallation();
-
-        // Initialize empty conversation (can still browse history)
+        // Fallback to empty conversation
         await this.initializeEmptyConversation();
-      } else {
-        console.log(
-          '[WebViewProvider] Qwen CLI detected, attempting connection...',
-        );
-        console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
-        console.log('[WebViewProvider] CLI version:', cliDetection.version);
-
-        // Perform version check with throttled notifications
-        const versionChecker = CliManager.getInstance(this.context);
-        await versionChecker.checkCliVersion(true); // Silent check to avoid popup spam
 
         try {
           console.log('[WebViewProvider] Connecting to agent...');
@@ -598,7 +599,7 @@ export class WebViewProvider {
           // Pass the detected CLI path to ensure we use the correct installation
           const connectResult = await this.agentManager.connect(
             workingDir,
-            cliDetection.cliPath,
+            bundledCliEntry,
             options,
           );
           console.log('[WebViewProvider] Agent connected successfully');

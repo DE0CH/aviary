@@ -12,7 +12,6 @@
 
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
-import { CliManager } from '../cli/cliManager.js';
 import { authMethod } from '../types/acpTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
@@ -32,13 +31,13 @@ export class QwenConnectionHandler {
    * @param connection - ACP connection instance
    * @param sessionReader - Session reader instance
    * @param workingDir - Working directory
-   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
+   * @param cliEntryPath - Path to bundled CLI entrypoint (cli.js)
    */
   async connect(
     connection: AcpConnection,
     sessionReader: QwenSessionReader,
     workingDir: string,
-    cliPath?: string,
+    cliEntryPath: string,
     options?: {
       autoAuthenticate?: boolean;
     },
@@ -49,19 +48,10 @@ export class QwenConnectionHandler {
     let sessionCreated = false;
     let requiresAuth = false;
 
-    // Check if CLI exists using standard detection (with cached results for better performance)
-    const detectionResult = await CliManager.detectQwenCli(
-      /* forceRefresh */ false, // Use cached results when available for better performance
-    );
-    if (!detectionResult.isInstalled) {
-      throw new Error(detectionResult.error || 'Qwen CLI not found');
-    }
-    console.log('[QwenAgentManager] CLI detected at:', detectionResult.cliPath);
-
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    await connection.connect(cliPath!, workingDir, extraArgs);
+    await connection.connect(cliEntryPath, workingDir, extraArgs);
 
     // Try to restore existing session or create new session
     // Note: Auto-restore on connect is disabled to avoid surprising loads

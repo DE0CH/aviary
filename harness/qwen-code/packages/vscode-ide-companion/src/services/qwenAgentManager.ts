@@ -23,9 +23,7 @@ import {
   type QwenConnectionResult,
 } from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
-import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
-import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliManager.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 import { handleAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 
@@ -189,11 +187,11 @@ export class QwenAgentManager {
    * Connect to Qwen service
    *
    * @param workingDir - Working directory
-   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
+   * @param cliEntryPath - Path to bundled CLI entrypoint (cli.js)
    */
   async connect(
     workingDir: string,
-    _cliPath?: string,
+    cliEntryPath: string,
     options?: AgentConnectOptions,
   ): Promise<QwenConnectionResult> {
     this.currentWorkingDir = workingDir;
@@ -201,7 +199,7 @@ export class QwenAgentManager {
       this.connection,
       this.sessionReader,
       workingDir,
-      _cliPath,
+      cliEntryPath,
       options,
     );
   }
@@ -284,71 +282,51 @@ export class QwenAgentManager {
       '[QwenAgentManager] Getting session list with version-aware strategy',
     );
 
-    // Check if CLI supports session/list method
-    const cliContextManager = CliContextManager.getInstance();
-    const supportsSessionList = cliContextManager.supportsSessionList();
+    // Prefer ACP method first; fall back to file system if it fails for any reason.
+    try {
+      console.log('[QwenAgentManager] Attempting to get session list via ACP');
+      const response = await this.connection.listSessions();
+      console.log('[QwenAgentManager] ACP session list response:', response);
 
-    console.log(
-      '[QwenAgentManager] CLI supports session/list:',
-      supportsSessionList,
-    );
+      // sendRequest resolves with the JSON-RPC "result" directly
+      // Newer CLI returns an object: { items: [...], nextCursor?, hasMore }
+      // Older prototypes might return an array. Support both.
+      const res: unknown = response;
+      let items: Array<Record<string, unknown>> = [];
 
-    // Try ACP method first if supported
-    if (supportsSessionList) {
-      try {
-        console.log(
-          '[QwenAgentManager] Attempting to get session list via ACP method',
-        );
-        const response = await this.connection.listSessions();
-        console.log('[QwenAgentManager] ACP session list response:', response);
-
-        // sendRequest resolves with the JSON-RPC "result" directly
-        // Newer CLI returns an object: { items: [...], nextCursor?, hasMore }
-        // Older prototypes might return an array. Support both.
-        const res: unknown = response;
-        let items: Array<Record<string, unknown>> = [];
-
-        // Note: AcpSessionManager resolves `sendRequest` with the JSON-RPC
-        // "result" directly (not the full AcpResponse). Treat it as unknown
-        // and carefully narrow before accessing `items` to satisfy strict TS.
-        if (res && typeof res === 'object' && 'items' in res) {
-          const itemsValue = (res as { items?: unknown }).items;
-          items = Array.isArray(itemsValue)
-            ? (itemsValue as Array<Record<string, unknown>>)
-            : [];
-        }
-
-        console.log(
-          '[QwenAgentManager] Sessions retrieved via ACP:',
-          res,
-          items.length,
-        );
-        if (items.length > 0) {
-          const sessions = items.map((item) => ({
-            id: item.sessionId || item.id,
-            sessionId: item.sessionId || item.id,
-            title: item.title || item.name || item.prompt || 'Untitled Session',
-            name: item.title || item.name || item.prompt || 'Untitled Session',
-            startTime: item.startTime,
-            lastUpdated: item.mtime || item.lastUpdated,
-            messageCount: item.messageCount || 0,
-            projectHash: item.projectHash,
-            filePath: item.filePath,
-            cwd: item.cwd,
-          }));
-
-          console.log(
-            '[QwenAgentManager] Sessions retrieved via ACP:',
-            sessions.length,
-          );
-          return sessions;
-        }
-      } catch (error) {
-        console.warn(
-          '[QwenAgentManager] ACP session list failed, falling back to file system method:',
-          error,
-        );
+      if (Array.isArray(res)) {
+        items = res as Array<Record<string, unknown>>;
+      } else if (res && typeof res === 'object' && 'items' in res) {
+        const itemsValue = (res as { items?: unknown }).items;
+        items = Array.isArray(itemsValue)
+          ? (itemsValue as Array<Record<string, unknown>>)
+          : [];
       }
+
+      console.log('[QwenAgentManager] Sessions retrieved via ACP:', {
+        count: items.length,
+      });
+
+      if (items.length > 0) {
+        const sessions = items.map((item) => ({
+          id: item.sessionId || item.id,
+          sessionId: item.sessionId || item.id,
+          title: item.title || item.name || item.prompt || 'Untitled Session',
+          name: item.title || item.name || item.prompt || 'Untitled Session',
+          startTime: item.startTime,
+          lastUpdated: item.mtime || item.lastUpdated,
+          messageCount: item.messageCount || 0,
+          projectHash: item.projectHash,
+          filePath: item.filePath,
+          cwd: item.cwd,
+        }));
+        return sessions;
+      }
+    } catch (error) {
+      console.warn(
+        '[QwenAgentManager] ACP session list failed, falling back to file system method:',
+        error,
+      );
     }
 
     // Always fall back to file system method
@@ -404,63 +382,52 @@ export class QwenAgentManager {
   }> {
     const size = params?.size ?? 20;
     const cursor = params?.cursor;
+    try {
+      const response = await this.connection.listSessions({
+        size,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      // sendRequest resolves with the JSON-RPC "result" directly
+      const res: unknown = response;
+      let items: Array<Record<string, unknown>> = [];
 
-    const cliContextManager = CliContextManager.getInstance();
-    const supportsSessionList = cliContextManager.supportsSessionList();
-
-    if (supportsSessionList) {
-      try {
-        const response = await this.connection.listSessions({
-          size,
-          ...(cursor !== undefined ? { cursor } : {}),
-        });
-        // sendRequest resolves with the JSON-RPC "result" directly
-        const res: unknown = response;
-        let items: Array<Record<string, unknown>> = [];
-
-        if (Array.isArray(res)) {
-          items = res;
-        } else if (typeof res === 'object' && res !== null && 'items' in res) {
-          const responseObject = res as {
-            items?: Array<Record<string, unknown>>;
-          };
-          items = Array.isArray(responseObject.items)
-            ? responseObject.items
-            : [];
-        }
-
-        const mapped = items.map((item) => ({
-          id: item.sessionId || item.id,
-          sessionId: item.sessionId || item.id,
-          title: item.title || item.name || item.prompt || 'Untitled Session',
-          name: item.title || item.name || item.prompt || 'Untitled Session',
-          startTime: item.startTime,
-          lastUpdated: item.mtime || item.lastUpdated,
-          messageCount: item.messageCount || 0,
-          projectHash: item.projectHash,
-          filePath: item.filePath,
-          cwd: item.cwd,
-        }));
-
-        const nextCursor: number | undefined =
-          typeof res === 'object' && res !== null && 'nextCursor' in res
-            ? typeof res.nextCursor === 'number'
-              ? res.nextCursor
-              : undefined
-            : undefined;
-        const hasMore: boolean =
-          typeof res === 'object' && res !== null && 'hasMore' in res
-            ? Boolean(res.hasMore)
-            : false;
-
-        return { sessions: mapped, nextCursor, hasMore };
-      } catch (error) {
-        console.warn(
-          '[QwenAgentManager] Paged ACP session list failed:',
-          error,
-        );
-        // fall through to file system
+      if (Array.isArray(res)) {
+        items = res;
+      } else if (typeof res === 'object' && res !== null && 'items' in res) {
+        const responseObject = res as {
+          items?: Array<Record<string, unknown>>;
+        };
+        items = Array.isArray(responseObject.items) ? responseObject.items : [];
       }
+
+      const mapped = items.map((item) => ({
+        id: item.sessionId || item.id,
+        sessionId: item.sessionId || item.id,
+        title: item.title || item.name || item.prompt || 'Untitled Session',
+        name: item.title || item.name || item.prompt || 'Untitled Session',
+        startTime: item.startTime,
+        lastUpdated: item.mtime || item.lastUpdated,
+        messageCount: item.messageCount || 0,
+        projectHash: item.projectHash,
+        filePath: item.filePath,
+        cwd: item.cwd,
+      }));
+
+      const nextCursor: number | undefined =
+        typeof res === 'object' && res !== null && 'nextCursor' in res
+          ? typeof res.nextCursor === 'number'
+            ? res.nextCursor
+            : undefined
+          : undefined;
+      const hasMore: boolean =
+        typeof res === 'object' && res !== null && 'hasMore' in res
+          ? Boolean(res.hasMore)
+          : false;
+
+      return { sessions: mapped, nextCursor, hasMore };
+    } catch (error) {
+      console.warn('[QwenAgentManager] Paged ACP session list failed:', error);
+      // fall through to file system
     }
 
     // Fallback: file system for current project only (to match ACP semantics)
@@ -510,31 +477,28 @@ export class QwenAgentManager {
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
       // Prefer reading CLI's JSONL if we can find filePath from session/list
-      const cliContextManager = CliContextManager.getInstance();
-      if (cliContextManager.supportsSessionList()) {
-        try {
-          const list = await this.getSessionList();
-          const item = list.find(
-            (s) => s.sessionId === sessionId || s.id === sessionId,
-          );
-          console.log(
-            '[QwenAgentManager] Session list item for filePath lookup:',
-            item,
-          );
-          if (
-            typeof item === 'object' &&
-            item !== null &&
-            'filePath' in item &&
-            typeof item.filePath === 'string'
-          ) {
-            const messages = await this.readJsonlMessages(item.filePath);
-            // Even if messages array is empty, we should return it rather than falling back
-            // This ensures we don't accidentally show messages from a different session format
-            return messages;
-          }
-        } catch (e) {
-          console.warn('[QwenAgentManager] JSONL read path lookup failed:', e);
+      try {
+        const list = await this.getSessionList();
+        const item = list.find(
+          (s) => s.sessionId === sessionId || s.id === sessionId,
+        );
+        console.log(
+          '[QwenAgentManager] Session list item for filePath lookup:',
+          item,
+        );
+        if (
+          typeof item === 'object' &&
+          item !== null &&
+          'filePath' in item &&
+          typeof item.filePath === 'string'
+        ) {
+          const messages = await this.readJsonlMessages(item.filePath);
+          // Even if messages array is empty, we should return it rather than falling back
+          // This ensures we don't accidentally show messages from a different session format
+          return messages;
         }
+      } catch (e) {
+        console.warn('[QwenAgentManager] JSONL read path lookup failed:', e);
       }
 
       // Fallback: legacy JSON session files
@@ -938,16 +902,6 @@ export class QwenAgentManager {
     sessionId: string,
     cwdOverride?: string,
   ): Promise<unknown> {
-    // Check if CLI supports session/load method
-    const cliContextManager = CliContextManager.getInstance();
-    const supportsSessionLoad = cliContextManager.supportsSessionLoad();
-
-    if (!supportsSessionLoad) {
-      throw new Error(
-        `CLI version does not support session/load method. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-      );
-    }
-
     try {
       // Route upcoming session/update messages as discrete messages for replay
       this.rehydratingSessionId = sessionId;
@@ -1021,32 +975,18 @@ export class QwenAgentManager {
       sessionId,
     );
 
-    // Check if CLI supports session/load method
-    const cliContextManager = CliContextManager.getInstance();
-    const supportsSessionLoad = cliContextManager.supportsSessionLoad();
-
-    console.log(
-      '[QwenAgentManager] CLI supports session/load:',
-      supportsSessionLoad,
-    );
-
-    // Try ACP method first if supported
-    if (supportsSessionLoad) {
-      try {
-        console.log(
-          '[QwenAgentManager] Attempting to load session via ACP method',
-        );
-        await this.loadSessionViaAcp(sessionId);
-        console.log('[QwenAgentManager] Session loaded successfully via ACP');
-
-        // After loading via ACP, we still need to get messages from file system
-        // In future, we might get them directly from the ACP response
-      } catch (error) {
-        console.warn(
-          '[QwenAgentManager] ACP session load failed, falling back to file system method:',
-          error,
-        );
-      }
+    // Prefer ACP session/load first; fall back to file system on failure.
+    try {
+      console.log('[QwenAgentManager] Attempting to load session via ACP');
+      await this.loadSessionViaAcp(sessionId);
+      console.log('[QwenAgentManager] Session loaded successfully via ACP');
+      // After loading via ACP, we still need to get messages from file system.
+      // In future, we might get them directly from the ACP response.
+    } catch (error) {
+      console.warn(
+        '[QwenAgentManager] ACP session load failed, falling back to file system method:',
+        error,
+      );
     }
 
     // Always fall back to file system method
