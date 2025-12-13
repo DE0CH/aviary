@@ -7,6 +7,15 @@
 import type { SessionListItem } from '@qwen-code/qwen-code-core';
 
 /**
+ * State for managing loaded sessions in the session picker.
+ */
+export interface SessionState {
+  sessions: SessionListItem[];
+  hasMore: boolean;
+  nextCursor?: number;
+}
+
+/**
  * Page size for loading sessions.
  */
 export const SESSION_PAGE_SIZE = 20;

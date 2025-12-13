@@ -10,6 +10,7 @@ import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
 import { theme } from '../semantic-colors.js';
 import { useSessionPicker } from '../hooks/useStandaloneSessionPicker.js';
 import { SessionListItemView } from './SessionListItem.js';
+import { t } from '../../i18n/index.js';
 
 // Exported for testing
 export interface SessionPickerProps {
@@ -109,7 +110,7 @@ export function SessionPicker({
         {/* Header row */}
         <Box paddingX={1}>
           <Text bold color={theme.text.primary}>
-            Resume Session
+            {t('Resume Session')}
           </Text>
         </Box>
 
@@ -126,8 +127,10 @@ export function SessionPicker({
             <Box paddingY={1} justifyContent="center">
               <Text color={theme.text.secondary}>
                 {picker.filterByBranch
-                  ? `No sessions found for branch "${currentBranch}"`
-                  : 'No sessions found'}
+                  ? t('No sessions found for branch "{{branch}}"', {
+                      branch: currentBranch ?? '',
+                    })
+                  : t('No sessions found')}
               </Text>
             </Box>
           ) : (
@@ -169,10 +172,10 @@ export function SessionPicker({
                 >
                   B
                 </Text>
-                {' to toggle branch · '}
+                {t(' to toggle branch') + ' · '}
               </>
             )}
-            {'↑↓ to navigate · Esc to cancel'}
+            {t('to navigate · Esc to cancel')}
           </Text>
         </Box>
       </Box>

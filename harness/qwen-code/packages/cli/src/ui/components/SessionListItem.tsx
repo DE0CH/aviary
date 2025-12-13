@@ -22,9 +22,9 @@ export interface SessionListItemViewProps {
   showScrollDown: boolean;
   maxPromptWidth: number;
   /**
-   * Prefix characters to use for selected, scroll up, and scroll down states.
-   * Defaults to ['> ', '^ ', 'v '] (dialog style).
-   * Use ['> ', '^ ', 'v '] for dialog or ['> ', '^ ', 'v '] for standalone.
+   * Prefix characters for selection indicator and scroll hints.
+   * Dialog style uses '> ', '^ ', 'v ' (ASCII).
+   * Standalone style uses special Unicode characters.
    */
   prefixChars?: {
     selected: string;

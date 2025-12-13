@@ -10,6 +10,7 @@ import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
 import { theme } from '../semantic-colors.js';
 import { useDialogSessionPicker } from '../hooks/useDialogSessionPicker.js';
 import { SessionListItemView } from './SessionListItem.js';
+import { t } from '../../i18n/index.js';
 
 export interface ResumeSessionDialogProps {
   cwd: string;
@@ -59,10 +60,10 @@ export function ResumeSessionDialog({
         padding={1}
       >
         <Text color={theme.text.primary} bold>
-          Resume Session
+          {t('Resume Session')}
         </Text>
         <Box paddingY={1}>
-          <Text color={theme.text.secondary}>Loading sessions...</Text>
+          <Text color={theme.text.secondary}>{t('Loading sessions...')}</Text>
         </Box>
       </Box>
     );
@@ -78,10 +79,13 @@ export function ResumeSessionDialog({
       {/* Header */}
       <Box marginBottom={1}>
         <Text color={theme.text.primary} bold>
-          Resume Session
+          {t('Resume Session')}
         </Text>
         {picker.filterByBranch && currentBranch && (
-          <Text color={theme.text.secondary}> (branch: {currentBranch})</Text>
+          <Text color={theme.text.secondary}>
+            {' '}
+            {t('(branch: {{branch}})', { branch: currentBranch })}
+          </Text>
         )}
       </Box>
 
@@ -91,8 +95,10 @@ export function ResumeSessionDialog({
           <Box paddingY={1}>
             <Text color={theme.text.secondary}>
               {picker.filterByBranch
-                ? `No sessions found for branch "${currentBranch}"`
-                : 'No sessions found'}
+                ? t('No sessions found for branch "{{branch}}"', {
+                    branch: currentBranch ?? '',
+                  })
+                : t('No sessions found')}
             </Text>
           </Box>
         ) : (
@@ -130,10 +136,10 @@ export function ResumeSessionDialog({
               <Text color={theme.text.accent} bold>
                 B
               </Text>
-              {' to toggle branch · '}
+              {t(' to toggle branch') + ' · '}
             </>
           )}
-          {'↑↓ to navigate · Enter to select · Esc to cancel'}
+          {t('to navigate · Enter to select · Esc to cancel')}
         </Text>
       </Box>
     </Box>

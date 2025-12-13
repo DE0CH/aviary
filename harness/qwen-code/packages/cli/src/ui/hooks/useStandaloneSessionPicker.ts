@@ -4,6 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Session picker hook for standalone mode (fullscreen CLI picker).
+ * Uses useInput (ink) instead of useKeypress (KeypressContext).
+ * For dialog mode within the main app, use useDialogSessionPicker instead.
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useInput } from 'ink';
 import type {
@@ -14,13 +20,8 @@ import type {
 import {
   SESSION_PAGE_SIZE,
   filterSessions,
+  type SessionState,
 } from '../utils/sessionPickerUtils.js';
-
-export interface SessionState {
-  sessions: SessionListItem[];
-  hasMore: boolean;
-  nextCursor?: number;
-}
 
 export interface UseSessionPickerOptions {
   sessionService: SessionService | null;

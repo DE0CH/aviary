@@ -19,14 +19,9 @@ import type {
 import {
   SESSION_PAGE_SIZE,
   filterSessions,
+  type SessionState,
 } from '../utils/sessionPickerUtils.js';
 import { useKeypress } from './useKeypress.js';
-
-export interface SessionState {
-  sessions: SessionListItem[];
-  hasMore: boolean;
-  nextCursor?: number;
-}
 
 export interface UseDialogSessionPickerOptions {
   sessionService: SessionService | null;
