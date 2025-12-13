@@ -16,6 +16,7 @@ import {
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { WebViewProvider } from './webview/WebViewProvider.js';
 import { registerNewCommands } from './commands/index.js';
+import { CliVersionChecker } from './cli/cliVersionChecker.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
 const INFO_MESSAGE_SHOWN_KEY = 'qwenCodeInfoMessageShown';
@@ -103,12 +104,50 @@ async function checkForUpdates(
   }
 }
 
+/**
+ * Update status bar item with CLI version information
+ */
+async function updateStatusBarItem(
+  statusBarItem: vscode.StatusBarItem,
+  context: vscode.ExtensionContext,
+) {
+  try {
+    // Initialize the version checker
+    const versionChecker = CliVersionChecker.getInstance(context);
+
+    // Get version status for display
+    const versionStatus = await versionChecker.getVersionStatus();
+
+    // Update status bar item
+    statusBarItem.text = versionStatus;
+    statusBarItem.tooltip = 'Qwen Code CLI Version Information';
+    statusBarItem.show();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`Error updating status bar: ${message}`);
+    statusBarItem.text = 'CLI: Error';
+    statusBarItem.tooltip = 'Failed to get CLI version information';
+    statusBarItem.show();
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext) {
   logger = vscode.window.createOutputChannel('Qwen Code Companion');
   log = createLogger(context, logger);
   log('Extension activated');
 
   checkForUpdates(context, log);
+
+  // Create status bar item for CLI version info
+  const versionStatusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  versionStatusBarItem.command = 'qwen-code.showCliVersionInfo';
+  context.subscriptions.push(versionStatusBarItem);
+
+  // Update status bar with CLI version info
+  updateStatusBarItem(versionStatusBarItem, context);
 
   const diffContentProvider = new DiffContentProvider();
   const diffManager = new DiffManager(
@@ -267,6 +306,26 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidGrantWorkspaceTrust(() => {
       ideServer.syncEnvVars();
     }),
+    vscode.commands.registerCommand(
+      'qwen-code.showCliVersionInfo',
+      async () => {
+        try {
+          const versionChecker = CliVersionChecker.getInstance(context);
+          const versionStatus = await versionChecker.getVersionStatus();
+
+          // Show information message with version details
+          vscode.window.showInformationMessage(
+            `Qwen Code CLI Version: ${versionStatus}`,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(
+            `Failed to get CLI version info: ${message}`,
+          );
+        }
+      },
+    ),
     vscode.commands.registerCommand(
       'qwen-code.runQwenCode',
       async (
