@@ -57,13 +57,3 @@ export function handleAuthenticateUpdate(
     authNotificationDisposable = null;
   });
 }
-
-/**
- * Dismiss the authentication notification if it's currently shown
- */
-export function dismissAuthenticateUpdate(): void {
-  if (authNotificationDisposable) {
-    authNotificationDisposable.dispose();
-    authNotificationDisposable = null;
-  }
-}

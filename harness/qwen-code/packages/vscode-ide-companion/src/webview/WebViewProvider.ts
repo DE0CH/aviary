@@ -17,21 +17,7 @@ import { CliVersionChecker } from '../cli/cliVersionChecker.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
-import { dismissAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 
-/**
- * WebView Provider Class
- *
- * Manages the WebView panel lifecycle, agent connection, and message handling.
- * Acts as the central coordinator between VS Code extension and WebView UI.
- *
- * Key responsibilities:
- * - WebView panel creation and management
- * - Qwen agent connection and session management
- * - Message routing between extension and WebView
- * - Authentication state handling
- * - Permission request processing
- */
 export class WebViewProvider {
   private panelManager: PanelManager;
   private messageHandler: MessageHandler;
@@ -535,19 +521,11 @@ export class WebViewProvider {
   /**
    * Attempt to restore authentication state and initialize connection
    * This is called when the webview is first shown
-   *
-   * This method tries to establish a connection without forcing authentication,
-   * allowing detection of existing authentication state. If connection fails,
-   * initializes an empty conversation to allow browsing history.
-   *
-   * @returns Promise<void> - Resolves when auth state restoration attempt is complete
    */
   private async attemptAuthStateRestoration(): Promise<void> {
     try {
-      console.log(
-        '[WebViewProvider] Attempting connection (without auto-auth)...',
-      );
-      // Attempt a lightweight connection to detect prior auth without forcing login
+      console.log('[WebViewProvider] Attempting connection...');
+      // Attempt a connection to detect prior auth without forcing login
       await this.initializeAgentConnection({ autoAuthenticate: false });
     } catch (error) {
       console.error(
@@ -570,16 +548,6 @@ export class WebViewProvider {
 
   /**
    * Internal: perform actual connection/initialization (no auth locking).
-   *
-   * This method handles the complete agent connection and initialization workflow:
-   * 1. Detects if Qwen CLI is installed
-   * 2. If CLI is not installed, prompts user for installation
-   * 3. If CLI is installed, attempts to connect to the agent
-   * 4. Handles authentication requirements and session creation
-   * 5. Notifies WebView of connection status
-   *
-   * @param options - Connection options including auto-authentication setting
-   * @returns Promise<void> - Resolves when initialization is complete
    */
   private async doInitializeAgentConnection(options?: {
     autoAuthenticate?: boolean;
@@ -623,18 +591,7 @@ export class WebViewProvider {
 
         // Perform version check with throttled notifications
         const versionChecker = CliVersionChecker.getInstance(this.context);
-        const versionCheckResult = await versionChecker.checkCliVersion(false); // Silent check to avoid popup spam
-
-        if (!versionCheckResult.isSupported) {
-          console.log(
-            '[WebViewProvider] Qwen CLI version is outdated or unsupported',
-            versionCheckResult,
-          );
-          // Log to output channel instead of showing popup
-          console.warn(
-            `Qwen Code CLI version issue: Installed=${versionCheckResult.version || 'unknown'}, Supported=${versionCheckResult.isSupported}`,
-          );
-        }
+        await versionChecker.checkCliVersion(true); // Silent check to avoid popup spam
 
         try {
           console.log('[WebViewProvider] Connecting to agent...');
@@ -674,9 +631,6 @@ export class WebViewProvider {
           const sessionReady = await this.loadCurrentSessionMessages(options);
 
           if (sessionReady) {
-            // Dismiss any authentication notifications
-            dismissAuthenticateUpdate();
-
             // Notify webview that agent is connected
             this.sendMessageToWebView({
               type: 'agentConnected',
@@ -751,9 +705,6 @@ export class WebViewProvider {
             '[WebViewProvider] Force re-login completed successfully',
           );
 
-          // Dismiss any authentication notifications
-          dismissAuthenticateUpdate();
-
           // Send success notification to WebView
           this.sendMessageToWebView({
             type: 'loginSuccess',
@@ -807,9 +758,6 @@ export class WebViewProvider {
       console.log(
         '[WebViewProvider] Connection refresh completed successfully',
       );
-
-      // Dismiss any authentication notifications
-      dismissAuthenticateUpdate();
 
       // Notify webview that agent is connected after refresh
       this.sendMessageToWebView({

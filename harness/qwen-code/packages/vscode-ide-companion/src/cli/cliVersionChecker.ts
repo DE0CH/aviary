@@ -6,7 +6,10 @@
 
 import * as vscode from 'vscode';
 import { CliDetector, type CliDetectionResult } from './cliDetector.js';
-import { CliVersionManager } from './cliVersionManager.js';
+import {
+  CliVersionManager,
+  MIN_CLI_VERSION_FOR_SESSION_METHODS,
+} from './cliVersionManager.js';
 import semver from 'semver';
 
 /**
@@ -78,15 +81,17 @@ export class CliVersionChecker {
       const isSupported = versionInfo.isSupported;
 
       // Check if update is needed (version is too old)
-      const minRequiredVersion = '0.5.0'; // This should match MIN_CLI_VERSION_FOR_SESSION_METHODS from CliVersionManager
       const needsUpdate = currentVersion
-        ? !semver.satisfies(currentVersion, `>=${minRequiredVersion}`)
+        ? !semver.satisfies(
+            currentVersion,
+            `>=${MIN_CLI_VERSION_FOR_SESSION_METHODS}`,
+          )
         : false;
 
       // Show notification only if needed and within cooldown period
       if (showNotifications && !isSupported && this.canShowNotification()) {
         vscode.window.showWarningMessage(
-          `Qwen Code CLI version is outdated. Current: ${currentVersion || 'unknown'}, Minimum required: ${minRequiredVersion}. Please update using: npm install -g @qwen-code/qwen-code@latest`,
+          `Qwen Code CLI version ${currentVersion} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later`,
         );
         this.lastNotificationTime = Date.now();
       }
@@ -124,35 +129,5 @@ export class CliVersionChecker {
       Date.now() - this.lastNotificationTime >
       CliVersionChecker.NOTIFICATION_COOLDOWN_MS
     );
-  }
-
-  /**
-   * Clear notification cooldown (allows immediate next notification)
-   */
-  clearCooldown(): void {
-    this.lastNotificationTime = 0;
-  }
-
-  /**
-   * Get version status for display in status bar or other UI elements
-   */
-  async getVersionStatus(): Promise<string> {
-    try {
-      const versionManager = CliVersionManager.getInstance();
-      const versionInfo = await versionManager.detectCliVersion();
-
-      if (!versionInfo.detectionResult.isInstalled) {
-        return 'CLI: Not installed';
-      }
-
-      const version = versionInfo.version || 'Unknown';
-      if (!versionInfo.isSupported) {
-        return `CLI: ${version} (Outdated)`;
-      }
-
-      return `CLI: ${version}`;
-    } catch (_) {
-      return 'CLI: Error';
-    }
   }
 }

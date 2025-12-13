@@ -748,71 +748,74 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      <InputForm
-        inputText={inputText}
-        inputFieldRef={inputFieldRef}
-        isStreaming={messageHandling.isStreaming}
-        isWaitingForResponse={messageHandling.isWaitingForResponse}
-        isComposing={isComposing}
-        editMode={editMode}
-        thinkingEnabled={thinkingEnabled}
-        activeFileName={fileContext.activeFileName}
-        activeSelection={fileContext.activeSelection}
-        skipAutoActiveContext={skipAutoActiveContext}
-        onInputChange={setInputText}
-        onCompositionStart={() => setIsComposing(true)}
-        onCompositionEnd={() => setIsComposing(false)}
-        onKeyDown={() => {}}
-        onSubmit={handleSubmitWithScroll}
-        onCancel={handleCancel}
-        onToggleEditMode={handleToggleEditMode}
-        onToggleThinking={handleToggleThinking}
-        onFocusActiveEditor={fileContext.focusActiveEditor}
-        onToggleSkipAutoActiveContext={() =>
-          setSkipAutoActiveContext((v) => !v)
-        }
-        onShowCommandMenu={async () => {
-          if (inputFieldRef.current) {
-            inputFieldRef.current.focus();
+      {isAuthenticated && (
+        <InputForm
+          inputText={inputText}
+          inputFieldRef={inputFieldRef}
+          isStreaming={messageHandling.isStreaming}
+          isWaitingForResponse={messageHandling.isWaitingForResponse}
+          isComposing={isComposing}
+          editMode={editMode}
+          thinkingEnabled={thinkingEnabled}
+          activeFileName={fileContext.activeFileName}
+          activeSelection={fileContext.activeSelection}
+          skipAutoActiveContext={skipAutoActiveContext}
+          onInputChange={setInputText}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
+          onKeyDown={() => {}}
+          onSubmit={handleSubmitWithScroll}
+          onCancel={handleCancel}
+          onToggleEditMode={handleToggleEditMode}
+          onToggleThinking={handleToggleThinking}
+          onFocusActiveEditor={fileContext.focusActiveEditor}
+          onToggleSkipAutoActiveContext={() =>
+            setSkipAutoActiveContext((v) => !v)
+          }
+          onShowCommandMenu={async () => {
+            if (inputFieldRef.current) {
+              inputFieldRef.current.focus();
 
-            const selection = window.getSelection();
-            let position = { top: 0, left: 0 };
+              const selection = window.getSelection();
+              let position = { top: 0, left: 0 };
 
-            if (selection && selection.rangeCount > 0) {
-              try {
-                const range = selection.getRangeAt(0);
-                const rangeRect = range.getBoundingClientRect();
-                if (rangeRect.top > 0 && rangeRect.left > 0) {
-                  position = {
-                    top: rangeRect.top,
-                    left: rangeRect.left,
-                  };
-                } else {
+              if (selection && selection.rangeCount > 0) {
+                try {
+                  const range = selection.getRangeAt(0);
+                  const rangeRect = range.getBoundingClientRect();
+                  if (rangeRect.top > 0 && rangeRect.left > 0) {
+                    position = {
+                      top: rangeRect.top,
+                      left: rangeRect.left,
+                    };
+                  } else {
+                    const inputRect =
+                      inputFieldRef.current.getBoundingClientRect();
+                    position = { top: inputRect.top, left: inputRect.left };
+                  }
+                } catch (error) {
+                  console.error('[App] Error getting cursor position:', error);
                   const inputRect =
                     inputFieldRef.current.getBoundingClientRect();
                   position = { top: inputRect.top, left: inputRect.left };
                 }
-              } catch (error) {
-                console.error('[App] Error getting cursor position:', error);
+              } else {
                 const inputRect = inputFieldRef.current.getBoundingClientRect();
                 position = { top: inputRect.top, left: inputRect.left };
               }
-            } else {
-              const inputRect = inputFieldRef.current.getBoundingClientRect();
-              position = { top: inputRect.top, left: inputRect.left };
+
+              await completion.openCompletion('/', '', position);
             }
+          }}
+          onAttachContext={handleAttachContextClick}
+          completionIsOpen={completion.isOpen}
+          completionItems={completion.items}
+          onCompletionSelect={handleCompletionSelect}
+          onCompletionClose={completion.closeCompletion}
+        />
+      )}
 
-            await completion.openCompletion('/', '', position);
-          }
-        }}
-        onAttachContext={handleAttachContextClick}
-        completionIsOpen={completion.isOpen}
-        completionItems={completion.items}
-        onCompletionSelect={handleCompletionSelect}
-        onCompletionClose={completion.closeCompletion}
-      />
-
-      {permissionRequest && (
+      {isAuthenticated && permissionRequest && (
         <PermissionDrawer
           isOpen={!!permissionRequest}
           options={permissionRequest.options}
