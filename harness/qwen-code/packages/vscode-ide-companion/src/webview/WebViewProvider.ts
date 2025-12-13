@@ -570,94 +570,68 @@ export class WebViewProvider {
       ).fsPath;
 
       try {
-        console.log('[WebViewProvider] Connecting to bundled agent...');
-        console.log('[WebViewProvider] Bundled CLI entry:', bundledCliEntry);
+        console.log('[WebViewProvider] Connecting to agent...');
 
-        await this.agentManager.connect(workingDir, bundledCliEntry);
+        // Pass the detected CLI path to ensure we use the correct installation
+        const connectResult = await this.agentManager.connect(
+          workingDir,
+          bundledCliEntry,
+          options,
+        );
         console.log('[WebViewProvider] Agent connected successfully');
         this.agentInitialized = true;
 
-        // Load messages from the current Qwen session
-        await this.loadCurrentSessionMessages();
+        // If authentication is required and autoAuthenticate is false,
+        // send authState message and return without creating session
+        if (connectResult.requiresAuth && !autoAuthenticate) {
+          console.log(
+            '[WebViewProvider] Authentication required but auto-auth disabled, sending authState and returning',
+          );
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+          // Initialize empty conversation to allow browsing history
+          await this.initializeEmptyConversation();
+          return;
+        }
 
-        // Notify webview that agent is connected
-        this.sendMessageToWebView({
-          type: 'agentConnected',
-          data: {},
-        });
+        if (connectResult.requiresAuth) {
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+        }
+
+        // Load messages from the current Qwen session
+        const sessionReady = await this.loadCurrentSessionMessages(options);
+
+        if (sessionReady) {
+          // Notify webview that agent is connected
+          this.sendMessageToWebView({
+            type: 'agentConnected',
+            data: {},
+          });
+        } else {
+          console.log(
+            '[WebViewProvider] Session creation deferred until user logs in.',
+          );
+        }
       } catch (_error) {
         console.error('[WebViewProvider] Agent connection error:', _error);
         vscode.window.showWarningMessage(
-          `Failed to start bundled Qwen Code CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
+          `Failed to connect to Qwen CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
         );
         // Fallback to empty conversation
         await this.initializeEmptyConversation();
 
-        try {
-          console.log('[WebViewProvider] Connecting to agent...');
-
-          // Pass the detected CLI path to ensure we use the correct installation
-          const connectResult = await this.agentManager.connect(
-            workingDir,
-            bundledCliEntry,
-            options,
-          );
-          console.log('[WebViewProvider] Agent connected successfully');
-          this.agentInitialized = true;
-
-          // If authentication is required and autoAuthenticate is false,
-          // send authState message and return without creating session
-          if (connectResult.requiresAuth && !autoAuthenticate) {
-            console.log(
-              '[WebViewProvider] Authentication required but auto-auth disabled, sending authState and returning',
-            );
-            this.sendMessageToWebView({
-              type: 'authState',
-              data: { authenticated: false },
-            });
-            // Initialize empty conversation to allow browsing history
-            await this.initializeEmptyConversation();
-            return;
-          }
-
-          if (connectResult.requiresAuth) {
-            this.sendMessageToWebView({
-              type: 'authState',
-              data: { authenticated: false },
-            });
-          }
-
-          // Load messages from the current Qwen session
-          const sessionReady = await this.loadCurrentSessionMessages(options);
-
-          if (sessionReady) {
-            // Notify webview that agent is connected
-            this.sendMessageToWebView({
-              type: 'agentConnected',
-              data: {},
-            });
-          } else {
-            console.log(
-              '[WebViewProvider] Session creation deferred until user logs in.',
-            );
-          }
-        } catch (_error) {
-          console.error('[WebViewProvider] Agent connection error:', _error);
-          vscode.window.showWarningMessage(
-            `Failed to connect to Qwen CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
-          );
-          // Fallback to empty conversation
-          await this.initializeEmptyConversation();
-
-          // Notify webview that agent connection failed
-          this.sendMessageToWebView({
-            type: 'agentConnectionError',
-            data: {
-              message:
-                _error instanceof Error ? _error.message : String(_error),
-            },
-          });
-        }
+        // Notify webview that agent connection failed
+        this.sendMessageToWebView({
+          type: 'agentConnectionError',
+          data: {
+            message: _error instanceof Error ? _error.message : String(_error),
+          },
+        });
       }
     };
 

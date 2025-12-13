@@ -197,7 +197,6 @@ export class QwenAgentManager {
     this.currentWorkingDir = workingDir;
     return this.connectionHandler.connect(
       this.connection,
-      this.sessionReader,
       workingDir,
       cliEntryPath,
       options,
