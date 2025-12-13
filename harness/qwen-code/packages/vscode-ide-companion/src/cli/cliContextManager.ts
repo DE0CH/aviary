@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { CliFeatureFlags, CliVersionInfo } from './cliVersionManager.js';
+import type { CliFeatureFlags, CliVersionInfo } from './cliManager.js';
 
 export class CliContextManager {
   private static instance: CliContextManager;

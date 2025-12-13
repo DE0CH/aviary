@@ -25,7 +25,7 @@ import {
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
-import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliVersionManager.js';
+import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliManager.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 import { handleAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 

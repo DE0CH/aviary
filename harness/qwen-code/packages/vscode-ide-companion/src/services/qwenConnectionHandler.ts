@@ -12,7 +12,7 @@
 
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
-import { CliDetector } from '../cli/cliDetector.js';
+import { CliManager } from '../cli/cliManager.js';
 import { authMethod } from '../types/acpTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
@@ -50,7 +50,7 @@ export class QwenConnectionHandler {
     let requiresAuth = false;
 
     // Check if CLI exists using standard detection (with cached results for better performance)
-    const detectionResult = await CliDetector.detectQwenCli(
+    const detectionResult = await CliManager.detectQwenCli(
       /* forceRefresh */ false, // Use cached results when available for better performance
     );
     if (!detectionResult.isInstalled) {

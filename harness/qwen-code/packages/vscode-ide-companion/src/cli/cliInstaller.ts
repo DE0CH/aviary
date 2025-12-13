@@ -5,7 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { CliDetector } from './cliDetector.js';
+import { CliManager } from './cliManager.js';
 
 /**
  * CLI Detection and Installation Handler
@@ -20,7 +20,7 @@ export class CliInstaller {
     sendToWebView: (message: unknown) => void,
   ): Promise<void> {
     try {
-      const result = await CliDetector.detectQwenCli();
+      const result = await CliManager.detectQwenCli();
 
       sendToWebView({
         type: 'cliDetectionResult',
@@ -31,7 +31,7 @@ export class CliInstaller {
           error: result.error,
           installInstructions: result.isInstalled
             ? undefined
-            : CliDetector.getInstallationInstructions(),
+            : CliManager.getInstallationInstructions(),
         },
       });
 
@@ -134,8 +134,8 @@ export class CliInstaller {
             }
 
             // Clear cache and recheck
-            CliDetector.clearCache();
-            const detection = await CliDetector.detectQwenCli();
+            CliManager.clearCache();
+            const detection = await CliManager.detectQwenCli();
 
             if (detection.isInstalled) {
               vscode.window

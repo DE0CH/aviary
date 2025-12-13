@@ -8,12 +8,11 @@ import * as vscode from 'vscode';
 import { QwenAgentManager } from '../services/qwenAgentManager.js';
 import { ConversationStore } from '../services/conversationStore.js';
 import type { AcpPermissionRequest } from '../types/acpTypes.js';
-import { CliDetector } from '../cli/cliDetector.js';
+import { CliManager } from '../cli/cliManager.js';
 import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
-import { CliVersionChecker } from '../cli/cliVersionChecker.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
@@ -566,7 +565,7 @@ export class WebViewProvider {
       );
 
       // Check if CLI is installed before attempting to connect
-      const cliDetection = await CliDetector.detectQwenCli();
+      const cliDetection = await CliManager.detectQwenCli();
 
       if (!cliDetection.isInstalled) {
         console.log(
@@ -590,7 +589,7 @@ export class WebViewProvider {
         console.log('[WebViewProvider] CLI version:', cliDetection.version);
 
         // Perform version check with throttled notifications
-        const versionChecker = CliVersionChecker.getInstance(this.context);
+        const versionChecker = CliManager.getInstance(this.context);
         await versionChecker.checkCliVersion(true); // Silent check to avoid popup spam
 
         try {
@@ -674,7 +673,6 @@ export class WebViewProvider {
     return vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Logging in to Qwen Code... ',
         cancellable: false,
       },
       async (progress) => {
