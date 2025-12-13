@@ -10,6 +10,9 @@ import { CliVersionManager } from './cliVersionManager.js';
 import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from './cliVersionManager.js';
 import type { CliVersionInfo } from './cliVersionManager.js';
 
+// Track which versions have already been warned about to avoid repetitive warnings
+const warnedVersions = new Set<string>();
+
 /**
  * Check CLI version and show warning if below minimum requirement
  *
@@ -23,9 +26,14 @@ export async function checkCliVersionAndWarn(): Promise<void> {
     cliContextManager.setCurrentVersionInfo(versionInfo);
 
     if (!versionInfo.isSupported) {
-      vscode.window.showWarningMessage(
-        `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-      );
+      // Only show warning if we haven't already warned about this specific version
+      const versionKey = versionInfo.version || 'unknown';
+      if (!warnedVersions.has(versionKey)) {
+        vscode.window.showWarningMessage(
+          `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
+        );
+        warnedVersions.add(versionKey);
+      }
     }
   } catch (error) {
     console.error('[CliVersionChecker] Failed to check CLI version:', error);

@@ -27,6 +27,16 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-5 md:p-10">
+      {/* Loading overlay */}
+      {loadingMessage && (
+        <div className="bg-background/80 absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="text-center">
+            <div className="border-primary mx-auto mb-2 h-8 w-8 animate-spin rounded-full border-b-2"></div>
+            <p className="text-muted-foreground text-sm">{loadingMessage}</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col items-center gap-8 w-full">
         {/* Qwen Logo */}
         <div className="flex flex-col items-center gap-6">
@@ -39,12 +49,6 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             <div className="text-[15px] text-app-primary-foreground leading-normal font-normal max-w-[400px]">
               {description}
             </div>
-            {loadingMessage && (
-              <div className="flex items-center justify-center gap-2 mt-4 text-sm text-app-secondary-foreground">
-                <span className="inline-block h-3 w-3 rounded-full border-2 border-app-secondary-foreground/40 border-t-app-primary-foreground animate-spin" />
-                <span>{loadingMessage}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>
