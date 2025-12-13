@@ -7,9 +7,23 @@
 import type React from 'react';
 import { generateIconUrl } from '../../utils/resourceUrl.js';
 
-export const EmptyState: React.FC = () => {
+interface EmptyStateProps {
+  isAuthenticated?: boolean;
+  loadingMessage?: string;
+}
+
+export const EmptyState: React.FC<EmptyStateProps> = ({
+  isAuthenticated = false,
+  loadingMessage,
+}) => {
   // Generate icon URL using the utility function
   const iconUri = generateIconUrl('icon.png');
+
+  const description = loadingMessage
+    ? 'Preparing Qwen Code…'
+    : isAuthenticated
+      ? 'What would you like to do? Ask about this codebase or we can start writing code.'
+      : 'Welcome! Please log in to start using Qwen Code.';
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-5 md:p-10">
@@ -23,9 +37,14 @@ export const EmptyState: React.FC = () => {
           />
           <div className="text-center">
             <div className="text-[15px] text-app-primary-foreground leading-normal font-normal max-w-[400px]">
-              What to do first? Ask about this codebase or we can start writing
-              code.
+              {description}
             </div>
+            {loadingMessage && (
+              <div className="flex items-center justify-center gap-2 mt-4 text-sm text-app-secondary-foreground">
+                <span className="inline-block h-3 w-3 rounded-full border-2 border-app-secondary-foreground/40 border-t-app-primary-foreground animate-spin" />
+                <span>{loadingMessage}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

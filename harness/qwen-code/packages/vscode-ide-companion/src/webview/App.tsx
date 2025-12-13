@@ -29,6 +29,7 @@ import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer
 import { ToolCall } from './components/messages/toolcalls/ToolCall.js';
 import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.js';
 import { EmptyState } from './components/layout/EmptyState.js';
+import { OnboardingPage } from './components/layout/OnboardingPage.js';
 import { type CompletionItem } from '../types/completionItemTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { ChatHeader } from './components/layout/ChatHeader.js';
@@ -67,6 +68,7 @@ export const App: React.FC = () => {
     toolCall: PermissionToolCall;
   } | null>(null);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(
     null,
   ) as React.RefObject<HTMLDivElement>;
@@ -176,6 +178,7 @@ export const App: React.FC = () => {
     vscode,
     inputFieldRef,
     isStreaming: messageHandling.isStreaming,
+    isWaitingForResponse: messageHandling.isWaitingForResponse,
   });
 
   // Handle cancel/stop from the input bar
@@ -218,6 +221,7 @@ export const App: React.FC = () => {
     inputFieldRef,
     setInputText,
     setEditMode,
+    setIsAuthenticated,
   });
 
   // Auto-scroll handling: keep the view pinned to bottom when new content arrives,
@@ -662,26 +666,37 @@ export const App: React.FC = () => {
 
       <div
         ref={messagesContainerRef}
-        className="chat-messages messages-container flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:hover:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:pb-[8px] [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        className="chat-messages messages-container flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[140px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:hover:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:pb-[8px] [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
       >
         {!hasContent ? (
-          <EmptyState />
+          isAuthenticated === false ? (
+            <OnboardingPage
+              onLogin={() => {
+                vscode.postMessage({ type: 'login', data: {} });
+                messageHandling.setWaitingForResponse(
+                  'Logging in to Qwen Code...',
+                );
+              }}
+            />
+          ) : isAuthenticated === null ? (
+            <EmptyState loadingMessage="Checking login status…" />
+          ) : (
+            <EmptyState isAuthenticated />
+          )
         ) : (
           <>
             {/* Render all messages and tool calls */}
             {renderMessages()}
-            {/* Flow-in persistent slot: keeps a small constant height so toggling */}
-            {/* the waiting message doesn't change list height to zero. When */}
-            {/* active, render the waiting message inline (not fixed). */}
-            <div className="waiting-message-slot min-h-[28px]">
-              {messageHandling.isWaitingForResponse &&
-                messageHandling.loadingMessage && (
+
+            {/* Waiting message positioned fixed above the input form to avoid layout shifts */}
+            {messageHandling.isWaitingForResponse &&
+              messageHandling.loadingMessage && (
+                <div className="waiting-message-slot min-h-[28px]">
                   <WaitingMessage
                     loadingMessage={messageHandling.loadingMessage}
                   />
-                )}
-            </div>
-
+                </div>
+              )}
             <div ref={messagesEndRef} />
           </>
         )}

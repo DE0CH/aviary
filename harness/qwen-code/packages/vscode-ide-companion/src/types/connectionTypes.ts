@@ -19,7 +19,7 @@ export interface AcpConnectionCallbacks {
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
   }>;
-  onEndTurn: () => void;
+  onEndTurn: (reason?: string) => void;
 }
 
 export interface AcpConnectionState {

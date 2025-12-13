@@ -25,6 +25,125 @@ export class CliDetector {
   private static readonly CACHE_DURATION_MS = 30000; // 30 seconds
 
   /**
+   * Lightweight check if the Qwen Code CLI is installed
+   * This version only checks for CLI existence without getting version info for faster performance
+   * @param forceRefresh - Force a new check, ignoring cache
+   * @returns Detection result with installation status and path
+   */
+  static async detectQwenCliLightweight(
+    forceRefresh = false,
+  ): Promise<CliDetectionResult> {
+    const now = Date.now();
+
+    // Return cached result if available and not expired
+    if (
+      !forceRefresh &&
+      this.cachedResult &&
+      now - this.lastCheckTime < this.CACHE_DURATION_MS
+    ) {
+      console.log('[CliDetector] Returning cached result');
+      return this.cachedResult;
+    }
+
+    console.log(
+      '[CliDetector] Starting lightweight CLI detection, current PATH:',
+      process.env.PATH,
+    );
+
+    try {
+      const isWindows = process.platform === 'win32';
+      const whichCommand = isWindows ? 'where' : 'which';
+
+      // Check if qwen command exists
+      try {
+        // Use simpler detection without NVM for speed
+        const detectionCommand = isWindows
+          ? `${whichCommand} qwen`
+          : `${whichCommand} qwen`;
+
+        console.log(
+          '[CliDetector] Detecting CLI with lightweight command:',
+          detectionCommand,
+        );
+
+        const { stdout } = await execAsync(detectionCommand, {
+          timeout: 3000, // Reduced timeout for faster detection
+          shell: isWindows ? undefined : '/bin/bash',
+        });
+
+        // The output may contain multiple lines
+        // We want the first line which should be the actual path
+        const lines = stdout
+          .trim()
+          .split('\n')
+          .filter((line) => line.trim());
+        const cliPath = lines[0]; // Just take the first path
+
+        console.log('[CliDetector] Found CLI at:', cliPath);
+
+        this.cachedResult = {
+          isInstalled: true,
+          cliPath,
+          // Version is not retrieved in lightweight detection
+        };
+        this.lastCheckTime = now;
+        return this.cachedResult;
+      } catch (detectionError) {
+        console.log('[CliDetector] CLI not found, error:', detectionError);
+        // CLI not found
+        let error = `Qwen Code CLI not found in PATH. Please install it using: npm install -g @qwen-code/qwen-code@latest`;
+
+        // Provide specific guidance for permission errors
+        if (detectionError instanceof Error) {
+          const errorMessage = detectionError.message;
+          if (
+            errorMessage.includes('EACCES') ||
+            errorMessage.includes('Permission denied')
+          ) {
+            error += `\n\nThis may be due to permission issues. Possible solutions:
+              \n1. Reinstall the CLI without sudo: npm install -g @qwen-code/qwen-code@latest
+              \n2. If previously installed with sudo, fix ownership: sudo chown -R $(whoami) $(npm config get prefix)/lib/node_modules/@qwen-code/qwen-code
+              \n3. Use nvm for Node.js version management to avoid permission issues
+              \n4. Check your PATH environment variable includes npm's global bin directory`;
+          }
+        }
+
+        this.cachedResult = {
+          isInstalled: false,
+          error,
+        };
+        this.lastCheckTime = now;
+        return this.cachedResult;
+      }
+    } catch (error) {
+      console.log('[CliDetector] General detection error:', error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      let userFriendlyError = `Failed to detect Qwen Code CLI: ${errorMessage}`;
+
+      // Provide specific guidance for permission errors
+      if (
+        errorMessage.includes('EACCES') ||
+        errorMessage.includes('Permission denied')
+      ) {
+        userFriendlyError += `\n\nThis may be due to permission issues. Possible solutions:
+          \n1. Reinstall the CLI without sudo: npm install -g @qwen-code/qwen-code@latest
+          \n2. If previously installed with sudo, fix ownership: sudo chown -R $(whoami) $(npm config get prefix)/lib/node_modules/@qwen-code/qwen-code
+          \n3. Use nvm for Node.js version management to avoid permission issues
+          \n4. Check your PATH environment variable includes npm's global bin directory`;
+      }
+
+      this.cachedResult = {
+        isInstalled: false,
+        error: userFriendlyError,
+      };
+      this.lastCheckTime = now;
+      return this.cachedResult;
+    }
+  }
+
+  /**
    * Checks if the Qwen Code CLI is installed
    * @param forceRefresh - Force a new check, ignoring cache
    * @returns Detection result with installation status and details

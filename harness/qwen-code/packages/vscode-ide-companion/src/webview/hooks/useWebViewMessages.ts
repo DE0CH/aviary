@@ -109,6 +109,8 @@ interface UseWebViewMessagesProps {
   setInputText: (text: string) => void;
   // Edit mode setter (maps ACP modes to UI modes)
   setEditMode?: (mode: ApprovalModeValue) => void;
+  // Authentication state setter
+  setIsAuthenticated?: (authenticated: boolean | null) => void;
 }
 
 /**
@@ -126,6 +128,7 @@ export const useWebViewMessages = ({
   inputFieldRef,
   setInputText,
   setEditMode,
+  setIsAuthenticated,
 }: UseWebViewMessagesProps) => {
   // VS Code API for posting messages back to the extension host
   const vscode = useVSCode();
@@ -141,6 +144,7 @@ export const useWebViewMessages = ({
     clearToolCalls,
     setPlanEntries,
     handlePermissionRequest,
+    setIsAuthenticated,
   });
 
   // Track last "Updated Plan" snapshot toolcall to support merge/dedupe
@@ -185,6 +189,7 @@ export const useWebViewMessages = ({
       clearToolCalls,
       setPlanEntries,
       handlePermissionRequest,
+      setIsAuthenticated,
     };
   });
 
@@ -216,6 +221,7 @@ export const useWebViewMessages = ({
           }
           break;
         }
+
         case 'loginSuccess': {
           // Clear loading state and show a short assistant notice
           handlers.messageHandling.clearWaitingForResponse();
@@ -224,12 +230,16 @@ export const useWebViewMessages = ({
             content: 'Successfully logged in. You can continue chatting.',
             timestamp: Date.now(),
           });
+          // Set authentication state to true
+          handlers.setIsAuthenticated?.(true);
           break;
         }
 
         case 'agentConnected': {
           // Agent connected successfully; clear any pending spinner
           handlers.messageHandling.clearWaitingForResponse();
+          // Set authentication state to true
+          handlers.setIsAuthenticated?.(true);
           break;
         }
 
@@ -245,6 +255,8 @@ export const useWebViewMessages = ({
             content: `Failed to connect to Qwen agent: ${errorMsg}\nYou can still use the chat UI, but messages won't be sent to AI.`,
             timestamp: Date.now(),
           });
+          // Set authentication state to false
+          handlers.setIsAuthenticated?.(false);
           break;
         }
 
@@ -259,6 +271,20 @@ export const useWebViewMessages = ({
             content: errorMsg,
             timestamp: Date.now(),
           });
+          // Set authentication state to false
+          handlers.setIsAuthenticated?.(false);
+          break;
+        }
+
+        case 'authState': {
+          const state = (
+            message?.data as { authenticated?: boolean | null } | undefined
+          )?.authenticated;
+          if (typeof state === 'boolean') {
+            handlers.setIsAuthenticated?.(state);
+          } else {
+            handlers.setIsAuthenticated?.(null);
+          }
           break;
         }
 
@@ -303,6 +329,7 @@ export const useWebViewMessages = ({
               }
             }
           }
+          console.log('[useWebViewMessages1111]__________ other message:', msg);
           break;
         }
 
@@ -336,7 +363,7 @@ export const useWebViewMessages = ({
             const reason = (
               (message.data as { reason?: string } | undefined)?.reason || ''
             ).toLowerCase();
-            if (reason === 'user_cancelled') {
+            if (reason === 'user_cancelled' || reason === 'cancelled') {
               activeExecToolCallsRef.current.clear();
               handlers.messageHandling.clearWaitingForResponse();
               break;

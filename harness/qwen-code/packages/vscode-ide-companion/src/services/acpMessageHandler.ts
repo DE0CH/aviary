@@ -110,13 +110,30 @@ export class AcpMessageHandler {
         // JSON.stringify(message.result).substring(0, 200),
         message.result,
       );
-      if (
+
+      console.log(
+        '[ACP] Response for message.result:',
+        message.result,
         message.result &&
-        typeof message.result === 'object' &&
-        'stopReason' in message.result &&
-        message.result.stopReason === 'end_turn'
-      ) {
-        callbacks.onEndTurn();
+          typeof message.result === 'object' &&
+          'stopReason' in message.result,
+
+        !!callbacks.onEndTurn,
+      );
+
+      if (message.result && typeof message.result === 'object') {
+        const stopReasonValue =
+          (message.result as { stopReason?: unknown }).stopReason ??
+          (message.result as { stop_reason?: unknown }).stop_reason;
+        if (typeof stopReasonValue === 'string') {
+          callbacks.onEndTurn(stopReasonValue);
+        } else if (
+          'stopReason' in message.result ||
+          'stop_reason' in message.result
+        ) {
+          // stop_reason present but not a string (e.g., null) -> still emit
+          callbacks.onEndTurn();
+        }
       }
       resolve(message.result);
     } else if ('error' in message) {

@@ -113,6 +113,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   onCompletionClose,
 }) => {
   const editModeInfo = getEditModeInfo(editMode);
+  const composerDisabled = isStreaming || isWaitingForResponse;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // ESC should cancel the current interaction (stop generation)
@@ -144,7 +145,7 @@ export const InputForm: React.FC<InputFormProps> = ({
 
   return (
     <div
-      className="p-1 px-4 pb-4"
+      className="p-1 px-4 pb-4 absolute bottom-0 left-0 right-0"
       style={{ backgroundColor: 'var(--app-primary-background)' }}
     >
       <div className="block">
@@ -171,7 +172,7 @@ export const InputForm: React.FC<InputFormProps> = ({
 
             <div
               ref={inputFieldRef}
-              contentEditable="plaintext-only"
+              contentEditable={'plaintext-only'}
               className="composer-input"
               role="textbox"
               aria-label="Message input"
@@ -179,10 +180,19 @@ export const InputForm: React.FC<InputFormProps> = ({
               data-placeholder="Ask Qwen Code …"
               // Use a data flag so CSS can show placeholder even if the browser
               // inserts an invisible <br> into contentEditable (so :empty no longer matches)
-              data-empty={inputText.trim().length === 0 ? 'true' : 'false'}
+              data-empty={
+                inputText.replace(/\u200B/g, '').trim().length === 0
+                  ? 'true'
+                  : 'false'
+              }
               onInput={(e) => {
+                if (composerDisabled) {
+                  return;
+                }
                 const target = e.target as HTMLDivElement;
-                onInputChange(target.textContent || '');
+                // Filter out zero-width space that we use to maintain height
+                const text = target.textContent?.replace(/\u200B/g, '') || '';
+                onInputChange(text);
               }}
               onCompositionStart={onCompositionStart}
               onCompositionEnd={onCompositionEnd}
@@ -280,7 +290,7 @@ export const InputForm: React.FC<InputFormProps> = ({
               <button
                 type="submit"
                 className="btn-send-compact [&>svg]:w-5 [&>svg]:h-5"
-                disabled={!inputText.trim()}
+                disabled={composerDisabled || !inputText.trim()}
               >
                 <ArrowUpIcon />
               </button>

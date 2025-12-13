@@ -15,6 +15,7 @@ import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { type ApprovalModeValue } from '../types/acpTypes.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
@@ -119,12 +120,16 @@ export class WebViewProvider {
       });
     });
 
-    // Setup end-turn handler from ACP stopReason=end_turn
-    this.agentManager.onEndTurn(() => {
+    // Setup end-turn handler from ACP stopReason notifications
+    this.agentManager.onEndTurn((reason) => {
+      console.log(' ============== ', reason);
       // Ensure WebView exits streaming state even if no explicit streamEnd was emitted elsewhere
       this.sendMessageToWebView({
         type: 'streamEnd',
-        data: { timestamp: Date.now(), reason: 'end_turn' },
+        data: {
+          timestamp: Date.now(),
+          reason: reason || 'end_turn',
+        },
       });
     });
 
@@ -520,10 +525,10 @@ export class WebViewProvider {
   private async attemptAuthStateRestoration(): Promise<void> {
     try {
       console.log(
-        '[WebViewProvider] Attempting connection (CLI handle authentication)...',
+        '[WebViewProvider] Attempting connection (without auto-auth)...',
       );
-      //always attempt connection and let CLI handle authentication
-      await this.initializeAgentConnection();
+      // Attempt a lightweight connection to detect prior auth without forcing login
+      await this.initializeAgentConnection({ autoAuthenticate: false });
     } catch (error) {
       console.error(
         '[WebViewProvider] Error in attemptAuthStateRestoration:',
@@ -537,14 +542,19 @@ export class WebViewProvider {
    * Initialize agent connection and session
    * Can be called from show() or via /login command
    */
-  async initializeAgentConnection(): Promise<void> {
-    return this.doInitializeAgentConnection();
+  async initializeAgentConnection(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<void> {
+    return this.doInitializeAgentConnection(options);
   }
 
   /**
    * Internal: perform actual connection/initialization (no auth locking).
    */
-  private async doInitializeAgentConnection(): Promise<void> {
+  private async doInitializeAgentConnection(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<void> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
     const run = async () => {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
@@ -553,7 +563,9 @@ export class WebViewProvider {
         '[WebViewProvider] Starting initialization, workingDir:',
         workingDir,
       );
-      console.log('[WebViewProvider] Using CLI-managed authentication');
+      console.log(
+        `[WebViewProvider] Using CLI-managed authentication (autoAuth=${autoAuthenticate})`,
+      );
 
       // Check if CLI is installed before attempting to connect
       const cliDetection = await CliDetector.detectQwenCli();
@@ -583,18 +595,34 @@ export class WebViewProvider {
           console.log('[WebViewProvider] Connecting to agent...');
 
           // Pass the detected CLI path to ensure we use the correct installation
-          await this.agentManager.connect(workingDir, cliDetection.cliPath);
+          const connectResult = await this.agentManager.connect(
+            workingDir,
+            cliDetection.cliPath,
+            options,
+          );
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
+          if (connectResult.requiresAuth) {
+            this.sendMessageToWebView({
+              type: 'authState',
+              data: { authenticated: false },
+            });
+          }
 
           // Load messages from the current Qwen session
-          await this.loadCurrentSessionMessages();
+          const sessionReady = await this.loadCurrentSessionMessages(options);
 
-          // Notify webview that agent is connected
-          this.sendMessageToWebView({
-            type: 'agentConnected',
-            data: {},
-          });
+          if (sessionReady) {
+            // Notify webview that agent is connected
+            this.sendMessageToWebView({
+              type: 'agentConnected',
+              data: {},
+            });
+          } else {
+            console.log(
+              '[WebViewProvider] Session creation deferred until user logs in.',
+            );
+          }
         } catch (_error) {
           console.error('[WebViewProvider] Agent connection error:', _error);
           vscode.window.showWarningMessage(
@@ -654,7 +682,7 @@ export class WebViewProvider {
           });
 
           // Reinitialize connection (will trigger fresh authentication)
-          await this.doInitializeAgentConnection();
+          await this.doInitializeAgentConnection({ autoAuthenticate: true });
           console.log(
             '[WebViewProvider] Force re-login completed successfully',
           );
@@ -737,7 +765,11 @@ export class WebViewProvider {
    * Load messages from current Qwen session
    * Skips session restoration and creates a new session directly
    */
-  private async loadCurrentSessionMessages(): Promise<void> {
+  private async loadCurrentSessionMessages(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<boolean> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
+    let sessionReady = false;
     try {
       console.log(
         '[WebViewProvider] Initializing with new session (skipping restoration)',
@@ -748,22 +780,47 @@ export class WebViewProvider {
 
       // avoid creating another session if connect() already created one.
       if (!this.agentManager.currentSessionId) {
-        try {
-          await this.agentManager.createNewSession(workingDir);
-          console.log('[WebViewProvider] ACP session created successfully');
-        } catch (sessionError) {
-          console.error(
-            '[WebViewProvider] Failed to create ACP session:',
-            sessionError,
+        if (!autoAuthenticate) {
+          console.log(
+            '[WebViewProvider] Skipping ACP session creation until user logs in.',
           );
-          vscode.window.showWarningMessage(
-            `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
-          );
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+        } else {
+          try {
+            await this.agentManager.createNewSession(workingDir, {
+              autoAuthenticate,
+            });
+            console.log('[WebViewProvider] ACP session created successfully');
+            sessionReady = true;
+          } catch (sessionError) {
+            const requiresAuth = isAuthenticationRequiredError(sessionError);
+            if (requiresAuth && !autoAuthenticate) {
+              console.log(
+                '[WebViewProvider] ACP session requires authentication; waiting for explicit login.',
+              );
+              this.sendMessageToWebView({
+                type: 'authState',
+                data: { authenticated: false },
+              });
+            } else {
+              console.error(
+                '[WebViewProvider] Failed to create ACP session:',
+                sessionError,
+              );
+              vscode.window.showWarningMessage(
+                `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+              );
+            }
+          }
         }
       } else {
         console.log(
           '[WebViewProvider] Existing ACP session detected, skipping new session creation',
         );
+        sessionReady = true;
       }
 
       await this.initializeEmptyConversation();
@@ -776,7 +833,10 @@ export class WebViewProvider {
         `Failed to load session messages: ${_error}`,
       );
       await this.initializeEmptyConversation();
+      return false;
     }
+
+    return sessionReady;
   }
 
   /**

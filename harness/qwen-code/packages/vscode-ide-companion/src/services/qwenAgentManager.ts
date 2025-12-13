@@ -17,11 +17,18 @@ import type {
   ToolCallUpdateData,
   QwenAgentCallbacks,
 } from '../types/chatTypes.js';
-import { QwenConnectionHandler } from '../services/qwenConnectionHandler.js';
+import {
+  QwenConnectionHandler,
+  type QwenConnectionResult,
+} from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
-import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliVersionManager.js';
+import {
+  MIN_CLI_VERSION_FOR_SESSION_METHODS,
+  type CliVersionInfo,
+} from '../cli/cliVersionManager.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -30,6 +37,13 @@ export type { ChatMessage, PlanEntry, ToolCallUpdateData };
  *
  * Coordinates various modules and provides unified interface
  */
+interface AgentConnectOptions {
+  autoAuthenticate?: boolean;
+}
+interface AgentSessionOptions {
+  autoAuthenticate?: boolean;
+}
+
 export class QwenAgentManager {
   private connection: AcpConnection;
   private sessionReader: QwenSessionReader;
@@ -119,10 +133,10 @@ export class QwenAgentManager {
       return { optionId: 'allow_once' };
     };
 
-    this.connection.onEndTurn = () => {
+    this.connection.onEndTurn = (reason?: string) => {
       try {
         if (this.callbacks.onEndTurn) {
-          this.callbacks.onEndTurn();
+          this.callbacks.onEndTurn(reason);
         } else if (this.callbacks.onStreamChunk) {
           // Fallback: send a zero-length chunk then rely on streamEnd elsewhere
           this.callbacks.onStreamChunk('');
@@ -136,6 +150,36 @@ export class QwenAgentManager {
     this.connection.onInitialized = (init: unknown) => {
       try {
         const obj = (init || {}) as Record<string, unknown>;
+
+        // Extract version information from initialize response
+        const serverVersion =
+          obj['version'] || obj['serverVersion'] || obj['cliVersion'];
+        if (serverVersion) {
+          console.log(
+            '[QwenAgentManager] Server version from initialize response:',
+            serverVersion,
+          );
+
+          // Update CLI context with version info from server
+          const cliContextManager = CliContextManager.getInstance();
+
+          // Create version info directly without async call
+          const versionInfo: CliVersionInfo = {
+            version: String(serverVersion),
+            isSupported: true, // Assume supported for now
+            features: {
+              supportsSessionList: true,
+              supportsSessionLoad: true,
+            },
+            detectionResult: {
+              isInstalled: true,
+              version: String(serverVersion),
+            },
+          };
+
+          cliContextManager.setCurrentVersionInfo(versionInfo);
+        }
+
         const modes = obj['modes'] as
           | {
               currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
@@ -164,13 +208,18 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
-  async connect(workingDir: string, _cliPath?: string): Promise<void> {
+  async connect(
+    workingDir: string,
+    _cliPath?: string,
+    options?: AgentConnectOptions,
+  ): Promise<QwenConnectionResult> {
     this.currentWorkingDir = workingDir;
-    await this.connectionHandler.connect(
+    return this.connectionHandler.connect(
       this.connection,
       this.sessionReader,
       workingDir,
       _cliPath,
+      options,
     );
   }
 
@@ -1170,7 +1219,11 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @returns Newly created session ID
    */
-  async createNewSession(workingDir: string): Promise<string | null> {
+  async createNewSession(
+    workingDir: string,
+    options?: AgentSessionOptions,
+  ): Promise<string | null> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
     // Reuse existing session if present
     if (this.connection.currentSessionId) {
       return this.connection.currentSessionId;
@@ -1188,12 +1241,15 @@ export class QwenAgentManager {
         try {
           await this.connection.newSession(workingDir);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          const requiresAuth =
-            msg.includes('Authentication required') ||
-            msg.includes('(code: -32000)');
+          const requiresAuth = isAuthenticationRequiredError(err);
 
           if (requiresAuth) {
+            if (!autoAuthenticate) {
+              console.warn(
+                '[QwenAgentManager] session/new requires authentication but auto-auth is disabled. Deferring until user logs in.',
+              );
+              throw err;
+            }
             console.warn(
               '[QwenAgentManager] session/new requires authentication. Retrying with authenticate...',
             );
@@ -1310,9 +1366,10 @@ export class QwenAgentManager {
   /**
    * Register end-of-turn callback
    *
-   * @param callback - Called when ACP stopReason === 'end_turn'
+   * @param callback - Called when ACP stopReason is reported
    */
-  onEndTurn(callback: () => void): void {
+  onEndTurn(callback: (reason?: string) => void): void {
+    console.log('[QwenAgentManager] onEndTurn__________ callback:', callback);
     this.callbacks.onEndTurn = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }

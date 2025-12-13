@@ -34,7 +34,7 @@ export interface QwenAgentCallbacks {
   onToolCall?: (update: ToolCallUpdateData) => void;
   onPlan?: (entries: PlanEntry[]) => void;
   onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string>;
-  onEndTurn?: () => void;
+  onEndTurn?: (reason?: string) => void;
   onModeInfo?: (info: {
     currentModeId?: ApprovalModeValue;
     availableModes?: Array<{

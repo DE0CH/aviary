@@ -10,15 +10,17 @@
  * Handles Qwen Agent connection establishment, authentication, and session creation
  */
 
-import * as vscode from 'vscode';
+// import * as vscode from 'vscode';
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
-import {
-  CliVersionManager,
-  MIN_CLI_VERSION_FOR_SESSION_METHODS,
-} from '../cli/cliVersionManager.js';
-import { CliContextManager } from '../cli/cliContextManager.js';
+import { CliDetector } from '../cli/cliDetector.js';
 import { authMethod } from '../types/acpTypes.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
+
+export interface QwenConnectionResult {
+  sessionCreated: boolean;
+  requiresAuth: boolean;
+}
 
 /**
  * Qwen Connection Handler class
@@ -38,36 +40,39 @@ export class QwenConnectionHandler {
     sessionReader: QwenSessionReader,
     workingDir: string,
     cliPath?: string,
-  ): Promise<void> {
+    options?: {
+      autoAuthenticate?: boolean;
+    },
+  ): Promise<QwenConnectionResult> {
     const connectId = Date.now();
     console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
+    let sessionCreated = false;
+    let requiresAuth = false;
 
-    // Check CLI version and features
-    const cliVersionManager = CliVersionManager.getInstance();
-    const versionInfo = await cliVersionManager.detectCliVersion();
-    console.log('[QwenAgentManager] CLI version info:', versionInfo);
-
-    // Store CLI context
-    const cliContextManager = CliContextManager.getInstance();
-    cliContextManager.setCurrentVersionInfo(versionInfo);
-
-    // Show warning if CLI version is below minimum requirement
-    if (!versionInfo.isSupported) {
-      // Wait to determine release version number
-      vscode.window.showWarningMessage(
-        `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-      );
+    // Lightweight check if CLI exists (without version info for faster performance)
+    const detectionResult = await CliDetector.detectQwenCliLightweight(
+      /* forceRefresh */ true,
+    );
+    if (!detectionResult.isInstalled) {
+      throw new Error(detectionResult.error || 'Qwen CLI not found');
     }
+    console.log('[QwenAgentManager] CLI detected at:', detectionResult.cliPath);
 
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    // Use the provided CLI path if available, otherwise use the configured path
-    const effectiveCliPath =
-      cliPath || config.get<string>('qwen.cliPath', 'qwen');
+    // TODO: @yiliang114. closed temporarily
+    // Show warning if CLI version is below minimum requirement
+    // if (!versionInfo.isSupported) {
+    //   // Wait to determine release version number
+    //   vscode.window.showWarningMessage(
+    //     `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
+    //   );
+    // }
 
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    await connection.connect(effectiveCliPath, workingDir, extraArgs);
+    // TODO:
+    await connection.connect(cliPath!, workingDir, extraArgs);
 
     // Try to restore existing session or create new session
     // Note: Auto-restore on connect is disabled to avoid surprising loads
@@ -85,18 +90,40 @@ export class QwenConnectionHandler {
         console.log(
           '[QwenAgentManager] Creating new session (letting CLI handle authentication)...',
         );
-        await this.newSessionWithRetry(connection, workingDir, 3, authMethod);
+        await this.newSessionWithRetry(
+          connection,
+          workingDir,
+          3,
+          authMethod,
+          autoAuthenticate,
+        );
         console.log('[QwenAgentManager] New session created successfully');
+        sessionCreated = true;
       } catch (sessionError) {
-        console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
-        console.log(`[QwenAgentManager] Error details:`, sessionError);
-        throw sessionError;
+        const needsAuth =
+          autoAuthenticate === false &&
+          isAuthenticationRequiredError(sessionError);
+        if (needsAuth) {
+          requiresAuth = true;
+          console.log(
+            '[QwenAgentManager] Session creation requires authentication; waiting for user-triggered login.',
+          );
+        } else {
+          console.log(
+            `\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`,
+          );
+          console.log(`[QwenAgentManager] Error details:`, sessionError);
+          throw sessionError;
+        }
       }
+    } else {
+      sessionCreated = true;
     }
 
     console.log(`\n========================================`);
     console.log(`[QwenAgentManager] ✅ CONNECT() COMPLETED SUCCESSFULLY`);
     console.log(`========================================\n`);
+    return { sessionCreated, requiresAuth };
   }
 
   /**
@@ -111,6 +138,7 @@ export class QwenConnectionHandler {
     workingDir: string,
     maxRetries: number,
     authMethod: string,
+    autoAuthenticate: boolean,
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -130,10 +158,14 @@ export class QwenConnectionHandler {
 
         // If Qwen reports that authentication is required, try to
         // authenticate on-the-fly once and retry without waiting.
-        const requiresAuth =
-          errorMessage.includes('Authentication required') ||
-          errorMessage.includes('(code: -32000)');
+        const requiresAuth = isAuthenticationRequiredError(error);
         if (requiresAuth) {
+          if (!autoAuthenticate) {
+            console.log(
+              '[QwenAgentManager] Authentication required but auto-authentication is disabled. Propagating error.',
+            );
+            throw error;
+          }
           console.log(
             '[QwenAgentManager] Qwen requires authentication. Authenticating and retrying session/new...',
           );
