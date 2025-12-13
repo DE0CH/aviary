@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
 import { theme } from '../semantic-colors.js';
-import { useSessionPicker } from '../hooks/useSessionPicker.js';
+import { useDialogSessionPicker } from '../hooks/useDialogSessionPicker.js';
 import { SessionListItemView } from './SessionListItem.js';
 
 export interface ResumeSessionDialogProps {
@@ -40,7 +40,7 @@ export function ResumeSessionDialog({
     ? Math.max(3, Math.floor((availableTerminalHeight - 6) / 3))
     : 5;
 
-  const picker = useSessionPicker({
+  const picker = useDialogSessionPicker({
     sessionService: sessionServiceRef.current,
     currentBranch,
     onSelect,
