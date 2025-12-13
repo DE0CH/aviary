@@ -4,18 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { render, Box, Text, useInput, useApp } from 'ink';
-import {
-  SessionService,
-  type SessionListItem,
-  type ListSessionsResult,
-  getGitBranch,
-} from '@qwen-code/qwen-code-core';
+import { useState, useEffect } from 'react';
+import { render, Box, Text, useApp } from 'ink';
+import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
 import { theme } from '../semantic-colors.js';
-import { formatRelativeTime } from '../utils/formatters.js';
-
-const PAGE_SIZE = 20;
+import { useSessionPicker } from '../hooks/useSessionPicker.js';
+import { SessionListItemView } from './SessionListItem.js';
 
 // Exported for testing
 export interface SessionPickerProps {
@@ -25,14 +19,13 @@ export interface SessionPickerProps {
   onCancel: () => void;
 }
 
-/**
- * Truncates text to fit within a given width, adding ellipsis if needed.
- */
-function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) return text;
-  if (maxWidth <= 3) return text.slice(0, maxWidth);
-  return text.slice(0, maxWidth - 3) + '...';
-}
+// Prefix characters for standalone fullscreen picker
+const STANDALONE_PREFIX_CHARS = {
+  selected: '› ',
+  scrollUp: '↑ ',
+  scrollDown: '↓ ',
+  normal: '  ',
+};
 
 // Exported for testing
 export function SessionPicker({
@@ -42,18 +35,6 @@ export function SessionPicker({
   onCancel,
 }: SessionPickerProps): React.JSX.Element {
   const { exit } = useApp();
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [sessionState, setSessionState] = useState<{
-    sessions: SessionListItem[];
-    hasMore: boolean;
-    nextCursor?: number;
-  }>({
-    sessions: [],
-    hasMore: true,
-    nextCursor: undefined,
-  });
-  const isLoadingMoreRef = useRef(false);
-  const [filterByBranch, setFilterByBranch] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [terminalSize, setTerminalSize] = useState({
     width: process.stdout.columns || 80,
@@ -74,159 +55,35 @@ export function SessionPicker({
     };
   }, []);
 
-  // Filter sessions: exclude empty sessions (0 messages) and optionally by branch
-  const filteredSessions = sessionState.sessions.filter((session) => {
-    // Always exclude sessions with no messages
-    if (session.messageCount === 0) {
-      return false;
-    }
-    // Apply branch filter if enabled
-    if (filterByBranch && currentBranch) {
-      return session.gitBranch === currentBranch;
-    }
-    return true;
-  });
-
-  const hasSentinel = sessionState.hasMore;
-
-  // Reset selection when filter changes
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [filterByBranch]);
-
-  const loadMoreSessions = useCallback(async () => {
-    if (!sessionState.hasMore || isLoadingMoreRef.current) return;
-    isLoadingMoreRef.current = true;
-    try {
-      const result: ListSessionsResult = await sessionService.listSessions({
-        size: PAGE_SIZE,
-        cursor: sessionState.nextCursor,
-      });
-
-      setSessionState((prev) => ({
-        sessions: [...prev.sessions, ...result.items],
-        hasMore: result.hasMore && result.nextCursor !== undefined,
-        nextCursor: result.nextCursor,
-      }));
-    } finally {
-      isLoadingMoreRef.current = false;
-    }
-  }, [sessionService, sessionState.hasMore, sessionState.nextCursor]);
-
   // Calculate visible items
   // Reserved space: header (1), footer (1), separators (2), borders (2)
   const reservedLines = 6;
   // Each item takes 2 lines (prompt + metadata) + 1 line margin between items
-  // On average, this is ~3 lines per item, but the last item has no margin
   const itemHeight = 3;
   const maxVisibleItems = Math.max(
     1,
     Math.floor((terminalSize.height - reservedLines) / itemHeight),
   );
 
-  // Calculate scroll offset
-  const scrollOffset = (() => {
-    if (filteredSessions.length <= maxVisibleItems) return 0;
-    const halfVisible = Math.floor(maxVisibleItems / 2);
-    let offset = selectedIndex - halfVisible;
-    offset = Math.max(0, offset);
-    offset = Math.min(filteredSessions.length - maxVisibleItems, offset);
-    return offset;
-  })();
+  const handleExit = () => {
+    setIsExiting(true);
+    exit();
+  };
 
-  const visibleSessions = filteredSessions.slice(
-    scrollOffset,
-    scrollOffset + maxVisibleItems,
-  );
-  const showScrollUp = scrollOffset > 0;
-  const showScrollDown =
-    scrollOffset + maxVisibleItems < filteredSessions.length;
-
-  // Sentinel (invisible) sits after the last session item; consider it visible
-  // once the viewport reaches the final real item.
-  const sentinelVisible =
-    hasSentinel && scrollOffset + maxVisibleItems >= filteredSessions.length;
-
-  // Load more when sentinel enters view or when filtered list is empty.
-  useEffect(() => {
-    if (!sessionState.hasMore || isLoadingMoreRef.current) return;
-
-    const shouldLoadMore =
-      filteredSessions.length === 0 ||
-      sentinelVisible ||
-      isLoadingMoreRef.current;
-
-    if (shouldLoadMore) {
-      void loadMoreSessions();
-    }
-  }, [
-    filteredSessions.length,
-    loadMoreSessions,
-    sessionState.hasMore,
-    sentinelVisible,
-  ]);
-
-  // Handle keyboard input
-  useInput((input, key) => {
-    // Ignore input if already exiting
-    if (isExiting) {
-      return;
-    }
-
-    // Escape or Ctrl+C to cancel
-    if (key.escape || (key.ctrl && input === 'c')) {
-      setIsExiting(true);
-      onCancel();
-      exit();
-      return;
-    }
-
-    if (key.return) {
-      const session = filteredSessions[selectedIndex];
-      if (session) {
-        setIsExiting(true);
-        onSelect(session.sessionId);
-        exit();
-      }
-      return;
-    }
-
-    if (key.upArrow || input === 'k') {
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
-      return;
-    }
-
-    if (key.downArrow || input === 'j') {
-      if (filteredSessions.length === 0) {
-        return;
-      }
-      setSelectedIndex((prev) =>
-        Math.min(filteredSessions.length - 1, prev + 1),
-      );
-      return;
-    }
-
-    if (input === 'b' || input === 'B') {
-      if (currentBranch) {
-        setFilterByBranch((prev) => !prev);
-      }
-      return;
-    }
+  const picker = useSessionPicker({
+    sessionService,
+    currentBranch,
+    onSelect,
+    onCancel,
+    maxVisibleItems,
+    centerSelection: true,
+    onExit: handleExit,
+    isActive: !isExiting,
   });
-
-  // Filtered sessions may have changed, ensure selectedIndex is valid
-  useEffect(() => {
-    if (
-      selectedIndex >= filteredSessions.length &&
-      filteredSessions.length > 0
-    ) {
-      setSelectedIndex(filteredSessions.length - 1);
-    }
-  }, [filteredSessions.length, selectedIndex]);
 
   // Calculate content width (terminal width minus border padding)
   const contentWidth = terminalSize.width - 4;
-  const promptMaxWidth = contentWidth - 4; // Account for "› " prefix
+  const promptMaxWidth = contentWidth - 4;
 
   // Return empty while exiting to prevent visual glitches
   if (isExiting) {
@@ -265,80 +122,30 @@ export function SessionPicker({
 
         {/* Session list with auto-scrolling */}
         <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-          {filteredSessions.length === 0 ? (
+          {picker.filteredSessions.length === 0 ? (
             <Box paddingY={1} justifyContent="center">
               <Text color={theme.text.secondary}>
-                {filterByBranch
+                {picker.filterByBranch
                   ? `No sessions found for branch "${currentBranch}"`
                   : 'No sessions found'}
               </Text>
             </Box>
           ) : (
-            visibleSessions.map((session, visibleIndex) => {
-              const actualIndex = scrollOffset + visibleIndex;
-              const isSelected = actualIndex === selectedIndex;
-              const isFirst = visibleIndex === 0;
-              const isLast = visibleIndex === visibleSessions.length - 1;
-              const timeAgo = formatRelativeTime(session.mtime);
-              const messageText =
-                session.messageCount === 1
-                  ? '1 message'
-                  : `${session.messageCount} messages`;
-
-              // Show scroll indicator on first/last visible items
-              const showUpIndicator = isFirst && showScrollUp;
-              const showDownIndicator = isLast && showScrollDown;
-
-              // Determine the prefix: selector takes priority over scroll indicator
-              const prefix = isSelected
-                ? '› '
-                : showUpIndicator
-                  ? '↑ '
-                  : showDownIndicator
-                    ? '↓ '
-                    : '  ';
-
+            picker.visibleSessions.map((session, visibleIndex) => {
+              const actualIndex = picker.scrollOffset + visibleIndex;
               return (
-                <Box
+                <SessionListItemView
                   key={session.sessionId}
-                  flexDirection="column"
-                  marginBottom={isLast ? 0 : 1}
-                >
-                  {/* First line: prefix (selector or scroll indicator) + prompt text */}
-                  <Box>
-                    <Text
-                      color={
-                        isSelected
-                          ? theme.text.accent
-                          : showUpIndicator || showDownIndicator
-                            ? theme.text.secondary
-                            : undefined
-                      }
-                    >
-                      {prefix}
-                    </Text>
-                    <Text
-                      bold={isSelected}
-                      color={
-                        isSelected ? theme.text.accent : theme.text.primary
-                      }
-                    >
-                      {truncateText(
-                        session.prompt || '(empty prompt)',
-                        promptMaxWidth,
-                      )}
-                    </Text>
-                  </Box>
-
-                  {/* Second line: metadata (aligned with prompt text) */}
-                  <Box>
-                    <Text>{'  '}</Text>
-                    <Text color={theme.text.secondary}>
-                      {timeAgo} · {messageText}
-                      {session.gitBranch && ` · ${session.gitBranch}`}
-                    </Text>
-                  </Box>
-                </Box>
+                  session={session}
+                  isSelected={actualIndex === picker.selectedIndex}
+                  isFirst={visibleIndex === 0}
+                  isLast={visibleIndex === picker.visibleSessions.length - 1}
+                  showScrollUp={picker.showScrollUp}
+                  showScrollDown={picker.showScrollDown}
+                  maxPromptWidth={promptMaxWidth}
+                  prefixChars={STANDALONE_PREFIX_CHARS}
+                  boldSelectedPrefix={false}
+                />
               );
             })
           )}
@@ -357,8 +164,8 @@ export function SessionPicker({
             {currentBranch && (
               <>
                 <Text
-                  bold={filterByBranch}
-                  color={filterByBranch ? theme.text.accent : undefined}
+                  bold={picker.filterByBranch}
+                  color={picker.filterByBranch ? theme.text.accent : undefined}
                 >
                   B
                 </Text>
