@@ -150,11 +150,4 @@ export class MessageRouter {
   appendStreamContent(chunk: string): void {
     this.sessionHandler.appendStreamContent(chunk);
   }
-
-  /**
-   * Check if saving checkpoint
-   */
-  getIsSavingCheckpoint(): boolean {
-    return this.sessionHandler.getIsSavingCheckpoint();
-  }
 }

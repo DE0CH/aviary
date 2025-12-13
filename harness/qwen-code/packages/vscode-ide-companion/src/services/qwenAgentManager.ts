@@ -336,8 +336,10 @@ export class QwenAgentManager {
           name: this.sessionReader.getSessionTitle(session),
           startTime: session.startTime,
           lastUpdated: session.lastUpdated,
-          messageCount: session.messages.length,
+          messageCount: session.messageCount ?? session.messages.length,
           projectHash: session.projectHash,
+          filePath: session.filePath,
+          cwd: session.cwd,
         }),
       );
 
@@ -452,8 +454,10 @@ export class QwenAgentManager {
         name: this.sessionReader.getSessionTitle(x.raw),
         startTime: x.raw.startTime,
         lastUpdated: x.raw.lastUpdated,
-        messageCount: x.raw.messages.length,
+        messageCount: x.raw.messageCount ?? x.raw.messages.length,
         projectHash: x.raw.projectHash,
+        filePath: x.raw.filePath,
+        cwd: x.raw.cwd,
       }));
       const nextCursorVal =
         page.length > 0 ? page[page.length - 1].mtime : undefined;
@@ -892,80 +896,6 @@ export class QwenAgentManager {
   }
 
   /**
-   * Save session as checkpoint (using CLI format)
-   * Saves to ~/.qwen/tmp/{projectHash}/checkpoint-{tag}.json
-   * Saves two copies with sessionId and conversationId to ensure recovery via either ID
-   *
-   * @param messages - Current session messages
-   * @param conversationId - Conversation ID (from VSCode extension)
-   * @returns Save result
-   */
-  async saveCheckpoint(
-    messages: ChatMessage[],
-    conversationId: string,
-  ): Promise<{ success: boolean; tag?: string; message?: string }> {
-    try {
-      console.log('[QwenAgentManager] ===== CHECKPOINT SAVE START =====');
-      console.log('[QwenAgentManager] Conversation ID:', conversationId);
-      console.log('[QwenAgentManager] Message count:', messages.length);
-      console.log(
-        '[QwenAgentManager] Current working dir:',
-        this.currentWorkingDir,
-      );
-      console.log(
-        '[QwenAgentManager] Current session ID (from CLI):',
-        this.currentSessionId,
-      );
-      // In ACP mode, the CLI does not accept arbitrary slash commands like
-      // "/chat save". To ensure we never block on unsupported features,
-      // persist checkpoints directly to ~/.qwen/tmp using our SessionManager.
-      const qwenMessages = messages.map((m) => ({
-        // Generate minimal QwenMessage shape expected by the writer
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        timestamp: new Date().toISOString(),
-        type: m.role === 'user' ? ('user' as const) : ('qwen' as const),
-        content: m.content,
-      }));
-
-      const tag = await this.sessionManager.saveCheckpoint(
-        qwenMessages,
-        conversationId,
-        this.currentWorkingDir,
-        this.currentSessionId || undefined,
-      );
-
-      return { success: true, tag };
-    } catch (error) {
-      console.error('[QwenAgentManager] ===== CHECKPOINT SAVE FAILED =====');
-      console.error('[QwenAgentManager] Error:', error);
-      console.error(
-        '[QwenAgentManager] Error stack:',
-        error instanceof Error ? error.stack : 'N/A',
-      );
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  /**
-   * Save session directly to file system (without relying on ACP)
-   *
-   * @param messages - Current session messages
-   * @param sessionName - Session name
-   * @returns Save result
-   */
-  async saveSessionDirect(
-    messages: ChatMessage[],
-    sessionName: string,
-  ): Promise<{ success: boolean; sessionId?: string; message?: string }> {
-    // Use checkpoint format instead of session format
-    // This matches CLI's /chat save behavior
-    return this.saveCheckpoint(messages, sessionName);
-  }
-
-  /**
    * Try to load session via ACP session/load method
    * This method will only be used if CLI version supports it
    *
@@ -1150,16 +1080,6 @@ export class QwenAgentManager {
       );
       throw error;
     }
-  }
-
-  /**
-   * Load session, preferring ACP method if CLI version supports it
-   *
-   * @param sessionId - Session ID
-   * @returns Loaded session messages or null
-   */
-  async loadSessionDirect(sessionId: string): Promise<ChatMessage[] | null> {
-    return this.loadSession(sessionId);
   }
 
   /**
