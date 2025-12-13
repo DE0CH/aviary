@@ -20,6 +20,7 @@ export const AGENT_METHODS = {
 export const CLIENT_METHODS = {
   fs_read_text_file: 'fs/read_text_file',
   fs_write_text_file: 'fs/write_text_file',
+  authenticate_update: 'authenticate/update',
   session_request_permission: 'session/request_permission',
   session_update: 'session/update',
 };
@@ -56,8 +57,6 @@ export type ListSessionsResponse = z.infer<typeof listSessionsResponseSchema>;
 export type CancelNotification = z.infer<typeof cancelNotificationSchema>;
 
 export type AuthenticateRequest = z.infer<typeof authenticateRequestSchema>;
-
-export type AuthenticateResponse = z.infer<typeof authenticateResponseSchema>;
 
 export type NewSessionResponse = z.infer<typeof newSessionResponseSchema>;
 
@@ -247,7 +246,13 @@ export const authenticateRequestSchema = z.object({
   methodId: z.string(),
 });
 
-export const authenticateResponseSchema = z.null();
+export const authenticateUpdateSchema = z.object({
+  _meta: z.object({
+    authUri: z.string(),
+  }),
+});
+
+export type AuthenticateUpdate = z.infer<typeof authenticateUpdateSchema>;
 
 export const newSessionResponseSchema = z.object({
   sessionId: z.string(),
@@ -555,7 +560,6 @@ export const sessionUpdateSchema = z.union([
 
 export const agentResponseSchema = z.union([
   initializeResponseSchema,
-  authenticateResponseSchema,
   newSessionResponseSchema,
   loadSessionResponseSchema,
   promptResponseSchema,

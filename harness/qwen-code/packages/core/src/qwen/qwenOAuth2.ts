@@ -514,26 +514,14 @@ export async function getQwenOAuthClient(
       }
     }
 
-    // If shared manager fails, check if we have cached credentials for device flow
-    if (await loadCachedQwenCredentials(client)) {
-      // We have cached credentials but they might be expired
-      // Try device flow instead of forcing refresh
-      const result = await authWithQwenDeviceFlow(client, config);
-      if (!result.success) {
-        // Use detailed error message if available, otherwise use default
-        const errorMessage =
-          result.message || 'Qwen OAuth authentication failed';
-        throw new Error(errorMessage);
-      }
-      return client;
-    }
-
     if (options?.requireCachedCredentials) {
       throw new Error(
         'No cached Qwen-OAuth credentials found. Please re-authenticate.',
       );
     }
 
+    // If we couldn't obtain valid credentials via SharedTokenManager, fall back to
+    // interactive device authorization (unless explicitly forbidden above).
     const result = await authWithQwenDeviceFlow(client, config);
     if (!result.success) {
       // Only emit timeout event if the failure reason is actually timeout
@@ -844,27 +832,6 @@ async function authWithQwenDeviceFlow(
   } finally {
     // Clean up event listener
     qwenOAuth2Events.off(QwenOAuth2Event.AuthCancel, cancelHandler);
-  }
-}
-
-async function loadCachedQwenCredentials(
-  client: QwenOAuth2Client,
-): Promise<boolean> {
-  try {
-    const keyFile = getQwenCachedCredentialPath();
-    const creds = await fs.readFile(keyFile, 'utf-8');
-    const credentials = JSON.parse(creds) as QwenCredentials;
-    client.setCredentials(credentials);
-
-    // Verify that the credentials are still valid
-    const { token } = await client.getAccessToken();
-    if (!token) {
-      return false;
-    }
-
-    return true;
-  } catch (_) {
-    return false;
   }
 }
 
