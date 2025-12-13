@@ -124,7 +124,7 @@ export class CliInstaller {
               installCommand,
               {
                 timeout: 120000,
-                shell: '/bin/bash',
+                shell: process.platform === 'win32' ? undefined : '/bin/bash',
               }, // 2 minutes timeout
             );
 

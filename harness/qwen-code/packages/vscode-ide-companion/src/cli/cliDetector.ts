@@ -186,7 +186,7 @@ export class CliDetector {
 
         const { stdout } = await execAsync(detectionCommand, {
           timeout: 5000,
-          shell: '/bin/bash',
+          shell: isWindows ? undefined : '/bin/bash',
         });
         // The output may contain multiple lines, with NVM activation messages
         // We want the last line which should be the actual path
@@ -216,7 +216,7 @@ export class CliDetector {
 
           const { stdout: versionOutput } = await execAsync(versionCommand, {
             timeout: 5000,
-            shell: '/bin/bash',
+            shell: isWindows ? undefined : '/bin/bash',
           });
           // The output may contain multiple lines, with NVM activation messages
           // We want the last line which should be the actual version
