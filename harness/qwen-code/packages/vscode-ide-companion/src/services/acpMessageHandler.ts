@@ -17,6 +17,7 @@ import type {
   AcpResponse,
   AcpSessionUpdate,
   AcpPermissionRequest,
+  AuthenticateUpdateNotification,
 } from '../types/acpTypes.js';
 import { CLIENT_METHODS } from '../constants/acpSchema.js';
 import type {
@@ -167,6 +168,15 @@ export class AcpMessageHandler {
           JSON.stringify(params).substring(0, 300),
         );
         callbacks.onSessionUpdate(params as AcpSessionUpdate);
+        break;
+      case CLIENT_METHODS.authenticate_update:
+        console.log(
+          '[ACP] >>> Processing authenticate_update:',
+          JSON.stringify(params).substring(0, 300),
+        );
+        callbacks.onAuthenticateUpdate(
+          params as AuthenticateUpdateNotification,
+        );
         break;
       case CLIENT_METHODS.session_request_permission:
         result = await this.handlePermissionRequest(

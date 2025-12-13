@@ -14,7 +14,7 @@ import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
-import { type ApprovalModeValue } from '../types/acpTypes.js';
+import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
 /**

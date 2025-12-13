@@ -14,8 +14,8 @@ import type {
   AcpRequest,
   AcpNotification,
   AcpResponse,
-  ApprovalModeValue,
 } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { AGENT_METHODS } from '../constants/acpSchema.js';
 import type { PendingRequest } from '../types/connectionTypes.js';
 import type { ChildProcess } from 'child_process';

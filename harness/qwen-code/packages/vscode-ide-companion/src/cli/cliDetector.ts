@@ -38,16 +38,6 @@ export class CliDetector {
    *
    * @param forceRefresh - Whether to force refresh cached results, default is false
    * @returns Promise<CliDetectionResult> - Detection result containing installation status and path
-   *
-   * @example
-   * ```typescript
-   * const result = await CliDetector.detectQwenCliLightweight();
-   * if (result.isInstalled) {
-   *   console.log('CLI installed at:', result.cliPath);
-   * } else {
-   *   console.log('CLI not found:', result.error);
-   * }
-   * ```
    */
   static async detectQwenCliLightweight(
     forceRefresh = false,
