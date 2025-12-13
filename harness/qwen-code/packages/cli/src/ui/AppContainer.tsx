@@ -442,7 +442,12 @@ export const AppContainer = (props: AppContainerProps) => {
   // Handle resume session selection
   const handleResumeSessionSelect = useCallback(
     async (sessionId: string) => {
-      if (!config) return;
+      if (!config) {
+        return;
+      }
+
+      // Close dialog immediately to prevent input capture during async operations
+      closeResumeDialog();
 
       const {
         SessionService,
@@ -459,7 +464,6 @@ export const AppContainer = (props: AppContainerProps) => {
       const sessionData = await sessionService.loadSession(sessionId);
 
       if (!sessionData) {
-        closeResumeDialog();
         return;
       }
 
@@ -486,8 +490,6 @@ export const AppContainer = (props: AppContainerProps) => {
       // Clear and load history
       historyManager.clearItems();
       historyManager.loadHistory(uiHistoryItems);
-
-      closeResumeDialog();
     },
     [config, closeResumeDialog, historyManager, startNewSession],
   );
