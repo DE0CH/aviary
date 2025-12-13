@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react';
 import { render, Box, Text, useApp } from 'ink';
 import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
 import { theme } from '../semantic-colors.js';
-import { useSessionPicker } from '../hooks/useSessionPicker.js';
+import { useSessionPicker } from '../hooks/useStandaloneSessionPicker.js';
 import { SessionListItemView } from './SessionListItem.js';
 
 // Exported for testing

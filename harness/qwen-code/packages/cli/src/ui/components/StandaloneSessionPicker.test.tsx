@@ -6,7 +6,7 @@
 
 import { render } from 'ink-testing-library';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionPicker } from './ResumeSessionPicker.js';
+import { SessionPicker } from './StandaloneSessionPicker.js';
 import type {
   SessionListItem,
   ListSessionsResult,
