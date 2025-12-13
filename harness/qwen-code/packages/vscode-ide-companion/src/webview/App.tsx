@@ -43,7 +43,7 @@ import { InputForm } from './components/layout/InputForm.js';
 import { SessionSelector } from './components/layout/SessionSelector.js';
 import { FileIcon, UserIcon } from './components/icons/index.js';
 import { ApprovalMode, NEXT_APPROVAL_MODE } from '../types/acpTypes.js';
-import type { ApprovalModeValue } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type { PlanEntry } from '../types/chatTypes.js';
 
 export const App: React.FC = () => {
@@ -90,9 +90,13 @@ export const App: React.FC = () => {
   const getCompletionItems = React.useCallback(
     async (trigger: '@' | '/', query: string): Promise<CompletionItem[]> => {
       if (trigger === '@') {
-        if (!fileContext.hasRequestedFiles) {
-          fileContext.requestWorkspaceFiles();
-        }
+        console.log('[App] getCompletionItems @ called', {
+          query,
+          requested: fileContext.hasRequestedFiles,
+          workspaceFiles: fileContext.workspaceFiles.length,
+        });
+        // 始终根据当前 query 触发请求，让 hook 判断是否需要真正请求
+        fileContext.requestWorkspaceFiles(query);
 
         const fileIcon = <FileIcon />;
         const allItems: CompletionItem[] = fileContext.workspaceFiles.map(
@@ -109,7 +113,6 @@ export const App: React.FC = () => {
         );
 
         if (query && query.length >= 1) {
-          fileContext.requestWorkspaceFiles(query);
           const lowerQuery = query.toLowerCase();
           return allItems.filter(
             (item) =>
@@ -154,17 +157,39 @@ export const App: React.FC = () => {
 
   const completion = useCompletionTrigger(inputFieldRef, getCompletionItems);
 
+  // Track a lightweight signature of workspace files to detect content changes even when length is unchanged
+  const workspaceFilesSignature = useMemo(
+    () =>
+      fileContext.workspaceFiles
+        .map(
+          (file) =>
+            `${file.id}|${file.label}|${file.description ?? ''}|${file.path}`,
+        )
+        .join('||'),
+    [fileContext.workspaceFiles],
+  );
+
   // When workspace files update while menu open for @, refresh items so the first @ shows the list
   // Note: Avoid depending on the entire `completion` object here, since its identity
   // changes on every render which would retrigger this effect and can cause a refresh loop.
   useEffect(() => {
-    if (completion.isOpen && completion.triggerChar === '@') {
+    // Only auto-refresh when there's no query (first @ popup) to avoid repeated refreshes during search
+    if (
+      completion.isOpen &&
+      completion.triggerChar === '@' &&
+      !completion.query
+    ) {
       // Only refresh items; do not change other completion state to avoid re-renders loops
       completion.refreshCompletion();
     }
     // Only re-run when the actual data source changes, not on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileContext.workspaceFiles, completion.isOpen, completion.triggerChar]);
+  }, [
+    workspaceFilesSignature,
+    completion.isOpen,
+    completion.triggerChar,
+    completion.query,
+  ]);
 
   // Message submission
   const { handleSubmit: submitMessage } = useMessageSubmit({

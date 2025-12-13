@@ -11,7 +11,7 @@ import {
   PlanModeIcon,
   CodeBracketsIcon,
   HideContextIcon,
-  ThinkingIcon,
+  // ThinkingIcon,  // Temporarily disabled
   SlashCommandIcon,
   LinkIcon,
   ArrowUpIcon,
@@ -20,7 +20,7 @@ import {
 import { CompletionMenu } from '../layout/CompletionMenu.js';
 import type { CompletionItem } from '../../../types/completionItemTypes.js';
 import { getApprovalModeInfoFromString } from '../../../types/acpTypes.js';
-import type { ApprovalModeValue } from '../../../types/acpTypes.js';
+import type { ApprovalModeValue } from '../../../types/approvalModeValueTypes.js';
 
 interface InputFormProps {
   inputText: string;
@@ -92,7 +92,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   isWaitingForResponse,
   isComposing,
   editMode,
-  thinkingEnabled,
+  // thinkingEnabled,  // Temporarily disabled
   activeFileName,
   activeSelection,
   skipAutoActiveContext,
@@ -103,7 +103,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   onSubmit,
   onCancel,
   onToggleEditMode,
-  onToggleThinking,
+  // onToggleThinking,  // Temporarily disabled
   onToggleSkipAutoActiveContext,
   onShowCommandMenu,
   onAttachContext,
@@ -236,15 +236,16 @@ export const InputForm: React.FC<InputFormProps> = ({
             {/* Spacer */}
             <div className="flex-1 min-w-0" />
 
+            {/* @yiliang114. closed temporarily */}
             {/* Thinking button */}
-            <button
+            {/* <button
               type="button"
               className={`btn-icon-compact ${thinkingEnabled ? 'btn-icon-compact--active' : ''}`}
               title={thinkingEnabled ? 'Thinking on' : 'Thinking off'}
               onClick={onToggleThinking}
             >
               <ThinkingIcon enabled={thinkingEnabled} />
-            </button>
+            </button> */}
 
             {/* Command button */}
             <button

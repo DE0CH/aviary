@@ -54,9 +54,18 @@ export class QwenConnectionHandler {
     // Show warning if CLI version is below minimum requirement
     if (!versionInfo.isSupported) {
       // Wait to determine release version number
-      vscode.window.showWarningMessage(
+      const selection = await vscode.window.showWarningMessage(
         `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
+        'Upgrade Now',
       );
+
+      // Handle the user's selection
+      if (selection === 'Upgrade Now') {
+        // Open terminal and run npm install command
+        const terminal = vscode.window.createTerminal('Qwen Code CLI Upgrade');
+        terminal.show();
+        terminal.sendText('npm install -g @qwen-code/qwen-code@latest');
+      }
     }
 
     const config = vscode.workspace.getConfiguration('qwenCode');
