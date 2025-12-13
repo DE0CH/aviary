@@ -34,9 +34,6 @@ export type { ChatMessage, PlanEntry, ToolCallUpdateData };
  *
  * Coordinates various modules and provides unified interface
  */
-interface AgentConnectOptions {
-  autoAuthenticate?: boolean;
-}
 interface AgentSessionOptions {
   autoAuthenticate?: boolean;
 }
@@ -192,14 +189,12 @@ export class QwenAgentManager {
   async connect(
     workingDir: string,
     cliEntryPath: string,
-    options?: AgentConnectOptions,
   ): Promise<QwenConnectionResult> {
     this.currentWorkingDir = workingDir;
     return this.connectionHandler.connect(
       this.connection,
       workingDir,
       cliEntryPath,
-      options,
     );
   }
 

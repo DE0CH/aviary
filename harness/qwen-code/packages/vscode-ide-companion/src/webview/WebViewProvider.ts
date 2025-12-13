@@ -576,7 +576,6 @@ export class WebViewProvider {
         const connectResult = await this.agentManager.connect(
           workingDir,
           bundledCliEntry,
-          options,
         );
         console.log('[WebViewProvider] Agent connected successfully');
         this.agentInitialized = true;
