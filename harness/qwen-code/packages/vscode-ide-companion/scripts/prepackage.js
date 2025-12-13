@@ -35,7 +35,7 @@ function npmBin() {
 function run(cmd, args, opts = {}) {
   const res = spawnSync(cmd, args, {
     stdio: 'inherit',
-    shell: false,
+    shell: process.platform === 'win32' ? true : false,
     ...opts,
   });
   if (res.error) {
@@ -71,8 +71,8 @@ function main() {
 
   console.log('[prepackage] Copying bundled CLI dist/ into extension...');
   run(
-    process.execPath,
-    [path.join(extensionRoot, 'scripts', 'copy-bundled-cli.js')],
+    'node',
+    [`${path.join(extensionRoot, 'scripts', 'copy-bundled-cli.js')}`],
     {
       cwd: extensionRoot,
     },
