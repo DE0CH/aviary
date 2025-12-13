@@ -292,7 +292,7 @@ class GeminiAgent {
   private async ensureAuthenticated(config: Config): Promise<void> {
     const selectedType = this.settings.merged.security?.auth?.selectedType;
     if (!selectedType) {
-      throw acp.RequestError.authRequired();
+      throw acp.RequestError.authRequired('No Selected Type');
     }
 
     try {
@@ -300,7 +300,9 @@ class GeminiAgent {
       await config.refreshAuth(selectedType, true);
     } catch (e) {
       console.error(`Authentication failed: ${e}`);
-      throw acp.RequestError.authRequired();
+      throw acp.RequestError.authRequired(
+        'Authentication failed: ' + (e as Error).message,
+      );
     }
   }
 
