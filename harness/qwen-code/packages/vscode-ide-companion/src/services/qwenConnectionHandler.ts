@@ -10,14 +10,8 @@
  * Handles Qwen Agent connection establishment, authentication, and session creation
  */
 
-import * as vscode from 'vscode';
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
-import {
-  CliVersionManager,
-  MIN_CLI_VERSION_FOR_SESSION_METHODS,
-} from '../cli/cliVersionManager.js';
-import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
 
 /**
@@ -31,52 +25,21 @@ export class QwenConnectionHandler {
    * @param connection - ACP connection instance
    * @param sessionReader - Session reader instance
    * @param workingDir - Working directory
-   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
+   * @param cliEntryPath - Path to bundled CLI entrypoint (cli.js)
    */
   async connect(
     connection: AcpConnection,
     sessionReader: QwenSessionReader,
     workingDir: string,
-    cliPath?: string,
+    cliEntryPath: string,
   ): Promise<void> {
     const connectId = Date.now();
     console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
 
-    // Check CLI version and features
-    const cliVersionManager = CliVersionManager.getInstance();
-    const versionInfo = await cliVersionManager.detectCliVersion();
-    console.log('[QwenAgentManager] CLI version info:', versionInfo);
-
-    // Store CLI context
-    const cliContextManager = CliContextManager.getInstance();
-    cliContextManager.setCurrentVersionInfo(versionInfo);
-
-    // Show warning if CLI version is below minimum requirement
-    if (!versionInfo.isSupported) {
-      // Wait to determine release version number
-      const selection = await vscode.window.showWarningMessage(
-        `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-        'Upgrade Now',
-      );
-
-      // Handle the user's selection
-      if (selection === 'Upgrade Now') {
-        // Open terminal and run npm install command
-        const terminal = vscode.window.createTerminal('Qwen Code CLI Upgrade');
-        terminal.show();
-        terminal.sendText('npm install -g @qwen-code/qwen-code@latest');
-      }
-    }
-
-    const config = vscode.workspace.getConfiguration('qwenCode');
-    // Use the provided CLI path if available, otherwise use the configured path
-    const effectiveCliPath =
-      cliPath || config.get<string>('qwen.cliPath', 'qwen');
-
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    await connection.connect(effectiveCliPath, workingDir, extraArgs);
+    await connection.connect(cliEntryPath, workingDir, extraArgs);
 
     // Try to restore existing session or create new session
     // Note: Auto-restore on connect is disabled to avoid surprising loads
