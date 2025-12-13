@@ -10,12 +10,12 @@
  * Handles Qwen Agent connection establishment, authentication, and session creation
  */
 
-// import * as vscode from 'vscode';
 import type { AcpConnection } from './acpConnection.js';
 import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import { CliDetector } from '../cli/cliDetector.js';
 import { authMethod } from '../types/acpTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
+import { checkCliVersionAndWarn } from '../cli/cliVersionChecker.js';
 
 export interface QwenConnectionResult {
   sessionCreated: boolean;
@@ -59,19 +59,12 @@ export class QwenConnectionHandler {
     }
     console.log('[QwenAgentManager] CLI detected at:', detectionResult.cliPath);
 
-    // TODO: @yiliang114. closed temporarily
     // Show warning if CLI version is below minimum requirement
-    // if (!versionInfo.isSupported) {
-    //   // Wait to determine release version number
-    //   vscode.window.showWarningMessage(
-    //     `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-    //   );
-    // }
+    await checkCliVersionAndWarn();
 
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    // TODO:
     await connection.connect(cliPath!, workingDir, extraArgs);
 
     // Try to restore existing session or create new session

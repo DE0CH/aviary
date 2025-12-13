@@ -29,7 +29,7 @@ import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer
 import { ToolCall } from './components/messages/toolcalls/ToolCall.js';
 import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.js';
 import { EmptyState } from './components/layout/EmptyState.js';
-import { OnboardingPage } from './components/layout/OnboardingPage.js';
+import { Onboarding } from './components/layout/Onboarding.js';
 import { type CompletionItem } from '../types/completionItemTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { ChatHeader } from './components/layout/ChatHeader.js';
@@ -670,7 +670,7 @@ export const App: React.FC = () => {
       >
         {!hasContent ? (
           isAuthenticated === false ? (
-            <OnboardingPage
+            <Onboarding
               onLogin={() => {
                 vscode.postMessage({ type: 'login', data: {} });
                 messageHandling.setWaitingForResponse(

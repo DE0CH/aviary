@@ -24,10 +24,8 @@ import {
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { CliContextManager } from '../cli/cliContextManager.js';
 import { authMethod } from '../types/acpTypes.js';
-import {
-  MIN_CLI_VERSION_FOR_SESSION_METHODS,
-  type CliVersionInfo,
-} from '../cli/cliVersionManager.js';
+import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from '../cli/cliVersionManager.js';
+import { processServerVersion } from '../cli/cliVersionChecker.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
@@ -149,37 +147,10 @@ export class QwenAgentManager {
     // Initialize callback to surface available modes and current mode to UI
     this.connection.onInitialized = (init: unknown) => {
       try {
+        // Process server version information
+        processServerVersion(init);
+
         const obj = (init || {}) as Record<string, unknown>;
-
-        // Extract version information from initialize response
-        const serverVersion =
-          obj['version'] || obj['serverVersion'] || obj['cliVersion'];
-        if (serverVersion) {
-          console.log(
-            '[QwenAgentManager] Server version from initialize response:',
-            serverVersion,
-          );
-
-          // Update CLI context with version info from server
-          const cliContextManager = CliContextManager.getInstance();
-
-          // Create version info directly without async call
-          const versionInfo: CliVersionInfo = {
-            version: String(serverVersion),
-            isSupported: true, // Assume supported for now
-            features: {
-              supportsSessionList: true,
-              supportsSessionLoad: true,
-            },
-            detectionResult: {
-              isInstalled: true,
-              version: String(serverVersion),
-            },
-          };
-
-          cliContextManager.setCurrentVersionInfo(versionInfo);
-        }
-
         const modes = obj['modes'] as
           | {
               currentModeId?: 'plan' | 'default' | 'auto-edit' | 'yolo';
@@ -1369,7 +1340,6 @@ export class QwenAgentManager {
    * @param callback - Called when ACP stopReason is reported
    */
   onEndTurn(callback: (reason?: string) => void): void {
-    console.log('[QwenAgentManager] onEndTurn__________ callback:', callback);
     this.callbacks.onEndTurn = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }

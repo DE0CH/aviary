@@ -111,16 +111,6 @@ export class AcpMessageHandler {
         message.result,
       );
 
-      console.log(
-        '[ACP] Response for message.result:',
-        message.result,
-        message.result &&
-          typeof message.result === 'object' &&
-          'stopReason' in message.result,
-
-        !!callbacks.onEndTurn,
-      );
-
       if (message.result && typeof message.result === 'object') {
         const stopReasonValue =
           (message.result as { stopReason?: unknown }).stopReason ??

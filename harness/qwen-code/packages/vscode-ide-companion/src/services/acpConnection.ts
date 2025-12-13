@@ -42,9 +42,7 @@ export class AcpConnection {
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
   }> = () => Promise.resolve({ optionId: 'allow' });
-  onEndTurn: (reason?: string) => void = (reason?: string | undefined) => {
-    console.log('[ACP] onEndTurn__________ reason:', reason || 'unknown');
-  };
+  onEndTurn: () => void = () => {};
   // Called after successful initialize() with the initialize result
   onInitialized: (init: unknown) => void = () => {};
 

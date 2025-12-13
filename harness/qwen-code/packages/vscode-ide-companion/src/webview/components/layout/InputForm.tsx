@@ -172,7 +172,7 @@ export const InputForm: React.FC<InputFormProps> = ({
 
             <div
               ref={inputFieldRef}
-              contentEditable={'plaintext-only'}
+              contentEditable="plaintext-only"
               className="composer-input"
               role="textbox"
               aria-label="Message input"
@@ -186,9 +186,6 @@ export const InputForm: React.FC<InputFormProps> = ({
                   : 'false'
               }
               onInput={(e) => {
-                if (composerDisabled) {
-                  return;
-                }
                 const target = e.target as HTMLDivElement;
                 // Filter out zero-width space that we use to maintain height
                 const text = target.textContent?.replace(/\u200B/g, '') || '';
