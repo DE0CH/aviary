@@ -15,8 +15,12 @@ export const SESSION_PAGE_SIZE = 20;
  * Truncates text to fit within a given width, adding ellipsis if needed.
  */
 export function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) return text;
-  if (maxWidth <= 3) return text.slice(0, maxWidth);
+  if (text.length <= maxWidth) {
+    return text;
+  }
+  if (maxWidth <= 3) {
+    return text.slice(0, maxWidth);
+  }
   return text.slice(0, maxWidth - 3) + '...';
 }
 

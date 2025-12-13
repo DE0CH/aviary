@@ -41,7 +41,7 @@ export function ResumeSessionDialog({
     : 5;
 
   const picker = useSessionPicker({
-    sessionService: sessionServiceRef.current!,
+    sessionService: sessionServiceRef.current,
     currentBranch,
     onSelect,
     onCancel,

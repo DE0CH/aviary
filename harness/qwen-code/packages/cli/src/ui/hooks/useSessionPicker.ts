@@ -23,7 +23,7 @@ export interface SessionState {
 }
 
 export interface UseSessionPickerOptions {
-  sessionService: SessionService;
+  sessionService: SessionService | null;
   currentBranch?: string;
   onSelect: (sessionId: string) => void;
   onCancel: () => void;
@@ -92,7 +92,9 @@ export function useSessionPicker({
   // Calculate scroll offset based on mode
   const scrollOffset = centerSelection
     ? (() => {
-        if (filteredSessions.length <= maxVisibleItems) return 0;
+        if (filteredSessions.length <= maxVisibleItems) {
+          return 0;
+        }
         const halfVisible = Math.floor(maxVisibleItems / 2);
         let offset = selectedIndex - halfVisible;
         offset = Math.max(0, offset);
@@ -111,6 +113,11 @@ export function useSessionPicker({
 
   // Load initial sessions
   useEffect(() => {
+    // Guard: don't load if sessionService is not ready
+    if (!sessionService) {
+      return;
+    }
+
     const loadInitialSessions = async () => {
       try {
         const result: ListSessionsResult = await sessionService.listSessions({
@@ -130,7 +137,9 @@ export function useSessionPicker({
 
   // Load more sessions
   const loadMoreSessions = useCallback(async () => {
-    if (!sessionState.hasMore || isLoadingMoreRef.current) return;
+    if (!sessionService || !sessionState.hasMore || isLoadingMoreRef.current) {
+      return;
+    }
 
     isLoadingMoreRef.current = true;
     try {
@@ -229,7 +238,9 @@ export function useSessionPicker({
 
       // Navigation down
       if (key.downArrow || input === 'j') {
-        if (filteredSessions.length === 0) return;
+        if (filteredSessions.length === 0) {
+          return;
+        }
 
         setSelectedIndex((prev) => {
           const newIndex = Math.min(filteredSessions.length - 1, prev + 1);
