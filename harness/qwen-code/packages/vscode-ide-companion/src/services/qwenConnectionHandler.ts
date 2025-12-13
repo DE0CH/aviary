@@ -151,6 +151,9 @@ export class QwenConnectionHandler {
             // newSession may cause the cli authorization jump to be triggered again
             // Add a slight delay to ensure auth state is settled
             await new Promise((resolve) => setTimeout(resolve, 300));
+            console.log(
+              '[QwenAgentManager] newSessionWithRetry Authentication successful',
+            );
             // Retry immediately after successful auth
             await connection.newSession(workingDir);
             console.log(

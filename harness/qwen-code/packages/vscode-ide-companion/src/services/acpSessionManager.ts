@@ -169,7 +169,7 @@ export class AcpSessionManager {
       pendingRequests,
       nextRequestId,
     );
-    console.log('[ACP] Authenticate successful');
+    console.log('[ACP] Authenticate successful', response);
     return response;
   }
 

@@ -1110,6 +1110,9 @@ export class QwenAgentManager {
             try {
               // Let CLI handle authentication - it's the single source of truth
               await this.connection.authenticate(authMethod);
+              console.log(
+                '[QwenAgentManager] createNewSession Authentication successful. Retrying session/new...',
+              );
               // Add a slight delay to ensure auth state is settled
               await new Promise((resolve) => setTimeout(resolve, 300));
               await this.connection.newSession(workingDir);
