@@ -43,6 +43,14 @@ vi.mock('vscode', () => ({
     registerWebviewPanelSerializer: vi.fn(() => ({
       dispose: vi.fn(),
     })),
+    createStatusBarItem: vi.fn(() => ({
+      text: '',
+      tooltip: '',
+      command: '',
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+    })),
   },
   workspace: {
     workspaceFolders: [],
@@ -57,6 +65,10 @@ vi.mock('vscode', () => ({
   },
   Uri: {
     joinPath: vi.fn(),
+  },
+  StatusBarAlignment: {
+    Left: 1,
+    Right: 2,
   },
   ExtensionMode: {
     Development: 1,

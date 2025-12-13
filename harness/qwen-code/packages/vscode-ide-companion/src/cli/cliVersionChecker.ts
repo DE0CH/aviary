@@ -5,121 +5,154 @@
  */
 
 import * as vscode from 'vscode';
-import { CliContextManager } from './cliContextManager.js';
+import { CliDetector, type CliDetectionResult } from './cliDetector.js';
 import { CliVersionManager } from './cliVersionManager.js';
-import { MIN_CLI_VERSION_FOR_SESSION_METHODS } from './cliVersionManager.js';
-import type { CliVersionInfo } from './cliVersionManager.js';
-
-// Track which versions have already been warned about to avoid repetitive warnings
-// Using a Map with timestamps to allow warnings to be shown again after a certain period
-const warnedVersions = new Map<string, number>();
-const WARNING_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours cooldown
+import semver from 'semver';
 
 /**
- * Check CLI version and show warning if below minimum requirement
- * Provides an "Upgrade Now" option for unsupported versions
+ * CLI Version Checker
  *
- * @returns Version information
+ * Handles CLI version checking with throttling to prevent frequent notifications.
+ * This class manages version checking and provides version information without
+ * constantly bothering the user with popups.
  */
-export async function checkCliVersionAndWarn(): Promise<CliVersionInfo> {
-  try {
-    const cliContextManager = CliContextManager.getInstance();
-    const versionInfo =
-      await CliVersionManager.getInstance().detectCliVersion(true);
-    cliContextManager.setCurrentVersionInfo(versionInfo);
+export class CliVersionChecker {
+  private static instance: CliVersionChecker;
+  private lastNotificationTime: number = 0;
+  private static readonly NOTIFICATION_COOLDOWN_MS = 300000; // 5 minutes cooldown
+  private context: vscode.ExtensionContext;
 
-    if (!versionInfo.isSupported) {
-      // Only show warning if we haven't already warned about this specific version recently
-      const versionKey = versionInfo.version || 'unknown';
-      const lastWarningTime = warnedVersions.get(versionKey);
-      const currentTime = Date.now();
+  private constructor(context: vscode.ExtensionContext) {
+    this.context = context;
+  }
 
-      // Show warning if we haven't warned about this version or if enough time has passed
-      if (
-        !lastWarningTime ||
-        currentTime - lastWarningTime > WARNING_COOLDOWN_MS
-      ) {
-        // Wait to determine release version number
-        const selection = await vscode.window.showWarningMessage(
-          `Qwen Code CLI version ${versionInfo.version} is below the minimum required version. Some features may not work properly. Please upgrade to version ${MIN_CLI_VERSION_FOR_SESSION_METHODS} or later.`,
-          'Upgrade Now',
-        );
+  /**
+   * Get singleton instance
+   */
+  static getInstance(context?: vscode.ExtensionContext): CliVersionChecker {
+    if (!CliVersionChecker.instance && context) {
+      CliVersionChecker.instance = new CliVersionChecker(context);
+    }
+    return CliVersionChecker.instance;
+  }
 
-        // Handle the user's selection
-        if (selection === 'Upgrade Now') {
-          // Open terminal and run npm install command
-          const terminal = vscode.window.createTerminal(
-            'Qwen Code CLI Upgrade',
+  /**
+   * Check CLI version with cooldown to prevent spamming notifications
+   *
+   * @param showNotifications - Whether to show notifications for issues
+   * @returns Promise with version check result
+   */
+  async checkCliVersion(showNotifications: boolean = true): Promise<{
+    isInstalled: boolean;
+    version?: string;
+    isSupported: boolean;
+    needsUpdate: boolean;
+    error?: string;
+  }> {
+    try {
+      // Detect CLI installation
+      const detectionResult: CliDetectionResult =
+        await CliDetector.detectQwenCli();
+
+      if (!detectionResult.isInstalled) {
+        if (showNotifications && this.canShowNotification()) {
+          vscode.window.showWarningMessage(
+            `Qwen Code CLI not found. Please install it using: npm install -g @qwen-code/qwen-code@latest`,
           );
-          terminal.show();
-          terminal.sendText('npm install -g @qwen-code/qwen-code@latest');
+          this.lastNotificationTime = Date.now();
         }
 
-        // Update the last warning time
-        warnedVersions.set(versionKey, currentTime);
+        return {
+          isInstalled: false,
+          error: detectionResult.error,
+          isSupported: false,
+          needsUpdate: false,
+        };
       }
-    }
 
-    return versionInfo;
-  } catch (error) {
-    console.error('[CliVersionChecker] Failed to check CLI version:', error);
-    // Return a default version info in case of error
-    return {
-      version: undefined,
-      isSupported: false,
-      features: {
-        supportsSessionList: false,
-        supportsSessionLoad: false,
-      },
-      detectionResult: {
+      // Get version information
+      const versionManager = CliVersionManager.getInstance();
+      const versionInfo = await versionManager.detectCliVersion();
+
+      const currentVersion = detectionResult.version;
+      const isSupported = versionInfo.isSupported;
+
+      // Check if update is needed (version is too old)
+      const minRequiredVersion = '0.5.0'; // This should match MIN_CLI_VERSION_FOR_SESSION_METHODS from CliVersionManager
+      const needsUpdate = currentVersion
+        ? !semver.satisfies(currentVersion, `>=${minRequiredVersion}`)
+        : false;
+
+      // Show notification only if needed and within cooldown period
+      if (showNotifications && !isSupported && this.canShowNotification()) {
+        vscode.window.showWarningMessage(
+          `Qwen Code CLI version is outdated. Current: ${currentVersion || 'unknown'}, Minimum required: ${minRequiredVersion}. Please update using: npm install -g @qwen-code/qwen-code@latest`,
+        );
+        this.lastNotificationTime = Date.now();
+      }
+
+      return {
+        isInstalled: true,
+        version: currentVersion,
+        isSupported,
+        needsUpdate,
+      };
+    } catch (error) {
+      console.error('[CliVersionChecker] Version check failed:', error);
+
+      if (showNotifications && this.canShowNotification()) {
+        vscode.window.showErrorMessage(
+          `Failed to check Qwen Code CLI version: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        this.lastNotificationTime = Date.now();
+      }
+
+      return {
         isInstalled: false,
         error: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
-}
-
-/**
- * Process server version information from initialize response
- *
- * @param init - Initialize response object
- */
-export function processServerVersion(init: unknown): void {
-  try {
-    const obj = (init || {}) as Record<string, unknown>;
-
-    // Extract version information from initialize response
-    const serverVersion =
-      obj['version'] || obj['serverVersion'] || obj['cliVersion'];
-    if (serverVersion) {
-      console.log(
-        '[CliVersionChecker] Server version from initialize response:',
-        serverVersion,
-      );
-
-      // Update CLI context with version info from server
-      const cliContextManager = CliContextManager.getInstance();
-
-      // Create version info directly without async call
-      const versionInfo: CliVersionInfo = {
-        version: String(serverVersion),
-        isSupported: true, // Assume supported for now
-        features: {
-          supportsSessionList: true,
-          supportsSessionLoad: true,
-        },
-        detectionResult: {
-          isInstalled: true,
-          version: String(serverVersion),
-        },
+        isSupported: false,
+        needsUpdate: false,
       };
-
-      cliContextManager.setCurrentVersionInfo(versionInfo);
     }
-  } catch (error) {
-    console.error(
-      '[CliVersionChecker] Failed to process server version:',
-      error,
+  }
+
+  /**
+   * Check if notification can be shown based on cooldown period
+   */
+  private canShowNotification(): boolean {
+    return (
+      Date.now() - this.lastNotificationTime >
+      CliVersionChecker.NOTIFICATION_COOLDOWN_MS
     );
+  }
+
+  /**
+   * Clear notification cooldown (allows immediate next notification)
+   */
+  clearCooldown(): void {
+    this.lastNotificationTime = 0;
+  }
+
+  /**
+   * Get version status for display in status bar or other UI elements
+   */
+  async getVersionStatus(): Promise<string> {
+    try {
+      const versionManager = CliVersionManager.getInstance();
+      const versionInfo = await versionManager.detectCliVersion();
+
+      if (!versionInfo.detectionResult.isInstalled) {
+        return 'CLI: Not installed';
+      }
+
+      const version = versionInfo.version || 'Unknown';
+      if (!versionInfo.isSupported) {
+        return `CLI: ${version} (Outdated)`;
+      }
+
+      return `CLI: ${version}`;
+    } catch (_) {
+      return 'CLI: Error';
+    }
   }
 }

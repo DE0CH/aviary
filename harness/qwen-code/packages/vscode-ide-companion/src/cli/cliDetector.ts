@@ -50,14 +50,8 @@ export class CliDetector {
       this.cachedResult &&
       now - this.lastCheckTime < this.CACHE_DURATION_MS
     ) {
-      console.log('[CliDetector] Returning cached result');
       return this.cachedResult;
     }
-
-    console.log(
-      '[CliDetector] Starting lightweight CLI detection, current PATH:',
-      process.env.PATH,
-    );
 
     try {
       const isWindows = process.platform === 'win32';
@@ -69,11 +63,6 @@ export class CliDetector {
         const detectionCommand = isWindows
           ? `${whichCommand} qwen`
           : `${whichCommand} qwen`;
-
-        console.log(
-          '[CliDetector] Detecting CLI with lightweight command:',
-          detectionCommand,
-        );
 
         // Execute command to detect CLI path, set shorter timeout (3 seconds)
         const { stdout } = await execAsync(detectionCommand, {
@@ -87,8 +76,6 @@ export class CliDetector {
           .split('\n')
           .filter((line) => line.trim());
         const cliPath = lines[0]; // Take only the first path
-
-        console.log('[CliDetector] Found CLI at:', cliPath);
 
         // Build successful detection result, note no version information
         this.cachedResult = {

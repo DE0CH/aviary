@@ -15,7 +15,6 @@ import type { QwenSessionReader } from '../services/qwenSessionReader.js';
 import { CliDetector } from '../cli/cliDetector.js';
 import { authMethod } from '../types/acpTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
-import { checkCliVersionAndWarn } from '../cli/cliVersionChecker.js';
 
 export interface QwenConnectionResult {
   sessionCreated: boolean;
@@ -50,17 +49,14 @@ export class QwenConnectionHandler {
     let sessionCreated = false;
     let requiresAuth = false;
 
-    // Lightweight check if CLI exists (without version info for faster performance)
-    const detectionResult = await CliDetector.detectQwenCliLightweight(
-      /* forceRefresh */ true,
+    // Check if CLI exists using standard detection (with cached results for better performance)
+    const detectionResult = await CliDetector.detectQwenCli(
+      /* forceRefresh */ false, // Use cached results when available for better performance
     );
     if (!detectionResult.isInstalled) {
       throw new Error(detectionResult.error || 'Qwen CLI not found');
     }
     console.log('[QwenAgentManager] CLI detected at:', detectionResult.cliPath);
-
-    // Show warning if CLI version is below minimum requirement
-    await checkCliVersionAndWarn();
 
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];

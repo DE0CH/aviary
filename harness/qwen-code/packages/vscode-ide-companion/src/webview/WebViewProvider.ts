@@ -13,9 +13,11 @@ import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
 import { CliInstaller } from '../cli/cliInstaller.js';
+import { CliVersionChecker } from '../cli/cliVersionChecker.js';
 import { getFileName } from './utils/webviewUtils.js';
 import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
+import { dismissAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 
 /**
  * WebView Provider Class
@@ -46,7 +48,7 @@ export class WebViewProvider {
   private currentModeId: ApprovalModeValue | null = null;
 
   constructor(
-    context: vscode.ExtensionContext,
+    private context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
   ) {
     this.agentManager = new QwenAgentManager();
@@ -619,6 +621,21 @@ export class WebViewProvider {
         console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
         console.log('[WebViewProvider] CLI version:', cliDetection.version);
 
+        // Perform version check with throttled notifications
+        const versionChecker = CliVersionChecker.getInstance(this.context);
+        const versionCheckResult = await versionChecker.checkCliVersion(false); // Silent check to avoid popup spam
+
+        if (!versionCheckResult.isSupported) {
+          console.log(
+            '[WebViewProvider] Qwen CLI version is outdated or unsupported',
+            versionCheckResult,
+          );
+          // Log to output channel instead of showing popup
+          console.warn(
+            `Qwen Code CLI version issue: Installed=${versionCheckResult.version || 'unknown'}, Supported=${versionCheckResult.isSupported}`,
+          );
+        }
+
         try {
           console.log('[WebViewProvider] Connecting to agent...');
 
@@ -630,6 +647,22 @@ export class WebViewProvider {
           );
           console.log('[WebViewProvider] Agent connected successfully');
           this.agentInitialized = true;
+
+          // If authentication is required and autoAuthenticate is false,
+          // send authState message and return without creating session
+          if (connectResult.requiresAuth && !autoAuthenticate) {
+            console.log(
+              '[WebViewProvider] Authentication required but auto-auth disabled, sending authState and returning',
+            );
+            this.sendMessageToWebView({
+              type: 'authState',
+              data: { authenticated: false },
+            });
+            // Initialize empty conversation to allow browsing history
+            await this.initializeEmptyConversation();
+            return;
+          }
+
           if (connectResult.requiresAuth) {
             this.sendMessageToWebView({
               type: 'authState',
@@ -641,6 +674,9 @@ export class WebViewProvider {
           const sessionReady = await this.loadCurrentSessionMessages(options);
 
           if (sessionReady) {
+            // Dismiss any authentication notifications
+            dismissAuthenticateUpdate();
+
             // Notify webview that agent is connected
             this.sendMessageToWebView({
               type: 'agentConnected',
@@ -715,6 +751,9 @@ export class WebViewProvider {
             '[WebViewProvider] Force re-login completed successfully',
           );
 
+          // Dismiss any authentication notifications
+          dismissAuthenticateUpdate();
+
           // Send success notification to WebView
           this.sendMessageToWebView({
             type: 'loginSuccess',
@@ -768,6 +807,9 @@ export class WebViewProvider {
       console.log(
         '[WebViewProvider] Connection refresh completed successfully',
       );
+
+      // Dismiss any authentication notifications
+      dismissAuthenticateUpdate();
 
       // Notify webview that agent is connected after refresh
       this.sendMessageToWebView({

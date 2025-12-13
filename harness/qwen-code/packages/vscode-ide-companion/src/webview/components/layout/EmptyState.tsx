@@ -27,24 +27,33 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-5 md:p-10">
-      {/* Loading overlay */}
-      {loadingMessage && (
-        <div className="bg-background/80 absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="text-center">
-            <div className="border-primary mx-auto mb-2 h-8 w-8 animate-spin rounded-full border-b-2"></div>
-            <p className="text-muted-foreground text-sm">{loadingMessage}</p>
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-col items-center gap-8 w-full">
         {/* Qwen Logo */}
         <div className="flex flex-col items-center gap-6">
-          <img
-            src={iconUri}
-            alt="Qwen Logo"
-            className="w-[60px] h-[60px] object-contain"
-          />
+          {iconUri ? (
+            <img
+              src={iconUri}
+              alt="Qwen Logo"
+              className="w-[60px] h-[60px] object-contain"
+              onError={(e) => {
+                // Fallback to a div with text if image fails to load
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                const parent = target.parentElement;
+                if (parent) {
+                  const fallback = document.createElement('div');
+                  fallback.className =
+                    'w-[60px] h-[60px] flex items-center justify-center text-2xl font-bold';
+                  fallback.textContent = 'Q';
+                  parent.appendChild(fallback);
+                }
+              }}
+            />
+          ) : (
+            <div className="w-[60px] h-[60px] flex items-center justify-center text-2xl font-bold bg-gray-200 rounded">
+              Q
+            </div>
+          )}
           <div className="text-center">
             <div className="text-[15px] text-app-primary-foreground leading-normal font-normal max-w-[400px]">
               {description}
