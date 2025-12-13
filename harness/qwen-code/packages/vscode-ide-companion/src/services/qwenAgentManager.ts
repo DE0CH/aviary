@@ -7,6 +7,7 @@ import { AcpConnection } from './acpConnection.js';
 import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
+  AuthenticateUpdateNotification,
 } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { QwenSessionReader, type QwenSession } from './qwenSessionReader.js';
@@ -17,9 +18,14 @@ import type {
   ToolCallUpdateData,
   QwenAgentCallbacks,
 } from '../types/chatTypes.js';
-import { QwenConnectionHandler } from '../services/qwenConnectionHandler.js';
+import {
+  QwenConnectionHandler,
+  type QwenConnectionResult,
+} from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { authMethod } from '../types/acpTypes.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
+import { handleAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 
 export type { ChatMessage, PlanEntry, ToolCallUpdateData };
 
@@ -28,6 +34,13 @@ export type { ChatMessage, PlanEntry, ToolCallUpdateData };
  *
  * Coordinates various modules and provides unified interface
  */
+interface AgentConnectOptions {
+  autoAuthenticate?: boolean;
+}
+interface AgentSessionOptions {
+  autoAuthenticate?: boolean;
+}
+
 export class QwenAgentManager {
   private connection: AcpConnection;
   private sessionReader: QwenSessionReader;
@@ -117,16 +130,30 @@ export class QwenAgentManager {
       return { optionId: 'allow_once' };
     };
 
-    this.connection.onEndTurn = () => {
+    this.connection.onEndTurn = (reason?: string) => {
       try {
         if (this.callbacks.onEndTurn) {
-          this.callbacks.onEndTurn();
+          this.callbacks.onEndTurn(reason);
         } else if (this.callbacks.onStreamChunk) {
           // Fallback: send a zero-length chunk then rely on streamEnd elsewhere
           this.callbacks.onStreamChunk('');
         }
       } catch (err) {
         console.warn('[QwenAgentManager] onEndTurn callback error:', err);
+      }
+    };
+
+    this.connection.onAuthenticateUpdate = (
+      data: AuthenticateUpdateNotification,
+    ) => {
+      try {
+        // Handle authentication update notifications by showing VS Code notification
+        handleAuthenticateUpdate(data);
+      } catch (err) {
+        console.warn(
+          '[QwenAgentManager] onAuthenticateUpdate callback error:',
+          err,
+        );
       }
     };
 
@@ -162,13 +189,17 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @param cliEntryPath - Path to bundled CLI entrypoint (cli.js)
    */
-  async connect(workingDir: string, cliEntryPath: string): Promise<void> {
+  async connect(
+    workingDir: string,
+    cliEntryPath: string,
+    options?: AgentConnectOptions,
+  ): Promise<QwenConnectionResult> {
     this.currentWorkingDir = workingDir;
-    await this.connectionHandler.connect(
+    return this.connectionHandler.connect(
       this.connection,
-      this.sessionReader,
       workingDir,
       cliEntryPath,
+      options,
     );
   }
 
@@ -250,9 +281,10 @@ export class QwenAgentManager {
       '[QwenAgentManager] Getting session list with version-aware strategy',
     );
 
-    // Prefer ACP method first; fall back to file system if it fails for any reason.
     try {
-      console.log('[QwenAgentManager] Attempting to get session list via ACP');
+      console.log(
+        '[QwenAgentManager] Attempting to get session list via ACP method',
+      );
       const response = await this.connection.listSessions();
       console.log('[QwenAgentManager] ACP session list response:', response);
 
@@ -262,19 +294,21 @@ export class QwenAgentManager {
       const res: unknown = response;
       let items: Array<Record<string, unknown>> = [];
 
-      if (Array.isArray(res)) {
-        items = res as Array<Record<string, unknown>>;
-      } else if (res && typeof res === 'object' && 'items' in res) {
+      // Note: AcpSessionManager resolves `sendRequest` with the JSON-RPC
+      // "result" directly (not the full AcpResponse). Treat it as unknown
+      // and carefully narrow before accessing `items` to satisfy strict TS.
+      if (res && typeof res === 'object' && 'items' in res) {
         const itemsValue = (res as { items?: unknown }).items;
         items = Array.isArray(itemsValue)
           ? (itemsValue as Array<Record<string, unknown>>)
           : [];
       }
 
-      console.log('[QwenAgentManager] Sessions retrieved via ACP:', {
-        count: items.length,
-      });
-
+      console.log(
+        '[QwenAgentManager] Sessions retrieved via ACP:',
+        res,
+        items.length,
+      );
       if (items.length > 0) {
         const sessions = items.map((item) => ({
           id: item.sessionId || item.id,
@@ -288,6 +322,11 @@ export class QwenAgentManager {
           filePath: item.filePath,
           cwd: item.cwd,
         }));
+
+        console.log(
+          '[QwenAgentManager] Sessions retrieved via ACP:',
+          sessions.length,
+        );
         return sessions;
       }
     } catch (error) {
@@ -350,6 +389,7 @@ export class QwenAgentManager {
   }> {
     const size = params?.size ?? 20;
     const cursor = params?.cursor;
+
     try {
       const response = await this.connection.listSessions({
         size,
@@ -444,7 +484,6 @@ export class QwenAgentManager {
    */
   async getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
-      // Prefer reading CLI's JSONL if we can find filePath from session/list
       try {
         const list = await this.getSessionList();
         const item = list.find(
@@ -664,7 +703,9 @@ export class QwenAgentManager {
             const planText = planEntries
               .map(
                 (entry: Record<string, unknown>, index: number) =>
-                  `${index + 1}. ${entry.description || entry.title || 'Unnamed step'}`,
+                  `${index + 1}. ${
+                    entry.description || entry.title || 'Unnamed step'
+                  }`,
               )
               .join('\n');
             msgs.push({
@@ -943,13 +984,15 @@ export class QwenAgentManager {
       sessionId,
     );
 
-    // Prefer ACP session/load first; fall back to file system on failure.
     try {
-      console.log('[QwenAgentManager] Attempting to load session via ACP');
+      console.log(
+        '[QwenAgentManager] Attempting to load session via ACP method',
+      );
       await this.loadSessionViaAcp(sessionId);
       console.log('[QwenAgentManager] Session loaded successfully via ACP');
-      // After loading via ACP, we still need to get messages from file system.
-      // In future, we might get them directly from the ACP response.
+
+      // After loading via ACP, we still need to get messages from file system
+      // In future, we might get them directly from the ACP response
     } catch (error) {
       console.warn(
         '[QwenAgentManager] ACP session load failed, falling back to file system method:',
@@ -1030,7 +1073,11 @@ export class QwenAgentManager {
    * @param workingDir - Working directory
    * @returns Newly created session ID
    */
-  async createNewSession(workingDir: string): Promise<string | null> {
+  async createNewSession(
+    workingDir: string,
+    options?: AgentSessionOptions,
+  ): Promise<string | null> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
     // Reuse existing session if present
     if (this.connection.currentSessionId) {
       return this.connection.currentSessionId;
@@ -1048,18 +1095,24 @@ export class QwenAgentManager {
         try {
           await this.connection.newSession(workingDir);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          const requiresAuth =
-            msg.includes('Authentication required') ||
-            msg.includes('(code: -32000)');
+          const requiresAuth = isAuthenticationRequiredError(err);
 
           if (requiresAuth) {
+            if (!autoAuthenticate) {
+              console.warn(
+                '[QwenAgentManager] session/new requires authentication but auto-auth is disabled. Deferring until user logs in.',
+              );
+              throw err;
+            }
             console.warn(
               '[QwenAgentManager] session/new requires authentication. Retrying with authenticate...',
             );
             try {
               // Let CLI handle authentication - it's the single source of truth
               await this.connection.authenticate(authMethod);
+              console.log(
+                '[QwenAgentManager] createNewSession Authentication successful. Retrying session/new...',
+              );
               // Add a slight delay to ensure auth state is settled
               await new Promise((resolve) => setTimeout(resolve, 300));
               await this.connection.newSession(workingDir);
@@ -1170,9 +1223,9 @@ export class QwenAgentManager {
   /**
    * Register end-of-turn callback
    *
-   * @param callback - Called when ACP stopReason === 'end_turn'
+   * @param callback - Called when ACP stopReason is reported
    */
-  onEndTurn(callback: () => void): void {
+  onEndTurn(callback: (reason?: string) => void): void {
     this.callbacks.onEndTurn = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }

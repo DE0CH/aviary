@@ -11,8 +11,13 @@
  */
 
 import type { AcpConnection } from './acpConnection.js';
-import type { QwenSessionReader } from '../services/qwenSessionReader.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 import { authMethod } from '../types/acpTypes.js';
+
+export interface QwenConnectionResult {
+  sessionCreated: boolean;
+  requiresAuth: boolean;
+}
 
 /**
  * Qwen Connection Handler class
@@ -23,23 +28,27 @@ export class QwenConnectionHandler {
    * Connect to Qwen service and establish session
    *
    * @param connection - ACP connection instance
-   * @param sessionReader - Session reader instance
    * @param workingDir - Working directory
-   * @param cliEntryPath - Path to bundled CLI entrypoint (cli.js)
+   * @param cliPath - CLI path (optional, if provided will override the path in configuration)
    */
   async connect(
     connection: AcpConnection,
-    sessionReader: QwenSessionReader,
     workingDir: string,
     cliEntryPath: string,
-  ): Promise<void> {
+    options?: {
+      autoAuthenticate?: boolean;
+    },
+  ): Promise<QwenConnectionResult> {
     const connectId = Date.now();
     console.log(`[QwenAgentManager] 🚀 CONNECT() CALLED - ID: ${connectId}`);
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
+    let sessionCreated = false;
+    let requiresAuth = false;
 
     // Build extra CLI arguments (only essential parameters)
     const extraArgs: string[] = [];
 
-    await connection.connect(cliEntryPath, workingDir, extraArgs);
+    await connection.connect(cliEntryPath!, workingDir, extraArgs);
 
     // Try to restore existing session or create new session
     // Note: Auto-restore on connect is disabled to avoid surprising loads
@@ -57,18 +66,40 @@ export class QwenConnectionHandler {
         console.log(
           '[QwenAgentManager] Creating new session (letting CLI handle authentication)...',
         );
-        await this.newSessionWithRetry(connection, workingDir, 3, authMethod);
+        await this.newSessionWithRetry(
+          connection,
+          workingDir,
+          3,
+          authMethod,
+          autoAuthenticate,
+        );
         console.log('[QwenAgentManager] New session created successfully');
+        sessionCreated = true;
       } catch (sessionError) {
-        console.log(`\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`);
-        console.log(`[QwenAgentManager] Error details:`, sessionError);
-        throw sessionError;
+        const needsAuth =
+          autoAuthenticate === false &&
+          isAuthenticationRequiredError(sessionError);
+        if (needsAuth) {
+          requiresAuth = true;
+          console.log(
+            '[QwenAgentManager] Session creation requires authentication; waiting for user-triggered login.',
+          );
+        } else {
+          console.log(
+            `\n⚠️ [SESSION FAILED] newSessionWithRetry threw error\n`,
+          );
+          console.log(`[QwenAgentManager] Error details:`, sessionError);
+          throw sessionError;
+        }
       }
+    } else {
+      sessionCreated = true;
     }
 
     console.log(`\n========================================`);
     console.log(`[QwenAgentManager] ✅ CONNECT() COMPLETED SUCCESSFULLY`);
     console.log(`========================================\n`);
+    return { sessionCreated, requiresAuth };
   }
 
   /**
@@ -83,6 +114,7 @@ export class QwenConnectionHandler {
     workingDir: string,
     maxRetries: number,
     authMethod: string,
+    autoAuthenticate: boolean,
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -102,10 +134,14 @@ export class QwenConnectionHandler {
 
         // If Qwen reports that authentication is required, try to
         // authenticate on-the-fly once and retry without waiting.
-        const requiresAuth =
-          errorMessage.includes('Authentication required') ||
-          errorMessage.includes('(code: -32000)');
+        const requiresAuth = isAuthenticationRequiredError(error);
         if (requiresAuth) {
+          if (!autoAuthenticate) {
+            console.log(
+              '[QwenAgentManager] Authentication required but auto-authentication is disabled. Propagating error.',
+            );
+            throw error;
+          }
           console.log(
             '[QwenAgentManager] Qwen requires authentication. Authenticating and retrying session/new...',
           );
@@ -115,6 +151,9 @@ export class QwenConnectionHandler {
             // newSession may cause the cli authorization jump to be triggered again
             // Add a slight delay to ensure auth state is settled
             await new Promise((resolve) => setTimeout(resolve, 300));
+            console.log(
+              '[QwenAgentManager] newSessionWithRetry Authentication successful',
+            );
             // Retry immediately after successful auth
             await connection.newSession(workingDir);
             console.log(

@@ -10,6 +10,7 @@ import type {
   AcpPermissionRequest,
   AcpResponse,
   AcpSessionUpdate,
+  AuthenticateUpdateNotification,
 } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type { ChildProcess, SpawnOptions } from 'child_process';
@@ -42,6 +43,8 @@ export class AcpConnection {
   onPermissionRequest: (data: AcpPermissionRequest) => Promise<{
     optionId: string;
   }> = () => Promise.resolve({ optionId: 'allow' });
+  onAuthenticateUpdate: (data: AuthenticateUpdateNotification) => void =
+    () => {};
   onEndTurn: () => void = () => {};
   // Called after successful initialize() with the initialize result
   onInitialized: (init: unknown) => void = () => {};
@@ -207,6 +210,7 @@ export class AcpConnection {
     const callbacks: AcpConnectionCallbacks = {
       onSessionUpdate: this.onSessionUpdate,
       onPermissionRequest: this.onPermissionRequest,
+      onAuthenticateUpdate: this.onAuthenticateUpdate,
       onEndTurn: this.onEndTurn,
     };
 

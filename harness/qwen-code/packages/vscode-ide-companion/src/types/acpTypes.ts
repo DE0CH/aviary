@@ -166,6 +166,13 @@ export interface CurrentModeUpdate extends BaseSessionUpdate {
   };
 }
 
+// Authenticate update (sent by agent during authentication process)
+export interface AuthenticateUpdateNotification {
+  _meta: {
+    authUri: string;
+  };
+}
+
 export type AcpSessionUpdate =
   | UserMessageChunkUpdate
   | AgentMessageChunkUpdate
