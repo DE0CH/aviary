@@ -194,6 +194,16 @@ const SETTINGS_SCHEMA = {
           { value: 'ru', label: 'Русский (Russian)' },
         ],
       },
+      terminalBell: {
+        type: 'boolean',
+        label: 'Terminal Bell',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Play terminal bell sound when response completes or needs approval.',
+        showInDialog: true,
+      },
     },
   },
   output: {

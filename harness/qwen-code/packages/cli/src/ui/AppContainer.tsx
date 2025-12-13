@@ -942,6 +942,7 @@ export const AppContainer = (props: AppContainerProps) => {
     isFocused,
     streamingState,
     elapsedTime,
+    settings,
   });
 
   // Dialog close functionality
