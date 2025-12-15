@@ -362,15 +362,19 @@ Co-authored-by: ${gitCoAuthorSettings.name} <${gitCoAuthorSettings.email}>`;
 
     // Handle different git commit patterns
     // Match -m "message" or -m 'message', including combined flags like -am
-    const messagePattern = /(-[a-zA-Z]*m\s+)(['"])((?:\\.|[^\\])*?)(\2)/;
-    const match = command.match(messagePattern);
+    // Use separate patterns to avoid ReDoS (catastrophic backtracking)
+    const doubleQuotePattern = /(-[a-zA-Z]*m\s+)"((?:[^"\\]|\\.)*)"/;
+    const singleQuotePattern = /(-[a-zA-Z]*m\s+)'((?:[^'\\]|\\.)*)'/;
+    const match =
+      command.match(doubleQuotePattern) || command.match(singleQuotePattern);
+    const quote = command.match(doubleQuotePattern) ? '"' : "'";
 
     console.error('[gitCoAuthor] Message pattern match:', match ? 'YES' : 'NO');
 
     if (match) {
-      const [fullMatch, prefix, quote, existingMessage, closingQuote] = match;
+      const [fullMatch, prefix, existingMessage] = match;
       const newMessage = existingMessage + coAuthor;
-      const replacement = prefix + quote + newMessage + closingQuote;
+      const replacement = prefix + quote + newMessage + quote;
 
       console.error('[gitCoAuthor] Adding co-author trailer');
       return command.replace(fullMatch, replacement);
