@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import { isSubpath } from '../utils/paths.js';
 import { detectIde, type IdeInfo } from '../ide/detect-ide.js';
 import { ideContextStore } from './ideContext.js';
+import { Storage } from '../config/storage.js';
 import {
   IdeContextNotificationSchema,
   IdeDiffAcceptedNotificationSchema,
@@ -576,7 +577,85 @@ export class IdeClient {
       return undefined;
     }
 
-    // For backwards compatability
+    // Preferred: lock file(s) in global qwen dir (~/.qwen/ide/<pid>-<port>.lock)
+    // 1) If QWEN_CODE_IDE_SERVER_PORT is set, prefer ~/.qwen/ide/<pid>-<port>.lock
+    // 2) Otherwise (or on failure), scan ~/.qwen/ide for <pid>-*.lock and select:
+    //    - valid workspace path (validateWorkspacePath)
+    const ideDir = Storage.getGlobalIdeDir();
+    const idePid = this.ideProcessInfo.pid;
+    const portFromEnv = this.getPortFromEnv();
+    if (portFromEnv) {
+      try {
+        const lockFile = path.join(ideDir, `${idePid}-${portFromEnv}.lock`);
+        const lockFileContents = await fs.promises.readFile(lockFile, 'utf8');
+        return JSON.parse(lockFileContents);
+      } catch (_) {
+        // Fall through to scanning / legacy discovery.
+      }
+    }
+
+    try {
+      const fileRegex = new RegExp(`^${idePid}-\\d+\\.lock$`);
+      const lockFiles = (await fs.promises.readdir(ideDir)).filter((file) =>
+        fileRegex.test(file),
+      );
+
+      const fileContents = await Promise.all(
+        lockFiles.map(async (file) => {
+          const fullPath = path.join(ideDir, file);
+          try {
+            const stat = await fs.promises.stat(fullPath);
+            const content = await fs.promises.readFile(fullPath, 'utf8');
+            try {
+              const parsed = JSON.parse(content);
+              return { file, mtimeMs: stat.mtimeMs, parsed };
+            } catch (e) {
+              logger.debug('Failed to parse JSON from lock file: ', e);
+              return { file, mtimeMs: stat.mtimeMs, parsed: undefined };
+            }
+          } catch (e) {
+            // If we can't stat/read the file, treat it as very old so it doesn't
+            // win ties, and skip parsing by returning undefined content.
+            logger.debug('Failed to read/stat IDE lock file:', e);
+            return { file, mtimeMs: -Infinity, parsed: undefined };
+          }
+        }),
+      );
+      const validWorkspaces = fileContents
+        .filter(({ parsed }) => parsed !== undefined)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .map(({ parsed }) => parsed)
+        .filter((content) => {
+          const { isValid } = IdeClient.validateWorkspacePath(
+            content.workspacePath,
+            process.cwd(),
+          );
+          return isValid;
+        });
+
+      if (validWorkspaces.length > 0) {
+        if (validWorkspaces.length === 1) {
+          return validWorkspaces[0];
+        }
+
+        if (validWorkspaces.length > 1 && portFromEnv) {
+          const matchingPort = validWorkspaces.find(
+            (content) => String(content.port) === portFromEnv,
+          );
+          if (matchingPort) {
+            return matchingPort;
+          }
+        }
+
+        if (validWorkspaces.length > 1) {
+          return validWorkspaces[0];
+        }
+      }
+    } catch (_) {
+      // Fall through to legacy discovery mechanisms.
+    }
+
+    // For backwards compatability: single file in system temp dir named by PID.
     try {
       const portFile = path.join(
         os.tmpdir(),
@@ -585,85 +664,13 @@ export class IdeClient {
       const portFileContents = await fs.promises.readFile(portFile, 'utf8');
       return JSON.parse(portFileContents);
     } catch (_) {
-      // For newer extension versions, the file name matches the pattern
+      // For older/newer extension versions, the file name matches the pattern
       // /^qwen-code-ide-server-${pid}-\d+\.json$/. If multiple IDE
       // windows are open, multiple files matching the pattern are expected to
       // exist.
     }
 
-    const portFileDir = path.join(os.tmpdir(), 'gemini', 'ide');
-    let portFiles;
-    try {
-      portFiles = await fs.promises.readdir(portFileDir);
-    } catch (e) {
-      logger.debug('Failed to read IDE connection directory:', e);
-      return undefined;
-    }
-
-    if (!portFiles) {
-      return undefined;
-    }
-
-    const fileRegex = new RegExp(
-      `^qwen-code-ide-server-${this.ideProcessInfo.pid}-\\d+\\.json$`,
-    );
-    const matchingFiles = portFiles
-      .filter((file) => fileRegex.test(file))
-      .sort();
-    if (matchingFiles.length === 0) {
-      return undefined;
-    }
-
-    let fileContents: string[];
-    try {
-      fileContents = await Promise.all(
-        matchingFiles.map((file) =>
-          fs.promises.readFile(path.join(portFileDir, file), 'utf8'),
-        ),
-      );
-    } catch (e) {
-      logger.debug('Failed to read IDE connection config file(s):', e);
-      return undefined;
-    }
-    const parsedContents = fileContents.map((content) => {
-      try {
-        return JSON.parse(content);
-      } catch (e) {
-        logger.debug('Failed to parse JSON from config file: ', e);
-        return undefined;
-      }
-    });
-
-    const validWorkspaces = parsedContents.filter((content) => {
-      if (!content) {
-        return false;
-      }
-      const { isValid } = IdeClient.validateWorkspacePath(
-        content.workspacePath,
-        process.cwd(),
-      );
-      return isValid;
-    });
-
-    if (validWorkspaces.length === 0) {
-      return undefined;
-    }
-
-    if (validWorkspaces.length === 1) {
-      return validWorkspaces[0];
-    }
-
-    const portFromEnv = this.getPortFromEnv();
-    if (portFromEnv) {
-      const matchingPort = validWorkspaces.find(
-        (content) => String(content.port) === portFromEnv,
-      );
-      if (matchingPort) {
-        return matchingPort;
-      }
-    }
-
-    return validWorkspaces[0];
+    return undefined;
   }
 
   private createProxyAwareFetch() {
