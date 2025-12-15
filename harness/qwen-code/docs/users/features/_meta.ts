@@ -1,5 +1,5 @@
 export default {
-  'sub-agents': 'Sub Agents',
+  'sub-agents': 'SubAgents',
   checkpointing: {
     display: 'hidden',
   },
