@@ -334,13 +334,24 @@ export class ShellToolInvocation extends BaseToolInvocation<
   private addCoAuthorToGitCommit(command: string): string {
     // Check if co-author feature is enabled
     const gitCoAuthorSettings = this.config.getGitCoAuthor();
+
+    // Debug logging for gitCoAuthor feature
+    // TODO: Remove after debugging is complete
+    console.error(
+      '[gitCoAuthor] Settings:',
+      JSON.stringify(gitCoAuthorSettings),
+    );
+    console.error('[gitCoAuthor] Command:', command);
+
     if (!gitCoAuthorSettings.enabled) {
+      console.error('[gitCoAuthor] Feature disabled, skipping');
       return command;
     }
 
     // Check if this is a git commit command (anywhere in the command, e.g., after "cd /path &&")
     const gitCommitPattern = /\bgit\s+commit\b/;
     if (!gitCommitPattern.test(command)) {
+      console.error('[gitCoAuthor] Not a git commit command, skipping');
       return command;
     }
 
@@ -354,16 +365,20 @@ Co-authored-by: ${gitCoAuthorSettings.name} <${gitCoAuthorSettings.email}>`;
     const messagePattern = /(-[a-zA-Z]*m\s+)(['"])((?:\\.|[^\\])*?)(\2)/;
     const match = command.match(messagePattern);
 
+    console.error('[gitCoAuthor] Message pattern match:', match ? 'YES' : 'NO');
+
     if (match) {
       const [fullMatch, prefix, quote, existingMessage, closingQuote] = match;
       const newMessage = existingMessage + coAuthor;
       const replacement = prefix + quote + newMessage + closingQuote;
 
+      console.error('[gitCoAuthor] Adding co-author trailer');
       return command.replace(fullMatch, replacement);
     }
 
     // If no -m flag found, the command might open an editor
     // In this case, we can't easily modify it, so return as-is
+    console.error('[gitCoAuthor] No -m flag found, skipping');
     return command;
   }
 }
