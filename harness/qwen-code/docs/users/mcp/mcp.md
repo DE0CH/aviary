@@ -15,6 +15,7 @@ An MCP server enables the CLI to:
 With an MCP server, you can extend the CLI’s capabilities to perform actions beyond its built-in features, such as interacting with databases, APIs, custom scripts, or specialized workflows.
 
 ## Core Integration Architecture
+
 Qwen Code integrates with MCP servers through a sophisticated discovery and execution system built into the core package (`packages/core/src/tools/`):
 
 ### Discovery Layer (`mcp-client.ts`)
@@ -37,6 +38,7 @@ Each discovered MCP tool is wrapped in a `DiscoveredMCPTool` instance that:
 - **Maintains connection state** and handles timeouts
 
 ### Transport Mechanisms
+
 The CLI supports three MCP transport types:
 
 - **Stdio Transport:** Spawns a subprocess and communicates via stdin/stdout
@@ -52,6 +54,7 @@ Qwen Code uses the `mcpServers` configuration in your `settings.json` file t
 You can configure MCP servers in your `settings.json` file in two main ways: through the top-level `mcpServers`object for specific server definitions, and through the `mcp` object for global settings that control server discovery and execution.
 
 #### Global MCP Settings (`mcp`)
+
 The `mcp` object in your `settings.json` allows you to define global rules for all MCP servers.
 
 - **`mcp.serverCommand`** : A global command to start an MCP server.
@@ -62,32 +65,34 @@ The `mcp` object in your `settings.json` allows you to define global rules f
 
 ```
 {
-	"mcp": {    
-		"allowed": ["my-trusted-server"],   
-  	"excluded": ["experimental-server"]  
+	"mcp": {
+		"allowed": ["my-trusted-server"],
+  	"excluded": ["experimental-server"]
   }
 }
 ```
 
 #### Server-Specific Configuration (`mcpServers`)
+
 The `mcpServers` object is where you define each individual MCP server you want the CLI to connect to.
 
 ### Configuration Structure
+
 Add an `mcpServers` object to your `settings.json` file:
 
 ```
-{ ...file contains other config objects  
-	"mcpServers": {    
-		"serverName": {      
-			"command": "path/to/server",      
-			"args": ["--arg1", "value1"],      
-			"env": {        
-				"API_KEY": "$MY_API_TOKEN"      
-				},      
-			"cwd": "./server-directory",      
-			"timeout": 30000,      
-			"trust": false    
-			}  
+{ ...file contains other config objects
+	"mcpServers": {
+		"serverName": {
+			"command": "path/to/server",
+			"args": ["--arg1", "value1"],
+			"env": {
+				"API_KEY": "$MY_API_TOKEN"
+				},
+			"cwd": "./server-directory",
+			"timeout": 30000,
+			"trust": false
+			}
 		}
 	}
 ```
@@ -112,7 +117,7 @@ Each server configuration supports the following properties:
 - **`trust`** (boolean): When `true`, bypasses all tool call confirmations for this server (default: `false`)
 - **`includeTools`** : List of tool names to include from this MCP server. When specified, only the tools listed here will be available from this server (allowlist behavior). If not specified, all tools from the server are enabled by default.
 - **`excludeTools`** : List of tool names to exclude from this MCP server. Tools listed here will not be available to the model, even if they are exposed by the server. 
-	- **Note:** `excludeTools` takes precedence over `includeTools` - if a tool is in both lists, it will be excluded.
+  - **Note:** `excludeTools` takes precedence over `includeTools` - if a tool is in both lists, it will be excluded.
 - **`targetAudience`** : The OAuth Client ID allowlisted on the IAP-protected application you are trying to access. Used with `authProviderType: 'service_account_impersonation'`.
 - **`targetServiceAccount`** : The email address of the Google Cloud Service Account to impersonate. Used with `authProviderType: 'service_account_impersonation'`.
 
@@ -125,11 +130,11 @@ Qwen Code supports OAuth 2.0 authentication for remote MCP servers using SSE or 
 For servers that support OAuth discovery, you can omit the OAuth configuration and let the CLI discover it automatically:
 
 ```
-{  
-	"mcpServers": {    
-			"discoveredServer": {      
-				"url": "https://api.example.com/sse"    
-			}  
+{
+	"mcpServers": {
+			"discoveredServer": {
+				"url": "https://api.example.com/sse"
+			}
 	}
 }
 ```
@@ -171,10 +176,10 @@ Use the `/mcp auth` command to manage OAuth authentication:
 
 ```
 # List servers requiring authentication
-/mcp auth 
+/mcp auth
 
 # Authenticate with a specific server
-/mcp auth serverName 
+/mcp auth serverName
 
 # Re-authenticate if tokens expire
 /mcp auth serverName
@@ -206,22 +211,22 @@ OAuth tokens are automatically:
 You can specify the authentication provider type using the `authProviderType` property:
 
 - **`authProviderType`** : Specifies the authentication provider. Can be one of the following:
-    - **`dynamic_discovery`** (default): The CLI will automatically discover the OAuth configuration from the server.
-    - **`google_credentials`**: The CLI will use the Google Application Default Credentials (ADC) to authenticate with the server. When using this provider, you must specify the required scopes.
-    - **`service_account_impersonation`**: The CLI will impersonate a Google Cloud Service Account to authenticate with the server. This is useful for accessing IAP-protected services (this was specifically designed for Cloud Run services).
+  - **`dynamic_discovery`** (default): The CLI will automatically discover the OAuth configuration from the server.
+  - **`google_credentials`**: The CLI will use the Google Application Default Credentials (ADC) to authenticate with the server. When using this provider, you must specify the required scopes.
+  - **`service_account_impersonation`**: The CLI will impersonate a Google Cloud Service Account to authenticate with the server. This is useful for accessing IAP-protected services (this was specifically designed for Cloud Run services).
 
 #### Google Credentials
 
 ```
-{  
-	"mcpServers": {    
-		"googleCloudServer": {      
-			"httpUrl": "https://my-gcp-service.run.app/mcp",      
-			"authProviderType": "google_credentials",      
-			"oauth": {        
-				"scopes": ["https://www.googleapis.com/auth/userinfo.email"]      
-			}    
-		}  
+{
+	"mcpServers": {
+		"googleCloudServer": {
+			"httpUrl": "https://my-gcp-service.run.app/mcp",
+			"authProviderType": "google_credentials",
+			"oauth": {
+				"scopes": ["https://www.googleapis.com/auth/userinfo.email"]
+			}
+		}
 	}
 }
 ```
@@ -249,18 +254,18 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### Python MCP Server (Stdio)
 
 ```
-{  
-	"mcpServers": {    
-		"pythonTools": {      
-			"command": "python",      
-			"args": ["-m", "my_mcp_server", "--port", "8080"],      
-			"cwd": "./mcp-servers/python",      
-			"env": {        
-				"DATABASE_URL": "$DB_CONNECTION_STRING",        
-				"API_KEY": "${EXTERNAL_API_KEY}"      
-			},      
-			"timeout": 15000    
-		}  
+{
+	"mcpServers": {
+		"pythonTools": {
+			"command": "python",
+			"args": ["-m", "my_mcp_server", "--port", "8080"],
+			"cwd": "./mcp-servers/python",
+			"env": {
+				"DATABASE_URL": "$DB_CONNECTION_STRING",
+				"API_KEY": "${EXTERNAL_API_KEY}"
+			},
+			"timeout": 15000
+		}
 	}
 }
 ```
@@ -268,14 +273,14 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### Node.js MCP Server (Stdio)
 
 ```
-{  
-	"mcpServers": {    
-		"nodeServer": {      
-			"command": "node",      
-			"args": ["dist/server.js", "--verbose"],      
-			"cwd": "./mcp-servers/node",      
-			"trust": true    
-		}  
+{
+	"mcpServers": {
+		"nodeServer": {
+			"command": "node",
+			"args": ["dist/server.js", "--verbose"],
+			"cwd": "./mcp-servers/node",
+			"trust": true
+		}
 	}
 }
 ```
@@ -283,15 +288,15 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### Docker-based MCP Server
 
 ```
-{  
-	"mcpServers": {    
-		"dockerizedServer": {      
-			"command": "docker",      
-			"args": [        "run",        "-i",        "--rm",        "-e",        "API_KEY",        "-v",        "${PWD}:/workspace",        "my-mcp-server:latest"      ],      
-			"env": {        
-				"API_KEY": "$EXTERNAL_SERVICE_TOKEN"      
-			}    
-		}  
+{
+	"mcpServers": {
+		"dockerizedServer": {
+			"command": "docker",
+			"args": [        "run",        "-i",        "--rm",        "-e",        "API_KEY",        "-v",        "${PWD}:/workspace",        "my-mcp-server:latest"      ],
+			"env": {
+				"API_KEY": "$EXTERNAL_SERVICE_TOKEN"
+			}
+		}
 	}
 }
 ```
@@ -299,12 +304,12 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### HTTP-based MCP Server
 
 ```
-{ 
-	"mcpServers": {    
-		"httpServer": {      
-			"httpUrl": "http://localhost:3000/mcp",      
-			"timeout": 5000    
-		} 
+{
+	"mcpServers": {
+		"httpServer": {
+			"httpUrl": "http://localhost:3000/mcp",
+			"timeout": 5000
+		}
 	}
 }
 ```
@@ -312,17 +317,17 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### HTTP-based MCP Server with Custom Headers
 
 ```
-{  
-	"mcpServers": {    
-		"httpServerWithAuth": {      
-			"httpUrl": "http://localhost:3000/mcp",      
-			"headers": {        
-				"Authorization": "Bearer your-api-token",        
-				"X-Custom-Header": "custom-value",        
-				"Content-Type": "application/json"      
-			},      
-			"timeout": 5000    
-		}  
+{
+	"mcpServers": {
+		"httpServerWithAuth": {
+			"httpUrl": "http://localhost:3000/mcp",
+			"headers": {
+				"Authorization": "Bearer your-api-token",
+				"X-Custom-Header": "custom-value",
+				"Content-Type": "application/json"
+			},
+			"timeout": 5000
+		}
 	}
 }
 ```
@@ -330,15 +335,15 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 #### MCP Server with Tool Filtering
 
 ```
-{  
-	"mcpServers": {    
-		"filteredServer": {      
-			"command": "python",      
-			"args": ["-m", "my_mcp_server"],      
-			"includeTools": ["safe_tool", "file_reader", "data_processor"],     
-			// "excludeTools": ["dangerous_tool", "file_deleter"],      
-			"timeout": 30000    
-		}  
+{
+	"mcpServers": {
+		"filteredServer": {
+			"command": "python",
+			"args": ["-m", "my_mcp_server"],
+			"includeTools": ["safe_tool", "file_reader", "data_processor"],
+			// "excludeTools": ["dangerous_tool", "file_deleter"],
+			"timeout": 30000
+		}
 	}
 }
 ```
@@ -346,14 +351,14 @@ The CLI will use your local Application Default Credentials (ADC) to generate an
 ### SSE MCP Server with SA Impersonation
 
 ```
-{  
-	"mcpServers": {    
-		"myIapProtectedServer": {      
-			"url": "https://my-iap-service.run.app/sse",      
-			"authProviderType": "service_account_impersonation",      
+{
+	"mcpServers": {
+		"myIapProtectedServer": {
+			"url": "https://my-iap-service.run.app/sse",
+			"authProviderType": "service_account_impersonation",
 			"targetAudience": "YOUR_IAP_CLIENT_ID.apps.googleusercontent.com",
-			"targetServiceAccount": "your-sa@your-project.iam.gserviceaccount.com"    
-		}  
+			"targetServiceAccount": "your-sa@your-project.iam.gserviceaccount.com"
+		}
 	}
 }
 ```
@@ -368,9 +373,9 @@ For each configured server in `mcpServers`:
 
 1. **Status tracking begins:** Server status is set to `CONNECTING`
 2. **Transport selection:** Based on configuration properties:
-    - `httpUrl` → `StreamableHTTPClientTransport`
-    - `url` → `SSEClientTransport`
-    - `command` → `StdioClientTransport`
+   - `httpUrl` → `StreamableHTTPClientTransport`
+   - `url` → `SSEClientTransport`
+   - `command` → `StdioClientTransport`
 3. **Connection establishment:** The MCP client attempts to connect with the configured timeout
 4. **Error handling:** Connection failures are logged and the server status is set to `DISCONNECTED`
 
@@ -382,8 +387,8 @@ Upon successful connection:
 2. **Schema validation:** Each tool’s function declaration is validated
 3. **Tool filtering:** Tools are filtered based on `includeTools` and `excludeTools` configuration
 4. **Name sanitization:** Tool names are cleaned to meet Qwen API requirements:
-    - Invalid characters (non-alphanumeric, underscore, dot, hyphen) are replaced with underscores
-    - Names longer than 63 characters are truncated with middle replacement (`___`)
+   - Invalid characters (non-alphanumeric, underscore, dot, hyphen) are replaced with underscores
+   - Names longer than 63 characters are truncated with middle replacement (`___`)
 
 ### 3. Conflict Resolution
 
@@ -428,7 +433,7 @@ Each `DiscoveredMCPTool` implements sophisticated confirmation logic:
 #### Trust-based Bypass
 
 ```
-if (this.trust) {  
+if (this.trust) {
 	return false; // No confirmation needed
 }
 ```
@@ -454,18 +459,16 @@ When confirmation is required, users can choose:
 Upon confirmation (or trust bypass):
 
 1. **Parameter preparation:** Arguments are validated against the tool’s schema
-   
 2. **MCP call:** The underlying `CallableTool` invokes the server with:
-   
+
 ```
-const functionCalls = [{    
-	name: this.serverToolName, // Original server tool name    
-	args: params,  
+const functionCalls = [{
+	name: this.serverToolName, // Original server tool name
+	args: params,
 },];
 ```
 
 3. **Response processing:** Results are formatted for both LLM context and user display
-   
 
 ### 4. Response Handling
 
@@ -656,8 +659,6 @@ Here is an example of a valid JSON response from an MCP tool that returns both a
 }
 ```
 
-
-
 When Qwen Code receives this response, it will:
 
 1. Extract all the text and combine it into a single `functionResponse` part for the model.
@@ -674,16 +675,16 @@ In addition to tools, MCP servers can expose predefined prompts that can be exec
 
 Here’s a small example of a stdio MCP server that defines prompts:
 
-````
+```
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
- 
+
 const server = new McpServer({
   name: 'prompt-server',
   version: '1.0.0',
 });
- 
+
 server.registerPrompt(
   'poem-writer',
   {
@@ -703,10 +704,10 @@ server.registerPrompt(
     ],
   }),
 );
- 
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
-````
+```
 
 This can be included in `settings.json` under `mcpServers` with:
 
@@ -720,8 +721,6 @@ This can be included in `settings.json` under `mcpServers` with:
   }
 }
 ```
-
-
 
 ### Invoking Prompts
 
@@ -776,15 +775,13 @@ This is the default transport for running local servers.
 ```
 # Basic syntax
 qwen mcp add <name> <command> [args...]
- 
+
 # Example: Adding a local server
 qwen mcp add my-stdio-server -e API_KEY=123 /path/to/server arg1 arg2 arg3
- 
+
 # Example: Adding a local python server
 qwen mcp add python-server python server.py --port 8080
 ```
-
-
 
 #### Adding an HTTP server
 
@@ -793,15 +790,13 @@ This transport is for servers that use the streamable HTTP transport.
 ```
 # Basic syntax
 qwen mcp add --transport http <name> <url>
- 
+
 # Example: Adding an HTTP server
 qwen mcp add --transport http http-server https://api.example.com/mcp/
- 
+
 # Example: Adding an HTTP server with an authentication header
 qwen mcp add --transport http secure-http https://api.example.com/mcp/ --header "Authorization: Bearer abc123"
 ```
-
-
 
 #### Adding an SSE server
 
@@ -810,15 +805,13 @@ This transport is for servers that use Server-Sent Events (SSE).
 ```
 # Basic syntax
 qwen mcp add --transport sse <name> <url>
- 
+
 # Example: Adding an SSE server
 qwen mcp add --transport sse sse-server https://api.example.com/sse/
- 
+
 # Example: Adding an SSE server with an authentication header
 qwen mcp add --transport sse secure-sse https://api.example.com/sse/ --header "Authorization: Bearer abc123"
 ```
-
-
 
 ### Listing Servers (`qwen mcp list`)
 
@@ -837,8 +830,6 @@ qwen mcp list
 ✓ http-server: https://api.example.com/mcp (http) - Connected
 ✗ sse-server: https://api.example.com/sse (sse) - Disconnected
 ```
-
-
 
 ### Removing a Server (`qwen mcp remove`)
 

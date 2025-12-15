@@ -7,6 +7,5 @@ export default {
   },
   'approval-mode': 'Approval Mode',
   'token-caching': 'Token Caching',
-  mcp: 'MCP',
   sandbox: 'Sandboxing',
 };
