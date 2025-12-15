@@ -47,6 +47,10 @@ observability framework — Qwen Code's observability system provides:
 
 ## Configuration
 
+> [!note]
+>
+> **⚠️ Special Note: This feature requires corresponding code changes. This documentation is provided in advance; please refer to future code updates for actual functionality.**
+
 All telemetry behavior is controlled through your `.qwen/settings.json` file.
 These settings can be overridden by environment variables or CLI flags.
 

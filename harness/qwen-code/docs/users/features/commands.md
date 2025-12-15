@@ -1,4 +1,4 @@
-# Qwen Code Command Reference
+# Commands
 
 This document details all commands supported by Qwen Code, helping you efficiently manage sessions, customize the interface, and control its behavior.
 
@@ -183,10 +183,10 @@ Naming Rules: Path separator (`/` or `\`) converted to colon (`:`)
 | Operation                       | User Interaction     |
 | ------------------------------- | -------------------- |
 | 1. Parse command and parameters | -                    |
-| 2. Automatic Shell escaping   | -                    |
-| 3. Show confirmation dialog   | ✅ User confirmation |
-| 4. Execute command           | -                    |
-| 5. Inject output to prompt    | -                    |
+| 2. Automatic Shell escaping     | -                    |
+| 3. Show confirmation dialog     | ✅ User confirmation |
+| 4. Execute command              | -                    |
+| 5. Inject output to prompt      | -                    |
 
 Example: Git Commit Message Generation
 
@@ -228,9 +228,9 @@ Review {{args}}, reference standards:
 | Operation                     | Command/Code                                |
 | ----------------------------- | ------------------------------------------- |
 | 1. Create directory structure | `mkdir -p ~/.qwen/commands/refactor`        |
-| 2. Create command file     | `touch ~/.qwen/commands/refactor/pure.toml` |
-| 3. Edit command content    | Refer to the complete code below. |
-| 4. Test command            | `@file.js` → `/refactor:pure`               |
+| 2. Create command file        | `touch ~/.qwen/commands/refactor/pure.toml` |
+| 3. Edit command content       | Refer to the complete code below.           |
+| 4. Test command               | `@file.js` → `/refactor:pure`               |
 
 ```# ~/.qwen/commands/refactor/pure.toml
 description = "Refactor code to pure function"
