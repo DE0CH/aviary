@@ -360,9 +360,16 @@ export class ShellToolInvocation extends BaseToolInvocation<
 
 Co-authored-by: ${gitCoAuthorSettings.name} <${gitCoAuthorSettings.email}>`;
 
-    // Handle different git commit patterns
+    // Handle different git commit patterns:
     // Match -m "message" or -m 'message', including combined flags like -am
     // Use separate patterns to avoid ReDoS (catastrophic backtracking)
+    //
+    // Pattern breakdown:
+    //   -[a-zA-Z]*m  matches -m, -am, -nm, etc. (combined short flags)
+    //   \s+          matches whitespace after the flag
+    //   [^"\\]       matches any char except double-quote and backslash
+    //   \\.          matches escape sequences like \" or \\
+    //   (?:...|...)* matches normal chars or escapes, repeated
     const doubleQuotePattern = /(-[a-zA-Z]*m\s+)"((?:[^"\\]|\\.)*)"/;
     const singleQuotePattern = /(-[a-zA-Z]*m\s+)'((?:[^'\\]|\\.)*)'/;
     const match =
