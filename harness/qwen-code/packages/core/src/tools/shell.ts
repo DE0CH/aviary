@@ -350,8 +350,8 @@ export class ShellToolInvocation extends BaseToolInvocation<
 Co-authored-by: ${gitCoAuthorSettings.name} <${gitCoAuthorSettings.email}>`;
 
     // Handle different git commit patterns
-    // Match -m "message" or -m 'message'
-    const messagePattern = /(-m\s+)(['"])((?:\\.|[^\\])*?)(\2)/;
+    // Match -m "message" or -m 'message', including combined flags like -am
+    const messagePattern = /(-[a-zA-Z]*m\s+)(['"])((?:\\.|[^\\])*?)(\2)/;
     const match = command.match(messagePattern);
 
     if (match) {

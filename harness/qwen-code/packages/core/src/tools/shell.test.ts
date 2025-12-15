@@ -608,6 +608,36 @@ describe('ShellTool', () => {
         );
       });
 
+      it('should handle git commit with combined short flags like -am', async () => {
+        const command = 'git commit -am "Add feature"';
+        const invocation = shellTool.build({ command, is_background: false });
+        const promise = invocation.execute(mockAbortSignal);
+
+        resolveExecutionPromise({
+          rawOutput: Buffer.from(''),
+          output: '',
+          exitCode: 0,
+          signal: null,
+          error: null,
+          aborted: false,
+          pid: 12345,
+          executionMethod: 'child_process',
+        });
+
+        await promise;
+
+        expect(mockShellExecutionService).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>',
+          ),
+          expect.any(String),
+          expect.any(Function),
+          mockAbortSignal,
+          false,
+          {},
+        );
+      });
+
       it('should not modify non-git commands', async () => {
         const command = 'npm install';
         const invocation = shellTool.build({ command, is_background: false });
