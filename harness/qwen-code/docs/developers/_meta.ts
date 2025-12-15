@@ -7,7 +7,7 @@ export default {
   roadmap: 'Roadmap',
   contributing: 'Contributing Guide',
   'Qwen Code SDK': {
-    title: 'Qwen Code SDK',
+    title: 'Agent SDK',
     type: 'separator',
   },
   'sdk-typescript': 'Typescript SDK',
@@ -15,15 +15,9 @@ export default {
     title: 'Dive Into Qwen Code',
     type: 'separator',
   },
-  cli: {
-    display: 'hidden',
-  },
 
   tools: 'Tools',
-  // development: 'Development',
-  core: {
-    display: 'hidden',
-  },
+
   extensions: {
     display: 'hidden',
   },
