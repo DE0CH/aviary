@@ -1,14 +1,14 @@
-# Sub Agents
+# Subagents
 
-Sub Agents are specialized AI assistants that handle specific types of tasks within Qwen Code. They allow you to delegate focused work to AI agents that are configured with task-specific prompts, tools, and behaviors.
+Subagents are specialized AI assistants that handle specific types of tasks within Qwen Code. They allow you to delegate focused work to AI agents that are configured with task-specific prompts, tools, and behaviors.
 
-## What are Sub Agents?
+## What are Subagents?
 
-Sub Agents are independent AI assistants that:
+Subagents are independent AI assistants that:
 
-- **Specialize in specific tasks** - Each Sub Agents is configured with a focused system prompt for particular types of work
+- **Specialize in specific tasks** - Each Subagent is configured with a focused system prompt for particular types of work
 - **Have separate context** - They maintain their own conversation history, separate from your main chat
-- **Use controlled tools** - You can configure which tools each Sub Agents has access to
+- **Use controlled tools** - You can configure which tools each Subagent has access to
 - **Work autonomously** - Once given a task, they work independently until completion or failure
 - **Provide detailed feedback** - You can see their progress, tool usage, and execution statistics in real-time
 
@@ -20,18 +20,18 @@ Sub Agents are independent AI assistants that:
 - **Controlled Access**: Limit which tools each agent can use for security and focus
 - **Progress Visibility**: Monitor agent execution with real-time progress updates
 
-## How Sub Agents Work
+## How Subagents Work
 
-1. **Configuration**: You create Sub Agents configurations that define their behavior, tools, and system prompts
-2. **Delegation**: The main AI can automatically delegate tasks to appropriate Sub Agents
-3. **Execution**: Sub Agents work independently, using their configured tools to complete tasks
+1. **Configuration**: You create Subagents configurations that define their behavior, tools, and system prompts
+2. **Delegation**: The main AI can automatically delegate tasks to appropriate Subagents
+3. **Execution**: Subagents work independently, using their configured tools to complete tasks
 4. **Results**: They return results and execution summaries back to the main conversation
 
 ## Getting Started
 
 ### Quick Start
 
-1. **Create your first Sub Agents**:
+1. **Create your first Subagent**:
 
    `/agents create`
 
@@ -41,16 +41,16 @@ Sub Agents are independent AI assistants that:
 
    `/agents manage`
 
-   View and manage your configured Sub Agents.
+   View and manage your configured Subagents.
 
-3. **Use Sub Agents automatically**: Simply ask the main AI to perform tasks that match your Sub Agents’ specializations. The AI will automatically delegate appropriate work.
+3. **Use Subagents automatically**: Simply ask the main AI to perform tasks that match your Subagents' specializations. The AI will automatically delegate appropriate work.
 
 ### Example Usage
 
 ```
 User: "Please write comprehensive tests for the authentication module"
-AI: I'll delegate this to your testing specialist Sub Agents.
-[Delegates to "testing-expert" Sub Agents]
+AI: I'll delegate this to your testing specialist Subagents.
+[Delegates to "testing-expert" Subagents]
 [Shows real-time progress of test creation]
 [Returns with completed test files and execution summary]`
 ```
@@ -59,15 +59,15 @@ AI: I'll delegate this to your testing specialist Sub Agents.
 
 ### CLI Commands
 
-Sub Agents are managed through the `/agents` slash command and its subcommands:
+Subagents are managed through the `/agents` slash command and its subcommands:
 
-**Usage:**：`/agents create`。Creates a new Sub Agents through a guided step wizard.
+**Usage:**：`/agents create`。Creates a new Subagent through a guided step wizard.
 
-**Usage:**：`/agents manage`。Opens an interactive management dialog for viewing and managing existing Sub Agents.
+**Usage:**：`/agents manage`。Opens an interactive management dialog for viewing and managing existing Subagents.
 
 ### Storage Locations
 
-Sub Agents are stored as Markdown files in two locations:
+Subagents are stored as Markdown files in two locations:
 
 - **Project-level**: `.qwen/agents/` (takes precedence)
 - **User-level**: `~/.qwen/agents/` (fallback)
@@ -76,7 +76,7 @@ This allows you to have both project-specific agents and personal agents that wo
 
 ### File Format
 
-Sub Agents are configured using Markdown files with YAML frontmatter. This format is human-readable and easy to edit with any text editor.
+Subagents are configured using Markdown files with YAML frontmatter. This format is human-readable and easy to edit with any text editor.
 
 #### Basic Structure
 
@@ -114,26 +114,26 @@ Focus on creating clear, comprehensive documentation that helps both
 new contributors and end users understand the project.
 ```
 
-## Using Sub Agents Effectively
+## Using Subagents Effectively
 
 ### Automatic Delegation
 
 Qwen Code proactively delegates tasks based on:
 
 - The task description in your request
-- The description field in Sub Agents configurations
+- The description field in Subagents configurations
 - Current context and available tools
 
-To encourage more proactive Sub Agents use, include phrases like “use PROACTIVELY” or “MUST BE USED” in your description field.
+To encourage more proactive Subagents use, include phrases like "use PROACTIVELY" or "MUST BE USED" in your description field.
 
 ### Explicit Invocation
 
-Request a specific Sub Agents by mentioning it in your command:
+Request a specific Subagent by mentioning it in your command:
 
 ```
-Let the testing-expert Sub Agents create unit tests for the payment module
-Have the documentation-writer Sub Agents update the API reference
-Get the react-specialist Sub Agents to optimize this component's performance
+Let the testing-expert Subagents create unit tests for the payment module
+Have the documentation-writer Subagents update the API reference
+Get the react-specialist Subagents to optimize this component's performance
 ```
 
 ## Examples
@@ -378,7 +378,7 @@ Focus on writing clean, maintainable Python code that follows community standard
 
 #### Single Responsibility Principle
 
-Each Sub Agents should have a clear, focused purpose.
+Each Subagent should have a clear, focused purpose.
 
 **✅ Good:**
 
@@ -482,9 +482,9 @@ Always follow these standards:
 
 ## Security Considerations
 
-- **Tool Restrictions**: Sub Agents only have access to their configured tools
+- **Tool Restrictions**: Subagents only have access to their configured tools
 - **Sandboxing**: All tool execution follows the same security model as direct tool use
-- **Audit Trail**: All Sub Agents actions are logged and visible in real-time
+- **Audit Trail**: All Subagents actions are logged and visible in real-time
 - **Access Control**: Project and user-level separation provides appropriate boundaries
 - **Sensitive Information**: Avoid including secrets or credentials in agent configurations
 - **Production Environments**: Consider separate agents for production vs development environments
