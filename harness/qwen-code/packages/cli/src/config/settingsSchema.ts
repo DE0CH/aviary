@@ -204,6 +204,16 @@ const SETTINGS_SCHEMA = {
           'Play terminal bell sound when response completes or needs approval.',
         showInDialog: true,
       },
+      chatRecording: {
+        type: 'boolean',
+        label: 'Chat Recording',
+        category: 'General',
+        requiresRestart: true,
+        default: true,
+        description:
+          'Enable saving chat history to disk. Disabling this will also prevent --continue and --resume from working.',
+        showInDialog: false,
+      },
     },
   },
   output: {
