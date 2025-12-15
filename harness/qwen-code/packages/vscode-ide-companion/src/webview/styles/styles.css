@@ -5,7 +5,6 @@
  */
 
 /* Import component styles */
-@import '../components/messages/Assistant/AssistantMessage.css';
 @import './timeline.css';
 @import '../components/messages/MarkdownRenderer/MarkdownRenderer.css';
 

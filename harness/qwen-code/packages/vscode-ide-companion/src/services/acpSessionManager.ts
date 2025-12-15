@@ -14,8 +14,8 @@ import type {
   AcpRequest,
   AcpNotification,
   AcpResponse,
-  ApprovalModeValue,
 } from '../types/acpTypes.js';
+import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { AGENT_METHODS } from '../constants/acpSchema.js';
 import type { PendingRequest } from '../types/connectionTypes.js';
 import type { ChildProcess } from 'child_process';
@@ -54,8 +54,14 @@ export class AcpSessionManager {
     };
 
     return new Promise((resolve, reject) => {
-      const timeoutDuration =
-        method === AGENT_METHODS.session_prompt ? 120000 : 60000;
+      // different timeout durations based on methods
+      let timeoutDuration = 60000; // default 60 seconds
+      if (
+        method === AGENT_METHODS.session_prompt ||
+        method === AGENT_METHODS.initialize
+      ) {
+        timeoutDuration = 120000; // 2min for session_prompt and initialize
+      }
 
       const timeoutId = setTimeout(() => {
         pendingRequests.delete(id);
@@ -163,7 +169,7 @@ export class AcpSessionManager {
       pendingRequests,
       nextRequestId,
     );
-    console.log('[ACP] Authenticate successful');
+    console.log('[ACP] Authenticate successful', response);
     return response;
   }
 
