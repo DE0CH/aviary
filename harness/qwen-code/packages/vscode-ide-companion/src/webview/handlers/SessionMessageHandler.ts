@@ -153,6 +153,24 @@ export class SessionMessageHandler extends BaseMessageHandler {
   }
 
   /**
+   * Notify the webview that streaming has finished.
+   */
+  private sendStreamEnd(reason?: string): void {
+    const data: { timestamp: number; reason?: string } = {
+      timestamp: Date.now(),
+    };
+
+    if (reason) {
+      data.reason = reason;
+    }
+
+    this.sendToWebView({
+      type: 'streamEnd',
+      data,
+    });
+  }
+
+  /**
    * Prompt user to login and invoke the registered login handler/command.
    * Returns true if a login was initiated.
    */
@@ -373,10 +391,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
         );
       }
 
-      this.sendToWebView({
-        type: 'streamEnd',
-        data: { timestamp: Date.now() },
-      });
+      this.sendStreamEnd();
     } catch (error) {
       console.error('[SessionMessageHandler] Error sending message:', error);
 
@@ -398,10 +413,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
       if (isAbortLike) {
         // Do not show VS Code error popup for intentional cancellations.
         // Ensure the webview knows the stream ended due to user action.
-        this.sendToWebView({
-          type: 'streamEnd',
-          data: { timestamp: Date.now(), reason: 'user_cancelled' },
-        });
+        this.sendStreamEnd('user_cancelled');
         return;
       }
       // Check for session not found error and handle it appropriately
@@ -423,12 +435,23 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'sessionExpired',
           data: { message: 'Session expired. Please login again.' },
         });
+        this.sendStreamEnd('session_expired');
       } else {
-        vscode.window.showErrorMessage(`Error sending message: ${error}`);
+        const isTimeoutError =
+          lower.includes('timeout') || lower.includes('timed out');
+        if (!isTimeoutError) {
+          vscode.window.showErrorMessage(`Error sending message: ${error}`);
+        } else {
+          // 超时对用户没有可执行的操作，因此只在面板内重置信息，不弹出 VS Code 错误提醒
+          console.warn(
+            '[SessionMessageHandler] Prompt timed out; suppressing popup',
+          );
+        }
         this.sendToWebView({
           type: 'error',
           data: { message: errorMsg },
         });
+        this.sendStreamEnd(isTimeoutError ? 'timeout' : 'error');
       }
     }
   }
