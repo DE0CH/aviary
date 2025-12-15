@@ -14,6 +14,8 @@ export enum ToolErrorType {
   UNHANDLED_EXCEPTION = 'unhandled_exception',
   TOOL_NOT_REGISTERED = 'tool_not_registered',
   EXECUTION_FAILED = 'execution_failed',
+  // Try to execute a tool that is excluded due to the approval mode
+  EXECUTION_DENIED = 'execution_denied',
 
   // File System Errors
   FILE_NOT_FOUND = 'file_not_found',
@@ -33,6 +35,7 @@ export enum ToolErrorType {
   EDIT_NO_OCCURRENCE_FOUND = 'edit_no_occurrence_found',
   EDIT_EXPECTED_OCCURRENCE_MISMATCH = 'edit_expected_occurrence_mismatch',
   EDIT_NO_CHANGE = 'edit_no_change',
+  EDIT_NO_CHANGE_LLM_JUDGEMENT = 'edit_no_change_llm_judgement',
 
   // Glob-specific Errors
   GLOB_EXECUTION_ERROR = 'glob_execution_error',

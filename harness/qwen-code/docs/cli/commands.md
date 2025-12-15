@@ -9,30 +9,10 @@ Slash commands provide meta-level control over the CLI itself.
 ### Built-in Commands
 
 - **`/bug`**
-  - **Description:** File an issue about Qwen Code. By default, the issue is filed within the GitHub repository for Qwen Code. The string you enter after `/bug` will become the headline for the bug being filed. The default `/bug` behavior can be modified using the `bugCommand` setting in your `.qwen/settings.json` files.
+  - **Description:** File an issue about Qwen Code. By default, the issue is filed within the GitHub repository for Qwen Code. The string you enter after `/bug` will become the headline for the bug being filed. The default `/bug` behavior can be modified using the `advanced.bugCommand` setting in your `.qwen/settings.json` files.
 
-- **`/chat`**
-  - **Description:** Save and resume conversation history for branching conversation state interactively, or resuming a previous state from a later session.
-  - **Sub-commands:**
-    - **`save`**
-      - **Description:** Saves the current conversation history. You must add a `<tag>` for identifying the conversation state.
-      - **Usage:** `/chat save <tag>`
-      - **Details on Checkpoint Location:** The default locations for saved chat checkpoints are:
-        - Linux/macOS: `~/.qwen/tmp/<project_hash>/`
-        - Windows: `C:\Users\<YourUsername>\.qwen\tmp\<project_hash>\`
-        - When you run `/chat list`, the CLI only scans these specific directories to find available checkpoints.
-        - **Note:** These checkpoints are for manually saving and resuming conversation states. For automatic checkpoints created before file modifications, see the [Checkpointing documentation](../checkpointing.md).
-    - **`resume`**
-      - **Description:** Resumes a conversation from a previous save.
-      - **Usage:** `/chat resume <tag>`
-    - **`list`**
-      - **Description:** Lists available tags for chat state resumption.
-    - **`delete`**
-      - **Description:** Deletes a saved conversation checkpoint.
-      - **Usage:** `/chat delete <tag>`
-
-- **`/clear`**
-  - **Description:** Clear the terminal screen, including the visible session history and scrollback within the CLI. The underlying session data (for history recall) might be preserved depending on the exact implementation, but the visual display is cleared.
+- **`/clear`** (aliases: `reset`, `new`)
+  - **Description:** Clear conversation history and free up context by starting a fresh session. Also clears the terminal output and scrollback within the CLI.
   - **Keyboard shortcut:** Press **Ctrl+L** at any time to perform a clear action.
 
 - **`/summary`**
@@ -51,17 +31,6 @@ Slash commands provide meta-level control over the CLI itself.
 
 - **`/copy`**
   - **Description:** Copies the last output produced by Qwen Code to your clipboard, for easy sharing or reuse.
-
-- **`/directory`** (or **`/dir`**)
-  - **Description:** Manage workspace directories for multi-directory support.
-  - **Sub-commands:**
-    - **`add`**:
-      - **Description:** Add a directory to the workspace. The path can be absolute or relative to the current working directory. Moreover, the reference from home directory is supported as well.
-      - **Usage:** `/directory add <path1>,<path2>`
-      - **Note:** Disabled in restrictive sandbox profiles. If you're using that, use `--include-directories` when starting the session instead.
-    - **`show`**:
-      - **Description:** Display all directories added by `/directory add` and `--include-directories`.
-      - **Usage:** `/directory show`
 
 - **`/directory`** (or **`/dir`**)
   - **Description:** Manage workspace directories for multi-directory support.
@@ -104,6 +73,20 @@ Slash commands provide meta-level control over the CLI itself.
     - **`refresh`**:
       - **Description:** Reload the hierarchical instructional memory from all context files (default: `QWEN.md`) found in the configured locations (global, project/ancestors, and sub-directories). This updates the model with the latest context content.
     - **Note:** For more details on how context files contribute to hierarchical memory, see the [CLI Configuration documentation](./configuration.md#context-files-hierarchical-instructional-context).
+
+- **`/model`**
+  - **Description:** Switch the model for the current session. Opens a dialog to select from available models based on your authentication type.
+  - **Usage:** `/model`
+  - **Features:**
+    - Shows a dialog with all available models for your current authentication type
+    - Displays model descriptions and capabilities (e.g., vision support)
+    - Changes the model for the current session only
+    - Supports both Qwen models (via OAuth) and OpenAI models (via API key)
+  - **Available Models:**
+    - **Qwen Coder:** The latest Qwen Coder model from Alibaba Cloud ModelStudio (version: qwen3-coder-plus-2025-09-23)
+    - **Qwen Vision:** The latest Qwen Vision model from Alibaba Cloud ModelStudio (version: qwen3-vl-plus-2025-09-23) - supports image analysis
+    - **OpenAI Models:** Available when using OpenAI authentication (configured via `OPENAI_MODEL` environment variable)
+  - **Note:** Model selection is session-specific and does not persist across different Qwen Code sessions. To set a default model, use the `model.name` setting in your configuration.
 
 - **`/restore`**
   - **Description:** Restores the project files to the state they were in just before a tool was executed. This is particularly useful for undoing file edits made by a tool. If run without a tool call ID, it will list available checkpoints to restore from.
@@ -162,19 +145,6 @@ Slash commands provide meta-level control over the CLI itself.
     - **`nodesc`** or **`nodescriptions`**:
       - **Description:** Hide tool descriptions, showing only the tool names.
 
-- **`/privacy`**
-  - **Description:** Display the Privacy Notice and allow users to select whether they consent to the collection of their data for service improvement purposes.
-
-- **`/quit-confirm`**
-  - **Description:** Show a confirmation dialog before exiting Qwen Code, allowing you to choose how to handle your current session.
-  - **Usage:** `/quit-confirm`
-  - **Features:**
-    - **Quit immediately:** Exit without saving anything (equivalent to `/quit`)
-    - **Generate summary and quit:** Create a project summary using `/summary` before exiting
-    - **Save conversation and quit:** Save the current conversation with an auto-generated tag before exiting
-  - **Keyboard shortcut:** Press **Ctrl+C** twice to trigger the quit confirmation dialog
-  - **Note:** This command is automatically triggered when you press Ctrl+C once, providing a safety mechanism to prevent accidental exits.
-
 - **`/quit`** (or **`/exit`**)
   - **Description:** Exit Qwen Code immediately without any confirmation dialog.
 
@@ -191,6 +161,16 @@ Slash commands provide meta-level control over the CLI itself.
 
 - **`/init`**
   - **Description:** Analyzes the current directory and creates a `QWEN.md` context file by default (or the filename specified by `contextFileName`). If a non-empty file already exists, no changes are made. The command seeds an empty file and prompts the model to populate it with project-specific instructions.
+
+- [**`/language`**](./language.md)
+  - **Description:** View or change the language setting for both UI and LLM output.
+  - **Sub-commands:**
+    - **`ui`**: Set the UI language (zh-CN or en-US)
+    - **`output`**: Set the LLM output language
+  - **Usage:** `/language [ui|output] [language]`
+  - **Examples:**
+    - `/language ui zh-CN` (set UI language to Simplified Chinese)
+    - `/language output English` (set LLM output language to English)
 
 ### Custom Commands
 
@@ -435,6 +415,16 @@ That's it! You can now run your command in the CLI. First, you might add a file 
 
 Qwen Code will then execute the multi-line prompt defined in your TOML file.
 
+## Input Prompt Shortcuts
+
+These shortcuts apply directly to the input prompt for text manipulation.
+
+- **Undo:**
+  - **Keyboard shortcut:** Press **Ctrl+z** to undo the last action in the input prompt.
+
+- **Redo:**
+  - **Keyboard shortcut:** Press **Ctrl+Shift+Z** to redo the last undone action in the input prompt.
+
 ## At commands (`@`)
 
 At commands are used to include the content of files or directories as part of your prompt to the model. These commands include git-aware filtering.
@@ -450,7 +440,7 @@ At commands are used to include the content of files or directories as part of y
     - If a path to a directory is provided, the command attempts to read the content of files within that directory and any subdirectories.
     - Spaces in paths should be escaped with a backslash (e.g., `@My\ Documents/file.txt`).
     - The command uses the `read_many_files` tool internally. The content is fetched and then inserted into your query before being sent to the model.
-    - **Git-aware filtering:** By default, git-ignored files (like `node_modules/`, `dist/`, `.env`, `.git/`) are excluded. This behavior can be changed via the `fileFiltering` settings.
+    - **Git-aware filtering:** By default, git-ignored files (like `node_modules/`, `dist/`, `.env`, `.git/`) are excluded. This behavior can be changed via the `context.fileFiltering` settings.
     - **File types:** The command is intended for text-based files. While it might attempt to read any file, binary files or very large files might be skipped or truncated by the underlying `read_many_files` tool to ensure performance and relevance. The tool indicates if files were skipped.
   - **Output:** The CLI will show a tool call message indicating that `read_many_files` was used, along with a message detailing the status and the path(s) that were processed.
 

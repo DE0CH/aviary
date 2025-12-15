@@ -4,17 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  ConfigParameters,
-  FileFilteringOptions,
-  MCPServerConfig,
-  TelemetryTarget,
-} from '@qwen-code/qwen-code-core';
 import {
   ApprovalMode,
+  AuthType,
   Config,
-  DEFAULT_GEMINI_EMBEDDING_MODEL,
-  DEFAULT_GEMINI_MODEL,
+  DEFAULT_QWEN_EMBEDDING_MODEL,
   DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
   EditTool,
   FileDiscoveryService,
@@ -23,24 +17,35 @@ import {
   setGeminiMdFilename as setServerGeminiMdFilename,
   ShellTool,
   WriteFileTool,
+  resolveTelemetrySettings,
+  FatalConfigError,
+  Storage,
+  InputFormat,
+  OutputFormat,
+  SessionService,
+  type ResumedSessionData,
+  type FileFilteringOptions,
+  type MCPServerConfig,
 } from '@qwen-code/qwen-code-core';
-import * as fs from 'node:fs';
-import { homedir } from 'node:os';
-import * as path from 'node:path';
-import process from 'node:process';
-import { hideBin } from 'yargs/helpers';
-import yargs from 'yargs/yargs';
 import { extensionsCommand } from '../commands/extensions.js';
-import { mcpCommand } from '../commands/mcp.js';
 import type { Settings } from './settings.js';
+import yargs, { type Argv } from 'yargs';
+import { hideBin } from 'yargs/helpers';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { homedir } from 'node:os';
 
 import { resolvePath } from '../utils/resolvePath.js';
 import { getCliVersion } from '../utils/version.js';
 import type { Extension } from './extension.js';
 import { annotateActiveExtensions } from './extension.js';
 import { loadSandboxConfig } from './sandboxConfig.js';
+import { appEvents } from '../utils/events.js';
+import { mcpCommand } from '../commands/mcp.js';
 
 import { isWorkspaceTrusted } from './trustedFolders.js';
+import type { ExtensionEnablementManager } from './extensions/extensionEnablement.js';
+import { buildWebSearchConfig } from './webSearch.js';
 
 // Simple console logger for now - replace with actual logger if available
 const logger = {
@@ -86,6 +91,7 @@ function parseApprovalModeValue(value: string): ApprovalMode {
 }
 
 export interface CliArgs {
+  query: string | undefined;
   model: string | undefined;
   sandbox: boolean | string | undefined;
   sandboxImage: string | undefined;
@@ -111,28 +117,142 @@ export interface CliArgs {
   openaiLogging: boolean | undefined;
   openaiApiKey: string | undefined;
   openaiBaseUrl: string | undefined;
+  openaiLoggingDir: string | undefined;
   proxy: string | undefined;
   includeDirectories: string[] | undefined;
   tavilyApiKey: string | undefined;
+  googleApiKey: string | undefined;
+  googleSearchEngineId: string | undefined;
+  webSearchDefault: string | undefined;
   screenReader: boolean | undefined;
   vlmSwitchMode: string | undefined;
+  useSmartEdit: boolean | undefined;
+  inputFormat?: string | undefined;
+  outputFormat: string | undefined;
+  includePartialMessages?: boolean;
+  /**
+   * If chat recording is disabled, the chat history would not be recorded,
+   * so --continue and --resume would not take effect.
+   */
+  chatRecording: boolean | undefined;
+  /** Resume the most recent session for the current project */
+  continue: boolean | undefined;
+  /** Resume a specific session by its ID */
+  resume: string | undefined;
+  maxSessionTurns: number | undefined;
+  coreTools: string[] | undefined;
+  excludeTools: string[] | undefined;
+  authType: string | undefined;
+  channel: string | undefined;
+}
+
+function normalizeOutputFormat(
+  format: string | OutputFormat | undefined,
+): OutputFormat | undefined {
+  if (!format) {
+    return undefined;
+  }
+  if (format === OutputFormat.STREAM_JSON) {
+    return OutputFormat.STREAM_JSON;
+  }
+  if (format === 'json' || format === OutputFormat.JSON) {
+    return OutputFormat.JSON;
+  }
+  return OutputFormat.TEXT;
 }
 
 export async function parseArguments(settings: Settings): Promise<CliArgs> {
-  const yargsInstance = yargs(hideBin(process.argv))
-    // Set locale to English for consistent output, especially in tests
+  const rawArgv = hideBin(process.argv);
+  const yargsInstance = yargs(rawArgv)
     .locale('en')
     .scriptName('qwen')
     .usage(
       'Usage: qwen [options] [command]\n\nQwen Code - Launch an interactive CLI, use -p/--prompt for non-interactive mode',
     )
-    .command('$0', 'Launch Qwen Code', (yargsInstance) =>
+    .option('telemetry', {
+      type: 'boolean',
+      description:
+        'Enable telemetry? This flag specifically controls if telemetry is sent. Other --telemetry-* flags set specific values but do not enable telemetry on their own.',
+    })
+    .option('telemetry-target', {
+      type: 'string',
+      choices: ['local', 'gcp'],
+      description:
+        'Set the telemetry target (local or gcp). Overrides settings files.',
+    })
+    .option('telemetry-otlp-endpoint', {
+      type: 'string',
+      description:
+        'Set the OTLP endpoint for telemetry. Overrides environment variables and settings files.',
+    })
+    .option('telemetry-otlp-protocol', {
+      type: 'string',
+      choices: ['grpc', 'http'],
+      description:
+        'Set the OTLP protocol for telemetry (grpc or http). Overrides settings files.',
+    })
+    .option('telemetry-log-prompts', {
+      type: 'boolean',
+      description:
+        'Enable or disable logging of user prompts for telemetry. Overrides settings files.',
+    })
+    .option('telemetry-outfile', {
+      type: 'string',
+      description: 'Redirect all telemetry output to the specified file.',
+    })
+    .deprecateOption(
+      'telemetry',
+      'Use the "telemetry.enabled" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .deprecateOption(
+      'telemetry-target',
+      'Use the "telemetry.target" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .deprecateOption(
+      'telemetry-otlp-endpoint',
+      'Use the "telemetry.otlpEndpoint" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .deprecateOption(
+      'telemetry-otlp-protocol',
+      'Use the "telemetry.otlpProtocol" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .deprecateOption(
+      'telemetry-log-prompts',
+      'Use the "telemetry.logPrompts" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .deprecateOption(
+      'telemetry-outfile',
+      'Use the "telemetry.outfile" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .option('debug', {
+      alias: 'd',
+      type: 'boolean',
+      description: 'Run in debug mode?',
+      default: false,
+    })
+    .option('proxy', {
+      type: 'string',
+      description: 'Proxy for Qwen Code, like schema://user:password@host:port',
+    })
+    .deprecateOption(
+      'proxy',
+      'Use the "proxy" setting in settings.json instead. This flag will be removed in a future version.',
+    )
+    .option('chat-recording', {
+      type: 'boolean',
+      description:
+        'Enable chat recording to disk. If false, chat history is not saved and --continue/--resume will not work.',
+    })
+    .command('$0 [query..]', 'Launch Qwen Code CLI', (yargsInstance: Argv) =>
       yargsInstance
+        .positional('query', {
+          description:
+            'Positional prompt. Defaults to one-shot; use -i/--prompt-interactive for interactive.',
+        })
         .option('model', {
           alias: 'm',
           type: 'string',
           description: `Model`,
-          default: process.env['GEMINI_MODEL'],
         })
         .option('prompt', {
           alias: 'p',
@@ -153,12 +273,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         .option('sandbox-image', {
           type: 'string',
           description: 'Sandbox image URI.',
-        })
-        .option('debug', {
-          alias: 'd',
-          type: 'boolean',
-          description: 'Run in debug mode?',
-          default: false,
         })
         .option('all-files', {
           alias: ['a'],
@@ -184,37 +298,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           description:
             'Set the approval mode: plan (plan only), default (prompt for approval), auto-edit (auto-approve edit tools), yolo (auto-approve all tools)',
         })
-        .option('telemetry', {
-          type: 'boolean',
-          description:
-            'Enable telemetry? This flag specifically controls if telemetry is sent. Other --telemetry-* flags set specific values but do not enable telemetry on their own.',
-        })
-        .option('telemetry-target', {
-          type: 'string',
-          choices: ['local', 'gcp'],
-          description:
-            'Set the telemetry target (local or gcp). Overrides settings files.',
-        })
-        .option('telemetry-otlp-endpoint', {
-          type: 'string',
-          description:
-            'Set the OTLP endpoint for telemetry. Overrides environment variables and settings files.',
-        })
-        .option('telemetry-otlp-protocol', {
-          type: 'string',
-          choices: ['grpc', 'http'],
-          description:
-            'Set the OTLP protocol for telemetry (grpc or http). Overrides settings files.',
-        })
-        .option('telemetry-log-prompts', {
-          type: 'boolean',
-          description:
-            'Enable or disable logging of user prompts for telemetry. Overrides settings files.',
-        })
-        .option('telemetry-outfile', {
-          type: 'string',
-          description: 'Redirect all telemetry output to the specified file.',
-        })
         .option('checkpointing', {
           alias: 'c',
           type: 'boolean',
@@ -225,15 +308,28 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           type: 'boolean',
           description: 'Starts the agent in ACP mode',
         })
+        .option('channel', {
+          type: 'string',
+          choices: ['VSCode', 'ACP', 'SDK', 'CI'],
+          description: 'Channel identifier (VSCode, ACP, SDK, CI)',
+        })
         .option('allowed-mcp-server-names', {
           type: 'array',
           string: true,
           description: 'Allowed MCP server names',
+          coerce: (mcpServerNames: string[]) =>
+            // Handle comma-separated values
+            mcpServerNames.flatMap((mcpServerName) =>
+              mcpServerName.split(',').map((m) => m.trim()),
+            ),
         })
         .option('allowed-tools', {
           type: 'array',
           string: true,
           description: 'Tools that are allowed to run without confirmation',
+          coerce: (tools: string[]) =>
+            // Handle comma-separated values
+            tools.flatMap((tool) => tool.split(',').map((t) => t.trim())),
         })
         .option('extensions', {
           alias: 'e',
@@ -241,16 +337,16 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           string: true,
           description:
             'A list of extensions to use. If not provided, all extensions are used.',
+          coerce: (extensions: string[]) =>
+            // Handle comma-separated values
+            extensions.flatMap((extension) =>
+              extension.split(',').map((e) => e.trim()),
+            ),
         })
         .option('list-extensions', {
           alias: 'l',
           type: 'boolean',
           description: 'List all available extensions and exit.',
-        })
-        .option('proxy', {
-          type: 'string',
-          description:
-            'Proxy for qwen client, like schema://user:password@host:port',
         })
         .option('include-directories', {
           type: 'array',
@@ -266,6 +362,11 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           description:
             'Enable logging of OpenAI API calls for debugging and analysis',
         })
+        .option('openai-logging-dir', {
+          type: 'string',
+          description:
+            'Custom directory path for OpenAI API logs. Overrides settings files.',
+        })
         .option('openai-api-key', {
           type: 'string',
           description: 'OpenAI API key to use for authentication',
@@ -276,12 +377,24 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         })
         .option('tavily-api-key', {
           type: 'string',
-          description: 'Tavily API key for web search functionality',
+          description: 'Tavily API key for web search',
+        })
+        .option('google-api-key', {
+          type: 'string',
+          description: 'Google Custom Search API key',
+        })
+        .option('google-search-engine-id', {
+          type: 'string',
+          description: 'Google Custom Search Engine ID',
+        })
+        .option('web-search-default', {
+          type: 'string',
+          description:
+            'Default web search provider (dashscope, tavily, google)',
         })
         .option('screen-reader', {
           type: 'boolean',
           description: 'Enable screen reader mode for accessibility.',
-          default: false,
         })
         .option('vlm-switch-mode', {
           type: 'string',
@@ -290,16 +403,122 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
             'Default behavior when images are detected in input. Values: once (one-time switch), session (switch for entire session), persist (continue with current model). Overrides settings files.',
           default: process.env['VLM_SWITCH_MODE'],
         })
-        .check((argv) => {
-          if (argv.prompt && argv['promptInteractive']) {
-            throw new Error(
-              'Cannot use both --prompt (-p) and --prompt-interactive (-i) together',
-            );
+        .option('input-format', {
+          type: 'string',
+          choices: ['text', 'stream-json'],
+          description: 'The format consumed from standard input.',
+          default: 'text',
+        })
+        .option('output-format', {
+          alias: 'o',
+          type: 'string',
+          description: 'The format of the CLI output.',
+          choices: ['text', 'json', 'stream-json'],
+        })
+        .option('include-partial-messages', {
+          type: 'boolean',
+          description:
+            'Include partial assistant messages when using stream-json output.',
+          default: false,
+        })
+        .option('continue', {
+          type: 'boolean',
+          description:
+            'Resume the most recent session for the current project.',
+          default: false,
+        })
+        .option('resume', {
+          type: 'string',
+          description:
+            'Resume a specific session by its ID. Use without an ID to show session picker.',
+        })
+        .option('max-session-turns', {
+          type: 'number',
+          description: 'Maximum number of session turns',
+        })
+        .option('core-tools', {
+          type: 'array',
+          string: true,
+          description: 'Core tool paths',
+          coerce: (tools: string[]) =>
+            tools.flatMap((tool) => tool.split(',').map((t) => t.trim())),
+        })
+        .option('exclude-tools', {
+          type: 'array',
+          string: true,
+          description: 'Tools to exclude',
+          coerce: (tools: string[]) =>
+            tools.flatMap((tool) => tool.split(',').map((t) => t.trim())),
+        })
+        .option('allowed-tools', {
+          type: 'array',
+          string: true,
+          description: 'Tools to allow, will bypass confirmation',
+          coerce: (tools: string[]) =>
+            tools.flatMap((tool) => tool.split(',').map((t) => t.trim())),
+        })
+        .option('auth-type', {
+          type: 'string',
+          choices: [AuthType.USE_OPENAI, AuthType.QWEN_OAUTH],
+          description: 'Authentication type',
+        })
+        .deprecateOption(
+          'show-memory-usage',
+          'Use the "ui.showMemoryUsage" setting in settings.json instead. This flag will be removed in a future version.',
+        )
+        .deprecateOption(
+          'sandbox-image',
+          'Use the "tools.sandbox" setting in settings.json instead. This flag will be removed in a future version.',
+        )
+        .deprecateOption(
+          'checkpointing',
+          'Use the "general.checkpointing.enabled" setting in settings.json instead. This flag will be removed in a future version.',
+        )
+        .deprecateOption(
+          'all-files',
+          'Use @ includes in the application instead. This flag will be removed in a future version.',
+        )
+        .deprecateOption(
+          'prompt',
+          'Use the positional prompt instead. This flag will be removed in a future version.',
+        )
+        // Ensure validation flows through .fail() for clean UX
+        .fail((msg: string, err: Error | undefined, yargs: Argv) => {
+          console.error(msg || err?.message || 'Unknown error');
+          yargs.showHelp();
+          process.exit(1);
+        })
+        .check((argv: { [x: string]: unknown }) => {
+          // The 'query' positional can be a string (for one arg) or string[] (for multiple).
+          // This guard safely checks if any positional argument was provided.
+          const query = argv['query'] as string | string[] | undefined;
+          const hasPositionalQuery = Array.isArray(query)
+            ? query.length > 0
+            : !!query;
+
+          if (argv['prompt'] && hasPositionalQuery) {
+            return 'Cannot use both a positional prompt and the --prompt (-p) flag together';
           }
-          if (argv.yolo && argv['approvalMode']) {
-            throw new Error(
-              'Cannot use both --yolo (-y) and --approval-mode together. Use --approval-mode=yolo instead.',
-            );
+          if (argv['prompt'] && argv['promptInteractive']) {
+            return 'Cannot use both --prompt (-p) and --prompt-interactive (-i) together';
+          }
+          if (argv['yolo'] && argv['approvalMode']) {
+            return 'Cannot use both --yolo (-y) and --approval-mode together. Use --approval-mode=yolo instead.';
+          }
+          if (
+            argv['includePartialMessages'] &&
+            argv['outputFormat'] !== OutputFormat.STREAM_JSON
+          ) {
+            return '--include-partial-messages requires --output-format stream-json';
+          }
+          if (
+            argv['inputFormat'] === 'stream-json' &&
+            argv['outputFormat'] !== OutputFormat.STREAM_JSON
+          ) {
+            return '--input-format stream-json requires --output-format stream-json';
+          }
+          if (argv['continue'] && argv['resume']) {
+            return 'Cannot use both --continue and --resume together. Use --continue to resume the latest session, or --resume <sessionId> to resume a specific session.';
           }
           return true;
         }),
@@ -307,7 +526,7 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
     // Register MCP subcommands
     .command(mcpCommand);
 
-  if (settings?.experimental?.extensionManagement ?? false) {
+  if (settings?.experimental?.extensionManagement ?? true) {
     yargsInstance.command(extensionsCommand);
   }
 
@@ -322,6 +541,8 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
   yargsInstance.wrap(yargsInstance.terminalWidth());
   const result = await yargsInstance.parse();
 
+  // If yargs handled --help/--version it will have exited; nothing to do here.
+
   // Handle case where MCP subcommands are executed - they should exit the process
   // and not return to main CLI logic
   if (
@@ -332,8 +553,34 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
     process.exit(0);
   }
 
+  // Normalize query args: handle both quoted "@path file" and unquoted @path file
+  const queryArg = (result as { query?: string | string[] | undefined }).query;
+  const q: string | undefined = Array.isArray(queryArg)
+    ? queryArg.join(' ')
+    : queryArg;
+
+  // Route positional args: explicit -i flag -> interactive; else -> one-shot (even for @commands)
+  if (q && !result['prompt']) {
+    const hasExplicitInteractive =
+      result['promptInteractive'] === '' || !!result['promptInteractive'];
+    if (hasExplicitInteractive) {
+      result['promptInteractive'] = q;
+    } else {
+      result['prompt'] = q;
+    }
+  }
+
+  // Keep CliArgs.query as a string for downstream typing
+  (result as Record<string, unknown>)['query'] = q || undefined;
+
   // The import format is now only controlled by settings.memoryImportFormat
   // We no longer accept it as a CLI argument
+
+  // Apply ACP fallback: if experimental-acp is present but no explicit --channel, treat as ACP
+  if (result['experimentalAcp'] && !result['channel']) {
+    (result as Record<string, unknown>)['channel'] = 'ACP';
+  }
+
   return result as unknown as CliArgs;
 }
 
@@ -347,6 +594,7 @@ export async function loadHierarchicalGeminiMemory(
   fileService: FileDiscoveryService,
   settings: Settings,
   extensionContextFilePaths: string[] = [],
+  folderTrust: boolean,
   memoryImportFormat: 'flat' | 'tree' = 'tree',
   fileFilteringOptions?: FileFilteringOptions,
 ): Promise<{ memoryContent: string; fileCount: number }> {
@@ -372,58 +620,47 @@ export async function loadHierarchicalGeminiMemory(
     debugMode,
     fileService,
     extensionContextFilePaths,
+    folderTrust,
     memoryImportFormat,
     fileFilteringOptions,
     settings.context?.discoveryMaxDirs,
   );
 }
 
-export async function loadCliConfig(
-  settings: Settings,
-  extensions: Extension[],
-  sessionId: string,
-  argv: CliArgs,
-  cwd: string = process.cwd(),
-): Promise<Config> {
-  const debugMode =
+export function isDebugMode(argv: CliArgs): boolean {
+  return (
     argv.debug ||
     [process.env['DEBUG'], process.env['DEBUG_MODE']].some(
       (v) => v === 'true' || v === '1',
-    ) ||
-    false;
+    )
+  );
+}
+
+export async function loadCliConfig(
+  settings: Settings,
+  extensions: Extension[],
+  extensionEnablementManager: ExtensionEnablementManager,
+  argv: CliArgs,
+  cwd: string = process.cwd(),
+): Promise<Config> {
+  const debugMode = isDebugMode(argv);
+
   const memoryImportFormat = settings.context?.importFormat || 'tree';
 
   const ideMode = settings.ide?.enabled ?? false;
 
-  const folderTrustFeature =
-    settings.security?.folderTrust?.featureEnabled ?? false;
-  const folderTrustSetting = settings.security?.folderTrust?.enabled ?? true;
-  const folderTrust = folderTrustFeature && folderTrustSetting;
-  const trustedFolder = isWorkspaceTrusted(settings);
+  const folderTrust = settings.security?.folderTrust?.enabled ?? false;
+  const trustedFolder = isWorkspaceTrusted(settings)?.isTrusted ?? true;
 
   const allExtensions = annotateActiveExtensions(
     extensions,
-    argv.extensions || [],
     cwd,
+    extensionEnablementManager,
   );
 
   const activeExtensions = extensions.filter(
     (_, i) => allExtensions[i].isActive,
   );
-  // Handle OpenAI API key from command line
-  if (argv.openaiApiKey) {
-    process.env['OPENAI_API_KEY'] = argv.openaiApiKey;
-  }
-
-  // Handle OpenAI base URL from command line
-  if (argv.openaiBaseUrl) {
-    process.env['OPENAI_BASE_URL'] = argv.openaiBaseUrl;
-  }
-
-  // Handle Tavily API key from command line
-  if (argv.tavilyApiKey) {
-    process.env['TAVILY_API_KEY'] = argv.tavilyApiKey;
-  }
 
   // Set the context filename in the server's memoryTool module BEFORE loading memory
   // TODO(b/343434939): This is a bit of a hack. The contextFileName should ideally be passed
@@ -439,6 +676,20 @@ export async function loadCliConfig(
   const extensionContextFilePaths = activeExtensions.flatMap(
     (e) => e.contextFiles,
   );
+
+  // Automatically load output-language.md if it exists
+  const outputLanguageFilePath = path.join(
+    Storage.getGlobalQwenDir(),
+    'output-language.md',
+  );
+  if (fs.existsSync(outputLanguageFilePath)) {
+    extensionContextFilePaths.push(outputLanguageFilePath);
+    if (debugMode) {
+      logger.debug(
+        `Found output-language.md, adding to context files: ${outputLanguageFilePath}`,
+      );
+    }
+  }
 
   const fileService = new FileDiscoveryService(cwd);
 
@@ -461,12 +712,29 @@ export async function loadCliConfig(
     fileService,
     settings,
     extensionContextFilePaths,
+    trustedFolder,
     memoryImportFormat,
     fileFiltering,
   );
 
   let mcpServers = mergeMcpServers(settings, activeExtensions);
   const question = argv.promptInteractive || argv.prompt || '';
+  const inputFormat: InputFormat =
+    (argv.inputFormat as InputFormat | undefined) ?? InputFormat.TEXT;
+  const argvOutputFormat = normalizeOutputFormat(
+    argv.outputFormat as string | OutputFormat | undefined,
+  );
+  const settingsOutputFormat = normalizeOutputFormat(settings.output?.format);
+  const outputFormat =
+    argvOutputFormat ?? settingsOutputFormat ?? OutputFormat.TEXT;
+  const outputSettingsFormat: OutputFormat =
+    outputFormat === OutputFormat.STREAM_JSON
+      ? settingsOutputFormat &&
+        settingsOutputFormat !== OutputFormat.STREAM_JSON
+        ? settingsOutputFormat
+        : OutputFormat.TEXT
+      : (outputFormat as OutputFormat);
+  const includePartialMessages = Boolean(argv.includePartialMessages);
 
   // Determine approval mode with backward compatibility
   let approvalMode: ApprovalMode;
@@ -474,8 +742,8 @@ export async function loadCliConfig(
     approvalMode = parseApprovalModeValue(argv.approvalMode);
   } else if (argv.yolo) {
     approvalMode = ApprovalMode.YOLO;
-  } else if (settings.approvalMode) {
-    approvalMode = parseApprovalModeValue(settings.approvalMode);
+  } else if (settings.tools?.approvalMode) {
+    approvalMode = parseApprovalModeValue(settings.tools.approvalMode);
   } else {
     approvalMode = ApprovalMode.DEFAULT;
   }
@@ -492,11 +760,56 @@ export async function loadCliConfig(
     approvalMode = ApprovalMode.DEFAULT;
   }
 
-  const interactive =
-    !!argv.promptInteractive || (process.stdin.isTTY && question.length === 0);
+  let telemetrySettings;
+  try {
+    telemetrySettings = await resolveTelemetrySettings({
+      argv,
+      env: process.env as unknown as Record<string, string | undefined>,
+      settings: settings.telemetry,
+    });
+  } catch (err) {
+    if (err instanceof FatalConfigError) {
+      throw new FatalConfigError(
+        `Invalid telemetry configuration: ${err.message}.`,
+      );
+    }
+    throw err;
+  }
+
+  // Interactive mode determination with priority:
+  // 1. If promptInteractive (-i flag) is provided, it is explicitly interactive
+  // 2. If outputFormat is stream-json or json (no matter input-format) along with query or prompt, it is non-interactive
+  // 3. If no query or prompt is provided, check isTTY: TTY means interactive, non-TTY means non-interactive
+  const hasQuery = !!argv.query;
+  const hasPrompt = !!argv.prompt;
+  let interactive: boolean;
+  if (argv.promptInteractive) {
+    // Priority 1: Explicit -i flag means interactive
+    interactive = true;
+  } else if (
+    (outputFormat === OutputFormat.STREAM_JSON ||
+      outputFormat === OutputFormat.JSON) &&
+    (hasQuery || hasPrompt)
+  ) {
+    // Priority 2: JSON/stream-json output with query/prompt means non-interactive
+    interactive = false;
+  } else if (!hasQuery && !hasPrompt) {
+    // Priority 3: No query or prompt means interactive only if TTY (format arguments ignored)
+    interactive = process.stdin.isTTY ?? false;
+  } else {
+    // Default: If we have query/prompt but output format is TEXT, assume non-interactive
+    // (fallback for edge cases where query/prompt is provided with TEXT output)
+    interactive = false;
+  }
   // In non-interactive mode, exclude tools that require a prompt.
+  // However, if stream-json input is used, control can be requested via JSON messages,
+  // so tools should not be excluded in that case.
   const extraExcludes: string[] = [];
-  if (!interactive && !argv.experimentalAcp) {
+  if (
+    !interactive &&
+    !argv.experimentalAcp &&
+    inputFormat !== InputFormat.STREAM_JSON
+  ) {
     switch (approvalMode) {
       case ApprovalMode.PLAN:
       case ApprovalMode.DEFAULT:
@@ -520,6 +833,7 @@ export async function loadCliConfig(
     settings,
     activeExtensions,
     extraExcludes.length > 0 ? extraExcludes : undefined,
+    argv.excludeTools,
   );
   const blockedMcpServers: Array<{ name: string; extensionName: string }> = [];
 
@@ -550,9 +864,13 @@ export async function loadCliConfig(
     );
   }
 
-  const sandboxConfig = await loadSandboxConfig(settings, argv);
-  const cliVersion = await getCliVersion();
+  const resolvedModel =
+    argv.model ||
+    process.env['OPENAI_MODEL'] ||
+    process.env['QWEN_MODEL'] ||
+    settings.model?.name;
 
+  const sandboxConfig = await loadSandboxConfig(settings, argv);
   const screenReader =
     argv.screenReader !== undefined
       ? argv.screenReader
@@ -560,9 +878,34 @@ export async function loadCliConfig(
 
   const vlmSwitchMode =
     argv.vlmSwitchMode || settings.experimental?.vlmSwitchMode;
+
+  let sessionId: string | undefined;
+  let sessionData: ResumedSessionData | undefined;
+
+  if (argv.continue || argv.resume) {
+    const sessionService = new SessionService(cwd);
+    if (argv.continue) {
+      sessionData = await sessionService.loadLastSession();
+      if (sessionData) {
+        sessionId = sessionData.conversation.sessionId;
+      }
+    }
+
+    if (argv.resume) {
+      sessionId = argv.resume;
+      sessionData = await sessionService.loadSession(argv.resume);
+      if (!sessionData) {
+        const message = `No saved session found with ID ${argv.resume}. Run \`qwen --resume\` without an ID to choose from existing sessions.`;
+        console.log(message);
+        process.exit(1);
+      }
+    }
+  }
+
   return new Config({
     sessionId,
-    embeddingModel: DEFAULT_GEMINI_EMBEDDING_MODEL,
+    sessionData,
+    embeddingModel: DEFAULT_QWEN_EMBEDDING_MODEL,
     sandbox: sandboxConfig,
     targetDir: cwd,
     includeDirectories,
@@ -571,7 +914,7 @@ export async function loadCliConfig(
     debugMode,
     question,
     fullContext: argv.allFiles || false,
-    coreTools: settings.tools?.core || undefined,
+    coreTools: argv.coreTools || settings.tools?.core || undefined,
     allowedTools: argv.allowedTools || settings.tools?.allowed || undefined,
     excludeTools,
     toolDiscoveryCommand: settings.tools?.discoveryCommand,
@@ -587,31 +930,9 @@ export async function loadCliConfig(
       ...settings.ui?.accessibility,
       screenReader,
     },
-    telemetry: {
-      enabled: argv.telemetry ?? settings.telemetry?.enabled,
-      target: (argv.telemetryTarget ??
-        settings.telemetry?.target) as TelemetryTarget,
-      otlpEndpoint:
-        argv.telemetryOtlpEndpoint ??
-        process.env['OTEL_EXPORTER_OTLP_ENDPOINT'] ??
-        settings.telemetry?.otlpEndpoint,
-      otlpProtocol: (['grpc', 'http'] as const).find(
-        (p) =>
-          p ===
-          (argv.telemetryOtlpProtocol ?? settings.telemetry?.otlpProtocol),
-      ),
-      logPrompts: argv.telemetryLogPrompts ?? settings.telemetry?.logPrompts,
-      outfile: argv.telemetryOutfile ?? settings.telemetry?.outfile,
-    },
+    telemetry: telemetrySettings,
     usageStatisticsEnabled: settings.privacy?.usageStatisticsEnabled ?? true,
-    // Git-aware file filtering settings
-    fileFiltering: {
-      respectGitIgnore: settings.context?.fileFiltering?.respectGitIgnore,
-      respectGeminiIgnore: settings.context?.fileFiltering?.respectGeminiIgnore,
-      enableRecursiveFileSearch:
-        settings.context?.fileFiltering?.enableRecursiveFileSearch,
-      disableFuzzySearch: settings.context?.fileFiltering?.disableFuzzySearch,
-    },
+    fileFiltering: settings.context?.fileFiltering,
     checkpointing:
       argv.checkpointing || settings.general?.checkpointing?.enabled,
     proxy:
@@ -623,50 +944,73 @@ export async function loadCliConfig(
     cwd,
     fileDiscoveryService: fileService,
     bugCommand: settings.advanced?.bugCommand,
-    model: argv.model || settings.model?.name || DEFAULT_GEMINI_MODEL,
+    model: resolvedModel,
     extensionContextFilePaths,
-    sessionTokenLimit: settings.sessionTokenLimit ?? -1,
-    maxSessionTurns: settings.model?.maxSessionTurns ?? -1,
+    sessionTokenLimit: settings.model?.sessionTokenLimit ?? -1,
+    maxSessionTurns:
+      argv.maxSessionTurns ?? settings.model?.maxSessionTurns ?? -1,
     experimentalZedIntegration: argv.experimentalAcp || false,
     listExtensions: argv.listExtensions || false,
     extensions: allExtensions,
     blockedMcpServers,
     noBrowser: !!process.env['NO_BROWSER'],
-    enableOpenAILogging:
-      (typeof argv.openaiLogging === 'undefined'
-        ? settings.enableOpenAILogging
-        : argv.openaiLogging) ?? false,
-    systemPromptMappings: (settings.systemPromptMappings ?? [
-      {
-        baseUrls: [
-          'https://dashscope.aliyuncs.com/compatible-mode/v1/',
-          'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/',
-        ],
-        modelNames: ['qwen3-coder-plus'],
-        template:
-          'SYSTEM_TEMPLATE:{"name":"qwen3_coder","params":{"is_git_repository":{RUNTIME_VARS_IS_GIT_REPO},"sandbox":"{RUNTIME_VARS_SANDBOX}"}}',
-      },
-    ]) as ConfigParameters['systemPromptMappings'],
-    authType: settings.security?.auth?.selectedType,
-    contentGenerator: settings.contentGenerator,
-    cliVersion,
-    tavilyApiKey:
-      argv.tavilyApiKey ||
-      settings.tavilyApiKey ||
-      process.env['TAVILY_API_KEY'],
+    authType:
+      (argv.authType as AuthType | undefined) ||
+      settings.security?.auth?.selectedType,
+    inputFormat,
+    outputFormat,
+    includePartialMessages,
+    generationConfig: {
+      ...(settings.model?.generationConfig || {}),
+      model: resolvedModel,
+      apiKey:
+        argv.openaiApiKey ||
+        process.env['OPENAI_API_KEY'] ||
+        settings.security?.auth?.apiKey,
+      baseUrl:
+        argv.openaiBaseUrl ||
+        process.env['OPENAI_BASE_URL'] ||
+        settings.security?.auth?.baseUrl,
+      enableOpenAILogging:
+        (typeof argv.openaiLogging === 'undefined'
+          ? settings.model?.enableOpenAILogging
+          : argv.openaiLogging) ?? false,
+      openAILoggingDir:
+        argv.openaiLoggingDir || settings.model?.openAILoggingDir,
+    },
+    cliVersion: await getCliVersion(),
+    webSearch: buildWebSearchConfig(
+      argv,
+      settings,
+      settings.security?.auth?.selectedType,
+    ),
     summarizeToolOutput: settings.model?.summarizeToolOutput,
     ideMode,
     chatCompression: settings.model?.chatCompression,
-    folderTrustFeature,
     folderTrust,
     interactive,
     trustedFolder,
     useRipgrep: settings.tools?.useRipgrep,
-    shouldUseNodePtyShell: settings.tools?.usePty,
+    useBuiltinRipgrep: settings.tools?.useBuiltinRipgrep,
+    shouldUseNodePtyShell: settings.tools?.shell?.enableInteractiveShell,
     skipNextSpeakerCheck: settings.model?.skipNextSpeakerCheck,
-    enablePromptCompletion: settings.general?.enablePromptCompletion ?? false,
-    skipLoopDetection: settings.skipLoopDetection ?? false,
+    skipLoopDetection: settings.model?.skipLoopDetection ?? false,
+    skipStartupContext: settings.model?.skipStartupContext ?? false,
     vlmSwitchMode,
+    truncateToolOutputThreshold: settings.tools?.truncateToolOutputThreshold,
+    truncateToolOutputLines: settings.tools?.truncateToolOutputLines,
+    enableToolOutputTruncation: settings.tools?.enableToolOutputTruncation,
+    eventEmitter: appEvents,
+    useSmartEdit: argv.useSmartEdit ?? settings.useSmartEdit,
+    output: {
+      format: outputSettingsFormat,
+    },
+    channel: argv.channel,
+    // Precedence: explicit CLI flag > settings file > default(true).
+    // NOTE: do NOT set a yargs default for `chat-recording`, otherwise argv will
+    // always be true and the settings file can never disable recording.
+    chatRecording:
+      argv.chatRecording ?? settings.general?.chatRecording ?? true,
   });
 }
 
@@ -726,8 +1070,10 @@ function mergeExcludeTools(
   settings: Settings,
   extensions: Extension[],
   extraExcludes?: string[] | undefined,
+  cliExcludeTools?: string[] | undefined,
 ): string[] {
   const allExcludeTools = new Set([
+    ...(cliExcludeTools || []),
     ...(settings.tools?.exclude || []),
     ...(extraExcludes || []),
   ]);

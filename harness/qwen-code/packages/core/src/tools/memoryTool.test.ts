@@ -29,10 +29,6 @@ vi.mock(import('node:fs/promises'), async (importOriginal) => {
   };
 });
 
-vi.mock('fs', () => ({
-  mkdirSync: vi.fn(),
-}));
-
 vi.mock('os');
 
 const MEMORY_SECTION_HEADER = '## Qwen Added Memories';
@@ -241,9 +237,7 @@ describe('MemoryTool', () => {
         expectedFsArgument,
       );
       const successMessage = `Okay, I've remembered that in global memory: "${params.fact}"`;
-      expect(result.llmContent).toBe(
-        JSON.stringify({ success: true, message: successMessage }),
-      );
+      expect(result.llmContent).toBe(successMessage);
       expect(result.returnDisplay).toBe(successMessage);
     });
 
@@ -271,9 +265,7 @@ describe('MemoryTool', () => {
         expectedFsArgument,
       );
       const successMessage = `Okay, I've remembered that in project memory: "${params.fact}"`;
-      expect(result.llmContent).toBe(
-        JSON.stringify({ success: true, message: successMessage }),
-      );
+      expect(result.llmContent).toBe(successMessage);
       expect(result.returnDisplay).toBe(successMessage);
     });
 
@@ -298,10 +290,7 @@ describe('MemoryTool', () => {
       const result = await invocation.execute(mockAbortSignal);
 
       expect(result.llmContent).toBe(
-        JSON.stringify({
-          success: false,
-          error: `Failed to save memory. Detail: ${underlyingError.message}`,
-        }),
+        `Error saving memory: ${underlyingError.message}`,
       );
       expect(result.returnDisplay).toBe(
         `Error saving memory: ${underlyingError.message}`,
@@ -319,6 +308,8 @@ describe('MemoryTool', () => {
       expect(result.llmContent).toContain(
         'Please specify where to save this memory',
       );
+      expect(result.llmContent).toContain('Global:');
+      expect(result.llmContent).toContain('Project:');
       expect(result.returnDisplay).toContain('Global:');
       expect(result.returnDisplay).toContain('Project:');
     });

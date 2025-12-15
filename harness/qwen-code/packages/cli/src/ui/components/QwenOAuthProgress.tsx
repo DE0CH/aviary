@@ -6,17 +6,19 @@
 
 import type React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import Link from 'ink-link';
 import qrcode from 'qrcode-terminal';
 import { Colors } from '../colors.js';
-import type { DeviceAuthorizationInfo } from '../hooks/useQwenAuth.js';
+import type { DeviceAuthorizationData } from '@qwen-code/qwen-code-core';
+import { useKeypress } from '../hooks/useKeypress.js';
+import { t } from '../../i18n/index.js';
 
 interface QwenOAuthProgressProps {
   onTimeout: () => void;
   onCancel: () => void;
-  deviceAuth?: DeviceAuthorizationInfo;
+  deviceAuth?: DeviceAuthorizationData;
   authStatus?:
     | 'idle'
     | 'polling'
@@ -51,11 +53,11 @@ function QrCodeDisplay({
       width="100%"
     >
       <Text bold color={Colors.AccentBlue}>
-        Qwen OAuth Authentication
+        {t('Qwen OAuth Authentication')}
       </Text>
 
       <Box marginTop={1}>
-        <Text>Please visit this URL to authorize:</Text>
+        <Text>{t('Please visit this URL to authorize:')}</Text>
       </Box>
 
       <Link url={verificationUrl} fallback={false}>
@@ -65,7 +67,7 @@ function QrCodeDisplay({
       </Link>
 
       <Box marginTop={1}>
-        <Text>Or scan the QR code below:</Text>
+        <Text>{t('Or scan the QR code below:')}</Text>
       </Box>
 
       <Box marginTop={1}>
@@ -102,15 +104,18 @@ function StatusDisplay({
     >
       <Box marginTop={1}>
         <Text>
-          <Spinner type="dots" /> Waiting for authorization{dots}
+          <Spinner type="dots" /> {t('Waiting for authorization')}
+          {dots}
         </Text>
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">
         <Text color={Colors.Gray}>
-          Time remaining: {formatTime(timeRemaining)}
+          {t('Time remaining:')} {formatTime(timeRemaining)}
         </Text>
-        <Text color={Colors.AccentPurple}>(Press ESC to cancel)</Text>
+        <Text color={Colors.AccentPurple}>
+          {t('(Press ESC or CTRL+C to cancel)')}
+        </Text>
       </Box>
     </Box>
   );
@@ -128,14 +133,17 @@ export function QwenOAuthProgress({
   const [dots, setDots] = useState<string>('');
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
 
-  useInput((input, key) => {
-    if (authStatus === 'timeout') {
-      // Any key press in timeout state should trigger cancel to return to auth dialog
-      onCancel();
-    } else if (key.escape) {
-      onCancel();
-    }
-  });
+  useKeypress(
+    (key) => {
+      if (authStatus === 'timeout' || authStatus === 'error') {
+        // Any key press in timeout or error state should trigger cancel to return to auth dialog
+        onCancel();
+      } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+        onCancel();
+      }
+    },
+    { isActive: true },
+  );
 
   // Generate QR code once when device auth is available
   useEffect(() => {
@@ -211,13 +219,47 @@ export function QwenOAuthProgress({
         width="100%"
       >
         <Text bold color={Colors.AccentRed}>
-          Qwen OAuth Authentication Timeout
+          {t('Qwen OAuth Authentication Timeout')}
         </Text>
 
         <Box marginTop={1}>
           <Text>
             {authMessage ||
-              `OAuth token expired (over ${defaultTimeout} seconds). Please select authentication method again.`}
+              t(
+                'OAuth token expired (over {{seconds}} seconds). Please select authentication method again.',
+                {
+                  seconds: defaultTimeout.toString(),
+                },
+              )}
+          </Text>
+        </Box>
+
+        <Box marginTop={1}>
+          <Text color={Colors.Gray}>
+            {t('Press any key to return to authentication type selection.')}
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (authStatus === 'error') {
+    return (
+      <Box
+        borderStyle="round"
+        borderColor={Colors.AccentRed}
+        flexDirection="column"
+        padding={1}
+        width="100%"
+      >
+        <Text bold color={Colors.AccentRed}>
+          Qwen OAuth Authentication Error
+        </Text>
+
+        <Box marginTop={1}>
+          <Text>
+            {authMessage ||
+              'An error occurred during authentication. Please try again.'}
           </Text>
         </Box>
 
@@ -242,15 +284,18 @@ export function QwenOAuthProgress({
       >
         <Box>
           <Text>
-            <Spinner type="dots" /> Waiting for Qwen OAuth authentication...
+            <Spinner type="dots" />
+            {t('Waiting for Qwen OAuth authentication...')}
           </Text>
         </Box>
         <Box marginTop={1} justifyContent="space-between">
           <Text color={Colors.Gray}>
-            Time remaining: {Math.floor(timeRemaining / 60)}:
+            {t('Time remaining:')} {Math.floor(timeRemaining / 60)}:
             {(timeRemaining % 60).toString().padStart(2, '0')}
           </Text>
-          <Text color={Colors.AccentPurple}>(Press ESC to cancel)</Text>
+          <Text color={Colors.AccentPurple}>
+            {t('(Press ESC or CTRL+C to cancel)')}
+          </Text>
         </Box>
       </Box>
     );

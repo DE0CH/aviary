@@ -20,7 +20,7 @@ const LIMITS = {
   '32k': 32_768,
   '64k': 65_536,
   '128k': 131_072,
-  '200k': 200_000, // vendor-declared decimal (OpenAI / Anthropic use 200k)
+  '200k': 200_000, // vendor-declared decimal, used by OpenAI, Anthropic, GLM etc.
   '256k': 262_144,
   '512k': 524_288,
   '1m': 1_048_576,
@@ -47,17 +47,25 @@ export function normalize(model: string): string {
   // remove trailing build / date / revision suffixes:
   // - dates (e.g., -20250219), -v1, version numbers, 'latest', 'preview' etc.
   s = s.replace(/-preview/g, '');
-  // Special handling for Qwen model names that include "-latest" as part of the model name
-  if (!s.match(/^qwen-(?:plus|flash|vl-max)-latest$/)) {
-    // \d{6,} - Match 6 or more digits (dates) like -20250219 (6+ digit dates)
-    // \d+x\d+b - Match patterns like 4x8b, -7b, -70b
-    // v\d+(?:\.\d+)* - Match version patterns starting with 'v' like -v1, -v1.2, -v2.1.3
-    // -\d+(?:\.\d+)+ - Match version numbers with dots (that are preceded by a dash),
-    //   like -1.1, -2.0.1 but only when they're suffixes, Example: model-test-1.1 → model-test;
-    //   Note: this does NOT match 4.1 in gpt-4.1 because there's no dash before 4.1 in that context.
-    // latest - Match the literal string "latest"
+  // Special handling for model names that include date/version as part of the model identifier
+  // - Qwen models: qwen-plus-latest, qwen-flash-latest, qwen-vl-max-latest
+  // - Kimi models: kimi-k2-0905, kimi-k2-0711, etc. (keep date for version distinction)
+  if (
+    !s.match(/^qwen-(?:plus|flash|vl-max)-latest$/) &&
+    !s.match(/^kimi-k2-\d{4}$/)
+  ) {
+    // Regex breakdown:
+    // -(?:...)$ - Non-capturing group for suffixes at the end of the string
+    // The following patterns are matched within the group:
+    //   \d{4,} - Match 4 or more digits (dates) like -20250219 -0528 (4+ digit dates)
+    //   \d+x\d+b - Match patterns like 4x8b, -7b, -70b
+    //   v\d+(?:\.\d+)* - Match version patterns starting with 'v' like -v1, -v1.2, -v2.1.3
+    //   (?<=-[^-]+-)\d+(?:\.\d+)+ - Match version numbers with dots that are preceded by another dash,
+    //     like -1.1, -2.0.1 but only when they are preceded by another dash, Example: model-test-1.1 → model-test;
+    //     Note: this does NOT match 4.1 in gpt-4.1 because there's no dash before -4.1 in that context.
+    //   latest|exp - Match the literal string "latest" or "exp"
     s = s.replace(
-      /-(?:\d{6,}|\d+x\d+b|v\d+(?:\.\d+)*|-\d+(?:\.\d+)+|latest)$/g,
+      /-(?:\d{4,}|\d+x\d+b|v\d+(?:\.\d+)*|(?<=-[^-]+-)\d+(?:\.\d+)+|latest|exp)$/g,
       '',
     );
   }
@@ -115,7 +123,7 @@ const PATTERNS: Array<[RegExp, TokenCount]> = [
   [/^coder-model$/, LIMITS['1m']],
 
   // Commercial Qwen3-Max-Preview: 256K token context
-  [/^qwen3-max-preview(-.*)?$/, LIMITS['256k']], // catches "qwen3-max-preview" and date variants
+  [/^qwen3-max(-preview)?(-.*)?$/, LIMITS['256k']], // catches "qwen3-max" or "qwen3-max-preview" and date variants
 
   // Open-source Qwen3-Coder variants: 256K native
   [/^qwen3-coder-.*$/, LIMITS['256k']],
@@ -149,18 +157,29 @@ const PATTERNS: Array<[RegExp, TokenCount]> = [
   // -------------------
   // Zhipu GLM
   // -------------------
-  [/^glm-4\.5v.*$/, LIMITS['64k']],
-  [/^glm-4\.5-air.*$/, LIMITS['128k']],
-  [/^glm-4\.5.*$/, LIMITS['128k']],
+  [/^glm-4\.5v(?:-.*)?$/, LIMITS['64k']],
+  [/^glm-4\.5-air(?:-.*)?$/, LIMITS['128k']],
+  [/^glm-4\.5(?:-.*)?$/, LIMITS['128k']],
+  [/^glm-4\.6(?:-.*)?$/, 202_752 as unknown as TokenCount], // exact limit from the model config file
 
   // -------------------
-  // DeepSeek / GPT-OSS / Kimi / Llama & Mistral examples
+  // DeepSeek
   // -------------------
-  [/^deepseek-r1.*$/, LIMITS['128k']],
-  [/^deepseek-v3(?:\.1)?.*$/, LIMITS['128k']],
-  [/^kimi-k2-instruct.*$/, LIMITS['128k']],
+  [/^deepseek(?:-.*)?$/, LIMITS['128k']],
+
+  // -------------------
+  // Moonshot / Kimi
+  // -------------------
+  [/^kimi-k2-0905$/, LIMITS['256k']], // Kimi-k2-0905-preview: 256K context
+  [/^kimi-k2-turbo.*$/, LIMITS['256k']], // Kimi-k2-turbo-preview: 256K context
+  [/^kimi-k2-0711$/, LIMITS['128k']], // Kimi-k2-0711-preview: 128K context
+  [/^kimi-k2-instruct.*$/, LIMITS['128k']], // Kimi-k2-instruct: 128K context
+
+  // -------------------
+  // GPT-OSS / Llama & Mistral examples
+  // -------------------
   [/^gpt-oss.*$/, LIMITS['128k']],
-  [/^llama-4-scout.*$/, LIMITS['10m'] as unknown as TokenCount], // ultra-long variants - handle carefully
+  [/^llama-4-scout.*$/, LIMITS['10m']],
   [/^mistral-large-2.*$/, LIMITS['128k']],
 ];
 
@@ -179,8 +198,8 @@ const OUTPUT_PATTERNS: Array<[RegExp, TokenCount]> = [
   // Generic coder-model: same as qwen3-coder-plus (64K max output tokens)
   [/^coder-model$/, LIMITS['64k']],
 
-  // Qwen3-Max-Preview: 65,536 max output tokens
-  [/^qwen3-max-preview(-.*)?$/, LIMITS['64k']],
+  // Qwen3-Max: 65,536 max output tokens
+  [/^qwen3-max(-preview)?(-.*)?$/, LIMITS['64k']],
 
   // Qwen-VL-Max-Latest: 8,192 max output tokens
   [/^qwen-vl-max-latest$/, LIMITS['8k']],
@@ -190,6 +209,12 @@ const OUTPUT_PATTERNS: Array<[RegExp, TokenCount]> = [
 
   // Qwen3-VL-Plus: 32K max output tokens
   [/^qwen3-vl-plus$/, LIMITS['32k']],
+
+  // Deepseek-chat: 8k max tokens
+  [/^deepseek-chat$/, LIMITS['8k']],
+
+  // Deepseek-reasoner: 64k max tokens
+  [/^deepseek-reasoner$/, LIMITS['64k']],
 ];
 
 /**

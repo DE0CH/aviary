@@ -58,9 +58,35 @@ describe('normalize', () => {
     expect(normalize('gemini-2.0-flash-preview')).toBe('gemini-2.0-flash');
   });
 
-  it('should remove version numbers with dots when they are at the end', () => {
-    expect(normalize('gpt-4.1.1-latest')).toBe('gpt-4.1.1');
+  it('should not remove "-latest" from specific Qwen model names', () => {
+    expect(normalize('qwen-plus-latest')).toBe('qwen-plus-latest');
+    expect(normalize('qwen-flash-latest')).toBe('qwen-flash-latest');
+    expect(normalize('qwen-vl-max-latest')).toBe('qwen-vl-max-latest');
+  });
+
+  it('should preserve date suffixes for Kimi K2 models', () => {
+    expect(normalize('kimi-k2-0905-preview')).toBe('kimi-k2-0905');
+    expect(normalize('kimi-k2-0711-preview')).toBe('kimi-k2-0711');
+    expect(normalize('kimi-k2-turbo-preview')).toBe('kimi-k2-turbo');
+  });
+
+  it('should remove date like suffixes', () => {
+    expect(normalize('deepseek-r1-0528')).toBe('deepseek-r1');
+  });
+
+  it('should remove literal "-latest" "-exp" suffixes', () => {
     expect(normalize('gpt-4.1-latest')).toBe('gpt-4.1');
+    expect(normalize('deepseek-v3.2-exp')).toBe('deepseek-v3.2');
+  });
+
+  it('should remove suffix version numbers with "v" prefix', () => {
+    expect(normalize('model-test-v1.1')).toBe('model-test');
+    expect(normalize('model-v1.1')).toBe('model');
+  });
+
+  it('should remove suffix version numbers w/o "v" prefix only if they are preceded by another dash', () => {
+    expect(normalize('model-test-1.1')).toBe('model-test');
+    expect(normalize('gpt-4.1')).toBe('gpt-4.1');
   });
 });
 
@@ -188,9 +214,12 @@ describe('tokenLimit', () => {
     it('should return the correct limit for glm-4.5', () => {
       expect(tokenLimit('glm-4.5')).toBe(131072);
     });
+    it('should return the correct limit for glm-4.6', () => {
+      expect(tokenLimit('glm-4.6')).toBe(202752);
+    });
   });
 
-  describe('Other models', () => {
+  describe('DeepSeek', () => {
     it('should return the correct limit for deepseek-r1', () => {
       expect(tokenLimit('deepseek-r1')).toBe(131072);
     });
@@ -200,9 +229,30 @@ describe('tokenLimit', () => {
     it('should return the correct limit for deepseek-v3.1', () => {
       expect(tokenLimit('deepseek-v3.1')).toBe(131072);
     });
-    it('should return the correct limit for kimi-k2-instruct', () => {
-      expect(tokenLimit('kimi-k2-instruct')).toBe(131072);
+    it('should return the correct limit for deepseek-v3.2', () => {
+      expect(tokenLimit('deepseek-v3.2-exp')).toBe(131072);
     });
+  });
+
+  describe('Moonshot Kimi', () => {
+    it('should return the correct limit for kimi-k2-0905-preview', () => {
+      expect(tokenLimit('kimi-k2-0905-preview')).toBe(262144); // 256K
+      expect(tokenLimit('kimi-k2-0905')).toBe(262144);
+    });
+    it('should return the correct limit for kimi-k2-turbo-preview', () => {
+      expect(tokenLimit('kimi-k2-turbo-preview')).toBe(262144); // 256K
+      expect(tokenLimit('kimi-k2-turbo')).toBe(262144);
+    });
+    it('should return the correct limit for kimi-k2-0711-preview', () => {
+      expect(tokenLimit('kimi-k2-0711-preview')).toBe(131072); // 128K
+      expect(tokenLimit('kimi-k2-0711')).toBe(131072);
+    });
+    it('should return the correct limit for kimi-k2-instruct', () => {
+      expect(tokenLimit('kimi-k2-instruct')).toBe(131072); // 128K
+    });
+  });
+
+  describe('Other models', () => {
     it('should return the correct limit for gpt-oss', () => {
       expect(tokenLimit('gpt-oss')).toBe(131072);
     });

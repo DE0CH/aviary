@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AuthType } from '@qwen-code/qwen-code-core';
 import type {
   SlashCommand,
   CommandContext,
@@ -12,30 +11,14 @@ import type {
   MessageActionReturn,
 } from './types.js';
 import { CommandKind } from './types.js';
-import {
-  AVAILABLE_MODELS_QWEN,
-  getOpenAIAvailableModelFromEnv,
-  type AvailableModel,
-} from '../models/availableModels.js';
-
-function getAvailableModelsForAuthType(authType: AuthType): AvailableModel[] {
-  switch (authType) {
-    case AuthType.QWEN_OAUTH:
-      return AVAILABLE_MODELS_QWEN;
-    case AuthType.USE_OPENAI: {
-      const openAIModel = getOpenAIAvailableModelFromEnv();
-      return openAIModel ? [openAIModel] : [];
-    }
-    default:
-      // For other auth types, return empty array for now
-      // This can be expanded later according to the design doc
-      return [];
-  }
-}
+import { getAvailableModelsForAuthType } from '../models/availableModels.js';
+import { t } from '../../i18n/index.js';
 
 export const modelCommand: SlashCommand = {
   name: 'model',
-  description: 'Switch the model for this session',
+  get description() {
+    return t('Switch the model for this session');
+  },
   kind: CommandKind.BUILT_IN,
   action: async (
     context: CommandContext,
@@ -56,7 +39,7 @@ export const modelCommand: SlashCommand = {
       return {
         type: 'message',
         messageType: 'error',
-        content: 'Content generator configuration not available.',
+        content: t('Content generator configuration not available.'),
       };
     }
 
@@ -65,7 +48,7 @@ export const modelCommand: SlashCommand = {
       return {
         type: 'message',
         messageType: 'error',
-        content: 'Authentication type not available.',
+        content: t('Authentication type not available.'),
       };
     }
 
@@ -75,7 +58,12 @@ export const modelCommand: SlashCommand = {
       return {
         type: 'message',
         messageType: 'error',
-        content: `No models available for the current authentication type (${authType}).`,
+        content: t(
+          'No models available for the current authentication type ({{authType}}).',
+          {
+            authType,
+          },
+        ),
       };
     }
 

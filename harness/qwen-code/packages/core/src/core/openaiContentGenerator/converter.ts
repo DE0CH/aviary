@@ -24,6 +24,33 @@ import { safeJsonParse } from '../../utils/safeJsonParse.js';
 import { StreamingToolCallParser } from './streamingToolCallParser.js';
 
 /**
+ * Extended usage type that supports both OpenAI standard format and alternative formats
+ * Some models return cached_tokens at the top level instead of in prompt_tokens_details
+ */
+interface ExtendedCompletionUsage extends OpenAI.CompletionUsage {
+  cached_tokens?: number;
+}
+
+interface ExtendedChatCompletionAssistantMessageParam
+  extends OpenAI.Chat.ChatCompletionAssistantMessageParam {
+  reasoning_content?: string | null;
+}
+
+type ExtendedChatCompletionMessageParam =
+  | OpenAI.Chat.ChatCompletionMessageParam
+  | ExtendedChatCompletionAssistantMessageParam;
+
+export interface ExtendedCompletionMessage
+  extends OpenAI.Chat.ChatCompletionMessage {
+  reasoning_content?: string | null;
+}
+
+export interface ExtendedCompletionChunkDelta
+  extends OpenAI.Chat.ChatCompletionChunk.Choice.Delta {
+  reasoning_content?: string | null;
+}
+
+/**
  * Tool call accumulator for streaming responses
  */
 export interface ToolCallAccumulator {
@@ -36,7 +63,8 @@ export interface ToolCallAccumulator {
  * Parsed parts from Gemini content, categorized by type
  */
 interface ParsedParts {
-  textParts: string[];
+  thoughtParts: string[];
+  contentParts: string[];
   functionCalls: FunctionCall[];
   functionResponses: FunctionResponse[];
   mediaParts: Array<{
@@ -165,13 +193,11 @@ export class OpenAIContentConverter {
             // Handle both Gemini tools (parameters) and MCP tools (parametersJsonSchema)
             if (func.parametersJsonSchema) {
               // MCP tool format - use parametersJsonSchema directly
-              if (func.parametersJsonSchema) {
-                // Create a shallow copy to avoid mutating the original object
-                const paramsCopy = {
-                  ...(func.parametersJsonSchema as Record<string, unknown>),
-                };
-                parameters = paramsCopy;
-              }
+              // Create a shallow copy to avoid mutating the original object
+              const paramsCopy = {
+                ...(func.parametersJsonSchema as Record<string, unknown>),
+              };
+              parameters = paramsCopy;
             } else if (func.parameters) {
               // Gemini tool format - convert parameters to OpenAI format
               parameters = this.convertGeminiToolParametersToOpenAI(
@@ -243,7 +269,7 @@ export class OpenAIContentConverter {
    */
   private processContents(
     contents: ContentListUnion,
-    messages: OpenAI.Chat.ChatCompletionMessageParam[],
+    messages: ExtendedChatCompletionMessageParam[],
   ): void {
     if (Array.isArray(contents)) {
       for (const content of contents) {
@@ -259,7 +285,7 @@ export class OpenAIContentConverter {
    */
   private processContent(
     content: ContentUnion | PartUnion,
-    messages: OpenAI.Chat.ChatCompletionMessageParam[],
+    messages: ExtendedChatCompletionMessageParam[],
   ): void {
     if (typeof content === 'string') {
       messages.push({ role: 'user' as const, content });
@@ -276,10 +302,7 @@ export class OpenAIContentConverter {
         messages.push({
           role: 'tool' as const,
           tool_call_id: funcResponse.id || '',
-          content:
-            typeof funcResponse.response === 'string'
-              ? funcResponse.response
-              : JSON.stringify(funcResponse.response),
+          content: this.extractFunctionResponseContent(funcResponse.response),
         });
       }
       return;
@@ -296,11 +319,19 @@ export class OpenAIContentConverter {
         },
       }));
 
-      messages.push({
+      const assistantMessage: ExtendedChatCompletionAssistantMessageParam = {
         role: 'assistant' as const,
-        content: parsedParts.textParts.join('') || null,
+        content: parsedParts.contentParts.join('') || null,
         tool_calls: toolCalls,
-      });
+      };
+
+      // Only include reasoning_content if it has actual content
+      const reasoningContent = parsedParts.thoughtParts.join('');
+      if (reasoningContent) {
+        assistantMessage.reasoning_content = reasoningContent;
+      }
+
+      messages.push(assistantMessage);
       return;
     }
 
@@ -317,7 +348,8 @@ export class OpenAIContentConverter {
    * Parse Gemini parts into categorized components
    */
   private parseParts(parts: Part[]): ParsedParts {
-    const textParts: string[] = [];
+    const thoughtParts: string[] = [];
+    const contentParts: string[] = [];
     const functionCalls: FunctionCall[] = [];
     const functionResponses: FunctionResponse[] = [];
     const mediaParts: Array<{
@@ -329,9 +361,20 @@ export class OpenAIContentConverter {
 
     for (const part of parts) {
       if (typeof part === 'string') {
-        textParts.push(part);
-      } else if ('text' in part && part.text) {
-        textParts.push(part.text);
+        contentParts.push(part);
+      } else if (
+        'text' in part &&
+        part.text &&
+        !('thought' in part && part.thought)
+      ) {
+        contentParts.push(part.text);
+      } else if (
+        'text' in part &&
+        part.text &&
+        'thought' in part &&
+        part.thought
+      ) {
+        thoughtParts.push(part.text);
       } else if ('functionCall' in part && part.functionCall) {
         functionCalls.push(part.functionCall);
       } else if ('functionResponse' in part && part.functionResponse) {
@@ -356,7 +399,43 @@ export class OpenAIContentConverter {
       }
     }
 
-    return { textParts, functionCalls, functionResponses, mediaParts };
+    return {
+      thoughtParts,
+      contentParts,
+      functionCalls,
+      functionResponses,
+      mediaParts,
+    };
+  }
+
+  private extractFunctionResponseContent(response: unknown): string {
+    if (response === null || response === undefined) {
+      return '';
+    }
+
+    if (typeof response === 'string') {
+      return response;
+    }
+
+    if (typeof response === 'object') {
+      const responseObject = response as Record<string, unknown>;
+      const output = responseObject['output'];
+      if (typeof output === 'string') {
+        return output;
+      }
+
+      const error = responseObject['error'];
+      if (typeof error === 'string') {
+        return error;
+      }
+    }
+
+    try {
+      const serialized = JSON.stringify(response);
+      return serialized ?? String(response);
+    } catch {
+      return String(response);
+    }
   }
 
   /**
@@ -373,14 +452,29 @@ export class OpenAIContentConverter {
    */
   private createMultimodalMessage(
     role: 'user' | 'assistant',
-    parsedParts: Pick<ParsedParts, 'textParts' | 'mediaParts'>,
-  ): OpenAI.Chat.ChatCompletionMessageParam | null {
-    const { textParts, mediaParts } = parsedParts;
-    const content = textParts.map((text) => ({ type: 'text' as const, text }));
+    parsedParts: Pick<
+      ParsedParts,
+      'contentParts' | 'mediaParts' | 'thoughtParts'
+    >,
+  ): ExtendedChatCompletionMessageParam | null {
+    const { contentParts, mediaParts, thoughtParts } = parsedParts;
+    const reasoningContent = thoughtParts.join('');
+    const content = contentParts.map((text) => ({
+      type: 'text' as const,
+      text,
+    }));
 
     // If no media parts, return simple text message
     if (mediaParts.length === 0) {
-      return content.length > 0 ? { role, content } : null;
+      if (content.length === 0) return null;
+      const message: ExtendedChatCompletionMessageParam = { role, content };
+      // Only include reasoning_content if it has actual content
+      if (reasoningContent) {
+        (
+          message as ExtendedChatCompletionAssistantMessageParam
+        ).reasoning_content = reasoningContent;
+      }
+      return message;
     }
 
     // For assistant messages with media, convert to text only
@@ -501,6 +595,13 @@ export class OpenAIContentConverter {
 
     const parts: Part[] = [];
 
+    // Handle reasoning content (thoughts)
+    const reasoningText = (choice.message as ExtendedCompletionMessage)
+      .reasoning_content;
+    if (reasoningText) {
+      parts.push({ text: reasoningText, thought: true });
+    }
+
     // Handle text content
     if (choice.message.content) {
       parts.push({ text: choice.message.content });
@@ -555,7 +656,13 @@ export class OpenAIContentConverter {
       const promptTokens = usage.prompt_tokens || 0;
       const completionTokens = usage.completion_tokens || 0;
       const totalTokens = usage.total_tokens || 0;
-      const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
+      // Support both formats: prompt_tokens_details.cached_tokens (OpenAI standard)
+      // and cached_tokens (some models return it at top level)
+      const extendedUsage = usage as ExtendedCompletionUsage;
+      const cachedTokens =
+        usage.prompt_tokens_details?.cached_tokens ??
+        extendedUsage.cached_tokens ??
+        0;
 
       // If we only have total tokens but no breakdown, estimate the split
       // Typically input is ~70% and output is ~30% for most conversations
@@ -590,6 +697,12 @@ export class OpenAIContentConverter {
 
     if (choice) {
       const parts: Part[] = [];
+
+      const reasoningText = (choice.delta as ExtendedCompletionChunkDelta)
+        .reasoning_content;
+      if (reasoningText) {
+        parts.push({ text: reasoningText, thought: true });
+      }
 
       // Handle text content
       if (choice.delta?.content) {
@@ -680,7 +793,15 @@ export class OpenAIContentConverter {
       const promptTokens = usage.prompt_tokens || 0;
       const completionTokens = usage.completion_tokens || 0;
       const totalTokens = usage.total_tokens || 0;
-      const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
+      const thinkingTokens =
+        usage.completion_tokens_details?.reasoning_tokens || 0;
+      // Support both formats: prompt_tokens_details.cached_tokens (OpenAI standard)
+      // and cached_tokens (some models return it at top level)
+      const extendedUsage = usage as ExtendedCompletionUsage;
+      const cachedTokens =
+        usage.prompt_tokens_details?.cached_tokens ??
+        extendedUsage.cached_tokens ??
+        0;
 
       // If we only have total tokens but no breakdown, estimate the split
       // Typically input is ~70% and output is ~30% for most conversations
@@ -696,6 +817,7 @@ export class OpenAIContentConverter {
       response.usageMetadata = {
         promptTokenCount: finalPromptTokens,
         candidatesTokenCount: finalCompletionTokens,
+        thoughtsTokenCount: thinkingTokens,
         totalTokenCount: totalTokens,
         cachedContentTokenCount: cachedTokens,
       };

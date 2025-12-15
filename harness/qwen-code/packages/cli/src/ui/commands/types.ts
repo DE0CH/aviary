@@ -4,13 +4,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { Content, PartListUnion } from '@google/genai';
-import type { HistoryItemWithoutId, HistoryItem } from '../types.js';
 import type { Config, GitService, Logger } from '@qwen-code/qwen-code-core';
+import type {
+  HistoryItemWithoutId,
+  HistoryItem,
+  ConfirmationRequest,
+} from '../types.js';
 import type { LoadedSettings } from '../../config/settings.js';
 import type { UseHistoryManagerReturn } from '../hooks/useHistoryManager.js';
 import type { SessionStatsState } from '../contexts/SessionContext.js';
+import type {
+  ExtensionUpdateAction,
+  ExtensionUpdateStatus,
+} from '../state/extensions.js';
 
 // Grouped dependencies for clarity and easier mocking
 export interface CommandContext {
@@ -29,7 +37,7 @@ export interface CommandContext {
     config: Config | null;
     settings: LoadedSettings;
     git: GitService | undefined;
-    logger: Logger;
+    logger: Logger | null;
   };
   // UI state and history management
   ui: {
@@ -56,17 +64,20 @@ export interface CommandContext {
      * @param history The array of history items to load.
      */
     loadHistory: UseHistoryManagerReturn['loadHistory'];
-    /** Toggles a special display mode. */
-    toggleCorgiMode: () => void;
     toggleVimEnabled: () => Promise<boolean>;
     setGeminiMdFileCount: (count: number) => void;
     reloadCommands: () => void;
+    extensionsUpdateState: Map<string, ExtensionUpdateStatus>;
+    dispatchExtensionStateUpdate: (action: ExtensionUpdateAction) => void;
+    addConfirmUpdateExtensionRequest: (value: ConfirmationRequest) => void;
   };
   // Session-specific data
   session: {
     stats: SessionStatsState;
     /** A transient list of shell commands the user has approved for this session. */
     sessionShellAllowlist: Set<string>;
+    /** Reset session metrics and prompt counters for a fresh session. */
+    startNewSession?: (sessionId: string) => void;
   };
   // Flag to indicate if an overwrite has been confirmed
   overwriteConfirmed?: boolean;
@@ -84,12 +95,6 @@ export interface ToolActionReturn {
 /** The return type for a command action that results in the app quitting. */
 export interface QuitActionReturn {
   type: 'quit';
-  messages: HistoryItem[];
-}
-
-/** The return type for a command action that requests quit confirmation. */
-export interface QuitConfirmationActionReturn {
-  type: 'quit_confirmation';
   messages: HistoryItem[];
 }
 
@@ -114,11 +119,12 @@ export interface OpenDialogActionReturn {
     | 'auth'
     | 'theme'
     | 'editor'
-    | 'privacy'
     | 'settings'
     | 'model'
     | 'subagent_create'
-    | 'subagent_list';
+    | 'subagent_list'
+    | 'permissions'
+    | 'approval-mode';
 }
 
 /**
@@ -168,7 +174,6 @@ export type SlashCommandActionReturn =
   | ToolActionReturn
   | MessageActionReturn
   | QuitActionReturn
-  | QuitConfirmationActionReturn
   | OpenDialogActionReturn
   | LoadHistoryActionReturn
   | SubmitPromptActionReturn
@@ -186,6 +191,7 @@ export interface SlashCommand {
   name: string;
   altNames?: string[];
   description: string;
+  hidden?: boolean;
 
   kind: CommandKind;
 
@@ -201,7 +207,7 @@ export interface SlashCommand {
     | SlashCommandActionReturn
     | Promise<void | SlashCommandActionReturn>;
 
-  // Provides argument completion (e.g., completing a tag for `/chat resume <tag>`).
+  // Provides argument completion
   completion?: (
     context: CommandContext,
     partialArg: string,

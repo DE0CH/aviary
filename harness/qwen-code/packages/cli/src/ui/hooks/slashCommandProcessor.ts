@@ -6,26 +6,24 @@
 
 import { useCallback, useMemo, useEffect, useState } from 'react';
 import { type PartListUnion } from '@google/genai';
-import process from 'node:process';
 import type { UseHistoryManagerReturn } from './useHistoryManager.js';
-import type { Config } from '@qwen-code/qwen-code-core';
 import {
+  type Logger,
+  type Config,
   GitService,
-  Logger,
   logSlashCommand,
   makeSlashCommandEvent,
   SlashCommandStatus,
   ToolConfirmationOutcome,
-  Storage,
+  IdeClient,
 } from '@qwen-code/qwen-code-core';
 import { useSessionStats } from '../contexts/SessionContext.js';
-import { formatDuration } from '../utils/formatters.js';
-import { runExitCleanup } from '../../utils/cleanup.js';
 import type {
   Message,
   HistoryItemWithoutId,
-  HistoryItem,
   SlashCommandProcessorResult,
+  HistoryItem,
+  ConfirmationRequest,
 } from '../types.js';
 import { MessageType } from '../types.js';
 import type { LoadedSettings } from '../../config/settings.js';
@@ -34,6 +32,47 @@ import { CommandService } from '../../services/CommandService.js';
 import { BuiltinCommandLoader } from '../../services/BuiltinCommandLoader.js';
 import { FileCommandLoader } from '../../services/FileCommandLoader.js';
 import { McpPromptLoader } from '../../services/McpPromptLoader.js';
+import { parseSlashCommand } from '../../utils/commands.js';
+import {
+  type ExtensionUpdateAction,
+  type ExtensionUpdateStatus,
+} from '../state/extensions.js';
+
+type SerializableHistoryItem = Record<string, unknown>;
+
+function serializeHistoryItemForRecording(
+  item: Omit<HistoryItem, 'id'>,
+): SerializableHistoryItem {
+  const clone: SerializableHistoryItem = { ...item };
+  if ('timestamp' in clone && clone['timestamp'] instanceof Date) {
+    clone['timestamp'] = clone['timestamp'].toISOString();
+  }
+  return clone;
+}
+
+const SLASH_COMMANDS_SKIP_RECORDING = new Set([
+  'quit',
+  'exit',
+  'clear',
+  'reset',
+  'new',
+]);
+
+interface SlashCommandProcessorActions {
+  openAuthDialog: () => void;
+  openThemeDialog: () => void;
+  openEditorDialog: () => void;
+  openSettingsDialog: () => void;
+  openModelDialog: () => void;
+  openPermissionsDialog: () => void;
+  openApprovalModeDialog: () => void;
+  quit: (messages: HistoryItem[]) => void;
+  setDebugMessage: (message: string) => void;
+  dispatchExtensionStateUpdate: (action: ExtensionUpdateAction) => void;
+  addConfirmUpdateExtensionRequest: (request: ConfirmationRequest) => void;
+  openSubagentCreateDialog: () => void;
+  openAgentsManagerDialog: () => void;
+}
 
 /**
  * Hook to define and process slash commands (e.g., /help, /clear).
@@ -45,23 +84,15 @@ export const useSlashCommandProcessor = (
   clearItems: UseHistoryManagerReturn['clearItems'],
   loadHistory: UseHistoryManagerReturn['loadHistory'],
   refreshStatic: () => void,
-  onDebugMessage: (message: string) => void,
-  openThemeDialog: () => void,
-  openAuthDialog: () => void,
-  openEditorDialog: () => void,
-  toggleCorgiMode: () => void,
-  setQuittingMessages: (message: HistoryItem[]) => void,
-  openPrivacyNotice: () => void,
-  openSettingsDialog: () => void,
-  openModelSelectionDialog: () => void,
-  openSubagentCreateDialog: () => void,
-  openAgentsManagerDialog: () => void,
   toggleVimEnabled: () => Promise<boolean>,
   setIsProcessing: (isProcessing: boolean) => void,
   setGeminiMdFileCount: (count: number) => void,
-  _showQuitConfirmation: () => void,
+  actions: SlashCommandProcessorActions,
+  extensionsUpdateState: Map<string, ExtensionUpdateStatus>,
+  isConfigInitialized: boolean,
+  logger: Logger | null,
 ) => {
-  const session = useSessionStats();
+  const { stats: sessionStats, startNewSession } = useSessionStats();
   const [commands, setCommands] = useState<readonly SlashCommand[]>([]);
   const [reloadTrigger, setReloadTrigger] = useState(0);
 
@@ -80,10 +111,6 @@ export const useSlashCommandProcessor = (
     prompt: React.ReactNode;
     onConfirm: (confirmed: boolean) => void;
   }>(null);
-  const [quitConfirmationRequest, setQuitConfirmationRequest] =
-    useState<null | {
-      onConfirm: (shouldQuit: boolean, action?: string) => void;
-    }>(null);
 
   const [sessionShellAllowlist, setSessionShellAllowlist] = useState(
     new Set<string>(),
@@ -95,26 +122,17 @@ export const useSlashCommandProcessor = (
     return new GitService(config.getProjectRoot(), config.storage);
   }, [config]);
 
-  const logger = useMemo(() => {
-    const l = new Logger(
-      config?.getSessionId() || '',
-      config?.storage ?? new Storage(process.cwd()),
-    );
-    // The logger's initialize is async, but we can create the instance
-    // synchronously. Commands that use it will await its initialization.
-    return l;
-  }, [config]);
-
-  const [pendingCompressionItem, setPendingCompressionItem] =
-    useState<HistoryItemWithoutId | null>(null);
+  const [pendingItem, setPendingItem] = useState<HistoryItemWithoutId | null>(
+    null,
+  );
 
   const pendingHistoryItems = useMemo(() => {
     const items: HistoryItemWithoutId[] = [];
-    if (pendingCompressionItem != null) {
-      items.push(pendingCompressionItem);
+    if (pendingItem != null) {
+      items.push(pendingItem);
     }
     return items;
-  }, [pendingCompressionItem]);
+  }, [pendingItem]);
 
   const addMessage = useCallback(
     (message: Message) => {
@@ -123,13 +141,7 @@ export const useSlashCommandProcessor = (
       if (message.type === MessageType.ABOUT) {
         historyItemContent = {
           type: 'about',
-          cliVersion: message.cliVersion,
-          osVersion: message.osVersion,
-          sandboxEnv: message.sandboxEnv,
-          modelVersion: message.modelVersion,
-          selectedAuthType: message.selectedAuthType,
-          gcpProject: message.gcpProject,
-          ideClient: message.ideClient,
+          systemInfo: message.systemInfo,
         };
       } else if (message.type === MessageType.HELP) {
         historyItemContent = {
@@ -152,11 +164,6 @@ export const useSlashCommandProcessor = (
       } else if (message.type === MessageType.QUIT) {
         historyItemContent = {
           type: 'quit',
-          duration: message.duration,
-        };
-      } else if (message.type === MessageType.QUIT_CONFIRMATION) {
-        historyItemContent = {
-          type: 'quit_confirmation',
           duration: message.duration,
         };
       } else if (message.type === MessageType.COMPRESSION) {
@@ -195,17 +202,21 @@ export const useSlashCommandProcessor = (
           refreshStatic();
         },
         loadHistory,
-        setDebugMessage: onDebugMessage,
-        pendingItem: pendingCompressionItem,
-        setPendingItem: setPendingCompressionItem,
-        toggleCorgiMode,
+        setDebugMessage: actions.setDebugMessage,
+        pendingItem,
+        setPendingItem,
         toggleVimEnabled,
         setGeminiMdFileCount,
         reloadCommands,
+        extensionsUpdateState,
+        dispatchExtensionStateUpdate: actions.dispatchExtensionStateUpdate,
+        addConfirmUpdateExtensionRequest:
+          actions.addConfirmUpdateExtensionRequest,
       },
       session: {
-        stats: session.stats,
+        stats: sessionStats,
         sessionShellAllowlist,
+        startNewSession,
       },
     }),
     [
@@ -217,15 +228,16 @@ export const useSlashCommandProcessor = (
       addItem,
       clearItems,
       refreshStatic,
-      session.stats,
-      onDebugMessage,
-      pendingCompressionItem,
-      setPendingCompressionItem,
-      toggleCorgiMode,
+      sessionStats,
+      startNewSession,
+      actions,
+      pendingItem,
+      setPendingItem,
       toggleVimEnabled,
       sessionShellAllowlist,
       setGeminiMdFileCount,
       reloadCommands,
+      extensionsUpdateState,
     ],
   );
 
@@ -234,15 +246,20 @@ export const useSlashCommandProcessor = (
       return;
     }
 
-    const ideClient = config.getIdeClient();
     const listener = () => {
       reloadCommands();
     };
 
-    ideClient.addStatusChangeListener(listener);
+    (async () => {
+      const ideClient = await IdeClient.getInstance();
+      ideClient.addStatusChangeListener(listener);
+    })();
 
     return () => {
-      ideClient.removeStatusChangeListener(listener);
+      (async () => {
+        const ideClient = await IdeClient.getInstance();
+        ideClient.removeStatusChangeListener(listener);
+      })();
     };
   }, [config, reloadCommands]);
 
@@ -266,7 +283,7 @@ export const useSlashCommandProcessor = (
     return () => {
       controller.abort();
     };
-  }, [config, reloadTrigger]);
+  }, [config, reloadTrigger, isConfigInitialized]);
 
   const handleSlashCommand = useCallback(
     async (
@@ -283,52 +300,33 @@ export const useSlashCommandProcessor = (
         return false;
       }
 
+      const recordedItems: Array<Omit<HistoryItem, 'id'>> = [];
+      const recordItem = (item: Omit<HistoryItem, 'id'>) => {
+        recordedItems.push(item);
+      };
+      const addItemWithRecording: UseHistoryManagerReturn['addItem'] = (
+        item,
+        timestamp,
+      ) => {
+        recordItem(item);
+        return addItem(item, timestamp);
+      };
+
       setIsProcessing(true);
 
       const userMessageTimestamp = Date.now();
-      addItem({ type: MessageType.USER, text: trimmed }, userMessageTimestamp);
+      addItemWithRecording(
+        { type: MessageType.USER, text: trimmed },
+        userMessageTimestamp,
+      );
 
-      const parts = trimmed.substring(1).trim().split(/\s+/);
-      const commandPath = parts.filter((p) => p); // The parts of the command, e.g., ['memory', 'add']
-
-      let currentCommands = commands;
-      let commandToExecute: SlashCommand | undefined;
-      let pathIndex = 0;
       let hasError = false;
-      const canonicalPath: string[] = [];
+      const {
+        commandToExecute,
+        args,
+        canonicalPath: resolvedCommandPath,
+      } = parseSlashCommand(trimmed, commands);
 
-      for (const part of commandPath) {
-        // TODO: For better performance and architectural clarity, this two-pass
-        // search could be replaced. A more optimal approach would be to
-        // pre-compute a single lookup map in `CommandService.ts` that resolves
-        // all name and alias conflicts during the initial loading phase. The
-        // processor would then perform a single, fast lookup on that map.
-
-        // First pass: check for an exact match on the primary command name.
-        let foundCommand = currentCommands.find((cmd) => cmd.name === part);
-
-        // Second pass: if no primary name matches, check for an alias.
-        if (!foundCommand) {
-          foundCommand = currentCommands.find((cmd) =>
-            cmd.altNames?.includes(part),
-          );
-        }
-
-        if (foundCommand) {
-          commandToExecute = foundCommand;
-          canonicalPath.push(foundCommand.name);
-          pathIndex++;
-          if (foundCommand.subCommands) {
-            currentCommands = foundCommand.subCommands;
-          } else {
-            break;
-          }
-        } else {
-          break;
-        }
-      }
-
-      const resolvedCommandPath = canonicalPath;
       const subcommand =
         resolvedCommandPath.length > 1
           ? resolvedCommandPath.slice(1).join(' ')
@@ -336,11 +334,13 @@ export const useSlashCommandProcessor = (
 
       try {
         if (commandToExecute) {
-          const args = parts.slice(pathIndex).join(' ');
-
           if (commandToExecute.action) {
             const fullCommandContext: CommandContext = {
               ...commandContext,
+              ui: {
+                ...commandContext.ui,
+                addItem: addItemWithRecording,
+              },
               invocation: {
                 raw: trimmed,
                 name: commandToExecute.name,
@@ -391,28 +391,31 @@ export const useSlashCommandProcessor = (
                 case 'dialog':
                   switch (result.dialog) {
                     case 'auth':
-                      openAuthDialog();
+                      actions.openAuthDialog();
                       return { type: 'handled' };
                     case 'theme':
-                      openThemeDialog();
+                      actions.openThemeDialog();
                       return { type: 'handled' };
                     case 'editor':
-                      openEditorDialog();
-                      return { type: 'handled' };
-                    case 'privacy':
-                      openPrivacyNotice();
+                      actions.openEditorDialog();
                       return { type: 'handled' };
                     case 'settings':
-                      openSettingsDialog();
+                      actions.openSettingsDialog();
                       return { type: 'handled' };
                     case 'model':
-                      openModelSelectionDialog();
+                      actions.openModelDialog();
+                      return { type: 'handled' };
+                    case 'permissions':
+                      actions.openPermissionsDialog();
                       return { type: 'handled' };
                     case 'subagent_create':
-                      openSubagentCreateDialog();
+                      actions.openSubagentCreateDialog();
                       return { type: 'handled' };
                     case 'subagent_list':
-                      openAgentsManagerDialog();
+                      actions.openAgentsManagerDialog();
+                      return { type: 'handled' };
+                    case 'approval-mode':
+                      actions.openApprovalModeDialog();
                       return { type: 'handled' };
                     case 'help':
                       return { type: 'handled' };
@@ -424,94 +427,17 @@ export const useSlashCommandProcessor = (
                     }
                   }
                 case 'load_history': {
-                  await config
-                    ?.getGeminiClient()
-                    ?.setHistory(result.clientHistory);
+                  config?.getGeminiClient()?.setHistory(result.clientHistory);
+                  config?.getGeminiClient()?.stripThoughtsFromHistory();
                   fullCommandContext.ui.clear();
                   result.history.forEach((item, index) => {
                     fullCommandContext.ui.addItem(item, index);
                   });
                   return { type: 'handled' };
                 }
-                case 'quit_confirmation':
-                  // Show quit confirmation dialog instead of immediately quitting
-                  setQuitConfirmationRequest({
-                    onConfirm: (shouldQuit: boolean, action?: string) => {
-                      setQuitConfirmationRequest(null);
-                      if (!shouldQuit) {
-                        // User cancelled the quit operation - do nothing
-                        return;
-                      }
-                      if (shouldQuit) {
-                        if (action === 'save_and_quit') {
-                          // First save conversation with auto-generated tag, then quit
-                          const timestamp = new Date()
-                            .toISOString()
-                            .replace(/[:.]/g, '-');
-                          const autoSaveTag = `auto-save chat ${timestamp}`;
-                          handleSlashCommand(`/chat save "${autoSaveTag}"`);
-                          setTimeout(() => handleSlashCommand('/quit'), 100);
-                        } else if (action === 'summary_and_quit') {
-                          // Generate summary and then quit
-                          handleSlashCommand('/summary')
-                            .then(() => {
-                              // Wait for user to see the summary result
-                              setTimeout(() => {
-                                handleSlashCommand('/quit');
-                              }, 1200);
-                            })
-                            .catch((error) => {
-                              // If summary fails, still quit but show error
-                              addItem(
-                                {
-                                  type: 'error',
-                                  text: `Failed to generate summary before quit: ${
-                                    error instanceof Error
-                                      ? error.message
-                                      : String(error)
-                                  }`,
-                                },
-                                Date.now(),
-                              );
-                              // Give user time to see the error message
-                              setTimeout(() => {
-                                handleSlashCommand('/quit');
-                              }, 1000);
-                            });
-                        } else {
-                          // Just quit immediately - trigger the actual quit action
-                          const now = Date.now();
-                          const { sessionStartTime } = session.stats;
-                          const wallDuration = now - sessionStartTime.getTime();
-
-                          setQuittingMessages([
-                            {
-                              type: 'user',
-                              text: `/quit`,
-                              id: now - 1,
-                            },
-                            {
-                              type: 'quit',
-                              duration: formatDuration(wallDuration),
-                              id: now,
-                            },
-                          ]);
-                          setTimeout(async () => {
-                            await runExitCleanup();
-                            process.exit(0);
-                          }, 100);
-                        }
-                      }
-                    },
-                  });
-                  return { type: 'handled' };
 
                 case 'quit':
-                  setQuittingMessages(result.messages);
-                  setTimeout(async () => {
-                    await runExitCleanup();
-                    process.exit(0);
-                  }, 100);
+                  actions.quit(result.messages);
                   return { type: 'handled' };
 
                 case 'submit_prompt':
@@ -573,7 +499,7 @@ export const useSlashCommandProcessor = (
                   });
 
                   if (!confirmed) {
-                    addItem(
+                    addItemWithRecording(
                       {
                         type: MessageType.INFO,
                         text: 'Operation cancelled.',
@@ -629,7 +555,7 @@ export const useSlashCommandProcessor = (
           });
           logSlashCommand(config, event);
         }
-        addItem(
+        addItemWithRecording(
           {
             type: MessageType.ERROR,
             text: e instanceof Error ? e.message : String(e),
@@ -638,6 +564,38 @@ export const useSlashCommandProcessor = (
         );
         return { type: 'handled' };
       } finally {
+        if (config?.getChatRecordingService) {
+          const chatRecorder = config.getChatRecordingService();
+          const primaryCommand =
+            resolvedCommandPath[0] ||
+            trimmed.replace(/^[/?]/, '').split(/\s+/)[0] ||
+            trimmed;
+          const shouldRecord =
+            !SLASH_COMMANDS_SKIP_RECORDING.has(primaryCommand);
+          try {
+            if (shouldRecord) {
+              chatRecorder?.recordSlashCommand({
+                phase: 'invocation',
+                rawCommand: trimmed,
+              });
+              const outputItems = recordedItems
+                .filter((item) => item.type !== 'user')
+                .map(serializeHistoryItemForRecording);
+              chatRecorder?.recordSlashCommand({
+                phase: 'result',
+                rawCommand: trimmed,
+                outputHistoryItems: outputItems,
+              });
+            }
+          } catch (recordError) {
+            if (config.getDebugMode()) {
+              console.error(
+                '[slashCommand] Failed to record slash command:',
+                recordError,
+              );
+            }
+          }
+        }
         if (config && resolvedCommandPath[0] && !hasError) {
           const event = makeSlashCommandEvent({
             command: resolvedCommandPath[0],
@@ -652,23 +610,14 @@ export const useSlashCommandProcessor = (
     [
       config,
       addItem,
-      openAuthDialog,
+      actions,
       commands,
       commandContext,
       addMessage,
-      openThemeDialog,
-      openPrivacyNotice,
-      openEditorDialog,
-      setQuittingMessages,
-      openSettingsDialog,
-      openSubagentCreateDialog,
-      openAgentsManagerDialog,
       setShellConfirmationRequest,
       setSessionShellAllowlist,
       setIsProcessing,
       setConfirmationRequest,
-      openModelSelectionDialog,
-      session.stats,
     ],
   );
 
@@ -679,6 +628,5 @@ export const useSlashCommandProcessor = (
     commandContext,
     shellConfirmationRequest,
     confirmationRequest,
-    quitConfirmationRequest,
   };
 };

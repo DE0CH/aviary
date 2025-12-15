@@ -6,8 +6,9 @@
 
 import type React from 'react';
 import { Box, Text } from 'ink';
-import { Colors } from '../colors.js';
-import type { SlashCommand } from '../commands/types.js';
+import { theme } from '../semantic-colors.js';
+import { type SlashCommand, CommandKind } from '../commands/types.js';
+import { t } from '../../i18n/index.js';
 
 interface Help {
   commands: readonly SlashCommand[];
@@ -17,152 +18,170 @@ export const Help: React.FC<Help> = ({ commands }) => (
   <Box
     flexDirection="column"
     marginBottom={1}
-    borderColor={Colors.Gray}
+    borderColor={theme.border.default}
     borderStyle="round"
     padding={1}
   >
     {/* Basics */}
-    <Text bold color={Colors.Foreground}>
-      Basics:
+    <Text bold color={theme.text.primary}>
+      {t('Basics:')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
-        Add context
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
+        {t('Add context')}
       </Text>
-      : Use{' '}
-      <Text bold color={Colors.AccentPurple}>
-        @
-      </Text>{' '}
-      to specify files for context (e.g.,{' '}
-      <Text bold color={Colors.AccentPurple}>
-        @src/myFile.ts
-      </Text>
-      ) to target specific files or folders.
+      :{' '}
+      {t(
+        'Use {{symbol}} to specify files for context (e.g., {{example}}) to target specific files or folders.',
+        {
+          symbol: t('@'),
+          example: t('@src/myFile.ts'),
+        },
+      )}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
-        Shell mode
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
+        {t('Shell mode')}
       </Text>
-      : Execute shell commands via{' '}
-      <Text bold color={Colors.AccentPurple}>
-        !
-      </Text>{' '}
-      (e.g.,{' '}
-      <Text bold color={Colors.AccentPurple}>
-        !npm run start
-      </Text>
-      ) or use natural language (e.g.{' '}
-      <Text bold color={Colors.AccentPurple}>
-        start server
-      </Text>
-      ).
+      :{' '}
+      {t(
+        'Execute shell commands via {{symbol}} (e.g., {{example1}}) or use natural language (e.g., {{example2}}).',
+        {
+          symbol: t('!'),
+          example1: t('!npm run start'),
+          example2: t('start server'),
+        },
+      )}
     </Text>
 
     <Box height={1} />
 
     {/* Commands */}
-    <Text bold color={Colors.Foreground}>
-      Commands:
+    <Text bold color={theme.text.primary}>
+      {t('Commands:')}
     </Text>
     {commands
-      .filter((command) => command.description)
+      .filter((command) => command.description && !command.hidden)
       .map((command: SlashCommand) => (
         <Box key={command.name} flexDirection="column">
-          <Text color={Colors.Foreground}>
-            <Text bold color={Colors.AccentPurple}>
+          <Text color={theme.text.primary}>
+            <Text bold color={theme.text.accent}>
               {' '}
-              /{command.name}
+              {formatCommandLabel(command, '/')}
             </Text>
+            {command.kind === CommandKind.MCP_PROMPT && (
+              <Text color={theme.text.secondary}> [MCP]</Text>
+            )}
             {command.description && ' - ' + command.description}
           </Text>
           {command.subCommands &&
-            command.subCommands.map((subCommand) => (
-              <Text key={subCommand.name} color={Colors.Foreground}>
-                <Text bold color={Colors.AccentPurple}>
-                  {'   '}
-                  {subCommand.name}
+            command.subCommands
+              .filter((subCommand) => !subCommand.hidden)
+              .map((subCommand) => (
+                <Text key={subCommand.name} color={theme.text.primary}>
+                  <Text bold color={theme.text.accent}>
+                    {'   '}
+                    {formatCommandLabel(subCommand)}
+                  </Text>
+                  {subCommand.description && ' - ' + subCommand.description}
                 </Text>
-                {subCommand.description && ' - ' + subCommand.description}
-              </Text>
-            ))}
+              ))}
         </Box>
       ))}
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         {' '}
         !{' '}
       </Text>
-      - shell command
+      - {t('shell command')}
+    </Text>
+    <Text color={theme.text.primary}>
+      <Text color={theme.text.secondary}>[MCP]</Text> -{' '}
+      {t('Model Context Protocol command (from external servers)')}
     </Text>
 
     <Box height={1} />
 
     {/* Shortcuts */}
-    <Text bold color={Colors.Foreground}>
-      Keyboard Shortcuts:
+    <Text bold color={theme.text.primary}>
+      {t('Keyboard Shortcuts:')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Alt+Left/Right
       </Text>{' '}
-      - Jump through words in the input
+      - {t('Jump through words in the input')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Ctrl+C
       </Text>{' '}
-      - Close dialogs, cancel requests, or quit application
+      - {t('Close dialogs, cancel requests, or quit application')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         {process.platform === 'win32' ? 'Ctrl+Enter' : 'Ctrl+J'}
       </Text>{' '}
+      -{' '}
       {process.platform === 'linux'
-        ? '- New line (Alt+Enter works for certain linux distros)'
-        : '- New line'}
+        ? t('New line (Alt+Enter works for certain linux distros)')
+        : t('New line')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Ctrl+L
       </Text>{' '}
-      - Clear the screen
+      - {t('Clear the screen')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         {process.platform === 'darwin' ? 'Ctrl+X / Meta+Enter' : 'Ctrl+X'}
       </Text>{' '}
-      - Open input in external editor
+      - {t('Open input in external editor')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Enter
       </Text>{' '}
-      - Send message
+      - {t('Send message')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Esc
       </Text>{' '}
-      - Cancel operation / Clear input (double press)
+      - {t('Cancel operation / Clear input (double press)')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Shift+Tab
       </Text>{' '}
-      - Cycle approval modes
+      - {t('Cycle approval modes')}
     </Text>
-    <Text color={Colors.Foreground}>
-      <Text bold color={Colors.AccentPurple}>
+    <Text color={theme.text.primary}>
+      <Text bold color={theme.text.accent}>
         Up/Down
       </Text>{' '}
-      - Cycle through your prompt history
+      - {t('Cycle through your prompt history')}
     </Text>
     <Box height={1} />
-    <Text color={Colors.Foreground}>
-      For a full list of shortcuts, see{' '}
-      <Text bold color={Colors.AccentPurple}>
-        docs/keyboard-shortcuts.md
-      </Text>
+    <Text color={theme.text.primary}>
+      {t('For a full list of shortcuts, see {{docPath}}', {
+        docPath: t('docs/keyboard-shortcuts.md'),
+      })}
     </Text>
   </Box>
 );
+
+/**
+ * Builds a display label for a slash command, including any alternate names.
+ */
+function formatCommandLabel(command: SlashCommand, prefix = ''): string {
+  const altNames = command.altNames?.filter(Boolean);
+  const baseLabel = `${prefix}${command.name}`;
+
+  if (!altNames || altNames.length === 0) {
+    return baseLabel;
+  }
+
+  return `${baseLabel} (${altNames.join(', ')})`;
+}

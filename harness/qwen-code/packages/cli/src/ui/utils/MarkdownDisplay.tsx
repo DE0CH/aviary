@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { Text, Box } from 'ink';
-import { Colors } from '../colors.js';
+import { theme } from '../semantic-colors.js';
 import { colorizeCode } from './CodeColorizer.js';
 import { TableRenderer } from './TableRenderer.js';
 import { RenderInline } from './InlineMarkdownRenderer.js';
@@ -17,6 +17,7 @@ interface MarkdownDisplayProps {
   isPending: boolean;
   availableTerminalHeight?: number;
   terminalWidth: number;
+  textColor?: string;
 }
 
 // Constants for Markdown parsing and rendering
@@ -31,10 +32,11 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
   isPending,
   availableTerminalHeight,
   terminalWidth,
+  textColor = theme.text.primary,
 }) => {
   if (!text) return <></>;
 
-  const lines = text.split(`\n`);
+  const lines = text.split(/\r?\n/);
   const headerRegex = /^ *(#{1,4}) +(.*)/;
   const codeFenceRegex = /^ *(`{3,}|~{3,}) *(\w*?) *$/;
   const ulItemRegex = /^([ \t]*)([-*+]) +(.*)/;
@@ -116,7 +118,7 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
         addContentBlock(
           <Box key={key}>
             <Text wrap="wrap">
-              <RenderInline text={line} />
+              <RenderInline text={line} textColor={textColor} />
             </Text>
           </Box>,
         );
@@ -155,7 +157,7 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
         addContentBlock(
           <Box key={key}>
             <Text wrap="wrap">
-              <RenderInline text={line} />
+              <RenderInline text={line} textColor={textColor} />
             </Text>
           </Box>,
         );
@@ -173,36 +175,36 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
       switch (level) {
         case 1:
           headerNode = (
-            <Text bold color={Colors.AccentCyan}>
-              <RenderInline text={headerText} />
+            <Text bold color={textColor}>
+              <RenderInline text={headerText} textColor={textColor} />
             </Text>
           );
           break;
         case 2:
           headerNode = (
-            <Text bold color={Colors.AccentBlue}>
-              <RenderInline text={headerText} />
+            <Text bold color={textColor}>
+              <RenderInline text={headerText} textColor={textColor} />
             </Text>
           );
           break;
         case 3:
           headerNode = (
-            <Text bold>
-              <RenderInline text={headerText} />
+            <Text bold color={textColor}>
+              <RenderInline text={headerText} textColor={textColor} />
             </Text>
           );
           break;
         case 4:
           headerNode = (
-            <Text italic color={Colors.Gray}>
-              <RenderInline text={headerText} />
+            <Text italic color={textColor}>
+              <RenderInline text={headerText} textColor={textColor} />
             </Text>
           );
           break;
         default:
           headerNode = (
-            <Text>
-              <RenderInline text={headerText} />
+            <Text color={textColor}>
+              <RenderInline text={headerText} textColor={textColor} />
             </Text>
           );
           break;
@@ -219,6 +221,7 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
           type="ul"
           marker={marker}
           leadingWhitespace={leadingWhitespace}
+          textColor={textColor}
         />,
       );
     } else if (olMatch) {
@@ -232,6 +235,7 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
           type="ol"
           marker={marker}
           leadingWhitespace={leadingWhitespace}
+          textColor={textColor}
         />,
       );
     } else {
@@ -245,8 +249,8 @@ const MarkdownDisplayInternal: React.FC<MarkdownDisplayProps> = ({
       } else {
         addContentBlock(
           <Box key={key}>
-            <Text wrap="wrap">
-              <RenderInline text={line} />
+            <Text wrap="wrap" color={textColor}>
+              <RenderInline text={line} textColor={textColor} />
             </Text>
           </Box>,
         );
@@ -314,7 +318,9 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
         // Not enough space to even show the message meaningfully
         return (
           <Box paddingLeft={CODE_BLOCK_PREFIX_PADDING}>
-            <Text color={Colors.Gray}>... code is being written ...</Text>
+            <Text color={theme.text.secondary}>
+              ... code is being written ...
+            </Text>
           </Box>
         );
       }
@@ -330,7 +336,7 @@ const RenderCodeBlockInternal: React.FC<RenderCodeBlockProps> = ({
       return (
         <Box paddingLeft={CODE_BLOCK_PREFIX_PADDING} flexDirection="column">
           {colorizedTruncatedCode}
-          <Text color={Colors.Gray}>... generating more ...</Text>
+          <Text color={theme.text.secondary}>... generating more ...</Text>
         </Box>
       );
     }
@@ -365,6 +371,7 @@ interface RenderListItemProps {
   type: 'ul' | 'ol';
   marker: string;
   leadingWhitespace?: string;
+  textColor?: string;
 }
 
 const RenderListItemInternal: React.FC<RenderListItemProps> = ({
@@ -372,6 +379,7 @@ const RenderListItemInternal: React.FC<RenderListItemProps> = ({
   type,
   marker,
   leadingWhitespace = '',
+  textColor = theme.text.primary,
 }) => {
   const prefix = type === 'ol' ? `${marker}. ` : `${marker} `;
   const prefixWidth = prefix.length;
@@ -383,11 +391,11 @@ const RenderListItemInternal: React.FC<RenderListItemProps> = ({
       flexDirection="row"
     >
       <Box width={prefixWidth}>
-        <Text>{prefix}</Text>
+        <Text color={textColor}>{prefix}</Text>
       </Box>
       <Box flexGrow={LIST_ITEM_TEXT_FLEX_GROW}>
-        <Text wrap="wrap">
-          <RenderInline text={itemText} />
+        <Text wrap="wrap" color={textColor}>
+          <RenderInline text={itemText} textColor={textColor} />
         </Text>
       </Box>
     </Box>

@@ -13,9 +13,8 @@ import { Config } from '../config/config.js';
 export const DEFAULT_CONFIG_PARAMETERS: ConfigParameters = {
   usageStatisticsEnabled: true,
   debugMode: false,
-  sessionId: 'test-session-id',
   proxy: undefined,
-  model: 'gemini-9001-super-duper',
+  model: 'qwen-9001-super-duper',
   targetDir: '/',
   cwd: '/',
 };

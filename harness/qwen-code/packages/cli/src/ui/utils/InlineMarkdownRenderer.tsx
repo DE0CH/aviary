@@ -6,25 +6,29 @@
 
 import React from 'react';
 import { Text } from 'ink';
-import { Colors } from '../colors.js';
+import { theme } from '../semantic-colors.js';
 import stringWidth from 'string-width';
 
 // Constants for Markdown parsing
 const BOLD_MARKER_LENGTH = 2; // For "**"
 const ITALIC_MARKER_LENGTH = 1; // For "*" or "_"
-const STRIKETHROUGH_MARKER_LENGTH = 2; // For "~~"
+const STRIKETHROUGH_MARKER_LENGTH = 2; // For "~~")
 const INLINE_CODE_MARKER_LENGTH = 1; // For "`"
 const UNDERLINE_TAG_START_LENGTH = 3; // For "<u>"
 const UNDERLINE_TAG_END_LENGTH = 4; // For "</u>"
 
 interface RenderInlineProps {
   text: string;
+  textColor?: string;
 }
 
-const RenderInlineInternal: React.FC<RenderInlineProps> = ({ text }) => {
+const RenderInlineInternal: React.FC<RenderInlineProps> = ({
+  text,
+  textColor = theme.text.primary,
+}) => {
   // Early return for plain text without markdown or URLs
   if (!/[*_~`<[https?:]/.test(text)) {
-    return <Text>{text}</Text>;
+    return <Text color={textColor}>{text}</Text>;
   }
 
   const nodes: React.ReactNode[] = [];
@@ -96,7 +100,7 @@ const RenderInlineInternal: React.FC<RenderInlineProps> = ({ text }) => {
         const codeMatch = fullMatch.match(/^(`+)(.+?)\1$/s);
         if (codeMatch && codeMatch[2]) {
           renderedNode = (
-            <Text key={key} color={Colors.AccentPurple}>
+            <Text key={key} color={theme.text.accent}>
               {codeMatch[2]}
             </Text>
           );
@@ -113,7 +117,7 @@ const RenderInlineInternal: React.FC<RenderInlineProps> = ({ text }) => {
           renderedNode = (
             <Text key={key}>
               {linkText}
-              <Text color={Colors.AccentBlue}> ({url})</Text>
+              <Text color={theme.text.link}> ({url})</Text>
             </Text>
           );
         }
@@ -133,7 +137,7 @@ const RenderInlineInternal: React.FC<RenderInlineProps> = ({ text }) => {
         );
       } else if (fullMatch.match(/^https?:\/\//)) {
         renderedNode = (
-          <Text key={key} color={Colors.AccentBlue}>
+          <Text key={key} color={theme.text.link}>
             {fullMatch}
           </Text>
         );
@@ -168,6 +172,6 @@ export const getPlainTextLength = (text: string): number => {
     .replace(/~~(.*?)~~/g, '$1')
     .replace(/`(.*?)`/g, '$1')
     .replace(/<u>(.*?)<\/u>/g, '$1')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1');
+    .replace(/.*\[(.*?)\]\(.*\)/g, '$1');
   return stringWidth(cleanText);
 };

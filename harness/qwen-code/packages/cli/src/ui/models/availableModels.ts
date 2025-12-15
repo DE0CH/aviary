@@ -4,18 +4,39 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { AuthType, DEFAULT_QWEN_MODEL } from '@qwen-code/qwen-code-core';
+import { t } from '../../i18n/index.js';
+
 export type AvailableModel = {
   id: string;
   label: string;
+  description?: string;
   isVision?: boolean;
 };
 
 export const MAINLINE_VLM = 'vision-model';
-export const MAINLINE_CODER = 'coder-model';
+export const MAINLINE_CODER = DEFAULT_QWEN_MODEL;
 
 export const AVAILABLE_MODELS_QWEN: AvailableModel[] = [
-  { id: MAINLINE_CODER, label: MAINLINE_CODER },
-  { id: MAINLINE_VLM, label: MAINLINE_VLM, isVision: true },
+  {
+    id: MAINLINE_CODER,
+    label: MAINLINE_CODER,
+    get description() {
+      return t(
+        'The latest Qwen Coder model from Alibaba Cloud ModelStudio (version: qwen3-coder-plus-2025-09-23)',
+      );
+    },
+  },
+  {
+    id: MAINLINE_VLM,
+    label: MAINLINE_VLM,
+    get description() {
+      return t(
+        'The latest Qwen Vision model from Alibaba Cloud ModelStudio (version: qwen3-vl-plus-2025-09-23)',
+      );
+    },
+    isVision: true,
+  },
 ];
 
 /**
@@ -37,6 +58,23 @@ export function getFilteredQwenModels(
 export function getOpenAIAvailableModelFromEnv(): AvailableModel | null {
   const id = process.env['OPENAI_MODEL']?.trim();
   return id ? { id, label: id } : null;
+}
+
+export function getAvailableModelsForAuthType(
+  authType: AuthType,
+): AvailableModel[] {
+  switch (authType) {
+    case AuthType.QWEN_OAUTH:
+      return AVAILABLE_MODELS_QWEN;
+    case AuthType.USE_OPENAI: {
+      const openAIModel = getOpenAIAvailableModelFromEnv();
+      return openAIModel ? [openAIModel] : [];
+    }
+    default:
+      // For other auth types, return empty array for now
+      // This can be expanded later according to the design doc
+      return [];
+  }
 }
 
 /**

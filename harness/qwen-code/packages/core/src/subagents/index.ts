@@ -58,13 +58,15 @@ export type {
   SubAgentStartEvent,
   SubAgentRoundEvent,
   SubAgentStreamTextEvent,
+  SubAgentUsageEvent,
   SubAgentToolCallEvent,
   SubAgentToolResultEvent,
   SubAgentFinishEvent,
   SubAgentErrorEvent,
+  SubAgentApprovalRequestEvent,
 } from './subagent-events.js';
 
-export { SubAgentEventEmitter } from './subagent-events.js';
+export { SubAgentEventEmitter, SubAgentEventType } from './subagent-events.js';
 
 // Statistics and formatting
 export type {

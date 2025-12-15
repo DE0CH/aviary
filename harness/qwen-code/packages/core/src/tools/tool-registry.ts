@@ -16,11 +16,13 @@ import type { Config } from '../config/config.js';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { connectAndDiscover } from './mcp-client.js';
+import type { SendSdkMcpMessage } from './mcp-client.js';
 import { McpClientManager } from './mcp-client-manager.js';
 import { DiscoveredMCPTool } from './mcp-tool.js';
 import { parse } from 'shell-quote';
 import { ToolErrorType } from './tool-error.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
+import type { EventEmitter } from 'node:events';
 
 type ToolParams = Record<string, unknown>;
 
@@ -167,11 +169,16 @@ Signal: Signal number or \`(none)\` if no signal was received.
 }
 
 export class ToolRegistry {
+  // The tools keyed by tool name as seen by the LLM.
   private tools: Map<string, AnyDeclarativeTool> = new Map();
   private config: Config;
   private mcpClientManager: McpClientManager;
 
-  constructor(config: Config) {
+  constructor(
+    config: Config,
+    eventEmitter?: EventEmitter,
+    sendSdkMcpMessage?: SendSdkMcpMessage,
+  ) {
     this.config = config;
     this.mcpClientManager = new McpClientManager(
       this.config.getMcpServers() ?? {},
@@ -180,6 +187,8 @@ export class ToolRegistry {
       this.config.getPromptRegistry(),
       this.config.getDebugMode(),
       this.config.getWorkspaceContext(),
+      eventEmitter,
+      sendSdkMcpMessage,
     );
   }
 
@@ -235,7 +244,7 @@ export class ToolRegistry {
     await this.discoverAndRegisterToolsFromCommand();
 
     // discover tools using MCP servers, if configured
-    await this.mcpClientManager.discoverAllMcpTools();
+    await this.mcpClientManager.discoverAllMcpTools(this.config);
   }
 
   /**
@@ -250,7 +259,7 @@ export class ToolRegistry {
     this.config.getPromptRegistry().clear();
 
     // discover tools using MCP servers, if configured
-    await this.mcpClientManager.discoverAllMcpTools();
+    await this.mcpClientManager.discoverAllMcpTools(this.config);
   }
 
   /**
@@ -284,6 +293,7 @@ export class ToolRegistry {
         this.config.getPromptRegistry(),
         this.config.getDebugMode(),
         this.config.getWorkspaceContext(),
+        this.config,
       );
     }
   }

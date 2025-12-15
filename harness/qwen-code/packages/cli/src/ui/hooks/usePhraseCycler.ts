@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { t } from '../../i18n/index.js';
 
 export const WITTY_LOADING_PHRASES = [
   "I'm Feeling Lucky",
@@ -146,15 +147,28 @@ export const PHRASE_CHANGE_INTERVAL_MS = 15000;
  * @param isWaiting Whether to show a specific waiting phrase.
  * @returns The current loading phrase.
  */
-export const usePhraseCycler = (isActive: boolean, isWaiting: boolean) => {
+export const usePhraseCycler = (
+  isActive: boolean,
+  isWaiting: boolean,
+  customPhrases?: string[],
+) => {
+  // Translate all phrases at once if using default phrases
+  const loadingPhrases = useMemo(
+    () =>
+      customPhrases && customPhrases.length > 0
+        ? customPhrases
+        : WITTY_LOADING_PHRASES.map((phrase) => t(phrase)),
+    [customPhrases],
+  );
+
   const [currentLoadingPhrase, setCurrentLoadingPhrase] = useState(
-    WITTY_LOADING_PHRASES[0],
+    loadingPhrases[0],
   );
   const phraseIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (isWaiting) {
-      setCurrentLoadingPhrase('Waiting for user confirmation...');
+      setCurrentLoadingPhrase(t('Waiting for user confirmation...'));
       if (phraseIntervalRef.current) {
         clearInterval(phraseIntervalRef.current);
         phraseIntervalRef.current = null;
@@ -165,16 +179,14 @@ export const usePhraseCycler = (isActive: boolean, isWaiting: boolean) => {
       }
       // Select an initial random phrase
       const initialRandomIndex = Math.floor(
-        Math.random() * WITTY_LOADING_PHRASES.length,
+        Math.random() * loadingPhrases.length,
       );
-      setCurrentLoadingPhrase(WITTY_LOADING_PHRASES[initialRandomIndex]);
+      setCurrentLoadingPhrase(loadingPhrases[initialRandomIndex]);
 
       phraseIntervalRef.current = setInterval(() => {
         // Select a new random phrase
-        const randomIndex = Math.floor(
-          Math.random() * WITTY_LOADING_PHRASES.length,
-        );
-        setCurrentLoadingPhrase(WITTY_LOADING_PHRASES[randomIndex]);
+        const randomIndex = Math.floor(Math.random() * loadingPhrases.length);
+        setCurrentLoadingPhrase(loadingPhrases[randomIndex]);
       }, PHRASE_CHANGE_INTERVAL_MS);
     } else {
       // Idle or other states, clear the phrase interval
@@ -183,7 +195,7 @@ export const usePhraseCycler = (isActive: boolean, isWaiting: boolean) => {
         clearInterval(phraseIntervalRef.current);
         phraseIntervalRef.current = null;
       }
-      setCurrentLoadingPhrase(WITTY_LOADING_PHRASES[0]);
+      setCurrentLoadingPhrase(loadingPhrases[0]);
     }
 
     return () => {
@@ -192,7 +204,7 @@ export const usePhraseCycler = (isActive: boolean, isWaiting: boolean) => {
         phraseIntervalRef.current = null;
       }
     };
-  }, [isActive, isWaiting]);
+  }, [isActive, isWaiting, loadingPhrases]);
 
   return currentLoadingPhrase;
 };

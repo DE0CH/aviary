@@ -25,7 +25,7 @@
   
 </div>
 
-Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI**](https://github.com/google-gemini/gemini-cli) ([details](./README.gemini.md)), specifically optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder) models. It enhances your development workflow with advanced code understanding, automated tasks, and intelligent assistance.
+Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI**](https://github.com/google-gemini/gemini-cli), specifically optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder) models. It enhances your development workflow with advanced code understanding, automated tasks, and intelligent assistance.
 
 ## 💡 Free Options Available
 
@@ -87,6 +87,12 @@ npm install -g .
 ```bash
 brew install qwen-code
 ```
+
+## VS Code Extension
+
+In addition to the CLI tool, Qwen Code also provides a **VS Code extension** that brings AI-powered coding assistance directly into your editor with features like file system operations, native diffing, interactive chat, and more.
+
+> 📦 The extension is currently in development. For installation, features, and development guide, see the [VS Code Extension README](./packages/vscode-ide-companion/README.md).
 
 ## Quick Start
 

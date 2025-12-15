@@ -23,6 +23,12 @@ export type UiEvent =
   | (ApiErrorEvent & { 'event.name': typeof EVENT_API_ERROR })
   | (ToolCallEvent & { 'event.name': typeof EVENT_TOOL_CALL });
 
+export {
+  EVENT_API_ERROR,
+  EVENT_API_RESPONSE,
+  EVENT_TOOL_CALL,
+} from './constants.js';
+
 export interface ToolCallStats {
   count: number;
   success: number;
@@ -144,7 +150,19 @@ export class UiTelemetryService extends EventEmitter {
     return this.#lastPromptTokenCount;
   }
 
-  resetLastPromptTokenCount(): void {
+  setLastPromptTokenCount(lastPromptTokenCount: number): void {
+    this.#lastPromptTokenCount = lastPromptTokenCount;
+    this.emit('update', {
+      metrics: this.#metrics,
+      lastPromptTokenCount: this.#lastPromptTokenCount,
+    });
+  }
+
+  /**
+   * Resets metrics to the initial state (used when resuming a session).
+   */
+  reset(): void {
+    this.#metrics = createInitialMetrics();
     this.#lastPromptTokenCount = 0;
     this.emit('update', {
       metrics: this.#metrics,
@@ -171,8 +189,6 @@ export class UiTelemetryService extends EventEmitter {
     modelMetrics.tokens.cached += event.cached_content_token_count;
     modelMetrics.tokens.thoughts += event.thoughts_token_count;
     modelMetrics.tokens.tool += event.tool_token_count;
-
-    this.#lastPromptTokenCount = event.input_token_count;
   }
 
   private processApiError(event: ApiErrorEvent) {
@@ -224,11 +240,11 @@ export class UiTelemetryService extends EventEmitter {
 
     // Aggregate line count data from metadata
     if (event.metadata) {
-      if (event.metadata['ai_added_lines'] !== undefined) {
-        files.totalLinesAdded += event.metadata['ai_added_lines'];
+      if (event.metadata['model_added_lines'] !== undefined) {
+        files.totalLinesAdded += event.metadata['model_added_lines'];
       }
-      if (event.metadata['ai_removed_lines'] !== undefined) {
-        files.totalLinesRemoved += event.metadata['ai_removed_lines'];
+      if (event.metadata['model_removed_lines'] !== undefined) {
+        files.totalLinesRemoved += event.metadata['model_removed_lines'];
       }
     }
   }
