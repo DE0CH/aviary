@@ -4,18 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * Stream JSON Runner with Session State Machine
- *
- * Handles stream-json input/output format with:
- * - Initialize handshake
- * - Message routing (control vs user messages)
- * - FIFO user message queue
- * - Sequential message processing
- * - Graceful shutdown
- */
-
-import type { Config } from '@qwen-code/qwen-code-core';
+import type {
+  Config,
+  ConfigInitializeOptions,
+} from '@qwen-code/qwen-code-core';
 import { StreamJsonInputReader } from './io/StreamJsonInputReader.js';
 import { StreamJsonOutputAdapter } from './io/StreamJsonOutputAdapter.js';
 import { ControlContext } from './control/ControlContext.js';
@@ -42,48 +34,7 @@ import { createMinimalSettings } from '../config/settings.js';
 import { runNonInteractive } from '../nonInteractiveCli.js';
 import { ConsolePatcher } from '../ui/utils/ConsolePatcher.js';
 
-const SESSION_STATE = {
-  INITIALIZING: 'initializing',
-  IDLE: 'idle',
-  PROCESSING_QUERY: 'processing_query',
-  SHUTTING_DOWN: 'shutting_down',
-} as const;
-
-type SessionState = (typeof SESSION_STATE)[keyof typeof SESSION_STATE];
-
-/**
- * Message type classification for routing
- */
-type MessageType =
-  | 'control_request'
-  | 'control_response'
-  | 'control_cancel'
-  | 'user'
-  | 'assistant'
-  | 'system'
-  | 'result'
-  | 'stream_event'
-  | 'unknown';
-
-/**
- * Routed message with classification
- */
-interface RoutedMessage {
-  type: MessageType;
-  message:
-    | CLIMessage
-    | CLIControlRequest
-    | CLIControlResponse
-    | ControlCancelRequest;
-}
-
-/**
- * Session Manager
- *
- * Manages the session lifecycle and message processing state machine.
- */
-class SessionManager {
-  private state: SessionState = SESSION_STATE.INITIALIZING;
+class Session {
   private userMessageQueue: CLIUserMessage[] = [];
   private abortController: AbortController;
   private config: Config;
@@ -98,6 +49,15 @@ class SessionManager {
   private debugMode: boolean;
   private shutdownHandler: (() => void) | null = null;
   private initialPrompt: CLIUserMessage | null = null;
+  private processingPromise: Promise<void> | null = null;
+  private isShuttingDown: boolean = false;
+  private configInitialized: boolean = false;
+
+  // Single initialization promise that resolves when session is ready for user messages.
+  // Created lazily once initialization actually starts.
+  private initializationPromise: Promise<void> | null = null;
+  private initializationResolve: (() => void) | null = null;
+  private initializationReject: ((error: Error) => void) | null = null;
 
   constructor(config: Config, initialPrompt?: CLIUserMessage) {
     this.config = config;
@@ -112,161 +72,96 @@ class SessionManager {
       config.getIncludePartialMessages(),
     );
 
-    // Setup signal handlers for graceful shutdown
     this.setupSignalHandlers();
   }
 
-  /**
-   * Get next prompt ID
-   */
+  private ensureInitializationPromise(): void {
+    if (this.initializationPromise) {
+      return;
+    }
+    this.initializationPromise = new Promise<void>((resolve, reject) => {
+      this.initializationResolve = () => {
+        resolve();
+        this.initializationResolve = null;
+        this.initializationReject = null;
+      };
+      this.initializationReject = (error: Error) => {
+        reject(error);
+        this.initializationResolve = null;
+        this.initializationReject = null;
+      };
+    });
+  }
+
   private getNextPromptId(): string {
     this.promptIdCounter++;
     return `${this.sessionId}########${this.promptIdCounter}`;
   }
 
-  /**
-   * Route a message to the appropriate handler based on its type
-   *
-   * Classifies incoming messages and routes them to appropriate handlers.
-   */
-  private route(
-    message:
-      | CLIMessage
-      | CLIControlRequest
-      | CLIControlResponse
-      | ControlCancelRequest,
-  ): RoutedMessage {
-    // Check control messages first
-    if (isControlRequest(message)) {
-      return { type: 'control_request', message };
-    }
-    if (isControlResponse(message)) {
-      return { type: 'control_response', message };
-    }
-    if (isControlCancel(message)) {
-      return { type: 'control_cancel', message };
+  private async ensureConfigInitialized(
+    options?: ConfigInitializeOptions,
+  ): Promise<void> {
+    if (this.configInitialized) {
+      return;
     }
 
-    // Check data messages
-    if (isCLIUserMessage(message)) {
-      return { type: 'user', message };
-    }
-    if (isCLIAssistantMessage(message)) {
-      return { type: 'assistant', message };
-    }
-    if (isCLISystemMessage(message)) {
-      return { type: 'system', message };
-    }
-    if (isCLIResultMessage(message)) {
-      return { type: 'result', message };
-    }
-    if (isCLIPartialAssistantMessage(message)) {
-      return { type: 'stream_event', message };
-    }
-
-    // Unknown message type
     if (this.debugMode) {
-      console.error(
-        '[SessionManager] Unknown message type:',
-        JSON.stringify(message, null, 2),
-      );
-    }
-    return { type: 'unknown', message };
-  }
-
-  /**
-   * Process a single message with unified logic for both initial prompt and stream messages.
-   *
-   * Handles:
-   * - Abort check
-   * - First message detection and handling
-   * - Normal message processing
-   * - Shutdown state checks
-   *
-   * @param message - Message to process
-   * @returns true if the calling code should exit (break/return), false to continue
-   */
-  private async processSingleMessage(
-    message:
-      | CLIMessage
-      | CLIControlRequest
-      | CLIControlResponse
-      | ControlCancelRequest,
-  ): Promise<boolean> {
-    // Check for abort
-    if (this.abortController.signal.aborted) {
-      return true;
+      console.error('[Session] Initializing config');
     }
 
-    // Handle first message if control system not yet initialized
-    if (this.controlSystemEnabled === null) {
-      const handled = await this.handleFirstMessage(message);
-      if (handled) {
-        // If handled, check if we should shutdown
-        return this.state === SESSION_STATE.SHUTTING_DOWN;
-      }
-      // If not handled, fall through to normal processing
-    }
-
-    // Process message normally
-    await this.processMessage(message);
-
-    // Check for shutdown after processing
-    return this.state === SESSION_STATE.SHUTTING_DOWN;
-  }
-
-  /**
-   * Main entry point - run the session
-   */
-  async run(): Promise<void> {
     try {
-      if (this.debugMode) {
-        console.error('[SessionManager] Starting session', this.sessionId);
-      }
-
-      // Process initial prompt if provided
-      if (this.initialPrompt !== null) {
-        const shouldExit = await this.processSingleMessage(this.initialPrompt);
-        if (shouldExit) {
-          await this.shutdown();
-          return;
-        }
-      }
-
-      // Process messages from stream
-      for await (const message of this.inputReader.read()) {
-        const shouldExit = await this.processSingleMessage(message);
-        if (shouldExit) {
-          break;
-        }
-      }
-
-      // Stream closed, shutdown
-      await this.shutdown();
+      await this.config.initialize(options);
+      this.configInitialized = true;
     } catch (error) {
       if (this.debugMode) {
-        console.error('[SessionManager] Error:', error);
+        console.error('[Session] Failed to initialize config:', error);
       }
-      await this.shutdown();
       throw error;
-    } finally {
-      // Ensure signal handlers are always cleaned up even if shutdown wasn't called
-      this.cleanupSignalHandlers();
     }
+  }
+
+  /**
+   * Mark initialization as complete
+   */
+  private completeInitialization(): void {
+    if (this.initializationResolve) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization complete');
+      }
+      this.initializationResolve();
+      this.initializationResolve = null;
+      this.initializationReject = null;
+    }
+  }
+
+  /**
+   * Mark initialization as failed
+   */
+  private failInitialization(error: Error): void {
+    if (this.initializationReject) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization failed:', error);
+      }
+      this.initializationReject(error);
+      this.initializationResolve = null;
+      this.initializationReject = null;
+    }
+  }
+
+  /**
+   * Wait for session to be ready for user messages
+   */
+  private async waitForInitialization(): Promise<void> {
+    if (!this.initializationPromise) {
+      return;
+    }
+    await this.initializationPromise;
   }
 
   private ensureControlSystem(): void {
     if (this.controlContext && this.dispatcher && this.controlService) {
       return;
     }
-    // The control system follows a strict three-layer architecture:
-    // 1. ControlContext (shared session state)
-    // 2. ControlDispatcher (protocol routing SDK ↔ CLI)
-    // 3. ControlService (programmatic API for CLI runtime)
-    //
-    // Application code MUST interact with the control plane exclusively through
-    // ControlService. ControlDispatcher is reserved for protocol-level message
-    // routing and should never be used directly outside of this file.
     this.controlContext = new ControlContext({
       config: this.config,
       streamJson: this.outputAdapter,
@@ -292,273 +187,165 @@ class SessionManager {
     return this.dispatcher;
   }
 
-  private async handleFirstMessage(
+  /**
+   * Handle the first message to determine session mode (SDK vs direct).
+   * This is synchronous from the message loop's perspective - it starts
+   * async work but does not return a promise that the loop awaits.
+   *
+   * The initialization completes asynchronously and resolves initializationPromise
+   * when ready for user messages.
+   */
+  private handleFirstMessage(
     message:
       | CLIMessage
       | CLIControlRequest
       | CLIControlResponse
       | ControlCancelRequest,
-  ): Promise<boolean> {
-    const routed = this.route(message);
-
-    if (routed.type === 'control_request') {
-      const request = routed.message as CLIControlRequest;
+  ): void {
+    if (isControlRequest(message)) {
+      const request = message as CLIControlRequest;
       this.controlSystemEnabled = true;
       this.ensureControlSystem();
+
       if (request.request.subtype === 'initialize') {
-        await this.dispatcher?.dispatch(request);
-        this.state = SESSION_STATE.IDLE;
-        return true;
-      }
-      return false;
-    }
-
-    if (routed.type === 'user') {
-      this.controlSystemEnabled = false;
-      this.state = SESSION_STATE.PROCESSING_QUERY;
-      this.userMessageQueue.push(routed.message as CLIUserMessage);
-      await this.processUserMessageQueue();
-      return true;
-    }
-
-    this.controlSystemEnabled = false;
-    return false;
-  }
-
-  /**
-   * Process a single message from the stream
-   */
-  private async processMessage(
-    message:
-      | CLIMessage
-      | CLIControlRequest
-      | CLIControlResponse
-      | ControlCancelRequest,
-  ): Promise<void> {
-    const routed = this.route(message);
-
-    if (this.debugMode) {
-      console.error(
-        `[SessionManager] State: ${this.state}, Message type: ${routed.type}`,
-      );
-    }
-
-    switch (this.state) {
-      case SESSION_STATE.INITIALIZING:
-        await this.handleInitializingState(routed);
-        break;
-
-      case SESSION_STATE.IDLE:
-        await this.handleIdleState(routed);
-        break;
-
-      case SESSION_STATE.PROCESSING_QUERY:
-        await this.handleProcessingState(routed);
-        break;
-
-      case SESSION_STATE.SHUTTING_DOWN:
-        // Ignore all messages during shutdown
-        break;
-
-      default: {
-        // Exhaustive check
-        const _exhaustiveCheck: never = this.state;
-        if (this.debugMode) {
-          console.error('[SessionManager] Unknown state:', _exhaustiveCheck);
-        }
-        break;
-      }
-    }
-  }
-
-  /**
-   * Handle messages in initializing state
-   */
-  private async handleInitializingState(routed: RoutedMessage): Promise<void> {
-    if (routed.type === 'control_request') {
-      const request = routed.message as CLIControlRequest;
-      const dispatcher = this.getDispatcher();
-      if (!dispatcher) {
-        if (this.debugMode) {
-          console.error(
-            '[SessionManager] Control request received before control system initialization',
-          );
-        }
+        // Start SDK mode initialization (fire-and-forget from loop perspective)
+        void this.initializeSdkMode(request);
         return;
       }
-      if (request.request.subtype === 'initialize') {
-        await dispatcher.dispatch(request);
-        this.state = SESSION_STATE.IDLE;
-        if (this.debugMode) {
-          console.error('[SessionManager] Initialized, transitioning to idle');
-        }
-      } else {
-        if (this.debugMode) {
-          console.error(
-            '[SessionManager] Ignoring non-initialize control request during initialization',
-          );
-        }
-      }
-    } else {
+
       if (this.debugMode) {
         console.error(
-          '[SessionManager] Ignoring non-control message during initialization',
+          '[Session] Ignoring non-initialize control request during initialization',
         );
       }
-    }
-  }
-
-  /**
-   * Handle messages in idle state
-   */
-  private async handleIdleState(routed: RoutedMessage): Promise<void> {
-    const dispatcher = this.getDispatcher();
-    if (routed.type === 'control_request') {
-      if (!dispatcher) {
-        if (this.debugMode) {
-          console.error('[SessionManager] Ignoring control request (disabled)');
-        }
-        return;
-      }
-      const request = routed.message as CLIControlRequest;
-      await dispatcher.dispatch(request);
-      // Stay in idle state
-    } else if (routed.type === 'control_response') {
-      if (!dispatcher) {
-        return;
-      }
-      const response = routed.message as CLIControlResponse;
-      dispatcher.handleControlResponse(response);
-      // Stay in idle state
-    } else if (routed.type === 'control_cancel') {
-      if (!dispatcher) {
-        return;
-      }
-      const cancelRequest = routed.message as ControlCancelRequest;
-      dispatcher.handleCancel(cancelRequest.request_id);
-    } else if (routed.type === 'user') {
-      const userMessage = routed.message as CLIUserMessage;
-      this.userMessageQueue.push(userMessage);
-      // Start processing queue
-      await this.processUserMessageQueue();
-    } else {
-      if (this.debugMode) {
-        console.error(
-          '[SessionManager] Ignoring message type in idle state:',
-          routed.type,
-        );
-      }
-    }
-  }
-
-  /**
-   * Handle messages in processing state
-   */
-  private async handleProcessingState(routed: RoutedMessage): Promise<void> {
-    const dispatcher = this.getDispatcher();
-    if (routed.type === 'control_request') {
-      if (!dispatcher) {
-        if (this.debugMode) {
-          console.error(
-            '[SessionManager] Control request ignored during processing (disabled)',
-          );
-        }
-        return;
-      }
-      const request = routed.message as CLIControlRequest;
-      await dispatcher.dispatch(request);
-      // Continue processing
-    } else if (routed.type === 'control_response') {
-      if (!dispatcher) {
-        return;
-      }
-      const response = routed.message as CLIControlResponse;
-      dispatcher.handleControlResponse(response);
-      // Continue processing
-    } else if (routed.type === 'user') {
-      // Enqueue for later
-      const userMessage = routed.message as CLIUserMessage;
-      this.userMessageQueue.push(userMessage);
-      if (this.debugMode) {
-        console.error(
-          '[SessionManager] Enqueued user message during processing',
-        );
-      }
-    } else {
-      if (this.debugMode) {
-        console.error(
-          '[SessionManager] Ignoring message type during processing:',
-          routed.type,
-        );
-      }
-    }
-  }
-
-  /**
-   * Process user message queue (FIFO)
-   */
-  private async processUserMessageQueue(): Promise<void> {
-    while (
-      this.userMessageQueue.length > 0 &&
-      !this.abortController.signal.aborted
-    ) {
-      this.state = SESSION_STATE.PROCESSING_QUERY;
-      const userMessage = this.userMessageQueue.shift()!;
-
-      try {
-        await this.processUserMessage(userMessage);
-      } catch (error) {
-        if (this.debugMode) {
-          console.error(
-            '[SessionManager] Error processing user message:',
-            error,
-          );
-        }
-        // Send error result
-        this.emitErrorResult(error);
-      }
-    }
-
-    // If control system is disabled (single-query mode) and queue is empty,
-    // automatically shutdown instead of returning to idle
-    if (
-      !this.abortController.signal.aborted &&
-      this.state === SESSION_STATE.PROCESSING_QUERY &&
-      this.controlSystemEnabled === false &&
-      this.userMessageQueue.length === 0
-    ) {
-      if (this.debugMode) {
-        console.error(
-          '[SessionManager] Single-query mode: queue processed, shutting down',
-        );
-      }
-      this.state = SESSION_STATE.SHUTTING_DOWN;
       return;
     }
 
-    // Return to idle after processing queue (for multi-query mode with control system)
-    if (
-      !this.abortController.signal.aborted &&
-      this.state === SESSION_STATE.PROCESSING_QUERY
-    ) {
-      this.state = SESSION_STATE.IDLE;
+    if (isCLIUserMessage(message)) {
+      this.controlSystemEnabled = false;
+      // Start direct mode initialization (fire-and-forget from loop perspective)
+      void this.initializeDirectMode(message as CLIUserMessage);
+      return;
+    }
+
+    this.controlSystemEnabled = false;
+  }
+
+  /**
+   * SDK mode initialization flow
+   * Dispatches initialize request and initializes config with MCP support
+   */
+  private async initializeSdkMode(request: CLIControlRequest): Promise<void> {
+    this.ensureInitializationPromise();
+    try {
+      // Dispatch the initialize request first
+      // This registers SDK MCP servers in the control context
+      await this.dispatcher?.dispatch(request);
+
+      // Get sendSdkMcpMessage callback from SdkMcpController
+      // This callback is used by McpClientManager to send MCP messages
+      // from CLI MCP clients to SDK MCP servers via the control plane
+      const sendSdkMcpMessage =
+        this.dispatcher?.sdkMcpController.createSendSdkMcpMessage();
+
+      // Initialize config with SDK MCP message support
+      await this.ensureConfigInitialized({ sendSdkMcpMessage });
+
+      // Initialization complete!
+      this.completeInitialization();
+    } catch (error) {
       if (this.debugMode) {
-        console.error('[SessionManager] Queue processed, returning to idle');
+        console.error('[Session] SDK mode initialization failed:', error);
       }
+      this.failInitialization(
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
   /**
-   * Process a single user message
+   * Direct mode initialization flow
+   * Initializes config and enqueues the first user message
    */
+  private async initializeDirectMode(
+    userMessage: CLIUserMessage,
+  ): Promise<void> {
+    this.ensureInitializationPromise();
+    try {
+      // Initialize config
+      await this.ensureConfigInitialized();
+
+      // Initialization complete!
+      this.completeInitialization();
+
+      // Enqueue the first user message for processing
+      this.enqueueUserMessage(userMessage);
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] Direct mode initialization failed:', error);
+      }
+      this.failInitialization(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  /**
+   * Handle control request asynchronously (fire-and-forget from main loop).
+   * Errors are handled internally and responses sent by dispatcher.
+   */
+  private handleControlRequestAsync(request: CLIControlRequest): void {
+    const dispatcher = this.getDispatcher();
+    if (!dispatcher) {
+      if (this.debugMode) {
+        console.error('[Session] Control system not enabled');
+      }
+      return;
+    }
+
+    // Fire-and-forget: dispatch runs concurrently
+    // The dispatcher's pendingIncomingRequests tracks completion
+    void dispatcher.dispatch(request).catch((error) => {
+      if (this.debugMode) {
+        console.error('[Session] Control request dispatch error:', error);
+      }
+      // Error response is already sent by dispatcher.dispatch()
+    });
+  }
+
+  /**
+   * Handle control response - MUST be synchronous
+   * This resolves pending outgoing requests, breaking the deadlock cycle.
+   */
+  private handleControlResponse(response: CLIControlResponse): void {
+    const dispatcher = this.getDispatcher();
+    if (!dispatcher) {
+      return;
+    }
+
+    dispatcher.handleControlResponse(response);
+  }
+
+  private handleControlCancel(cancelRequest: ControlCancelRequest): void {
+    const dispatcher = this.getDispatcher();
+    if (!dispatcher) {
+      return;
+    }
+
+    dispatcher.handleCancel(cancelRequest.request_id);
+  }
+
   private async processUserMessage(userMessage: CLIUserMessage): Promise<void> {
     const input = extractUserMessageText(userMessage);
     if (!input) {
       if (this.debugMode) {
-        console.error('[SessionManager] No text content in user message');
+        console.error('[Session] No text content in user message');
       }
       return;
     }
+
+    // Wait for initialization to complete before processing user messages
+    await this.waitForInitialization();
 
     const promptId = this.getNextPromptId();
 
@@ -575,16 +362,56 @@ class SessionManager {
         },
       );
     } catch (error) {
-      // Error already handled by runNonInteractive via adapter.emitResult
       if (this.debugMode) {
-        console.error('[SessionManager] Query execution error:', error);
+        console.error('[Session] Query execution error:', error);
       }
     }
   }
 
-  /**
-   * Send tool results as user message
-   */
+  private async processUserMessageQueue(): Promise<void> {
+    if (this.isShuttingDown || this.abortController.signal.aborted) {
+      return;
+    }
+
+    while (
+      this.userMessageQueue.length > 0 &&
+      !this.isShuttingDown &&
+      !this.abortController.signal.aborted
+    ) {
+      const userMessage = this.userMessageQueue.shift()!;
+      try {
+        await this.processUserMessage(userMessage);
+      } catch (error) {
+        if (this.debugMode) {
+          console.error('[Session] Error processing user message:', error);
+        }
+        this.emitErrorResult(error);
+      }
+    }
+  }
+
+  private enqueueUserMessage(userMessage: CLIUserMessage): void {
+    this.userMessageQueue.push(userMessage);
+    this.ensureProcessingStarted();
+  }
+
+  private ensureProcessingStarted(): void {
+    if (this.processingPromise) {
+      return;
+    }
+
+    this.processingPromise = this.processUserMessageQueue().finally(() => {
+      this.processingPromise = null;
+      if (
+        this.userMessageQueue.length > 0 &&
+        !this.isShuttingDown &&
+        !this.abortController.signal.aborted
+      ) {
+        this.ensureProcessingStarted();
+      }
+    });
+  }
+
   private emitErrorResult(
     error: unknown,
     numTurns: number = 0,
@@ -602,30 +429,21 @@ class SessionManager {
     });
   }
 
-  /**
-   * Handle interrupt control request
-   */
   private handleInterrupt(): void {
     if (this.debugMode) {
-      console.error('[SessionManager] Interrupt requested');
+      console.error('[Session] Interrupt requested');
     }
-    // Abort current query if processing
-    if (this.state === SESSION_STATE.PROCESSING_QUERY) {
-      this.abortController.abort();
-      this.abortController = new AbortController(); // Create new controller for next query
-    }
+    this.abortController.abort();
+    this.abortController = new AbortController();
   }
 
-  /**
-   * Setup signal handlers for graceful shutdown
-   */
   private setupSignalHandlers(): void {
     this.shutdownHandler = () => {
       if (this.debugMode) {
-        console.error('[SessionManager] Shutdown signal received');
+        console.error('[Session] Shutdown signal received');
       }
+      this.isShuttingDown = true;
       this.abortController.abort();
-      this.state = SESSION_STATE.SHUTTING_DOWN;
     };
 
     process.on('SIGINT', this.shutdownHandler);
@@ -633,26 +451,162 @@ class SessionManager {
   }
 
   /**
-   * Shutdown session and cleanup resources
+   * Wait for all pending work to complete before shutdown
    */
-  private async shutdown(): Promise<void> {
-    if (this.debugMode) {
-      console.error('[SessionManager] Shutting down');
+  private async waitForAllPendingWork(): Promise<void> {
+    // 1. Wait for initialization to complete (or fail)
+    try {
+      await this.waitForInitialization();
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] Initialization error during shutdown:', error);
+      }
     }
 
-    this.state = SESSION_STATE.SHUTTING_DOWN;
+    // 2. Wait for all control request handlers using dispatcher's tracking
+    if (this.dispatcher) {
+      const pendingCount = this.dispatcher.getPendingIncomingRequestCount();
+      if (pendingCount > 0 && this.debugMode) {
+        console.error(
+          `[Session] Waiting for ${pendingCount} pending control request handlers`,
+        );
+      }
+      await this.dispatcher.waitForPendingIncomingRequests();
+    }
+
+    // 3. Wait for user message processing queue
+    while (this.processingPromise) {
+      if (this.debugMode) {
+        console.error('[Session] Waiting for user message processing');
+      }
+      try {
+        await this.processingPromise;
+      } catch (error) {
+        if (this.debugMode) {
+          console.error('[Session] Error in user message processing:', error);
+        }
+      }
+    }
+  }
+
+  private async shutdown(): Promise<void> {
+    if (this.debugMode) {
+      console.error('[Session] Shutting down');
+    }
+
+    this.isShuttingDown = true;
+
+    // Wait for all pending work
+    await this.waitForAllPendingWork();
+
     this.dispatcher?.shutdown();
     this.cleanupSignalHandlers();
   }
 
-  /**
-   * Remove signal handlers to prevent memory leaks
-   */
   private cleanupSignalHandlers(): void {
     if (this.shutdownHandler) {
       process.removeListener('SIGINT', this.shutdownHandler);
       process.removeListener('SIGTERM', this.shutdownHandler);
       this.shutdownHandler = null;
+    }
+  }
+
+  /**
+   * Main message processing loop
+   *
+   * CRITICAL: This loop must NEVER await handlers that might need to
+   * send control requests and wait for responses. Such handlers must
+   * be started in fire-and-forget mode, allowing the loop to continue
+   * reading responses that resolve pending requests.
+   *
+   * Message handling order:
+   * 1. control_response - FIRST, synchronously resolves pending requests
+   * 2. First message - determines mode, starts async initialization
+   * 3. control_request - fire-and-forget, tracked by dispatcher
+   * 4. control_cancel - synchronous
+   * 5. user_message - enqueued for processing
+   */
+  async run(): Promise<void> {
+    try {
+      if (this.debugMode) {
+        console.error('[Session] Starting session', this.sessionId);
+      }
+
+      // Handle initial prompt if provided (fire-and-forget)
+      if (this.initialPrompt !== null) {
+        this.handleFirstMessage(this.initialPrompt);
+      }
+
+      try {
+        for await (const message of this.inputReader.read()) {
+          if (this.abortController.signal.aborted) {
+            break;
+          }
+
+          // ============================================================
+          // CRITICAL: Handle control_response FIRST and SYNCHRONOUSLY
+          // This resolves pending outgoing requests, breaking deadlock.
+          // ============================================================
+          if (isControlResponse(message)) {
+            this.handleControlResponse(message as CLIControlResponse);
+            continue;
+          }
+
+          // Handle first message to determine session mode
+          if (this.controlSystemEnabled === null) {
+            this.handleFirstMessage(message);
+            continue;
+          }
+
+          // ============================================================
+          // CRITICAL: Handle control_request in FIRE-AND-FORGET mode
+          // DON'T await - let handler run concurrently while loop continues
+          // Dispatcher's pendingIncomingRequests tracks completion
+          // ============================================================
+          if (isControlRequest(message)) {
+            this.handleControlRequestAsync(message as CLIControlRequest);
+          } else if (isControlCancel(message)) {
+            // Cancel is synchronous - OK to handle inline
+            this.handleControlCancel(message as ControlCancelRequest);
+          } else if (isCLIUserMessage(message)) {
+            // User messages are enqueued, processing runs separately
+            this.enqueueUserMessage(message as CLIUserMessage);
+          } else if (this.debugMode) {
+            if (
+              !isCLIAssistantMessage(message) &&
+              !isCLISystemMessage(message) &&
+              !isCLIResultMessage(message) &&
+              !isCLIPartialAssistantMessage(message)
+            ) {
+              console.error(
+                '[Session] Unknown message type:',
+                JSON.stringify(message, null, 2),
+              );
+            }
+          }
+
+          if (this.isShuttingDown) {
+            break;
+          }
+        }
+      } catch (streamError) {
+        if (this.debugMode) {
+          console.error('[Session] Stream reading error:', streamError);
+        }
+        throw streamError;
+      }
+
+      // Stream ended - wait for all pending work before shutdown
+      await this.waitForAllPendingWork();
+      await this.shutdown();
+    } catch (error) {
+      if (this.debugMode) {
+        console.error('[Session] Error:', error);
+      }
+      await this.shutdown();
+      throw error;
+    } finally {
+      this.cleanupSignalHandlers();
     }
   }
 }
@@ -682,12 +636,6 @@ function extractUserMessageText(message: CLIUserMessage): string | null {
   return null;
 }
 
-/**
- * Entry point for stream-json mode
- *
- * @param config - Configuration object
- * @param input - Optional initial prompt input to process before reading from stream
- */
 export async function runNonInteractiveStreamJson(
   config: Config,
   input: string,
@@ -698,7 +646,6 @@ export async function runNonInteractiveStreamJson(
   consolePatcher.patch();
 
   try {
-    // Create initial user message from prompt input if provided
     let initialPrompt: CLIUserMessage | undefined = undefined;
     if (input && input.trim().length > 0) {
       const sessionId = config.getSessionId();
@@ -713,7 +660,7 @@ export async function runNonInteractiveStreamJson(
       };
     }
 
-    const manager = new SessionManager(config, initialPrompt);
+    const manager = new Session(config, initialPrompt);
     await manager.run();
   } finally {
     consolePatcher.cleanup();

@@ -8,8 +8,9 @@ import { EventEmitter } from 'events';
 import type {
   ToolCallConfirmationDetails,
   ToolConfirmationOutcome,
+  ToolResultDisplay,
 } from '../tools/tools.js';
-import type { Part } from '@google/genai';
+import type { Part, GenerateContentResponseUsageMetadata } from '@google/genai';
 
 export type SubAgentEvent =
   | 'start'
@@ -19,6 +20,7 @@ export type SubAgentEvent =
   | 'tool_call'
   | 'tool_result'
   | 'tool_waiting_approval'
+  | 'usage_metadata'
   | 'finish'
   | 'error';
 
@@ -30,6 +32,7 @@ export enum SubAgentEventType {
   TOOL_CALL = 'tool_call',
   TOOL_RESULT = 'tool_result',
   TOOL_WAITING_APPROVAL = 'tool_waiting_approval',
+  USAGE_METADATA = 'usage_metadata',
   FINISH = 'finish',
   ERROR = 'error',
 }
@@ -56,6 +59,14 @@ export interface SubAgentStreamTextEvent {
   timestamp: number;
 }
 
+export interface SubAgentUsageEvent {
+  subagentId: string;
+  round: number;
+  usage: GenerateContentResponseUsageMetadata;
+  durationMs?: number;
+  timestamp: number;
+}
+
 export interface SubAgentToolCallEvent {
   subagentId: string;
   round: number;
@@ -74,7 +85,7 @@ export interface SubAgentToolResultEvent {
   success: boolean;
   error?: string;
   responseParts?: Part[];
-  resultDisplay?: string;
+  resultDisplay?: ToolResultDisplay;
   durationMs?: number;
   timestamp: number;
 }

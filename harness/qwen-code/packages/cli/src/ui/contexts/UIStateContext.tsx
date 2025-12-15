@@ -12,7 +12,6 @@ import type {
   ShellConfirmationRequest,
   ConfirmationRequest,
   LoopDetectionConfirmationRequest,
-  QuitConfirmationRequest,
   HistoryItemWithoutId,
   StreamingState,
 } from '../types.js';
@@ -55,7 +54,6 @@ export interface UIState {
   qwenAuthState: QwenAuthState;
   editorError: string | null;
   isEditorDialogOpen: boolean;
-  corgiMode: boolean;
   debugMessage: string;
   quittingMessages: HistoryItem[] | null;
   isSettingsDialogOpen: boolean;
@@ -69,7 +67,6 @@ export interface UIState {
   confirmationRequest: ConfirmationRequest | null;
   confirmUpdateExtensionRequests: ConfirmationRequest[];
   loopDetectionConfirmationRequest: LoopDetectionConfirmationRequest | null;
-  quitConfirmationRequest: QuitConfirmationRequest | null;
   geminiMdFileCount: number;
   streamingState: StreamingState;
   initError: string | null;

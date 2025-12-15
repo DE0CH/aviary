@@ -64,8 +64,6 @@ export interface CommandContext {
      * @param history The array of history items to load.
      */
     loadHistory: UseHistoryManagerReturn['loadHistory'];
-    /** Toggles a special display mode. */
-    toggleCorgiMode: () => void;
     toggleVimEnabled: () => Promise<boolean>;
     setGeminiMdFileCount: (count: number) => void;
     reloadCommands: () => void;
@@ -97,12 +95,6 @@ export interface ToolActionReturn {
 /** The return type for a command action that results in the app quitting. */
 export interface QuitActionReturn {
   type: 'quit';
-  messages: HistoryItem[];
-}
-
-/** The return type for a command action that requests quit confirmation. */
-export interface QuitConfirmationActionReturn {
-  type: 'quit_confirmation';
   messages: HistoryItem[];
 }
 
@@ -182,7 +174,6 @@ export type SlashCommandActionReturn =
   | ToolActionReturn
   | MessageActionReturn
   | QuitActionReturn
-  | QuitConfirmationActionReturn
   | OpenDialogActionReturn
   | LoadHistoryActionReturn
   | SubmitPromptActionReturn

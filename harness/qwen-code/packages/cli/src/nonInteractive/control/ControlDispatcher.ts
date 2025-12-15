@@ -16,8 +16,11 @@
  * Controllers:
  * - SystemController: initialize, interrupt, set_model, supported_commands
  * - PermissionController: can_use_tool, set_permission_mode
- * - MCPController: mcp_message, mcp_server_status
+ * - SdkMcpController: mcp_server_status (mcp_message handled via callback)
  * - HookController: hook_callback
+ *
+ * Note: mcp_message requests are NOT routed through the dispatcher. CLI MCP
+ * clients send messages via SdkMcpController.createSendSdkMcpMessage() callback.
  *
  * Note: Control request types are centrally defined in the ControlRequestType
  * enum in packages/sdk/typescript/src/types/controlRequests.ts
@@ -26,8 +29,8 @@
 import type { IControlContext } from './ControlContext.js';
 import type { IPendingRequestRegistry } from './controllers/baseController.js';
 import { SystemController } from './controllers/systemController.js';
-// import { PermissionController } from './controllers/permissionController.js';
-// import { MCPController } from './controllers/mcpController.js';
+import { PermissionController } from './controllers/permissionController.js';
+import { SdkMcpController } from './controllers/sdkMcpController.js';
 // import { HookController } from './controllers/hookController.js';
 import type {
   CLIControlRequest,
@@ -64,8 +67,8 @@ export class ControlDispatcher implements IPendingRequestRegistry {
 
   // Make controllers publicly accessible
   readonly systemController: SystemController;
-  // readonly permissionController: PermissionController;
-  // readonly mcpController: MCPController;
+  readonly permissionController: PermissionController;
+  readonly sdkMcpController: SdkMcpController;
   // readonly hookController: HookController;
 
   // Central pending request registries
@@ -83,12 +86,16 @@ export class ControlDispatcher implements IPendingRequestRegistry {
       this,
       'SystemController',
     );
-    // this.permissionController = new PermissionController(
-    //   context,
-    //   this,
-    //   'PermissionController',
-    // );
-    // this.mcpController = new MCPController(context, this, 'MCPController');
+    this.permissionController = new PermissionController(
+      context,
+      this,
+      'PermissionController',
+    );
+    this.sdkMcpController = new SdkMcpController(
+      context,
+      this,
+      'SdkMcpController',
+    );
     // this.hookController = new HookController(context, this, 'HookController');
 
     // Listen for main abort signal
@@ -228,10 +235,10 @@ export class ControlDispatcher implements IPendingRequestRegistry {
     }
     this.pendingOutgoingRequests.clear();
 
-    // Cleanup controllers (MCP controller will close all clients)
+    // Cleanup controllers
     this.systemController.cleanup();
-    // this.permissionController.cleanup();
-    // this.mcpController.cleanup();
+    this.permissionController.cleanup();
+    this.sdkMcpController.cleanup();
     // this.hookController.cleanup();
   }
 
@@ -292,6 +299,47 @@ export class ControlDispatcher implements IPendingRequestRegistry {
   }
 
   /**
+   * Get count of pending incoming requests (for debugging)
+   */
+  getPendingIncomingRequestCount(): number {
+    return this.pendingIncomingRequests.size;
+  }
+
+  /**
+   * Wait for all incoming request handlers to complete.
+   *
+   * Uses polling since we don't have direct Promise references to handlers.
+   * The pendingIncomingRequests map is managed by BaseController:
+   * - Registered when handler starts (in handleRequest)
+   * - Deregistered when handler completes (success or error)
+   *
+   * @param pollIntervalMs - How often to check (default 50ms)
+   * @param timeoutMs - Maximum wait time (default 30s)
+   */
+  async waitForPendingIncomingRequests(
+    pollIntervalMs: number = 50,
+    timeoutMs: number = 30000,
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    while (this.pendingIncomingRequests.size > 0) {
+      if (Date.now() - startTime > timeoutMs) {
+        if (this.context.debugMode) {
+          console.error(
+            `[ControlDispatcher] Timeout waiting for ${this.pendingIncomingRequests.size} pending incoming requests`,
+          );
+        }
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    if (this.context.debugMode && this.pendingIncomingRequests.size === 0) {
+      console.error('[ControlDispatcher] All incoming requests completed');
+    }
+  }
+
+  /**
    * Returns the controller that handles the given request subtype
    */
   private getControllerForRequest(subtype: string) {
@@ -302,13 +350,12 @@ export class ControlDispatcher implements IPendingRequestRegistry {
       case 'supported_commands':
         return this.systemController;
 
-      // case 'can_use_tool':
-      // case 'set_permission_mode':
-      //   return this.permissionController;
+      case 'can_use_tool':
+      case 'set_permission_mode':
+        return this.permissionController;
 
-      // case 'mcp_message':
-      // case 'mcp_server_status':
-      //   return this.mcpController;
+      case 'mcp_server_status':
+        return this.sdkMcpController;
 
       // case 'hook_callback':
       //   return this.hookController;

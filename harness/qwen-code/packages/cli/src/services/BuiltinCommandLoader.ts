@@ -15,7 +15,6 @@ import { bugCommand } from '../ui/commands/bugCommand.js';
 import { clearCommand } from '../ui/commands/clearCommand.js';
 import { compressCommand } from '../ui/commands/compressCommand.js';
 import { copyCommand } from '../ui/commands/copyCommand.js';
-import { corgiCommand } from '../ui/commands/corgiCommand.js';
 import { docsCommand } from '../ui/commands/docsCommand.js';
 import { directoryCommand } from '../ui/commands/directoryCommand.js';
 import { editorCommand } from '../ui/commands/editorCommand.js';
@@ -28,7 +27,7 @@ import { mcpCommand } from '../ui/commands/mcpCommand.js';
 import { memoryCommand } from '../ui/commands/memoryCommand.js';
 import { modelCommand } from '../ui/commands/modelCommand.js';
 import { permissionsCommand } from '../ui/commands/permissionsCommand.js';
-import { quitCommand, quitConfirmCommand } from '../ui/commands/quitCommand.js';
+import { quitCommand } from '../ui/commands/quitCommand.js';
 import { restoreCommand } from '../ui/commands/restoreCommand.js';
 import { settingsCommand } from '../ui/commands/settingsCommand.js';
 import { statsCommand } from '../ui/commands/statsCommand.js';
@@ -63,7 +62,6 @@ export class BuiltinCommandLoader implements ICommandLoader {
       clearCommand,
       compressCommand,
       copyCommand,
-      corgiCommand,
       docsCommand,
       directoryCommand,
       editorCommand,
@@ -77,7 +75,6 @@ export class BuiltinCommandLoader implements ICommandLoader {
       modelCommand,
       ...(this.config?.getFolderTrust() ? [permissionsCommand] : []),
       quitCommand,
-      quitConfirmCommand,
       restoreCommand(this.config),
       statsCommand,
       summaryCommand,

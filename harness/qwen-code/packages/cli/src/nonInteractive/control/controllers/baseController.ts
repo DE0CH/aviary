@@ -117,16 +117,41 @@ export abstract class BaseController {
    * Send an outgoing control request to SDK
    *
    * Manages lifecycle: register -> send -> wait for response -> deregister
+   * Respects the provided AbortSignal for cancellation.
    */
   async sendControlRequest(
     payload: ControlRequestPayload,
     timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
+    signal?: AbortSignal,
   ): Promise<ControlResponse> {
+    // Check if already aborted
+    if (signal?.aborted) {
+      throw new Error('Request aborted');
+    }
+
     const requestId = randomUUID();
 
     return new Promise<ControlResponse>((resolve, reject) => {
+      // Setup abort handler
+      const abortHandler = () => {
+        this.registry.deregisterOutgoingRequest(requestId);
+        reject(new Error('Request aborted'));
+        if (this.context.debugMode) {
+          console.error(
+            `[${this.controllerName}] Outgoing request aborted: ${requestId}`,
+          );
+        }
+      };
+
+      if (signal) {
+        signal.addEventListener('abort', abortHandler, { once: true });
+      }
+
       // Setup timeout
       const timeoutId = setTimeout(() => {
+        if (signal) {
+          signal.removeEventListener('abort', abortHandler);
+        }
         this.registry.deregisterOutgoingRequest(requestId);
         reject(new Error('Control request timeout'));
         if (this.context.debugMode) {
@@ -136,12 +161,27 @@ export abstract class BaseController {
         }
       }, timeoutMs);
 
+      // Wrap resolve/reject to clean up abort listener
+      const wrappedResolve = (response: ControlResponse) => {
+        if (signal) {
+          signal.removeEventListener('abort', abortHandler);
+        }
+        resolve(response);
+      };
+
+      const wrappedReject = (error: Error) => {
+        if (signal) {
+          signal.removeEventListener('abort', abortHandler);
+        }
+        reject(error);
+      };
+
       // Register with central registry
       this.registry.registerOutgoingRequest(
         requestId,
         this.controllerName,
-        resolve,
-        reject,
+        wrappedResolve,
+        wrappedReject,
         timeoutId,
       );
 
@@ -155,6 +195,9 @@ export abstract class BaseController {
       try {
         this.context.streamJson.send(request);
       } catch (error) {
+        if (signal) {
+          signal.removeEventListener('abort', abortHandler);
+        }
         this.registry.deregisterOutgoingRequest(requestId);
         reject(error);
       }
@@ -174,7 +217,5 @@ export abstract class BaseController {
   /**
    * Cleanup resources
    */
-  cleanup(): void {
-    // Subclasses can override to add cleanup logic
-  }
+  cleanup(): void {}
 }
