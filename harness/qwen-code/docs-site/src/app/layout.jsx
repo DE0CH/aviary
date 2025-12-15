@@ -40,6 +40,9 @@ export default async function RootLayout({ children }) {
           navbar={navbar}
           pageMap={await getPageMap()}
           docsRepositoryBase="https://github.com/QwenLM/qwen-code/docs"
+          // Use a very large finite integer to expand all folders by default.
+          // (Some schema validators reject `Infinity`.)
+          sidebar={{ defaultMenuCollapseLevel: 9999 }}
           footer={footer}
           search={false}
           // ... Your additional layout options

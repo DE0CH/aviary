@@ -6,13 +6,12 @@ Learn how to enable and setup OpenTelemetry for Qwen Code.
   - [Key Benefits](#key-benefits)
   - [OpenTelemetry Integration](#opentelemetry-integration)
   - [Configuration](#configuration)
-  - [Google Cloud Telemetry](#google-cloud-telemetry)
+  - [Aliyun Telemetry](#aliyun-telemetry)
     - [Prerequisites](#prerequisites)
     - [Direct Export (Recommended)](#direct-export-recommended)
-    - [Collector-Based Export (Advanced)](#collector-based-export-advanced)
   - [Local Telemetry](#local-telemetry)
     - [File-based Output (Recommended)](#file-based-output-recommended)
-    - [Collector-Based Export (Advanced)](#collector-based-export-advanced-1)
+    - [Collector-Based Export (Advanced)](#collector-based-export-advanced)
   - [Logs and Metrics](#logs-and-metrics)
     - [Logs](#logs)
     - [Metrics](#metrics)
@@ -35,8 +34,8 @@ Learn how to enable and setup OpenTelemetry for Qwen Code.
 Built on **[OpenTelemetry]** — the vendor-neutral, industry-standard
 observability framework — Qwen Code's observability system provides:
 
-- **Universal Compatibility**: Export to any OpenTelemetry backend (Google
-  Cloud, Jaeger, Prometheus, Datadog, etc.)
+- **Universal Compatibility**: Export to any OpenTelemetry backend (Aliyun,
+  Jaeger, Prometheus, Datadog, etc.)
 - **Standardized Data**: Use consistent formats and collection methods across
   your toolchain
 - **Future-Proof Integration**: Connect with existing and future observability
@@ -51,15 +50,15 @@ observability framework — Qwen Code's observability system provides:
 All telemetry behavior is controlled through your `.qwen/settings.json` file.
 These settings can be overridden by environment variables or CLI flags.
 
-| Setting        | Environment Variable             | CLI Flag                                                 | Description                                       | Values            | Default                 |
-| -------------- | -------------------------------- | -------------------------------------------------------- | ------------------------------------------------- | ----------------- | ----------------------- |
-| `enabled`      | `GEMINI_TELEMETRY_ENABLED`       | `--telemetry` / `--no-telemetry`                         | Enable or disable telemetry                       | `true`/`false`    | `false`                 |
-| `target`       | `GEMINI_TELEMETRY_TARGET`        | `--telemetry-target <local\|gcp>`                        | Where to send telemetry data                      | `"gcp"`/`"local"` | `"local"`               |
-| `otlpEndpoint` | `GEMINI_TELEMETRY_OTLP_ENDPOINT` | `--telemetry-otlp-endpoint <URL>`                        | OTLP collector endpoint                           | URL string        | `http://localhost:4317` |
-| `otlpProtocol` | `GEMINI_TELEMETRY_OTLP_PROTOCOL` | `--telemetry-otlp-protocol <grpc\|http>`                 | OTLP transport protocol                           | `"grpc"`/`"http"` | `"grpc"`                |
-| `outfile`      | `GEMINI_TELEMETRY_OUTFILE`       | `--telemetry-outfile <path>`                             | Save telemetry to file (overrides `otlpEndpoint`) | file path         | -                       |
-| `logPrompts`   | `GEMINI_TELEMETRY_LOG_PROMPTS`   | `--telemetry-log-prompts` / `--no-telemetry-log-prompts` | Include prompts in telemetry logs                 | `true`/`false`    | `true`                  |
-| `useCollector` | `GEMINI_TELEMETRY_USE_COLLECTOR` | -                                                        | Use external OTLP collector (advanced)            | `true`/`false`    | `false`                 |
+| Setting        | Environment Variable           | CLI Flag                                                 | Description                                       | Values             | Default                 |
+| -------------- | ------------------------------ | -------------------------------------------------------- | ------------------------------------------------- | ------------------ | ----------------------- |
+| `enabled`      | `QWEN_TELEMETRY_ENABLED`       | `--telemetry` / `--no-telemetry`                         | Enable or disable telemetry                       | `true`/`false`     | `false`                 |
+| `target`       | `QWEN_TELEMETRY_TARGET`        | `--telemetry-target <local\|qwen>`                       | Where to send telemetry data                      | `"qwen"`/`"local"` | `"local"`               |
+| `otlpEndpoint` | `QWEN_TELEMETRY_OTLP_ENDPOINT` | `--telemetry-otlp-endpoint <URL>`                        | OTLP collector endpoint                           | URL string         | `http://localhost:4317` |
+| `otlpProtocol` | `QWEN_TELEMETRY_OTLP_PROTOCOL` | `--telemetry-otlp-protocol <grpc\|http>`                 | OTLP transport protocol                           | `"grpc"`/`"http"`  | `"grpc"`                |
+| `outfile`      | `QWEN_TELEMETRY_OUTFILE`       | `--telemetry-outfile <path>`                             | Save telemetry to file (overrides `otlpEndpoint`) | file path          | -                       |
+| `logPrompts`   | `QWEN_TELEMETRY_LOG_PROMPTS`   | `--telemetry-log-prompts` / `--no-telemetry-log-prompts` | Include prompts in telemetry logs                 | `true`/`false`     | `true`                  |
+| `useCollector` | `QWEN_TELEMETRY_USE_COLLECTOR` | -                                                        | Use external OTLP collector (advanced)            | `true`/`false`     | `false`                 |
 
 **Note on boolean environment variables:** For the boolean settings (`enabled`,
 `logPrompts`, `useCollector`), setting the corresponding environment variable to
@@ -68,98 +67,23 @@ These settings can be overridden by environment variables or CLI flags.
 For detailed information about all configuration options, see the
 [Configuration Guide](./cli/configuration.md).
 
-## Google Cloud Telemetry
-
-### Prerequisites
-
-Before using either method below, complete these steps:
-
-1. Set your Google Cloud project ID:
-   - For telemetry in a separate project from inference:
-     ```bash
-     export OTLP_GOOGLE_CLOUD_PROJECT="your-telemetry-project-id"
-     ```
-   - For telemetry in the same project as inference:
-     ```bash
-     export GOOGLE_CLOUD_PROJECT="your-project-id"
-     ```
-
-2. Authenticate with Google Cloud:
-   - If using a user account:
-     ```bash
-     gcloud auth application-default login
-     ```
-   - If using a service account:
-     ```bash
-     export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account.json"
-     ```
-3. Make sure your account or service account has these IAM roles:
-   - Cloud Trace Agent
-   - Monitoring Metric Writer
-   - Logs Writer
-
-4. Enable the required Google Cloud APIs (if not already enabled):
-   ```bash
-   gcloud services enable \
-     cloudtrace.googleapis.com \
-     monitoring.googleapis.com \
-     logging.googleapis.com \
-     --project="$OTLP_GOOGLE_CLOUD_PROJECT"
-   ```
+## Aliyun Telemetry
 
 ### Direct Export (Recommended)
 
-Sends telemetry directly to Google Cloud services. No collector needed.
+Sends telemetry directly to Aliyun services. No collector needed.
 
 1. Enable telemetry in your `.qwen/settings.json`:
    ```json
    {
      "telemetry": {
        "enabled": true,
-       "target": "gcp"
+       "target": "qwen"
      }
    }
    ```
 2. Run Qwen Code and send prompts.
-3. View logs and metrics:
-   - Open the Google Cloud Console in your browser after sending prompts:
-     - Logs: https://console.cloud.google.com/logs/
-     - Metrics: https://console.cloud.google.com/monitoring/metrics-explorer
-     - Traces: https://console.cloud.google.com/traces/list
-
-### Collector-Based Export (Advanced)
-
-For custom processing, filtering, or routing, use an OpenTelemetry collector to
-forward data to Google Cloud.
-
-1. Configure your `.qwen/settings.json`:
-   ```json
-   {
-     "telemetry": {
-       "enabled": true,
-       "target": "gcp",
-       "useCollector": true
-     }
-   }
-   ```
-2. Run the automation script:
-   ```bash
-   npm run telemetry -- --target=gcp
-   ```
-   This will:
-   - Start a local OTEL collector that forwards to Google Cloud
-   - Configure your workspace
-   - Provide links to view traces, metrics, and logs in Google Cloud Console
-   - Save collector logs to `~/.qwen/tmp/<projectHash>/otel/collector-gcp.log`
-   - Stop collector on exit (e.g. `Ctrl+C`)
-3. Run Qwen Code and send prompts.
-4. View logs and metrics:
-   - Open the Google Cloud Console in your browser after sending prompts:
-     - Logs: https://console.cloud.google.com/logs/
-     - Metrics: https://console.cloud.google.com/monitoring/metrics-explorer
-     - Traces: https://console.cloud.google.com/traces/list
-   - Open `~/.qwen/tmp/<projectHash>/otel/collector-gcp.log` to view local
-     collector logs.
+3. View logs and metrics in the Aliyun Console.
 
 ## Local Telemetry
 

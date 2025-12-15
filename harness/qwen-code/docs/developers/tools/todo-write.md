@@ -11,9 +11,9 @@ Use `todo_write` to create and manage a structured task list for your current co
 `todo_write` takes one argument:
 
 - `todos` (array, required): An array of todo items, where each item contains:
-  - `id` (string, required): A unique identifier for the todo item.
   - `content` (string, required): The description of the task.
   - `status` (string, required): The current status (`pending`, `in_progress`, or `completed`).
+  - `activeForm` (string, required): The present continuous form describing what is being done (e.g., "Running tests", "Building the project").
 
 ## How to use `todo_write` with Qwen Code
 
@@ -39,19 +39,19 @@ Creating a feature implementation plan:
 ```
 todo_write(todos=[
   {
-    "id": "create-model",
     "content": "Create user preferences model",
-    "status": "pending"
+    "status": "pending",
+    "activeForm": "Creating user preferences model"
   },
   {
-    "id": "add-endpoints",
     "content": "Add API endpoints for preferences",
-    "status": "pending"
+    "status": "pending",
+    "activeForm": "Adding API endpoints for preferences"
   },
   {
-    "id": "implement-ui",
     "content": "Implement frontend components",
-    "status": "pending"
+    "status": "pending",
+    "activeForm": "Implementing frontend components"
   }
 ])
 ```

@@ -10,6 +10,7 @@ export default {
     title: 'Qwen Code SDK',
     type: 'separator',
   },
+  'sdk-typescript': 'Typescript SDK',
   'Dive Into Qwen Code': {
     title: 'Dive Into Qwen Code',
     type: 'separator',
@@ -17,7 +18,16 @@ export default {
   cli: {
     display: 'hidden',
   },
-  core: 'Core',
+
   tools: 'Tools',
   // development: 'Development',
+  core: {
+    display: 'hidden',
+  },
+  extensions: {
+    display: 'hidden',
+  },
+  examples: {
+    display: 'hidden',
+  },
 };

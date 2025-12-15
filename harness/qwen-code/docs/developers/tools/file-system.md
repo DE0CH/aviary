@@ -83,7 +83,7 @@ Qwen Code provides a comprehensive suite of tools for interacting with the local
 
 - **Tool name:** `grep_search`
 - **Display name:** Grep
-- **File:** `ripGrep.ts` (with `grep.ts` as fallback)
+- **File:** `grep.ts` (with `ripGrep.ts` as fallback)
 - **Parameters:**
   - `pattern` (string, required): The regular expression pattern to search for in file contents (e.g., `"function\\s+myFunction"`, `"log.*Error"`).
   - `path` (string, optional): File or directory to search in. Defaults to current working directory.
@@ -141,7 +141,7 @@ grep_search(pattern="function", glob="*.js", limit=10)
   - `file_path` (string, required): The absolute path to the file to modify.
   - `old_string` (string, required): The exact literal text to replace.
 
-    **CRITICAL:** This string must uniquely identify the single instance to change. It should include at least 3 lines of context _before_ and _after_ the target text, matching whitespace and indentation precisely. If `old_string` is empty, the tool attempts to create a new file at `file_path` with `new_string` as content.
+    **CRITICAL:** This string must uniquely identify the single instance to change. It should include sufficient context around the target text, matching whitespace and indentation precisely. If `old_string` is empty, the tool attempts to create a new file at `file_path` with `new_string` as content.
 
   - `new_string` (string, required): The exact literal text to replace `old_string` with.
   - `replace_all` (boolean, optional): Replace all occurrences of `old_string`. Defaults to `false`.
