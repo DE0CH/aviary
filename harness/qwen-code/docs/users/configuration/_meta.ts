@@ -1,5 +1,6 @@
 export default {
   settings: 'Settings',
+  auth: 'Authentication',
   memory: {
     display: 'hidden',
   },

@@ -193,19 +193,18 @@ review my changes and suggest improvements
 
 Here are the most important commands for daily use:
 
-| Command               | What it does                                           | Example                       |
-| --------------------- | ------------------------------------------------------ | ----------------------------- |
-| `qwen`                | start Qwen Code                                        | `qwen`                        |
-| `/summary`            | Generate project summary based on conversation history | `/summary`                    |
-| `/compress`           | Replace chat history with summary to save Tokens       | `/compress`                   |
-| `/clear`              | Clear terminal screen content                          | `/clear` (shortcut: `Ctrl+L`) |
-| `/theme`              | Change Qwen Code visual theme                          | `/theme`                      |
-| `/language`           | View or change language settings                       | `/language`                   |
-| → `ui [language]`     | Set UI interface language                              | `/language ui zh-CN`          |
-| → `output [language]` | Set LLM output language                                | `/language output Chinese`    |
-| `/help`               | Display help information for available commands        | `/help` or `/?`               |
-| `/auth`               | Change authentication method                           | `/auth`                       |
-| `/quit`               | Exit Qwen Code immediately                             | `/quit` or `/exit`            |
+| Command               | What it does                                     | Example                       |
+| --------------------- | ------------------------------------------------ | ----------------------------- |
+| `qwen`                | start Qwen Code                                  | `qwen`                        |
+| `/auth`               | Change authentication method                     | `/auth`                       |
+| `/help`               | Display help information for available commands  | `/help` or `/?`               |
+| `/compress`           | Replace chat history with summary to save Tokens | `/compress`                   |
+| `/clear`              | Clear terminal screen content                    | `/clear` (shortcut: `Ctrl+L`) |
+| `/theme`              | Change Qwen Code visual theme                    | `/theme`                      |
+| `/language`           | View or change language settings                 | `/language`                   |
+| → `ui [language]`     | Set UI interface language                        | `/language ui zh-CN`          |
+| → `output [language]` | Set LLM output language                          | `/language output Chinese`    |
+| `/quit`               | Exit Qwen Code immediately                       | `/quit` or `/exit`            |
 
 See the [CLI reference](/users/reference/cli-reference) for a complete list of commands.
 
