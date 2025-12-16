@@ -50,13 +50,14 @@ Settings are organized into categories. All settings should be placed within the
 
 #### general
 
-| Setting                         | Type    | Description                                | Default     |
-| ------------------------------- | ------- | ------------------------------------------ | ----------- |
-| `general.preferredEditor`       | string  | The preferred editor to open files in.     | `undefined` |
-| `general.vimMode`               | boolean | Enable Vim keybindings.                    | `false`     |
-| `general.disableAutoUpdate`     | boolean | Disable automatic updates.                 | `false`     |
-| `general.disableUpdateNag`      | boolean | Disable update notification prompts.       | `false`     |
-| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery. | `false`     |
+| Setting                         | Type    | Description                                                                                                | Default     |
+| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- | ----------- |
+| `general.preferredEditor`       | string  | The preferred editor to open files in.                                                                     | `undefined` |
+| `general.vimMode`               | boolean | Enable Vim keybindings.                                                                                    | `false`     |
+| `general.disableAutoUpdate`     | boolean | Disable automatic updates.                                                                                 | `false`     |
+| `general.disableUpdateNag`      | boolean | Disable update notification prompts.                                                                       | `false`     |
+| `general.gitCoAuthor`           | boolean | Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code. | `true`      |
+| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery.                                                                 | `false`     |
 
 #### output
 

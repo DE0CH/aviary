@@ -147,6 +147,16 @@ const SETTINGS_SCHEMA = {
         description: 'Disable update notification prompts.',
         showInDialog: false,
       },
+      gitCoAuthor: {
+        type: 'boolean',
+        label: 'Git Co-Author',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code.',
+        showInDialog: false,
+      },
       checkpointing: {
         type: 'object',
         label: 'Checkpointing',
