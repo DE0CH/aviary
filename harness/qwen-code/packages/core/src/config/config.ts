@@ -741,9 +741,12 @@ export class Config {
   /**
    * Starts a new session and resets session-scoped services.
    */
-  startNewSession(sessionId?: string): string {
+  startNewSession(
+    sessionId?: string,
+    sessionData?: ResumedSessionData,
+  ): string {
     this.sessionId = sessionId ?? randomUUID();
-    this.sessionData = undefined;
+    this.sessionData = sessionData;
     this.chatRecordingService = this.chatRecordingEnabled
       ? new ChatRecordingService(this)
       : undefined;

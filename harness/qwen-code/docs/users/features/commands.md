@@ -20,10 +20,11 @@ These commands help you save, restore, and summarize work progress.
 
 | Command     | Description                                               | Usage Examples                       |
 | ----------- | --------------------------------------------------------- | ------------------------------------ |
+| `/init`     | Analyze current directory and create initial context file | `/init`                              |
 | `/summary`  | Generate project summary based on conversation history    | `/summary`                           |
 | `/compress` | Replace chat history with summary to save Tokens          | `/compress`                          |
+| `/resume`   | Resume a previous conversation session                    | `/resume`                            |
 | `/restore`  | Restore files to state before tool execution              | `/restore` (list) or `/restore <ID>` |
-| `/init`     | Analyze current directory and create initial context file | `/init`                              |
 
 ### 1.2 Interface and Workspace Control
 
