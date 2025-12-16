@@ -56,6 +56,7 @@ const SLASH_COMMANDS_SKIP_RECORDING = new Set([
   'clear',
   'reset',
   'new',
+  'resume',
 ]);
 
 interface SlashCommandProcessorActions {

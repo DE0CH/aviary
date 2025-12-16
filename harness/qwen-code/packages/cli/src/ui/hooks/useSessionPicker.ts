@@ -5,25 +5,28 @@
  */
 
 /**
- * Session picker hook for dialog mode (within main app).
- * Uses useKeypress (KeypressContext) instead of useInput (ink).
- * For standalone mode, use useSessionPicker instead.
+ * Unified session picker hook for both dialog and standalone modes.
+ *
+ * IMPORTANT:
+ * - Uses KeypressContext (`useKeypress`) so it behaves correctly inside the main app.
+ * - Standalone mode should wrap the picker in `<KeypressProvider>` when rendered
+ *   outside the main app.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  SessionService,
-  SessionListItem,
   ListSessionsResult,
+  SessionListItem,
+  SessionService,
 } from '@qwen-code/qwen-code-core';
 import {
-  SESSION_PAGE_SIZE,
   filterSessions,
+  SESSION_PAGE_SIZE,
   type SessionState,
 } from '../utils/sessionPickerUtils.js';
 import { useKeypress } from './useKeypress.js';
 
-export interface UseDialogSessionPickerOptions {
+export interface UseSessionPickerOptions {
   sessionService: SessionService | null;
   currentBranch?: string;
   onSelect: (sessionId: string) => void;
@@ -40,8 +43,7 @@ export interface UseDialogSessionPickerOptions {
   isActive?: boolean;
 }
 
-export interface UseDialogSessionPickerResult {
-  // State
+export interface UseSessionPickerResult {
   selectedIndex: number;
   sessionState: SessionState;
   filteredSessions: SessionListItem[];
@@ -51,12 +53,10 @@ export interface UseDialogSessionPickerResult {
   visibleSessions: SessionListItem[];
   showScrollUp: boolean;
   showScrollDown: boolean;
-
-  // Actions
   loadMoreSessions: () => Promise<void>;
 }
 
-export function useDialogSessionPicker({
+export function useSessionPicker({
   sessionService,
   currentBranch,
   onSelect,
@@ -64,7 +64,7 @@ export function useDialogSessionPicker({
   maxVisibleItems,
   centerSelection = false,
   isActive = true,
-}: UseDialogSessionPickerOptions): UseDialogSessionPickerResult {
+}: UseSessionPickerOptions): UseSessionPickerResult {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [sessionState, setSessionState] = useState<SessionState>({
     sessions: [],
@@ -73,43 +73,47 @@ export function useDialogSessionPicker({
   });
   const [filterByBranch, setFilterByBranch] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
   // For follow mode (non-centered)
   const [followScrollOffset, setFollowScrollOffset] = useState(0);
 
   const isLoadingMoreRef = useRef(false);
 
-  // Filter sessions
-  const filteredSessions = filterSessions(
-    sessionState.sessions,
-    filterByBranch,
-    currentBranch,
+  const filteredSessions = useMemo(
+    () => filterSessions(sessionState.sessions, filterByBranch, currentBranch),
+    [sessionState.sessions, filterByBranch, currentBranch],
   );
 
-  // Calculate scroll offset based on mode
-  const scrollOffset = centerSelection
-    ? (() => {
-        if (filteredSessions.length <= maxVisibleItems) {
-          return 0;
-        }
-        const halfVisible = Math.floor(maxVisibleItems / 2);
-        let offset = selectedIndex - halfVisible;
-        offset = Math.max(0, offset);
-        offset = Math.min(filteredSessions.length - maxVisibleItems, offset);
-        return offset;
-      })()
-    : followScrollOffset;
+  const scrollOffset = useMemo(() => {
+    if (centerSelection) {
+      if (filteredSessions.length <= maxVisibleItems) {
+        return 0;
+      }
+      const halfVisible = Math.floor(maxVisibleItems / 2);
+      let offset = selectedIndex - halfVisible;
+      offset = Math.max(0, offset);
+      offset = Math.min(filteredSessions.length - maxVisibleItems, offset);
+      return offset;
+    }
+    return followScrollOffset;
+  }, [
+    centerSelection,
+    filteredSessions.length,
+    followScrollOffset,
+    maxVisibleItems,
+    selectedIndex,
+  ]);
 
-  const visibleSessions = filteredSessions.slice(
-    scrollOffset,
-    scrollOffset + maxVisibleItems,
+  const visibleSessions = useMemo(
+    () => filteredSessions.slice(scrollOffset, scrollOffset + maxVisibleItems),
+    [filteredSessions, maxVisibleItems, scrollOffset],
   );
   const showScrollUp = scrollOffset > 0;
   const showScrollDown =
     scrollOffset + maxVisibleItems < filteredSessions.length;
 
-  // Load initial sessions
+  // Initial load
   useEffect(() => {
-    // Guard: don't load if sessionService is not ready
     if (!sessionService) {
       return;
     }
@@ -128,10 +132,10 @@ export function useDialogSessionPicker({
         setIsLoading(false);
       }
     };
-    loadInitialSessions();
+
+    void loadInitialSessions();
   }, [sessionService]);
 
-  // Load more sessions
   const loadMoreSessions = useCallback(async () => {
     if (!sessionService || !sessionState.hasMore || isLoadingMoreRef.current) {
       return;
@@ -169,9 +173,8 @@ export function useDialogSessionPicker({
     }
   }, [filteredSessions.length, selectedIndex]);
 
-  // Auto-load more when list is empty or near end (for centered mode)
+  // Auto-load more when centered mode hits the sentinel or list is empty.
   useEffect(() => {
-    // Don't auto-load during initial load or if not in centered mode
     if (
       isLoading ||
       !sessionState.hasMore ||
@@ -182,7 +185,6 @@ export function useDialogSessionPicker({
     }
 
     const sentinelVisible =
-      sessionState.hasMore &&
       scrollOffset + maxVisibleItems >= filteredSessions.length;
     const shouldLoadMore = filteredSessions.length === 0 || sentinelVisible;
 
@@ -190,27 +192,25 @@ export function useDialogSessionPicker({
       void loadMoreSessions();
     }
   }, [
-    isLoading,
-    filteredSessions.length,
-    loadMoreSessions,
-    sessionState.hasMore,
-    scrollOffset,
-    maxVisibleItems,
     centerSelection,
+    filteredSessions.length,
+    isLoading,
+    loadMoreSessions,
+    maxVisibleItems,
+    scrollOffset,
+    sessionState.hasMore,
   ]);
 
-  // Handle keyboard input using useKeypress (KeypressContext)
+  // Key handling (KeypressContext)
   useKeypress(
     (key) => {
       const { name, sequence, ctrl } = key;
 
-      // Escape or Ctrl+C to cancel
       if (name === 'escape' || (ctrl && name === 'c')) {
         onCancel();
         return;
       }
 
-      // Enter to select
       if (name === 'return') {
         const session = filteredSessions[selectedIndex];
         if (session) {
@@ -219,11 +219,9 @@ export function useDialogSessionPicker({
         return;
       }
 
-      // Navigation up
       if (name === 'up' || name === 'k') {
         setSelectedIndex((prev) => {
           const newIndex = Math.max(0, prev - 1);
-          // Adjust scroll offset if needed (for follow mode)
           if (!centerSelection && newIndex < followScrollOffset) {
             setFollowScrollOffset(newIndex);
           }
@@ -232,7 +230,6 @@ export function useDialogSessionPicker({
         return;
       }
 
-      // Navigation down
       if (name === 'down' || name === 'j') {
         if (filteredSessions.length === 0) {
           return;
@@ -240,28 +237,28 @@ export function useDialogSessionPicker({
 
         setSelectedIndex((prev) => {
           const newIndex = Math.min(filteredSessions.length - 1, prev + 1);
-          // Adjust scroll offset if needed (for follow mode)
+
           if (
             !centerSelection &&
             newIndex >= followScrollOffset + maxVisibleItems
           ) {
             setFollowScrollOffset(newIndex - maxVisibleItems + 1);
           }
-          // Load more if near the end
-          if (newIndex >= filteredSessions.length - 3 && sessionState.hasMore) {
-            loadMoreSessions();
+
+          // Follow mode: load more when near the end.
+          if (!centerSelection && newIndex >= filteredSessions.length - 3) {
+            void loadMoreSessions();
           }
+
           return newIndex;
         });
         return;
       }
 
-      // Toggle branch filter
       if (sequence === 'b' || sequence === 'B') {
         if (currentBranch) {
           setFilterByBranch((prev) => !prev);
         }
-        return;
       }
     },
     { isActive },

@@ -28,7 +28,7 @@ import { useConfig } from '../contexts/ConfigContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { SettingScope } from '../../config/settings.js';
 import { AuthState } from '../types.js';
-import { AuthType } from '@qwen-code/qwen-code-core';
+import { AuthType, getGitBranch } from '@qwen-code/qwen-code-core';
 import process from 'node:process';
 import { type UseHistoryManagerReturn } from '../hooks/useHistoryManager.js';
 import { IdeTrustChangeDialog } from './IdeTrustChangeDialog.js';
@@ -36,7 +36,7 @@ import { WelcomeBackDialog } from './WelcomeBackDialog.js';
 import { ModelSwitchDialog } from './ModelSwitchDialog.js';
 import { AgentCreationWizard } from './subagents/create/AgentCreationWizard.js';
 import { AgentsManagerDialog } from './subagents/manage/AgentsManagerDialog.js';
-import { ResumeSessionDialog } from './ResumeSessionDialog.js';
+import { SessionPicker } from './SessionPicker.js';
 
 interface DialogManagerProps {
   addItem: UseHistoryManagerReturn['addItem'];
@@ -293,13 +293,11 @@ export const DialogManager = ({
 
   if (uiState.isResumeDialogOpen) {
     return (
-      <ResumeSessionDialog
-        cwd={config.getTargetDir()}
+      <SessionPicker
+        sessionService={config.getSessionService()}
+        currentBranch={getGitBranch(config.getTargetDir())}
         onSelect={uiActions.handleResumeSessionSelect}
         onCancel={uiActions.closeResumeDialog}
-        availableTerminalHeight={
-          constrainHeight ? terminalHeight - staticExtraHeight : undefined
-        }
       />
     );
   }

@@ -24,13 +24,14 @@ export const SESSION_PAGE_SIZE = 20;
  * Truncates text to fit within a given width, adding ellipsis if needed.
  */
 export function truncateText(text: string, maxWidth: number): string {
-  if (text.length <= maxWidth) {
-    return text;
+  const firstLine = text.split(/\r?\n/, 1)[0];
+  if (firstLine.length <= maxWidth) {
+    return firstLine;
   }
   if (maxWidth <= 3) {
-    return text.slice(0, maxWidth);
+    return firstLine.slice(0, maxWidth);
   }
-  return text.slice(0, maxWidth - 3) + '...';
+  return firstLine.slice(0, maxWidth - 3) + '...';
 }
 
 /**
@@ -42,10 +43,6 @@ export function filterSessions(
   currentBranch?: string,
 ): SessionListItem[] {
   return sessions.filter((session) => {
-    // Always exclude sessions with no messages
-    if (session.messageCount === 0) {
-      return false;
-    }
     // Apply branch filter if enabled
     if (filterByBranch && currentBranch) {
       return session.gitBranch === currentBranch;

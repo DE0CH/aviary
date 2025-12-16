@@ -4,87 +4,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
-import { render, Box, Text, useApp } from 'ink';
-import { SessionService, getGitBranch } from '@qwen-code/qwen-code-core';
-import { theme } from '../semantic-colors.js';
-import { useSessionPicker } from '../hooks/useStandaloneSessionPicker.js';
-import { SessionListItemView } from './SessionListItem.js';
-import { t } from '../../i18n/index.js';
+import { useState } from 'react';
+import { render, Box, useApp } from 'ink';
+import { getGitBranch, SessionService } from '@qwen-code/qwen-code-core';
+import { KeypressProvider } from '../contexts/KeypressContext.js';
+import { SessionPicker } from './SessionPicker.js';
 
-// Exported for testing
-export interface SessionPickerProps {
+interface StandalonePickerScreenProps {
   sessionService: SessionService;
-  currentBranch?: string;
   onSelect: (sessionId: string) => void;
   onCancel: () => void;
+  currentBranch?: string;
 }
 
-// Prefix characters for standalone fullscreen picker
-const STANDALONE_PREFIX_CHARS = {
-  selected: '› ',
-  scrollUp: '↑ ',
-  scrollDown: '↓ ',
-  normal: '  ',
-};
-
-// Exported for testing
-export function SessionPicker({
+function StandalonePickerScreen({
   sessionService,
-  currentBranch,
   onSelect,
   onCancel,
-}: SessionPickerProps): React.JSX.Element {
+  currentBranch,
+}: StandalonePickerScreenProps): React.JSX.Element {
   const { exit } = useApp();
   const [isExiting, setIsExiting] = useState(false);
-  const [terminalSize, setTerminalSize] = useState({
-    width: process.stdout.columns || 80,
-    height: process.stdout.rows || 24,
-  });
-
-  // Update terminal size on resize
-  useEffect(() => {
-    const handleResize = () => {
-      setTerminalSize({
-        width: process.stdout.columns || 80,
-        height: process.stdout.rows || 24,
-      });
-    };
-    process.stdout.on('resize', handleResize);
-    return () => {
-      process.stdout.off('resize', handleResize);
-    };
-  }, []);
-
-  // Calculate visible items
-  // Reserved space: header (1), footer (1), separators (2), borders (2)
-  const reservedLines = 6;
-  // Each item takes 2 lines (prompt + metadata) + 1 line margin between items
-  const itemHeight = 3;
-  const maxVisibleItems = Math.max(
-    1,
-    Math.floor((terminalSize.height - reservedLines) / itemHeight),
-  );
-
   const handleExit = () => {
     setIsExiting(true);
     exit();
   };
-
-  const picker = useSessionPicker({
-    sessionService,
-    currentBranch,
-    onSelect,
-    onCancel,
-    maxVisibleItems,
-    centerSelection: true,
-    onExit: handleExit,
-    isActive: !isExiting,
-  });
-
-  // Calculate content width (terminal width minus border padding)
-  const contentWidth = terminalSize.width - 4;
-  const promptMaxWidth = contentWidth - 4;
 
   // Return empty while exiting to prevent visual glitches
   if (isExiting) {
@@ -92,94 +36,19 @@ export function SessionPicker({
   }
 
   return (
-    <Box
-      flexDirection="column"
-      width={terminalSize.width}
-      height={terminalSize.height - 1}
-      overflow="hidden"
-    >
-      {/* Main container with single border */}
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={theme.border.default}
-        width={terminalSize.width}
-        height={terminalSize.height - 1}
-        overflow="hidden"
-      >
-        {/* Header row */}
-        <Box paddingX={1}>
-          <Text bold color={theme.text.primary}>
-            {t('Resume Session')}
-          </Text>
-        </Box>
-
-        {/* Separator line */}
-        <Box>
-          <Text color={theme.border.default}>
-            {'─'.repeat(terminalSize.width - 2)}
-          </Text>
-        </Box>
-
-        {/* Session list with auto-scrolling */}
-        <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-          {picker.filteredSessions.length === 0 ? (
-            <Box paddingY={1} justifyContent="center">
-              <Text color={theme.text.secondary}>
-                {picker.filterByBranch
-                  ? t('No sessions found for branch "{{branch}}"', {
-                      branch: currentBranch ?? '',
-                    })
-                  : t('No sessions found')}
-              </Text>
-            </Box>
-          ) : (
-            picker.visibleSessions.map((session, visibleIndex) => {
-              const actualIndex = picker.scrollOffset + visibleIndex;
-              return (
-                <SessionListItemView
-                  key={session.sessionId}
-                  session={session}
-                  isSelected={actualIndex === picker.selectedIndex}
-                  isFirst={visibleIndex === 0}
-                  isLast={visibleIndex === picker.visibleSessions.length - 1}
-                  showScrollUp={picker.showScrollUp}
-                  showScrollDown={picker.showScrollDown}
-                  maxPromptWidth={promptMaxWidth}
-                  prefixChars={STANDALONE_PREFIX_CHARS}
-                  boldSelectedPrefix={false}
-                />
-              );
-            })
-          )}
-        </Box>
-
-        {/* Separator line */}
-        <Box>
-          <Text color={theme.border.default}>
-            {'─'.repeat(terminalSize.width - 2)}
-          </Text>
-        </Box>
-
-        {/* Footer with keyboard shortcuts */}
-        <Box paddingX={1}>
-          <Text color={theme.text.secondary}>
-            {currentBranch && (
-              <>
-                <Text
-                  bold={picker.filterByBranch}
-                  color={picker.filterByBranch ? theme.text.accent : undefined}
-                >
-                  B
-                </Text>
-                {t(' to toggle branch') + ' · '}
-              </>
-            )}
-            {t('to navigate · Esc to cancel')}
-          </Text>
-        </Box>
-      </Box>
-    </Box>
+    <SessionPicker
+      sessionService={sessionService}
+      onSelect={(id) => {
+        onSelect(id);
+        handleExit();
+      }}
+      onCancel={() => {
+        onCancel();
+        handleExit();
+      }}
+      currentBranch={currentBranch}
+      centerSelection={true}
+    />
   );
 }
 
@@ -205,8 +74,6 @@ export async function showResumeSessionPicker(
     return undefined;
   }
 
-  const currentBranch = getGitBranch(cwd);
-
   // Clear the screen before showing the picker for a clean fullscreen experience
   clearScreen();
 
@@ -220,16 +87,18 @@ export async function showResumeSessionPicker(
     let selectedId: string | undefined;
 
     const { unmount, waitUntilExit } = render(
-      <SessionPicker
-        sessionService={sessionService}
-        currentBranch={currentBranch}
-        onSelect={(id) => {
-          selectedId = id;
-        }}
-        onCancel={() => {
-          selectedId = undefined;
-        }}
-      />,
+      <KeypressProvider kittyProtocolEnabled={false}>
+        <StandalonePickerScreen
+          sessionService={sessionService}
+          onSelect={(id) => {
+            selectedId = id;
+          }}
+          onCancel={() => {
+            selectedId = undefined;
+          }}
+          currentBranch={getGitBranch(cwd)}
+        />
+      </KeypressProvider>,
       {
         exitOnCtrlC: false,
       },

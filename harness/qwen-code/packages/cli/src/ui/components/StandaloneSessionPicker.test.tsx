@@ -6,11 +6,20 @@
 
 import { render } from 'ink-testing-library';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionPicker } from './StandaloneSessionPicker.js';
+import { KeypressProvider } from '../contexts/KeypressContext.js';
+import { SessionPicker } from './SessionPicker.js';
 import type {
   SessionListItem,
   ListSessionsResult,
 } from '@qwen-code/qwen-code-core';
+
+vi.mock('@qwen-code/qwen-code-core', async () => {
+  const actual = await vi.importActual('@qwen-code/qwen-code-core');
+  return {
+    ...actual,
+    getGitBranch: vi.fn().mockReturnValue('main'),
+  };
+});
 
 // Mock terminal size
 const mockTerminalSize = { columns: 80, rows: 24 };
@@ -68,8 +77,8 @@ describe('SessionPicker', () => {
     vi.clearAllMocks();
   });
 
-  describe('Empty Sessions Filtering', () => {
-    it('should filter out sessions with 0 messages', async () => {
+  describe('Empty Sessions', () => {
+    it('should show sessions with 0 messages', async () => {
       const sessions = [
         createMockSession({
           sessionId: 'empty-1',
@@ -92,24 +101,24 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
 
       const output = lastFrame();
-      // Should show the session with messages
       expect(output).toContain('Hello');
-      // Should NOT show empty sessions
-      expect(output).not.toContain('empty-1');
-      expect(output).not.toContain('empty-2');
+      // Should show empty sessions too (rendered as "(empty prompt)" + "0 messages")
+      expect(output).toContain('0 messages');
     });
 
-    it('should show "No sessions found" when all sessions are empty', async () => {
+    it('should show sessions even when all sessions are empty', async () => {
       const sessions = [
         createMockSession({ sessionId: 'empty-1', messageCount: 0 }),
         createMockSession({ sessionId: 'empty-2', messageCount: 0 }),
@@ -119,17 +128,19 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
 
       const output = lastFrame();
-      expect(output).toContain('No sessions found');
+      expect(output).toContain('0 messages');
     });
 
     it('should show sessions with 1 or more messages', async () => {
@@ -150,11 +161,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -194,12 +207,14 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame, stdin } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          currentBranch="main"
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+            currentBranch="main"
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -246,12 +261,14 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame, stdin } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          currentBranch="main"
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+            currentBranch="main"
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -261,9 +278,9 @@ describe('SessionPicker', () => {
       await wait(50);
 
       const output = lastFrame();
-      // Should only show non-empty sessions from main branch
+      // Should only show sessions from main branch (including 0-message sessions)
       expect(output).toContain('Valid main');
-      expect(output).not.toContain('Empty main');
+      expect(output).toContain('Empty main');
       expect(output).not.toContain('Valid feature');
     });
   });
@@ -292,11 +309,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame, stdin } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -332,11 +351,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { stdin, unmount } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -365,11 +386,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { stdin } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -390,11 +413,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { stdin } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -423,11 +448,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -445,18 +472,20 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
 
       const output = lastFrame();
       expect(output).toContain('Resume Session');
-      expect(output).toContain('to navigate');
+      expect(output).toContain('↑↓ to navigate');
       expect(output).toContain('Esc to cancel');
     });
 
@@ -467,12 +496,14 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          currentBranch="main"
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+            currentBranch="main"
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -492,11 +523,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -515,11 +548,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { lastFrame } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(100);
@@ -569,11 +604,13 @@ describe('SessionPicker', () => {
       const onCancel = vi.fn();
 
       const { unmount } = render(
-        <SessionPicker
-          sessionService={mockService as never}
-          onSelect={onSelect}
-          onCancel={onCancel}
-        />,
+        <KeypressProvider kittyProtocolEnabled={false}>
+          <SessionPicker
+            sessionService={mockService as never}
+            onSelect={onSelect}
+            onCancel={onCancel}
+          />
+        </KeypressProvider>,
       );
 
       await wait(200);
