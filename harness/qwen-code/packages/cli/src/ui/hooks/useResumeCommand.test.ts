@@ -158,21 +158,23 @@ describe('useResumeCommand', () => {
     });
     expect(result.current.isResumeDialogOpen).toBe(true);
 
-    const resumePromise = act(async () => {
-      // Intentionally do not resolve loadSession yet.
-      await result.current.handleResume('session-2');
+    let resumePromise: Promise<void> | undefined;
+    act(() => {
+      // Start resume but do not await it yet — we want to assert the dialog
+      // closes immediately before the async session load completes.
+      resumePromise = result.current.handleResume('session-2') as unknown as
+        | Promise<void>
+        | undefined;
     });
-
-    // After the first flush, the dialog should already be closed even though
-    // the session load is still pending.
-    await act(async () => {});
     expect(result.current.isResumeDialogOpen).toBe(false);
 
     // Now finish the async load and let the handler complete.
     resumeMocks.resolvePendingLoadSession({
       conversation: [{ role: 'user', parts: [{ text: 'hello' }] }],
     });
-    await resumePromise;
+    await act(async () => {
+      await resumePromise;
+    });
 
     expect(config.startNewSession).toHaveBeenCalledWith(
       'session-2',
