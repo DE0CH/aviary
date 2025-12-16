@@ -147,6 +147,16 @@ const SETTINGS_SCHEMA = {
         description: 'Disable update notification prompts.',
         showInDialog: false,
       },
+      gitCoAuthor: {
+        type: 'boolean',
+        label: 'Git Co-Author',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code.',
+        showInDialog: false,
+      },
       checkpointing: {
         type: 'object',
         label: 'Checkpointing',
@@ -939,58 +949,6 @@ const SETTINGS_SCHEMA = {
         default: DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
         description: 'The number of lines to keep when truncating tool output.',
         showInDialog: true,
-      },
-    },
-  },
-
-  git: {
-    type: 'object',
-    label: 'Git',
-    category: 'Git',
-    requiresRestart: false,
-    default: {},
-    description: 'Git-related settings.',
-    showInDialog: false,
-    properties: {
-      gitCoAuthor: {
-        type: 'object',
-        label: 'Git Co-Author',
-        category: 'Git',
-        requiresRestart: false,
-        default: {},
-        description:
-          'Settings for automatic Co-authored-by trailer in git commits.',
-        showInDialog: false,
-        properties: {
-          enabled: {
-            type: 'boolean',
-            label: 'Enable Git Co-Author',
-            category: 'Git',
-            requiresRestart: false,
-            default: true,
-            description:
-              'Automatically add Co-authored-by trailer to git commit messages.',
-            showInDialog: true,
-          },
-          name: {
-            type: 'string',
-            label: 'Co-Author Name',
-            category: 'Git',
-            requiresRestart: false,
-            default: 'Qwen-Coder' as string | undefined,
-            description: 'The name to use in the Co-authored-by trailer.',
-            showInDialog: true,
-          },
-          email: {
-            type: 'string',
-            label: 'Co-Author Email',
-            category: 'Git',
-            requiresRestart: false,
-            default: 'qwen-coder@alibabacloud.com' as string | undefined,
-            description: 'The email to use in the Co-authored-by trailer.',
-            showInDialog: true,
-          },
-        },
       },
     },
   },

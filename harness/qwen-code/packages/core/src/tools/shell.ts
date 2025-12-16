@@ -335,23 +335,13 @@ export class ShellToolInvocation extends BaseToolInvocation<
     // Check if co-author feature is enabled
     const gitCoAuthorSettings = this.config.getGitCoAuthor();
 
-    // Debug logging for gitCoAuthor feature
-    // TODO: Remove after debugging is complete
-    console.error(
-      '[gitCoAuthor] Settings:',
-      JSON.stringify(gitCoAuthorSettings),
-    );
-    console.error('[gitCoAuthor] Command:', command);
-
     if (!gitCoAuthorSettings.enabled) {
-      console.error('[gitCoAuthor] Feature disabled, skipping');
       return command;
     }
 
     // Check if this is a git commit command (anywhere in the command, e.g., after "cd /path &&")
     const gitCommitPattern = /\bgit\s+commit\b/;
     if (!gitCommitPattern.test(command)) {
-      console.error('[gitCoAuthor] Not a git commit command, skipping');
       return command;
     }
 
@@ -372,24 +362,21 @@ Co-authored-by: ${gitCoAuthorSettings.name} <${gitCoAuthorSettings.email}>`;
     //   (?:...|...)* matches normal chars or escapes, repeated
     const doubleQuotePattern = /(-[a-zA-Z]*m\s+)"((?:[^"\\]|\\.)*)"/;
     const singleQuotePattern = /(-[a-zA-Z]*m\s+)'((?:[^'\\]|\\.)*)'/;
-    const match =
-      command.match(doubleQuotePattern) || command.match(singleQuotePattern);
-    const quote = command.match(doubleQuotePattern) ? '"' : "'";
-
-    console.error('[gitCoAuthor] Message pattern match:', match ? 'YES' : 'NO');
+    const doubleMatch = command.match(doubleQuotePattern);
+    const singleMatch = command.match(singleQuotePattern);
+    const match = doubleMatch ?? singleMatch;
+    const quote = doubleMatch ? '"' : "'";
 
     if (match) {
       const [fullMatch, prefix, existingMessage] = match;
       const newMessage = existingMessage + coAuthor;
       const replacement = prefix + quote + newMessage + quote;
 
-      console.error('[gitCoAuthor] Adding co-author trailer');
       return command.replace(fullMatch, replacement);
     }
 
     // If no -m flag found, the command might open an editor
     // In this case, we can't easily modify it, so return as-is
-    console.error('[gitCoAuthor] No -m flag found, skipping');
     return command;
   }
 }

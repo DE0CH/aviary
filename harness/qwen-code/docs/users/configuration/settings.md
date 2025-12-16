@@ -50,13 +50,14 @@ Settings are organized into categories. All settings should be placed within the
 
 #### general
 
-| Setting                         | Type    | Description                                | Default     |
-| ------------------------------- | ------- | ------------------------------------------ | ----------- |
-| `general.preferredEditor`       | string  | The preferred editor to open files in.     | `undefined` |
-| `general.vimMode`               | boolean | Enable Vim keybindings.                    | `false`     |
-| `general.disableAutoUpdate`     | boolean | Disable automatic updates.                 | `false`     |
-| `general.disableUpdateNag`      | boolean | Disable update notification prompts.       | `false`     |
-| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery. | `false`     |
+| Setting                         | Type    | Description                                                                                                | Default     |
+| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- | ----------- |
+| `general.preferredEditor`       | string  | The preferred editor to open files in.                                                                     | `undefined` |
+| `general.vimMode`               | boolean | Enable Vim keybindings.                                                                                    | `false`     |
+| `general.disableAutoUpdate`     | boolean | Disable automatic updates.                                                                                 | `false`     |
+| `general.disableUpdateNag`      | boolean | Disable update notification prompts.                                                                       | `false`     |
+| `general.gitCoAuthor`           | boolean | Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code. | `true`      |
+| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery.                                                                 | `false`     |
 
 #### output
 
@@ -174,14 +175,6 @@ If you are experiencing performance issues with file searching (e.g., with `@` c
 | `tools.truncateToolOutputThreshold`  | number            | Truncate tool output if it is larger than this many characters. Applies to Shell, Grep, Glob, ReadFile and ReadManyFiles tools.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `25000`     | Requires restart: Yes                                                                                                                                                                                                                                |
 | `tools.truncateToolOutputLines`      | number            | Maximum lines or entries kept when truncating tool output. Applies to Shell, Grep, Glob, ReadFile and ReadManyFiles tools.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `1000`      | Requires restart: Yes                                                                                                                                                                                                                                |
 | `tools.autoAccept`                   | boolean           | Controls whether the CLI automatically accepts and executes tool calls that are considered safe (e.g., read-only operations) without explicit user confirmation. If set to `true`, the CLI will bypass the confirmation prompt for tools deemed safe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `false`     |                                                                                                                                                                                                                                                      |
-
-#### git
-
-| Setting                   | Type    | Description                                                                                                | Default                         |
-| ------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `git.gitCoAuthor.enabled` | boolean | Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code. | `true`                          |
-| `git.gitCoAuthor.name`    | string  | The name to use in the Co-authored-by trailer.                                                             | `"Qwen-Coder"`                  |
-| `git.gitCoAuthor.email`   | string  | The email to use in the Co-authored-by trailer.                                                            | `"qwen-coder@alibabacloud.com"` |
 
 #### mcp
 
