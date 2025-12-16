@@ -38,11 +38,11 @@ what does this project do?
 
 ![](https://gw.alicdn.com/imgextra/i2/O1CN01XoPbZm1CrsZzvMQ6m_!!6000000000135-1-tps-772-646.gif)
 
-You'll be prompted to log in on first use. That's it! [Continue with Quickstart (5 mins) →](./quickstart)
+You'll be prompted to log in on first use. That's it! [Continue with Quickstart (5 mins) →](../users/quickstart)
 
 > [!tip]
 >
-> See [troubleshooting](./support/troubleshooting) if you hit issues.
+> See [troubleshooting](../users/support/troubleshooting) if you hit issues.
 
 > [!note]
 >

@@ -225,9 +225,9 @@ See the [CLI reference](/users/reference/cli-reference) for a complete list of c
 3. build a webpage that allows users to see and edit their information
 ```
 
-**Let Claude explore first**
+**Let Qwen Code explore first**
 
-- Before making changes, let Claude understand your code:
+- Before making changes, let Qwen Code understand your code:
 
 ```
 analyze the database schema
