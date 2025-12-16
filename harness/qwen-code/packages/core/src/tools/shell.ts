@@ -193,11 +193,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
             switch (event.type) {
               case 'data':
                 if (isBinaryStream) break;
-                if (typeof cumulativeOutput === 'string') {
-                  cumulativeOutput += event.chunk;
-                } else {
-                  cumulativeOutput = event.chunk;
-                }
+                cumulativeOutput = event.chunk;
                 shouldUpdate = true;
                 break;
               case 'binary_detected':
