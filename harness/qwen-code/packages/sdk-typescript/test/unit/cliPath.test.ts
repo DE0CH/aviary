@@ -38,6 +38,8 @@ describe('CLI Path Utilities', () => {
     mockFs.statSync.mockReturnValue({
       isFile: () => true,
     } as ReturnType<typeof import('fs').statSync>);
+    // Default: return true for existsSync (can be overridden in specific tests)
+    mockFs.existsSync.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -54,7 +56,17 @@ describe('CLI Path Utilities', () => {
         // Mock environment variable
         const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
         process.env['QWEN_CODE_CLI_PATH'] = '/usr/local/bin/qwen';
-        mockFs.existsSync.mockReturnValue(true);
+        // Mock existsSync to return false for bundled CLI, true for env var path
+        mockFs.existsSync.mockImplementation((p) => {
+          const pathStr = p.toString();
+          if (
+            pathStr.includes('cli/cli.js') ||
+            pathStr.includes('cli\\cli.js')
+          ) {
+            return false;
+          }
+          return pathStr.includes('/usr/local/bin/qwen');
+        });
 
         const result = parseExecutableSpec();
 
@@ -365,6 +377,17 @@ describe('CLI Path Utilities', () => {
         // Mock environment variable
         const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
         process.env['QWEN_CODE_CLI_PATH'] = '/usr/local/bin/qwen';
+        // Mock existsSync to return false for bundled CLI, true for env var path
+        mockFs.existsSync.mockImplementation((p) => {
+          const pathStr = p.toString();
+          if (
+            pathStr.includes('cli/cli.js') ||
+            pathStr.includes('cli\\cli.js')
+          ) {
+            return false;
+          }
+          return pathStr.includes('/usr/local/bin/qwen');
+        });
 
         const result = prepareSpawnInfo();
 
@@ -385,7 +408,14 @@ describe('CLI Path Utilities', () => {
     it('should find CLI from environment variable', () => {
       const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
       process.env['QWEN_CODE_CLI_PATH'] = '/custom/path/to/qwen';
-      mockFs.existsSync.mockReturnValue(true);
+      // Mock existsSync to return false for bundled CLI, true for env var path
+      mockFs.existsSync.mockImplementation((p) => {
+        const pathStr = p.toString();
+        if (pathStr.includes('cli/cli.js') || pathStr.includes('cli\\cli.js')) {
+          return false;
+        }
+        return pathStr.includes('/custom/path/to/qwen');
+      });
 
       const result = findNativeCliPath();
 
