@@ -8,21 +8,18 @@ import * as vscode from 'vscode';
 import { QwenAgentManager } from '../services/qwenAgentManager.js';
 import { ConversationStore } from '../services/conversationStore.js';
 import type { AcpPermissionRequest } from '../types/acpTypes.js';
-import { CliDetector } from '../cli/cliDetector.js';
-import { AuthStateManager } from '../services/authStateManager.js';
 import { PanelManager } from '../webview/PanelManager.js';
 import { MessageHandler } from '../webview/MessageHandler.js';
 import { WebViewContent } from '../webview/WebViewContent.js';
-import { CliInstaller } from '../cli/cliInstaller.js';
 import { getFileName } from './utils/webviewUtils.js';
-import { authMethod, type ApprovalModeValue } from '../types/acpTypes.js';
+import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
+import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;
   private messageHandler: MessageHandler;
   private agentManager: QwenAgentManager;
   private conversationStore: ConversationStore;
-  private authStateManager: AuthStateManager;
   private disposables: vscode.Disposable[] = [];
   private agentInitialized = false; // Track if agent has been initialized
   // Track a pending permission request and its resolver so extension commands
@@ -34,12 +31,11 @@ export class WebViewProvider {
   private currentModeId: ApprovalModeValue | null = null;
 
   constructor(
-    context: vscode.ExtensionContext,
+    private context: vscode.ExtensionContext,
     private extensionUri: vscode.Uri,
   ) {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
-    this.authStateManager = AuthStateManager.getInstance(context);
     this.panelManager = new PanelManager(extensionUri, () => {
       // Panel dispose callback
       this.disposables.forEach((d) => d.dispose());
@@ -122,12 +118,15 @@ export class WebViewProvider {
       });
     });
 
-    // Setup end-turn handler from ACP stopReason=end_turn
-    this.agentManager.onEndTurn(() => {
+    // Setup end-turn handler from ACP stopReason notifications
+    this.agentManager.onEndTurn((reason) => {
       // Ensure WebView exits streaming state even if no explicit streamEnd was emitted elsewhere
       this.sendMessageToWebView({
         type: 'streamEnd',
-        data: { timestamp: Date.now(), reason: 'end_turn' },
+        data: {
+          timestamp: Date.now(),
+          reason: reason || 'end_turn',
+        },
       });
     });
 
@@ -522,40 +521,14 @@ export class WebViewProvider {
    */
   private async attemptAuthStateRestoration(): Promise<void> {
     try {
-      if (this.authStateManager) {
-        // Debug current auth state
-        await this.authStateManager.debugAuthState();
-
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-        const hasValidAuth = await this.authStateManager.hasValidAuth(
-          workingDir,
-          authMethod,
-        );
-        console.log('[WebViewProvider] Has valid cached auth:', hasValidAuth);
-
-        if (hasValidAuth) {
-          console.log(
-            '[WebViewProvider] Valid auth found, attempting connection...',
-          );
-          // Try to connect with cached auth
-          await this.initializeAgentConnection();
-        } else {
-          console.log(
-            '[WebViewProvider] No valid auth found, rendering empty conversation',
-          );
-          // Render the chat UI immediately without connecting
-          await this.initializeEmptyConversation();
-        }
-      } else {
-        console.log(
-          '[WebViewProvider] No auth state manager, rendering empty conversation',
-        );
-        await this.initializeEmptyConversation();
-      }
-    } catch (_error) {
-      console.error('[WebViewProvider] Auth state restoration failed:', _error);
-      // Fallback to rendering empty conversation
+      console.log('[WebViewProvider] Attempting connection...');
+      // Attempt a connection to detect prior auth without forcing login
+      await this.initializeAgentConnection({ autoAuthenticate: false });
+    } catch (error) {
+      console.error(
+        '[WebViewProvider] Error in attemptAuthStateRestoration:',
+        error,
+      );
       await this.initializeEmptyConversation();
     }
   }
@@ -564,70 +537,88 @@ export class WebViewProvider {
    * Initialize agent connection and session
    * Can be called from show() or via /login command
    */
-  async initializeAgentConnection(): Promise<void> {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+  async initializeAgentConnection(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<void> {
+    return this.doInitializeAgentConnection(options);
+  }
 
-    console.log(
-      '[WebViewProvider] Starting initialization, workingDir:',
-      workingDir,
-    );
-    console.log(
-      '[WebViewProvider] AuthStateManager available:',
-      !!this.authStateManager,
-    );
+  /**
+   * Internal: perform actual connection/initialization (no auth locking).
+   */
+  private async doInitializeAgentConnection(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<void> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
+    const run = async () => {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-    // Check if CLI is installed before attempting to connect
-    const cliDetection = await CliDetector.detectQwenCli();
-
-    if (!cliDetection.isInstalled) {
       console.log(
-        '[WebViewProvider] Qwen CLI not detected, skipping agent connection',
+        '[WebViewProvider] Starting initialization, workingDir:',
+        workingDir,
       );
-      console.log('[WebViewProvider] CLI detection error:', cliDetection.error);
-
-      // Show VSCode notification with installation option
-      await CliInstaller.promptInstallation();
-
-      // Initialize empty conversation (can still browse history)
-      await this.initializeEmptyConversation();
-    } else {
       console.log(
-        '[WebViewProvider] Qwen CLI detected, attempting connection...',
+        `[WebViewProvider] Using CLI-managed authentication (autoAuth=${autoAuthenticate})`,
       );
-      console.log('[WebViewProvider] CLI path:', cliDetection.cliPath);
-      console.log('[WebViewProvider] CLI version:', cliDetection.version);
+
+      const bundledCliEntry = vscode.Uri.joinPath(
+        this.extensionUri,
+        'dist',
+        'qwen-cli',
+        'cli.js',
+      ).fsPath;
 
       try {
         console.log('[WebViewProvider] Connecting to agent...');
-        console.log(
-          '[WebViewProvider] Using authStateManager:',
-          !!this.authStateManager,
-        );
-        const authInfo = await this.authStateManager.getAuthInfo();
-        console.log('[WebViewProvider] Auth cache status:', authInfo);
 
         // Pass the detected CLI path to ensure we use the correct installation
-        await this.agentManager.connect(
+        const connectResult = await this.agentManager.connect(
           workingDir,
-          this.authStateManager,
-          cliDetection.cliPath,
+          bundledCliEntry,
+          options,
         );
         console.log('[WebViewProvider] Agent connected successfully');
         this.agentInitialized = true;
 
-        // Load messages from the current Qwen session
-        await this.loadCurrentSessionMessages();
+        // If authentication is required and autoAuthenticate is false,
+        // send authState message and return without creating session
+        if (connectResult.requiresAuth && !autoAuthenticate) {
+          console.log(
+            '[WebViewProvider] Authentication required but auto-auth disabled, sending authState and returning',
+          );
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+          // Initialize empty conversation to allow browsing history
+          await this.initializeEmptyConversation();
+          return;
+        }
 
-        // Notify webview that agent is connected
-        this.sendMessageToWebView({
-          type: 'agentConnected',
-          data: {},
-        });
+        if (connectResult.requiresAuth) {
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+        }
+
+        // Load messages from the current Qwen session
+        const sessionReady = await this.loadCurrentSessionMessages(options);
+
+        if (sessionReady) {
+          // Notify webview that agent is connected
+          this.sendMessageToWebView({
+            type: 'agentConnected',
+            data: {},
+          });
+        } else {
+          console.log(
+            '[WebViewProvider] Session creation deferred until user logs in.',
+          );
+        }
       } catch (_error) {
         console.error('[WebViewProvider] Agent connection error:', _error);
-        // Clear auth cache on error (might be auth issue)
-        await this.authStateManager.clearAuthState();
         vscode.window.showWarningMessage(
           `Failed to connect to Qwen CLI: ${_error}\nYou can still use the chat UI, but messages won't be sent to AI.`,
         );
@@ -642,7 +633,9 @@ export class WebViewProvider {
           },
         });
       }
-    }
+    };
+
+    return run();
   }
 
   /**
@@ -651,28 +644,15 @@ export class WebViewProvider {
    */
   async forceReLogin(): Promise<void> {
     console.log('[WebViewProvider] Force re-login requested');
-    console.log(
-      '[WebViewProvider] Current authStateManager:',
-      !!this.authStateManager,
-    );
 
-    await vscode.window.withProgress(
+    return vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Logging in to Qwen Code... ',
         cancellable: false,
       },
       async (progress) => {
         try {
           progress.report({ message: 'Preparing sign-in...' });
-
-          // Clear existing auth cache
-          if (this.authStateManager) {
-            await this.authStateManager.clearAuthState();
-            console.log('[WebViewProvider] Auth cache cleared');
-          } else {
-            console.log('[WebViewProvider] No authStateManager to clear');
-          }
 
           // Disconnect existing connection if any
           if (this.agentInitialized) {
@@ -693,18 +673,10 @@ export class WebViewProvider {
           });
 
           // Reinitialize connection (will trigger fresh authentication)
-          await this.initializeAgentConnection();
+          await this.doInitializeAgentConnection({ autoAuthenticate: true });
           console.log(
             '[WebViewProvider] Force re-login completed successfully',
           );
-
-          // Ensure auth state is saved after successful re-login
-          if (this.authStateManager) {
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
-            await this.authStateManager.saveAuthState(workingDir, authMethod);
-            console.log('[WebViewProvider] Auth state saved after re-login');
-          }
 
           // Send success notification to WebView
           this.sendMessageToWebView({
@@ -784,7 +756,11 @@ export class WebViewProvider {
    * Load messages from current Qwen session
    * Skips session restoration and creates a new session directly
    */
-  private async loadCurrentSessionMessages(): Promise<void> {
+  private async loadCurrentSessionMessages(options?: {
+    autoAuthenticate?: boolean;
+  }): Promise<boolean> {
+    const autoAuthenticate = options?.autoAuthenticate ?? true;
+    let sessionReady = false;
     try {
       console.log(
         '[WebViewProvider] Initializing with new session (skipping restoration)',
@@ -793,29 +769,49 @@ export class WebViewProvider {
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
-      // Skip session restoration entirely and create a new session directly
-      try {
-        await this.agentManager.createNewSession(
-          workingDir,
-          this.authStateManager,
-        );
-        console.log('[WebViewProvider] ACP session created successfully');
-
-        // Ensure auth state is saved after successful session creation
-        if (this.authStateManager) {
-          await this.authStateManager.saveAuthState(workingDir, authMethod);
+      // avoid creating another session if connect() already created one.
+      if (!this.agentManager.currentSessionId) {
+        if (!autoAuthenticate) {
           console.log(
-            '[WebViewProvider] Auth state saved after session creation',
+            '[WebViewProvider] Skipping ACP session creation until user logs in.',
           );
+          this.sendMessageToWebView({
+            type: 'authState',
+            data: { authenticated: false },
+          });
+        } else {
+          try {
+            await this.agentManager.createNewSession(workingDir, {
+              autoAuthenticate,
+            });
+            console.log('[WebViewProvider] ACP session created successfully');
+            sessionReady = true;
+          } catch (sessionError) {
+            const requiresAuth = isAuthenticationRequiredError(sessionError);
+            if (requiresAuth && !autoAuthenticate) {
+              console.log(
+                '[WebViewProvider] ACP session requires authentication; waiting for explicit login.',
+              );
+              this.sendMessageToWebView({
+                type: 'authState',
+                data: { authenticated: false },
+              });
+            } else {
+              console.error(
+                '[WebViewProvider] Failed to create ACP session:',
+                sessionError,
+              );
+              vscode.window.showWarningMessage(
+                `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
+              );
+            }
+          }
         }
-      } catch (sessionError) {
-        console.error(
-          '[WebViewProvider] Failed to create ACP session:',
-          sessionError,
+      } else {
+        console.log(
+          '[WebViewProvider] Existing ACP session detected, skipping new session creation',
         );
-        vscode.window.showWarningMessage(
-          `Failed to create ACP session: ${sessionError}. You may need to authenticate first.`,
-        );
+        sessionReady = true;
       }
 
       await this.initializeEmptyConversation();
@@ -828,7 +824,10 @@ export class WebViewProvider {
         `Failed to load session messages: ${_error}`,
       );
       await this.initializeEmptyConversation();
+      return false;
     }
+
+    return sessionReady;
   }
 
   /**
@@ -975,25 +974,13 @@ export class WebViewProvider {
   }
 
   /**
-   * Clear authentication cache for this WebViewProvider instance
-   */
-  async clearAuthCache(): Promise<void> {
-    console.log('[WebViewProvider] Clearing auth cache for this instance');
-    if (this.authStateManager) {
-      await this.authStateManager.clearAuthState();
-      this.resetAgentState();
-    }
-  }
-
-  /**
    * Restore an existing WebView panel (called during VSCode restart)
    * This sets up the panel with all event listeners
    */
   async restorePanel(panel: vscode.WebviewPanel): Promise<void> {
     console.log('[WebViewProvider] Restoring WebView panel');
     console.log(
-      '[WebViewProvider] Current authStateManager in restore:',
-      !!this.authStateManager,
+      '[WebViewProvider] Using CLI-managed authentication in restore',
     );
     this.panelManager.setPanel(panel);
 
@@ -1196,18 +1183,13 @@ export class WebViewProvider {
       const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
 
       // Create new Qwen session via agent manager
-      await this.agentManager.createNewSession(
-        workingDir,
-        this.authStateManager,
-      );
+      await this.agentManager.createNewSession(workingDir);
 
       // Clear current conversation UI
       this.sendMessageToWebView({
         type: 'conversationCleared',
         data: {},
       });
-
-      console.log('[WebViewProvider] New session created successfully');
     } catch (_error) {
       console.error('[WebViewProvider] Failed to create new session:', _error);
       vscode.window.showErrorMessage(`Failed to create new session: ${_error}`);
