@@ -99,7 +99,6 @@ import { processVisionSwitchOutcome } from './hooks/useVisionAutoSwitch.js';
 import { useSubagentCreateDialog } from './hooks/useSubagentCreateDialog.js';
 import { useAgentsManagerDialog } from './hooks/useAgentsManagerDialog.js';
 import { useAttentionNotifications } from './hooks/useAttentionNotifications.js';
-import { useSessionSelect } from './hooks/useSessionSelect.js';
 
 const CTRL_EXIT_PROMPT_DURATION_MS = 1000;
 
@@ -437,13 +436,14 @@ export const AppContainer = (props: AppContainerProps) => {
   const { isModelDialogOpen, openModelDialog, closeModelDialog } =
     useModelCommand();
 
-  const { isResumeDialogOpen, openResumeDialog, closeResumeDialog } =
-    useResumeCommand();
-
-  const handleResumeSessionSelect = useSessionSelect({
+  const {
+    isResumeDialogOpen,
+    openResumeDialog,
+    closeResumeDialog,
+    handleResume,
+  } = useResumeCommand({
     config,
     historyManager,
-    closeResumeDialog,
     startNewSession,
     remount: refreshStatic,
   });
@@ -1442,7 +1442,7 @@ export const AppContainer = (props: AppContainerProps) => {
       // Resume session dialog
       openResumeDialog,
       closeResumeDialog,
-      handleResumeSessionSelect,
+      handleResume,
     }),
     [
       handleThemeSelect,
@@ -1478,7 +1478,7 @@ export const AppContainer = (props: AppContainerProps) => {
       // Resume session dialog
       openResumeDialog,
       closeResumeDialog,
-      handleResumeSessionSelect,
+      handleResume,
     ],
   );
 

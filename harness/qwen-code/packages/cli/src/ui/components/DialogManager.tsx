@@ -296,7 +296,7 @@ export const DialogManager = ({
       <SessionPicker
         sessionService={config.getSessionService()}
         currentBranch={getGitBranch(config.getTargetDir())}
-        onSelect={uiActions.handleResumeSessionSelect}
+        onSelect={uiActions.handleResume}
         onCancel={uiActions.closeResumeDialog}
       />
     );

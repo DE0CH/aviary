@@ -5,8 +5,58 @@
  */
 
 import { act, renderHook } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { useResumeCommand } from './useResumeCommand.js';
+
+const resumeMocks = vi.hoisted(() => {
+  let resolveLoadSession:
+    | ((value: { conversation: unknown } | undefined) => void)
+    | undefined;
+  let pendingLoadSession:
+    | Promise<{ conversation: unknown } | undefined>
+    | undefined;
+
+  return {
+    createPendingLoadSession() {
+      pendingLoadSession = new Promise((resolve) => {
+        resolveLoadSession = resolve;
+      });
+      return pendingLoadSession;
+    },
+    resolvePendingLoadSession(value: { conversation: unknown } | undefined) {
+      resolveLoadSession?.(value);
+    },
+    getPendingLoadSession() {
+      return pendingLoadSession;
+    },
+    reset() {
+      resolveLoadSession = undefined;
+      pendingLoadSession = undefined;
+    },
+  };
+});
+
+vi.mock('../utils/resumeHistoryUtils.js', () => ({
+  buildResumedHistoryItems: vi.fn(() => [{ id: 1, type: 'user', text: 'hi' }]),
+}));
+
+vi.mock('@qwen-code/qwen-code-core', () => {
+  class SessionService {
+    constructor(_cwd: string) {}
+    async loadSession(_sessionId: string) {
+      return (
+        resumeMocks.getPendingLoadSession() ??
+        Promise.resolve({
+          conversation: [{ role: 'user', parts: [{ text: 'hello' }] }],
+        })
+      );
+    }
+  }
+
+  return {
+    SessionService,
+  };
+});
 
 describe('useResumeCommand', () => {
   it('should initialize with dialog closed', () => {
@@ -48,10 +98,91 @@ describe('useResumeCommand', () => {
 
     const initialOpenFn = result.current.openResumeDialog;
     const initialCloseFn = result.current.closeResumeDialog;
+    const initialHandleResume = result.current.handleResume;
 
     rerender();
 
     expect(result.current.openResumeDialog).toBe(initialOpenFn);
     expect(result.current.closeResumeDialog).toBe(initialCloseFn);
+    expect(result.current.handleResume).toBe(initialHandleResume);
+  });
+
+  it('handleResume no-ops when config is null', async () => {
+    const historyManager = { clearItems: vi.fn(), loadHistory: vi.fn() };
+    const startNewSession = vi.fn();
+
+    const { result } = renderHook(() =>
+      useResumeCommand({
+        config: null,
+        historyManager,
+        startNewSession,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleResume('session-1');
+    });
+
+    expect(startNewSession).not.toHaveBeenCalled();
+    expect(historyManager.clearItems).not.toHaveBeenCalled();
+    expect(historyManager.loadHistory).not.toHaveBeenCalled();
+  });
+
+  it('handleResume closes the dialog immediately and restores session state', async () => {
+    resumeMocks.reset();
+    resumeMocks.createPendingLoadSession();
+
+    const historyManager = { clearItems: vi.fn(), loadHistory: vi.fn() };
+    const startNewSession = vi.fn();
+    const geminiClient = {
+      initialize: vi.fn(),
+    };
+
+    const config = {
+      getTargetDir: () => '/tmp',
+      getGeminiClient: () => geminiClient,
+      startNewSession: vi.fn(),
+    } as unknown as import('@qwen-code/qwen-code-core').Config;
+
+    const { result } = renderHook(() =>
+      useResumeCommand({
+        config,
+        historyManager,
+        startNewSession,
+      }),
+    );
+
+    // Open first so we can verify the dialog closes immediately.
+    act(() => {
+      result.current.openResumeDialog();
+    });
+    expect(result.current.isResumeDialogOpen).toBe(true);
+
+    const resumePromise = act(async () => {
+      // Intentionally do not resolve loadSession yet.
+      await result.current.handleResume('session-2');
+    });
+
+    // After the first flush, the dialog should already be closed even though
+    // the session load is still pending.
+    await act(async () => {});
+    expect(result.current.isResumeDialogOpen).toBe(false);
+
+    // Now finish the async load and let the handler complete.
+    resumeMocks.resolvePendingLoadSession({
+      conversation: [{ role: 'user', parts: [{ text: 'hello' }] }],
+    });
+    await resumePromise;
+
+    expect(config.startNewSession).toHaveBeenCalledWith(
+      'session-2',
+      expect.objectContaining({
+        conversation: expect.anything(),
+      }),
+    );
+    expect(startNewSession).toHaveBeenCalledWith('session-2');
+    expect(geminiClient.initialize).toHaveBeenCalledTimes(1);
+    expect(historyManager.clearItems).toHaveBeenCalledTimes(1);
+    expect(historyManager.loadHistory).toHaveBeenCalledTimes(1);
   });
 });

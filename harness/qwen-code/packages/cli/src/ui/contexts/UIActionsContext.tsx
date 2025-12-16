@@ -67,7 +67,7 @@ export interface UIActions {
   // Resume session dialog
   openResumeDialog: () => void;
   closeResumeDialog: () => void;
-  handleResumeSessionSelect: (sessionId: string) => void;
+  handleResume: (sessionId: string) => void;
 }
 
 export const UIActionsContext = createContext<UIActions | null>(null);
