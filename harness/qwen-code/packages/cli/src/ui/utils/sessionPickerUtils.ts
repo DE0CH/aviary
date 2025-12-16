@@ -35,7 +35,7 @@ export function truncateText(text: string, maxWidth: number): string {
 }
 
 /**
- * Filters sessions to exclude empty ones (0 messages) and optionally by branch.
+ * Filters sessions optionally by branch.
  */
 export function filterSessions(
   sessions: SessionListItem[],

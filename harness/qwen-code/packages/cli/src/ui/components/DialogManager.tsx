@@ -28,7 +28,7 @@ import { useConfig } from '../contexts/ConfigContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { SettingScope } from '../../config/settings.js';
 import { AuthState } from '../types.js';
-import { AuthType, getGitBranch } from '@qwen-code/qwen-code-core';
+import { AuthType } from '@qwen-code/qwen-code-core';
 import process from 'node:process';
 import { type UseHistoryManagerReturn } from '../hooks/useHistoryManager.js';
 import { IdeTrustChangeDialog } from './IdeTrustChangeDialog.js';
@@ -295,7 +295,7 @@ export const DialogManager = ({
     return (
       <SessionPicker
         sessionService={config.getSessionService()}
-        currentBranch={getGitBranch(config.getTargetDir())}
+        currentBranch={uiState.branchName}
         onSelect={uiActions.handleResume}
         onCancel={uiActions.closeResumeDialog}
       />

@@ -5,7 +5,6 @@
  */
 
 import { Box, Text } from 'ink';
-import { useEffect, useState } from 'react';
 import type {
   SessionListItem as SessionData,
   SessionService,
@@ -17,6 +16,7 @@ import {
   formatMessageCount,
   truncateText,
 } from '../utils/sessionPickerUtils.js';
+import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { t } from '../../i18n/index.js';
 
 export interface SessionPickerProps {
@@ -125,27 +125,10 @@ export function SessionPicker(props: SessionPickerProps) {
     centerSelection = true,
   } = props;
 
-  const [terminalSize, setTerminalSize] = useState({
-    width: process.stdout.columns || 80,
-    height: process.stdout.rows || 24,
-  });
+  const { columns: width, rows: height } = useTerminalSize();
 
-  // Keep fullscreen picker responsive to terminal resize.
-  useEffect(() => {
-    const handleResize = () => {
-      setTerminalSize({
-        width: process.stdout.columns || 80,
-        height: process.stdout.rows || 24,
-      });
-    };
-
-    // `stdout` emits "resize" when TTY size changes.
-    process.stdout.on('resize', handleResize);
-    return () => {
-      process.stdout.off('resize', handleResize);
-    };
-  }, []);
-
+  // Calculate box width (width + 6 for border padding)
+  const boxWidth = width + 6;
   // Calculate visible items (same heuristic as before)
   // Reserved space: header (1), footer (1), separators (2), borders (2)
   const reservedLines = 6;
@@ -153,7 +136,7 @@ export function SessionPicker(props: SessionPickerProps) {
   const itemHeight = 3;
   const maxVisibleItems = Math.max(
     1,
-    Math.floor((terminalSize.height - reservedLines) / itemHeight),
+    Math.floor((height - reservedLines) / itemHeight),
   );
 
   const picker = useSessionPicker({
@@ -166,17 +149,10 @@ export function SessionPicker(props: SessionPickerProps) {
     isActive: true,
   });
 
-  const width = terminalSize.width;
-  const height = terminalSize.height;
-
-  // Calculate content width (terminal width minus border padding)
-  const contentWidth = width - 4;
-  const promptMaxWidth = contentWidth - 4;
-
   return (
     <Box
       flexDirection="column"
-      width={width}
+      width={boxWidth}
       height={height - 1}
       overflow="hidden"
     >
@@ -184,7 +160,7 @@ export function SessionPicker(props: SessionPickerProps) {
         flexDirection="column"
         borderStyle="round"
         borderColor={theme.border.default}
-        width={width}
+        width={boxWidth}
         height={height - 1}
         overflow="hidden"
       >
@@ -236,7 +212,7 @@ export function SessionPicker(props: SessionPickerProps) {
                   isLast={visibleIndex === picker.visibleSessions.length - 1}
                   showScrollUp={picker.showScrollUp}
                   showScrollDown={picker.showScrollDown}
-                  maxPromptWidth={promptMaxWidth}
+                  maxPromptWidth={width}
                   prefixChars={PREFIX_CHARS}
                   boldSelectedPrefix={false}
                 />
