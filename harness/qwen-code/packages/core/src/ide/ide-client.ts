@@ -591,7 +591,7 @@ export class IdeClient {
       // exist.
     }
 
-    const portFileDir = os.tmpdir();
+    const portFileDir = path.join(os.tmpdir(), 'gemini', 'ide');
     let portFiles;
     try {
       portFiles = await fs.promises.readdir(portFileDir);
