@@ -45,7 +45,8 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4"
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "tiktoken": "^1.0.21"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

@@ -20,6 +20,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Executable types supported by the SDK
@@ -40,11 +41,37 @@ export type SpawnInfo = {
   originalInput: string;
 };
 
+function getBundledCliPath(): string | null {
+  try {
+    const currentFile =
+      typeof __filename !== 'undefined'
+        ? __filename
+        : fileURLToPath(import.meta.url);
+
+    const currentDir = path.dirname(currentFile);
+
+    const bundledCliPath = path.join(currentDir, 'cli', 'cli.js');
+
+    if (fs.existsSync(bundledCliPath)) {
+      return bundledCliPath;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function findNativeCliPath(): string {
+  const bundledCli = getBundledCliPath();
+  if (bundledCli) {
+    return bundledCli;
+  }
+
   const homeDir = process.env['HOME'] || process.env['USERPROFILE'] || '';
 
   const candidates: Array<string | undefined> = [
-    // 1. Environment variable (highest priority)
+    // 1. Environment variable
     process.env['QWEN_CODE_CLI_PATH'],
 
     // 2. Volta bin
