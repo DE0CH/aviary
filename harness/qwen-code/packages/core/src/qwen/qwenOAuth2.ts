@@ -677,6 +677,19 @@ async function authWithQwenDeviceFlow(
           // Cache the new tokens
           await cacheQwenCredentials(credentials);
 
+          // IMPORTANT:
+          // SharedTokenManager maintains an in-memory cache and throttles file checks.
+          // If we only write the creds file here, a subsequent `getQwenOAuthClient()`
+          // call in the same process (within the throttle window) may not re-read the
+          // updated file and could incorrectly re-trigger device auth.
+          // Clearing the cache forces the next call to reload from disk.
+          try {
+            SharedTokenManager.getInstance().clearCache();
+          } catch {
+            // In unit tests we sometimes mock SharedTokenManager.getInstance() with a
+            // minimal stub; cache invalidation is best-effort and should not break auth.
+          }
+
           // Emit auth progress success event
           qwenOAuth2Events.emit(
             QwenOAuth2Event.AuthProgress,
@@ -880,6 +893,14 @@ export async function clearQwenCredentials(): Promise<void> {
     }
     // Log other errors but don't throw - clearing credentials should be non-critical
     console.warn('Warning: Failed to clear cached Qwen credentials:', error);
+  } finally {
+    // Also clear SharedTokenManager in-memory cache to prevent stale credentials
+    // from being reused within the same process after the file is removed.
+    try {
+      SharedTokenManager.getInstance().clearCache();
+    } catch {
+      // Best-effort; don't fail credential clearing if SharedTokenManager is mocked.
+    }
   }
 }
 

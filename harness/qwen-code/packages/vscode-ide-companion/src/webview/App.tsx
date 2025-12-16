@@ -29,6 +29,7 @@ import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer
 import { ToolCall } from './components/messages/toolcalls/ToolCall.js';
 import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.js';
 import { EmptyState } from './components/layout/EmptyState.js';
+import { Onboarding } from './components/layout/Onboarding.js';
 import { type CompletionItem } from '../types/completionItemTypes.js';
 import { useCompletionTrigger } from './hooks/useCompletionTrigger.js';
 import { ChatHeader } from './components/layout/ChatHeader.js';
@@ -67,6 +68,8 @@ export const App: React.FC = () => {
     toolCall: PermissionToolCall;
   } | null>(null);
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true); // Track if we're still initializing/loading
   const messagesEndRef = useRef<HTMLDivElement>(
     null,
   ) as React.RefObject<HTMLDivElement>;
@@ -201,6 +204,7 @@ export const App: React.FC = () => {
     vscode,
     inputFieldRef,
     isStreaming: messageHandling.isStreaming,
+    isWaitingForResponse: messageHandling.isWaitingForResponse,
   });
 
   // Handle cancel/stop from the input bar
@@ -243,6 +247,7 @@ export const App: React.FC = () => {
     inputFieldRef,
     setInputText,
     setEditMode,
+    setIsAuthenticated,
   });
 
   // Auto-scroll handling: keep the view pinned to bottom when new content arrives,
@@ -355,6 +360,14 @@ export const App: React.FC = () => {
     inProgressToolCalls,
     completedToolCalls,
   ]);
+
+  // Set loading state to false after initial mount and when we have authentication info
+  useEffect(() => {
+    // If we have determined authentication status, we're done loading
+    if (isAuthenticated !== null) {
+      setIsLoading(false);
+    }
+  }, [isAuthenticated]);
 
   // Handle permission response
   const handlePermissionResponse = useCallback(
@@ -662,7 +675,19 @@ export const App: React.FC = () => {
     allMessages.length > 0;
 
   return (
-    <div className="chat-container">
+    <div className="chat-container relative">
+      {/* Top-level loading overlay */}
+      {isLoading && (
+        <div className="bg-background/80 absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="text-center">
+            <div className="border-primary mx-auto mb-2 h-8 w-8 animate-spin rounded-full border-b-2"></div>
+            <p className="text-muted-foreground text-sm">
+              Preparing Qwen Code...
+            </p>
+          </div>
+        </div>
+      )}
+
       <SessionSelector
         visible={sessionManagement.showSessionSelector}
         sessions={sessionManagement.filteredSessions}
@@ -687,96 +712,110 @@ export const App: React.FC = () => {
 
       <div
         ref={messagesContainerRef}
-        className="chat-messages messages-container flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[120px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:hover:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:pb-[8px] [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
+        className="chat-messages messages-container flex-1 overflow-y-auto overflow-x-hidden pt-5 pr-5 pl-5 pb-[140px] flex flex-col relative min-w-0 focus:outline-none [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:hover:bg-white/30 [&>*]:flex [&>*]:gap-0 [&>*]:items-start [&>*]:text-left [&>*]:py-2 [&>*:not(:last-child)]:pb-[8px] [&>*]:flex-col [&>*]:relative [&>*]:animate-[fadeIn_0.2s_ease-in]"
       >
-        {!hasContent ? (
-          <EmptyState />
+        {!hasContent && !isLoading ? (
+          isAuthenticated === false ? (
+            <Onboarding
+              onLogin={() => {
+                vscode.postMessage({ type: 'login', data: {} });
+                messageHandling.setWaitingForResponse(
+                  'Logging in to Qwen Code...',
+                );
+              }}
+            />
+          ) : isAuthenticated === null ? (
+            <EmptyState loadingMessage="Checking login status…" />
+          ) : (
+            <EmptyState isAuthenticated />
+          )
         ) : (
           <>
             {/* Render all messages and tool calls */}
             {renderMessages()}
-            {/* Flow-in persistent slot: keeps a small constant height so toggling */}
-            {/* the waiting message doesn't change list height to zero. When */}
-            {/* active, render the waiting message inline (not fixed). */}
-            <div className="waiting-message-slot min-h-[28px]">
-              {messageHandling.isWaitingForResponse &&
-                messageHandling.loadingMessage && (
+
+            {/* Waiting message positioned fixed above the input form to avoid layout shifts */}
+            {messageHandling.isWaitingForResponse &&
+              messageHandling.loadingMessage && (
+                <div className="waiting-message-slot min-h-[28px]">
                   <WaitingMessage
                     loadingMessage={messageHandling.loadingMessage}
                   />
-                )}
-            </div>
-
+                </div>
+              )}
             <div ref={messagesEndRef} />
           </>
         )}
       </div>
 
-      <InputForm
-        inputText={inputText}
-        inputFieldRef={inputFieldRef}
-        isStreaming={messageHandling.isStreaming}
-        isWaitingForResponse={messageHandling.isWaitingForResponse}
-        isComposing={isComposing}
-        editMode={editMode}
-        thinkingEnabled={thinkingEnabled}
-        activeFileName={fileContext.activeFileName}
-        activeSelection={fileContext.activeSelection}
-        skipAutoActiveContext={skipAutoActiveContext}
-        onInputChange={setInputText}
-        onCompositionStart={() => setIsComposing(true)}
-        onCompositionEnd={() => setIsComposing(false)}
-        onKeyDown={() => {}}
-        onSubmit={handleSubmitWithScroll}
-        onCancel={handleCancel}
-        onToggleEditMode={handleToggleEditMode}
-        onToggleThinking={handleToggleThinking}
-        onFocusActiveEditor={fileContext.focusActiveEditor}
-        onToggleSkipAutoActiveContext={() =>
-          setSkipAutoActiveContext((v) => !v)
-        }
-        onShowCommandMenu={async () => {
-          if (inputFieldRef.current) {
-            inputFieldRef.current.focus();
+      {isAuthenticated && (
+        <InputForm
+          inputText={inputText}
+          inputFieldRef={inputFieldRef}
+          isStreaming={messageHandling.isStreaming}
+          isWaitingForResponse={messageHandling.isWaitingForResponse}
+          isComposing={isComposing}
+          editMode={editMode}
+          thinkingEnabled={thinkingEnabled}
+          activeFileName={fileContext.activeFileName}
+          activeSelection={fileContext.activeSelection}
+          skipAutoActiveContext={skipAutoActiveContext}
+          onInputChange={setInputText}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => setIsComposing(false)}
+          onKeyDown={() => {}}
+          onSubmit={handleSubmitWithScroll}
+          onCancel={handleCancel}
+          onToggleEditMode={handleToggleEditMode}
+          onToggleThinking={handleToggleThinking}
+          onFocusActiveEditor={fileContext.focusActiveEditor}
+          onToggleSkipAutoActiveContext={() =>
+            setSkipAutoActiveContext((v) => !v)
+          }
+          onShowCommandMenu={async () => {
+            if (inputFieldRef.current) {
+              inputFieldRef.current.focus();
 
-            const selection = window.getSelection();
-            let position = { top: 0, left: 0 };
+              const selection = window.getSelection();
+              let position = { top: 0, left: 0 };
 
-            if (selection && selection.rangeCount > 0) {
-              try {
-                const range = selection.getRangeAt(0);
-                const rangeRect = range.getBoundingClientRect();
-                if (rangeRect.top > 0 && rangeRect.left > 0) {
-                  position = {
-                    top: rangeRect.top,
-                    left: rangeRect.left,
-                  };
-                } else {
+              if (selection && selection.rangeCount > 0) {
+                try {
+                  const range = selection.getRangeAt(0);
+                  const rangeRect = range.getBoundingClientRect();
+                  if (rangeRect.top > 0 && rangeRect.left > 0) {
+                    position = {
+                      top: rangeRect.top,
+                      left: rangeRect.left,
+                    };
+                  } else {
+                    const inputRect =
+                      inputFieldRef.current.getBoundingClientRect();
+                    position = { top: inputRect.top, left: inputRect.left };
+                  }
+                } catch (error) {
+                  console.error('[App] Error getting cursor position:', error);
                   const inputRect =
                     inputFieldRef.current.getBoundingClientRect();
                   position = { top: inputRect.top, left: inputRect.left };
                 }
-              } catch (error) {
-                console.error('[App] Error getting cursor position:', error);
+              } else {
                 const inputRect = inputFieldRef.current.getBoundingClientRect();
                 position = { top: inputRect.top, left: inputRect.left };
               }
-            } else {
-              const inputRect = inputFieldRef.current.getBoundingClientRect();
-              position = { top: inputRect.top, left: inputRect.left };
+
+              await completion.openCompletion('/', '', position);
             }
+          }}
+          onAttachContext={handleAttachContextClick}
+          completionIsOpen={completion.isOpen}
+          completionItems={completion.items}
+          onCompletionSelect={handleCompletionSelect}
+          onCompletionClose={completion.closeCompletion}
+        />
+      )}
 
-            await completion.openCompletion('/', '', position);
-          }
-        }}
-        onAttachContext={handleAttachContextClick}
-        completionIsOpen={completion.isOpen}
-        completionItems={completion.items}
-        onCompletionSelect={handleCompletionSelect}
-        onCompletionClose={completion.closeCompletion}
-      />
-
-      {permissionRequest && (
+      {isAuthenticated && permissionRequest && (
         <PermissionDrawer
           isOpen={!!permissionRequest}
           options={permissionRequest.options}
