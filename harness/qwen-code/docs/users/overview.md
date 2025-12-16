@@ -58,5 +58,5 @@ You'll be prompted to log in on first use. That's it! [Continue with Quickstart 
 ## Why developers love Qwen Code
 
 - **Works in your terminal**: Not another chat window. Not another IDE. Qwen Code meets you where you already work, with the tools you already love.
-- **Takes action**: Qwen Code can directly edit files, run commands, and create commits. Need more? [MCP](/users/features/mcp) lets Qwen Code read your design docs in Google Drive, update your tickets in Jira, or use _your_ custom developer tooling.
+- **Takes action**: Qwen Code can directly edit files, run commands, and create commits. Need more? [MCP](../users/features/mcp) lets Qwen Code read your design docs in Google Drive, update your tickets in Jira, or use _your_ custom developer tooling.
 - **Unix philosophy**: Qwen Code is composable and scriptable. `tail -f app.log | qwen -p "Slack me if you see any anomalies appear in this log stream"` _works_. Your CI can run `qwen -p "If there are new text strings, translate them into French and raise a PR for @lang-fr-team to review"`.
