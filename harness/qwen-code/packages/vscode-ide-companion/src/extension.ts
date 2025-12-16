@@ -292,7 +292,14 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         if (selectedFolder) {
-          const qwenCmd = 'qwen';
+          const cliEntry = vscode.Uri.joinPath(
+            context.extensionUri,
+            'dist',
+            'qwen-cli',
+            'cli.js',
+          ).fsPath;
+          const quote = (s: string) => `"${s.replaceAll('"', '\\"')}"`;
+          const qwenCmd = `${quote(process.execPath)} ${quote(cliEntry)}`;
           const terminal = vscode.window.createTerminal({
             name: `Qwen Code (${selectedFolder.name})`,
             cwd: selectedFolder.uri.fsPath,

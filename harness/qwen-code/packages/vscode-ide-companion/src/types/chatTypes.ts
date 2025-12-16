@@ -3,7 +3,8 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { AcpPermissionRequest, ApprovalModeValue } from './acpTypes.js';
+import type { AcpPermissionRequest } from './acpTypes.js';
+import type { ApprovalModeValue } from './approvalModeValueTypes.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -34,7 +35,7 @@ export interface QwenAgentCallbacks {
   onToolCall?: (update: ToolCallUpdateData) => void;
   onPlan?: (entries: PlanEntry[]) => void;
   onPermissionRequest?: (request: AcpPermissionRequest) => Promise<string>;
-  onEndTurn?: () => void;
+  onEndTurn?: (reason?: string) => void;
   onModeInfo?: (info: {
     currentModeId?: ApprovalModeValue;
     availableModes?: Array<{

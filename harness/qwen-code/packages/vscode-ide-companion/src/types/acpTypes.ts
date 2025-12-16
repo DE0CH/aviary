@@ -3,6 +3,7 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  */
+import type { ApprovalModeValue } from './approvalModeValueTypes.js';
 
 export const JSONRPC_VERSION = '2.0' as const;
 export const authMethod = 'qwen-oauth';
@@ -138,8 +139,6 @@ export interface PlanUpdate extends BaseSessionUpdate {
   };
 }
 
-export type ApprovalModeValue = 'plan' | 'default' | 'auto-edit' | 'yolo';
-
 export {
   ApprovalMode,
   APPROVAL_MODE_MAP,
@@ -164,6 +163,13 @@ export interface CurrentModeUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'current_mode_update';
     modeId: ApprovalModeValue;
+  };
+}
+
+// Authenticate update (sent by agent during authentication process)
+export interface AuthenticateUpdateNotification {
+  _meta: {
+    authUri: string;
   };
 }
 
