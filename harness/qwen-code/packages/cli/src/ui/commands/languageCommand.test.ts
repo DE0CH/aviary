@@ -46,12 +46,15 @@ vi.mock('node:fs', async (importOriginal) => {
 
 // Mock Storage from core
 vi.mock('@qwen-code/qwen-code-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
+  const actual =
+    await importOriginal<typeof import('@qwen-code/qwen-code-core')>();
   return {
     ...actual,
     Storage: {
       getGlobalQwenDir: vi.fn().mockReturnValue('/mock/.qwen'),
-      getGlobalSettingsPath: vi.fn().mockReturnValue('/mock/.qwen/settings.json'),
+      getGlobalSettingsPath: vi
+        .fn()
+        .mockReturnValue('/mock/.qwen/settings.json'),
     },
   };
 });
@@ -360,7 +363,10 @@ describe('languageCommand', () => {
         throw new Error('The language command must have an action.');
       }
 
-      const result = await languageCommand.action(mockContext, 'output Chinese');
+      const result = await languageCommand.action(
+        mockContext,
+        'output Chinese',
+      );
 
       expect(fs.mkdirSync).toHaveBeenCalled();
       expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -371,7 +377,9 @@ describe('languageCommand', () => {
       expect(result).toEqual({
         type: 'message',
         messageType: 'info',
-        content: expect.stringContaining('LLM output language rule file generated'),
+        content: expect.stringContaining(
+          'LLM output language rule file generated',
+        ),
       });
     });
 
@@ -380,7 +388,10 @@ describe('languageCommand', () => {
         throw new Error('The language command must have an action.');
       }
 
-      const result = await languageCommand.action(mockContext, 'output Japanese');
+      const result = await languageCommand.action(
+        mockContext,
+        'output Japanese',
+      );
 
       expect(result).toEqual({
         type: 'message',
@@ -514,7 +525,9 @@ describe('languageCommand', () => {
       expect(result).toEqual({
         type: 'message',
         messageType: 'info',
-        content: expect.stringContaining('LLM output language rule file generated'),
+        content: expect.stringContaining(
+          'LLM output language rule file generated',
+        ),
       });
     });
   });

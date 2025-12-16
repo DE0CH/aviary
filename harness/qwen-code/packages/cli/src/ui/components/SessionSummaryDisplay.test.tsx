@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SessionSummaryDisplay } from './SessionSummaryDisplay.js';
 import * as SessionContext from '../contexts/SessionContext.js';
 import type { SessionMetrics } from '../contexts/SessionContext.js';
+import { ConfigContext } from '../contexts/ConfigContext.js';
 
 vi.mock('../contexts/SessionContext.js', async (importOriginal) => {
   const actual = await importOriginal<typeof SessionContext>();
@@ -24,6 +25,7 @@ const renderWithMockedStats = (
   metrics: SessionMetrics,
   sessionId: string = 'test-session-id-12345',
   promptCount: number = 5,
+  chatRecordingEnabled: boolean = true,
 ) => {
   useSessionStatsMock.mockReturnValue({
     stats: {
@@ -38,7 +40,17 @@ const renderWithMockedStats = (
     startNewPrompt: vi.fn(),
   });
 
-  return render(<SessionSummaryDisplay duration="1h 23m 45s" />);
+  const mockConfig = {
+    getChatRecordingService: vi.fn(() =>
+      chatRecordingEnabled ? ({} as never) : undefined,
+    ),
+  };
+
+  return render(
+    <ConfigContext.Provider value={mockConfig as never}>
+      <SessionSummaryDisplay duration="1h 23m 45s" />
+    </ConfigContext.Provider>,
+  );
 };
 
 describe('<SessionSummaryDisplay />', () => {
@@ -102,6 +114,36 @@ describe('<SessionSummaryDisplay />', () => {
       metrics,
       'test-session-id-12345',
       0,
+    );
+    const output = lastFrame();
+
+    expect(output).toContain('Agent powering down. Goodbye!');
+    expect(output).not.toContain('To continue this session, run');
+    expect(output).not.toContain('qwen --resume');
+  });
+
+  it('does not show resume message when chat recording is disabled', () => {
+    const metrics: SessionMetrics = {
+      models: {},
+      tools: {
+        totalCalls: 0,
+        totalSuccess: 0,
+        totalFail: 0,
+        totalDurationMs: 0,
+        totalDecisions: { accept: 0, reject: 0, modify: 0 },
+        byName: {},
+      },
+      files: {
+        totalLinesAdded: 0,
+        totalLinesRemoved: 0,
+      },
+    };
+
+    const { lastFrame } = renderWithMockedStats(
+      metrics,
+      'test-session-id-12345',
+      5,
+      false,
     );
     const output = lastFrame();
 

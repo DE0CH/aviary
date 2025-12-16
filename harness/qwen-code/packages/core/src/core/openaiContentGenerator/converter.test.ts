@@ -338,10 +338,7 @@ describe('OpenAIContentConverter', () => {
     });
 
     it('should handle tools without functionDeclarations', async () => {
-      const emptyTools: Tool[] = [
-        {} as Tool,
-        { functionDeclarations: [] },
-      ];
+      const emptyTools: Tool[] = [{} as Tool, { functionDeclarations: [] }];
 
       const result = await converter.convertGeminiToolsToOpenAI(emptyTools);
 
@@ -489,7 +486,10 @@ describe('OpenAIContentConverter', () => {
       const result = converter.convertGeminiToolParametersToOpenAI(params);
       const properties = result?.['properties'] as Record<string, unknown>;
       const nested = properties?.['nested'] as Record<string, unknown>;
-      const nestedProperties = nested?.['properties'] as Record<string, unknown>;
+      const nestedProperties = nested?.['properties'] as Record<
+        string,
+        unknown
+      >;
 
       expect(nestedProperties?.['deep']).toEqual({
         type: 'integer',
