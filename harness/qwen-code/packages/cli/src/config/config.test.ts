@@ -206,6 +206,18 @@ describe('parseArguments', () => {
     expect(argv.prompt).toBeUndefined();
   });
 
+  it('should allow -r flag as alias for --resume', async () => {
+    process.argv = ['node', 'script.js', '-r', 'session-123'];
+    const argv = await parseArguments({} as Settings);
+    expect(argv.resume).toBe('session-123');
+  });
+
+  it('should allow -C flag as alias for --continue', async () => {
+    process.argv = ['node', 'script.js', '-C'];
+    const argv = await parseArguments({} as Settings);
+    expect(argv.continue).toBe(true);
+  });
+
   it('should convert positional query argument to prompt by default', async () => {
     process.argv = ['node', 'script.js', 'Hi Gemini'];
     const argv = await parseArguments({} as Settings);

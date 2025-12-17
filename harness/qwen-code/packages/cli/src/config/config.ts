@@ -422,12 +422,14 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           default: false,
         })
         .option('continue', {
+          alias: 'C',
           type: 'boolean',
           description:
             'Resume the most recent session for the current project.',
           default: false,
         })
         .option('resume', {
+          alias: 'r',
           type: 'string',
           description:
             'Resume a specific session by its ID. Use without an ID to show session picker.',
