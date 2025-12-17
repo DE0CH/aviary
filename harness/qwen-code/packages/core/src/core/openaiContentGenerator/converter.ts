@@ -250,7 +250,7 @@ export class OpenAIContentConverter {
     const mergedMessages =
       this.mergeConsecutiveAssistantMessages(cleanedMessages);
 
-    return mergedMessages;
+    return this.filterEmptyMessages(mergedMessages);
   }
 
   /**
@@ -1124,12 +1124,44 @@ export class OpenAIContentConverter {
         // If the last message is also an assistant message, merge them
         if (lastMessage.role === 'assistant') {
           // Combine content
-          const combinedContent = [
-            typeof lastMessage.content === 'string' ? lastMessage.content : '',
-            typeof message.content === 'string' ? message.content : '',
-          ]
-            .filter(Boolean)
-            .join('');
+          const lastContent = lastMessage.content;
+          const currentContent = message.content;
+
+          // Determine if we should use array format (if either content is an array)
+          const useArrayFormat =
+            Array.isArray(lastContent) || Array.isArray(currentContent);
+
+          let combinedContent:
+            | string
+            | OpenAI.Chat.ChatCompletionContentPart[]
+            | null;
+
+          if (useArrayFormat) {
+            // Convert both to array format and merge
+            const lastParts = Array.isArray(lastContent)
+              ? lastContent
+              : typeof lastContent === 'string' && lastContent
+                ? [{ type: 'text' as const, text: lastContent }]
+                : [];
+
+            const currentParts = Array.isArray(currentContent)
+              ? currentContent
+              : typeof currentContent === 'string' && currentContent
+                ? [{ type: 'text' as const, text: currentContent }]
+                : [];
+
+            combinedContent = [
+              ...lastParts,
+              ...currentParts,
+            ] as OpenAI.Chat.ChatCompletionContentPart[];
+          } else {
+            // Both are strings or null, merge as strings
+            const lastText = typeof lastContent === 'string' ? lastContent : '';
+            const currentText =
+              typeof currentContent === 'string' ? currentContent : '';
+            const mergedText = [lastText, currentText].filter(Boolean).join('');
+            combinedContent = mergedText || null;
+          }
 
           // Combine tool calls
           const lastToolCalls =
@@ -1141,14 +1173,17 @@ export class OpenAIContentConverter {
           // Update the last message with combined data
           (
             lastMessage as OpenAI.Chat.ChatCompletionMessageParam & {
-              content: string | null;
+              content: string | OpenAI.Chat.ChatCompletionContentPart[] | null;
               tool_calls?: OpenAI.Chat.ChatCompletionMessageToolCall[];
             }
           ).content = combinedContent || null;
           if (combinedToolCalls.length > 0) {
             (
               lastMessage as OpenAI.Chat.ChatCompletionMessageParam & {
-                content: string | null;
+                content:
+                  | string
+                  | OpenAI.Chat.ChatCompletionContentPart[]
+                  | null;
                 tool_calls?: OpenAI.Chat.ChatCompletionMessageToolCall[];
               }
             ).tool_calls = combinedToolCalls;
@@ -1163,5 +1198,44 @@ export class OpenAIContentConverter {
     }
 
     return merged;
+  }
+
+  /**
+   * Filter out messages that have neither content nor tool_calls
+   * to prevent API errors
+   */
+  private filterEmptyMessages(
+    messages: OpenAI.Chat.ChatCompletionMessageParam[],
+  ): OpenAI.Chat.ChatCompletionMessageParam[] {
+    return messages.filter((message) => {
+      // Keep system, user, and tool messages if they have content
+      if (
+        message.role === 'system' ||
+        message.role === 'user' ||
+        message.role === 'tool'
+      ) {
+        return (
+          message.content !== null &&
+          message.content !== undefined &&
+          message.content !== ''
+        );
+      }
+
+      // For assistant messages, keep if they have content or tool_calls
+      if (message.role === 'assistant') {
+        const hasContent =
+          message.content !== null &&
+          message.content !== undefined &&
+          message.content !== '';
+        const hasToolCalls =
+          'tool_calls' in message &&
+          message.tool_calls &&
+          message.tool_calls.length > 0;
+        return hasContent || hasToolCalls;
+      }
+
+      // Keep other message types by default
+      return true;
+    });
   }
 }
