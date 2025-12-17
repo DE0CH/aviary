@@ -440,24 +440,25 @@ export class SessionMessageHandler extends BaseMessageHandler {
         const isTimeoutError =
           lower.includes('timeout') || lower.includes('timed out');
         if (isTimeoutError) {
-          // Timeout has no action for the user to perform, so only reset the information in the panel and no VS Code error alert will pop up.
+          // Note: session_prompt no longer has a timeout, so this should rarely occur
+          // This path may still be hit for other methods (initialize, etc.) or network-level timeouts
           console.warn(
-            '[SessionMessageHandler] Prompt timed out; suppressing popup',
+            '[SessionMessageHandler] Request timed out; suppressing popup',
           );
 
           const timeoutMessage: ChatMessage = {
             role: 'assistant',
             content:
-              'Request timed out (no response within 120 seconds). Please try again or simplify the request.',
+              'Request timed out. This may be due to a network issue. Please try again.',
             timestamp: Date.now(),
           };
 
-          // Send a timeout message to the WebView without terminating the stream
-          // In this way, the long-term task can continue to receive subsequent messages after timeout.
+          // Send a timeout message to the WebView
           this.sendToWebView({
             type: 'message',
             data: timeoutMessage,
           });
+          this.sendStreamEnd('timeout');
         } else {
           // Handling of Non-Timeout Errors
           vscode.window.showErrorMessage(`Error sending message: ${error}`);
