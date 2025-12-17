@@ -41,14 +41,12 @@ export class SchemaValidator {
       return 'Value of params must be an object';
     }
     const validate = ajValidator.compile(schema);
-    const valid = validate(data);
+    let valid = validate(data);
     if (!valid && validate.errors) {
       // Coerce string boolean values ("true"/"false") to actual booleans
       fixBooleanValues(data as Record<string, unknown>);
 
-      const validate = ajValidator.compile(schema);
-      const valid = validate(data);
-
+      valid = validate(data);
       if (!valid && validate.errors) {
         return ajValidator.errorsText(validate.errors, { dataVar: 'params' });
       }
