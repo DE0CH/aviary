@@ -191,6 +191,17 @@ export const ideCommand = async (): Promise<SlashCommand> => {
     kind: CommandKind.BUILT_IN,
     action: async (context) => {
       const installer = getIdeInstaller(currentIDE);
+      const isSandBox = !!process.env['SANDBOX'];
+      if (isSandBox) {
+        context.ui.addItem(
+          {
+            type: 'info',
+            text: `IDE integration needs to be installed on the host. If you have already installed it, you can directly connect the ide`,
+          },
+          Date.now(),
+        );
+        return;
+      }
       if (!installer) {
         context.ui.addItem(
           {
