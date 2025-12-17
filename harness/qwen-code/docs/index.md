@@ -4,7 +4,7 @@ Welcome to the Qwen Code documentation. Qwen Code is an agentic coding tool that
 
 ## Documentation Sections
 
-### [User Guide](../users/overview)
+### [User Guide](./users/overview)
 Learn how to use Qwen Code as an end user. This section covers:
 
 - Basic installation and setup
@@ -13,7 +13,7 @@ Learn how to use Qwen Code as an end user. This section covers:
 - Configuration options
 - Troubleshooting
 
-### [Developer Guide](./developers/contributing)
+### [Developer Guide](./developers/architecture)
 
 Learn how to contribute to and develop Qwen Code. This section covers:
 
