@@ -250,7 +250,7 @@ export class OpenAIContentConverter {
     const mergedMessages =
       this.mergeConsecutiveAssistantMessages(cleanedMessages);
 
-    return this.filterEmptyMessages(mergedMessages);
+    return mergedMessages;
   }
 
   /**
@@ -1198,44 +1198,5 @@ export class OpenAIContentConverter {
     }
 
     return merged;
-  }
-
-  /**
-   * Filter out messages that have neither content nor tool_calls
-   * to prevent API errors
-   */
-  private filterEmptyMessages(
-    messages: OpenAI.Chat.ChatCompletionMessageParam[],
-  ): OpenAI.Chat.ChatCompletionMessageParam[] {
-    return messages.filter((message) => {
-      // Keep system, user, and tool messages if they have content
-      if (
-        message.role === 'system' ||
-        message.role === 'user' ||
-        message.role === 'tool'
-      ) {
-        return (
-          message.content !== null &&
-          message.content !== undefined &&
-          message.content !== ''
-        );
-      }
-
-      // For assistant messages, keep if they have content or tool_calls
-      if (message.role === 'assistant') {
-        const hasContent =
-          message.content !== null &&
-          message.content !== undefined &&
-          message.content !== '';
-        const hasToolCalls =
-          'tool_calls' in message &&
-          message.tool_calls &&
-          message.tool_calls.length > 0;
-        return hasContent || hasToolCalls;
-      }
-
-      // Keep other message types by default
-      return true;
-    });
   }
 }
