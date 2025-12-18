@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Qwen Code Screenshot](./docs/assets/qwen-screenshot.png)
+![](https://gw.alicdn.com/imgextra/i1/O1CN01D2DviS1wwtEtMwIzJ_!!6000000006373-2-tps-1600-900.png)
 
 [![npm version](https://img.shields.io/npm/v/@qwen-code/qwen-code.svg)](https://www.npmjs.com/package/@qwen-code/qwen-code)
 [![License](https://img.shields.io/github/license/QwenLM/qwen-code.svg)](./LICENSE)
@@ -11,58 +11,29 @@
 
 **AI-powered command-line workflow tool for developers**
 
-[Installation](#installation) • [Quick Start](#quick-start) • [Features](#key-features) • [Documentation](./docs/) • [Contributing](./CONTRIBUTING.md)
-
-</div>
-
-<div align="center">
-  
+  <a href="https://qwenlm.github.io/qwen-code-docs/zh/">中文</a> |
   <a href="https://qwenlm.github.io/qwen-code-docs/de/">Deutsch</a> | 
   <a href="https://qwenlm.github.io/qwen-code-docs/fr">français</a> | 
   <a href="https://qwenlm.github.io/qwen-code-docs/ja/">日本語</a> | 
-  <a href="https://qwenlm.github.io/qwen-code-docs/ru">Русский</a> | 
-  <a href="https://qwenlm.github.io/qwen-code-docs/zh/">中文</a>
-  
+  <a href="https://qwenlm.github.io/qwen-code-docs/ru">Русский</a> 
+
+[Installation](#install-from-npm) • [Quick Start](#-quick-start) • [Features](#-why-qwen-code) • [Documentation](https://qwenlm.github.io/qwen-code-docs/en/users/overview/) • [Contributing](https://qwenlm.github.io/qwen-code-docs/en/developers/contributing/)
+
+
 </div>
 
 Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI**](https://github.com/google-gemini/gemini-cli), specifically optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder) models. It enhances your development workflow with advanced code understanding, automated tasks, and intelligent assistance.
 
-![](https://gw.alicdn.com/imgextra/i1/O1CN01D2DviS1wwtEtMwIzJ_!!6000000006373-2-tps-1600-900.png)
 
 
 ## 📌 Why Qwen Code？
 
-**🌱 Seamless Integration & Immediate Setup**
-   - Free & Open Source: Completely free to use with generous daily quotas (up
-     to 2,000 requests/day)
-   - Quick Start in 30 Seconds: One-click authentication with **Qwen OAuth**, no
-     complex configuration needed
-
-**🧠 Advanced Code Intelligence**
-  - Deep Code Understanding: Grasp complex codebases beyond traditional context
-    limits, instantly understanding architecture, dependencies, and data flows
-  - Multi-Language Support and Smart Refactoring: Optimize, debug, and refactor code with AI-powered insights that follow industry standards
-
-**🔧 Comprehensive Development Assistance**
-  - Error Debugging Made Easy: Paste error logs directly for instant root cause
-    analysis and actionable solutions
-  - Git Workflow Enhancement: Generate standardized commit messages, explain Git
-    commands, and assist with code reviews
-  - Documentation & Testing: Automatically generate comprehensive documentation,
-    JSDoc comments, and unit tests with edge cases
-
-**💼 Professional [VS Code Integration](https://qwenlm.github.io/qwen-code-docs/en/users/integration-vscode/)**
-  - Sidebar Companion: Install the VS Code extension for seamless integration
-    with native diffing, interactive chat, and file system operations
-  - Context-Aware Assistance: Get AI-powered help without leaving your
-    preferred development environment
-
-**🌐 Flexible Authentication**
-  - Multiple Free Tiers: Access regional free options (Mainland China:
-    ModelScope, International: OpenRouter) with up to 2,000 free API calls per
-    day
-  - OpenAI-Compatible: Use existing API keys from various providers (Alibaba
-    Cloud, OpenRouter, etc.)
+- 🎯 Free Access Available: Get started with 2,000 free requests per day via Qwen OAuth.
+- 🧠 Code Understanding & Editing - Query and edit large codebases beyond traditional context window limits
+- 🤖 Workflow Automation - Automate operational tasks like handling pull requests and complex rebases
+- 💻 Terminal-first: Designed for developers who live in the command line.
+- 🧰 VS Code: Install the VS Code extension to seamlessly integrate into your existing workflow.
+- 📦 Simple Setup: Easy installation with npm, Homebrew, or source for quick deployment.
 
 >👉 Know more [workflows](https://qwenlm.github.io/qwen-code-docs/en/users/common-workflow/)
 >
@@ -157,8 +128,6 @@ qwen
 > Find all hardcoded credentials or API keys
 ```
 
-## Popular Tasks
-
 ### 📚 Understand New Codebases
 
 ```text
@@ -215,79 +184,6 @@ qwen
 - `Ctrl+D` - Exit (on empty line)
 - `Up/Down` - Navigate command history
 
-## 💬 Session Management
-
-Control your token usage with configurable session limits to optimize costs and performance.
-
-### Configure Session Token Limit
-
-Create or edit `.qwen/settings.json` in your home directory:
-
-```json
-{
-  "sessionTokenLimit": 32000
-}
-```
-
-### Session Commands
-
-- **`/compress`** - Compress conversation history to continue within token limits
-- **`/clear`** - Clear all conversation history and start fresh
-- **`/stats`** - Check current token usage and limits
-
-> [!note] 
->
-> 📝 **Note**: Session token limit applies to a single conversation, not cumulative API calls.
-
-## Vision Model Configuration
-
-Qwen Code includes intelligent vision model auto-switching that detects images in your input and can automatically switch to vision-capable models for multimodal analysis. **This feature is enabled by default** - when you include images in your queries, you'll see a dialog asking how you'd like to handle the vision model switch.
-
-### Skip the Switch Dialog (Optional)
-
-If you don't want to see the interactive dialog each time, configure the default behavior in your `.qwen/settings.json`:
-
-```json
-{
-  "experimental": {
-    "vlmSwitchMode": "once"
-  }
-}
-```
-
-**Available modes:**
-
-- **`"once"`** - Switch to vision model for this query only, then revert
-- **`"session"`** - Switch to vision model for the entire session
-- **`"persist"`** - Continue with current model (no switching)
-- **Not set** - Show interactive dialog each time (default)
-
-#### Command Line Override
-
-You can also set the behavior via command line:
-
-```bash
-# Switch once per query
-qwen --vlm-switch-mode once
-
-# Switch for entire session
-qwen --vlm-switch-mode session
-
-# Never switch automatically
-qwen --vlm-switch-mode persist
-```
-
-### Disable Vision Models (Optional)
-
-To completely disable vision model support, add to your `.qwen/settings.json`:
-
-```json
-{
-  "experimental": {
-    "visionModelPreview": false
-  }
-}
-```
 
 > 👉 Know more about [Commands](https://qwenlm.github.io/qwen-code-docs/en/users/features/commands/)
 >
