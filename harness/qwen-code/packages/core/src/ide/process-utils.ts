@@ -113,15 +113,15 @@ async function getIdeProcessInfoForUnix(): Promise<{
         } catch {
           // Ignore if getting grandparent fails, we'll just use the parent pid.
         }
-        const { command } = await getProcessInfo(idePid);
-        return { pid: idePid, command };
+        const { command: ideCommand } = await getProcessInfo(idePid);
+        return { pid: idePid, command: ideCommand };
       }
 
       if (parentPid <= 1) {
         break; // Reached the root
       }
       currentPid = parentPid;
-    } catch {
+    } catch (_e) {
       // Process in chain died
       break;
     }
@@ -131,41 +131,70 @@ async function getIdeProcessInfoForUnix(): Promise<{
   return { pid: currentPid, command };
 }
 
-async function getProcessTreeForWindows(): Promise<
-  Map<number, { parentPid: number; name: string; command: string }>
-> {
+interface ProcessInfo {
+  pid: number;
+  parentPid: number;
+  name: string;
+  command: string;
+}
+
+interface RawProcessInfo {
+  ProcessId?: number;
+  ParentProcessId?: number;
+  Name?: string;
+  CommandLine?: string;
+}
+
+/**
+ * Fetches the entire process table on Windows.
+ */
+async function getProcessTableWindows(): Promise<Map<number, ProcessInfo>> {
+  const processMap = new Map<number, ProcessInfo>();
   try {
     const powershellCommand =
-      'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine | ConvertTo-Json -Depth 1';
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress';
     const { stdout } = await execFileAsync(
       'powershell',
       ['-NoProfile', '-NonInteractive', '-Command', powershellCommand],
       { maxBuffer: 10 * 1024 * 1024 },
     );
 
-    const processes = JSON.parse(stdout);
-    const map = new Map();
-
-    const list = Array.isArray(processes) ? processes : [processes];
-
-    for (const p of list) {
-      map.set(p.ProcessId, {
-        parentPid: p.ParentProcessId,
-        name: p.Name,
-        command: p.CommandLine || '',
-      });
+    if (!stdout.trim()) {
+      return processMap;
     }
-    return map;
-  } catch (e) {
-    console.error('Failed to get process tree:', e);
-    return new Map();
+
+    let processes: RawProcessInfo | RawProcessInfo[];
+    try {
+      processes = JSON.parse(stdout);
+    } catch (_e) {
+      return processMap;
+    }
+
+    if (!Array.isArray(processes)) {
+      processes = [processes];
+    }
+
+    for (const p of processes) {
+      if (p && typeof p.ProcessId === 'number') {
+        processMap.set(p.ProcessId, {
+          pid: p.ProcessId,
+          parentPid: p.ParentProcessId || 0,
+          name: p.Name || '',
+          command: p.CommandLine || '',
+        });
+      }
+    }
+  } catch (_e) {
+    // Fallback or error handling if PowerShell fails
   }
+  return processMap;
 }
 
 /**
- * Finds the IDE process info on Windows.
+ * Finds the IDE process info on Windows using a snapshot approach.
  *
- * The strategy is to find the great-grandchild of the root process.
+ * The strategy is to find the IDE process by looking for known IDE executables
+ * in the process chain, with fallback to heuristics.
  *
  * @returns A promise that resolves to the PID and command of the IDE process.
  */
@@ -173,33 +202,146 @@ async function getIdeProcessInfoForWindows(): Promise<{
   pid: number;
   command: string;
 }> {
-  const processMap = await getProcessTreeForWindows();
-  let currentPid = process.pid;
-  let previousPid = process.pid;
+  // Fetch the entire process table in one go.
+  const processMap = await getProcessTableWindows();
 
-  for (let i = 0; i < MAX_TRAVERSAL_DEPTH; i++) {
-    const proc = processMap.get(currentPid);
-    if (!proc) break;
+  const myPid = process.pid;
+  const myProc = processMap.get(myPid);
 
-    const parentPid = proc.parentPid;
-
-    if (parentPid > 0) {
-      const parentProc = processMap.get(parentPid);
-      if (parentProc && parentProc.parentPid === 0) {
-        // We've found the grandchild of the root (`currentPid`). The IDE
-        // process is its child, which we've stored in `previousPid`.
-        const ideProc = processMap.get(previousPid);
-        return { pid: previousPid, command: ideProc?.command || '' };
-      }
-    }
-
-    if (parentPid <= 0) break;
-    previousPid = currentPid;
-    currentPid = parentPid;
+  if (!myProc) {
+    // Fallback: return current process info if snapshot fails
+    return { pid: myPid, command: '' };
   }
 
-  const currentProc = processMap.get(currentPid);
-  return { pid: currentPid, command: currentProc?.command || '' };
+  // Known IDE process names (lowercase for case-insensitive comparison)
+  const ideProcessNames = [
+    'code.exe', // VS Code
+    'code - insiders.exe', // VS Code Insiders
+    'cursor.exe', // Cursor
+    'windsurf.exe', // Windsurf
+    'devenv.exe', // Visual Studio
+    'rider64.exe', // JetBrains Rider
+    'idea64.exe', // IntelliJ IDEA
+    'pycharm64.exe', // PyCharm
+    'webstorm64.exe', // WebStorm
+  ];
+
+  // Perform tree traversal in memory
+  const ancestors: ProcessInfo[] = [];
+  let curr: ProcessInfo | undefined = myProc;
+
+  for (let i = 0; i < MAX_TRAVERSAL_DEPTH && curr; i++) {
+    ancestors.push(curr);
+
+    if (curr.parentPid === 0 || !processMap.has(curr.parentPid)) {
+      // Try to get info about the missing parent
+      if (curr.parentPid !== 0) {
+        try {
+          const parentInfo = await getProcessInfo(curr.parentPid);
+          if (parentInfo.name) {
+            ancestors.push({
+              pid: curr.parentPid,
+              parentPid: parentInfo.parentPid,
+              name: parentInfo.name,
+              command: parentInfo.command,
+            });
+          }
+        } catch (_e) {
+          // Ignore if query fails
+        }
+      }
+      break;
+    }
+    curr = processMap.get(curr.parentPid);
+  }
+
+  // Strategy 1: Look for known IDE process names in the chain
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const proc = ancestors[i];
+    const nameLower = proc.name.toLowerCase();
+
+    if (
+      ideProcessNames.some((ideName) => nameLower === ideName.toLowerCase())
+    ) {
+      return { pid: proc.pid, command: proc.command };
+    }
+  }
+
+  // Strategy 2: Special handling for Git Bash (sh.exe/bash.exe) with missing parent
+  // Check this first before general shell handling
+  const gitBashNames = ['sh.exe', 'bash.exe'];
+  const gitBashProc = ancestors.find((p) =>
+    gitBashNames.some((name) => p.name.toLowerCase() === name.toLowerCase()),
+  );
+
+  if (gitBashProc) {
+    // Check if parent exists in process table
+    const parentExists =
+      gitBashProc.parentPid !== 0 && processMap.has(gitBashProc.parentPid);
+
+    if (!parentExists && gitBashProc.parentPid !== 0) {
+      // Look for IDE processes in the entire process table
+      const ideProcesses: ProcessInfo[] = [];
+      for (const [, proc] of processMap) {
+        const nameLower = proc.name.toLowerCase();
+        if (
+          ideProcessNames.some((ideName) => nameLower === ideName.toLowerCase())
+        ) {
+          ideProcesses.push(proc);
+        }
+      }
+
+      if (ideProcesses.length > 0) {
+        // Prefer main process (without --type= parameter) over utility processes
+        const mainProcesses = ideProcesses.filter(
+          (p) => !p.command.includes('--type='),
+        );
+        const targetProcesses =
+          mainProcesses.length > 0 ? mainProcesses : ideProcesses;
+
+        // Sort by PID and pick the one with lowest PID
+        targetProcesses.sort((a, b) => a.pid - b.pid);
+        return {
+          pid: targetProcesses[0].pid,
+          command: targetProcesses[0].command,
+        };
+      }
+    } else if (parentExists) {
+      // Git Bash parent exists, use it
+      const gitBashIndex = ancestors.indexOf(gitBashProc);
+      if (gitBashIndex >= 0 && gitBashIndex + 1 < ancestors.length) {
+        const parentProc = ancestors[gitBashIndex + 1];
+        return { pid: parentProc.pid, command: parentProc.command };
+      }
+    }
+  }
+
+  // Strategy 3: Look for other shell processes (cmd.exe, powershell.exe, etc.) and use their parent
+  const otherShellNames = ['cmd.exe', 'powershell.exe', 'pwsh.exe'];
+  for (let i = 0; i < ancestors.length; i++) {
+    const proc = ancestors[i];
+    const nameLower = proc.name.toLowerCase();
+
+    if (otherShellNames.some((shell) => nameLower === shell.toLowerCase())) {
+      // The parent of the shell is likely closer to the IDE
+      if (i + 1 < ancestors.length) {
+        const parentProc = ancestors[i + 1];
+        return { pid: parentProc.pid, command: parentProc.command };
+      }
+      break;
+    }
+  }
+
+  // Strategy 4: Use ancestors[length-3] as fallback (original logic)
+  if (ancestors.length >= 3) {
+    const target = ancestors[ancestors.length - 3];
+    return { pid: target.pid, command: target.command };
+  } else if (ancestors.length > 0) {
+    const target = ancestors[ancestors.length - 1];
+    return { pid: target.pid, command: target.command };
+  }
+
+  return { pid: myPid, command: myProc.command };
 }
 
 /**
