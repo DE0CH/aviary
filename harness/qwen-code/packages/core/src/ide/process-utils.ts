@@ -15,6 +15,18 @@ const execFileAsync = promisify(execFile);
 const MAX_TRAVERSAL_DEPTH = 32;
 
 /**
+ * Escapes a string for safe use inside PowerShell double-quoted strings.
+ * Must escape backslashes first, then double quotes.
+ *
+ * @param str The string to escape.
+ * @returns The escaped string safe for PowerShell double-quoted context.
+ */
+function escapeForPowerShellDoubleQuotes(str: string): string {
+  // Order matters: escape backslashes first, then double quotes
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
  * Fetches the parent process ID, name, and command for a given process ID.
  *
  * @param pid The process ID to inspect.
@@ -39,7 +51,7 @@ async function getProcessInfo(pid: number): Promise<{
       ].join(' ');
 
       const { stdout } = await execAsync(
-        `powershell -NoProfile -NonInteractive -Command "${powershellCommand.replace(/"/g, '\\"')}"`,
+        `powershell -NoProfile -NonInteractive -Command "${escapeForPowerShellDoubleQuotes(powershellCommand)}"`,
       );
       const output = stdout.trim();
       if (!output) return { parentPid: 0, name: '', command: '' };
