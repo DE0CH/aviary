@@ -98,7 +98,7 @@ qwen
 > Generate unit tests for this module
 ```
 
-![](https://cloud.video.taobao.com/vod/B40FS7f_HDyM_Zn0rI5-4eazHeRzYtG-EYJnHAqtzkQ.mp4)
+![](https://gw.alicdn.com/imgextra/i2/O1CN01bgnQbj1XcrWfFWeNc_!!6000000002945-1-tps-852-480.gif)
 
 
 ## Usage Examples
