@@ -31,7 +31,7 @@ This guide provides solutions to common issues and debugging tips, including top
     1. In your home directory: `~/.qwen/settings.json`.
     2. In your project's root directory: `./.qwen/settings.json`.
 
-    Refer to [Qwen Code Configuration](/users/configuration/settings) for more details.
+    Refer to [Qwen Code Configuration](../configuration/settings) for more details.
 
 - **Q: Why don't I see cached token counts in my stats output?**
   - A: Cached token information is only displayed when cached tokens are being used. This feature is available for API key users (Qwen API key or Google Cloud Vertex AI) but not for OAuth users (such as Google Personal/Enterprise accounts like Google Gmail or Google Workspace, respectively). This is because the Qwen Code Assist API does not support cached content creation. You can still view your total token usage using the `/stats` command.
@@ -59,7 +59,7 @@ This guide provides solutions to common issues and debugging tips, including top
 
 - **Error: "Operation not permitted", "Permission denied", or similar.**
   - **Cause:** When sandboxing is enabled, Qwen Code may attempt operations that are restricted by your sandbox configuration, such as writing outside the project directory or system temp directory.
-  - **Solution:** Refer to the [Configuration: Sandboxing](/users/features/sandbox) documentation for more information, including how to customize your sandbox configuration.
+  - **Solution:** Refer to the [Configuration: Sandboxing](../features/sandbox) documentation for more information, including how to customize your sandbox configuration.
 
 - **Qwen Code is not running in interactive mode in "CI" environments**
   - **Issue:** Qwen Code does not enter interactive mode (no prompt appears) if an environment variable starting with `CI_` (e.g. `CI_TOKEN`) is set. This is because the `is-in-ci` package, used by the underlying UI framework, detects these variables and assumes a non-interactive CI environment.
@@ -84,12 +84,12 @@ This guide provides solutions to common issues and debugging tips, including top
 
 The Qwen Code uses specific exit codes to indicate the reason for termination. This is especially useful for scripting and automation.
 
-| Exit Code | Error Type                 | Description                                                  |
-| --------- | -------------------------- | ------------------------------------------------------------ |
-| 41        | `FatalAuthenticationError` | An error occurred during the authentication process.         |
-| 42        | `FatalInputError`          | Invalid or missing input was provided to the CLI. (non-interactive mode only) |
-| 44        | `FatalSandboxError`        | An error occurred with the sandboxing environment (e.g. Docker, Podman, or Seatbelt). |
-| 52        | `FatalConfigError`         | A configuration file (`settings.json`) is invalid or contains errors. |
+| Exit Code | Error Type                 | Description                                                                                         |
+| --------- | -------------------------- | --------------------------------------------------------------------------------------------------- |
+| 41        | `FatalAuthenticationError` | An error occurred during the authentication process.                                                |
+| 42        | `FatalInputError`          | Invalid or missing input was provided to the CLI. (non-interactive mode only)                       |
+| 44        | `FatalSandboxError`        | An error occurred with the sandboxing environment (e.g. Docker, Podman, or Seatbelt).               |
+| 52        | `FatalConfigError`         | A configuration file (`settings.json`) is invalid or contains errors.                               |
 | 53        | `FatalTurnLimitedError`    | The maximum number of conversational turns for the session was reached. (non-interactive mode only) |
 
 ## Debugging Tips
