@@ -50,7 +50,7 @@ describe('getIdeProcessInfo', () => {
       expect(result).toEqual({ pid: 700, command: '/usr/lib/vscode/code' });
     });
 
-    it('should return parent process info if grandparent lookup fails', async () => {
+    it('should return shell process info if grandparent lookup fails', async () => {
       (os.platform as Mock).mockReturnValue('linux');
       mockedExec
         .mockResolvedValueOnce({ stdout: '800 /bin/bash' }) // pid 1000 -> ppid 800 (shell)
@@ -63,7 +63,7 @@ describe('getIdeProcessInfo', () => {
   });
 
   describe('on Windows', () => {
-    it('should traverse up and find the great-grandchild of the root process', async () => {
+    it('should find known IDE process in the chain', async () => {
       (os.platform as Mock).mockReturnValue('win32');
 
       const processes = [
@@ -97,38 +97,92 @@ describe('getIdeProcessInfo', () => {
         if (file === 'powershell') {
           return Promise.resolve({ stdout: JSON.stringify(processes) });
         }
-        // Fallback for getProcessInfo calls if any (should not happen in new logic for Windows traversal)
         return Promise.resolve({ stdout: '' });
       });
 
       const result = await getIdeProcessInfo();
-      // 1000 -> 900 -> 800 -> 700 (root child)
-      // Great-grandchild of root (700) is 900.
-      // Wait, logic is:
-      // 700 (root child) -> 800 (grandchild) -> 900 (great-grandchild) -> 1000 (current)
-      // The code looks for the grandchild of the root.
-      // Root is 0 (conceptually). Child of root is 700. Grandchild is 800.
-      // The code says:
-      // "We've found the grandchild of the root (`currentPid`). The IDE process is its child, which we've stored in `previousPid`."
+      // Strategy 1: Should find code.exe (known IDE process) in the chain
+      // Process chain: 1000 (node.exe) -> 900 (powershell.exe) -> 800 (code.exe) -> 700 (wininit.exe)
+      // The function should identify code.exe as the IDE process
+      expect(result).toEqual({ pid: 800, command: 'code.exe' });
+    });
 
-      // Let's trace the loop in `getIdeProcessInfoForWindows`:
-      // currentPid = 1000, previousPid = 1000
-      // Loop 1:
-      //   proc = 1000. parentPid = 900.
-      //   parentProc = 900. parentProc.parentPid = 800 != 0.
-      //   previousPid = 1000. currentPid = 900.
-      // Loop 2:
-      //   proc = 900. parentPid = 800.
-      //   parentProc = 800. parentProc.parentPid = 700 != 0.
-      //   previousPid = 900. currentPid = 800.
-      // Loop 3:
-      //   proc = 800. parentPid = 700.
-      //   parentProc = 700. parentProc.parentPid = 0.
-      //   MATCH!
-      //   ideProc = processMap.get(previousPid) = processMap.get(900) = powershell.exe
-      //   return { pid: 900, command: 'powershell.exe' }
+    it('should find shell parent when shell exists in chain', async () => {
+      (os.platform as Mock).mockReturnValue('win32');
 
-      expect(result).toEqual({ pid: 900, command: 'powershell.exe' });
+      const processes = [
+        {
+          ProcessId: 1000,
+          ParentProcessId: 900,
+          Name: 'node.exe',
+          CommandLine: 'node.exe',
+        },
+        {
+          ProcessId: 900,
+          ParentProcessId: 800,
+          Name: 'cmd.exe',
+          CommandLine: 'cmd.exe',
+        },
+        {
+          ProcessId: 800,
+          ParentProcessId: 700,
+          Name: 'explorer.exe',
+          CommandLine: 'explorer.exe',
+        },
+        {
+          ProcessId: 700,
+          ParentProcessId: 0,
+          Name: 'wininit.exe',
+          CommandLine: 'wininit.exe',
+        },
+      ];
+
+      mockedExec.mockImplementation((file: string, _args: string[]) => {
+        if (file === 'powershell') {
+          return Promise.resolve({ stdout: JSON.stringify(processes) });
+        }
+        return Promise.resolve({ stdout: '' });
+      });
+
+      const result = await getIdeProcessInfo();
+      // Strategy 3: Should find cmd.exe and return its parent (explorer.exe)
+      expect(result).toEqual({ pid: 800, command: 'explorer.exe' });
+    });
+
+    it('should handle Git Bash with missing parent by finding IDE in process table', async () => {
+      (os.platform as Mock).mockReturnValue('win32');
+
+      const processes = [
+        {
+          ProcessId: 1000,
+          ParentProcessId: 900,
+          Name: 'node.exe',
+          CommandLine: 'node.exe',
+        },
+        {
+          ProcessId: 900,
+          ParentProcessId: 12345, // Parent doesn't exist in process table
+          Name: 'bash.exe',
+          CommandLine: 'bash.exe',
+        },
+        {
+          ProcessId: 800,
+          ParentProcessId: 0,
+          Name: 'code.exe',
+          CommandLine: 'code.exe',
+        },
+      ];
+
+      mockedExec.mockImplementation((file: string, _args: string[]) => {
+        if (file === 'powershell') {
+          return Promise.resolve({ stdout: JSON.stringify(processes) });
+        }
+        return Promise.resolve({ stdout: '' });
+      });
+
+      const result = await getIdeProcessInfo();
+      // Strategy 2: Git Bash with missing parent should find code.exe in process table
+      expect(result).toEqual({ pid: 800, command: 'code.exe' });
     });
 
     it('should handle empty process list gracefully', async () => {
@@ -142,13 +196,7 @@ describe('getIdeProcessInfo', () => {
 
     it('should handle malformed JSON output gracefully', async () => {
       (os.platform as Mock).mockReturnValue('win32');
-      mockedExec.mockResolvedValue({ stdout: '{"invalid":json}' }); // Malformed JSON will throw in JSON.parse
-
-      // If JSON.parse fails, getProcessTreeForWindows returns empty map.
-      // Then getIdeProcessInfoForWindows returns current pid.
-
-      // Wait, mockedExec throws? No, JSON.parse throws.
-      // getProcessTreeForWindows catches error and returns empty map.
+      mockedExec.mockResolvedValue({ stdout: '{"invalid":json}' });
 
       const result = await getIdeProcessInfo();
       expect(result).toEqual({ pid: 1000, command: '' });
