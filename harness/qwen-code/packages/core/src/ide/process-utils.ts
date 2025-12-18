@@ -38,12 +38,9 @@ async function getProcessInfo(pid: number): Promise<{
         '}',
       ].join(' ');
 
-      const { stdout } = await execFileAsync('powershell', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        powershellCommand,
-      ]);
+      const { stdout } = await execAsync(
+        `powershell -NoProfile -NonInteractive -Command "${powershellCommand.replace(/"/g, '\\"')}"`,
+      );
       const output = stdout.trim();
       if (!output) return { parentPid: 0, name: '', command: '' };
       const {
@@ -234,22 +231,7 @@ async function getIdeProcessInfoForWindows(): Promise<{
     ancestors.push(curr);
 
     if (curr.parentPid === 0 || !processMap.has(curr.parentPid)) {
-      // Try to get info about the missing parent
-      if (curr.parentPid !== 0) {
-        try {
-          const parentInfo = await getProcessInfo(curr.parentPid);
-          if (parentInfo.name) {
-            ancestors.push({
-              pid: curr.parentPid,
-              parentPid: parentInfo.parentPid,
-              name: parentInfo.name,
-              command: parentInfo.command,
-            });
-          }
-        } catch (_e) {
-          // Ignore if query fails
-        }
-      }
+      // Parent process not in map, stop traversal
       break;
     }
     curr = processMap.get(curr.parentPid);
