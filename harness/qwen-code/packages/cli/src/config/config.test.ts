@@ -212,8 +212,8 @@ describe('parseArguments', () => {
     expect(argv.resume).toBe('session-123');
   });
 
-  it('should allow -C flag as alias for --continue', async () => {
-    process.argv = ['node', 'script.js', '-C'];
+  it('should allow -c flag as alias for --continue', async () => {
+    process.argv = ['node', 'script.js', '-c'];
     const argv = await parseArguments({} as Settings);
     expect(argv.continue).toBe(true);
   });
