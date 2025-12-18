@@ -313,6 +313,7 @@ export default {
   'Tool Output Truncation Lines': 'Лимит строк вывода инструментов',
   'Folder Trust': 'Доверие к папке',
   'Vision Model Preview': 'Визуальная модель (предпросмотр)',
+  'Tool Schema Compliance': 'Соответствие схеме инструмента',
   // Варианты перечислений настроек
   'Auto (detect from system)': 'Авто (определить из системы)',
   Text: 'Текст',
@@ -341,8 +342,8 @@ export default {
     'Установка предпочитаемого внешнего редактора',
   'Manage extensions': 'Управление расширениями',
   'List active extensions': 'Показать активные расширения',
-  'Update extensions. Usage: update |--all':
-    'Обновить расширения. Использование: update |--all',
+  'Update extensions. Usage: update <extension-names>|--all':
+    'Обновить расширения. Использование: update <extension-names>|--all',
   'manage IDE integration': 'Управление интеграцией с IDE',
   'check status of IDE integration': 'Проверить статус интеграции с IDE',
   'install required IDE companion for {{ideName}}':
@@ -400,7 +401,8 @@ export default {
   'Set LLM output language': 'Установка языка вывода LLM',
   'Usage: /language ui [zh-CN|en-US]':
     'Использование: /language ui [zh-CN|en-US|ru-RU]',
-  'Usage: /language output ': 'Использование: /language output ',
+  'Usage: /language output <language>':
+    'Использование: /language output <language>',
   'Example: /language output 中文': 'Пример: /language output 中文',
   'Example: /language output English': 'Пример: /language output English',
   'Example: /language output 日本語': 'Пример: /language output 日本語',
@@ -417,9 +419,8 @@ export default {
   'To request additional UI language packs, please open an issue on GitHub.':
     'Для запроса дополнительных языковых пакетов интерфейса, пожалуйста, создайте обращение на GitHub.',
   'Available options:': 'Доступные варианты:',
-  ' - zh-CN: Simplified Chinese': ' - zh-CN: Упрощенный китайский',
-  ' - en-US: English': ' - en-US: Английский',
-  ' - ru-RU: Russian': ' - ru-RU: Русский',
+  '  - zh-CN: Simplified Chinese': ' - zh-CN: Упрощенный китайский',
+  '  - en-US: English': ' - en-US: Английский',
   'Set UI language to Simplified Chinese (zh-CN)':
     'Установить язык интерфейса на упрощенный китайский (zh-CN)',
   'Set UI language to English (en-US)':
@@ -435,8 +436,8 @@ export default {
     'Режим подтверждения изменен на: {{mode}}',
   'Approval mode changed to: {{mode}} (saved to {{scope}} settings{{location}})':
     'Режим подтверждения изменен на: {{mode}} (сохранено в настройках {{scope}}{{location}})',
-  'Usage: /approval-mode [--session|--user|--project]':
-    'Использование: /approval-mode [--session|--user|--project]',
+  'Usage: /approval-mode <mode> [--session|--user|--project]':
+    'Использование: /approval-mode <mode> [--session|--user|--project]',
   'Scope subcommands do not accept additional arguments.':
     'Подкоманды области не принимают дополнительных аргументов.',
   'Plan mode - Analyze only, do not modify files or execute commands':
@@ -588,8 +589,8 @@ export default {
     'Ошибка при экспорте диалога: {{error}}',
   'Conversation shared to {{filePath}}': 'Диалог экспортирован в {{filePath}}',
   'No conversation found to share.': 'Нет диалога для экспорта.',
-  'Share the current conversation to a markdown or json file. Usage: /chat share <путь-к-файлу>':
-    'Экспортировать текущий диалог в markdown или json файл. Использование: /chat share <путь-к-файлу>',
+  'Share the current conversation to a markdown or json file. Usage: /chat share <file>':
+    'Экспортировать текущий диалог в markdown или json файл. Использование: /chat share <файл>',
 
   // ============================================================================
   // Команды - Резюме
@@ -650,8 +651,8 @@ export default {
     'Команда /directory add не поддерживается в ограничительных профилях песочницы. Пожалуйста, используйте --include-directories при запуске сессии.',
   "Error adding '{{path}}': {{error}}":
     "Ошибка при добавлении '{{path}}': {{error}}",
-  'Successfully added GEMINI.md files from the following directories if there are:\n- {{directories}}':
-    'Успешно добавлены файлы GEMINI.md из следующих директорий (если они есть):\n- {{directories}}',
+  'Successfully added QWEN.md files from the following directories if there are:\n- {{directories}}':
+    'Успешно добавлены файлы QWEN.md из следующих директорий (если они есть):\n- {{directories}}',
   'Error refreshing memory: {{error}}':
     'Ошибка при обновлении памяти: {{error}}',
   'Successfully added directories:\n- {{directories}}':
@@ -884,6 +885,7 @@ export default {
   // Экран выхода / Статистика
   // ============================================================================
   'Agent powering down. Goodbye!': 'Агент завершает работу. До свидания!',
+  'To continue this session, run': 'Для продолжения этой сессии, выполните',
   'Interaction Summary': 'Сводка взаимодействия',
   'Session ID:': 'ID сессии:',
   'Tool Calls:': 'Вызовы инструментов:',
@@ -1009,7 +1011,7 @@ export default {
   "Just a sec, I'm optimizing the humor...": 'Секунду, оптимизирую юмор...',
   "Just a moment, I'm tuning the algorithms...":
     'Момент, настраиваю алгоритмы...',
-  'Warp speed engaged...': 'Варп-скорость включена...',
+  'Warp speed engaged...': 'Варп-прыжок активирован...',
   'Mining for more Dilithium crystals...': 'Добываем кристаллы дилития...',
   "Don't panic...": 'Без паники...',
   'Following the white rabbit...': 'Следуем за белым кроликом...',
@@ -1083,7 +1085,7 @@ export default {
     'Только что вспомнил, куда положил ключи...',
   'Pondering the orb...': 'Размышляю над сферой...',
   "I've seen things you people wouldn't believe... like a user who reads loading messages.":
-    'Я видел такое, во что вы, люди, просто не поверите... например, пользователя, читающего сообщения загрузки.',
+    'Я видел такое, что вам, людям, и не снилось... пользователя, читающего эти сообщения.',
   'Initiating thoughtful gaze...': 'Инициируем задумчивый взгляд...',
   "What's a computer's favorite snack? Microchips.":
     'Что сервер заказывает в баре? Пинг-коладу.',
@@ -1095,7 +1097,7 @@ export default {
     'Ищу взрослых для присмот... в смысле, обрабатываю.',
   'Making it go beep boop.': 'Делаем бип-буп.',
   'Buffering... because even AIs need a moment.':
-    'Буферизация... даже ИИ нужно мгновение.',
+    'Буферизация... даже ИИ нужно время подумать.',
   'Entangling quantum particles for a faster response...':
     'Запутываем квантовые частицы для быстрого ответа...',
   'Polishing the chrome... on the algorithms.':
