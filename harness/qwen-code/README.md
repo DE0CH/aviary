@@ -74,99 +74,35 @@ qwen
 
 ## Usage Examples
 
-If you want to learn more about common workflows, click [Common Workflows](https://qwenlm.github.io/qwen-code-docs/en/users/common-workflow/) to view.
-
-### 🔍 Explore Codebases
+### 1️⃣ Interactive Mode
 
 ```bash
 cd your-project/
 qwen
-
-# Architecture analysis
-> Describe the main pieces of this system's architecture
-> What are the key dependencies and how do they interact?
-> Find all API endpoints and their authentication methods
 ```
 
-### 💻 Code Development
+Navigate to your project folder and type `qwen` to launch Qwen Code. Start a conversation and use `@` to reference files within the folder.
+
+If you want to learn more about common workflows, click [Common Workflows](https://qwenlm.github.io/qwen-code-docs/en/users/common-workflow/) to view.
+
+### 2️⃣ Headless Mode
 
 ```bash
-# Refactoring
-> Refactor this function to improve readability and performance
-> Convert this class to use dependency injection
-> Split this large module into smaller, focused components
-
-# Code generation
-> Create a REST API endpoint for user management
-> Generate unit tests for the authentication module
-> Add error handling to all database operations
+cd your-project/
+qwen -p "your question"
 ```
+[Headless mode](https://qwenlm.github.io/qwen-code-docs/en/users/features/headless) allows you to run Qwen Code programmatically from command line scripts and automation tools without any interactive UI. This is ideal for scripting, automation, CI/CD pipelines, and building AI-powered tools.
 
-### 🔄 Automate Workflows
+### 3️⃣ Use in IDE
+If you prefer to integrate Qwen Code into your current editor, we now support VS Code and Zed. For details, please refer to:
 
-```bash
-# Git automation
-> Analyze git commits from the last 7 days, grouped by feature
-> Create a changelog from recent commits
-> Find all TODO comments and create GitHub issues
+- [Use in VS Code](https://qwenlm.github.io/qwen-code-docs/en/users/integration-vscode/)
+- [Use in Zed](https://qwenlm.github.io/qwen-code-docs/en/users/integration-zed/)
 
-# File operations
-> Convert all images in this directory to PNG format
-> Rename all test files to follow the *.test.ts pattern
-> Find and remove all console.log statements
-```
+### 4️⃣ SDK
+Qwen Code now supports an SDK designed to simplify integration with the Qwen Code platform. It provides a set of easy-to-use APIs and tools enabling developers to efficiently build, test, and deploy applications. For details, please refer to:
 
-### 🐛 Debugging & Analysis
-
-```bash
-# Performance analysis
-> Identify performance bottlenecks in this React component
-> Find all N+1 query problems in the codebase
-
-# Security audit
-> Check for potential SQL injection vulnerabilities
-> Find all hardcoded credentials or API keys
-```
-
-### 📚 Understand New Codebases
-
-```text
-> What are the core business logic components?
-> What security mechanisms are in place?
-> How does the data flow through the system?
-> What are the main design patterns used?
-> Generate a dependency graph for this module
-```
-
-### 🔨 Code Refactoring & Optimization
-
-```text
-> What parts of this module can be optimized?
-> Help me refactor this class to follow SOLID principles
-> Add proper error handling and logging
-> Convert callbacks to async/await pattern
-> Implement caching for expensive operations
-```
-
-### 📝 Documentation & Testing
-
-```text
-> Generate comprehensive JSDoc comments for all public APIs
-> Write unit tests with edge cases for this component
-> Create API documentation in OpenAPI format
-> Add inline comments explaining complex algorithms
-> Generate a README for this module
-```
-
-### 🚀 Development Acceleration
-
-```text
-> Set up a new Express server with authentication
-> Create a React component with TypeScript and tests
-> Implement a rate limiter middleware
-> Add database migrations for new schema
-> Configure CI/CD pipeline for this project
-```
+- [Use the Qwen Code SDK](./packages/sdk-typescript/README.md)
 
 ## Commands & Shortcuts
 
