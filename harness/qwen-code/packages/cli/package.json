@@ -36,10 +36,10 @@
     "sandboxImageUri": "ghcr.io/qwenlm/qwen-code:0.5.1"
   },
   "dependencies": {
-    "@google/genai": "1.16.0",
+    "@google/genai": "1.30.0",
     "@iarna/toml": "^2.2.5",
     "@qwen-code/qwen-code-core": "file:../core",
-    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@modelcontextprotocol/sdk": "^1.25.1",
     "@types/update-notifier": "^6.0.8",
     "ansi-regex": "^6.2.2",
     "command-exists": "^1.2.9",

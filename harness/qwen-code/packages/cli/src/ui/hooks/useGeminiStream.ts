@@ -26,7 +26,6 @@ import {
   GitService,
   UnauthorizedError,
   UserPromptEvent,
-  DEFAULT_GEMINI_FLASH_MODEL,
   logConversationFinishedEvent,
   ConversationFinishedEvent,
   ApprovalMode,
@@ -600,9 +599,6 @@ export const useGeminiStream = (
           text: parseAndFormatApiError(
             eventValue.error,
             config.getContentGeneratorConfig()?.authType,
-            undefined,
-            config.getModel(),
-            DEFAULT_GEMINI_FLASH_MODEL,
           ),
         },
         userMessageTimestamp,
@@ -654,6 +650,9 @@ export const useGeminiStream = (
           'Response stopped due to image safety violations.',
         [FinishReason.UNEXPECTED_TOOL_CALL]:
           'Response stopped due to unexpected tool call.',
+        [FinishReason.IMAGE_PROHIBITED_CONTENT]:
+          'Response stopped due to image prohibited content.',
+        [FinishReason.NO_IMAGE]: 'Response stopped due to no image.',
       };
 
       const message = finishReasonMessages[finishReason];
@@ -987,9 +986,6 @@ export const useGeminiStream = (
                 text: parseAndFormatApiError(
                   getErrorMessage(error) || 'Unknown error',
                   config.getContentGeneratorConfig()?.authType,
-                  undefined,
-                  config.getModel(),
-                  DEFAULT_GEMINI_FLASH_MODEL,
                 ),
               },
               userMessageTimestamp,

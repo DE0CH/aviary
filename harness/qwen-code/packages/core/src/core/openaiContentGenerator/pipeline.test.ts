@@ -60,6 +60,7 @@ describe('ContentGenerationPipeline', () => {
       buildClient: vi.fn().mockReturnValue(mockClient),
       buildRequest: vi.fn().mockImplementation((req) => req),
       buildHeaders: vi.fn().mockReturnValue({}),
+      getDefaultGenerationConfig: vi.fn().mockReturnValue({}),
     };
 
     // Mock telemetry service

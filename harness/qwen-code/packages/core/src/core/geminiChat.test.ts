@@ -111,7 +111,7 @@ describe('GeminiChat', () => {
       getUsageStatisticsEnabled: () => true,
       getDebugMode: () => false,
       getContentGeneratorConfig: vi.fn().mockReturnValue({
-        authType: 'oauth-personal', // Ensure this is set for fallback tests
+        authType: 'gemini-api-key', // Ensure this is set for fallback tests
         model: 'test-model',
       }),
       getModel: vi.fn().mockReturnValue('gemini-pro'),
@@ -1382,7 +1382,7 @@ describe('GeminiChat', () => {
     });
 
     it('should call handleFallback with the specific failed model and retry if handler returns true', async () => {
-      const authType = AuthType.LOGIN_WITH_GOOGLE;
+      const authType = AuthType.USE_GEMINI;
       vi.mocked(mockConfig.getContentGeneratorConfig).mockReturnValue({
         model: 'test-model',
         authType,

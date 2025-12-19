@@ -12,14 +12,8 @@ import type {
   GenerateContentParameters,
   GenerateContentResponse,
 } from '@google/genai';
-import { GoogleGenAI } from '@google/genai';
-import { createCodeAssistContentGenerator } from '../code_assist/codeAssist.js';
 import { DEFAULT_QWEN_MODEL } from '../config/models.js';
 import type { Config } from '../config/config.js';
-
-import type { UserTierId } from '../code_assist/types.js';
-import { InstallationManager } from '../utils/installationManager.js';
-import { LoggingContentGenerator } from './loggingContentGenerator.js';
 
 /**
  * Interface abstracting the core functionalities for generating content and counting tokens.
@@ -38,15 +32,11 @@ export interface ContentGenerator {
   countTokens(request: CountTokensParameters): Promise<CountTokensResponse>;
 
   embedContent(request: EmbedContentParameters): Promise<EmbedContentResponse>;
-
-  userTier?: UserTierId;
 }
 
 export enum AuthType {
-  LOGIN_WITH_GOOGLE = 'oauth-personal',
   USE_GEMINI = 'gemini-api-key',
   USE_VERTEX_AI = 'vertex-ai',
-  CLOUD_SHELL = 'cloud-shell',
   USE_OPENAI = 'openai',
   QWEN_OAUTH = 'qwen-oauth',
 }
@@ -59,12 +49,9 @@ export type ContentGeneratorConfig = {
   authType?: AuthType | undefined;
   enableOpenAILogging?: boolean;
   openAILoggingDir?: string;
-  // Timeout configuration in milliseconds
-  timeout?: number;
-  // Maximum retries for failed requests
-  maxRetries?: number;
-  // Disable cache control for DashScope providers
-  disableCacheControl?: boolean;
+  timeout?: number; // Timeout configuration in milliseconds
+  maxRetries?: number; // Maximum retries for failed requests
+  disableCacheControl?: boolean; // Disable cache control for DashScope providers
   samplingParams?: {
     top_p?: number;
     top_k?: number;
@@ -73,6 +60,9 @@ export type ContentGeneratorConfig = {
     frequency_penalty?: number;
     temperature?: number;
     max_tokens?: number;
+  };
+  reasoning?: {
+    effort?: 'low' | 'medium' | 'high';
   };
   proxy?: string | undefined;
   userAgent?: string;
@@ -123,48 +113,14 @@ export async function createContentGenerator(
   gcConfig: Config,
   isInitialAuth?: boolean,
 ): Promise<ContentGenerator> {
-  const version = process.env['CLI_VERSION'] || process.version;
-  const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
-  const baseHeaders: Record<string, string> = {
-    'User-Agent': userAgent,
-  };
-
-  if (
-    config.authType === AuthType.LOGIN_WITH_GOOGLE ||
-    config.authType === AuthType.CLOUD_SHELL
-  ) {
-    const httpOptions = { headers: baseHeaders };
-    return new LoggingContentGenerator(
-      await createCodeAssistContentGenerator(
-        httpOptions,
-        config.authType,
-        gcConfig,
-      ),
-      gcConfig,
-    );
-  }
-
   if (
     config.authType === AuthType.USE_GEMINI ||
     config.authType === AuthType.USE_VERTEX_AI
   ) {
-    let headers: Record<string, string> = { ...baseHeaders };
-    if (gcConfig?.getUsageStatisticsEnabled()) {
-      const installationManager = new InstallationManager();
-      const installationId = installationManager.getInstallationId();
-      headers = {
-        ...headers,
-        'x-gemini-api-privileged-user-id': `${installationId}`,
-      };
-    }
-    const httpOptions = { headers };
-
-    const googleGenAI = new GoogleGenAI({
-      apiKey: config.apiKey === '' ? undefined : config.apiKey,
-      vertexai: config.vertexai,
-      httpOptions,
-    });
-    return new LoggingContentGenerator(googleGenAI.models, gcConfig);
+    const { createGeminiContentGenerator } = await import(
+      './geminiContentGenerator/index.js'
+    );
+    return createGeminiContentGenerator(config, gcConfig);
   }
 
   if (config.authType === AuthType.USE_OPENAI) {
