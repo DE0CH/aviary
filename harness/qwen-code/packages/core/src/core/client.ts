@@ -94,8 +94,7 @@ const MAX_TURNS = 100;
 export class GeminiClient {
   private chat?: GeminiChat;
   private readonly generateContentConfig: GenerateContentConfig = {
-    temperature: 0,
-    topP: 1,
+    topP: 0.8,
   };
   private sessionTurnCount = 0;
 
