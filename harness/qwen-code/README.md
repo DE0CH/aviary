@@ -69,7 +69,7 @@ qwen
 > Generate unit tests for this module
 ```
 
-![](https://gw.alicdn.com/imgextra/i2/O1CN01bgnQbj1XcrWfFWeNc_!!6000000002945-1-tps-852-480.gif)
+[![qwencode-start](https://img.alicdn.com/imgextra/i3/6000000004682/O1CN01cSWkqj1kSPUZPj68h_!!6000000004682-0-tbvideo.jpg)](https://cloud.video.taobao.com/vod/HLfyppnCHplRV9Qhz2xSqeazHeRzYtG-EYJnHAqtzkQ.mp4)
 
 
 ## Usage Examples
