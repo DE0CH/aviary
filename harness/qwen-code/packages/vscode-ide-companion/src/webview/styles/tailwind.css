@@ -43,7 +43,7 @@
 
   /* Composer: form wrapper */
   .composer-form {
-    @apply relative flex flex-col max-w-[680px] mx-auto rounded-large border shadow-sm transition-colors duration-200;
+    @apply relative flex flex-col max-w-[680px] mx-auto rounded-large border shadow-sm transition-colors duration-200 z-[1];
     background: var(--app-input-secondary-background);
     border-color: var(--app-input-border);
     color: var(--app-input-foreground);

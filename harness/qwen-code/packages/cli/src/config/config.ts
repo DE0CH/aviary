@@ -299,7 +299,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
             'Set the approval mode: plan (plan only), default (prompt for approval), auto-edit (auto-approve edit tools), yolo (auto-approve all tools)',
         })
         .option('checkpointing', {
-          alias: 'c',
           type: 'boolean',
           description: 'Enables checkpointing of file edits',
           default: false,
@@ -422,12 +421,14 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           default: false,
         })
         .option('continue', {
+          alias: 'c',
           type: 'boolean',
           description:
             'Resume the most recent session for the current project.',
           default: false,
         })
         .option('resume', {
+          alias: 'r',
           type: 'string',
           description:
             'Resume a specific session by its ID. Use without an ID to show session picker.',
@@ -1002,6 +1003,7 @@ export async function loadCliConfig(
     enableToolOutputTruncation: settings.tools?.enableToolOutputTruncation,
     eventEmitter: appEvents,
     useSmartEdit: argv.useSmartEdit ?? settings.useSmartEdit,
+    gitCoAuthor: settings.general?.gitCoAuthor,
     output: {
       format: outputSettingsFormat,
     },

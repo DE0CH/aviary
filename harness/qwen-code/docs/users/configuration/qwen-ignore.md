@@ -6,7 +6,7 @@ Qwen Code includes the ability to automatically ignore files, similar to `.gitig
 
 ## How it works
 
-When you add a path to your `.qwenignore` file, tools that respect this file will exclude matching files and directories from their operations. For example, when you use the [`read_many_files`](/developers/tools/multi-file) command, any paths in your `.qwenignore` file will be automatically excluded.
+When you add a path to your `.qwenignore` file, tools that respect this file will exclude matching files and directories from their operations. For example, when you use the [`read_many_files`](../../developers/tools/multi-file) command, any paths in your `.qwenignore` file will be automatically excluded.
 
 For the most part, `.qwenignore` follows the conventions of `.gitignore` files:
 
@@ -20,9 +20,9 @@ You can update your `.qwenignore` file at any time. To apply the changes, you mu
 
 ## How to use `.qwenignore`
 
-| Step                   | Description                                                  |
-| ---------------------- | ------------------------------------------------------------ |
-| **Enable .qwenignore** | Create a file named `.qwenignore` in your project root directory |
+| Step                   | Description                                                                            |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| **Enable .qwenignore** | Create a file named `.qwenignore` in your project root directory                       |
 | **Add ignore rules**   | Open `.qwenignore` file and add paths to ignore, example: `/archive/` or `apikeys.txt` |
 
 ### `.qwenignore` examples

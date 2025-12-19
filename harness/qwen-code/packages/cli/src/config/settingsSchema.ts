@@ -147,6 +147,16 @@ const SETTINGS_SCHEMA = {
         description: 'Disable update notification prompts.',
         showInDialog: false,
       },
+      gitCoAuthor: {
+        type: 'boolean',
+        label: 'Git Co-Author',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code.',
+        showInDialog: false,
+      },
       checkpointing: {
         type: 'object',
         label: 'Checkpointing',
@@ -284,7 +294,7 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description:
-          'Show Gemini CLI status and thoughts in the terminal window title',
+          'Show Qwen Code status and thoughts in the terminal window title',
         showInDialog: true,
       },
       hideTips: {
@@ -312,7 +322,7 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description:
-          'Hide the context summary (GEMINI.md, MCP servers) above the input.',
+          'Hide the context summary (QWEN.md, MCP servers) above the input.',
         showInDialog: true,
       },
       footer: {
@@ -518,7 +528,7 @@ const SETTINGS_SCHEMA = {
         category: 'Model',
         requiresRestart: false,
         default: undefined as string | undefined,
-        description: 'The Gemini model to use for conversations.',
+        description: 'The model to use for conversations.',
         showInDialog: false,
       },
       maxSessionTurns: {
@@ -648,6 +658,22 @@ const SETTINGS_SCHEMA = {
             parentKey: 'generationConfig',
             childKey: 'disableCacheControl',
             showInDialog: true,
+          },
+          schemaCompliance: {
+            type: 'enum',
+            label: 'Tool Schema Compliance',
+            category: 'Generation Configuration',
+            requiresRestart: false,
+            default: 'auto',
+            description:
+              'The compliance mode for tool schemas sent to the model. Use "openapi_30" for strict OpenAPI 3.0 compatibility (e.g., for Gemini).',
+            parentKey: 'generationConfig',
+            childKey: 'schemaCompliance',
+            showInDialog: true,
+            options: [
+              { value: 'auto', label: 'Auto (Default)' },
+              { value: 'openapi_30', label: 'OpenAPI 3.0 Strict' },
+            ],
           },
         },
       },
