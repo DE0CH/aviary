@@ -52,7 +52,7 @@ export function detectIdeFromEnv(): IdeInfo {
 
 function verifyVSCode(
   ide: IdeInfo,
-  ideProcessInfo: {
+  ideProcessInfo?: {
     pid: number;
     command: string;
   },
@@ -61,7 +61,7 @@ function verifyVSCode(
     return ide;
   }
   if (
-    ideProcessInfo.command &&
+    ideProcessInfo?.command &&
     ideProcessInfo.command.toLowerCase().includes('code')
   ) {
     return IDE_DEFINITIONS.vscode;
@@ -70,7 +70,7 @@ function verifyVSCode(
 }
 
 export function detectIde(
-  ideProcessInfo: {
+  ideProcessInfo?: {
     pid: number;
     command: string;
   },
