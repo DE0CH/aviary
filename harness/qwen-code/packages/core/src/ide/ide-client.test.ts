@@ -22,6 +22,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { detectIde, IDE_DEFINITIONS } from './detect-ide.js';
 import * as os from 'node:os';
+import * as path from 'node:path';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -96,20 +97,21 @@ describe('IdeClient', () => {
 
   describe('connect', () => {
     it('should connect using HTTP when port is provided in config file', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
 
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();
 
+      expect(fs.promises.readFile).toHaveBeenCalledWith(
+        path.join('/tmp', 'qwen-code-ide-server-12345.json'),
+        'utf8',
+      );
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         new URL('http://127.0.0.1:8080/mcp'),
         expect.any(Object),
@@ -121,19 +123,13 @@ describe('IdeClient', () => {
     });
 
     it('should connect using stdio when stdio config is provided in file', async () => {
-      const config = {
-        stdio: { command: 'test-cmd', args: ['--foo'] },
-        workspacePath: '/test/workspace',
-      };
+      const config = { stdio: { command: 'test-cmd', args: ['--foo'] } };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-12345.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
 
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();
@@ -152,17 +148,13 @@ describe('IdeClient', () => {
       const config = {
         port: '8080',
         stdio: { command: 'test-cmd', args: ['--foo'] },
-        workspacePath: '/test/workspace',
       };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
 
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();
@@ -225,16 +217,13 @@ describe('IdeClient', () => {
     });
 
     it('should prioritize file config over environment variables', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
       process.env['QWEN_CODE_IDE_SERVER_PORT'] = '9090';
 
       const ideClient = await IdeClient.getInstance();
@@ -276,15 +265,7 @@ describe('IdeClient', () => {
   describe('getConnectionConfigFromFile', () => {
     it('should return config from the specific pid file if it exists', async () => {
       const config = { port: '1234', workspacePath: '/test/workspace' };
-      (
-        vi.mocked(fs.promises.readdir) as Mock<
-          (path: fs.PathLike) => Promise<string[]>
-        >
-      ).mockResolvedValue(['qwen-code-ide-server-1234.json']);
       vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
 
       const ideClient = await IdeClient.getInstance();
       // In tests, the private method can be accessed like this.
@@ -295,6 +276,10 @@ describe('IdeClient', () => {
       ).getConnectionConfigFromFile();
 
       expect(result).toEqual(config);
+      expect(fs.promises.readFile).toHaveBeenCalledWith(
+        path.join('/tmp', 'qwen-code-ide-server-12345.json'),
+        'utf8',
+      );
     });
 
     it('should return undefined if no config files are found', async () => {
@@ -317,11 +302,14 @@ describe('IdeClient', () => {
 
     it('should find and parse a single config file with the new naming scheme', async () => {
       const config = { port: '5678', workspacePath: '/test/workspace' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      ); // For old path
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-5678.json']);
+      ).mockResolvedValue(['qwen-code-ide-server-12345-123.json']);
       vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
         isValid: true,
@@ -335,6 +323,10 @@ describe('IdeClient', () => {
       ).getConnectionConfigFromFile();
 
       expect(result).toEqual(config);
+      expect(fs.promises.readFile).toHaveBeenCalledWith(
+        path.join('/tmp/gemini/ide', 'qwen-code-ide-server-12345-123.json'),
+        'utf8',
+      );
     });
 
     it('should filter out configs with invalid workspace paths', async () => {
@@ -346,13 +338,16 @@ describe('IdeClient', () => {
         port: '1111',
         workspacePath: '/invalid/workspace',
       };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-1111.json',
-        'qwen-code-ide-server-5678.json',
+        'qwen-code-ide-server-12345-111.json',
+        'qwen-code-ide-server-12345-222.json',
       ]);
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce(JSON.stringify(invalidConfig))
@@ -384,13 +379,16 @@ describe('IdeClient', () => {
     it('should return the first valid config when multiple workspaces are valid', async () => {
       const config1 = { port: '1111', workspacePath: '/test/workspace' };
       const config2 = { port: '2222', workspacePath: '/test/workspace2' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-1111.json',
-        'qwen-code-ide-server-2222.json',
+        'qwen-code-ide-server-12345-111.json',
+        'qwen-code-ide-server-12345-222.json',
       ]);
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce(JSON.stringify(config1))
@@ -413,13 +411,16 @@ describe('IdeClient', () => {
       process.env['QWEN_CODE_IDE_SERVER_PORT'] = '2222';
       const config1 = { port: '1111', workspacePath: '/test/workspace' };
       const config2 = { port: '2222', workspacePath: '/test/workspace2' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-1111.json',
-        'qwen-code-ide-server-2222.json',
+        'qwen-code-ide-server-12345-111.json',
+        'qwen-code-ide-server-12345-222.json',
       ]);
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce(JSON.stringify(config1))
@@ -441,13 +442,16 @@ describe('IdeClient', () => {
 
     it('should handle invalid JSON in one of the config files', async () => {
       const validConfig = { port: '2222', workspacePath: '/test/workspace' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-1111.json',
-        'qwen-code-ide-server-2222.json',
+        'qwen-code-ide-server-12345-111.json',
+        'qwen-code-ide-server-12345-222.json',
       ]);
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce('invalid json')
@@ -467,11 +471,12 @@ describe('IdeClient', () => {
     });
 
     it('should return undefined if readdir throws an error', async () => {
-      (
-        vi.mocked(fs.promises.readdir) as Mock<
-          (path: fs.PathLike) => Promise<string[]>
-        >
-      ).mockRejectedValue(new Error('readdir failed'));
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
+      vi.mocked(fs.promises.readdir).mockRejectedValue(
+        new Error('readdir failed'),
+      );
 
       const ideClient = await IdeClient.getInstance();
       const result = await (
@@ -485,12 +490,15 @@ describe('IdeClient', () => {
 
     it('should ignore files with invalid names', async () => {
       const validConfig = { port: '3333', workspacePath: '/test/workspace' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-3333.json', // valid
+        'qwen-code-ide-server-12345-111.json', // valid
         'not-a-config-file.txt', // invalid
         'qwen-code-ide-server-asdf.json', // invalid
       ]);
@@ -509,19 +517,30 @@ describe('IdeClient', () => {
       ).getConnectionConfigFromFile();
 
       expect(result).toEqual(validConfig);
+      expect(fs.promises.readFile).toHaveBeenCalledWith(
+        path.join('/tmp/gemini/ide', 'qwen-code-ide-server-12345-111.json'),
+        'utf8',
+      );
+      expect(fs.promises.readFile).not.toHaveBeenCalledWith(
+        path.join('/tmp/gemini/ide', 'not-a-config-file.txt'),
+        'utf8',
+      );
     });
 
     it('should match env port string to a number port in the config', async () => {
       process.env['QWEN_CODE_IDE_SERVER_PORT'] = '3333';
       const config1 = { port: 1111, workspacePath: '/test/workspace' };
       const config2 = { port: 3333, workspacePath: '/test/workspace2' };
+      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
+        new Error('not found'),
+      );
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        'qwen-code-ide-server-1111.json',
-        'qwen-code-ide-server-3333.json',
+        'qwen-code-ide-server-12345-111.json',
+        'qwen-code-ide-server-12345-222.json',
       ]);
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce(JSON.stringify(config1))
@@ -549,16 +568,13 @@ describe('IdeClient', () => {
     });
 
     it('should return false if tool discovery fails', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
       mockClient.request.mockRejectedValue(new Error('Method not found'));
 
       const ideClient = await IdeClient.getInstance();
@@ -571,16 +587,13 @@ describe('IdeClient', () => {
     });
 
     it('should return false if diffing tools are not available', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
       mockClient.request.mockResolvedValue({
         tools: [{ name: 'someOtherTool' }],
       });
@@ -595,16 +608,13 @@ describe('IdeClient', () => {
     });
 
     it('should return false if only openDiff tool is available', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
       mockClient.request.mockResolvedValue({
         tools: [{ name: 'openDiff' }],
       });
@@ -619,16 +629,13 @@ describe('IdeClient', () => {
     });
 
     it('should return true if connected and diffing tools are available', async () => {
-      const config = { port: '8080', workspacePath: '/test/workspace' };
+      const config = { port: '8080' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
       mockClient.request.mockResolvedValue({
         tools: [{ name: 'openDiff' }, { name: 'closeDiff' }],
       });
@@ -646,20 +653,13 @@ describe('IdeClient', () => {
   describe('authentication', () => {
     it('should connect with an auth token if provided in the discovery file', async () => {
       const authToken = 'test-auth-token';
-      const config = {
-        port: '8080',
-        authToken,
-        workspacePath: '/test/workspace',
-      };
+      const config = { port: '8080', authToken };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
       (
         vi.mocked(fs.promises.readdir) as Mock<
           (path: fs.PathLike) => Promise<string[]>
         >
-      ).mockResolvedValue(['qwen-code-ide-server-8080.json']);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-      vi.spyOn(IdeClient, 'validateWorkspacePath').mockReturnValue({
-        isValid: true,
-      });
+      ).mockResolvedValue([]);
 
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();

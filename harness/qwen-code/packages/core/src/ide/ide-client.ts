@@ -14,6 +14,7 @@ import {
   IdeDiffClosedNotificationSchema,
   IdeDiffRejectedNotificationSchema,
 } from './types.js';
+import { getIdeProcessInfo } from './process-utils.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -85,6 +86,7 @@ export class IdeClient {
       'IDE integration is currently disabled. To enable it, run /ide enable.',
   };
   private currentIde: IdeInfo | undefined;
+  private ideProcessInfo: { pid: number; command: string } | undefined;
   private connectionConfig:
     | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
     | undefined;
@@ -106,9 +108,10 @@ export class IdeClient {
     if (!IdeClient.instancePromise) {
       IdeClient.instancePromise = (async () => {
         const client = new IdeClient();
+        client.ideProcessInfo = await getIdeProcessInfo();
         client.connectionConfig = await client.getConnectionConfigFromFile();
         client.currentIde = detectIde(
-          undefined,
+          client.ideProcessInfo,
           client.connectionConfig?.ideInfo,
         );
         return client;
@@ -569,7 +572,26 @@ export class IdeClient {
     | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
     | undefined
   > {
-    const portFileDir = os.tmpdir();
+    if (!this.ideProcessInfo) {
+      return undefined;
+    }
+
+    // For backwards compatability
+    try {
+      const portFile = path.join(
+        os.tmpdir(),
+        `qwen-code-ide-server-${this.ideProcessInfo.pid}.json`,
+      );
+      const portFileContents = await fs.promises.readFile(portFile, 'utf8');
+      return JSON.parse(portFileContents);
+    } catch (_) {
+      // For newer extension versions, the file name matches the pattern
+      // /^qwen-code-ide-server-${pid}-\d+\.json$/. If multiple IDE
+      // windows are open, multiple files matching the pattern are expected to
+      // exist.
+    }
+
+    const portFileDir = path.join(os.tmpdir(), 'gemini', 'ide');
     let portFiles;
     try {
       portFiles = await fs.promises.readdir(portFileDir);
@@ -582,7 +604,9 @@ export class IdeClient {
       return undefined;
     }
 
-    const fileRegex = /^qwen-code-ide-server-\d+\.json$/;
+    const fileRegex = new RegExp(
+      `^qwen-code-ide-server-${this.ideProcessInfo.pid}-\\d+\\.json$`,
+    );
     const matchingFiles = portFiles
       .filter((file) => fileRegex.test(file))
       .sort();
