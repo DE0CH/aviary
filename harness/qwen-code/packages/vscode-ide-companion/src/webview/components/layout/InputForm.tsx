@@ -144,10 +144,7 @@ export const InputForm: React.FC<InputFormProps> = ({
       : '';
 
   return (
-    <div
-      className="p-1 px-4 pb-4 absolute bottom-0 left-0 right-0"
-      style={{ backgroundColor: 'var(--app-primary-background)' }}
-    >
+    <div className="p-1 px-4 pb-4 absolute bottom-0 left-0 right-0 bg-gradient-to-b from-transparent to-[var(--app-primary-background)]">
       <div className="block">
         <form className="composer-form" onSubmit={onSubmit}>
           {/* Inner background layer */}
