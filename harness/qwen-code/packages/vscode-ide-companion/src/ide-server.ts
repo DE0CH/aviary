@@ -10,6 +10,7 @@ import {
   IdeContextNotificationSchema,
   OpenDiffRequestSchema,
 } from '@qwen-code/qwen-code-core/src/ide/types.js';
+import { detectIdeFromEnv } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -82,11 +83,13 @@ async function writePortAndWorkspace({
     workspacePath,
   );
 
+  const ideInfo = detectIdeFromEnv();
   const content = JSON.stringify({
     port,
     workspacePath,
     ppid: process.ppid,
     authToken,
+    ideName: ideInfo.displayName,
   });
 
   log(`Writing IDE lock file to: ${lockFile}`);
@@ -340,12 +343,8 @@ export class IDEServer {
           this.port = address.port;
           try {
             const ideDir = await getGlobalIdeDir();
-            // Name the lock file by port to support multiple server instances
-            // under the same parent process.
-            this.lockFile = path.join(
-              ideDir,
-              `${process.ppid}-${this.port}.lock`,
-            );
+            // Name the lock file by port to support multiple server instances.
+            this.lockFile = path.join(ideDir, `${this.port}.lock`);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.log(`Failed to determine IDE lock directory: ${message}`);

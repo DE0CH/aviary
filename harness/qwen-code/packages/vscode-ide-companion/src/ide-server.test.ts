@@ -133,13 +133,14 @@ describe('IDEServer', () => {
       '/home/test',
       '.qwen',
       'ide',
-      `${process.ppid}-${port}.lock`,
+      `${port}.lock`,
     );
     const expectedContent = JSON.stringify({
       port: parseInt(port, 10),
       workspacePath: expectedWorkspacePaths,
       ppid: process.ppid,
       authToken: 'test-auth-token',
+      ideName: 'VS Code',
     });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedLockFile,
@@ -164,13 +165,14 @@ describe('IDEServer', () => {
       '/home/test',
       '.qwen',
       'ide',
-      `${process.ppid}-${port}.lock`,
+      `${port}.lock`,
     );
     const expectedContent = JSON.stringify({
       port: parseInt(port, 10),
       workspacePath: '/foo/bar',
       ppid: process.ppid,
       authToken: 'test-auth-token',
+      ideName: 'VS Code',
     });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedLockFile,
@@ -195,13 +197,14 @@ describe('IDEServer', () => {
       '/home/test',
       '.qwen',
       'ide',
-      `${process.ppid}-${port}.lock`,
+      `${port}.lock`,
     );
     const expectedContent = JSON.stringify({
       port: parseInt(port, 10),
       workspacePath: '',
       ppid: process.ppid,
       authToken: 'test-auth-token',
+      ideName: 'VS Code',
     });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedLockFile,
@@ -240,13 +243,14 @@ describe('IDEServer', () => {
       '/home/test',
       '.qwen',
       'ide',
-      `${process.ppid}-${port}.lock`,
+      `${port}.lock`,
     );
     const expectedContent = JSON.stringify({
       port: parseInt(port, 10),
       workspacePath: expectedWorkspacePaths,
       ppid: process.ppid,
       authToken: 'test-auth-token',
+      ideName: 'VS Code',
     });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedLockFile,
@@ -267,6 +271,7 @@ describe('IDEServer', () => {
       workspacePath: '/baz/qux',
       ppid: process.ppid,
       authToken: 'test-auth-token',
+      ideName: 'VS Code',
     });
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedLockFile,
@@ -279,12 +284,7 @@ describe('IDEServer', () => {
     await ideServer.start(mockContext);
     const replaceMock = mockContext.environmentVariableCollection.replace;
     const port = getPortFromMock(replaceMock);
-    const lockFile = path.join(
-      '/home/test',
-      '.qwen',
-      'ide',
-      `${process.ppid}-${port}.lock`,
-    );
+    const lockFile = path.join('/home/test', '.qwen', 'ide', `${port}.lock`);
     expect(fs.writeFile).toHaveBeenCalledWith(lockFile, expect.any(String));
 
     await ideServer.stop();
@@ -315,13 +315,14 @@ describe('IDEServer', () => {
         '/home/test',
         '.qwen',
         'ide',
-        `${process.ppid}-${port}.lock`,
+        `${port}.lock`,
       );
       const expectedContent = JSON.stringify({
         port: parseInt(port, 10),
         workspacePath: expectedWorkspacePaths,
         ppid: process.ppid,
         authToken: 'test-auth-token',
+        ideName: 'VS Code',
       });
       expect(fs.writeFile).toHaveBeenCalledWith(
         expectedLockFile,
