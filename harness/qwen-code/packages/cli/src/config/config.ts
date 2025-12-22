@@ -130,6 +130,11 @@ export interface CliArgs {
   inputFormat?: string | undefined;
   outputFormat: string | undefined;
   includePartialMessages?: boolean;
+  /**
+   * If chat recording is disabled, the chat history would not be recorded,
+   * so --continue and --resume would not take effect.
+   */
+  chatRecording: boolean | undefined;
   /** Resume the most recent session for the current project */
   continue: boolean | undefined;
   /** Resume a specific session by its ID */
@@ -233,6 +238,11 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
       'proxy',
       'Use the "proxy" setting in settings.json instead. This flag will be removed in a future version.',
     )
+    .option('chat-recording', {
+      type: 'boolean',
+      description:
+        'Enable chat recording to disk. If false, chat history is not saved and --continue/--resume will not work.',
+    })
     .command('$0 [query..]', 'Launch Qwen Code CLI', (yargsInstance: Argv) =>
       yargsInstance
         .positional('query', {
@@ -289,7 +299,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
             'Set the approval mode: plan (plan only), default (prompt for approval), auto-edit (auto-approve edit tools), yolo (auto-approve all tools)',
         })
         .option('checkpointing', {
-          alias: 'c',
           type: 'boolean',
           description: 'Enables checkpointing of file edits',
           default: false,
@@ -412,12 +421,14 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           default: false,
         })
         .option('continue', {
+          alias: 'c',
           type: 'boolean',
           description:
             'Resume the most recent session for the current project.',
           default: false,
         })
         .option('resume', {
+          alias: 'r',
           type: 'string',
           description:
             'Resume a specific session by its ID. Use without an ID to show session picker.',
@@ -992,10 +1003,16 @@ export async function loadCliConfig(
     enableToolOutputTruncation: settings.tools?.enableToolOutputTruncation,
     eventEmitter: appEvents,
     useSmartEdit: argv.useSmartEdit ?? settings.useSmartEdit,
+    gitCoAuthor: settings.general?.gitCoAuthor,
     output: {
       format: outputSettingsFormat,
     },
     channel: argv.channel,
+    // Precedence: explicit CLI flag > settings file > default(true).
+    // NOTE: do NOT set a yargs default for `chat-recording`, otherwise argv will
+    // always be true and the settings file can never disable recording.
+    chatRecording:
+      argv.chatRecording ?? settings.general?.chatRecording ?? true,
   });
 }
 

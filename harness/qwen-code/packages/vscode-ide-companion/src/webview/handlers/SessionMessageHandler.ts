@@ -153,6 +153,24 @@ export class SessionMessageHandler extends BaseMessageHandler {
   }
 
   /**
+   * Notify the webview that streaming has finished.
+   */
+  private sendStreamEnd(reason?: string): void {
+    const data: { timestamp: number; reason?: string } = {
+      timestamp: Date.now(),
+    };
+
+    if (reason) {
+      data.reason = reason;
+    }
+
+    this.sendToWebView({
+      type: 'streamEnd',
+      data,
+    });
+  }
+
+  /**
    * Prompt user to login and invoke the registered login handler/command.
    * Returns true if a login was initiated.
    */
@@ -373,10 +391,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
         );
       }
 
-      this.sendToWebView({
-        type: 'streamEnd',
-        data: { timestamp: Date.now() },
-      });
+      this.sendStreamEnd();
     } catch (error) {
       console.error('[SessionMessageHandler] Error sending message:', error);
 
@@ -398,10 +413,7 @@ export class SessionMessageHandler extends BaseMessageHandler {
       if (isAbortLike) {
         // Do not show VS Code error popup for intentional cancellations.
         // Ensure the webview knows the stream ended due to user action.
-        this.sendToWebView({
-          type: 'streamEnd',
-          data: { timestamp: Date.now(), reason: 'user_cancelled' },
-        });
+        this.sendStreamEnd('user_cancelled');
         return;
       }
       // Check for session not found error and handle it appropriately
@@ -423,12 +435,39 @@ export class SessionMessageHandler extends BaseMessageHandler {
           type: 'sessionExpired',
           data: { message: 'Session expired. Please login again.' },
         });
+        this.sendStreamEnd('session_expired');
       } else {
-        vscode.window.showErrorMessage(`Error sending message: ${error}`);
-        this.sendToWebView({
-          type: 'error',
-          data: { message: errorMsg },
-        });
+        const isTimeoutError =
+          lower.includes('timeout') || lower.includes('timed out');
+        if (isTimeoutError) {
+          // Note: session_prompt no longer has a timeout, so this should rarely occur
+          // This path may still be hit for other methods (initialize, etc.) or network-level timeouts
+          console.warn(
+            '[SessionMessageHandler] Request timed out; suppressing popup',
+          );
+
+          const timeoutMessage: ChatMessage = {
+            role: 'assistant',
+            content:
+              'Request timed out. This may be due to a network issue. Please try again.',
+            timestamp: Date.now(),
+          };
+
+          // Send a timeout message to the WebView
+          this.sendToWebView({
+            type: 'message',
+            data: timeoutMessage,
+          });
+          this.sendStreamEnd('timeout');
+        } else {
+          // Handling of Non-Timeout Errors
+          vscode.window.showErrorMessage(`Error sending message: ${error}`);
+          this.sendToWebView({
+            type: 'error',
+            data: { message: errorMsg },
+          });
+          this.sendStreamEnd('error');
+        }
       }
     }
   }

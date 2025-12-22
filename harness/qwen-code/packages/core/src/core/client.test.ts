@@ -2310,7 +2310,7 @@ ${JSON.stringify(
             abortSignal,
             systemInstruction: getCoreSystemPrompt(''),
             temperature: 0.5,
-            topP: 1,
+            topP: 0.8,
           },
           contents,
         },

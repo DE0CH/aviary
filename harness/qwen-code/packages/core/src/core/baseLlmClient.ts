@@ -66,8 +66,7 @@ export interface GenerateJsonOptions {
 export class BaseLlmClient {
   // Default configuration for utility tasks
   private readonly defaultUtilityConfig: GenerateContentConfig = {
-    temperature: 0,
-    topP: 1,
+    topP: 0.8,
   };
 
   constructor(

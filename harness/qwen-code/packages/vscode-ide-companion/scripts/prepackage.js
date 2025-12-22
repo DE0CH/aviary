@@ -35,7 +35,7 @@ function npmBin() {
 function run(cmd, args, opts = {}) {
   const res = spawnSync(cmd, args, {
     stdio: 'inherit',
-    shell: process.platform === 'win32' ? true : false,
+    shell: process.platform === 'win32',
     ...opts,
   });
   if (res.error) {
