@@ -38,6 +38,8 @@ describe('CLI Path Utilities', () => {
     mockFs.statSync.mockReturnValue({
       isFile: () => true,
     } as ReturnType<typeof import('fs').statSync>);
+    // Default: return true for existsSync (can be overridden in specific tests)
+    mockFs.existsSync.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -50,28 +52,26 @@ describe('CLI Path Utilities', () => {
 
   describe('parseExecutableSpec', () => {
     describe('auto-detection (no spec provided)', () => {
-      it('should auto-detect native CLI when no spec provided', () => {
-        // Mock environment variable
-        const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-        process.env['QWEN_CODE_CLI_PATH'] = '/usr/local/bin/qwen';
-        mockFs.existsSync.mockReturnValue(true);
+      it('should auto-detect bundled CLI when no spec provided', () => {
+        // Mock existsSync to return true for bundled CLI
+        mockFs.existsSync.mockImplementation((p) => {
+          const pathStr = p.toString();
+          return (
+            pathStr.includes('cli/cli.js') || pathStr.includes('cli\\cli.js')
+          );
+        });
 
         const result = parseExecutableSpec();
 
-        expect(result).toEqual({
-          executablePath: path.resolve('/usr/local/bin/qwen'),
-          isExplicitRuntime: false,
-        });
-
-        // Restore env
-        process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
+        expect(result.executablePath).toContain('cli.js');
+        expect(result.isExplicitRuntime).toBe(false);
       });
 
-      it('should throw when auto-detection fails', () => {
+      it('should throw when bundled CLI not found', () => {
         mockFs.existsSync.mockReturnValue(false);
 
         expect(() => parseExecutableSpec()).toThrow(
-          'qwen CLI not found. Please:',
+          'Bundled qwen CLI not found',
         );
       });
     });
@@ -361,65 +361,44 @@ describe('CLI Path Utilities', () => {
     });
 
     describe('auto-detection fallback', () => {
-      it('should auto-detect when no spec provided', () => {
-        // Mock environment variable
-        const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-        process.env['QWEN_CODE_CLI_PATH'] = '/usr/local/bin/qwen';
+      it('should auto-detect bundled CLI when no spec provided', () => {
+        // Mock existsSync to return true for bundled CLI
+        mockFs.existsSync.mockImplementation((p) => {
+          const pathStr = p.toString();
+          return (
+            pathStr.includes('cli/cli.js') || pathStr.includes('cli\\cli.js')
+          );
+        });
 
         const result = prepareSpawnInfo();
 
-        expect(result).toEqual({
-          command: path.resolve('/usr/local/bin/qwen'),
-          args: [],
-          type: 'native',
-          originalInput: '',
-        });
-
-        // Restore env
-        process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
+        expect(result.command).toBe(process.execPath);
+        expect(result.args[0]).toContain('cli.js');
+        expect(result.type).toBe('node');
+        expect(result.originalInput).toBe('');
       });
     });
   });
 
   describe('findNativeCliPath', () => {
-    it('should find CLI from environment variable', () => {
-      const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-      process.env['QWEN_CODE_CLI_PATH'] = '/custom/path/to/qwen';
-      mockFs.existsSync.mockReturnValue(true);
-
-      const result = findNativeCliPath();
-
-      expect(result).toBe(path.resolve('/custom/path/to/qwen'));
-
-      process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
-    });
-
-    it('should search common installation locations', () => {
-      const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-      delete process.env['QWEN_CODE_CLI_PATH'];
-
-      // Mock fs.existsSync to return true for volta bin
-      // Use path.join to match platform-specific path separators
-      const voltaBinPath = path.join('.volta', 'bin', 'qwen');
+    it('should find bundled CLI', () => {
+      // Mock existsSync to return true for bundled CLI
       mockFs.existsSync.mockImplementation((p) => {
-        return p.toString().includes(voltaBinPath);
+        const pathStr = p.toString();
+        return (
+          pathStr.includes('cli/cli.js') || pathStr.includes('cli\\cli.js')
+        );
       });
 
       const result = findNativeCliPath();
 
-      expect(result).toContain(voltaBinPath);
-
-      process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
+      expect(result).toContain('cli.js');
     });
 
-    it('should throw descriptive error when CLI not found', () => {
-      const originalEnv = process.env['QWEN_CODE_CLI_PATH'];
-      delete process.env['QWEN_CODE_CLI_PATH'];
+    it('should throw descriptive error when bundled CLI not found', () => {
       mockFs.existsSync.mockReturnValue(false);
 
-      expect(() => findNativeCliPath()).toThrow('qwen CLI not found. Please:');
-
-      process.env['QWEN_CODE_CLI_PATH'] = originalEnv;
+      expect(() => findNativeCliPath()).toThrow('Bundled qwen CLI not found');
     });
   });
 
@@ -634,13 +613,10 @@ describe('CLI Path Utilities', () => {
         mockFs.existsSync.mockReturnValue(false);
 
         expect(() => parseExecutableSpec('/missing/file')).toThrow(
-          'Set QWEN_CODE_CLI_PATH environment variable',
+          'Executable file not found at',
         );
         expect(() => parseExecutableSpec('/missing/file')).toThrow(
-          'Install qwen globally: npm install -g qwen',
-        );
-        expect(() => parseExecutableSpec('/missing/file')).toThrow(
-          'Force specific runtime: bun:/path/to/cli.js or tsx:/path/to/index.ts',
+          'Please check the file path and ensure the file exists',
         );
       });
     });

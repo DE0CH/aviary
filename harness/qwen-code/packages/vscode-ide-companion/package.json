@@ -2,7 +2,7 @@
   "name": "qwen-code-vscode-ide-companion",
   "displayName": "Qwen Code Companion",
   "description": "Enable Qwen Code with direct access to your VS Code workspace.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "qwenlm",
   "icon": "assets/icon.png",
   "repository": {
@@ -11,7 +11,7 @@
     "directory": "packages/vscode-ide-companion"
   },
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "^1.85.0"
   },
   "license": "LICENSE",
   "preview": true,
@@ -137,7 +137,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/semver": "^7.7.1",
-    "@types/vscode": "^1.99.0",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/vsce": "^3.6.0",
