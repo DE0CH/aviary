@@ -67,7 +67,11 @@ jobs:
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
         run: |-
-          npm run "test:integration:${SANDBOX}"
+          if [[ "${{ matrix.sandbox }}" == "sandbox:docker" ]]; then
+            npm run test:integration:sandbox:docker
+          else
+            npm run test:integration:sandbox:none
+          fi
 
   e2e-test-macos:
     name: 'E2E Test - macOS'
