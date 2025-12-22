@@ -7,11 +7,12 @@
 
 **An open-source AI agent that lives in your terminal.**
 
-<a href="https://qwenlm.github.io/qwen-code-docs/zh/">中文</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/de/">Deutsch</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/fr">français</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/ja/">日本語</a> |
-<a href="https://qwenlm.github.io/qwen-code-docs/ru">Русский</a>
+<a href="https://qwenlm.github.io/qwen-code-docs/zh/users/overview">中文</a> |
+<a href="https://qwenlm.github.io/qwen-code-docs/de/users/overview">Deutsch</a> |
+<a href="https://qwenlm.github.io/qwen-code-docs/fr/users/overview">français</a> |
+<a href="https://qwenlm.github.io/qwen-code-docs/ja/users/overview">日本語</a> |
+<a href="https://qwenlm.github.io/qwen-code-docs/ru/users/overview">Русский</a> |
+<a href="https://qwenlm.github.io/qwen-code-docs/pt-BR/users/overview">Português (Brasil)</a>
 
 </div>
 
@@ -21,7 +22,7 @@ Qwen Code is an open-source AI agent for the terminal, optimized for [Qwen3-Code
 
 ## Why Qwen Code?
 
-- **OpenAI-compatible, OAuth free-tier**: use an OpenAI-compatible API, or sign in with Qwen OAuth to get 2,000 free requests/day.
+- **OpenAI-compatible, OAuth free tier**: use an OpenAI-compatible API, or sign in with Qwen OAuth to get 2,000 free requests/day.
 - **Open-source, co-evolving**: both the framework and the Qwen3-Coder model are open-source—and they ship and evolve together.
 - **Agentic workflow, feature-rich**: rich built-in tools (Skills, SubAgents, Plan Mode) for a full agentic workflow and a Claude Code-like experience.
 - **Terminal-first, IDE-friendly**: built for developers who live in the command line, with optional integration for VS Code and Zed.
@@ -58,7 +59,7 @@ qwen
 /auth
 ```
 
-On first use you'll be prompted to sign in. You can run `/auth` anytime to switch authentication methods.
+On first use, you'll be prompted to sign in. You can run `/auth` anytime to switch authentication methods.
 
 Example prompts:
 
