@@ -1,15 +1,11 @@
-# Qwen Code
-
 <div align="center">
-
-![](https://gw.alicdn.com/imgextra/i1/O1CN01D2DviS1wwtEtMwIzJ_!!6000000006373-2-tps-1600-900.png)
 
 [![npm version](https://img.shields.io/npm/v/@qwen-code/qwen-code.svg)](https://www.npmjs.com/package/@qwen-code/qwen-code)
 [![License](https://img.shields.io/github/license/QwenLM/qwen-code.svg)](./LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
 [![Downloads](https://img.shields.io/npm/dm/@qwen-code/qwen-code.svg)](https://www.npmjs.com/package/@qwen-code/qwen-code)
 
-**AI-powered command-line workflow tool for developers**
+**An open-source AI agent that lives in your terminal.**
 
 <a href="https://qwenlm.github.io/qwen-code-docs/zh/">中文</a> |
 <a href="https://qwenlm.github.io/qwen-code-docs/de/">Deutsch</a> |
@@ -17,93 +13,137 @@
 <a href="https://qwenlm.github.io/qwen-code-docs/ja/">日本語</a> |
 <a href="https://qwenlm.github.io/qwen-code-docs/ru">Русский</a>
 
-[Installation](#install-from-npm) • [Quick Start](#-quick-start) • [Features](#-why-qwen-code) • [Documentation](https://qwenlm.github.io/qwen-code-docs/en/users/overview/) • [Contributing](https://qwenlm.github.io/qwen-code-docs/en/developers/contributing/)
-
 </div>
 
-Qwen Code is a powerful command-line AI workflow tool adapted from [**Gemini CLI**](https://github.com/google-gemini/gemini-cli), specifically optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder) models. It enhances your development workflow with advanced code understanding, automated tasks, and intelligent assistance.
+Qwen Code is an open-source AI agent for the terminal, optimized for [Qwen3-Coder](https://github.com/QwenLM/Qwen3-Coder). It helps you understand large codebases, automate tedious work, and ship faster.
 
-> [!NOTE]
-> 🖥️ There is also a powerful **desktop/web/mobile** UI for Qwen Code/Gemini CLI called [**Gemini CLI Desktop**](https://github.com/Piebald-AI/gemini-cli-desktop).
+![](https://gw.alicdn.com/imgextra/i1/O1CN01D2DviS1wwtEtMwIzJ_!!6000000006373-2-tps-1600-900.png)
 
-## 📌 Why Qwen Code？
+## Why Qwen Code?
 
-- 🎯 Free Access Available: Get started with 2,000 free requests per day via Qwen OAuth.
-- 🧠 Code Understanding & Editing - Query and edit large codebases beyond traditional context window limits
-- 🤖 Workflow Automation - Automate operational tasks like handling pull requests and complex rebases
-- 💻 Terminal-first: Designed for developers who live in the command line.
-- 🧰 VS Code: Install the VS Code extension to seamlessly integrate into your existing workflow.
-- 📦 Simple Setup: Easy installation with npm, Homebrew, or source for quick deployment.
+- **OpenAI-compatible, OAuth free-tier**: use an OpenAI-compatible API, or sign in with Qwen OAuth to get 2,000 free requests/day.
+- **Open-source, co-evolving**: both the framework and the Qwen3-Coder model are open-source—and they ship and evolve together.
+- **Agentic workflow, feature-rich**: rich built-in tools (Skills, SubAgents, Plan Mode) for a full agentic workflow and a Claude Code-like experience.
+- **Terminal-first, IDE-friendly**: built for developers who live in the command line, with optional integration for VS Code and Zed.
 
-> 👉 Know more [workflows](https://qwenlm.github.io/qwen-code-docs/en/users/common-workflow/)
->
-> 📦 The extension is currently in development. For installation, features, and development guide, see the [VS Code Extension README](./packages/vscode-ide-companion/README.md).
+## Installation
 
-## ❓ How to use Qwen Code?
-
-### Prerequisites
-
-Ensure you have [Node.js version 20](https://nodejs.org/en/download) or higher installed.
+#### Prerequisites
 
 ```bash
+# Node.js 20+
 curl -qL https://www.npmjs.com/install.sh | sh
 ```
 
-### Install from npm
+#### NPM (recommended)
 
 ```bash
 npm install -g @qwen-code/qwen-code@latest
 ```
 
-## 🚀 Quick Start
+#### Homebrew (macOS, Linux)
 
 ```bash
-# Start Qwen Code
-qwen
-
-# Example commands
-> What does this project do?
-> Explain this codebase structure
-> Help me refactor this function
-> Generate unit tests for this module
+brew install qwen-code
 ```
 
-👇 Click to play video
+## Quick Start
 
-[![qwencode-start](https://img.alicdn.com/imgextra/i3/6000000004682/O1CN01cSWkqj1kSPUZPj68h_!!6000000004682-0-tbvideo.jpg)](https://cloud.video.taobao.com/vod/HLfyppnCHplRV9Qhz2xSqeazHeRzYtG-EYJnHAqtzkQ.mp4)
+```bash
+# Start Qwen Code (interactive)
+qwen
 
-## Usage Examples
+# Then, in the session:
+/help
+/auth
+```
 
-### 1️⃣ Interactive Mode
+On first use you'll be prompted to sign in. You can run `/auth` anytime to switch authentication methods.
+
+Example prompts:
+
+```text
+What does this project do?
+Explain the codebase structure.
+Help me refactor this function.
+Generate unit tests for this module.
+```
+
+<details>
+<summary>Click to watch a demo video</summary>
+
+<video src="https://cloud.video.taobao.com/vod/HLfyppnCHplRV9Qhz2xSqeazHeRzYtG-EYJnHAqtzkQ.mp4" controls>
+Your browser does not support the video tag.
+</video>
+
+</details>
+
+## Authentication
+
+Qwen Code supports two authentication methods:
+
+- **Qwen OAuth (recommended & free)**: sign in with your `qwen.ai` account in a browser.
+- **OpenAI-compatible API**: use `OPENAI_API_KEY` (and optionally a custom base URL / model).
+
+#### Qwen OAuth (recommended)
+
+Start `qwen`, then run:
+
+```bash
+/auth
+```
+
+Choose **Qwen OAuth** and complete the browser flow. Your credentials are cached locally so you usually won't need to log in again.
+
+#### OpenAI-compatible API (API key)
+
+Environment variables (recommended for CI / headless environments):
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+export OPENAI_BASE_URL="https://api.openai.com/v1"  # optional
+export OPENAI_MODEL="gpt-4o"                        # optional
+```
+
+For details (including `.qwen/.env` loading and security notes), see the [authentication guide](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/).
+
+## Usage
+
+As an open-source terminal agent, you can use Qwen Code in four primary ways:
+
+1. Interactive mode (terminal UI)
+2. Headless mode (scripts, CI)
+3. IDE integration (VS Code, Zed)
+4. TypeScript SDK
+
+#### Interactive mode
 
 ```bash
 cd your-project/
 qwen
 ```
 
-Navigate to your project folder and type `qwen` to launch Qwen Code. Start a conversation and use `@` to reference files within the folder.
+Run `qwen` in your project folder to launch the interactive terminal UI. Use `@` to reference local files (for example `@src/main.ts`).
 
-If you want to learn more about common workflows, click [Common Workflows](https://qwenlm.github.io/qwen-code-docs/en/users/common-workflow/) to view.
-
-### 2️⃣ Headless Mode
+#### Headless mode
 
 ```bash
 cd your-project/
 qwen -p "your question"
 ```
 
-[Headless mode](https://qwenlm.github.io/qwen-code-docs/en/users/features/headless) allows you to run Qwen Code programmatically from command line scripts and automation tools without any interactive UI. This is ideal for scripting, automation, CI/CD pipelines, and building AI-powered tools.
+Use `-p` to run Qwen Code without the interactive UI—ideal for scripts, automation, and CI/CD. Learn more: [Headless mode](https://qwenlm.github.io/qwen-code-docs/en/users/features/headless).
 
-### 3️⃣ Use in IDE
+#### IDE integration
 
-If you prefer to integrate Qwen Code into your current editor, we now support VS Code and Zed. For details, please refer to:
+Use Qwen Code inside your editor (VS Code and Zed):
 
 - [Use in VS Code](https://qwenlm.github.io/qwen-code-docs/en/users/integration-vscode/)
 - [Use in Zed](https://qwenlm.github.io/qwen-code-docs/en/users/integration-zed/)
 
-### 4️⃣ SDK
+#### TypeScript SDK
 
-Qwen Code now supports an SDK designed to simplify integration with the Qwen Code platform. It provides a set of easy-to-use APIs and tools enabling developers to efficiently build, test, and deploy applications. For details, please refer to:
+Build on top of Qwen Code with the TypeScript SDK:
 
 - [Use the Qwen Code SDK](./packages/sdk-typescript/README.md)
 
@@ -115,6 +155,7 @@ Qwen Code now supports an SDK designed to simplify integration with the Qwen Cod
 - `/clear` - Clear conversation history
 - `/compress` - Compress history to save tokens
 - `/stats` - Show current session information
+- `/bug` - Submit a bug report
 - `/exit` or `/quit` - Exit Qwen Code
 
 ### Keyboard Shortcuts
@@ -123,9 +164,18 @@ Qwen Code now supports an SDK designed to simplify integration with the Qwen Cod
 - `Ctrl+D` - Exit (on empty line)
 - `Up/Down` - Navigate command history
 
-> 👉 Know more about [Commands](https://qwenlm.github.io/qwen-code-docs/en/users/features/commands/)
+> Learn more about [Commands](https://qwenlm.github.io/qwen-code-docs/en/users/features/commands/)
 >
-> 💡 **Tip**: In YOLO mode (`--yolo`), vision switching happens automatically without prompts when images are detected. Know more about [Approval Mode](https://qwenlm.github.io/qwen-code-docs/en/users/features/approval-mode/)
+> **Tip**: In YOLO mode (`--yolo`), vision switching happens automatically without prompts when images are detected. Learn more about [Approval Mode](https://qwenlm.github.io/qwen-code-docs/en/users/features/approval-mode/)
+
+## Configuration
+
+Qwen Code can be configured via `settings.json`, environment variables, and CLI flags.
+
+- **User settings**: `~/.qwen/settings.json`
+- **Project settings**: `.qwen/settings.json`
+
+See [settings](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/) for available options and precedence.
 
 ## Benchmark Results
 
@@ -136,24 +186,18 @@ Qwen Code now supports an SDK designed to simplify integration with the Qwen Cod
 | Qwen Code | Qwen3-Coder-480A35 | 37.5%    |
 | Qwen Code | Qwen3-Coder-30BA3B | 31.3%    |
 
-## Development & Contributing
+## Ecosystem
 
-See [CONTRIBUTING.md](https://qwenlm.github.io/qwen-code-docs/en/developers/contributing/) to learn how to contribute to the project.
+Looking for a graphical interface?
 
-For detailed authentication setup, see the [authentication guide](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/).
+- [**Gemini CLI Desktop**](https://github.com/Piebald-AI/gemini-cli-desktop) A cross-platform desktop/web/mobile UI for Qwen Code
 
 ## Troubleshooting
 
 If you encounter issues, check the [troubleshooting guide](https://qwenlm.github.io/qwen-code-docs/en/users/support/troubleshooting/).
 
+To report a bug from within the CLI, run `/bug` and include a short title and repro steps.
+
 ## Acknowledgments
 
 This project is based on [Google Gemini CLI](https://github.com/google-gemini/gemini-cli). We acknowledge and appreciate the excellent work of the Gemini CLI team. Our main contribution focuses on parser-level adaptations to better support Qwen-Coder models.
-
-## License
-
-[LICENSE](./LICENSE)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=QwenLM/qwen-code&type=Date)](https://www.star-history.com/#QwenLM/qwen-code&Date)
