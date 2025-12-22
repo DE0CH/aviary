@@ -209,6 +209,10 @@ export class LoggingContentGenerator implements ContentGenerator {
     return this.wrapped.embedContent(req);
   }
 
+  useSummarizedThinking(): boolean {
+    return this.wrapped.useSummarizedThinking();
+  }
+
   private toContents(contents: ContentListUnion): Content[] {
     if (Array.isArray(contents)) {
       // it's a Content[] or a PartsUnion[]

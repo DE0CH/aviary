@@ -16,8 +16,8 @@ import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import type {
   ContentGenerator,
   ContentGeneratorConfig,
-
-  AuthType} from '../core/contentGenerator.js';
+  AuthType,
+} from '../core/contentGenerator.js';
 import type { FallbackModelHandler } from '../fallback/types.js';
 import type { MCPOAuthConfig } from '../mcp/oauth-provider.js';
 import type { ShellExecutionConfig } from '../services/shellExecutionService.js';

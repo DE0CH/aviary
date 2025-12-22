@@ -137,4 +137,8 @@ export class GeminiContentGenerator implements ContentGenerator {
   ): Promise<EmbedContentResponse> {
     return this.googleGenAI.models.embedContent(request);
   }
+
+  useSummarizedThinking(): boolean {
+    return true;
+  }
 }

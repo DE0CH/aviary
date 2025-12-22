@@ -100,6 +100,7 @@ describe('GeminiChat', () => {
       countTokens: vi.fn(),
       embedContent: vi.fn(),
       batchEmbedContents: vi.fn(),
+      useSummarizedThinking: vi.fn().mockReturnValue(false),
     } as unknown as ContentGenerator;
 
     mockHandleFallback.mockClear();
@@ -717,6 +718,99 @@ describe('GeminiChat', () => {
       expect(uiTelemetryService.setLastPromptTokenCount).toHaveBeenCalledTimes(
         1,
       );
+    });
+
+    it('should handle summarized thinking by conditionally including thoughts in history', async () => {
+      // Case 1: useSummarizedThinking is true -> thoughts NOT in history
+      vi.mocked(mockContentGenerator.useSummarizedThinking).mockReturnValue(
+        true,
+      );
+      const stream1 = (async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{ thought: true, text: 'T1' }, { text: 'A1' }],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        } as unknown as GenerateContentResponse;
+      })();
+      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
+        stream1,
+      );
+
+      const res1 = await chat.sendMessageStream('m1', { message: 'h1' }, 'p1');
+      for await (const _ of res1);
+
+      const history1 = chat.getHistory();
+      expect(history1[1].parts).toEqual([{ text: 'A1' }]);
+
+      // Case 2: useSummarizedThinking is false -> thoughts ARE in history
+      chat.clearHistory();
+      vi.mocked(mockContentGenerator.useSummarizedThinking).mockReturnValue(
+        false,
+      );
+      const stream2 = (async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [{ thought: true, text: 'T2' }, { text: 'A2' }],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        } as unknown as GenerateContentResponse;
+      })();
+      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
+        stream2,
+      );
+
+      const res2 = await chat.sendMessageStream('m1', { message: 'h1' }, 'p2');
+      for await (const _ of res2);
+
+      const history2 = chat.getHistory();
+      expect(history2[1].parts).toEqual([
+        { text: 'T2', thought: true },
+        { text: 'A2' },
+      ]);
+    });
+
+    it('should keep parts with thoughtSignature when consolidating history', async () => {
+      const stream = (async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  {
+                    text: 'p1',
+                    thoughtSignature: 's1',
+                  } as unknown as { text: string; thoughtSignature: string },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        } as unknown as GenerateContentResponse;
+      })();
+      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
+        stream,
+      );
+
+      const res = await chat.sendMessageStream('m1', { message: 'h1' }, 'p1');
+      for await (const _ of res);
+
+      const history = chat.getHistory();
+      expect(history[1].parts![0]).toEqual({
+        text: 'p1',
+        thoughtSignature: 's1',
+      });
     });
   });
 
@@ -1532,7 +1626,7 @@ describe('GeminiChat', () => {
   });
 
   describe('stripThoughtsFromHistory', () => {
-    it('should strip thought signatures', () => {
+    it('should strip thoughts and thought signatures, and remove empty content objects', () => {
       chat.setHistory([
         {
           role: 'user',
@@ -1544,9 +1638,14 @@ describe('GeminiChat', () => {
             { text: 'thinking...', thought: true },
             { text: 'hi' },
             {
-              functionCall: { name: 'test', args: {} },
-            },
+              text: 'hidden metadata',
+              thoughtSignature: 'abc',
+            } as unknown as { text: string; thoughtSignature: string },
           ],
+        },
+        {
+          role: 'model',
+          parts: [{ text: 'only thinking', thought: true }],
         },
       ]);
 
@@ -1559,7 +1658,7 @@ describe('GeminiChat', () => {
         },
         {
           role: 'model',
-          parts: [{ text: 'hi' }, { functionCall: { name: 'test', args: {} } }],
+          parts: [{ text: 'hi' }, { text: 'hidden metadata' }],
         },
       ]);
     });

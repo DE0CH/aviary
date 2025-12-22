@@ -32,6 +32,8 @@ export interface ContentGenerator {
   countTokens(request: CountTokensParameters): Promise<CountTokensResponse>;
 
   embedContent(request: EmbedContentParameters): Promise<EmbedContentResponse>;
+
+  useSummarizedThinking(): boolean;
 }
 
 export enum AuthType {

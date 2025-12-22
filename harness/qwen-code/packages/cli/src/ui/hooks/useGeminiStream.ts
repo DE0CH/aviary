@@ -769,11 +769,17 @@ export const useGeminiStream = (
       for await (const event of stream) {
         switch (event.type) {
           case ServerGeminiEventType.Thought:
-            thoughtBuffer = handleThoughtEvent(
-              event.value,
-              thoughtBuffer,
-              userMessageTimestamp,
-            );
+            // If the thought has a subject, it's a discrete status update rather than
+            // a streamed textual thought, so we update the thought state directly.
+            if (event.value.subject) {
+              setThought(event.value);
+            } else {
+              thoughtBuffer = handleThoughtEvent(
+                event.value,
+                thoughtBuffer,
+                userMessageTimestamp,
+              );
+            }
             break;
           case ServerGeminiEventType.Content:
             geminiMessageBuffer = handleContentEvent(
@@ -844,6 +850,7 @@ export const useGeminiStream = (
       handleMaxSessionTurnsEvent,
       handleSessionTokenLimitExceededEvent,
       handleCitationEvent,
+      setThought,
     ],
   );
 
