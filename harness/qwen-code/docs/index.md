@@ -14,7 +14,7 @@ Learn how to use Qwen Code as an end user. This section covers:
 - Configuration options
 - Troubleshooting
 
-### [Developer Guide](./developers/contributing)
+### [Developer Guide](./developers/architecture)
 
 Learn how to contribute to and develop Qwen Code. This section covers:
 

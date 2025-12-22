@@ -121,6 +121,11 @@ jobs:
           IS_PREVIEW: '${{ steps.vars.outputs.is_preview }}'
           MANUAL_VERSION: '${{ inputs.version }}'
 
+      - name: 'Build CLI Bundle'
+        run: |
+          npm run build
+          npm run bundle
+
       - name: 'Run Tests'
         if: |-
           ${{ github.event.inputs.force_skip_tests != 'true' }}
@@ -131,13 +136,6 @@ jobs:
           OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
           OPENAI_BASE_URL: '${{ secrets.OPENAI_BASE_URL }}'
           OPENAI_MODEL: '${{ secrets.OPENAI_MODEL }}'
-
-      - name: 'Build CLI for Integration Tests'
-        if: |-
-          ${{ github.event.inputs.force_skip_tests != 'true' }}
-        run: |
-          npm run build
-          npm run bundle
 
       - name: 'Run SDK Integration Tests'
         if: |-

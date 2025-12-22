@@ -54,27 +54,31 @@ export class AcpSessionManager {
     };
 
     return new Promise((resolve, reject) => {
-      // different timeout durations based on methods
-      let timeoutDuration = 60000; // default 60 seconds
-      if (
-        method === AGENT_METHODS.session_prompt ||
-        method === AGENT_METHODS.initialize
-      ) {
-        timeoutDuration = 120000; // 2min for session_prompt and initialize
-      }
+      // No timeout for session_prompt as LLM tasks can take 5-10 minutes or longer
+      // The request should always terminate with a stop_reason
+      let timeoutId: NodeJS.Timeout | undefined;
+      let timeoutDuration: number | undefined;
 
-      const timeoutId = setTimeout(() => {
-        pendingRequests.delete(id);
-        reject(new Error(`Request ${method} timed out`));
-      }, timeoutDuration);
+      if (method !== AGENT_METHODS.session_prompt) {
+        // Set timeout for other methods
+        timeoutDuration = method === AGENT_METHODS.initialize ? 120000 : 60000;
+        timeoutId = setTimeout(() => {
+          pendingRequests.delete(id);
+          reject(new Error(`Request ${method} timed out`));
+        }, timeoutDuration);
+      }
 
       const pendingRequest: PendingRequest<T> = {
         resolve: (value: T) => {
-          clearTimeout(timeoutId);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           resolve(value);
         },
         reject: (error: Error) => {
-          clearTimeout(timeoutId);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           reject(error);
         },
         timeoutId,

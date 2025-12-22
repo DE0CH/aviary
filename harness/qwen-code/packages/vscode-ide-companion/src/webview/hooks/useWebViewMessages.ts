@@ -15,6 +15,14 @@ import type { ToolCallUpdate } from '../../types/chatTypes.js';
 import type { ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
 
+const FORCE_CLEAR_STREAM_END_REASONS = new Set([
+  'user_cancelled',
+  'cancelled',
+  'timeout',
+  'error',
+  'session_expired',
+]);
+
 interface UseWebViewMessagesProps {
   // Session management
   sessionManagement: {
@@ -364,12 +372,12 @@ export const useWebViewMessages = ({
             ).toLowerCase();
 
             /**
-             * Handle different types of stream end reasons:
-             * - 'user_cancelled': User explicitly cancelled operation
-             * - 'cancelled': General cancellation
-             * For these cases, immediately clear all active states
+             * Handle different types of stream end reasons that require a full reset:
+             * - 'user_cancelled' / 'cancelled': user explicitly cancelled
+             * - 'timeout' / 'error' / 'session_expired': request failed unexpectedly
+             * For these cases, immediately clear all active states.
              */
-            if (reason === 'user_cancelled' || reason === 'cancelled') {
+            if (FORCE_CLEAR_STREAM_END_REASONS.has(reason)) {
               // Clear active execution tool call tracking, reset state
               activeExecToolCallsRef.current.clear();
               // Clear waiting response state to ensure UI returns to normal
@@ -393,6 +401,9 @@ export const useWebViewMessages = ({
         }
 
         case 'error':
+          handlers.messageHandling.endStreaming();
+          handlers.messageHandling.clearThinking();
+          activeExecToolCallsRef.current.clear();
           handlers.messageHandling.clearWaitingForResponse();
           break;
 

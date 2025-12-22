@@ -151,8 +151,7 @@ describe('BaseLlmClient', () => {
           contents: defaultOptions.contents,
           config: {
             abortSignal: defaultOptions.abortSignal,
-            temperature: 0,
-            topP: 1,
+            topP: 0.8,
             tools: [
               {
                 functionDeclarations: [
@@ -189,7 +188,7 @@ describe('BaseLlmClient', () => {
         expect.objectContaining({
           config: expect.objectContaining({
             temperature: 0.8,
-            topP: 1, // Default should remain if not overridden
+            topP: 0.8, // Default should remain if not overridden
             topK: 10,
             tools: expect.any(Array),
           }),

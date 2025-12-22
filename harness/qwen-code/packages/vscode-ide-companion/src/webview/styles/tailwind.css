@@ -43,7 +43,7 @@
 
   /* Composer: form wrapper */
   .composer-form {
-    @apply relative flex flex-col max-w-[680px] mx-auto rounded-large border shadow-sm transition-colors duration-200;
+    @apply relative flex flex-col max-w-[680px] mx-auto rounded-large border shadow-sm transition-colors duration-200 z-[1];
     background: var(--app-input-secondary-background);
     border-color: var(--app-input-border);
     color: var(--app-input-foreground);
@@ -51,7 +51,8 @@
   .composer-form:focus-within {
     /* match existing highlight behavior */
     border-color: var(--app-input-highlight);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--app-input-highlight), transparent 80%);
+    box-shadow: 0 1px 2px
+      color-mix(in srgb, var(--app-input-highlight), transparent 80%);
   }
 
   /* Composer: input editable area */
@@ -66,7 +67,7 @@
      The data attribute is needed because some browsers insert a <br> in
      contentEditable, which breaks :empty matching. */
   .composer-input:empty:before,
-  .composer-input[data-empty="true"]::before {
+  .composer-input[data-empty='true']::before {
     content: attr(data-placeholder);
     color: var(--app-input-placeholder-foreground);
     pointer-events: none;
@@ -80,7 +81,7 @@
     outline: none;
   }
   .composer-input:disabled,
-  .composer-input[contenteditable="false"] {
+  .composer-input[contenteditable='false'] {
     color: #999;
     cursor: not-allowed;
   }
