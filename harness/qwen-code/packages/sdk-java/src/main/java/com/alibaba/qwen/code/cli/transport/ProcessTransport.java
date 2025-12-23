@@ -2,8 +2,9 @@ package com.alibaba.qwen.code.cli.transport;
 
 public class ProcessTransport {
     Process process;
+    TransportOptions transportOptions;
 
-    public ProcessTransport(Process process) {
-        this.process = process;
+    public ProcessTransport(TransportOptions transportOptions) {
+        this.transportOptions = transportOptions;
     }
 }
