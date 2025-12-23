@@ -276,7 +276,6 @@ export class Turn {
             type: GeminiEventType.Thought,
             value: parseThought(thoughtText),
           };
-          continue;
         }
 
         const text = getResponseText(resp);

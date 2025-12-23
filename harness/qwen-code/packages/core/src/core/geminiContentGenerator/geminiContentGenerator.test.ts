@@ -54,7 +54,7 @@ describe('GeminiContentGenerator', () => {
           topP: 0.95,
           thinkingConfig: {
             includeThoughts: true,
-            thinkingLevel: 'HIGH',
+            thinkingLevel: 'THINKING_LEVEL_UNSPECIFIED',
           },
         }),
       }),
@@ -79,7 +79,7 @@ describe('GeminiContentGenerator', () => {
           topP: 0.95,
           thinkingConfig: {
             includeThoughts: true,
-            thinkingLevel: 'HIGH',
+            thinkingLevel: 'THINKING_LEVEL_UNSPECIFIED',
           },
         }),
       }),

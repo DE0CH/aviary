@@ -92,6 +92,7 @@ export function isValidNonThoughtTextPart(part: Part): boolean {
   return (
     typeof part.text === 'string' &&
     !part.thought &&
+    !part.thoughtSignature &&
     // Technically, the model should never generate parts that have text and
     //  any of these but we don't trust them so check anyways.
     !part.functionCall &&
