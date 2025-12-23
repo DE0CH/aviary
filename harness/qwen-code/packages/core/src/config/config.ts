@@ -307,6 +307,7 @@ export interface ConfigParameters {
   extensionContextFilePaths?: string[];
   maxSessionTurns?: number;
   sessionTokenLimit?: number;
+  experimentalSkills?: boolean;
   experimentalZedIntegration?: boolean;
   listExtensions?: boolean;
   extensions?: GeminiCLIExtension[];
@@ -461,6 +462,7 @@ export class Config {
     | undefined;
   private readonly cliVersion?: string;
   private readonly experimentalZedIntegration: boolean = false;
+  private readonly experimentalSkills: boolean = false;
   private readonly chatRecordingEnabled: boolean;
   private readonly loadMemoryFromIncludeDirectories: boolean = false;
   private readonly webSearch?: {
@@ -560,6 +562,7 @@ export class Config {
     this.sessionTokenLimit = params.sessionTokenLimit ?? -1;
     this.experimentalZedIntegration =
       params.experimentalZedIntegration ?? false;
+    this.experimentalSkills = params.experimentalSkills ?? false;
     this.listExtensions = params.listExtensions ?? false;
     this._extensions = params.extensions ?? [];
     this._blockedMcpServers = params.blockedMcpServers ?? [];
@@ -1080,6 +1083,10 @@ export class Config {
     return this.experimentalZedIntegration;
   }
 
+  getExperimentalSkills(): boolean {
+    return this.experimentalSkills;
+  }
+
   getListExtensions(): boolean {
     return this.listExtensions;
   }
@@ -1356,7 +1363,9 @@ export class Config {
     };
 
     registerCoreTool(TaskTool, this);
-    registerCoreTool(SkillTool, this);
+    if (this.getExperimentalSkills()) {
+      registerCoreTool(SkillTool, this);
+    }
     registerCoreTool(LSTool, this);
     registerCoreTool(ReadFileTool, this);
 
