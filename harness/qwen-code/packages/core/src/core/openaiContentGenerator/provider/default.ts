@@ -59,8 +59,7 @@ export class DefaultOpenAICompatibleProvider
 
   getDefaultGenerationConfig(): GenerateContentConfig {
     return {
-      temperature: 1,
-      topP: 0.95,
+      topP: 0.8,
     };
   }
 }
