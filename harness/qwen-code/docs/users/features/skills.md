@@ -17,7 +17,7 @@ This guide shows you how to create, use, and manage Agent Skills in **Qwen Code*
 qwen --experimental-skills
 ```
 
-- Basic familiarity with Qwen Code ([Quickstart](../quickstart))
+- Basic familiarity with Qwen Code ([Quickstart](../quickstart.md))
 
 ## What are Agent Skills?
 
