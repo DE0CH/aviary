@@ -560,6 +560,12 @@ export default {
   'No conversation found to summarize.': '未找到要总结的对话',
   'Failed to generate project context summary: {{error}}':
     '生成项目上下文摘要失败：{{error}}',
+  'Saved project summary to {{filePathForDisplay}}.':
+    '项目摘要已保存到 {{filePathForDisplay}}',
+  'Saving project summary...': '正在保存项目摘要...',
+  'Generating project summary...': '正在生成项目摘要...',
+  'Failed to generate summary - no text content received from LLM response':
+    '生成摘要失败 - 未从 LLM 响应中接收到文本内容',
 
   // ============================================================================
   // Commands - Model

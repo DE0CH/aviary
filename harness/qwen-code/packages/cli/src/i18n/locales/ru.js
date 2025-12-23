@@ -604,6 +604,12 @@ export default {
     'Не найдено диалогов для создания сводки.',
   'Failed to generate project context summary: {{error}}':
     'Не удалось сгенерировать сводку контекста проекта: {{error}}',
+  'Saved project summary to {{filePathForDisplay}}.':
+    'Сводка проекта сохранена в {{filePathForDisplay}}',
+  'Saving project summary...': 'Сохранение сводки проекта...',
+  'Generating project summary...': 'Генерация сводки проекта...',
+  'Failed to generate summary - no text content received from LLM response':
+    'Не удалось сгенерировать сводку - не получен текстовый контент из ответа LLM',
 
   // ============================================================================
   // Команды - Модель
