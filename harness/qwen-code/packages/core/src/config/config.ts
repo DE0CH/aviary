@@ -16,6 +16,7 @@ import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import type {
   ContentGenerator,
   ContentGeneratorConfig,
+  AuthType,
 } from '../core/contentGenerator.js';
 import type { FallbackModelHandler } from '../fallback/types.js';
 import type { MCPOAuthConfig } from '../mcp/oauth-provider.js';
@@ -26,7 +27,6 @@ import type { AnyToolInvocation } from '../tools/tools.js';
 import { BaseLlmClient } from '../core/baseLlmClient.js';
 import { GeminiClient } from '../core/client.js';
 import {
-  AuthType,
   createContentGenerator,
   createContentGeneratorConfig,
 } from '../core/contentGenerator.js';
@@ -684,16 +684,6 @@ export class Config {
   }
 
   async refreshAuth(authMethod: AuthType, isInitialAuth?: boolean) {
-    // Vertex and Genai have incompatible encryption and sending history with
-    // throughtSignature from Genai to Vertex will fail, we need to strip them
-    if (
-      this.contentGeneratorConfig?.authType === AuthType.USE_GEMINI &&
-      authMethod === AuthType.LOGIN_WITH_GOOGLE
-    ) {
-      // Restore the conversation history to the new client
-      this.geminiClient.stripThoughtsFromHistory();
-    }
-
     const newContentGeneratorConfig = createContentGeneratorConfig(
       this,
       authMethod,

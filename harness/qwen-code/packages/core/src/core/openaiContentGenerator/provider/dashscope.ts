@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import type { GenerateContentConfig } from '@google/genai';
 import type { Config } from '../../../config/config.js';
 import type { ContentGeneratorConfig } from '../../contentGenerator.js';
 import { AuthType } from '../../contentGenerator.js';
@@ -138,6 +139,14 @@ export class DashScopeOpenAICompatibleProvider
         promptId: userPromptId,
         ...(channel ? { channel } : {}),
       },
+    };
+  }
+
+  getDefaultGenerationConfig(): GenerateContentConfig {
+    return {
+      temperature: 0.7,
+      topP: 0.8,
+      topK: 20,
     };
   }
 

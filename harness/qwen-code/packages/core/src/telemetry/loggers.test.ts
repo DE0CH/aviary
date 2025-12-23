@@ -83,7 +83,6 @@ import type {
 } from '@google/genai';
 import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import * as uiTelemetry from './uiTelemetry.js';
-import { UserAccountManager } from '../utils/userAccountManager.js';
 import { makeFakeConfig } from '../test-utils/config.js';
 
 describe('loggers', () => {
@@ -101,10 +100,6 @@ describe('loggers', () => {
     vi.spyOn(uiTelemetry.uiTelemetryService, 'addEvent').mockImplementation(
       mockUiEvent.addEvent,
     );
-    vi.spyOn(
-      UserAccountManager.prototype,
-      'getCachedGoogleAccount',
-    ).mockReturnValue('test-user@example.com');
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-01T00:00:00.000Z'));
   });
@@ -188,7 +183,6 @@ describe('loggers', () => {
         body: 'CLI configuration loaded.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_CLI_CONFIG,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           model: 'test-model',
@@ -233,7 +227,6 @@ describe('loggers', () => {
         body: 'User prompt. Length: 11.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_USER_PROMPT,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           prompt_length: 11,
@@ -255,7 +248,7 @@ describe('loggers', () => {
       const event = new UserPromptEvent(
         11,
         'prompt-id-9',
-        AuthType.CLOUD_SHELL,
+        AuthType.USE_GEMINI,
         'test-prompt',
       );
 
@@ -265,12 +258,11 @@ describe('loggers', () => {
         body: 'User prompt. Length: 11.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_USER_PROMPT,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           prompt_length: 11,
           prompt_id: 'prompt-id-9',
-          auth_type: 'cloud-shell',
+          auth_type: 'gemini-api-key',
         },
       });
     });
@@ -313,7 +305,7 @@ describe('loggers', () => {
         'test-model',
         100,
         'prompt-id-1',
-        AuthType.LOGIN_WITH_GOOGLE,
+        AuthType.USE_GEMINI,
         usageData,
         'test-response',
       );
@@ -324,7 +316,6 @@ describe('loggers', () => {
         body: 'API response from test-model. Status: 200. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_API_RESPONSE,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           [SemanticAttributes.HTTP_STATUS_CODE]: 200,
@@ -340,7 +331,7 @@ describe('loggers', () => {
           total_token_count: 0,
           response_text: 'test-response',
           prompt_id: 'prompt-id-1',
-          auth_type: 'oauth-personal',
+          auth_type: 'gemini-api-key',
         },
       });
 
@@ -386,7 +377,6 @@ describe('loggers', () => {
         body: 'API request to test-model.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_API_REQUEST,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           model: 'test-model',
@@ -405,7 +395,6 @@ describe('loggers', () => {
         body: 'API request to test-model.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_API_REQUEST,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           model: 'test-model',
@@ -430,7 +419,6 @@ describe('loggers', () => {
         body: 'Switching to flash as Fallback.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_FLASH_FALLBACK,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           auth_type: 'vertex-ai',
@@ -465,7 +453,6 @@ describe('loggers', () => {
       expect(emittedEvent.attributes).toEqual(
         expect.objectContaining({
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_RIPGREP_FALLBACK,
           error: 'ripgrep is not available',
         }),
@@ -484,7 +471,6 @@ describe('loggers', () => {
       expect(emittedEvent.attributes).toEqual(
         expect.objectContaining({
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_RIPGREP_FALLBACK,
           error: 'rg not found',
         }),
@@ -598,7 +584,6 @@ describe('loggers', () => {
         body: 'Tool call: test-function. Decision: accept. Success: true. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'test-function',
@@ -682,7 +667,6 @@ describe('loggers', () => {
         body: 'Tool call: test-function. Decision: reject. Success: false. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'test-function',
@@ -759,7 +743,6 @@ describe('loggers', () => {
         body: 'Tool call: test-function. Decision: modify. Success: true. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'test-function',
@@ -835,7 +818,6 @@ describe('loggers', () => {
         body: 'Tool call: test-function. Success: true. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'test-function',
@@ -910,7 +892,6 @@ describe('loggers', () => {
         body: 'Tool call: test-function. Success: false. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'test-function',
@@ -999,7 +980,6 @@ describe('loggers', () => {
         body: 'Tool call: mock_mcp_tool. Success: true. Duration: 100ms.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_TOOL_CALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           function_name: 'mock_mcp_tool',
@@ -1047,7 +1027,6 @@ describe('loggers', () => {
         body: 'Malformed JSON response from test-model.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_MALFORMED_JSON_RESPONSE,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           model: 'test-model',
@@ -1091,7 +1070,6 @@ describe('loggers', () => {
         body: 'File operation: read. Lines: 10.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_FILE_OPERATION,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           tool_name: 'test-tool',
@@ -1137,7 +1115,6 @@ describe('loggers', () => {
         body: 'Tool output truncated for test-tool.',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': 'tool_output_truncated',
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           eventName: 'tool_output_truncated',
@@ -1184,7 +1161,6 @@ describe('loggers', () => {
         body: 'Installed extension vscode',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_EXTENSION_INSTALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           extension_name: 'vscode',
@@ -1223,7 +1199,6 @@ describe('loggers', () => {
         body: 'Uninstalled extension vscode',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_EXTENSION_UNINSTALL,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           extension_name: 'vscode',
@@ -1260,7 +1235,6 @@ describe('loggers', () => {
         body: 'Enabled extension vscode',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_EXTENSION_ENABLE,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           extension_name: 'vscode',
@@ -1297,7 +1271,6 @@ describe('loggers', () => {
         body: 'Disabled extension vscode',
         attributes: {
           'session.id': 'test-session-id',
-          'user.email': 'test-user@example.com',
           'event.name': EVENT_EXTENSION_DISABLE,
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           extension_name: 'vscode',

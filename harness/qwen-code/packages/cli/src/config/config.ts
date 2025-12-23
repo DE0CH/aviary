@@ -460,7 +460,12 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         })
         .option('auth-type', {
           type: 'string',
-          choices: [AuthType.USE_OPENAI, AuthType.QWEN_OAUTH],
+          choices: [
+            AuthType.USE_OPENAI,
+            AuthType.QWEN_OAUTH,
+            AuthType.USE_GEMINI,
+            AuthType.USE_VERTEX_AI,
+          ],
           description: 'Authentication type',
         })
         .deprecateOption(

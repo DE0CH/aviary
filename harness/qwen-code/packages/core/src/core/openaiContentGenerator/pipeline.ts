@@ -283,16 +283,22 @@ export class ContentGenerationPipeline {
   private buildSamplingParameters(
     request: GenerateContentParameters,
   ): Record<string, unknown> {
+    const defaultSamplingParams =
+      this.config.provider.getDefaultGenerationConfig();
     const configSamplingParams = this.contentGeneratorConfig.samplingParams;
 
     // Helper function to get parameter value with priority: config > request > default
     const getParameterValue = <T>(
       configKey: keyof NonNullable<typeof configSamplingParams>,
-      requestKey: keyof NonNullable<typeof request.config>,
-      defaultValue?: T,
+      requestKey?: keyof NonNullable<typeof request.config>,
     ): T | undefined => {
       const configValue = configSamplingParams?.[configKey] as T | undefined;
-      const requestValue = request.config?.[requestKey] as T | undefined;
+      const requestValue = requestKey
+        ? (request.config?.[requestKey] as T | undefined)
+        : undefined;
+      const defaultValue = requestKey
+        ? (defaultSamplingParams[requestKey] as T)
+        : undefined;
 
       if (configValue !== undefined) return configValue;
       if (requestValue !== undefined) return requestValue;
@@ -304,12 +310,8 @@ export class ContentGenerationPipeline {
       key: string,
       configKey: keyof NonNullable<typeof configSamplingParams>,
       requestKey?: keyof NonNullable<typeof request.config>,
-      defaultValue?: T,
-    ): Record<string, T> | Record<string, never> => {
-      const value = requestKey
-        ? getParameterValue(configKey, requestKey, defaultValue)
-        : ((configSamplingParams?.[configKey] as T | undefined) ??
-          defaultValue);
+    ): Record<string, T | undefined> => {
+      const value = getParameterValue<T>(configKey, requestKey);
 
       return value !== undefined ? { [key]: value } : {};
     };
@@ -323,10 +325,18 @@ export class ContentGenerationPipeline {
       ...addParameterIfDefined('max_tokens', 'max_tokens', 'maxOutputTokens'),
 
       // Config-only parameters (no request fallback)
-      ...addParameterIfDefined('top_k', 'top_k'),
+      ...addParameterIfDefined('top_k', 'top_k', 'topK'),
       ...addParameterIfDefined('repetition_penalty', 'repetition_penalty'),
-      ...addParameterIfDefined('presence_penalty', 'presence_penalty'),
-      ...addParameterIfDefined('frequency_penalty', 'frequency_penalty'),
+      ...addParameterIfDefined(
+        'presence_penalty',
+        'presence_penalty',
+        'presencePenalty',
+      ),
+      ...addParameterIfDefined(
+        'frequency_penalty',
+        'frequency_penalty',
+        'frequencyPenalty',
+      ),
     };
 
     return params;

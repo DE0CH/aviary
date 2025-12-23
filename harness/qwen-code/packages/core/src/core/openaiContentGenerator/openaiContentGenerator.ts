@@ -154,4 +154,8 @@ export class OpenAIContentGenerator implements ContentGenerator {
       );
     }
   }
+
+  useSummarizedThinking(): boolean {
+    return false;
+  }
 }
