@@ -93,6 +93,7 @@ export type ModeInfo = z.infer<typeof modeInfoSchema>;
 export type ModesData = z.infer<typeof modesDataSchema>;
 
 export type AgentInfo = z.infer<typeof agentInfoSchema>;
+export type ModelInfo = z.infer<typeof modelInfoSchema>;
 
 export type PromptCapabilities = z.infer<typeof promptCapabilitiesSchema>;
 
@@ -417,11 +418,17 @@ export const agentInfoSchema = z.object({
   version: z.string(),
 });
 
+export const modelInfoSchema = z.object({
+  name: z.string(),
+  contextLimit: z.number().optional().nullable(),
+});
+
 export const initializeResponseSchema = z.object({
   agentCapabilities: agentCapabilitiesSchema,
   agentInfo: agentInfoSchema,
   authMethods: z.array(authMethodSchema),
   modes: modesDataSchema,
+  modelInfo: modelInfoSchema.optional(),
   protocolVersion: z.number(),
 });
 
@@ -514,6 +521,13 @@ export const currentModeUpdateSchema = z.object({
 
 export type CurrentModeUpdate = z.infer<typeof currentModeUpdateSchema>;
 
+export const currentModelUpdateSchema = z.object({
+  sessionUpdate: z.literal('current_model_update'),
+  model: modelInfoSchema,
+});
+
+export type CurrentModelUpdate = z.infer<typeof currentModelUpdateSchema>;
+
 export const sessionUpdateSchema = z.union([
   z.object({
     content: contentBlockSchema,
@@ -555,6 +569,7 @@ export const sessionUpdateSchema = z.union([
     sessionUpdate: z.literal('plan'),
   }),
   currentModeUpdateSchema,
+  currentModelUpdateSchema,
   availableCommandsUpdateSchema,
 ]);
 

@@ -48,6 +48,26 @@ export interface ContentBlock {
   uri?: string;
 }
 
+export interface UsageMetadata {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  thoughtsTokens?: number | null;
+  totalTokens?: number | null;
+  cachedTokens?: number | null;
+}
+
+export interface SessionUpdateMeta {
+  usage?: UsageMetadata | null;
+  durationMs?: number | null;
+  model?: string | null;
+  tokenLimit?: number | null;
+}
+
+export interface ModelInfo {
+  name: string;
+  contextLimit?: number | null;
+}
+
 export interface UserMessageChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'user_message_chunk';
@@ -59,6 +79,7 @@ export interface AgentMessageChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'agent_message_chunk';
     content: ContentBlock;
+    _meta?: SessionUpdateMeta;
   };
 }
 
@@ -66,6 +87,7 @@ export interface AgentThoughtChunkUpdate extends BaseSessionUpdate {
   update: {
     sessionUpdate: 'agent_thought_chunk';
     content: ContentBlock;
+    _meta?: SessionUpdateMeta;
   };
 }
 
@@ -166,6 +188,13 @@ export interface CurrentModeUpdate extends BaseSessionUpdate {
   };
 }
 
+export interface CurrentModelUpdate extends BaseSessionUpdate {
+  update: {
+    sessionUpdate: 'current_model_update';
+    model: ModelInfo;
+  };
+}
+
 // Authenticate update (sent by agent during authentication process)
 export interface AuthenticateUpdateNotification {
   _meta: {
@@ -180,7 +209,8 @@ export type AcpSessionUpdate =
   | ToolCallUpdate
   | ToolCallStatusUpdate
   | PlanUpdate
-  | CurrentModeUpdate;
+  | CurrentModeUpdate
+  | CurrentModelUpdate;
 
 // Permission request (simplified version, use schema.RequestPermissionRequest for validation)
 export interface AcpPermissionRequest {

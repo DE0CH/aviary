@@ -17,6 +17,7 @@ import type {
   PlanEntry,
   ToolCallUpdateData,
   QwenAgentCallbacks,
+  UsageStatsPayload,
 } from '../types/chatTypes.js';
 import {
   QwenConnectionHandler,
@@ -177,6 +178,23 @@ export class QwenAgentManager {
             availableModes: modes.availableModes,
           });
         }
+
+        const modelInfo = obj['modelInfo'] as
+          | {
+              name?: string;
+              contextLimit?: number | null;
+            }
+          | undefined;
+        if (
+          modelInfo &&
+          typeof modelInfo.name === 'string' &&
+          this.callbacks.onModelInfo
+        ) {
+          this.callbacks.onModelInfo({
+            name: modelInfo.name,
+            contextLimit: modelInfo.contextLimit,
+          });
+        }
       } catch (err) {
         console.warn('[QwenAgentManager] onInitialized parse error:', err);
       }
@@ -209,6 +227,16 @@ export class QwenAgentManager {
    * @param message - Message content
    */
   async sendMessage(message: string): Promise<void> {
+    // Validate the current session before sending the message
+    const isValid = await this.validateCurrentSession();
+    if (!isValid) {
+      console.warn(
+        '[QwenAgentManager] Current session is invalid, creating new session',
+      );
+      const workingDir = this.currentWorkingDir;
+      await this.createNewSession(workingDir);
+    }
+
     await this.connection.sendPrompt(message);
   }
 
@@ -1254,6 +1282,24 @@ export class QwenAgentManager {
     callback: (modeId: 'plan' | 'default' | 'auto-edit' | 'yolo') => void,
   ): void {
     this.callbacks.onModeChanged = callback;
+    this.sessionUpdateHandler.updateCallbacks(this.callbacks);
+  }
+
+  /**
+   * Register callback for usage metadata updates
+   */
+  onUsageUpdate(callback: (stats: UsageStatsPayload) => void): void {
+    this.callbacks.onUsageUpdate = callback;
+    this.sessionUpdateHandler.updateCallbacks(this.callbacks);
+  }
+
+  /**
+   * Register callback for model info updates
+   */
+  onModelInfo(
+    callback: (info: { name: string; contextLimit?: number | null }) => void,
+  ): void {
+    this.callbacks.onModelInfo = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }
 

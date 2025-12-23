@@ -21,6 +21,7 @@ import { CompletionMenu } from '../layout/CompletionMenu.js';
 import type { CompletionItem } from '../../../types/completionItemTypes.js';
 import { getApprovalModeInfoFromString } from '../../../types/acpTypes.js';
 import type { ApprovalModeValue } from '../../../types/approvalModeValueTypes.js';
+import { Tooltip } from '../Tooltip.js';
 
 interface InputFormProps {
   inputText: string;
@@ -36,6 +37,12 @@ interface InputFormProps {
   activeSelection: { startLine: number; endLine: number } | null;
   // Whether to auto-load the active editor selection/path into context
   skipAutoActiveContext: boolean;
+  contextUsage: {
+    percentLeft: number;
+    usedTokens: number;
+    tokenLimit: number;
+    model?: string;
+  } | null;
   onInputChange: (text: string) => void;
   onCompositionStart: () => void;
   onCompositionEnd: () => void;
@@ -96,6 +103,7 @@ export const InputForm: React.FC<InputFormProps> = ({
   activeFileName,
   activeSelection,
   skipAutoActiveContext,
+  contextUsage,
   onInputChange,
   onCompositionStart,
   onCompositionEnd,
@@ -142,6 +150,78 @@ export const InputForm: React.FC<InputFormProps> = ({
     selectedLinesCount > 0
       ? `${selectedLinesCount} ${selectedLinesCount === 1 ? 'line' : 'lines'} selected`
       : '';
+
+  const renderContextIndicator = () => {
+    if (!contextUsage) {
+      return null;
+    }
+
+    // Calculate used percentage for the progress indicator
+    // contextUsage.percentLeft is the percentage remaining, so 100 - percentLeft = percent used
+    const percentUsed = 100 - contextUsage.percentLeft;
+    const percentFormatted = Math.max(
+      0,
+      Math.min(100, Math.round(percentUsed)),
+    );
+    const radius = 9;
+    const circumference = 2 * Math.PI * radius;
+    // To show the used portion, we need to offset the unused portion
+    // If 20% is used, we want to show 20% filled, so offset the remaining 80%
+    const dashOffset = ((100 - percentUsed) / 100) * circumference;
+    const formatNumber = (value: number) => {
+      if (value >= 1000) {
+        return `${(Math.round((value / 1000) * 10) / 10).toFixed(1)}k`;
+      }
+      return Math.round(value).toLocaleString();
+    };
+
+    // Create tooltip content with proper formatting
+    const tooltipContent = (
+      <div className="flex flex-col gap-1">
+        <div className="font-medium">
+          {percentFormatted}% • {formatNumber(contextUsage.usedTokens)} /{' '}
+          {formatNumber(contextUsage.tokenLimit)} context used
+        </div>
+        {contextUsage.model && <div>Model: {contextUsage.model}</div>}
+      </div>
+    );
+
+    return (
+      <Tooltip content={tooltipContent} position="top">
+        <button
+          className="btn-icon-compact"
+          aria-label={`${percentFormatted}% • ${formatNumber(contextUsage.usedTokens)} / ${formatNumber(contextUsage.tokenLimit)} context used`}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" role="presentation">
+            <circle
+              className="context-indicator__track"
+              cx="12"
+              cy="12"
+              r={radius}
+              fill="none"
+              stroke="currentColor"
+              opacity="0.2"
+            />
+            <circle
+              className="context-indicator__progress"
+              cx="12"
+              cy="12"
+              r={radius}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+              style={{
+                transform: 'rotate(-90deg)',
+                transformOrigin: '50% 50%',
+              }}
+            />
+          </svg>
+        </button>
+      </Tooltip>
+    );
+  };
 
   return (
     <div className="p-1 px-4 pb-4 absolute bottom-0 left-0 right-0 bg-gradient-to-b from-transparent to-[var(--app-primary-background)]">
@@ -239,6 +319,9 @@ export const InputForm: React.FC<InputFormProps> = ({
 
             {/* Spacer */}
             <div className="flex-1 min-w-0" />
+
+            {/* Context usage indicator */}
+            {renderContextIndicator()}
 
             {/* @yiliang114. closed temporarily */}
             {/* Thinking button */}

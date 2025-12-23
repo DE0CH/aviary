@@ -376,6 +376,18 @@ export class SessionMessageHandler extends BaseMessageHandler {
         data: { timestamp: Date.now() },
       });
 
+      // Verify agent is connected before sending message
+      if (!this.agentManager.isConnected) {
+        throw new Error('Agent is not connected. Please try again.');
+      }
+
+      // Verify there's an active session
+      if (!this.agentManager.currentSessionId) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workingDir = workspaceFolder?.uri.fsPath || process.cwd();
+        await this.agentManager.createNewSession(workingDir);
+      }
+
       await this.agentManager.sendMessage(formattedText);
 
       // Save assistant message

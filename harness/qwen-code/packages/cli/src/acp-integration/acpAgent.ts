@@ -19,6 +19,7 @@ import {
   type Config,
   type ConversationRecord,
   type DeviceAuthorizationData,
+  tokenLimit,
 } from '@qwen-code/qwen-code-core';
 import type { ApprovalModeValue } from './schema.js';
 import * as acp from './acp.js';
@@ -100,6 +101,14 @@ class GeminiAgent {
     }));
 
     const version = process.env['CLI_VERSION'] || process.version;
+    const modelName = this.config.getModel();
+    const modelInfo =
+      modelName && modelName.length > 0
+        ? {
+            name: modelName,
+            contextLimit: tokenLimit(modelName),
+          }
+        : undefined;
 
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -113,6 +122,7 @@ class GeminiAgent {
         currentModeId: currentApprovalMode as ApprovalModeValue,
         availableModes,
       },
+      modelInfo,
       agentCapabilities: {
         loadSession: true,
         promptCapabilities: {
@@ -346,6 +356,8 @@ class GeminiAgent {
     setTimeout(async () => {
       await session.sendAvailableCommandsUpdate();
     }, 0);
+
+    await session.announceCurrentModel(true);
 
     if (conversation && conversation.messages) {
       await session.replayHistory(conversation.messages);
