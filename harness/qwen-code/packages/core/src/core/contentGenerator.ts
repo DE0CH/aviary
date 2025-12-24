@@ -14,6 +14,7 @@ import type {
 } from '@google/genai';
 import { DEFAULT_QWEN_MODEL } from '../config/models.js';
 import type { Config } from '../config/config.js';
+import { LoggingContentGenerator } from './loggingContentGenerator/loggingContentGenerator.js';
 
 /**
  * Interface abstracting the core functionalities for generating content and counting tokens.
@@ -37,10 +38,11 @@ export interface ContentGenerator {
 }
 
 export enum AuthType {
-  USE_GEMINI = 'gemini-api-key',
-  USE_VERTEX_AI = 'vertex-ai',
   USE_OPENAI = 'openai',
   QWEN_OAUTH = 'qwen-oauth',
+  USE_GEMINI = 'gemini',
+  USE_VERTEX_AI = 'vertex-ai',
+  USE_ANTHROPIC = 'anthropic',
 }
 
 export type ContentGeneratorConfig = {
@@ -77,7 +79,7 @@ export function createContentGeneratorConfig(
   authType: AuthType | undefined,
   generationConfig?: Partial<ContentGeneratorConfig>,
 ): ContentGeneratorConfig {
-  const newContentGeneratorConfig: Partial<ContentGeneratorConfig> = {
+  let newContentGeneratorConfig: Partial<ContentGeneratorConfig> = {
     ...(generationConfig || {}),
     authType,
     proxy: config?.getProxy(),
@@ -94,6 +96,14 @@ export function createContentGeneratorConfig(
   }
 
   if (authType === AuthType.USE_OPENAI) {
+    newContentGeneratorConfig = {
+      ...newContentGeneratorConfig,
+      apiKey: newContentGeneratorConfig.apiKey || process.env['OPENAI_API_KEY'],
+      baseUrl:
+        newContentGeneratorConfig.baseUrl || process.env['OPENAI_BASE_URL'],
+      model: newContentGeneratorConfig.model || process.env['OPENAI_MODEL'],
+    };
+
     if (!newContentGeneratorConfig.apiKey) {
       throw new Error('OpenAI API key is required');
     }
@@ -104,10 +114,62 @@ export function createContentGeneratorConfig(
     } as ContentGeneratorConfig;
   }
 
-  return {
-    ...newContentGeneratorConfig,
-    model: newContentGeneratorConfig?.model || DEFAULT_QWEN_MODEL,
-  } as ContentGeneratorConfig;
+  if (authType === AuthType.USE_ANTHROPIC) {
+    newContentGeneratorConfig = {
+      ...newContentGeneratorConfig,
+      apiKey:
+        newContentGeneratorConfig.apiKey || process.env['ANTHROPIC_API_KEY'],
+      baseUrl:
+        newContentGeneratorConfig.baseUrl || process.env['ANTHROPIC_BASE_URL'],
+      model: newContentGeneratorConfig.model || process.env['ANTHROPIC_MODEL'],
+    };
+
+    if (!newContentGeneratorConfig.apiKey) {
+      throw new Error('ANTHROPIC_API_KEY environment variable not found.');
+    }
+
+    if (!newContentGeneratorConfig.baseUrl) {
+      throw new Error('ANTHROPIC_BASE_URL environment variable not found.');
+    }
+
+    if (!newContentGeneratorConfig.model) {
+      throw new Error('ANTHROPIC_MODEL environment variable not found.');
+    }
+  }
+
+  if (authType === AuthType.USE_GEMINI) {
+    newContentGeneratorConfig = {
+      ...newContentGeneratorConfig,
+      apiKey: newContentGeneratorConfig.apiKey || process.env['GEMINI_API_KEY'],
+      model: newContentGeneratorConfig.model || process.env['GEMINI_MODEL'],
+    };
+
+    if (!newContentGeneratorConfig.apiKey) {
+      throw new Error('GEMINI_API_KEY environment variable not found.');
+    }
+
+    if (!newContentGeneratorConfig.model) {
+      throw new Error('GEMINI_MODEL environment variable not found.');
+    }
+  }
+
+  if (authType === AuthType.USE_VERTEX_AI) {
+    newContentGeneratorConfig = {
+      ...newContentGeneratorConfig,
+      apiKey: newContentGeneratorConfig.apiKey || process.env['GOOGLE_API_KEY'],
+      model: newContentGeneratorConfig.model || process.env['GOOGLE_MODEL'],
+    };
+
+    if (!newContentGeneratorConfig.apiKey) {
+      throw new Error('Google API key is required');
+    }
+
+    if (!newContentGeneratorConfig.model) {
+      throw new Error('GOOGLE_MODEL environment variable not found.');
+    }
+  }
+
+  return newContentGeneratorConfig as ContentGeneratorConfig;
 }
 
 export async function createContentGenerator(
@@ -115,16 +177,6 @@ export async function createContentGenerator(
   gcConfig: Config,
   isInitialAuth?: boolean,
 ): Promise<ContentGenerator> {
-  if (
-    config.authType === AuthType.USE_GEMINI ||
-    config.authType === AuthType.USE_VERTEX_AI
-  ) {
-    const { createGeminiContentGenerator } = await import(
-      './geminiContentGenerator/index.js'
-    );
-    return createGeminiContentGenerator(config, gcConfig);
-  }
-
   if (config.authType === AuthType.USE_OPENAI) {
     if (!config.apiKey) {
       throw new Error('OpenAI API key is required');
@@ -136,7 +188,8 @@ export async function createContentGenerator(
     );
 
     // Always use OpenAIContentGenerator, logging is controlled by enableOpenAILogging flag
-    return createOpenAIContentGenerator(config, gcConfig);
+    const generator = createOpenAIContentGenerator(config, gcConfig);
+    return new LoggingContentGenerator(generator, gcConfig);
   }
 
   if (config.authType === AuthType.QWEN_OAUTH) {
@@ -157,12 +210,37 @@ export async function createContentGenerator(
       );
 
       // Create the content generator with dynamic token management
-      return new QwenContentGenerator(qwenClient, config, gcConfig);
+      const generator = new QwenContentGenerator(qwenClient, config, gcConfig);
+      return new LoggingContentGenerator(generator, gcConfig);
     } catch (error) {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  if (config.authType === AuthType.USE_ANTHROPIC) {
+    if (!config.apiKey) {
+      throw new Error('Anthropic API key is required');
+    }
+
+    const { createAnthropicContentGenerator } = await import(
+      './anthropicContentGenerator/index.js'
+    );
+
+    const generator = createAnthropicContentGenerator(config, gcConfig);
+    return new LoggingContentGenerator(generator, gcConfig);
+  }
+
+  if (
+    config.authType === AuthType.USE_GEMINI ||
+    config.authType === AuthType.USE_VERTEX_AI
+  ) {
+    const { createGeminiContentGenerator } = await import(
+      './geminiContentGenerator/index.js'
+    );
+    const generator = createGeminiContentGenerator(config, gcConfig);
+    return new LoggingContentGenerator(generator, gcConfig);
   }
 
   throw new Error(

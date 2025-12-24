@@ -27,6 +27,9 @@ function getAuthTypeFromEnv(): AuthType | undefined {
   if (process.env['GOOGLE_API_KEY']) {
     return AuthType.USE_VERTEX_AI;
   }
+  if (process.env['ANTHROPIC_API_KEY']) {
+    return AuthType.USE_ANTHROPIC;
+  }
 
   return undefined;
 }
