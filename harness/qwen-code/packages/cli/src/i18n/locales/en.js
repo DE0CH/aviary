@@ -102,8 +102,8 @@ export default {
   'Theme "{{themeName}}" not found.': 'Theme "{{themeName}}" not found.',
   'Theme "{{themeName}}" not found in selected scope.':
     'Theme "{{themeName}}" not found in selected scope.',
-  'clear the screen and conversation history':
-    'clear the screen and conversation history',
+  'Clear conversation history and free up context':
+    'Clear conversation history and free up context',
   'Compresses the context by replacing it with a summary.':
     'Compresses the context by replacing it with a summary.',
   'open full Qwen Code documentation in your browser':
@@ -604,9 +604,10 @@ export default {
   // ============================================================================
   // Commands - Clear
   // ============================================================================
-  'Clearing terminal and resetting chat.':
-    'Clearing terminal and resetting chat.',
-  'Clearing terminal.': 'Clearing terminal.',
+  'Starting a new session, resetting chat, and clearing terminal.':
+    'Starting a new session, resetting chat, and clearing terminal.',
+  'Starting a new session and clearing.':
+    'Starting a new session and clearing.',
 
   // ============================================================================
   // Commands - Compress

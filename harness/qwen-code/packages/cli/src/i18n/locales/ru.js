@@ -103,8 +103,8 @@ export default {
   'Theme "{{themeName}}" not found.': 'Тема "{{themeName}}" не найдена.',
   'Theme "{{themeName}}" not found in selected scope.':
     'Тема "{{themeName}}" не найдена в выбранной области.',
-  'clear the screen and conversation history':
-    'Очистка экрана и истории диалога',
+  'Clear conversation history and free up context':
+    'Очистить историю диалога и освободить контекст',
   'Compresses the context by replacing it with a summary.':
     'Сжатие контекста заменой на краткую сводку',
   'open full Qwen Code documentation in your browser':
@@ -619,8 +619,9 @@ export default {
   // ============================================================================
   // Команды - Очистка
   // ============================================================================
-  'Clearing terminal and resetting chat.': 'Очистка терминала и сброс чата.',
-  'Clearing terminal.': 'Очистка терминала.',
+  'Starting a new session, resetting chat, and clearing terminal.':
+    'Начало новой сессии, сброс чата и очистка терминала.',
+  'Starting a new session and clearing.': 'Начало новой сессии и очистка.',
 
   // ============================================================================
   // Команды - Сжатие

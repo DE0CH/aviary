@@ -101,7 +101,7 @@ export default {
   'Theme "{{themeName}}" not found.': '未找到主题 "{{themeName}}"。',
   'Theme "{{themeName}}" not found in selected scope.':
     '在所选作用域中未找到主题 "{{themeName}}"。',
-  'clear the screen and conversation history': '清屏并清除对话历史',
+  'Clear conversation history and free up context': '清除对话历史并释放上下文',
   'Compresses the context by replacing it with a summary.':
     '通过用摘要替换来压缩上下文',
   'open full Qwen Code documentation in your browser':
@@ -573,8 +573,9 @@ export default {
   // ============================================================================
   // Commands - Clear
   // ============================================================================
-  'Clearing terminal and resetting chat.': '正在清屏并重置聊天',
-  'Clearing terminal.': '正在清屏',
+  'Starting a new session, resetting chat, and clearing terminal.':
+    '正在开始新会话，重置聊天并清屏。',
+  'Starting a new session and clearing.': '正在开始新会话并清屏。',
 
   // ============================================================================
   // Commands - Compress
