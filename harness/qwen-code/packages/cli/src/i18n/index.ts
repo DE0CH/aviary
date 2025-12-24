@@ -18,10 +18,11 @@ export { getLanguageNameFromLocale };
 
 // State
 let currentLanguage: SupportedLanguage = 'en';
-let translations: Record<string, string> = {};
+let translations: Record<string, string | string[]> = {};
 
 // Cache
-type TranslationDict = Record<string, string>;
+type TranslationValue = string | string[];
+type TranslationDict = Record<string, TranslationValue>;
 const translationCache: Record<string, TranslationDict> = {};
 const loadingPromises: Record<string, Promise<TranslationDict>> = {};
 
@@ -231,7 +232,23 @@ export function getCurrentLanguage(): SupportedLanguage {
 
 export function t(key: string, params?: Record<string, string>): string {
   const translation = translations[key] ?? key;
+  if (Array.isArray(translation)) {
+    return key;
+  }
   return interpolate(translation, params);
+}
+
+/**
+ * Get a translation that is an array of strings.
+ * @param key The translation key
+ * @returns The array of strings, or an empty array if not found or not an array
+ */
+export function ta(key: string): string[] {
+  const translation = translations[key];
+  if (Array.isArray(translation)) {
+    return translation;
+  }
+  return [];
 }
 
 export async function initializeI18n(
