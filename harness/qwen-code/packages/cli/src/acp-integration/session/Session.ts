@@ -66,12 +66,6 @@ import { MessageEmitter } from './emitters/MessageEmitter.js';
 import { SubAgentTracker } from './SubAgentTracker.js';
 
 /**
- * Built-in commands that are allowed in ACP integration mode.
- * Only safe, read-only commands that don't require interactive UI.
- */
-export const ALLOWED_BUILTIN_COMMANDS_FOR_ACP = ['init', 'summary', 'compress'];
-
-/**
  * Session represents an active conversation session with the AI model.
  * It uses modular components for consistent event emission:
  * - HistoryReplayer for replaying past conversations
@@ -172,13 +166,12 @@ export class Session implements SessionContext {
     let parts: Part[] | null;
 
     if (isSlashCommand(inputText)) {
-      // Handle slash command - allow specific built-in commands for ACP integration
+      // Handle slash command - uses default allowed commands (init, summary, compress)
       const slashCommandResult = await handleSlashCommand(
         inputText,
         pendingSend,
         this.config,
         this.settings,
-        ALLOWED_BUILTIN_COMMANDS_FOR_ACP,
       );
 
       parts = await this.#processSlashCommandResult(
@@ -300,11 +293,10 @@ export class Session implements SessionContext {
   async sendAvailableCommandsUpdate(): Promise<void> {
     const abortController = new AbortController();
     try {
+      // Use default allowed commands from getAvailableCommands
       const slashCommands = await getAvailableCommands(
         this.config,
-        this.settings,
         abortController.signal,
-        ALLOWED_BUILTIN_COMMANDS_FOR_ACP,
       );
 
       // Convert SlashCommand[] to AvailableCommand[] format for ACP protocol

@@ -42,12 +42,6 @@ import {
   computeUsageFromMetrics,
 } from './utils/nonInteractiveHelpers.js';
 
-const ALLOWED_BUILTIN_COMMANDS_FOR_NON_INTERACTIVE = [
-  'init',
-  'summary',
-  'compress',
-];
-
 /**
  * Emits a final message for slash command results.
  * Note: systemMessage should already be emitted before calling this function.
@@ -192,7 +186,6 @@ export async function runNonInteractive(
             abortController,
             config,
             settings,
-            ALLOWED_BUILTIN_COMMANDS_FOR_NON_INTERACTIVE,
           );
           switch (slashCommandResult.type) {
             case 'submit_prompt':

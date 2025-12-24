@@ -25,6 +25,21 @@ import type { LoadedSettings } from './config/settings.js';
 import type { SessionStatsState } from './ui/contexts/SessionContext.js';
 
 /**
+ * Built-in commands that are allowed in non-interactive modes (CLI and ACP).
+ * Only safe, read-only commands that don't require interactive UI.
+ *
+ * These commands are:
+ * - init: Initialize project configuration
+ * - summary: Generate session summary
+ * - compress: Compress conversation history
+ */
+export const ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE = [
+  'init',
+  'summary',
+  'compress',
+] as const;
+
+/**
  * Result of handling a slash command in non-interactive mode.
  *
  * Supported types:
@@ -201,7 +216,8 @@ function filterCommandsForNonInteractive(
  * @param config The configuration object
  * @param settings The loaded settings
  * @param allowedBuiltinCommandNames Optional array of built-in command names that are
- *   allowed. If not provided or empty, only file commands are available.
+ *   allowed. Defaults to ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE (init, summary, compress).
+ *   Pass an empty array to only allow file commands.
  * @returns A Promise that resolves to a `NonInteractiveSlashCommandResult` describing
  *   the outcome of the command execution.
  */
@@ -210,7 +226,9 @@ export const handleSlashCommand = async (
   abortController: AbortController,
   config: Config,
   settings: LoadedSettings,
-  allowedBuiltinCommandNames?: string[],
+  allowedBuiltinCommandNames: string[] = [
+    ...ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE,
+  ],
 ): Promise<NonInteractiveSlashCommandResult> => {
   const trimmed = rawQuery.trim();
   if (!trimmed.startsWith('/')) {
@@ -307,17 +325,18 @@ export const handleSlashCommand = async (
  * Retrieves all available slash commands for the current configuration.
  *
  * @param config The configuration object
- * @param settings The loaded settings
  * @param abortSignal Signal to cancel the loading process
  * @param allowedBuiltinCommandNames Optional array of built-in command names that are
- *   allowed. If not provided or empty, only file commands are available.
+ *   allowed. Defaults to ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE (init, summary, compress).
+ *   Pass an empty array to only include file commands.
  * @returns A Promise that resolves to an array of SlashCommand objects
  */
 export const getAvailableCommands = async (
   config: Config,
-  settings: LoadedSettings,
   abortSignal: AbortSignal,
-  allowedBuiltinCommandNames?: string[],
+  allowedBuiltinCommandNames: string[] = [
+    ...ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE,
+  ],
 ): Promise<SlashCommand[]> => {
   try {
     const allowedBuiltinSet = new Set(allowedBuiltinCommandNames ?? []);
