@@ -259,7 +259,7 @@ export async function buildSystemMessage(
   // Load slash commands with filtering based on allowed built-in commands
   const slashCommands = await loadSlashCommandNames(
     config,
-    allowedBuiltinCommandNames || [],
+    allowedBuiltinCommandNames,
   );
 
   // Load subagent names from config

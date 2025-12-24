@@ -65,15 +65,22 @@ export const summaryCommand: SlashCommand = {
       };
     }
 
-    const generateSummaryMarkdown = async (): Promise<string> => {
-      // Get the current chat history
+    const getChatHistory = () => {
       const chat = geminiClient.getChat();
-      const history = chat.getHistory();
+      return chat.getHistory();
+    };
 
+    const validateChatHistory = (
+      history: ReturnType<typeof getChatHistory>,
+    ) => {
       if (history.length <= 2) {
         throw new Error(t('No conversation found to summarize.'));
       }
+    };
 
+    const generateSummaryMarkdown = async (
+      history: ReturnType<typeof getChatHistory>,
+    ): Promise<string> => {
       // Build the conversation context for summary generation
       const conversationContext = history.map((message) => ({
         role: message.role,
@@ -181,6 +188,11 @@ export const summaryCommand: SlashCommand = {
       ui.addItem(completedSummaryItem, Date.now());
     };
 
+    const formatErrorMessage = (error: unknown): string =>
+      t('Failed to generate project context summary: {{error}}', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
     const failInteractive = (error: unknown) => {
       if (executionMode !== 'interactive') {
         return;
@@ -189,52 +201,80 @@ export const summaryCommand: SlashCommand = {
       ui.addItem(
         {
           type: 'error' as const,
-          text: `❌ ${t(
-            'Failed to generate project context summary: {{error}}',
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
-          )}`,
+          text: `❌ ${formatErrorMessage(error)}`,
         },
         Date.now(),
       );
     };
 
+    const formatSuccessMessage = (filePathForDisplay: string): string =>
+      t('Saved project summary to {{filePathForDisplay}}.', {
+        filePathForDisplay,
+      });
+
+    const returnNoConversationMessage = (): SlashCommandActionReturn => {
+      const msg = t('No conversation found to summarize.');
+      if (executionMode === 'acp') {
+        const messages = async function* () {
+          yield {
+            messageType: 'info' as const,
+            content: msg,
+          };
+        };
+        return {
+          type: 'stream_messages',
+          messages: messages(),
+        };
+      }
+      return {
+        type: 'message',
+        messageType: 'info',
+        content: msg,
+      };
+    };
+
+    const executeSummaryGeneration = async (
+      history: ReturnType<typeof getChatHistory>,
+    ): Promise<{
+      markdownSummary: string;
+      filePathForDisplay: string;
+    }> => {
+      emitInteractivePending('generating');
+      const markdownSummary = await generateSummaryMarkdown(history);
+      emitInteractivePending('saving');
+      const { filePathForDisplay } = await saveSummaryToDisk(markdownSummary);
+      completeInteractive(filePathForDisplay);
+      return { markdownSummary, filePathForDisplay };
+    };
+
+    // Validate chat history once at the beginning
+    const history = getChatHistory();
+    try {
+      validateChatHistory(history);
+    } catch (_error) {
+      return returnNoConversationMessage();
+    }
+
     if (executionMode === 'acp') {
       const messages = async function* () {
         try {
-          emitInteractivePending('generating');
           yield {
             messageType: 'info' as const,
             content: t('Generating project summary...'),
           };
 
-          const markdownSummary = await generateSummaryMarkdown();
-
-          yield {
-            messageType: 'info' as const,
-            content: t('Saving project summary...'),
-          };
           const { filePathForDisplay } =
-            await saveSummaryToDisk(markdownSummary);
+            await executeSummaryGeneration(history);
 
-          completeInteractive(filePathForDisplay);
           yield {
             messageType: 'info' as const,
-            content: t('Saved project summary to {{filePathForDisplay}}.', {
-              filePathForDisplay,
-            }),
+            content: formatSuccessMessage(filePathForDisplay),
           };
         } catch (error) {
           failInteractive(error);
           yield {
             messageType: 'error' as const,
-            content: t(
-              'Failed to generate project context summary: {{error}}',
-              {
-                error: error instanceof Error ? error.message : String(error),
-              },
-            ),
+            content: formatErrorMessage(error),
           };
         }
       };
@@ -246,17 +286,13 @@ export const summaryCommand: SlashCommand = {
     }
 
     try {
-      emitInteractivePending('generating');
-      const markdownSummary = await generateSummaryMarkdown();
-      emitInteractivePending('saving');
-      const { filePathForDisplay } = await saveSummaryToDisk(markdownSummary);
-      completeInteractive(filePathForDisplay);
+      const { filePathForDisplay } = await executeSummaryGeneration(history);
 
       if (executionMode === 'non_interactive') {
         return {
           type: 'message',
           messageType: 'info',
-          content: `Saved project summary to ${filePathForDisplay}.`,
+          content: formatSuccessMessage(filePathForDisplay),
         };
       }
 
@@ -267,34 +303,12 @@ export const summaryCommand: SlashCommand = {
         content: '',
       };
     } catch (error) {
-      // Convert "no conversation" into a clean info message for non-interactive / interactive modes.
-      const msg =
-        error instanceof Error ? error.message : t('Unknown error occurred.');
-
-      if (msg === t('No conversation found to summarize.')) {
-        if (executionMode === 'interactive') {
-          // Keep interactive behavior: show as a normal message.
-          return {
-            type: 'message',
-            messageType: 'info',
-            content: msg,
-          };
-        }
-        return {
-          type: 'message',
-          messageType: 'info',
-          content: msg,
-        };
-      }
-
       failInteractive(error);
 
       return {
         type: 'message',
         messageType: 'error',
-        content: t('Failed to generate project context summary: {{error}}', {
-          error: error instanceof Error ? error.message : String(error),
-        }),
+        content: formatErrorMessage(error),
       };
     }
   },
