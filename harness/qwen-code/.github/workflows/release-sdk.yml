@@ -159,6 +159,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: 'Create and switch to a release branch'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         id: 'release_branch'
         env:
           RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
@@ -168,16 +170,19 @@ jobs:
           echo "BRANCH_NAME=${BRANCH_NAME}" >> "${GITHUB_OUTPUT}"
 
       - name: 'Update package version'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         env:
           RELEASE_VERSION: '${{ steps.version.outputs.RELEASE_VERSION }}'
         run: |-
           # Use npm workspaces so the root lockfile is updated consistently.
           npm version -w @qwen-code/sdk "${RELEASE_VERSION}" --no-git-tag-version --allow-same-version
 
-      - name: 'Commit and Conditionally Push package version'
+      - name: 'Commit and Push package version'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         env:
           BRANCH_NAME: '${{ steps.release_branch.outputs.BRANCH_NAME }}'
-          IS_DRY_RUN: '${{ steps.vars.outputs.is_dry_run }}'
           RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
         run: |-
           git add packages/sdk-typescript/package.json package-lock.json
@@ -186,12 +191,8 @@ jobs:
           else
             git commit -m "chore(release): sdk-typescript ${RELEASE_TAG}"
           fi
-          if [[ "${IS_DRY_RUN}" == "false" ]]; then
-            echo "Pushing release branch to remote..."
-            git push --set-upstream origin "${BRANCH_NAME}" --follow-tags
-          else
-            echo "Dry run enabled. Skipping push."
-          fi
+          echo "Pushing release branch to remote..."
+          git push --set-upstream origin "${BRANCH_NAME}" --follow-tags
 
       - name: 'Build SDK'
         working-directory: 'packages/sdk-typescript'
@@ -220,16 +221,29 @@ jobs:
           RELEASE_BRANCH: '${{ steps.release_branch.outputs.BRANCH_NAME }}'
           RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
           PREVIOUS_RELEASE_TAG: '${{ steps.version.outputs.PREVIOUS_RELEASE_TAG }}'
+          IS_NIGHTLY: '${{ steps.vars.outputs.is_nightly }}'
+          IS_PREVIEW: '${{ steps.vars.outputs.is_preview }}'
+          REF: '${{ github.event.inputs.ref || github.sha }}'
         run: |-
+          # For stable releases, use the release branch; for nightly/preview, use the current ref
+          if [[ "${IS_NIGHTLY}" == "true" || "${IS_PREVIEW}" == "true" ]]; then
+            TARGET="${REF}"
+            PRERELEASE_FLAG="--prerelease"
+          else
+            TARGET="${RELEASE_BRANCH}"
+            PRERELEASE_FLAG=""
+          fi
+
           gh release create "sdk-typescript-${RELEASE_TAG}" \
-            --target "$RELEASE_BRANCH" \
+            --target "${TARGET}" \
             --title "SDK TypeScript Release ${RELEASE_TAG}" \
             --notes-start-tag "sdk-typescript-${PREVIOUS_RELEASE_TAG}" \
-            --generate-notes
+            --generate-notes \
+            ${PRERELEASE_FLAG}
 
       - name: 'Create PR to merge release branch into main'
         if: |-
-          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         id: 'pr'
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -251,7 +265,7 @@ jobs:
 
       - name: 'Wait for CI checks to complete'
         if: |-
-          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           PR_URL: '${{ steps.pr.outputs.PR_URL }}'
@@ -262,7 +276,7 @@ jobs:
 
       - name: 'Enable auto-merge for release PR'
         if: |-
-          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+          ${{ steps.vars.outputs.is_dry_run == 'false' && steps.vars.outputs.is_nightly == 'false' && steps.vars.outputs.is_preview == 'false' }}
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
           PR_URL: '${{ steps.pr.outputs.PR_URL }}'
