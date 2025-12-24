@@ -39,11 +39,6 @@ class TransportOptionsAdapter {
             args.add(transportOptions.getModel());
         }
 
-        if (StringUtils.isNotBlank(transportOptions.getCwd())) {
-            args.add("--cwd");
-            args.add(transportOptions.getCwd());
-        }
-
         if (transportOptions.getPermissionMode() != null) {
             args.add("--permission-mode");
             args.add(transportOptions.getPermissionMode().getValue());
