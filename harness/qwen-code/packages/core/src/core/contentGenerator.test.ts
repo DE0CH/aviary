@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createContentGenerator, AuthType } from './contentGenerator.js';
 import { GoogleGenAI } from '@google/genai';
 import type { Config } from '../config/config.js';
-import { LoggingContentGenerator } from './loggingContentGenerator/loggingContentGenerator.js';
+import { LoggingContentGenerator } from './loggingContentGenerator/index.js';
 
 vi.mock('@google/genai');
 

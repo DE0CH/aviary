@@ -14,7 +14,7 @@ import type {
 } from '@google/genai';
 import { DEFAULT_QWEN_MODEL } from '../config/models.js';
 import type { Config } from '../config/config.js';
-import { LoggingContentGenerator } from './loggingContentGenerator/loggingContentGenerator.js';
+import { LoggingContentGenerator } from './loggingContentGenerator/index.js';
 
 /**
  * Interface abstracting the core functionalities for generating content and counting tokens.
