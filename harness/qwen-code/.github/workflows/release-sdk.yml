@@ -33,6 +33,10 @@ on:
         type: 'boolean'
         default: false
 
+concurrency:
+  group: '${{ github.workflow }}'
+  cancel-in-progress: false
+
 jobs:
   release-sdk:
     runs-on: 'ubuntu-latest'
@@ -164,11 +168,11 @@ jobs:
           echo "BRANCH_NAME=${BRANCH_NAME}" >> "${GITHUB_OUTPUT}"
 
       - name: 'Update package version'
-        working-directory: 'packages/sdk-typescript'
         env:
           RELEASE_VERSION: '${{ steps.version.outputs.RELEASE_VERSION }}'
         run: |-
-          npm version "${RELEASE_VERSION}" --no-git-tag-version --allow-same-version
+          # Use npm workspaces so the root lockfile is updated consistently.
+          npm version -w @qwen-code/sdk "${RELEASE_VERSION}" --no-git-tag-version --allow-same-version
 
       - name: 'Commit and Conditionally Push package version'
         env:
@@ -176,7 +180,7 @@ jobs:
           IS_DRY_RUN: '${{ steps.vars.outputs.is_dry_run }}'
           RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
         run: |-
-          git add packages/sdk-typescript/package.json
+          git add packages/sdk-typescript/package.json package-lock.json
           if git diff --staged --quiet; then
             echo "No version changes to commit"
           else
@@ -244,6 +248,17 @@ jobs:
           fi
 
           echo "PR_URL=${pr_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: 'Wait for CI checks to complete'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_URL: '${{ steps.pr.outputs.PR_URL }}'
+        run: |-
+          set -euo pipefail
+          echo "Waiting for CI checks to complete..."
+          gh pr checks "${PR_URL}" --watch --interval 30
 
       - name: 'Enable auto-merge for release PR'
         if: |-
