@@ -74,7 +74,7 @@ export const App: React.FC = () => {
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true); // Track if we're still initializing/loading
-  const [modelInfo] = useState<{
+  const [modelInfo, setModelInfo] = useState<{
     name: string;
     contextLimit?: number | null;
   } | null>(null);
@@ -175,9 +175,9 @@ export const App: React.FC = () => {
     }
 
     const modelName =
-      (usageStats?.model && typeof usageStats.model === 'string'
-        ? usageStats.model
-        : undefined) ?? modelInfo?.name;
+      modelInfo?.name && typeof modelInfo.name === 'string'
+        ? modelInfo.name
+        : undefined;
 
     const derivedLimit =
       modelName && modelName.length > 0 ? tokenLimit(modelName) : undefined;
@@ -200,7 +200,6 @@ export const App: React.FC = () => {
       percentLeft,
       usedTokens: used,
       tokenLimit: limit,
-      model: modelName ?? undefined,
     };
   }, [usageStats, modelInfo]);
 
@@ -293,6 +292,9 @@ export const App: React.FC = () => {
     setEditMode,
     setIsAuthenticated,
     setUsageStats: (stats) => setUsageStats(stats ?? null),
+    setModelInfo: (info) => {
+      setModelInfo(info);
+    },
   });
 
   // Auto-scroll handling: keep the view pinned to bottom when new content arrives,

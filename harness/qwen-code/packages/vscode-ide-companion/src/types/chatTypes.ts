@@ -37,7 +37,6 @@ export interface UsageStatsPayload {
     cachedTokens?: number | null;
   } | null;
   durationMs?: number | null;
-  model?: string | null;
   tokenLimit?: number | null;
 }
 

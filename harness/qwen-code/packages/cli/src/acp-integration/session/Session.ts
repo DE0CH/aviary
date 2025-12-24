@@ -33,7 +33,6 @@ import {
   UserPromptEvent,
   TodoWriteTool,
   ExitPlanModeTool,
-  tokenLimit,
 } from '@qwen-code/qwen-code-core';
 
 import * as acp from '../acp.js';
@@ -53,7 +52,6 @@ import type {
   SetModeResponse,
   ApprovalModeValue,
   CurrentModeUpdate,
-  CurrentModelUpdate,
 } from '../schema.js';
 import { isSlashCommand } from '../../ui/utils/commandUtils.js';
 
@@ -88,10 +86,6 @@ export class Session implements SessionContext {
   private readonly toolCallEmitter: ToolCallEmitter;
   private readonly planEmitter: PlanEmitter;
   private readonly messageEmitter: MessageEmitter;
-  private lastAnnouncedModel: {
-    name: string;
-    contextLimit?: number | null;
-  } | null = null;
 
   // Implement SessionContext interface
   readonly sessionId: string;
@@ -196,8 +190,6 @@ export class Session implements SessionContext {
       // Normal processing for non-slash commands
       parts = await this.#resolvePrompt(params.prompt, pendingSend.signal);
     }
-
-    await this.sendCurrentModelUpdate();
 
     let nextMessage: Content | null = { role: 'user', parts };
 
@@ -382,40 +374,6 @@ export class Session implements SessionContext {
     const update: CurrentModeUpdate = {
       sessionUpdate: 'current_mode_update',
       modeId: newModeId,
-    };
-
-    await this.sendUpdate(update);
-  }
-
-  async announceCurrentModel(force: boolean = false): Promise<void> {
-    await this.sendCurrentModelUpdate(force);
-  }
-
-  private async sendCurrentModelUpdate(force: boolean = false): Promise<void> {
-    const modelName = this.config.getModel();
-    if (!modelName) {
-      return;
-    }
-
-    const contextLimit = tokenLimit(modelName);
-
-    if (
-      !force &&
-      this.lastAnnouncedModel &&
-      this.lastAnnouncedModel.name === modelName &&
-      this.lastAnnouncedModel.contextLimit === contextLimit
-    ) {
-      return;
-    }
-
-    this.lastAnnouncedModel = { name: modelName, contextLimit };
-
-    const update: CurrentModelUpdate = {
-      sessionUpdate: 'current_model_update',
-      model: {
-        name: modelName,
-        contextLimit,
-      },
     };
 
     await this.sendUpdate(update);

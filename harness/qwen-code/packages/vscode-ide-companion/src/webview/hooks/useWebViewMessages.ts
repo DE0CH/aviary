@@ -251,18 +251,7 @@ export const useWebViewMessages = ({
 
         case 'usageStats': {
           const stats = message.data as UsageStatsPayload | undefined;
-          if (
-            stats &&
-            (!stats.tokenLimit || stats.tokenLimit <= 0) &&
-            modelInfoRef.current?.contextLimit
-          ) {
-            handlers.setUsageStats?.({
-              ...stats,
-              tokenLimit: modelInfoRef.current.contextLimit ?? undefined,
-            });
-          } else {
-            handlers.setUsageStats?.(stats);
-          }
+          handlers.setUsageStats?.(stats);
           break;
         }
 

@@ -231,11 +231,6 @@ export class AcpSessionManager {
       throw new Error('No active ACP session');
     }
 
-    // Check if child process is still alive before sending the request
-    if (!child || child.killed) {
-      throw new Error('ACP child process is not available');
-    }
-
     return await this.sendRequest(
       AGENT_METHODS.session_prompt,
       {

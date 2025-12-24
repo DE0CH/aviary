@@ -10,11 +10,7 @@
  * Handles session updates from ACP and dispatches them to appropriate callbacks
  */
 
-import type {
-  AcpSessionUpdate,
-  ModelInfo,
-  SessionUpdateMeta,
-} from '../types/acpTypes.js';
+import type { AcpSessionUpdate, SessionUpdateMeta } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type {
   QwenAgentCallbacks,
@@ -164,11 +160,6 @@ export class QwenSessionUpdateHandler {
         break;
       }
 
-      case 'current_model_update': {
-        this.emitModelInfo((update as unknown as { model?: ModelInfo }).model);
-        break;
-      }
-
       default:
         console.log('[QwenAgentManager] Unhandled session update type');
         break;
@@ -183,18 +174,8 @@ export class QwenSessionUpdateHandler {
     const payload: UsageStatsPayload = {
       usage: meta.usage || undefined,
       durationMs: meta.durationMs ?? undefined,
-      model: meta.model ?? undefined,
-      tokenLimit: meta.tokenLimit ?? undefined,
     };
 
     this.callbacks.onUsageUpdate(payload);
-  }
-
-  private emitModelInfo(model?: ModelInfo): void {
-    if (!model || !this.callbacks.onModelInfo) {
-      return;
-    }
-
-    this.callbacks.onModelInfo(model);
   }
 }

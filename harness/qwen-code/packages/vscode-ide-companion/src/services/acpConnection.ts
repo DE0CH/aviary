@@ -289,11 +289,6 @@ export class AcpConnection {
    * @returns Response
    */
   async sendPrompt(prompt: string): Promise<AcpResponse> {
-    // Verify connection is still active before sending request
-    if (!this.isConnected) {
-      throw new Error('ACP connection is not active');
-    }
-
     return this.sessionManager.sendPrompt(
       prompt,
       this.child,

@@ -59,8 +59,6 @@ export interface UsageMetadata {
 export interface SessionUpdateMeta {
   usage?: UsageMetadata | null;
   durationMs?: number | null;
-  model?: string | null;
-  tokenLimit?: number | null;
 }
 
 export interface ModelInfo {
@@ -188,13 +186,6 @@ export interface CurrentModeUpdate extends BaseSessionUpdate {
   };
 }
 
-export interface CurrentModelUpdate extends BaseSessionUpdate {
-  update: {
-    sessionUpdate: 'current_model_update';
-    model: ModelInfo;
-  };
-}
-
 // Authenticate update (sent by agent during authentication process)
 export interface AuthenticateUpdateNotification {
   _meta: {
@@ -209,8 +200,7 @@ export type AcpSessionUpdate =
   | ToolCallUpdate
   | ToolCallStatusUpdate
   | PlanUpdate
-  | CurrentModeUpdate
-  | CurrentModelUpdate;
+  | CurrentModeUpdate;
 
 // Permission request (simplified version, use schema.RequestPermissionRequest for validation)
 export interface AcpPermissionRequest {

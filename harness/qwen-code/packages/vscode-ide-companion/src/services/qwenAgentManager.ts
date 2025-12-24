@@ -227,16 +227,6 @@ export class QwenAgentManager {
    * @param message - Message content
    */
   async sendMessage(message: string): Promise<void> {
-    // Validate the current session before sending the message
-    const isValid = await this.validateCurrentSession();
-    if (!isValid) {
-      console.warn(
-        '[QwenAgentManager] Current session is invalid, creating new session',
-      );
-      const workingDir = this.currentWorkingDir;
-      await this.createNewSession(workingDir);
-    }
-
     await this.connection.sendPrompt(message);
   }
 

@@ -357,8 +357,6 @@ class GeminiAgent {
       await session.sendAvailableCommandsUpdate();
     }, 0);
 
-    await session.announceCurrentModel(true);
-
     if (conversation && conversation.messages) {
       await session.replayHistory(conversation.messages);
     }
