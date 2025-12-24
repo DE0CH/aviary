@@ -572,11 +572,10 @@ export class GeminiChat {
         thought: true,
       };
 
-      const thoughtSignature =
-        allModelParts.filter(
-          (part) => part.thoughtSignature && part.thought,
-        )?.[0]?.thoughtSignature || '';
-      if (thoughtContentPart && thoughtSignature !== '') {
+      const thoughtSignature = allModelParts.filter(
+        (part) => part.thoughtSignature && part.thought,
+      )?.[0]?.thoughtSignature;
+      if (thoughtContentPart && thoughtSignature) {
         thoughtContentPart.thoughtSignature = thoughtSignature;
       }
     }

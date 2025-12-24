@@ -337,8 +337,29 @@ export class AnthropicContentGenerator implements ContentGenerator {
             finishReason = stopReasonValue;
           }
 
+          // Some Anthropic-compatible providers may include additional usage fields
+          // (e.g. `input_tokens`, `cache_read_input_tokens`) even though the official
+          // Anthropic SDK types only expose `output_tokens` here.
+          const usageUnknown = event.usage as unknown;
+          const usageRecord =
+            usageUnknown && typeof usageUnknown === 'object'
+              ? (usageUnknown as Record<string, unknown>)
+              : undefined;
+
           if (event.usage?.output_tokens !== undefined) {
             completionTokens = event.usage.output_tokens;
+          }
+          if (usageRecord?.['input_tokens'] !== undefined) {
+            const inputTokens = usageRecord['input_tokens'];
+            if (typeof inputTokens === 'number') {
+              promptTokens = inputTokens;
+            }
+          }
+          if (usageRecord?.['cache_read_input_tokens'] !== undefined) {
+            const cacheRead = usageRecord['cache_read_input_tokens'];
+            if (typeof cacheRead === 'number') {
+              cachedTokens = cacheRead;
+            }
           }
 
           if (finishReason || event.usage) {

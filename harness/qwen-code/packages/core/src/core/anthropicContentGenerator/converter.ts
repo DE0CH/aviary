@@ -155,11 +155,12 @@ export class AnthropicContentConverter {
             ? (block as { signature?: string }).signature
             : '';
         if (thinking || signature) {
-          parts.push({
+          const thoughtPart: Part = {
             text: thinking,
             thought: true,
-            thoughtSignature: signature || undefined,
-          });
+            thoughtSignature: signature,
+          };
+          parts.push(thoughtPart);
         }
       } else if (blockType === 'redacted_thinking') {
         parts.push({ text: '', thought: true });
@@ -248,14 +249,17 @@ export class AnthropicContentConverter {
 
     if (content.role === 'model' && parsed.functionCalls.length > 0) {
       const thinkingBlocks: AnthropicContentBlockParam[] =
-        parsed.thoughtParts.map(
-          (part) =>
-            ({
-              type: 'thinking',
-              thinking: part.text,
-              signature: part.signature,
-            }) as unknown as AnthropicContentBlockParam,
-        );
+        parsed.thoughtParts.map((part) => {
+          const thinkingBlock: unknown = {
+            type: 'thinking',
+            thinking: part.text,
+          };
+          if (part.signature) {
+            (thinkingBlock as { signature?: string }).signature =
+              part.signature;
+          }
+          return thinkingBlock as AnthropicContentBlockParam;
+        });
       const toolUses: AnthropicContentBlockParam[] = parsed.functionCalls.map(
         (call, index) => ({
           type: 'tool_use',
@@ -282,14 +286,17 @@ export class AnthropicContentConverter {
     const role = content.role === 'model' ? 'assistant' : 'user';
     const thinkingBlocks: AnthropicContentBlockParam[] =
       role === 'assistant'
-        ? parsed.thoughtParts.map(
-            (part) =>
-              ({
-                type: 'thinking',
-                thinking: part.text,
-                signature: part.signature,
-              }) as unknown as AnthropicContentBlockParam,
-          )
+        ? parsed.thoughtParts.map((part) => {
+            const thinkingBlock: unknown = {
+              type: 'thinking',
+              thinking: part.text,
+            };
+            if (part.signature) {
+              (thinkingBlock as { signature?: string }).signature =
+                part.signature;
+            }
+            return thinkingBlock as AnthropicContentBlockParam;
+          })
         : [];
     const textBlocks: AnthropicContentBlockParam[] = [
       ...thinkingBlocks,

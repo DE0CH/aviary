@@ -526,10 +526,15 @@ export const useGeminiStream = (
         return currentThoughtBuffer;
       }
 
-      const newThoughtBuffer = currentThoughtBuffer + thoughtText;
+      let newThoughtBuffer = currentThoughtBuffer + thoughtText;
+
+      const pendingType = pendingHistoryItemRef.current?.type;
+      const isPendingThought =
+        pendingType === 'gemini_thought' ||
+        pendingType === 'gemini_thought_content';
 
       // If we're not already showing a thought, start a new one
-      if (pendingHistoryItemRef.current?.type !== 'gemini_thought') {
+      if (!isPendingThought) {
         // If there's a pending non-thought item, finalize it first
         if (pendingHistoryItemRef.current) {
           addItem(pendingHistoryItemRef.current, userMessageTimestamp);
@@ -537,11 +542,37 @@ export const useGeminiStream = (
         setPendingHistoryItem({ type: 'gemini_thought', text: '' });
       }
 
-      // Update the existing thought message with accumulated content
-      setPendingHistoryItem({
-        type: 'gemini_thought',
-        text: newThoughtBuffer,
-      });
+      // Split large thought messages for better rendering performance (same rationale
+      // as regular content streaming). This helps avoid terminal flicker caused by
+      // constantly re-rendering an ever-growing "pending" block.
+      const splitPoint = findLastSafeSplitPoint(newThoughtBuffer);
+      const nextPendingType: 'gemini_thought' | 'gemini_thought_content' =
+        isPendingThought && pendingType === 'gemini_thought_content'
+          ? 'gemini_thought_content'
+          : 'gemini_thought';
+
+      if (splitPoint === newThoughtBuffer.length) {
+        // Update the existing thought message with accumulated content
+        setPendingHistoryItem({
+          type: nextPendingType,
+          text: newThoughtBuffer,
+        });
+      } else {
+        const beforeText = newThoughtBuffer.substring(0, splitPoint);
+        const afterText = newThoughtBuffer.substring(splitPoint);
+        addItem(
+          {
+            type: nextPendingType,
+            text: beforeText,
+          },
+          userMessageTimestamp,
+        );
+        setPendingHistoryItem({
+          type: 'gemini_thought_content',
+          text: afterText,
+        });
+        newThoughtBuffer = afterText;
+      }
 
       // Also update the thought state for the loading indicator
       mergeThought(eventValue);

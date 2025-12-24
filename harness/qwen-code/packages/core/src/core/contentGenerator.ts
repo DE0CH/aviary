@@ -105,7 +105,7 @@ export function createContentGeneratorConfig(
     };
 
     if (!newContentGeneratorConfig.apiKey) {
-      throw new Error('OpenAI API key is required');
+      throw new Error('OPENAI_API_KEY environment variable not found.');
     }
 
     return {
@@ -161,7 +161,7 @@ export function createContentGeneratorConfig(
     };
 
     if (!newContentGeneratorConfig.apiKey) {
-      throw new Error('Google API key is required');
+      throw new Error('GOOGLE_API_KEY environment variable not found.');
     }
 
     if (!newContentGeneratorConfig.model) {
@@ -179,7 +179,7 @@ export async function createContentGenerator(
 ): Promise<ContentGenerator> {
   if (config.authType === AuthType.USE_OPENAI) {
     if (!config.apiKey) {
-      throw new Error('OpenAI API key is required');
+      throw new Error('OPENAI_API_KEY environment variable not found.');
     }
 
     // Import OpenAIContentGenerator dynamically to avoid circular dependencies
@@ -221,7 +221,7 @@ export async function createContentGenerator(
 
   if (config.authType === AuthType.USE_ANTHROPIC) {
     if (!config.apiKey) {
-      throw new Error('Anthropic API key is required');
+      throw new Error('ANTHROPIC_API_KEY environment variable not found.');
     }
 
     const { createAnthropicContentGenerator } = await import(
