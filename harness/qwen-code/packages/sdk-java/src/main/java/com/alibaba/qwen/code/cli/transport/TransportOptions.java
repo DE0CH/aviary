@@ -2,24 +2,21 @@ package com.alibaba.qwen.code.cli.transport;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
-public class TransportOptions {
+public class TransportOptions implements Cloneable {
     private String pathToQwenExecutable;
     private String cwd;
     private String model;
     private PermissionMode permissionMode;
     private Map<String, String> env;
-    private Object abortController; // AbortController in JavaScript does not have a direct Java equivalent
-    private Boolean debug;
-    private Consumer<String> stderr; // Equivalent to (message: string) => void
-    private String logLevel; // Can be 'debug', 'info', 'warn', or 'error'
     private Integer maxSessionTurns;
     private List<String> coreTools;
     private List<String> excludeTools;
     private List<String> allowedTools;
     private String authType;
     private Boolean includePartialMessages;
+    private Long turnTimeoutMs;
+    private Long messageTimeoutMs;
 
     public String getPathToQwenExecutable() {
         return pathToQwenExecutable;
@@ -59,38 +56,6 @@ public class TransportOptions {
 
     public void setEnv(Map<String, String> env) {
         this.env = env;
-    }
-
-    public Object getAbortController() {
-        return abortController;
-    }
-
-    public void setAbortController(Object abortController) {
-        this.abortController = abortController;
-    }
-
-    public Boolean getDebug() {
-        return debug;
-    }
-
-    public void setDebug(Boolean debug) {
-        this.debug = debug;
-    }
-
-    public Consumer<String> getStderr() {
-        return stderr;
-    }
-
-    public void setStderr(Consumer<String> stderr) {
-        this.stderr = stderr;
-    }
-
-    public String getLogLevel() {
-        return logLevel;
-    }
-
-    public void setLogLevel(String logLevel) {
-        this.logLevel = logLevel;
     }
 
     public Integer getMaxSessionTurns() {
@@ -139,5 +104,30 @@ public class TransportOptions {
 
     public void setIncludePartialMessages(Boolean includePartialMessages) {
         this.includePartialMessages = includePartialMessages;
+    }
+
+    public Long getTurnTimeoutMs() {
+        return turnTimeoutMs;
+    }
+
+    public void setTurnTimeoutMs(Long turnTimeoutMs) {
+        this.turnTimeoutMs = turnTimeoutMs;
+    }
+
+    public Long getMessageTimeoutMs() {
+        return messageTimeoutMs;
+    }
+
+    public void setMessageTimeoutMs(Long messageTimeoutMs) {
+        this.messageTimeoutMs = messageTimeoutMs;
+    }
+
+    @Override
+    public TransportOptions clone() {
+        try {
+            return (TransportOptions) super.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new AssertionError();
+        }
     }
 }
