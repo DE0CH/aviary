@@ -80,6 +80,9 @@ export * from './tools/tool-registry.js';
 // Export subagents (Phase 1)
 export * from './subagents/index.js';
 
+// Export skills
+export * from './skills/index.js';
+
 // Export prompt logic
 export * from './prompts/mcp-prompts.js';
 
@@ -101,6 +104,7 @@ export * from './tools/mcp-client-manager.js';
 export * from './tools/mcp-tool.js';
 export * from './tools/sdk-control-client-transport.js';
 export * from './tools/task.js';
+export * from './tools/skill.js';
 export * from './tools/todoWrite.js';
 export * from './tools/exitPlanMode.js';
 

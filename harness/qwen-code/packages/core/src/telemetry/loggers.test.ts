@@ -200,6 +200,8 @@ describe('loggers', () => {
           mcp_tools: undefined,
           mcp_tools_count: undefined,
           output_format: 'json',
+          skills: undefined,
+          subagents: undefined,
         },
       });
     });
