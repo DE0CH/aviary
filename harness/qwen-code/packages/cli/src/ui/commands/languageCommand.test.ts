@@ -199,6 +199,39 @@ describe('languageCommand', () => {
         content: expect.stringContaining('Chinese'),
       });
     });
+
+    it('should parse Unicode LLM output language from marker', async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        [
+          '# ⚠️ CRITICAL: 中文 Output Language Rule - HIGHEST PRIORITY ⚠️',
+          '<!-- qwen-code:llm-output-language: 中文 -->',
+          '',
+          'Some other content...',
+        ].join('\n'),
+      );
+
+      vi.mocked(i18n.t).mockImplementation(
+        (key: string, params?: Record<string, string>) => {
+          if (params && key.includes('{{lang}}')) {
+            return key.replace('{{lang}}', params['lang'] || '');
+          }
+          return key;
+        },
+      );
+
+      if (!languageCommand.action) {
+        throw new Error('The language command must have an action.');
+      }
+
+      const result = await languageCommand.action(mockContext, '');
+
+      expect(result).toEqual({
+        type: 'message',
+        messageType: 'info',
+        content: expect.stringContaining('中文'),
+      });
+    });
   });
 
   describe('main command action - config not available', () => {

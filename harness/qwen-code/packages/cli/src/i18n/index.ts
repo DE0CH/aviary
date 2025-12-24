@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Qwen
+ * Copyright 2025 Qwen team
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
+import {
+  type SupportedLanguage,
+  getLanguageNameFromLocale,
+} from './languages.js';
 
-export type SupportedLanguage = 'en' | 'zh' | 'ru' | string; // Allow custom language codes
+export type { SupportedLanguage };
+export { getLanguageNameFromLocale };
 
 // State
 let currentLanguage: SupportedLanguage = 'en';
@@ -46,14 +51,6 @@ const getLocalePath = (
   return path.join(baseDir, `${lang}.js`);
 };
 
-// Supported locale codes mapped to English language names
-const LOCALE_TO_LANGUAGE_NAME: Record<string, string> = {
-  zh: 'Chinese',
-  en: 'English',
-  ru: 'Russian',
-  de: 'German',
-};
-
 // Language detection
 export function detectSystemLanguage(): SupportedLanguage {
   const envLang = process.env['QWEN_CODE_LANG'] || process.env['LANG'];
@@ -72,14 +69,6 @@ export function detectSystemLanguage(): SupportedLanguage {
   }
 
   return 'en';
-}
-
-/**
- * Maps a locale code to its English language name.
- * Used for LLM output language instructions.
- */
-export function getLanguageNameFromLocale(locale: SupportedLanguage): string {
-  return LOCALE_TO_LANGUAGE_NAME[locale] || 'English';
 }
 
 // Translation loading

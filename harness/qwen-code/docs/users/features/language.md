@@ -1,17 +1,20 @@
-# Language Settings
+# Internationalization (i18n) & Language
 
-Qwen Code supports multiple languages for both the user interface and LLM responses.
+Qwen Code is built for multilingual workflows: it supports UI localization (i18n/l10n) in the CLI, lets you choose the assistant output language, and allows custom UI language packs.
 
 ## Overview
 
-Two separate language settings control different aspects of Qwen Code:
+From a user point of view, Qwen Code’s “internationalization” spans multiple layers:
 
-| Setting            | What it controls                                   | Where stored                 |
-| ------------------ | -------------------------------------------------- | ---------------------------- |
-| `/language ui`     | Terminal UI text (menus, system messages, prompts) | `~/.qwen/settings.json`      |
-| `/language output` | Language the AI responds in                        | `~/.qwen/output-language.md` |
+| Capability / Setting     | What it controls                                                       | Where stored                 |
+| ------------------------ | ---------------------------------------------------------------------- | ---------------------------- |
+| `/language ui`           | Terminal UI text (menus, system messages, prompts)                     | `~/.qwen/settings.json`      |
+| `/language output`       | Language the AI responds in (an output preference, not UI translation) | `~/.qwen/output-language.md` |
+| Custom UI language packs | Overrides/extends built-in UI translations                             | `~/.qwen/locales/*.js`       |
 
 ## UI Language
+
+This is the CLI’s UI localization layer (i18n/l10n): it controls the language of menus, prompts, and system messages.
 
 ### Setting the UI Language
 
@@ -74,6 +77,10 @@ Use `/language output <language>` to change:
 
 Any language name works. The LLM will be instructed to respond in that language.
 
+> [!note]
+>
+> After changing the output language, restart Qwen Code for the change to take effect.
+
 ### File Location
 
 ```
@@ -94,7 +101,7 @@ Any language name works. The LLM will be instructed to respond in that language.
 export QWEN_CODE_LANG=zh
 ```
 
-This sets both the UI language detection and the LLM output language detection on first startup.
+This influences auto-detection on first startup (if you haven’t set a UI language and no `output-language.md` file exists yet).
 
 ## Custom Language Packs
 
@@ -104,6 +111,11 @@ For UI translations, you can create custom language packs in `~/.qwen/locales/`:
 - Example: `~/.qwen/locales/fr.js` for French
 
 User directory takes precedence over built-in translations.
+
+> [!tip]
+>
+> Contributions are welcome! If you’d like to improve built-in translations or add new languages.
+> For a concrete example, see [PR #1238: feat(i18n): add Russian language support](https://github.com/QwenLM/qwen-code/pull/1238).
 
 ### Language Pack Format
 
