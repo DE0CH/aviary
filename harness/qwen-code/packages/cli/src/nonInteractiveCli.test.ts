@@ -139,6 +139,8 @@ describe('runNonInteractive', () => {
       setModel: vi.fn(async (model: string) => {
         currentModel = model;
       }),
+      getExperimentalZedIntegration: vi.fn().mockReturnValue(false),
+      isInteractive: vi.fn().mockReturnValue(false),
     } as unknown as Config;
 
     mockSettings = {
@@ -872,7 +874,7 @@ describe('runNonInteractive', () => {
         'prompt-id-confirm',
       ),
     ).rejects.toThrow(
-      'Exiting due to a confirmation prompt requested by the command.',
+      'Shell command confirmation is not supported in non-interactive mode. Use YOLO mode or pre-approve commands.',
     );
   });
 
@@ -927,9 +929,7 @@ describe('runNonInteractive', () => {
         '/noaction',
         'prompt-id-unhandled',
       ),
-    ).rejects.toThrow(
-      'Exiting due to command result that is not supported in non-interactive mode.',
-    );
+    ).rejects.toThrow('Unknown command result type: unhandled');
   });
 
   it('should pass arguments to the slash command action', async () => {
