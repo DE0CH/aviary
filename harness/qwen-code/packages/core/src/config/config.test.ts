@@ -283,23 +283,6 @@ describe('Server Config (config.ts)', () => {
       expect(config.isInFallbackMode()).toBe(false);
     });
 
-    it('should strip thoughts when switching from GenAI to Vertex', async () => {
-      const config = new Config(baseParams);
-
-      vi.mocked(createContentGeneratorConfig).mockImplementation(
-        (_: Config, authType: AuthType | undefined) =>
-          ({ authType }) as unknown as ContentGeneratorConfig,
-      );
-
-      await config.refreshAuth(AuthType.USE_GEMINI);
-
-      await config.refreshAuth(AuthType.LOGIN_WITH_GOOGLE);
-
-      expect(
-        config.getGeminiClient().stripThoughtsFromHistory,
-      ).toHaveBeenCalledWith();
-    });
-
     it('should not strip thoughts when switching from Vertex to GenAI', async () => {
       const config = new Config(baseParams);
 

@@ -9,7 +9,6 @@ import { logs } from '@opentelemetry/api-logs';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import type { Config } from '../config/config.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
-import { UserAccountManager } from '../utils/userAccountManager.js';
 import {
   EVENT_API_ERROR,
   EVENT_API_CANCEL,
@@ -93,11 +92,8 @@ const shouldLogUserPrompts = (config: Config): boolean =>
   config.getTelemetryLogPromptsEnabled();
 
 function getCommonAttributes(config: Config): LogAttributes {
-  const userAccountManager = new UserAccountManager();
-  const email = userAccountManager.getCachedGoogleAccount();
   return {
     'session.id': config.getSessionId(),
-    ...(email && { 'user.email': email }),
   };
 }
 

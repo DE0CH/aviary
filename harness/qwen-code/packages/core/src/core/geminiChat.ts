@@ -92,6 +92,7 @@ export function isValidNonThoughtTextPart(part: Part): boolean {
   return (
     typeof part.text === 'string' &&
     !part.thought &&
+    !part.thoughtSignature &&
     // Technically, the model should never generate parts that have text and
     //  any of these but we don't trust them so check anyways.
     !part.functionCall &&
@@ -109,16 +110,22 @@ function isValidContent(content: Content): boolean {
     if (part === undefined || Object.keys(part).length === 0) {
       return false;
     }
-    if (
-      !part.thought &&
-      part.text !== undefined &&
-      part.text === '' &&
-      part.functionCall === undefined
-    ) {
+    if (!isValidContentPart(part)) {
       return false;
     }
   }
   return true;
+}
+
+function isValidContentPart(part: Part): boolean {
+  const isInvalid =
+    !part.thought &&
+    !part.thoughtSignature &&
+    part.text !== undefined &&
+    part.text === '' &&
+    part.functionCall === undefined;
+
+  return !isInvalid;
 }
 
 /**
@@ -448,15 +455,29 @@ export class GeminiChat {
         if (!content.parts) return content;
 
         // Filter out thought parts entirely
-        const filteredParts = content.parts.filter(
-          (part) =>
-            !(
+        const filteredParts = content.parts
+          .filter(
+            (part) =>
+              !(
+                part &&
+                typeof part === 'object' &&
+                'thought' in part &&
+                part.thought
+              ),
+          )
+          .map((part) => {
+            if (
               part &&
               typeof part === 'object' &&
-              'thought' in part &&
-              part.thought
-            ),
-        );
+              'thoughtSignature' in part
+            ) {
+              const newPart = { ...part };
+              delete (newPart as { thoughtSignature?: string })
+                .thoughtSignature;
+              return newPart;
+            }
+            return part;
+          });
 
         return {
           ...content,
@@ -538,11 +559,15 @@ export class GeminiChat {
       yield chunk; // Yield every chunk to the UI immediately.
     }
 
-    const thoughtParts = allModelParts.filter((part) => part.thought);
-    const thoughtText = thoughtParts
-      .map((part) => part.text)
-      .join('')
-      .trim();
+    let thoughtText = '';
+    // Only include thoughts if not using summarized thinking.
+    if (!this.config.getContentGenerator().useSummarizedThinking()) {
+      thoughtText = allModelParts
+        .filter((part) => part.thought)
+        .map((part) => part.text)
+        .join('')
+        .trim();
+    }
 
     const contentParts = allModelParts.filter((part) => !part.thought);
     const consolidatedHistoryParts: Part[] = [];
@@ -555,7 +580,7 @@ export class GeminiChat {
         isValidNonThoughtTextPart(part)
       ) {
         lastPart.text += part.text;
-      } else {
+      } else if (isValidContentPart(part)) {
         consolidatedHistoryParts.push(part);
       }
     }
