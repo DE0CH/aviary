@@ -46,6 +46,7 @@ jobs:
       packages: 'write'
       id-token: 'write'
       issues: 'write'
+      pull-requests: 'write'
     outputs:
       RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
 
@@ -221,6 +222,38 @@ jobs:
             --title "SDK TypeScript Release ${RELEASE_TAG}" \
             --notes-start-tag "sdk-typescript-${PREVIOUS_RELEASE_TAG}" \
             --generate-notes
+
+      - name: 'Create PR to merge release branch into main'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+        id: 'pr'
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          RELEASE_BRANCH: '${{ steps.release_branch.outputs.BRANCH_NAME }}'
+          RELEASE_TAG: '${{ steps.version.outputs.RELEASE_TAG }}'
+        run: |-
+          set -euo pipefail
+
+          pr_url="$(gh pr list --head "${RELEASE_BRANCH}" --base main --json url --jq '.[0].url')"
+          if [[ -z "${pr_url}" ]]; then
+            pr_url="$(gh pr create \
+              --base main \
+              --head "${RELEASE_BRANCH}" \
+              --title "chore(release): sdk-typescript ${RELEASE_TAG}" \
+              --body "Automated release PR for sdk-typescript ${RELEASE_TAG}.")"
+          fi
+
+          echo "PR_URL=${pr_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: 'Enable auto-merge for release PR'
+        if: |-
+          ${{ steps.vars.outputs.is_dry_run == 'false' }}
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          PR_URL: '${{ steps.pr.outputs.PR_URL }}'
+        run: |-
+          set -euo pipefail
+          gh pr merge "${PR_URL}" --merge --auto
 
       - name: 'Create Issue on Failure'
         if: |-
