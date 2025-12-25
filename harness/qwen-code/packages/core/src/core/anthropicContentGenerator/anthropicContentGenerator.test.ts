@@ -25,26 +25,26 @@ vi.mock('../../utils/request-tokenizer/index.js', () => ({
 
 type AnthropicCreateArgs = [unknown, { signal?: AbortSignal }?];
 
-vi.mock('@anthropic-ai/sdk', () => {
-  const state: {
-    constructorOptions?: Record<string, unknown>;
-    lastCreateArgs?: AnthropicCreateArgs;
-    createImpl: ReturnType<typeof vi.fn>;
-  } = {
-    constructorOptions: undefined,
-    lastCreateArgs: undefined,
-    createImpl: vi.fn(),
-  };
+const anthropicMockState: {
+  constructorOptions?: Record<string, unknown>;
+  lastCreateArgs?: AnthropicCreateArgs;
+  createImpl: ReturnType<typeof vi.fn>;
+} = {
+  constructorOptions: undefined,
+  lastCreateArgs: undefined,
+  createImpl: vi.fn(),
+};
 
+vi.mock('@anthropic-ai/sdk', () => {
   class AnthropicMock {
     messages: { create: (...args: AnthropicCreateArgs) => unknown };
 
     constructor(options: Record<string, unknown>) {
-      state.constructorOptions = options;
+      anthropicMockState.constructorOptions = options;
       this.messages = {
         create: (...args: AnthropicCreateArgs) => {
-          state.lastCreateArgs = args;
-          return state.createImpl(...args);
+          anthropicMockState.lastCreateArgs = args;
+          return anthropicMockState.createImpl(...args);
         },
       };
     }
@@ -52,7 +52,7 @@ vi.mock('@anthropic-ai/sdk', () => {
 
   return {
     default: AnthropicMock,
-    __anthropicState: state,
+    __anthropicState: anthropicMockState,
   };
 });
 
@@ -89,9 +89,7 @@ describe('AnthropicContentGenerator', () => {
       },
       processingTime: 1,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mod = (await import('@anthropic-ai/sdk')) as any;
-    anthropicState = mod.__anthropicState as typeof anthropicState;
+    anthropicState = anthropicMockState;
 
     anthropicState.createImpl.mockReset();
     anthropicState.lastCreateArgs = undefined;
@@ -127,6 +125,68 @@ describe('AnthropicContentGenerator', () => {
     expect(headers['User-Agent']).toContain(
       `(${process.platform}; ${process.arch})`,
     );
+  });
+
+  it('adds the effort beta header when reasoning.effort is set', async () => {
+    const { AnthropicContentGenerator } = await importGenerator();
+    void new AnthropicContentGenerator(
+      {
+        model: 'claude-test',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        timeout: 10_000,
+        maxRetries: 2,
+        samplingParams: {},
+        schemaCompliance: 'auto',
+        reasoning: { effort: 'medium' },
+      },
+      mockConfig,
+    );
+
+    const headers = (anthropicState.constructorOptions?.['defaultHeaders'] ||
+      {}) as Record<string, string>;
+    expect(headers['anthropic-beta']).toContain('effort-2025-11-24');
+  });
+
+  it('does not add the effort beta header when reasoning.effort is not set', async () => {
+    const { AnthropicContentGenerator } = await importGenerator();
+    void new AnthropicContentGenerator(
+      {
+        model: 'claude-test',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        timeout: 10_000,
+        maxRetries: 2,
+        samplingParams: {},
+        schemaCompliance: 'auto',
+      },
+      mockConfig,
+    );
+
+    const headers = (anthropicState.constructorOptions?.['defaultHeaders'] ||
+      {}) as Record<string, string>;
+    expect(headers['anthropic-beta']).not.toContain('effort-2025-11-24');
+  });
+
+  it('omits the anthropic beta header when reasoning is disabled', async () => {
+    const { AnthropicContentGenerator } = await importGenerator();
+    void new AnthropicContentGenerator(
+      {
+        model: 'claude-test',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        timeout: 10_000,
+        maxRetries: 2,
+        samplingParams: {},
+        schemaCompliance: 'auto',
+        reasoning: false,
+      },
+      mockConfig,
+    );
+
+    const headers = (anthropicState.constructorOptions?.['defaultHeaders'] ||
+      {}) as Record<string, string>;
+    expect(headers['anthropic-beta']).toBeUndefined();
   });
 
   describe('generateContent', () => {
@@ -167,7 +227,7 @@ describe('AnthropicContentGenerator', () => {
             top_k: 20,
           },
           schemaCompliance: 'auto',
-          reasoning: { effort: 'high' },
+          reasoning: { effort: 'high', budget_tokens: 1000 },
         },
         mockConfig,
       );
@@ -202,6 +262,7 @@ describe('AnthropicContentGenerator', () => {
           top_p: 0.9,
           top_k: 20,
           thinking: { type: 'enabled', budget_tokens: 1000 },
+          output_config: { effort: 'high' },
         }),
       );
 

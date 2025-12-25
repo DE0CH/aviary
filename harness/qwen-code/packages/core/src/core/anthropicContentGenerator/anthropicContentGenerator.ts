@@ -39,6 +39,9 @@ type StreamingBlockState = {
 
 type MessageCreateParamsWithThinking = MessageCreateParamsNonStreaming & {
   thinking?: { type: 'enabled'; budget_tokens: number };
+  // Anthropic beta feature: output_config.effort (requires beta header effort-2025-11-24)
+  // This is not yet represented in the official SDK types we depend on.
+  output_config?: { effort: 'low' | 'medium' | 'high' };
 };
 
 export class AnthropicContentGenerator implements ContentGenerator {
@@ -135,13 +138,32 @@ export class AnthropicContentGenerator implements ContentGenerator {
     return false;
   }
 
-  private buildHeaders(): Record<string, string | undefined> {
+  private buildHeaders(): Record<string, string> {
     const version = this.cliConfig.getCliVersion() || 'unknown';
     const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
-    return {
+
+    const betas: string[] = [];
+    const reasoning = this.contentGeneratorConfig.reasoning;
+
+    // Interleaved thinking is used when we send the `thinking` field.
+    if (reasoning !== false) {
+      betas.push('interleaved-thinking-2025-05-14');
+    }
+
+    // Effort (beta) is enabled when reasoning.effort is set.
+    if (reasoning !== false && reasoning?.effort !== undefined) {
+      betas.push('effort-2025-11-24');
+    }
+
+    const headers: Record<string, string> = {
       'User-Agent': userAgent,
-      'anthropic-beta': 'interleaved-thinking-2025-05-14',
     };
+
+    if (betas.length) {
+      headers['anthropic-beta'] = betas.join(',');
+    }
+
+    return headers;
   }
 
   private async buildRequest(
@@ -155,7 +177,8 @@ export class AnthropicContentGenerator implements ContentGenerator {
       : undefined;
 
     const sampling = this.buildSamplingParameters(request);
-    const thinking = this.buildThinkingConfig(request, sampling.max_tokens);
+    const thinking = this.buildThinkingConfig(request);
+    const outputConfig = this.buildOutputConfig();
 
     return {
       model: this.contentGeneratorConfig.model,
@@ -164,6 +187,7 @@ export class AnthropicContentGenerator implements ContentGenerator {
       tools,
       ...sampling,
       ...(thinking ? { thinking } : {}),
+      ...(outputConfig ? { output_config: outputConfig } : {}),
     };
   }
 
@@ -187,7 +211,8 @@ export class AnthropicContentGenerator implements ContentGenerator {
       return configValue !== undefined ? configValue : requestValue;
     };
 
-    const maxTokens = getParam<number>('max_tokens', 'maxOutputTokens') ?? 8192;
+    const maxTokens =
+      getParam<number>('max_tokens', 'maxOutputTokens') ?? 10_000;
 
     return {
       max_tokens: maxTokens,
@@ -199,7 +224,6 @@ export class AnthropicContentGenerator implements ContentGenerator {
 
   private buildThinkingConfig(
     request: GenerateContentParameters,
-    maxTokens: number,
   ): { type: 'enabled'; budget_tokens: number } | undefined {
     if (request.config?.thinkingConfig?.includeThoughts === false) {
       return undefined;
@@ -219,14 +243,29 @@ export class AnthropicContentGenerator implements ContentGenerator {
     }
 
     const effort = reasoning?.effort;
-    const baseBudget =
-      effort === 'low' ? 1024 : effort === 'high' ? 4096 : 2048;
-    const budgetTokens = Math.min(baseBudget, Math.max(1, maxTokens));
+    // When using interleaved thinking with tools, this budget token limit is the entire context window(200k tokens).
+    const budgetTokens =
+      effort === 'low' ? 16_000 : effort === 'high' ? 64_000 : 32_000;
 
     return {
       type: 'enabled',
       budget_tokens: budgetTokens,
     };
+  }
+
+  private buildOutputConfig():
+    | { effort: 'low' | 'medium' | 'high' }
+    | undefined {
+    const reasoning = this.contentGeneratorConfig.reasoning;
+    if (reasoning === false || reasoning === undefined) {
+      return undefined;
+    }
+
+    if (reasoning.effort === undefined) {
+      return undefined;
+    }
+
+    return { effort: reasoning.effort };
   }
 
   private async *processStream(
