@@ -39,7 +39,7 @@ export class GeminiContentGenerator implements ContentGenerator {
     this.contentGeneratorConfig = contentGeneratorConfig;
   }
 
-  private buildSamplingParameters(
+  private buildGenerateContentConfig(
     request: GenerateContentParameters,
   ): GenerateContentConfig {
     const configSamplingParams = this.contentGeneratorConfig?.samplingParams;
@@ -84,17 +84,7 @@ export class GeminiContentGenerator implements ContentGenerator {
         'frequencyPenalty',
       ),
       thinkingConfig: getParameterValue(
-        this.contentGeneratorConfig?.reasoning
-          ? {
-              includeThoughts: true,
-              thinkingLevel: (this.contentGeneratorConfig.reasoning.effort ===
-              'low'
-                ? 'LOW'
-                : this.contentGeneratorConfig.reasoning.effort === 'high'
-                  ? 'HIGH'
-                  : 'THINKING_LEVEL_UNSPECIFIED') as ThinkingLevel,
-            }
-          : undefined,
+        this.buildThinkingConfig(),
         'thinkingConfig',
         {
           includeThoughts: true,
@@ -104,13 +94,40 @@ export class GeminiContentGenerator implements ContentGenerator {
     };
   }
 
+  private buildThinkingConfig():
+    | { includeThoughts: boolean; thinkingLevel?: ThinkingLevel }
+    | undefined {
+    const reasoning = this.contentGeneratorConfig?.reasoning;
+
+    if (reasoning === false) {
+      return { includeThoughts: false };
+    }
+
+    if (reasoning) {
+      const thinkingLevel = (
+        reasoning.effort === 'low'
+          ? 'LOW'
+          : reasoning.effort === 'high'
+            ? 'HIGH'
+            : 'THINKING_LEVEL_UNSPECIFIED'
+      ) as ThinkingLevel;
+
+      return {
+        includeThoughts: true,
+        thinkingLevel,
+      };
+    }
+
+    return undefined;
+  }
+
   async generateContent(
     request: GenerateContentParameters,
     _userPromptId: string,
   ): Promise<GenerateContentResponse> {
     const finalRequest = {
       ...request,
-      config: this.buildSamplingParameters(request),
+      config: this.buildGenerateContentConfig(request),
     };
     return this.googleGenAI.models.generateContent(finalRequest);
   }
@@ -121,7 +138,7 @@ export class GeminiContentGenerator implements ContentGenerator {
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     const finalRequest = {
       ...request,
-      config: this.buildSamplingParameters(request),
+      config: this.buildGenerateContentConfig(request),
     };
     return this.googleGenAI.models.generateContentStream(finalRequest);
   }

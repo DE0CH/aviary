@@ -11,10 +11,8 @@ import type {
 } from '../contentGenerator.js';
 import type { Config } from '../../config/config.js';
 import { InstallationManager } from '../../utils/installationManager.js';
-import { LoggingContentGenerator } from './loggingContentGenerator.js';
 
 export { GeminiContentGenerator } from './geminiContentGenerator.js';
-export { LoggingContentGenerator } from './loggingContentGenerator.js';
 
 /**
  * Create a Gemini content generator.
@@ -51,5 +49,5 @@ export function createGeminiContentGenerator(
     config,
   );
 
-  return new LoggingContentGenerator(geminiContentGenerator, gcConfig);
+  return geminiContentGenerator;
 }

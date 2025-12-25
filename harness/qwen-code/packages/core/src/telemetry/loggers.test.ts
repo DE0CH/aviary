@@ -200,6 +200,8 @@ describe('loggers', () => {
           mcp_tools: undefined,
           mcp_tools_count: undefined,
           output_format: 'json',
+          skills: undefined,
+          subagents: undefined,
         },
       });
     });
@@ -262,7 +264,7 @@ describe('loggers', () => {
           'event.timestamp': '2025-01-01T00:00:00.000Z',
           prompt_length: 11,
           prompt_id: 'prompt-id-9',
-          auth_type: 'gemini-api-key',
+          auth_type: 'gemini',
         },
       });
     });
@@ -331,7 +333,7 @@ describe('loggers', () => {
           total_token_count: 0,
           response_text: 'test-response',
           prompt_id: 'prompt-id-1',
-          auth_type: 'gemini-api-key',
+          auth_type: 'gemini',
         },
       });
 
