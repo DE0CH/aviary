@@ -145,9 +145,7 @@ export class DashScopeOpenAICompatibleProvider
 
   getDefaultGenerationConfig(): GenerateContentConfig {
     return {
-      temperature: 0.7,
-      topP: 0.8,
-      topK: 20,
+      temperature: 0.3,
     };
   }
 
