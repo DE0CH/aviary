@@ -559,14 +559,25 @@ export class GeminiChat {
       yield chunk; // Yield every chunk to the UI immediately.
     }
 
-    let thoughtText = '';
-    // Only include thoughts if not using summarized thinking.
-    if (!this.config.getContentGenerator().useSummarizedThinking()) {
-      thoughtText = allModelParts
-        .filter((part) => part.thought)
-        .map((part) => part.text)
-        .join('')
-        .trim();
+    let thoughtContentPart: Part | undefined;
+    const thoughtText = allModelParts
+      .filter((part) => part.thought)
+      .map((part) => part.text)
+      .join('')
+      .trim();
+
+    if (thoughtText !== '') {
+      thoughtContentPart = {
+        text: thoughtText,
+        thought: true,
+      };
+
+      const thoughtSignature = allModelParts.filter(
+        (part) => part.thoughtSignature && part.thought,
+      )?.[0]?.thoughtSignature;
+      if (thoughtContentPart && thoughtSignature) {
+        thoughtContentPart.thoughtSignature = thoughtSignature;
+      }
     }
 
     const contentParts = allModelParts.filter((part) => !part.thought);
@@ -592,11 +603,11 @@ export class GeminiChat {
       .trim();
 
     // Record assistant turn with raw Content and metadata
-    if (thoughtText || contentText || hasToolCall || usageMetadata) {
+    if (thoughtContentPart || contentText || hasToolCall || usageMetadata) {
       this.chatRecordingService?.recordAssistantTurn({
         model,
         message: [
-          ...(thoughtText ? [{ text: thoughtText, thought: true }] : []),
+          ...(thoughtContentPart ? [thoughtContentPart] : []),
           ...(contentText ? [{ text: contentText }] : []),
           ...(hasToolCall
             ? contentParts
@@ -632,7 +643,7 @@ export class GeminiChat {
     this.history.push({
       role: 'model',
       parts: [
-        ...(thoughtText ? [{ text: thoughtText, thought: true }] : []),
+        ...(thoughtContentPart ? [thoughtContentPart] : []),
         ...consolidatedHistoryParts,
       ],
     });

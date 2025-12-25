@@ -39,7 +39,8 @@ export class DashScopeOpenAICompatibleProvider
     return (
       authType === AuthType.QWEN_OAUTH ||
       baseUrl === 'https://dashscope.aliyuncs.com/compatible-mode/v1' ||
-      baseUrl === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
+      baseUrl === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' ||
+      !baseUrl
     );
   }
 

@@ -7,16 +7,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createGeminiContentGenerator } from './index.js';
 import { GeminiContentGenerator } from './geminiContentGenerator.js';
-import { LoggingContentGenerator } from './loggingContentGenerator.js';
 import type { Config } from '../../config/config.js';
 import { AuthType } from '../contentGenerator.js';
 
 vi.mock('./geminiContentGenerator.js', () => ({
   GeminiContentGenerator: vi.fn().mockImplementation(() => ({})),
-}));
-
-vi.mock('./loggingContentGenerator.js', () => ({
-  LoggingContentGenerator: vi.fn().mockImplementation((wrapped) => wrapped),
 }));
 
 describe('createGeminiContentGenerator', () => {
@@ -31,7 +26,7 @@ describe('createGeminiContentGenerator', () => {
     } as unknown as Config;
   });
 
-  it('should create a GeminiContentGenerator wrapped in LoggingContentGenerator', () => {
+  it('should create a GeminiContentGenerator', () => {
     const config = {
       model: 'gemini-1.5-flash',
       apiKey: 'test-key',
@@ -41,7 +36,6 @@ describe('createGeminiContentGenerator', () => {
     const generator = createGeminiContentGenerator(config, mockConfig);
 
     expect(GeminiContentGenerator).toHaveBeenCalled();
-    expect(LoggingContentGenerator).toHaveBeenCalled();
     expect(generator).toBeDefined();
   });
 });

@@ -96,7 +96,6 @@ import {
 } from './constants.js';
 import { DEFAULT_QWEN_EMBEDDING_MODEL, DEFAULT_QWEN_MODEL } from './models.js';
 import { Storage } from './storage.js';
-import { DEFAULT_DASHSCOPE_BASE_URL } from '../core/openaiContentGenerator/constants.js';
 import { ChatRecordingService } from '../services/chatRecordingService.js';
 import {
   SessionService,
@@ -574,7 +573,7 @@ export class Config {
     this._generationConfig = {
       model: params.model,
       ...(params.generationConfig || {}),
-      baseUrl: params.generationConfig?.baseUrl || DEFAULT_DASHSCOPE_BASE_URL,
+      baseUrl: params.generationConfig?.baseUrl,
     };
     this.contentGeneratorConfig = this
       ._generationConfig as ContentGeneratorConfig;

@@ -720,66 +720,6 @@ describe('GeminiChat', () => {
       );
     });
 
-    it('should handle summarized thinking by conditionally including thoughts in history', async () => {
-      // Case 1: useSummarizedThinking is true -> thoughts NOT in history
-      vi.mocked(mockContentGenerator.useSummarizedThinking).mockReturnValue(
-        true,
-      );
-      const stream1 = (async function* () {
-        yield {
-          candidates: [
-            {
-              content: {
-                role: 'model',
-                parts: [{ thought: true, text: 'T1' }, { text: 'A1' }],
-              },
-              finishReason: 'STOP',
-            },
-          ],
-        } as unknown as GenerateContentResponse;
-      })();
-      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
-        stream1,
-      );
-
-      const res1 = await chat.sendMessageStream('m1', { message: 'h1' }, 'p1');
-      for await (const _ of res1);
-
-      const history1 = chat.getHistory();
-      expect(history1[1].parts).toEqual([{ text: 'A1' }]);
-
-      // Case 2: useSummarizedThinking is false -> thoughts ARE in history
-      chat.clearHistory();
-      vi.mocked(mockContentGenerator.useSummarizedThinking).mockReturnValue(
-        false,
-      );
-      const stream2 = (async function* () {
-        yield {
-          candidates: [
-            {
-              content: {
-                role: 'model',
-                parts: [{ thought: true, text: 'T2' }, { text: 'A2' }],
-              },
-              finishReason: 'STOP',
-            },
-          ],
-        } as unknown as GenerateContentResponse;
-      })();
-      vi.mocked(mockContentGenerator.generateContentStream).mockResolvedValue(
-        stream2,
-      );
-
-      const res2 = await chat.sendMessageStream('m1', { message: 'h1' }, 'p2');
-      for await (const _ of res2);
-
-      const history2 = chat.getHistory();
-      expect(history2[1].parts).toEqual([
-        { text: 'T2', thought: true },
-        { text: 'A2' },
-      ]);
-    });
-
     it('should keep parts with thoughtSignature when consolidating history', async () => {
       const stream = (async function* () {
         yield {
