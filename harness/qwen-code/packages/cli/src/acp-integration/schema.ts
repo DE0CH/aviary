@@ -255,7 +255,6 @@ export const authenticateUpdateSchema = z.object({
 
 export type AuthenticateUpdate = z.infer<typeof authenticateUpdateSchema>;
 
-// ACP `_meta` extensibility field: implementations MUST NOT assume keys.
 export const acpMetaSchema = z.record(z.unknown()).nullable().optional();
 
 export const modelIdSchema = z.string();
