@@ -231,7 +231,7 @@ export class ContentGenerationPipeline {
     const baseRequest: OpenAI.Chat.ChatCompletionCreateParams = {
       model: this.contentGeneratorConfig.model,
       messages,
-      ...this.buildSamplingParameters(request),
+      ...this.buildGenerateContentConfig(request),
     };
 
     // Add streaming options if present
@@ -253,7 +253,7 @@ export class ContentGenerationPipeline {
     return this.config.provider.buildRequest(baseRequest, userPromptId);
   }
 
-  private buildSamplingParameters(
+  private buildGenerateContentConfig(
     request: GenerateContentParameters,
   ): Record<string, unknown> {
     const defaultSamplingParams =
@@ -289,7 +289,7 @@ export class ContentGenerationPipeline {
       return value !== undefined ? { [key]: value } : {};
     };
 
-    const params = {
+    const params: Record<string, unknown> = {
       // Parameters with request fallback but no defaults
       ...addParameterIfDefined('temperature', 'temperature', 'temperature'),
       ...addParameterIfDefined('top_p', 'top_p', 'topP'),
@@ -310,9 +310,22 @@ export class ContentGenerationPipeline {
         'frequency_penalty',
         'frequencyPenalty',
       ),
+      ...this.buildReasoningConfig(),
     };
 
     return params;
+  }
+
+  private buildReasoningConfig(): Record<string, unknown> {
+    const reasoning = this.contentGeneratorConfig.reasoning;
+
+    if (reasoning === false) {
+      return {};
+    }
+
+    return {
+      reasoning_effort: reasoning?.effort ?? 'medium',
+    };
   }
 
   /**

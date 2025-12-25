@@ -65,9 +65,12 @@ export type ContentGeneratorConfig = {
     temperature?: number;
     max_tokens?: number;
   };
-  reasoning?: {
-    effort?: 'low' | 'medium' | 'high';
-  };
+  reasoning?:
+    | false
+    | {
+        effort?: 'low' | 'medium' | 'high';
+        budget_tokens?: number;
+      };
   proxy?: string | undefined;
   userAgent?: string;
   // Schema compliance mode for tool definitions

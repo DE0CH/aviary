@@ -205,7 +205,20 @@ export class AnthropicContentGenerator implements ContentGenerator {
       return undefined;
     }
 
-    const effort = this.contentGeneratorConfig.reasoning?.effort;
+    const reasoning = this.contentGeneratorConfig.reasoning;
+
+    if (reasoning === false) {
+      return undefined;
+    }
+
+    if (reasoning?.budget_tokens !== undefined) {
+      return {
+        type: 'enabled',
+        budget_tokens: reasoning.budget_tokens,
+      };
+    }
+
+    const effort = reasoning?.effort;
     const baseBudget =
       effort === 'low' ? 1024 : effort === 'high' ? 4096 : 2048;
     const budgetTokens = Math.min(baseBudget, Math.max(1, maxTokens));
