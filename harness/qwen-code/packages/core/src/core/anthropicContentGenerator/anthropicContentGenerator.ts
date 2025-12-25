@@ -47,7 +47,7 @@ export class AnthropicContentGenerator implements ContentGenerator {
 
   constructor(
     private contentGeneratorConfig: ContentGeneratorConfig,
-    private cliConfig: Config,
+    private readonly cliConfig: Config,
   ) {
     const defaultHeaders = this.buildHeaders();
     const baseURL = contentGeneratorConfig.baseUrl;
@@ -140,6 +140,7 @@ export class AnthropicContentGenerator implements ContentGenerator {
     const userAgent = `QwenCode/${version} (${process.platform}; ${process.arch})`;
     return {
       'User-Agent': userAgent,
+      'anthropic-beta': 'interleaved-thinking-2025-05-14',
     };
   }
 
