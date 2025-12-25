@@ -168,6 +168,27 @@ describe('AnthropicContentGenerator', () => {
     expect(headers['anthropic-beta']).not.toContain('effort-2025-11-24');
   });
 
+  it('omits the anthropic beta header when reasoning is disabled', async () => {
+    const { AnthropicContentGenerator } = await importGenerator();
+    void new AnthropicContentGenerator(
+      {
+        model: 'claude-test',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        timeout: 10_000,
+        maxRetries: 2,
+        samplingParams: {},
+        schemaCompliance: 'auto',
+        reasoning: false,
+      },
+      mockConfig,
+    );
+
+    const headers = (anthropicState.constructorOptions?.['defaultHeaders'] ||
+      {}) as Record<string, string>;
+    expect(headers['anthropic-beta']).toBeUndefined();
+  });
+
   describe('generateContent', () => {
     it('builds request with config sampling params (config overrides request) and thinking budget', async () => {
       const { AnthropicContentConverter } = await importConverter();
