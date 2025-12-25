@@ -255,8 +255,27 @@ export const authenticateUpdateSchema = z.object({
 
 export type AuthenticateUpdate = z.infer<typeof authenticateUpdateSchema>;
 
+// ACP `_meta` extensibility field: implementations MUST NOT assume keys.
+export const acpMetaSchema = z.record(z.unknown()).nullable().optional();
+
+export const modelIdSchema = z.string();
+
+export const modelInfoSchema = z.object({
+  _meta: acpMetaSchema,
+  description: z.string().nullable().optional(),
+  modelId: modelIdSchema,
+  name: z.string(),
+});
+
+export const sessionModelStateSchema = z.object({
+  _meta: acpMetaSchema,
+  availableModels: z.array(modelInfoSchema),
+  currentModelId: modelIdSchema,
+});
+
 export const newSessionResponseSchema = z.object({
   sessionId: z.string(),
+  models: sessionModelStateSchema,
 });
 
 export const loadSessionResponseSchema = z.null();
@@ -418,17 +437,11 @@ export const agentInfoSchema = z.object({
   version: z.string(),
 });
 
-export const modelInfoSchema = z.object({
-  name: z.string(),
-  contextLimit: z.number().optional().nullable(),
-});
-
 export const initializeResponseSchema = z.object({
   agentCapabilities: agentCapabilitiesSchema,
   agentInfo: agentInfoSchema,
   authMethods: z.array(authMethodSchema),
   modes: modesDataSchema,
-  modelInfo: modelInfoSchema.optional(),
   protocolVersion: z.number(),
 });
 

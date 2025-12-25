@@ -61,9 +61,20 @@ export interface SessionUpdateMeta {
   durationMs?: number | null;
 }
 
+export type AcpMeta = Record<string, unknown>;
+export type ModelId = string;
+
 export interface ModelInfo {
+  _meta?: AcpMeta | null;
+  description?: string | null;
+  modelId: ModelId;
   name: string;
-  contextLimit?: number | null;
+}
+
+export interface SessionModelState {
+  _meta?: AcpMeta | null;
+  availableModels: ModelInfo[];
+  currentModelId: ModelId;
 }
 
 export interface UserMessageChunkUpdate extends BaseSessionUpdate {

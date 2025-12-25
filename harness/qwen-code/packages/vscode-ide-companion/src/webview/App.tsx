@@ -46,6 +46,7 @@ import { FileIcon, UserIcon } from './components/icons/index.js';
 import { ApprovalMode, NEXT_APPROVAL_MODE } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import type { PlanEntry, UsageStatsPayload } from '../types/chatTypes.js';
+import type { ModelInfo } from '../types/acpTypes.js';
 import {
   DEFAULT_TOKEN_LIMIT,
   tokenLimit,
@@ -74,10 +75,7 @@ export const App: React.FC = () => {
   const [planEntries, setPlanEntries] = useState<PlanEntry[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true); // Track if we're still initializing/loading
-  const [modelInfo, setModelInfo] = useState<{
-    name: string;
-    contextLimit?: number | null;
-  } | null>(null);
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [usageStats, setUsageStats] = useState<UsageStatsPayload | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(
     null,
@@ -175,16 +173,24 @@ export const App: React.FC = () => {
     }
 
     const modelName =
-      modelInfo?.name && typeof modelInfo.name === 'string'
-        ? modelInfo.name
-        : undefined;
+      modelInfo?.modelId && typeof modelInfo.modelId === 'string'
+        ? modelInfo.modelId
+        : modelInfo?.name && typeof modelInfo.name === 'string'
+          ? modelInfo.name
+          : undefined;
 
     const derivedLimit =
       modelName && modelName.length > 0 ? tokenLimit(modelName) : undefined;
 
+    const metaLimitRaw = modelInfo?._meta?.['contextLimit'];
+    const metaLimit =
+      typeof metaLimitRaw === 'number' || metaLimitRaw === null
+        ? metaLimitRaw
+        : undefined;
+
     const limit =
       usageStats?.tokenLimit ??
-      modelInfo?.contextLimit ??
+      metaLimit ??
       derivedLimit ??
       DEFAULT_TOKEN_LIMIT;
 

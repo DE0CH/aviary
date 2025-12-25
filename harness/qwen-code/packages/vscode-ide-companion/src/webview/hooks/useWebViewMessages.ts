@@ -17,6 +17,7 @@ import type {
 } from '../../types/chatTypes.js';
 import type { ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
+import type { ModelInfo } from '../../types/acpTypes.js';
 
 const FORCE_CLEAR_STREAM_END_REASONS = new Set([
   'user_cancelled',
@@ -125,9 +126,7 @@ interface UseWebViewMessagesProps {
   // Usage stats setter
   setUsageStats?: (stats: UsageStatsPayload | undefined) => void;
   // Model info setter
-  setModelInfo?: (
-    info: { name: string; contextLimit?: number | null } | null,
-  ) => void;
+  setModelInfo?: (info: ModelInfo | null) => void;
 }
 
 /**
@@ -154,10 +153,7 @@ export const useWebViewMessages = ({
   // Track active long-running tool calls (execute/bash/command) so we can
   // keep the bottom "waiting" message visible until all of them complete.
   const activeExecToolCallsRef = useRef<Set<string>>(new Set());
-  const modelInfoRef = useRef<{
-    name: string;
-    contextLimit?: number | null;
-  } | null>(null);
+  const modelInfoRef = useRef<ModelInfo | null>(null);
   // Use ref to store callbacks to avoid useEffect dependency issues
   const handlersRef = useRef({
     sessionManagement,
@@ -256,13 +252,25 @@ export const useWebViewMessages = ({
         }
 
         case 'modelInfo': {
-          const info = message.data as
-            | { name?: string; contextLimit?: number | null }
-            | undefined;
-          if (info && typeof info.name === 'string') {
-            const normalized = {
-              name: info.name,
-              contextLimit: info.contextLimit,
+          const info = message.data as Partial<ModelInfo> | undefined;
+          if (
+            info &&
+            typeof info.name === 'string' &&
+            info.name.trim().length > 0
+          ) {
+            const modelId =
+              typeof info.modelId === 'string' && info.modelId.trim().length > 0
+                ? info.modelId.trim()
+                : info.name.trim();
+            const normalized: ModelInfo = {
+              modelId,
+              name: info.name.trim(),
+              ...(typeof info.description !== 'undefined'
+                ? { description: info.description ?? null }
+                : {}),
+              ...(typeof info._meta !== 'undefined'
+                ? { _meta: info._meta }
+                : {}),
             };
             modelInfoRef.current = normalized;
             handlers.setModelInfo?.(normalized);

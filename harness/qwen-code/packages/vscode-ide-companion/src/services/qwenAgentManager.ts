@@ -8,6 +8,7 @@ import type {
   AcpSessionUpdate,
   AcpPermissionRequest,
   AuthenticateUpdateNotification,
+  ModelInfo,
 } from '../types/acpTypes.js';
 import type { ApprovalModeValue } from '../types/approvalModeValueTypes.js';
 import { QwenSessionReader, type QwenSession } from './qwenSessionReader.js';
@@ -25,6 +26,7 @@ import {
 } from '../services/qwenConnectionHandler.js';
 import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { authMethod } from '../types/acpTypes.js';
+import { extractModelInfoFromNewSessionResult } from '../utils/acpModelInfo.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
 import { handleAuthenticateUpdate } from '../utils/authNotificationHandler.js';
 
@@ -178,23 +180,6 @@ export class QwenAgentManager {
             availableModes: modes.availableModes,
           });
         }
-
-        const modelInfo = obj['modelInfo'] as
-          | {
-              name?: string;
-              contextLimit?: number | null;
-            }
-          | undefined;
-        if (
-          modelInfo &&
-          typeof modelInfo.name === 'string' &&
-          this.callbacks.onModelInfo
-        ) {
-          this.callbacks.onModelInfo({
-            name: modelInfo.name,
-            contextLimit: modelInfo.contextLimit,
-          });
-        }
       } catch (err) {
         console.warn('[QwenAgentManager] onInitialized parse error:', err);
       }
@@ -213,12 +198,16 @@ export class QwenAgentManager {
     options?: AgentConnectOptions,
   ): Promise<QwenConnectionResult> {
     this.currentWorkingDir = workingDir;
-    return this.connectionHandler.connect(
+    const res = await this.connectionHandler.connect(
       this.connection,
       workingDir,
       cliEntryPath,
       options,
     );
+    if (res.modelInfo && this.callbacks.onModelInfo) {
+      this.callbacks.onModelInfo(res.modelInfo);
+    }
+    return res;
   }
 
   /**
@@ -1109,9 +1098,10 @@ export class QwenAgentManager {
 
     this.sessionCreateInFlight = (async () => {
       try {
+        let newSessionResult: unknown;
         // Try to create a new ACP session. If Qwen asks for auth, let it handle authentication.
         try {
-          await this.connection.newSession(workingDir);
+          newSessionResult = await this.connection.newSession(workingDir);
         } catch (err) {
           const requiresAuth = isAuthenticationRequiredError(err);
 
@@ -1133,7 +1123,7 @@ export class QwenAgentManager {
               );
               // Add a slight delay to ensure auth state is settled
               await new Promise((resolve) => setTimeout(resolve, 300));
-              await this.connection.newSession(workingDir);
+              newSessionResult = await this.connection.newSession(workingDir);
             } catch (reauthErr) {
               console.error(
                 '[QwenAgentManager] Re-authentication failed:',
@@ -1145,6 +1135,13 @@ export class QwenAgentManager {
             throw err;
           }
         }
+
+        const modelInfo =
+          extractModelInfoFromNewSessionResult(newSessionResult);
+        if (modelInfo && this.callbacks.onModelInfo) {
+          this.callbacks.onModelInfo(modelInfo);
+        }
+
         const newSessionId = this.connection.currentSessionId;
         console.log(
           '[QwenAgentManager] New session created with ID:',
@@ -1286,9 +1283,7 @@ export class QwenAgentManager {
   /**
    * Register callback for model info updates
    */
-  onModelInfo(
-    callback: (info: { name: string; contextLimit?: number | null }) => void,
-  ): void {
+  onModelInfo(callback: (info: ModelInfo) => void): void {
     this.callbacks.onModelInfo = callback;
     this.sessionUpdateHandler.updateCallbacks(this.callbacks);
   }

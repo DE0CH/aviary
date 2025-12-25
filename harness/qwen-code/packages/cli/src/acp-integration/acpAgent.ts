@@ -101,14 +101,6 @@ class GeminiAgent {
     }));
 
     const version = process.env['CLI_VERSION'] || process.version;
-    const modelName = this.config.getModel();
-    const modelInfo =
-      modelName && modelName.length > 0
-        ? {
-            name: modelName,
-            contextLimit: tokenLimit(modelName),
-          }
-        : undefined;
 
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
@@ -122,7 +114,6 @@ class GeminiAgent {
         currentModeId: currentApprovalMode as ApprovalModeValue,
         availableModes,
       },
-      modelInfo,
       agentCapabilities: {
         loadSession: true,
         promptCapabilities: {
@@ -175,9 +166,30 @@ class GeminiAgent {
     this.setupFileSystem(config);
 
     const session = await this.createAndStoreSession(config);
+    const configuredModel = (
+      config.getModel() ||
+      this.config.getModel() ||
+      ''
+    ).trim();
+    const modelId = configuredModel || 'default';
+    const modelName = configuredModel || modelId;
 
     return {
       sessionId: session.getId(),
+      models: {
+        currentModelId: modelId,
+        availableModels: [
+          {
+            modelId,
+            name: modelName,
+            description: null,
+            _meta: {
+              contextLimit: tokenLimit(modelId),
+            },
+          },
+        ],
+        _meta: null,
+      },
     };
   }
 
