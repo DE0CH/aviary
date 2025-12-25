@@ -27,7 +27,7 @@ import type { TextMessage } from './hooks/message/useMessageHandling.js';
 import type { ToolCallData } from './components/messages/toolcalls/ToolCall.js';
 import { PermissionDrawer } from './components/PermissionDrawer/PermissionDrawer.js';
 import { ToolCall } from './components/messages/toolcalls/ToolCall.js';
-import { hasToolCallOutput } from './components/messages/toolcalls/shared/utils.js';
+import { hasToolCallOutput } from './utils/utils.js';
 import { EmptyState } from './components/layout/EmptyState.js';
 import { Onboarding } from './components/layout/Onboarding.js';
 import { type CompletionItem } from '../types/completionItemTypes.js';
