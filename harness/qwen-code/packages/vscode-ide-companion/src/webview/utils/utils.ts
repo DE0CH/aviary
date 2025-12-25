@@ -42,7 +42,10 @@ export const extractCommandOutput = (text: string): string => {
 
   // Second try: Extract from structured text format
   // Look for "Output: " followed by content until "Error: " or end of string
-  const outputMatch = text.match(/Output:\s*([\s\S]*?)(?=\nError:|$)/i);
+  // Only match if there's actual content after "Output:" (not just whitespace)
+  // Avoid treating the next line (e.g. "Error: ...") as output when the Output line is empty.
+  // Intentionally do not allow `\s*` here since it would consume newlines.
+  const outputMatch = text.match(/Output:[ \t]*(.+?)(?=\nError:|$)/i);
   if (outputMatch && outputMatch[1]) {
     const output = outputMatch[1].trim();
     // Only return if there's meaningful content (not just "(none)" or empty)
@@ -59,10 +62,6 @@ export const extractCommandOutput = (text: string): string => {
     let inOutput = false;
 
     for (const line of lines) {
-      // Skip header lines
-      if (line.startsWith('Command:') || line.startsWith('Directory:')) {
-        continue;
-      }
       // Stop at metadata lines
       if (
         line.startsWith('Error:') ||
@@ -72,6 +71,10 @@ export const extractCommandOutput = (text: string): string => {
         line.startsWith('Process Group PGID:')
       ) {
         break;
+      }
+      // Skip header lines
+      if (line.startsWith('Command:') || line.startsWith('Directory:')) {
+        continue;
       }
       // Start collecting after "Output:" label
       if (line.startsWith('Output:')) {
