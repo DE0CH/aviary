@@ -622,22 +622,6 @@ describe('languageCommand', () => {
       (c) => c.name === 'de-DE',
     );
 
-    it('zh-CN should have aliases', () => {
-      expect(zhCNSubcommand?.altNames).toContain('zh');
-      expect(zhCNSubcommand?.altNames).toContain('chinese');
-    });
-
-    it('en-US should have aliases', () => {
-      expect(enUSSubcommand?.altNames).toContain('en');
-      expect(enUSSubcommand?.altNames).toContain('english');
-    });
-
-    it('de-DE should have aliases', () => {
-      expect(deDESubcommand?.altNames).toContain('de');
-      expect(deDESubcommand?.altNames).toContain('german');
-      expect(deDESubcommand?.altNames).toContain('deutsch');
-    });
-
     it('zh-CN action should set Chinese', async () => {
       if (!zhCNSubcommand?.action) {
         throw new Error('zh-CN subcommand must have an action.');

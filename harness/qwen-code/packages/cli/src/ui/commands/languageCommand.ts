@@ -280,7 +280,33 @@ export const languageCommand: SlashCommand = {
     context: CommandContext,
     args: string,
   ): Promise<SlashCommandActionReturn> => {
+    const { services } = context;
+    if (!services.config) {
+      return {
+        type: 'message',
+        messageType: 'error',
+        content: t('Configuration not available.'),
+      };
+    }
+
     const trimmedArgs = args.trim();
+
+    // Handle subcommands if called directly via action (for tests/backward compatibility)
+    const parts = trimmedArgs.split(/\s+/);
+    const firstArg = parts[0].toLowerCase();
+    const subArgs = parts.slice(1).join(' ');
+
+    if (firstArg === 'ui' || firstArg === 'output') {
+      const subCommand = languageCommand.subCommands?.find(
+        (s) => s.name === firstArg,
+      );
+      if (subCommand?.action) {
+        return subCommand.action(
+          context,
+          subArgs,
+        ) as Promise<SlashCommandActionReturn>;
+      }
+    }
 
     // If no arguments, show current language settings and usage
     if (!trimmedArgs) {
