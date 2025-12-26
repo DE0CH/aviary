@@ -23,6 +23,7 @@ import {
 import { createNonInteractiveUI } from './ui/noninteractive/nonInteractiveUi.js';
 import type { LoadedSettings } from './config/settings.js';
 import type { SessionStatsState } from './ui/contexts/SessionContext.js';
+import { t } from './i18n/index.js';
 
 /**
  * Built-in commands that are allowed in non-interactive modes (CLI and ACP).
@@ -112,13 +113,11 @@ function handleCommandResult(
         messages: result.messages,
       };
 
-    //
     /**
      * Currently return types below are never generated due to the
      * whitelist of allowed slash commands in ACP and non-interactive mode.
      * We'll try to add more supported return types in the future.
      */
-
     case 'tool':
       return {
         type: 'unsupported',
@@ -246,28 +245,47 @@ export const handleSlashCommand = async (
 
   const allowedBuiltinSet = new Set(allowedBuiltinCommandNames ?? []);
 
-  // Only load BuiltinCommandLoader if there are allowed built-in commands
-  const loaders =
-    allowedBuiltinSet.size > 0
-      ? [new BuiltinCommandLoader(config), new FileCommandLoader(config)]
-      : [new FileCommandLoader(config)];
+  // Load all commands to check if the command exists but is not allowed
+  const allLoaders = [
+    new BuiltinCommandLoader(config),
+    new FileCommandLoader(config),
+  ];
 
   const commandService = await CommandService.create(
-    loaders,
+    allLoaders,
     abortController.signal,
   );
-  const commands = commandService.getCommands();
+  const allCommands = commandService.getCommands();
   const filteredCommands = filterCommandsForNonInteractive(
-    commands,
+    allCommands,
     allowedBuiltinSet,
   );
 
+  // First, try to parse with filtered commands
   const { commandToExecute, args } = parseSlashCommand(
     rawQuery,
     filteredCommands,
   );
 
   if (!commandToExecute) {
+    // Check if this is a known command that's just not allowed
+    const { commandToExecute: knownCommand } = parseSlashCommand(
+      rawQuery,
+      allCommands,
+    );
+
+    if (knownCommand) {
+      // Command exists but is not allowed in non-interactive mode
+      return {
+        type: 'unsupported',
+        reason: t(
+          'The command "/{{command}}" is not supported in non-interactive mode.',
+          { command: knownCommand.name },
+        ),
+        originalType: 'filtered_command',
+      };
+    }
+
     return { type: 'no_command' };
   }
 

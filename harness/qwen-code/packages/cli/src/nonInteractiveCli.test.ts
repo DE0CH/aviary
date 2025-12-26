@@ -68,6 +68,7 @@ describe('runNonInteractive', () => {
   let mockShutdownTelemetry: Mock;
   let consoleErrorSpy: MockInstance;
   let processStdoutSpy: MockInstance;
+  let processStderrSpy: MockInstance;
   let mockGeminiClient: {
     sendMessageStream: Mock;
     getChatRecordingService: Mock;
@@ -85,6 +86,9 @@ describe('runNonInteractive', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     processStdoutSpy = vi
       .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    processStderrSpy = vi
+      .spyOn(process.stderr, 'write')
       .mockImplementation(() => true);
     vi.spyOn(process, 'exit').mockImplementation((code) => {
       throw new Error(`process.exit(${code}) called`);
@@ -854,7 +858,7 @@ describe('runNonInteractive', () => {
     expect(processStdoutSpy).toHaveBeenCalledWith('Response from command');
   });
 
-  it('should throw FatalInputError if a command requires confirmation', async () => {
+  it('should handle command that requires confirmation by returning early', async () => {
     const mockCommand = {
       name: 'confirm',
       description: 'a command that needs confirmation',
@@ -866,15 +870,16 @@ describe('runNonInteractive', () => {
     };
     mockGetCommands.mockReturnValue([mockCommand]);
 
-    await expect(
-      runNonInteractive(
-        mockConfig,
-        mockSettings,
-        '/confirm',
-        'prompt-id-confirm',
-      ),
-    ).rejects.toThrow(
-      'Shell command confirmation is not supported in non-interactive mode. Use YOLO mode or pre-approve commands.',
+    await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      '/confirm',
+      'prompt-id-confirm',
+    );
+
+    // Should write error message to stderr
+    expect(processStderrSpy).toHaveBeenCalledWith(
+      'Shell command confirmation is not supported in non-interactive mode. Use YOLO mode or pre-approve commands.\n',
     );
   });
 
@@ -911,7 +916,30 @@ describe('runNonInteractive', () => {
     expect(processStdoutSpy).toHaveBeenCalledWith('Response to unknown');
   });
 
-  it('should throw for unhandled command result types', async () => {
+  it('should handle known but unsupported slash commands like /help by returning early', async () => {
+    // Mock a built-in command that exists but is not in the allowed list
+    const mockHelpCommand = {
+      name: 'help',
+      description: 'Show help',
+      kind: CommandKind.BUILT_IN,
+      action: vi.fn(),
+    };
+    mockGetCommands.mockReturnValue([mockHelpCommand]);
+
+    await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      '/help',
+      'prompt-id-help',
+    );
+
+    // Should write error message to stderr
+    expect(processStderrSpy).toHaveBeenCalledWith(
+      'The command "/help" is not supported in non-interactive mode.\n',
+    );
+  });
+
+  it('should handle unhandled command result types by returning early with error', async () => {
     const mockCommand = {
       name: 'noaction',
       description: 'unhandled type',
@@ -922,14 +950,17 @@ describe('runNonInteractive', () => {
     };
     mockGetCommands.mockReturnValue([mockCommand]);
 
-    await expect(
-      runNonInteractive(
-        mockConfig,
-        mockSettings,
-        '/noaction',
-        'prompt-id-unhandled',
-      ),
-    ).rejects.toThrow('Unknown command result type: unhandled');
+    await runNonInteractive(
+      mockConfig,
+      mockSettings,
+      '/noaction',
+      'prompt-id-unhandled',
+    );
+
+    // Should write error message to stderr
+    expect(processStderrSpy).toHaveBeenCalledWith(
+      'Unknown command result type: unhandled\n',
+    );
   });
 
   it('should pass arguments to the slash command action', async () => {

@@ -260,7 +260,8 @@ export default {
   ', Tab to change focus': ', Tab для смены фокуса',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     'Для применения изменений необходимо перезапустить Qwen Code. Нажмите r для выхода и применения изменений.',
-
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    'Команда "/{{command}}" не поддерживается в неинтерактивном режиме.',
   // ============================================================================
   // Метки настроек
   // ============================================================================

@@ -249,6 +249,8 @@ export default {
   ', Tab to change focus': '，Tab 切换焦点',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     '要查看更改，必须重启 Qwen Code。按 r 退出并立即应用更改。',
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    '不支持在非交互模式下使用命令 "/{{command}}"。',
   // ============================================================================
   // Settings Labels
   // ============================================================================

@@ -205,13 +205,19 @@ export async function runNonInteractive(
               return;
             }
             case 'stream_messages':
-              // ACP exclusive - should not reach here in non-interactive mode
               throw new FatalInputError(
                 'Stream messages mode is not supported in non-interactive CLI',
               );
-              break;
-            case 'unsupported':
-              throw new FatalInputError(slashCommandResult.reason);
+            case 'unsupported': {
+              await emitNonInteractiveFinalMessage({
+                message: slashCommandResult.reason,
+                isError: true,
+                adapter,
+                config,
+                startTimeMs: startTime,
+              });
+              return;
+            }
             case 'no_command':
               break;
             default: {

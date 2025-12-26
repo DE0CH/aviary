@@ -258,6 +258,8 @@ export default {
   ', Tab to change focus': ', Tab to change focus',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.',
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    'The command "/{{command}}" is not supported in non-interactive mode.',
   // ============================================================================
   // Settings Labels
   // ============================================================================
