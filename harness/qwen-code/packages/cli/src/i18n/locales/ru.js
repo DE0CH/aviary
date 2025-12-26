@@ -260,7 +260,8 @@ export default {
   ', Tab to change focus': ', Tab для смены фокуса',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     'Для применения изменений необходимо перезапустить Qwen Code. Нажмите r для выхода и применения изменений.',
-
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    'Команда "/{{command}}" не поддерживается в неинтерактивном режиме.',
   // ============================================================================
   // Метки настроек
   // ============================================================================
@@ -604,6 +605,12 @@ export default {
     'Не найдено диалогов для создания сводки.',
   'Failed to generate project context summary: {{error}}':
     'Не удалось сгенерировать сводку контекста проекта: {{error}}',
+  'Saved project summary to {{filePathForDisplay}}.':
+    'Сводка проекта сохранена в {{filePathForDisplay}}',
+  'Saving project summary...': 'Сохранение сводки проекта...',
+  'Generating project summary...': 'Генерация сводки проекта...',
+  'Failed to generate summary - no text content received from LLM response':
+    'Не удалось сгенерировать сводку - не получен текстовый контент из ответа LLM',
 
   // ============================================================================
   // Команды - Модель

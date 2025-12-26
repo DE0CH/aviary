@@ -249,6 +249,8 @@ export default {
   ', Tab to change focus': '，Tab 切换焦点',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     '要查看更改，必须重启 Qwen Code。按 r 退出并立即应用更改。',
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    '不支持在非交互模式下使用命令 "/{{command}}"。',
   // ============================================================================
   // Settings Labels
   // ============================================================================
@@ -560,6 +562,12 @@ export default {
   'No conversation found to summarize.': '未找到要总结的对话',
   'Failed to generate project context summary: {{error}}':
     '生成项目上下文摘要失败：{{error}}',
+  'Saved project summary to {{filePathForDisplay}}.':
+    '项目摘要已保存到 {{filePathForDisplay}}',
+  'Saving project summary...': '正在保存项目摘要...',
+  'Generating project summary...': '正在生成项目摘要...',
+  'Failed to generate summary - no text content received from LLM response':
+    '生成摘要失败 - 未从 LLM 响应中接收到文本内容',
 
   // ============================================================================
   // Commands - Model

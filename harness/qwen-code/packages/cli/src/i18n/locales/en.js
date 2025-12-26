@@ -258,6 +258,8 @@ export default {
   ', Tab to change focus': ', Tab to change focus',
   'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.':
     'To see changes, Qwen Code must be restarted. Press r to exit and apply changes now.',
+  'The command "/{{command}}" is not supported in non-interactive mode.':
+    'The command "/{{command}}" is not supported in non-interactive mode.',
   // ============================================================================
   // Settings Labels
   // ============================================================================
@@ -590,6 +592,12 @@ export default {
   'No conversation found to summarize.': 'No conversation found to summarize.',
   'Failed to generate project context summary: {{error}}':
     'Failed to generate project context summary: {{error}}',
+  'Saved project summary to {{filePathForDisplay}}.':
+    'Saved project summary to {{filePathForDisplay}}.',
+  'Saving project summary...': 'Saving project summary...',
+  'Generating project summary...': 'Generating project summary...',
+  'Failed to generate summary - no text content received from LLM response':
+    'Failed to generate summary - no text content received from LLM response',
 
   // ============================================================================
   // Commands - Model
