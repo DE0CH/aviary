@@ -52,11 +52,11 @@ function formatUiLanguageDisplay(lang: SupportedLanguage): string {
 }
 
 function sanitizeLanguageForMarker(language: string): string {
-  // HTML comments cannot contain "--" or end marker "-->" safely.
+  // HTML comments cannot contain "--" or end markers like "-->" or "--!>" safely.
   // Also avoid newlines to keep the marker single-line and robust to parsing.
   return language
     .replace(/[\r\n]/g, ' ')
-    .replace(/-->/g, '')
+    .replace(/--!?>/g, '')
     .replace(/--/g, '');
 }
 
