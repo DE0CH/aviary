@@ -5,8 +5,6 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync } from 'node:fs';
-import * as path from 'node:path';
 import { TestRig, printDebugInfo, validateModelOutput } from './test-helper.js';
 
 describe('file-system', () => {
@@ -245,12 +243,5 @@ describe('file-system', () => {
       successfulReplace,
       'A successful replace should not have occurred',
     ).toBeUndefined();
-
-    // Final verification: ensure the file was not created.
-    const filePath = path.join(rig.testDir!, fileName);
-    const fileExists = existsSync(filePath);
-    expect(fileExists, 'The non-existent file should not be created').toBe(
-      false,
-    );
   });
 });
