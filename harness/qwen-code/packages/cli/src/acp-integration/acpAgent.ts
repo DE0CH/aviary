@@ -19,6 +19,7 @@ import {
   type Config,
   type ConversationRecord,
   type DeviceAuthorizationData,
+  tokenLimit,
 } from '@qwen-code/qwen-code-core';
 import type { ApprovalModeValue } from './schema.js';
 import * as acp from './acp.js';
@@ -165,9 +166,30 @@ class GeminiAgent {
     this.setupFileSystem(config);
 
     const session = await this.createAndStoreSession(config);
+    const configuredModel = (
+      config.getModel() ||
+      this.config.getModel() ||
+      ''
+    ).trim();
+    const modelId = configuredModel || 'default';
+    const modelName = configuredModel || modelId;
 
     return {
       sessionId: session.getId(),
+      models: {
+        currentModelId: modelId,
+        availableModels: [
+          {
+            modelId,
+            name: modelName,
+            description: null,
+            _meta: {
+              contextLimit: tokenLimit(modelId),
+            },
+          },
+        ],
+        _meta: null,
+      },
     };
   }
 
