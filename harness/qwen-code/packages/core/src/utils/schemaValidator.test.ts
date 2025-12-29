@@ -184,7 +184,9 @@ describe('SchemaValidator', () => {
       };
       const params = { options: { enabled: 'true' } };
       expect(SchemaValidator.validate(nestedSchema, params)).toBeNull();
-      expect((params.options as { enabled: boolean }).enabled).toBe(true);
+      expect((params.options as unknown as { enabled: boolean }).enabled).toBe(
+        true,
+      );
     });
 
     it('should not affect non-boolean strings', () => {
