@@ -76,7 +76,9 @@ class TransportOptionsAdapter {
     }
 
     private TransportOptions addDefaultTransportOptions(TransportOptions userTransportOptions) {
-        TransportOptions transportOptions = userTransportOptions.clone();
+        TransportOptions transportOptions = Optional.ofNullable(userTransportOptions)
+                .map(TransportOptions::clone)
+                .orElse(new TransportOptions());
 
         if (StringUtils.isBlank(transportOptions.getPathToQwenExecutable())) {
             transportOptions.setPathToQwenExecutable("qwen");

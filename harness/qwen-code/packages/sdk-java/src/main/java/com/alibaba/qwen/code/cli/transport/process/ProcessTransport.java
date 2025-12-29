@@ -1,5 +1,6 @@
 package com.alibaba.qwen.code.cli.transport.process;
 
+import com.alibaba.qwen.code.cli.transport.Transport;
 import com.alibaba.qwen.code.cli.transport.TransportOptions;
 
 import org.apache.commons.lang3.exception.ContextedRuntimeException;
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
-public class ProcessTransport {
+public class ProcessTransport implements Transport {
     private static final Logger log = LoggerFactory.getLogger(ProcessTransport.class);
     TransportOptionsAdapter transportOptionsAdapter;
 
@@ -30,6 +31,10 @@ public class ProcessTransport {
     protected BufferedWriter processInput;
     protected BufferedReader processOutput;
     protected BufferedReader processError;
+
+    public ProcessTransport() throws IOException {
+        this(new TransportOptions());
+    }
 
     public ProcessTransport(TransportOptions transportOptions) throws IOException {
         this.transportOptionsAdapter = new TransportOptionsAdapter(transportOptions);
@@ -56,6 +61,7 @@ public class ProcessTransport {
         startErrorReading();
     }
 
+    @Override
     public void close() throws IOException {
         if (processInput != null) {
             processInput.close();
@@ -71,6 +77,12 @@ public class ProcessTransport {
         }
     }
 
+    @Override
+    public boolean isAvailable() {
+        return process != null && process.isAlive();
+    }
+
+    @Override
     public String inputWaitForOneLine(String message) throws IOException, ExecutionException, InterruptedException, TimeoutException {
         return inputWaitForOneLine(message, turnTimeoutMs);
     }
@@ -106,6 +118,7 @@ public class ProcessTransport {
         }
     }
 
+    @Override
     public void inputWaitForMultiLine(String message, Function<String, Boolean> callBackFunction) throws IOException {
         inputWaitForMultiLine(message, callBackFunction, turnTimeoutMs);
     }
@@ -132,6 +145,7 @@ public class ProcessTransport {
         }
     }
 
+    @Override
     public void inputNoWaitResponse(String message) throws IOException {
         log.debug("input message to agent: {}", message);
         processInput.write(message);
