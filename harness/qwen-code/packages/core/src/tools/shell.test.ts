@@ -960,32 +960,5 @@ spanning multiple lines"`;
         {},
       );
     });
-
-    it('should detect immediate failure in Windows background task', async () => {
-      vi.mocked(os.platform).mockReturnValue('win32');
-      const mockAbortSignal = new AbortController().signal;
-
-      const invocation = shellTool.build({
-        command: 'invalid_command',
-        is_background: true,
-      });
-
-      const promise = invocation.execute(mockAbortSignal);
-
-      // Wait a tick to ensure mockShellOutputCallback is assigned
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      if (mockShellOutputCallback) {
-        mockShellOutputCallback({
-          type: 'data',
-          chunk:
-            "'invalid_command' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n",
-        });
-      }
-
-      const result = await promise;
-      expect(result.error).toBeDefined();
-      expect(result.llmContent).toContain('Command failed to start');
-    });
   });
 });

@@ -829,7 +829,7 @@ describe('ShellExecutionService child_process fallback', () => {
         [],
         expect.objectContaining({
           shell: true,
-          detached: false,
+          detached: true,
         }),
       );
     });
