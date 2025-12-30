@@ -121,6 +121,7 @@ export async function showResumeSessionPicker(
       if (process.stdin.isTTY && !wasRaw && !selectedId) {
         process.stdin.setRawMode(false);
       }
+
       resolve(selectedId);
     });
   });
