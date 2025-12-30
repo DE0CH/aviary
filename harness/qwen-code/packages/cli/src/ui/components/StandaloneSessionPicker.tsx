@@ -87,7 +87,13 @@ export async function showResumeSessionPicker(
     let selectedId: string | undefined;
 
     const { unmount, waitUntilExit } = render(
-      <KeypressProvider kittyProtocolEnabled={false}>
+      <KeypressProvider
+        kittyProtocolEnabled={false}
+        pasteWorkaround={
+          process.platform === 'win32' ||
+          parseInt(process.versions.node.split('.')[0], 10) < 20
+        }
+      >
         <StandalonePickerScreen
           sessionService={sessionService}
           onSelect={(id) => {
@@ -115,7 +121,6 @@ export async function showResumeSessionPicker(
       if (process.stdin.isTTY && !wasRaw && !selectedId) {
         process.stdin.setRawMode(false);
       }
-
       resolve(selectedId);
     });
   });
