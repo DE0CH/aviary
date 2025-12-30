@@ -21,34 +21,43 @@ public class CLIControlResponse<R> extends MessageBase {
         this.response = response;
     }
 
+    public Response<R> createResponse() {
+        Response<R> response = new Response<>();
+        this.setResponse(response);
+        return response;
+    }
+
     public static class Response<R> {
         @JSONField(name = "request_id")
         private String requestId;
-        private String subtype;
+        private String subtype = "success";
         R response;
 
         public String getRequestId() {
             return requestId;
         }
 
-        public void setRequestId(String requestId) {
+        public Response<R> setRequestId(String requestId) {
             this.requestId = requestId;
+            return this;
         }
 
         public String getSubtype() {
             return subtype;
         }
 
-        public void setSubtype(String subtype) {
+        public Response<R> setSubtype(String subtype) {
             this.subtype = subtype;
+            return this;
         }
 
         public R getResponse() {
             return response;
         }
 
-        public void setResponse(R response) {
+        public Response<R> setResponse(R response) {
             this.response = response;
+            return this;
         }
     }
 }

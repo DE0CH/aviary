@@ -3,6 +3,8 @@ package com.alibaba.qwen.code.cli.transport;
 import java.util.List;
 import java.util.Map;
 
+import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+
 public class TransportOptions implements Cloneable {
     private String pathToQwenExecutable;
     private String cwd;
@@ -17,6 +19,7 @@ public class TransportOptions implements Cloneable {
     private Boolean includePartialMessages;
     private Long turnTimeoutMs;
     private Long messageTimeoutMs;
+    private String resumeSessionId;
 
     public String getPathToQwenExecutable() {
         return pathToQwenExecutable;
@@ -120,6 +123,14 @@ public class TransportOptions implements Cloneable {
 
     public void setMessageTimeoutMs(Long messageTimeoutMs) {
         this.messageTimeoutMs = messageTimeoutMs;
+    }
+
+    public String getResumeSessionId() {
+        return resumeSessionId;
+    }
+
+    public void setResumeSessionId(String resumeSessionId) {
+        this.resumeSessionId = resumeSessionId;
     }
 
     @Override

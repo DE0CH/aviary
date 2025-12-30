@@ -72,6 +72,11 @@ class TransportOptionsAdapter {
         if (transportOptions.getIncludePartialMessages() != null && transportOptions.getIncludePartialMessages()) {
             args.add("--include-partial-messages");
         }
+
+        if (StringUtils.isNotBlank(transportOptions.getResumeSessionId())) {
+            args.add("--resume");
+            args.add(transportOptions.getResumeSessionId());
+        }
         return args.toArray(new String[] {});
     }
 

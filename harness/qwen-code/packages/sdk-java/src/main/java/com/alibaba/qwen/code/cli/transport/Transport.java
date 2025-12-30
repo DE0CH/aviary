@@ -6,6 +6,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 public interface Transport {
+    TransportOptions getTransportOptions();
+
+    void start() throws IOException;
+
     void close() throws IOException;
 
     boolean isAvailable();

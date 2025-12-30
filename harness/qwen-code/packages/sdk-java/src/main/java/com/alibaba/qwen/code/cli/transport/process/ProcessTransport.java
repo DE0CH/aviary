@@ -22,10 +22,9 @@ import java.util.function.Function;
 
 public class ProcessTransport implements Transport {
     private static final Logger log = LoggerFactory.getLogger(ProcessTransport.class);
-    TransportOptionsAdapter transportOptionsAdapter;
-
-    protected final Long turnTimeoutMs;
-    protected final Long messageTimeoutMs;
+    private final TransportOptions transportOptions;
+    protected Long turnTimeoutMs;
+    protected Long messageTimeoutMs;
 
     protected Process process;
     protected BufferedWriter processInput;
@@ -37,13 +36,21 @@ public class ProcessTransport implements Transport {
     }
 
     public ProcessTransport(TransportOptions transportOptions) throws IOException {
-        this.transportOptionsAdapter = new TransportOptionsAdapter(transportOptions);
-        turnTimeoutMs = transportOptionsAdapter.getHandledTransportOptions().getTurnTimeoutMs();
-        messageTimeoutMs = transportOptionsAdapter.getHandledTransportOptions().getMessageTimeoutMs();
+        this.transportOptions = transportOptions;
         start();
     }
 
-    protected void start() throws IOException {
+    @Override
+    public TransportOptions getTransportOptions() {
+        return transportOptions;
+    }
+
+    @Override
+    public void start() throws IOException {
+        TransportOptionsAdapter transportOptionsAdapter = new TransportOptionsAdapter(transportOptions);
+        this.turnTimeoutMs = transportOptionsAdapter.getHandledTransportOptions().getTurnTimeoutMs();
+        this.messageTimeoutMs = transportOptionsAdapter.getHandledTransportOptions().getMessageTimeoutMs();
+
         String[] commandArgs = transportOptionsAdapter.buildCommandArgs();
         log.debug("trans to command args: {}", transportOptionsAdapter);
 

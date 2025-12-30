@@ -1,4 +1,4 @@
-package com.alibaba.qwen.code.cli.transport;
+package com.alibaba.qwen.code.cli.protocol.data;
 
 public enum PermissionMode {
     DEFAULT("default"),

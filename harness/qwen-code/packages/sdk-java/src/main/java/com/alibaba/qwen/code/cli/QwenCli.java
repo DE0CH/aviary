@@ -31,12 +31,12 @@ public class QwenCli {
         try {
             session.sendPrompt(prompt, new SessionEventSimpleConsumers() {
                 @Override
-                public void onSystemMessage(SDKSystemMessage systemMessage) {
+                public void onSystemMessage(Session session, SDKSystemMessage systemMessage) {
                     response.add(systemMessage);
                 }
 
                 @Override
-                public void onAssistantMessage(SDKAssistantMessage assistantMessage) {
+                public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
                     response.add(assistantMessage);
                 }
             });

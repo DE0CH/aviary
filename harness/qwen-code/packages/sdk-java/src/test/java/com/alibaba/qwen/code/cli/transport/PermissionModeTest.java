@@ -1,5 +1,7 @@
 package com.alibaba.qwen.code.cli.transport;
 
+import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
