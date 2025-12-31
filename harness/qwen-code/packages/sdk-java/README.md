@@ -26,8 +26,7 @@ implementation 'com.alibaba:qwencode-sdk-java:0.0.1'
 
 - Java >= 1.8
 - Maven >= 3.6.0 (for building from source)
-
-> From v0.1.1, the CLI is bundled with the SDK. So no standalone CLI installation is needed.
+- Qwen Code CLI: The SDK communicates with the Qwen Code CLI executable. By default, the SDK looks for a `qwen` command in the system PATH.
 
 ## Quick Start
 
