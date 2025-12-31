@@ -42,7 +42,7 @@ class TransportOptionsAdapter {
         }
 
         if (transportOptions.getPermissionMode() != null) {
-            args.add("--permission-mode");
+            args.add("--approval-mode");
             args.add(transportOptions.getPermissionMode().getValue());
         }
 

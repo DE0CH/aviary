@@ -115,6 +115,8 @@ The Qwen Code Java SDK follows a layered architecture that abstracts the communi
 
 The architecture allows for both simple usage through static methods in `QwenCodeCli` and more advanced usage through direct `Session` management with custom event handlers and transport options.
 
+## Usage
+
 ### Session Event Consumers
 
 The SDK allows you to customize how events from the CLI are handled using event consumers. The `SessionEventConsumers` interface provides callbacks for different types of messages during a session:
@@ -603,6 +605,112 @@ public class ModifyThreadPoolExample {
 ```
 
 Note that when modifying the default executor directly, you're changing the properties of the shared static instance that will affect all subsequent operations in the application. If you need different configurations for different parts of your application, using the supplier approach is recommended.
+
+### Transport Options
+
+The `TransportOptions` class allows you to configure how the SDK communicates with the Qwen Code CLI. Below are all the available options with their descriptions:
+
+- **`pathToQwenExecutable`**: Specifies the path to the Qwen Code CLI executable. By default, the SDK looks for a `qwen` command in the system PATH.
+  - Type: `String`
+  - Example: `new TransportOptions().setPathToQwenExecutable("/usr/local/bin/qwen")`
+
+- **`cwd`**: Sets the working directory for the CLI process. This affects where the CLI operates and where relative paths are resolved from.
+  - Type: `String`
+  - Example: `new TransportOptions().setCwd("/path/to/project")`
+
+- **`model`**: Specifies the AI model to use for the session (e.g., "qwen-max", "qwen-plus", "qwen3-coder-flash", etc.).
+  - Type: `String`
+  - Example: `new TransportOptions().setModel("qwen3-coder-flash")`
+
+- **`permissionMode`**: Sets the permission mode that controls tool execution. Available modes are:
+  - `PermissionMode.DEFAULT`: Write tools are denied unless approved via `canUseTool` callback or in `allowedTools`. Read-only tools execute without confirmation.
+  - `PermissionMode.PLAN`: Blocks all write tools, instructing AI to present a plan first.
+  - `PermissionMode.AUTO_EDIT`: Auto-approve edit tools (edit, write_file) while other tools require confirmation.
+  - `PermissionMode.YOLO`: All tools execute automatically without confirmation.
+  - Type: `PermissionMode`
+  - Example: `new TransportOptions().setPermissionMode(PermissionMode.YOLO)`
+
+- **`env`**: A map of environment variables to pass to the CLI process.
+  - Type: `Map<String, String>`
+  - Example: `new TransportOptions().setEnv(Map.of("ENV_VAR", "value"))`
+
+- **`maxSessionTurns`**: Limits the number of conversation turns in a session.
+  - Type: `Integer`
+  - Example: `new TransportOptions().setMaxSessionTurns(10)`
+
+- **`coreTools`**: Specifies a list of core tools that should be available to the AI.
+  - Type: `List<String>`
+  - Example: `new TransportOptions().setCoreTools(List.of("read_file", "write_file"))`
+
+- **`excludeTools`**: Specifies a list of tools to exclude from being available to the AI.
+  - Type: `List<String>`
+  - Example: `new TransportOptions().setExcludeTools(List.of("shell"))`
+
+- **`allowedTools`**: Specifies a list of tools that are pre-approved for use without additional confirmation.
+  - Type: `List<String>`
+  - Example: `new TransportOptions().setAllowedTools(List.of("read_file", "list_directory"))`
+
+- **`authType`**: Specifies the authentication type to use for the session.
+  - Type: `String`
+  - Example: `new TransportOptions().setAuthType("bearer")`
+
+- **`includePartialMessages`**: When true, enables receiving partial messages during streaming responses.
+  - Type: `Boolean`
+  - Example: `new TransportOptions().setIncludePartialMessages(true)`
+
+- **`skillsEnable`**: Enables or disables skills functionality for the session.
+  - Type: `Boolean`
+  - Example: `new TransportOptions().setSkillsEnable(true)`
+
+- **`turnTimeout`**: Sets the timeout for a complete turn of conversation (default: 60 seconds).
+  - Type: `Timeout`
+  - Example: `new TransportOptions().setTurnTimeout(new Timeout(120L, TimeUnit.SECONDS))`
+
+- **`messageTimeout`**: Sets the timeout for individual messages within a turn (default: 60 seconds).
+  - Type: `Timeout`
+  - Example: `new TransportOptions().setMessageTimeout(new Timeout(90L, TimeUnit.SECONDS))`
+
+- **`resumeSessionId`**: Specifies the ID of a previous session to resume.
+  - Type: `String`
+  - Example: `new TransportOptions().setResumeSessionId("session-12345")`
+
+- **`otherOptions`**: Allows passing additional command-line options directly to the CLI.
+  - Type: `List<String>`
+  - Example: `new TransportOptions().setOtherOptions(List.of("--verbose", "--no-cache"))`
+
+Example of using TransportOptions:
+
+```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
+import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
+import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+import com.alibaba.qwen.code.cli.utils.Timeout;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+public class TransportOptionsExample {
+    public static void main(String[] args) {
+        TransportOptions options = new TransportOptions()
+            .setModel("qwen3-coder-flash")
+            .setPermissionMode(PermissionMode.AUTO_EDIT)
+            .setCwd("/path/to/working/directory")
+            .setEnv(Map.of("CUSTOM_VAR", "value"))
+            .setIncludePartialMessages(true)
+            .setTurnTimeout(new Timeout(120L, TimeUnit.SECONDS))
+            .setMessageTimeout(new Timeout(90L, TimeUnit.SECONDS))
+            .setAllowedTools(List.of("read_file", "write_file", "list_directory"));
+
+        try (Session session = QwenCodeCli.newSession(options)) {
+            // Use the session with custom options
+            List<String> result = session.sendPrompt("Analyze the current project", new SessionEventSimpleConsumers());
+            result.forEach(System.out::println);
+        }
+    }
+}
+```
 
 ### Error Handling
 
