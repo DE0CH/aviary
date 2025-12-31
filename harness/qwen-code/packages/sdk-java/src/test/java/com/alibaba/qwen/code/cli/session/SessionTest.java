@@ -2,8 +2,10 @@ package com.alibaba.qwen.code.cli.session;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.qwen.code.cli.QwenCodeCli;
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Allow;
@@ -19,9 +21,8 @@ import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
 import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
-import com.alibaba.qwen.code.cli.transport.Transport;
 import com.alibaba.qwen.code.cli.transport.TransportOptions;
-import com.alibaba.qwen.code.cli.transport.process.ProcessTransport;
+import com.alibaba.qwen.code.cli.utils.Timeout;
 
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
@@ -34,8 +35,7 @@ class SessionTest {
 
     @Test
     void partialSendPromptSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
-        Transport transport = new ProcessTransport(new TransportOptions().setIncludePartialMessages(true));
-        Session session = new Session(transport);
+        Session session = QwenCodeCli.newSession(new TransportOptions().setIncludePartialMessages(true));
         session.sendPrompt("in the dir src/test/temp/, create file empty file test.touch", new SessionEventSimpleConsumers() {
             @Override
             public void onAssistantMessageIncludePartial(Session session, List<AssistantContent> assistantContents,
@@ -47,8 +47,7 @@ class SessionTest {
 
     @Test
     void setPermissionModeSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
-        Transport transport = new ProcessTransport();
-        Session session = new Session(transport);
+        Session session = QwenCodeCli.newSession(new TransportOptions());
 
         log.info(session.setPermissionMode(PermissionMode.YOLO).map(s -> s ? "setPermissionMode 1 success" : "setPermissionMode 1 error")
                 .orElse("setPermissionMode 1 unknown"));
@@ -74,8 +73,7 @@ class SessionTest {
 
     @Test
     void sendPromptAndSetModelSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
-        Transport transport = new ProcessTransport();
-        Session session = new Session(transport);
+        Session session = QwenCodeCli.newSession(new TransportOptions());
 
         log.info(session.setModel("qwen3-coder-flash").map(s -> s ? "setModel 1 success" : "setModel 1 error").orElse("setModel 1 unknown"));
         writeSplitLine("setModel 1 end");
@@ -100,10 +98,10 @@ class SessionTest {
 
     @Test
     void sendPromptAndInterruptContinueSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
-        Transport transport = new ProcessTransport();
-        Session session = new Session(transport);
+        Session session = QwenCodeCli.newSession();
 
         SessionEventConsumers sessionEventConsumers = new SessionEventSimpleConsumers() {
+
             @Override
             public void onSystemMessage(Session session, SDKSystemMessage systemMessage) {
                 log.info("systemMessage: {}", systemMessage);
@@ -133,7 +131,12 @@ class SessionTest {
             public void onOtherMessage(Session session, String message) {
                 log.info("otherMessage: {}", message);
             }
-        };
+
+            @Override
+            public Timeout onPermissionRequestTimeout(Session session) {
+                return Timeout.TIMEOUT_30_MINUTES;
+            }
+        }.setDefaultEventTimeout(new Timeout(90L, TimeUnit.SECONDS));
         session.sendPrompt("查看下当前目录有多少个文件", sessionEventConsumers);
         writeSplitLine("prompt 1 end");
 

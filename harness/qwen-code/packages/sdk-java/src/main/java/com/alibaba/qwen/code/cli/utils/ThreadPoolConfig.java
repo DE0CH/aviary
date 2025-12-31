@@ -31,7 +31,11 @@ public class ThreadPoolConfig {
         ThreadPoolConfig.executorSupplier = executorSupplier;
     }
 
-    public static ExecutorService getExecutor() {
+    public static ThreadPoolExecutor getDefaultExecutor() {
+        return defaultExecutor;
+    }
+
+    static ExecutorService getExecutor() {
         return Optional.ofNullable(executorSupplier).map(s -> {
             try {
                 return s.get();

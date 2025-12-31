@@ -16,7 +16,12 @@ import com.alibaba.qwen.code.cli.transport.process.ProcessTransport;
 import com.alibaba.qwen.code.cli.utils.MyConcurrentUtils;
 import com.alibaba.qwen.code.cli.utils.Timeout;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class QwenCodeCli {
+    private static final Logger log = LoggerFactory.getLogger(QwenCodeCli.class);
+
     public static List<String> simpleQuery(String prompt) {
         final List<String> response = new ArrayList<>();
         MyConcurrentUtils.runAndWait(() -> simpleQuery(prompt, response::add), Timeout.TIMEOUT_30_MINUTES);
@@ -24,7 +29,7 @@ public class QwenCodeCli {
     }
 
     public static void simpleQuery(String prompt, Consumer<String> messageConsumer) {
-        Session session = newSessionWithProcessTransport(new TransportOptions());
+        Session session = newSession(new TransportOptions());
         try {
             session.sendPrompt(prompt, new SessionEventSimpleConsumers() {
                 @Override
@@ -42,16 +47,20 @@ public class QwenCodeCli {
             }.setDefaultPermissionOperation(Operation.allow));
         } catch (Exception e) {
             throw new RuntimeException("sendPrompt error!", e);
-        }
-
-        try {
-            session.close();
-        } catch (Exception e) {
-            throw new RuntimeException("close Session error!", e);
+        } finally {
+            try {
+                session.close();
+            } catch (Exception e) {
+                log.error("close session error!", e);
+            }
         }
     }
 
-    public static Session newSessionWithProcessTransport(TransportOptions transportOptions) {
+    public static Session newSession() {
+        return newSession(new TransportOptions());
+    }
+
+    public static Session newSession(TransportOptions transportOptions) {
         Transport transport;
         try {
             transport = new ProcessTransport(transportOptions);
