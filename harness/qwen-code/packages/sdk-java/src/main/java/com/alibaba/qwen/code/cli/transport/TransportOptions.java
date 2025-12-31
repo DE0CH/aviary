@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+import com.alibaba.qwen.code.cli.utils.Timeout;
 
 public class TransportOptions implements Cloneable {
     private String pathToQwenExecutable;
@@ -17,120 +18,154 @@ public class TransportOptions implements Cloneable {
     private List<String> allowedTools;
     private String authType;
     private Boolean includePartialMessages;
-    private Long turnTimeoutMs;
-    private Long messageTimeoutMs;
+    private Boolean skillsEnable;
+    private Timeout turnTimeout;
+    private Timeout messageTimeout;
     private String resumeSessionId;
+    private List<String> otherOptions;
 
     public String getPathToQwenExecutable() {
         return pathToQwenExecutable;
     }
 
-    public void setPathToQwenExecutable(String pathToQwenExecutable) {
+    public TransportOptions setPathToQwenExecutable(String pathToQwenExecutable) {
         this.pathToQwenExecutable = pathToQwenExecutable;
+        return this;
     }
 
     public String getCwd() {
         return cwd;
     }
 
-    public void setCwd(String cwd) {
+    public TransportOptions setCwd(String cwd) {
         this.cwd = cwd;
+        return this;
     }
 
     public String getModel() {
         return model;
     }
 
-    public void setModel(String model) {
+    public TransportOptions setModel(String model) {
         this.model = model;
+        return this;
     }
 
     public PermissionMode getPermissionMode() {
         return permissionMode;
     }
 
-    public void setPermissionMode(PermissionMode permissionMode) {
+    public TransportOptions setPermissionMode(PermissionMode permissionMode) {
         this.permissionMode = permissionMode;
+        return this;
     }
 
     public Map<String, String> getEnv() {
         return env;
     }
 
-    public void setEnv(Map<String, String> env) {
+    public TransportOptions setEnv(Map<String, String> env) {
         this.env = env;
+        return this;
     }
 
     public Integer getMaxSessionTurns() {
         return maxSessionTurns;
     }
 
-    public void setMaxSessionTurns(Integer maxSessionTurns) {
+    public TransportOptions setMaxSessionTurns(Integer maxSessionTurns) {
         this.maxSessionTurns = maxSessionTurns;
+        return this;
     }
 
     public List<String> getCoreTools() {
         return coreTools;
     }
 
-    public void setCoreTools(List<String> coreTools) {
+    public TransportOptions setCoreTools(List<String> coreTools) {
         this.coreTools = coreTools;
+        return this;
     }
 
     public List<String> getExcludeTools() {
         return excludeTools;
     }
 
-    public void setExcludeTools(List<String> excludeTools) {
+    public TransportOptions setExcludeTools(List<String> excludeTools) {
         this.excludeTools = excludeTools;
+        return this;
     }
 
     public List<String> getAllowedTools() {
         return allowedTools;
     }
 
-    public void setAllowedTools(List<String> allowedTools) {
+    public TransportOptions setAllowedTools(List<String> allowedTools) {
         this.allowedTools = allowedTools;
+        return this;
     }
 
     public String getAuthType() {
         return authType;
     }
 
-    public void setAuthType(String authType) {
+    public TransportOptions setAuthType(String authType) {
         this.authType = authType;
+        return this;
     }
 
     public Boolean getIncludePartialMessages() {
         return includePartialMessages;
     }
 
-    public void setIncludePartialMessages(Boolean includePartialMessages) {
+    public TransportOptions setIncludePartialMessages(Boolean includePartialMessages) {
         this.includePartialMessages = includePartialMessages;
+        return this;
     }
 
-    public Long getTurnTimeoutMs() {
-        return turnTimeoutMs;
+    public Boolean getSkillsEnable() {
+        return skillsEnable;
     }
 
-    public void setTurnTimeoutMs(Long turnTimeoutMs) {
-        this.turnTimeoutMs = turnTimeoutMs;
+    public TransportOptions setSkillsEnable(Boolean skillsEnable) {
+        this.skillsEnable = skillsEnable;
+        return this;
     }
 
-    public Long getMessageTimeoutMs() {
-        return messageTimeoutMs;
+    public Timeout getTurnTimeout() {
+        return turnTimeout;
     }
 
-    public void setMessageTimeoutMs(Long messageTimeoutMs) {
-        this.messageTimeoutMs = messageTimeoutMs;
+    public TransportOptions setTurnTimeout(Timeout turnTimeout) {
+        this.turnTimeout = turnTimeout;
+        return this;
+    }
+
+    public Timeout getMessageTimeout() {
+        return messageTimeout;
+    }
+
+    public TransportOptions setMessageTimeout(Timeout messageTimeout) {
+        this.messageTimeout = messageTimeout;
+        return this;
     }
 
     public String getResumeSessionId() {
         return resumeSessionId;
     }
 
-    public void setResumeSessionId(String resumeSessionId) {
+    public TransportOptions setResumeSessionId(String resumeSessionId) {
         this.resumeSessionId = resumeSessionId;
+        return this;
+    }
+
+    public List<String> getOtherOptions() {
+        return otherOptions;
+    }
+
+    public TransportOptions setOtherOptions(List<String> otherOptions) {
+        this.otherOptions = otherOptions;
+        return this;
     }
 
     @Override

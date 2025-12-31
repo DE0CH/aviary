@@ -2,6 +2,8 @@ package com.alibaba.qwen.code.cli.session;
 
 import java.io.IOException;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -15,6 +17,7 @@ import com.alibaba.qwen.code.cli.protocol.message.SDKResultMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKSystemMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKUserMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
+import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKPartialAssistantMessage;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeResponse;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInterruptRequest;
@@ -28,16 +31,19 @@ import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
 import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
 import com.alibaba.qwen.code.cli.transport.Transport;
+import com.alibaba.qwen.code.cli.utils.MyConcurrentUtils;
+import com.alibaba.qwen.code.cli.utils.Timeout;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class Session {
+    private static final Logger log = LoggerFactory.getLogger(Session.class);
     private final Transport transport;
     private CLIControlInitializeResponse lastCliControlInitializeResponse;
     private SDKSystemMessage lastSdkSystemMessage;
-    private static final Logger log = LoggerFactory.getLogger(Session.class);
+    private final Timeout defaultEventTimeout = Timeout.TIMEOUT_60_SECONDS;
 
     public Session(Transport transport) throws SessionControlException {
         if (transport == null || !transport.isAvailable()) {
@@ -61,43 +67,44 @@ public class Session {
         }
     }
 
-    public void interrupt() throws SessionControlException {
-        if (!isAvailable()) {
-            throw new SessionControlException("Session is not available");
-        }
-
+    public void close() throws SessionControlException {
         try {
-            transport.inputNoWaitResponse(
-                    new CLIControlRequest<CLIControlInterruptRequest>().setRequest(new CLIControlInterruptRequest()).toString());
+            transport.close();
         } catch (Exception e) {
-            throw new SessionControlException("Failed to interrupt the session", e);
+            throw new SessionControlException("Failed to close the session", e);
         }
     }
 
-    public void setModel(String modelName) throws SessionControlException {
-        if (!isAvailable()) {
-            throw new SessionControlException("Session is not available");
-        }
+    public Optional<Boolean> interrupt() throws SessionControlException {
+        checkAvailable();
+        return processControlRequest(new CLIControlRequest<CLIControlInterruptRequest>().setRequest(new CLIControlInterruptRequest()).toString());
+    }
 
+    public Optional<Boolean> setModel(String modelName) throws SessionControlException {
+        checkAvailable();
         CLIControlSetModelRequest cliControlSetModelRequest = new CLIControlSetModelRequest();
         cliControlSetModelRequest.setModel(modelName);
-        try {
-            transport.inputNoWaitResponse(new CLIControlRequest<CLIControlSetModelRequest>().setRequest(cliControlSetModelRequest).toString());
-        } catch (Exception e) {
-            throw new SessionControlException("Failed to set model", e);
-        }
+        return processControlRequest(new CLIControlRequest<CLIControlSetModelRequest>().setRequest(cliControlSetModelRequest).toString());
     }
 
-    public void setPermissionMode(PermissionMode permissionMode) throws SessionControlException {
-        if (!isAvailable()) {
-            throw new SessionControlException("Session is not available");
-        }
-
+    public Optional<Boolean> setPermissionMode(PermissionMode permissionMode) throws SessionControlException {
+        checkAvailable();
         CLIControlSetPermissionModeRequest cliControlSetPermissionModeRequest = new CLIControlSetPermissionModeRequest();
         cliControlSetPermissionModeRequest.setMode(permissionMode.getValue());
+        return processControlRequest(
+                new CLIControlRequest<CLIControlSetPermissionModeRequest>().setRequest(cliControlSetPermissionModeRequest).toString());
+    }
+
+    private Optional<Boolean> processControlRequest(String request) throws SessionControlException {
         try {
-            transport.inputNoWaitResponse(
-                    new CLIControlRequest<CLIControlSetPermissionModeRequest>().setRequest(cliControlSetPermissionModeRequest).toString());
+            if (transport.isReading()) {
+                transport.inputNoWaitResponse(request);
+                return Optional.empty();
+            } else {
+                String response = transport.inputWaitForOneLine(request);
+                CLIControlResponse<?> cliControlResponse = JSON.parseObject(response, new TypeReference<CLIControlResponse<?>>() {});
+                return Optional.of("success".equals(cliControlResponse.getResponse().getSubtype()));
+            }
         } catch (Exception e) {
             throw new SessionControlException("Failed to set model", e);
         }
@@ -108,61 +115,43 @@ public class Session {
     }
 
     public void resumeSession(String sessionId) throws SessionControlException {
-        if (!isAvailable()) {
-            throw new SessionControlException("Session is not available");
-        }
-
         if (StringUtils.isNotBlank(sessionId)) {
             transport.getTransportOptions().setResumeSessionId(sessionId);
         }
         this.start();
     }
 
-    public String getSessionId() {
-        return Optional.ofNullable(lastSdkSystemMessage).map(SDKSystemMessage::getSessionId).orElse(null);
-    }
-
-    public void close() throws SessionControlException {
-        try {
-            transport.close();
-        } catch (Exception e) {
-            throw new SessionControlException("Failed to close the session", e);
-        }
-    }
-
-    public boolean isAvailable() {
-        return transport.isAvailable();
-    }
-
-    public Capabilities getCapabilities() {
-        return Optional.ofNullable(lastCliControlInitializeResponse).map(CLIControlInitializeResponse::getCapabilities).orElse(new Capabilities());
-    }
-
-    public void sendPrompt(String prompt, SessionEventConsumers sessionEventConsumers) throws SessionSendPromptException {
-        if (!transport.isAvailable()) {
-            throw new SessionSendPromptException("Session is not available");
-        }
-
+    public void sendPrompt(String prompt, SessionEventConsumers sessionEventConsumers) throws SessionSendPromptException, SessionControlException {
+        checkAvailable();
         try {
             transport.inputWaitForMultiLine(new SDKUserMessage().setContent(prompt).toString(), (line) -> {
-                log.debug("read a message from agent {}", line);
                 JSONObject jsonObject = JSON.parseObject(line);
                 String messageType = jsonObject.getString("type");
                 if ("system".equals(messageType)) {
                     lastSdkSystemMessage = jsonObject.to(SDKSystemMessage.class);
-                    sessionEventConsumers.onSystemMessage(this, lastSdkSystemMessage);
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onSystemMessage(this, lastSdkSystemMessage),
+                            Optional.ofNullable(sessionEventConsumers.onSystemMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("assistant".equals(messageType)) {
-                    sessionEventConsumers.onAssistantMessage(this, jsonObject.to(SDKAssistantMessage.class));
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onAssistantMessage(this, jsonObject.to(SDKAssistantMessage.class)),
+                            Optional.ofNullable(sessionEventConsumers.onAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
+                    return false;
+                } else if ("stream_event".equals(messageType)) {
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onPartialAssistantMessage(this, jsonObject.to(SDKPartialAssistantMessage.class)),
+                            Optional.ofNullable(sessionEventConsumers.onPartialAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("user".equals(messageType)) {
-                    sessionEventConsumers.onUserMessage(this, jsonObject.to(SDKUserMessage.class, Feature.FieldBased));
+                    MyConcurrentUtils.runAndWait(
+                            () -> sessionEventConsumers.onUserMessage(this, jsonObject.to(SDKUserMessage.class, Feature.FieldBased)),
+                            Optional.ofNullable(sessionEventConsumers.onUserMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("result".equals(messageType)) {
-                    sessionEventConsumers.onResultMessage(this, jsonObject.to(SDKResultMessage.class));
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onResultMessage(this, jsonObject.to(SDKResultMessage.class)),
+                            Optional.ofNullable(sessionEventConsumers.onResultMessageTimeout(this)).orElse(defaultEventTimeout));
                     return true;
                 } else if ("control_response".equals(messageType)) {
-                    sessionEventConsumers.onControlResponse(this, jsonObject.to(CLIControlResponse.class));
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onControlResponse(this, jsonObject.to(CLIControlResponse.class)),
+                            Optional.ofNullable(sessionEventConsumers.onControlResponseTimeout(this)).orElse(defaultEventTimeout));
                     if (!"error".equals(jsonObject.getString("subtype"))) {
                         return false;
                     } else {
@@ -170,10 +159,11 @@ public class Session {
                         return "error".equals(jsonObject.getString("subtype"));
                     }
                 } else if ("control_request".equals(messageType)) {
-                    return processControlRequest(jsonObject, sessionEventConsumers);
+                    return processControlRequestInThePrompting(jsonObject, sessionEventConsumers);
                 } else {
                     log.warn("unknown message type: {}", messageType);
-                    sessionEventConsumers.onOtherMessage(this, line);
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onOtherMessage(this, line),
+                            Optional.ofNullable(sessionEventConsumers.onOtherMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 }
             });
@@ -182,7 +172,7 @@ public class Session {
         }
     }
 
-    private boolean processControlRequest(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers) {
+    private boolean processControlRequestInThePrompting(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers) {
         String subType = Optional.of(jsonObject)
                 .map(cr -> cr.getJSONObject("request"))
                 .map(r -> r.getString("subtype"))
@@ -190,13 +180,21 @@ public class Session {
         if ("can_use_tool".equals(subType)) {
             try {
                 return processPermissionResponse(jsonObject, sessionEventConsumers);
-            } catch (IOException e) {
+            } catch (IOException | ExecutionException | InterruptedException | TimeoutException e) {
                 log.error("Failed to process permission response", e);
                 return false;
             }
         } else {
-            CLIControlResponse<?> cliControlResponse = sessionEventConsumers.onControlRequest(this,
-                    jsonObject.to(new TypeReference<CLIControlRequest<?>>() {}));
+            CLIControlResponse<?> cliControlResponse;
+            try {
+                cliControlResponse = MyConcurrentUtils.runAndWait(
+                        () -> sessionEventConsumers.onControlRequest(this, jsonObject.to(new TypeReference<CLIControlRequest<?>>() {})),
+                        Optional.ofNullable(sessionEventConsumers.onControlRequestTimeout(this)).orElse(defaultEventTimeout));
+            } catch (Exception e) {
+                log.error("Failed to process control request", e);
+                return false;
+            }
+
             if (cliControlResponse != null) {
                 try {
                     transport.inputNoWaitResponse(cliControlResponse.toString());
@@ -209,9 +207,13 @@ public class Session {
         }
     }
 
-    private boolean processPermissionResponse(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers) throws IOException {
-        CLIControlRequest<CLIControlPermissionRequest> permissionRequest = jsonObject.to(new TypeReference<CLIControlRequest<CLIControlPermissionRequest>>() {});
-        Behavior behavior = Optional.ofNullable(sessionEventConsumers.onPermissionRequest(this, permissionRequest))
+    private boolean processPermissionResponse(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers)
+            throws IOException, ExecutionException, InterruptedException, TimeoutException {
+        CLIControlRequest<CLIControlPermissionRequest> permissionRequest = jsonObject.to(
+                new TypeReference<CLIControlRequest<CLIControlPermissionRequest>>() {});
+
+        Behavior behavior = Optional.ofNullable(MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onPermissionRequest(this, permissionRequest),
+                        Optional.ofNullable(sessionEventConsumers.onPermissionRequestTimeout(this)).orElse(defaultEventTimeout)))
                 .map(b -> {
                     if (b instanceof Allow) {
                         Allow allow = (Allow) b;
@@ -223,11 +225,30 @@ public class Session {
                 })
                 .orElse(Behavior.defaultBehavior());
         CLIControlResponse<CLIControlPermissionResponse> permissionResponse = new CLIControlResponse<>();
-        permissionResponse.createResponse().setResponse(new CLIControlPermissionResponse().setBehavior(behavior)).setRequestId(permissionRequest.getRequestId());
+        permissionResponse.createResponse().setResponse(new CLIControlPermissionResponse().setBehavior(behavior)).setRequestId(
+                permissionRequest.getRequestId());
         String permissionMessage = permissionResponse.toString();
         log.debug("send permission message to agent: {}", permissionMessage);
         transport.inputNoWaitResponse(permissionMessage);
 
         return false;
+    }
+
+    public String getSessionId() {
+        return Optional.ofNullable(lastSdkSystemMessage).map(SDKSystemMessage::getSessionId).orElse(null);
+    }
+
+    public boolean isAvailable() {
+        return transport.isAvailable();
+    }
+
+    public Capabilities getCapabilities() {
+        return Optional.ofNullable(lastCliControlInitializeResponse).map(CLIControlInitializeResponse::getCapabilities).orElse(new Capabilities());
+    }
+
+    private void checkAvailable() throws SessionControlException {
+        if (!isAvailable()) {
+            throw new SessionControlException("Session is not available");
+        }
     }
 }

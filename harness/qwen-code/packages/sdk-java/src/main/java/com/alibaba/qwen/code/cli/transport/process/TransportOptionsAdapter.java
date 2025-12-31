@@ -1,6 +1,7 @@
 package com.alibaba.qwen.code.cli.transport.process;
 
 import com.alibaba.qwen.code.cli.transport.TransportOptions;
+import com.alibaba.qwen.code.cli.utils.Timeout;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -11,11 +12,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 class TransportOptionsAdapter {
     TransportOptions transportOptions;
-    private static final Long DEFAULT_TURN_TIMEOUT_MS = 1000 * 60 * 30L;
-    private static final Long DEFAULT_MESSAGE_TIMEOUT_MS = 1000 * 60 * 3L;
+    private static final Timeout DEFAULT_TURN_TIMEOUT = new Timeout(1000 * 60 * 30L, TimeUnit.MILLISECONDS);
+    private static final Timeout DEFAULT_MESSAGE_TIMEOUT = new Timeout(1000 * 60 * 3L, TimeUnit.MILLISECONDS);
 
     TransportOptionsAdapter(TransportOptions userTransportOptions) {
         transportOptions = addDefaultTransportOptions(userTransportOptions);
@@ -73,9 +75,17 @@ class TransportOptionsAdapter {
             args.add("--include-partial-messages");
         }
 
+        if (transportOptions.getSkillsEnable() != null && transportOptions.getSkillsEnable()) {
+            args.add("--experimental-skills");
+        }
+
         if (StringUtils.isNotBlank(transportOptions.getResumeSessionId())) {
             args.add("--resume");
             args.add(transportOptions.getResumeSessionId());
+        }
+
+        if (transportOptions.getOtherOptions() != null) {
+            args.addAll(transportOptions.getOtherOptions());
         }
         return args.toArray(new String[] {});
     }
@@ -97,12 +107,12 @@ class TransportOptionsAdapter {
         Optional.ofNullable(transportOptions.getEnv()).ifPresent(env::putAll);
         transportOptions.setEnv(env);
 
-        if (transportOptions.getTurnTimeoutMs() == null) {
-            transportOptions.setTurnTimeoutMs(DEFAULT_TURN_TIMEOUT_MS);
+        if (transportOptions.getTurnTimeout() == null) {
+            transportOptions.setTurnTimeout(DEFAULT_TURN_TIMEOUT);
         }
 
-        if (transportOptions.getMessageTimeoutMs() == null) {
-            transportOptions.setMessageTimeoutMs(DEFAULT_MESSAGE_TIMEOUT_MS);
+        if (transportOptions.getMessageTimeout() == null) {
+            transportOptions.setMessageTimeout(DEFAULT_MESSAGE_TIMEOUT);
         }
         return transportOptions;
     }

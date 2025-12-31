@@ -8,6 +8,8 @@ import java.util.function.Function;
 public interface Transport {
     TransportOptions getTransportOptions();
 
+    boolean isReading();
+
     void start() throws IOException;
 
     void close() throws IOException;

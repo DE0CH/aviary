@@ -22,4 +22,9 @@ public class ThinkingBlock extends ContentBlock{
     public void setSignature(String signature) {
         this.signature = signature;
     }
+
+    @Override
+    public Object getContent() {
+        return thinking;
+    }
 }

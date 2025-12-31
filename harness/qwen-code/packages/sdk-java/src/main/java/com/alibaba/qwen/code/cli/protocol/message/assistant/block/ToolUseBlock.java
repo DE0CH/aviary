@@ -46,4 +46,9 @@ public class ToolUseBlock extends ContentBlock {
     public void setAnnotations(List<Annotation> annotations) {
         this.annotations = annotations;
     }
+
+    @Override
+    public Object getContent() {
+        return input;
+    }
 }

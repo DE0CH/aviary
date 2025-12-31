@@ -13,4 +13,9 @@ public class TextBlock extends ContentBlock {
     public void setText(String text) {
         this.text = text;
     }
+
+    @Override
+    public Object getContent() {
+        return text;
+    }
 }

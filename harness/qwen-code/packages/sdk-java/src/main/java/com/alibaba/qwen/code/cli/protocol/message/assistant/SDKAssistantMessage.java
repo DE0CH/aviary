@@ -15,6 +15,11 @@ public class SDKAssistantMessage extends MessageBase {
     @JSONField(name = "parent_tool_use_id")
     private String parentToolUseId;
 
+    public SDKAssistantMessage() {
+        super();
+        this.type = "assistant";
+    }
+
     public String getUuid() {
         return uuid;
     }
