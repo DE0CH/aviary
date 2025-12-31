@@ -135,6 +135,7 @@ Event processing is subject to the timeout settings configured in `TransportOpti
 Example of custom event handling:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
@@ -152,112 +153,116 @@ import com.alibaba.qwen.code.cli.utils.Timeout;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-Session session = QwenCodeCli.newSession();
-SessionEventSimpleConsumers eventConsumers = new SessionEventSimpleConsumers() {
-    @Override
-    public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
-        String message = assistantMessage.getMessage().getContent().stream()
-            .findFirst()
-            .map(content -> content.getText())
-            .orElse("");
-        System.out.println("Assistant: " + message);
-    }
+public class CustomEventHandlingExample {
+    public static void main(String[] args) {
+        Session session = QwenCodeCli.newSession();
+        SessionEventSimpleConsumers eventConsumers = new SessionEventSimpleConsumers() {
+            @Override
+            public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
+                String message = assistantMessage.getMessage().getContent().stream()
+                    .findFirst()
+                    .map(content -> content.getText())
+                    .orElse("");
+                System.out.println("Assistant: " + message);
+            }
 
-    @Override
-    public void onPartialAssistantMessage(Session session, SDKPartialAssistantMessage partialAssistantMessage) {
-        System.out.println("Partial assistant message: " + partialAssistantMessage);
-    }
+            @Override
+            public void onPartialAssistantMessage(Session session, SDKPartialAssistantMessage partialAssistantMessage) {
+                System.out.println("Partial assistant message: " + partialAssistantMessage);
+            }
 
-    public void onAssistantMessageIncludePartial(Session session, List<AssistantContent> assistantContents,
-            AssistantMessageOutputType assistantMessageOutputType) {
-        System.out.println("Assistant content (type: " + assistantMessageOutputType + "): " + assistantContents);
-    }
+            public void onAssistantMessageIncludePartial(Session session, List<AssistantContent> assistantContents,
+                    AssistantMessageOutputType assistantMessageOutputType) {
+                System.out.println("Assistant content (type: " + assistantMessageOutputType + "): " + assistantContents);
+            }
 
-    @Override
-    public void onSystemMessage(Session session, SDKSystemMessage systemMessage) {
-        System.out.println("System: " + systemMessage.getMessage());
-    }
+            @Override
+            public void onSystemMessage(Session session, SDKSystemMessage systemMessage) {
+                System.out.println("System: " + systemMessage.getMessage());
+            }
 
-    @Override
-    public void onResultMessage(Session session, SDKResultMessage resultMessage) {
-        System.out.println("Result: " + resultMessage.getMessage());
-    }
+            @Override
+            public void onResultMessage(Session session, SDKResultMessage resultMessage) {
+                System.out.println("Result: " + resultMessage.getMessage());
+            }
 
-    @Override
-    public void onUserMessage(Session session, SDKUserMessage userMessage) {
-        System.out.println("User: " + userMessage.getMessage());
-    }
+            @Override
+            public void onUserMessage(Session session, SDKUserMessage userMessage) {
+                System.out.println("User: " + userMessage.getMessage());
+            }
 
-    @Override
-    public void onOtherMessage(Session session, String message) {
-        System.out.println("Other: " + message);
-    }
+            @Override
+            public void onOtherMessage(Session session, String message) {
+                System.out.println("Other: " + message);
+            }
 
-    @Override
-    public void onControlResponse(Session session, CLIControlResponse<?> cliControlResponse) {
-        System.out.println("Control response: " + cliControlResponse);
-    }
+            @Override
+            public void onControlResponse(Session session, CLIControlResponse<?> cliControlResponse) {
+                System.out.println("Control response: " + cliControlResponse);
+            }
 
-    @Override
-    public CLIControlResponse<?> onControlRequest(Session session, CLIControlRequest<?> cliControlRequest) {
-        System.out.println("Control request: " + cliControlRequest);
-        return new CLIControlResponse<>(); // Return appropriate response
-    }
+            @Override
+            public CLIControlResponse<?> onControlRequest(Session session, CLIControlRequest<?> cliControlRequest) {
+                System.out.println("Control request: " + cliControlRequest);
+                return new CLIControlResponse<>(); // Return appropriate response
+            }
 
-    @Override
-    public Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest) {
-        System.out.println("Permission request: " + permissionRequest.getRequest().getInput());
-        return new com.alibaba.qwen.code.cli.protocol.data.behavior.Allow()
-            .setUpdatedInput(permissionRequest.getRequest().getInput()); // Allow by default
-    }
+            @Override
+            public Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest) {
+                System.out.println("Permission request: " + permissionRequest.getRequest().getInput());
+                return new com.alibaba.qwen.code.cli.protocol.data.behavior.Allow()
+                    .setUpdatedInput(permissionRequest.getRequest().getInput()); // Allow by default
+            }
 
-    @Override
-    public Timeout onAssistantMessageTimeout(Session session) {
-        return new Timeout(90L, TimeUnit.SECONDS);  // Timeout for processing assistant messages
-    }
+            @Override
+            public Timeout onAssistantMessageTimeout(Session session) {
+                return new Timeout(90L, TimeUnit.SECONDS);  // Timeout for processing assistant messages
+            }
 
-    @Override
-    public Timeout onSystemMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing system messages
-    }
+            @Override
+            public Timeout onSystemMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing system messages
+            }
 
-    @Override
-    public Timeout onResultMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing result messages
-    }
+            @Override
+            public Timeout onResultMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing result messages
+            }
 
-    @Override
-    public Timeout onPartialAssistantMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing partial assistant messages
-    }
+            @Override
+            public Timeout onPartialAssistantMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing partial assistant messages
+            }
 
-    @Override
-    public Timeout onUserMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing user messages
-    }
+            @Override
+            public Timeout onUserMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing user messages
+            }
 
-    @Override
-    public Timeout onOtherMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing other messages
-    }
+            @Override
+            public Timeout onOtherMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing other messages
+            }
 
-    @Override
-    public Timeout onControlResponseTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing control responses
-    }
+            @Override
+            public Timeout onControlResponseTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing control responses
+            }
 
-    @Override
-    public Timeout onControlRequestTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing control requests
-    }
+            @Override
+            public Timeout onControlRequestTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing control requests
+            }
 
-    @Override
-    public Timeout onPermissionRequestTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing permission requests
-    }
-}.setDefaultEventTimeout(new Timeout(60L, TimeUnit.SECONDS));  // Default timeout for all events
+            @Override
+            public Timeout onPermissionRequestTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing permission requests
+            }
+        }.setDefaultEventTimeout(new Timeout(60L, TimeUnit.SECONDS));  // Default timeout for all events
 
-session.sendPrompt("Example prompt", eventConsumers);
+        session.sendPrompt("Example prompt", eventConsumers);
+    }
+}
 ```
 
 ### Permission Modes
@@ -272,8 +277,17 @@ The SDK supports different permission modes for controlling tool execution:
 To set a permission mode:
 
 ```java
-Session session = QwenCodeCli.newSession(new TransportOptions().setPermissionMode(PermissionMode.YOLO));
-session.setPermissionMode(PermissionMode.PLAN);
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
+import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+
+public class PermissionModeExample {
+    public static void main(String[] args) {
+        Session session = QwenCodeCli.newSession(new TransportOptions().setPermissionMode(PermissionMode.YOLO));
+        session.setPermissionMode(PermissionMode.PLAN);
+    }
+}
 ```
 
 ### Session Control
@@ -291,17 +305,26 @@ The SDK provides fine-grained control over session lifecycle and behavior:
 Example of session control:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
+import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+import java.util.List;
 
-TransportOptions options = new TransportOptions()
-    .setModel("qwen-max")
-    .setPermissionMode(PermissionMode.AUTO_EDIT);
+public class SessionControlExample {
+    public static void main(String[] args) {
+        TransportOptions options = new TransportOptions()
+            .setModel("qwen-max")
+            .setPermissionMode(PermissionMode.AUTO_EDIT);
 
-try (Session session = QwenCodeCli.newSession(options)) {
-    // Use the session with default event consumers
-    List<String> result = session.sendPrompt("Explain how to use the SDK", new SessionEventSimpleConsumers());
-    result.forEach(System.out::println);
-} // Session automatically closes when exiting try-with-resources
+        try (Session session = QwenCodeCli.newSession(options)) {
+            // Use the session with default event consumers
+            List<String> result = session.sendPrompt("Explain how to use the SDK", new SessionEventSimpleConsumers());
+            result.forEach(System.out::println);
+        } // Session automatically closes when exiting try-with-resources
+    }
+}
 ```
 
 #### Interrupt Function
@@ -315,30 +338,36 @@ The `interrupt()` function allows you to interrupt a currently running prompt. T
 Example of interrupting a running prompt:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
+import java.util.Optional;
 
-try (Session session = QwenCodeCli.newSession()) {
-    session.sendPrompt("Analyze this large codebase...", new SessionEventSimpleConsumers() {
-        @Override
-        public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
-            System.out.println("Received: " + assistantMessage.getMessage().getContent().stream()
-                .findFirst()
-                .map(content -> content.getText())
-                .orElse(""));
+public class InterruptExample {
+    public static void main(String[] args) {
+        try (Session session = QwenCodeCli.newSession()) {
+            session.sendPrompt("Analyze this large codebase...", new SessionEventSimpleConsumers() {
+                @Override
+                public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
+                    System.out.println("Received: " + assistantMessage.getMessage().getContent().stream()
+                        .findFirst()
+                        .map(content -> content.getText())
+                        .orElse(""));
 
-            // Interrupt the session after receiving the first message
-            try {
-                Optional<Boolean> interruptResult = session.interrupt();
-                System.out.println(interruptResult.map(s -> s ? "Interrupt successful" : "Interrupt error")
-                        .orElse("Interrupt unknown"));
-            } catch (SessionControlException e) {
-                System.err.println("Interrupt error: " + e.getMessage());
-            }
+                    // Interrupt the session after receiving the first message
+                    try {
+                        Optional<Boolean> interruptResult = session.interrupt();
+                        System.out.println(interruptResult.map(s -> s ? "Interrupt successful" : "Interrupt error")
+                                .orElse("Interrupt unknown"));
+                    } catch (SessionControlException e) {
+                        System.err.println("Interrupt error: " + e.getMessage());
+                    }
+                }
+            });
         }
-    });
+    }
 }
 ```
 
@@ -354,25 +383,31 @@ The `setModel()` function allows you to dynamically change the AI model during a
 Example of changing the model during a session:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import java.util.Optional;
 
-try (Session session = QwenCodeCli.newSession()) {
-    // Switch to a specific model
-    Optional<Boolean> modelChangeResult = session.setModel("qwen3-coder-flash");
-    System.out.println(modelChangeResult.map(s -> s ? "setModel success" : "setModel error")
-            .orElse("setModel unknown"));
+public class SetModelExample {
+    public static void main(String[] args) {
+        try (Session session = QwenCodeCli.newSession()) {
+            // Switch to a specific model
+            Optional<Boolean> modelChangeResult = session.setModel("qwen3-coder-flash");
+            System.out.println(modelChangeResult.map(s -> s ? "setModel success" : "setModel error")
+                    .orElse("setModel unknown"));
 
-    // Use the model for a prompt
-    session.sendPrompt("hello world", new SessionEventSimpleConsumers());
+            // Use the model for a prompt
+            session.sendPrompt("hello world", new SessionEventSimpleConsumers());
 
-    // Switch to another model
-    Optional<Boolean> modelChangeResult2 = session.setModel("qwen3-coder-plus");
-    System.out.println(modelChangeResult2.map(s -> s ? "setModel success" : "setModel error")
-            .orElse("setModel unknown"));
+            // Switch to another model
+            Optional<Boolean> modelChangeResult2 = session.setModel("qwen3-coder-plus");
+            System.out.println(modelChangeResult2.map(s -> s ? "setModel success" : "setModel error")
+                    .orElse("setModel unknown"));
 
-    // Use the new model for another prompt
-    session.sendPrompt("list files in the current directory", new SessionEventSimpleConsumers());
+            // Use the new model for another prompt
+            session.sendPrompt("list files in the current directory", new SessionEventSimpleConsumers());
+        }
+    }
 }
 ```
 
@@ -388,26 +423,32 @@ The `setPermissionMode()` function allows you to dynamically change the permissi
 Example of changing the permission mode during a session:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+import java.util.Optional;
 
-try (Session session = QwenCodeCli.newSession()) {
-    // Switch to a permissive mode
-    Optional<Boolean> permissionChangeResult = session.setPermissionMode(PermissionMode.YOLO);
-    System.out.println(permissionChangeResult.map(s -> s ? "setPermissionMode success" : "setPermissionMode error")
-            .orElse("setPermissionMode unknown"));
+public class SetPermissionModeExample {
+    public static void main(String[] args) {
+        try (Session session = QwenCodeCli.newSession()) {
+            // Switch to a permissive mode
+            Optional<Boolean> permissionChangeResult = session.setPermissionMode(PermissionMode.YOLO);
+            System.out.println(permissionChangeResult.map(s -> s ? "setPermissionMode success" : "setPermissionMode error")
+                    .orElse("setPermissionMode unknown"));
 
-    // Use the session with the new permission mode
-    session.sendPrompt("in the dir src/test/temp/, create file empty file test.touch", new SessionEventSimpleConsumers());
+            // Use the session with the new permission mode
+            session.sendPrompt("in the dir src/test/temp/, create file empty file test.touch", new SessionEventSimpleConsumers());
 
-    // Switch to another permission mode
-    Optional<Boolean> permissionChangeResult2 = session.setPermissionMode(PermissionMode.PLAN);
-    System.out.println(permissionChangeResult2.map(s -> s ? "setPermissionMode success" : "setPermissionMode error")
-            .orElse("setPermissionMode unknown"));
+            // Switch to another permission mode
+            Optional<Boolean> permissionChangeResult2 = session.setPermissionMode(PermissionMode.PLAN);
+            System.out.println(permissionChangeResult2.map(s -> s ? "setPermissionMode success" : "setPermissionMode error")
+                    .orElse("setPermissionMode unknown"));
 
-    // Use the session with the new permission mode
-    session.sendPrompt("rename test.touch to test_rename.touch", new SessionEventSimpleConsumers());
+            // Use the session with the new permission mode
+            session.sendPrompt("rename test.touch to test_rename.touch", new SessionEventSimpleConsumers());
+        }
+    }
 }
 ```
 
@@ -433,51 +474,59 @@ The timeout configuration allows you to control how long the SDK waits for respo
 To customize timeout settings:
 
 ```java
-import com.alibaba.qwen.code.cli.utils.Timeout;
-import java.util.concurrent.TimeUnit;
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
+import com.alibaba.qwen.code.cli.utils.Timeout;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-// Configure transport-level timeouts
-TransportOptions options = new TransportOptions()
-    .setTurnTimeout(new Timeout(120L, TimeUnit.SECONDS))    // Timeout for a complete turn of conversation
-    .setMessageTimeout(new Timeout(90L, TimeUnit.SECONDS));  // Timeout for individual messages within a turn
+public class TimeoutConfigurationExample {
+    public static void main(String[] args) {
+        // Configure transport-level timeouts
+        TransportOptions options = new TransportOptions()
+            .setTurnTimeout(new Timeout(120L, TimeUnit.SECONDS))    // Timeout for a complete turn of conversation
+            .setMessageTimeout(new Timeout(90L, TimeUnit.SECONDS));  // Timeout for individual messages within a turn
 
-Session session = QwenCodeCli.newSession(options);
+        Session session = QwenCodeCli.newSession(options);
 
-// Configure event-level timeouts using SessionEventConsumers
-SessionEventConsumers eventConsumers = new SessionEventSimpleConsumers() {
-    @Override
-    public Timeout onSystemMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing system messages
+        // Configure event-level timeouts using SessionEventConsumers
+        SessionEventConsumers eventConsumers = new SessionEventSimpleConsumers() {
+            @Override
+            public Timeout onSystemMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing system messages
+            }
+
+            @Override
+            public Timeout onResultMessageTimeout(Session session) {
+                return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing result messages
+            }
+
+            @Override
+            public Timeout onAssistantMessageTimeout(Session session) {
+                return new Timeout(90L, TimeUnit.SECONDS);  // Timeout for processing assistant messages
+            }
+
+            @Override
+            public Timeout onControlResponseTimeout(Session session) {
+                return new Timeout(45L, TimeUnit.SECONDS);  // Timeout for processing control responses
+            }
+
+            @Override
+            public Timeout onPermissionRequestTimeout(Session session) {
+                return new Timeout(30L, TimeUnit.SECONDS);  // Timeout for processing permission requests
+            }
+
+            @Override
+            public Timeout onOtherMessageTimeout(Session session) {
+                return new Timeout(35L, TimeUnit.SECONDS);  // Timeout for processing other messages
+            }
+        }.setDefaultEventTimeout(new Timeout(90L, TimeUnit.SECONDS));  // Default timeout for all events
+        session.sendPrompt("hello world", eventConsumers);
     }
-
-    @Override
-    public Timeout onResultMessageTimeout(Session session) {
-        return new Timeout(60L, TimeUnit.SECONDS);  // Timeout for processing result messages
-    }
-
-    @Override
-    public Timeout onAssistantMessageTimeout(Session session) {
-        return new Timeout(90L, TimeUnit.SECONDS);  // Timeout for processing assistant messages
-    }
-
-    @Override
-    public Timeout onControlResponseTimeout(Session session) {
-        return new Timeout(45L, TimeUnit.SECONDS);  // Timeout for processing control responses
-    }
-
-    @Override
-    public Timeout onPermissionRequestTimeout(Session session) {
-        return new Timeout(30L, TimeUnit.SECONDS);  // Timeout for processing permission requests
-    }
-
-    @Override
-    public Timeout onOtherMessageTimeout(Session session) {
-        return new Timeout(35L, TimeUnit.SECONDS);  // Timeout for processing other messages
-    }
-}.setDefaultEventTimeout(new Timeout(90L, TimeUnit.SECONDS));  // Default timeout for all events
-session.sendPrompt("hello world", sessionEventConsumers);
+}
 ```
 
 ### Thread Pool Configuration
@@ -501,44 +550,56 @@ The thread pool can be customized in two ways:
 Example of custom thread pool configuration using a supplier:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.utils.ThreadPoolConfig;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Supplier;
 
-// Set a custom thread pool supplier
-ThreadPoolConfig.setExecutorSupplier(new Supplier<ThreadPoolExecutor>() {
-    @Override
-    public ThreadPoolExecutor get() {
-        return (ThreadPoolExecutor) Executors.newFixedThreadPool(20);
-    }
-});
+public class ThreadPoolConfigurationExample {
+    public static void main(String[] args) {
+        // Set a custom thread pool supplier
+        ThreadPoolConfig.setExecutorSupplier(new Supplier<ThreadPoolExecutor>() {
+            @Override
+            public ThreadPoolExecutor get() {
+                return (ThreadPoolExecutor) Executors.newFixedThreadPool(20);
+            }
+        });
 
-// The SDK will now use the custom thread pool for all operations
-Session session = QwenCodeCli.newSession();
+        // The SDK will now use the custom thread pool for all operations
+        Session session = QwenCodeCli.newSession();
+    }
+}
 ```
 
 Example of modifying properties after getting the default executor:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.utils.ThreadPoolConfig;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-// Get the default executor and modify its properties
-ThreadPoolExecutor executor = ThreadPoolConfig.getDefaultExecutor();
+public class ModifyThreadPoolExample {
+    public static void main(String[] args) {
+        // Get the default executor and modify its properties
+        ThreadPoolExecutor executor = ThreadPoolConfig.getDefaultExecutor();
 
-// Modify the core pool size
-executor.setCorePoolSize(15);
+        // Modify the core pool size
+        executor.setCorePoolSize(15);
 
-// Modify the maximum pool size
-executor.setMaximumPoolSize(40);
+        // Modify the maximum pool size
+        executor.setMaximumPoolSize(40);
 
-// Modify the keep-alive time
-executor.setKeepAliveTime(120, TimeUnit.SECONDS);
+        // Modify the keep-alive time
+        executor.setKeepAliveTime(120, TimeUnit.SECONDS);
 
-// The SDK will now use the modified executor for all operations
-Session session = QwenCodeCli.newSession();
+        // The SDK will now use the modified executor for all operations
+        Session session = QwenCodeCli.newSession();
+    }
+}
 ```
 
 Note that when modifying the default executor directly, you're changing the properties of the shared static instance that will affect all subsequent operations in the application. If you need different configurations for different parts of your application, using the supplier approach is recommended.
@@ -554,22 +615,31 @@ The SDK provides specific exception types for different error scenarios:
 Example of comprehensive error handling:
 
 ```java
+import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
+import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
+import java.util.List;
 
-try (Session session = QwenCodeCli.newSession()) {
-    try {
-        List<String> result = session.sendPrompt("Process this request", new SessionEventSimpleConsumers());
-        result.forEach(System.out::println);
-    } catch (SessionSendPromptException e) {
-        System.err.println("Error sending prompt: " + e.getMessage());
-        e.printStackTrace();
+public class ErrorHandlingExample {
+    public static void main(String[] args) {
+        try (Session session = QwenCodeCli.newSession()) {
+            try {
+                List<String> result = session.sendPrompt("Process this request", new SessionEventSimpleConsumers());
+                result.forEach(System.out::println);
+            } catch (SessionSendPromptException e) {
+                System.err.println("Error sending prompt: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } catch (SessionControlException e) {
+            System.err.println("Error controlling session: " + e.getMessage());
+            e.printStackTrace();
+        } catch (Exception e) {
+            System.err.println("Unexpected error: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
-} catch (SessionControlException e) {
-    System.err.println("Error controlling session: " + e.getMessage());
-    e.printStackTrace();
-} catch (Exception e) {
-    System.err.println("Unexpected error: " + e.getMessage());
-    e.printStackTrace();
 }
 ```
 
