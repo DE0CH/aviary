@@ -14,23 +14,55 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Adapter that converts TransportOptions to command-line arguments for the CLI process.
+ */
 class TransportOptionsAdapter {
+    /**
+     * The adapted transport options.
+     */
     TransportOptions transportOptions;
+    /**
+     * Default timeout for turns.
+     */
     private static final Timeout DEFAULT_TURN_TIMEOUT = new Timeout(1000 * 60 * 30L, TimeUnit.MILLISECONDS);
+    /**
+     * Default timeout for messages.
+     */
     private static final Timeout DEFAULT_MESSAGE_TIMEOUT = new Timeout(1000 * 60 * 3L, TimeUnit.MILLISECONDS);
 
+    /**
+     * Constructs a new adapter with the specified options.
+     *
+     * @param userTransportOptions The user's transport options
+     */
     TransportOptionsAdapter(TransportOptions userTransportOptions) {
         transportOptions = addDefaultTransportOptions(userTransportOptions);
     }
 
+    /**
+     * Gets the processed transport options.
+     *
+     * @return The processed transport options
+     */
     TransportOptions getHandledTransportOptions() {
         return transportOptions;
     }
 
+    /**
+     * Gets the current working directory.
+     *
+     * @return The current working directory
+     */
     String getCwd() {
         return transportOptions.getCwd();
     }
 
+    /**
+     * Builds command-line arguments from the transport options.
+     *
+     * @return An array of command-line arguments
+     */
     String[] buildCommandArgs() {
         List<String> args = new ArrayList<>(
                 Arrays.asList(transportOptions.getPathToQwenExecutable(), "--input-format", "stream-json", "--output-format",
@@ -90,6 +122,12 @@ class TransportOptionsAdapter {
         return args.toArray(new String[] {});
     }
 
+    /**
+     * Adds default values to the user's transport options.
+     *
+     * @param userTransportOptions The user's transport options
+     * @return The options with defaults added
+     */
     private TransportOptions addDefaultTransportOptions(TransportOptions userTransportOptions) {
         TransportOptions transportOptions = Optional.ofNullable(userTransportOptions)
                 .map(TransportOptions::clone)

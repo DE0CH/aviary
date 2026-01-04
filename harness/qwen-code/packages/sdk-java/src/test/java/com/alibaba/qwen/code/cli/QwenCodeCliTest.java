@@ -2,6 +2,8 @@ package com.alibaba.qwen.code.cli;
 
 import java.util.List;
 
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
+
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +16,14 @@ class QwenCodeCliTest {
     @Test
     void simpleQuery() {
         List<String> result = QwenCodeCli.simpleQuery("hello world");
-        log.info("result: {}", result);
+        log.info("simpleQuery result: {}", result);
+        assertNotNull(result);
+    }
+
+    @Test
+    void simpleQueryWithModel() {
+        List<String> result = QwenCodeCli.simpleQuery("hello world", new TransportOptions().setModel("qwen-plus"));
+        log.info("simpleQueryWithModel result: {}", result);
         assertNotNull(result);
     }
 }

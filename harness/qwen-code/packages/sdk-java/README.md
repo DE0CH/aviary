@@ -150,8 +150,8 @@ import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
-import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers.AssistantMessageOutputType;
 import com.alibaba.qwen.code.cli.utils.Timeout;
+
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -162,9 +162,9 @@ public class CustomEventHandlingExample {
             @Override
             public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
                 String message = assistantMessage.getMessage().getContent().stream()
-                    .findFirst()
-                    .map(content -> content.getText())
-                    .orElse("");
+                        .findFirst()
+                        .map(content -> content.getText())
+                        .orElse("");
                 System.out.println("Assistant: " + message);
             }
 
@@ -213,7 +213,7 @@ public class CustomEventHandlingExample {
             public Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest) {
                 System.out.println("Permission request: " + permissionRequest.getRequest().getInput());
                 return new com.alibaba.qwen.code.cli.protocol.data.behavior.Allow()
-                    .setUpdatedInput(permissionRequest.getRequest().getInput()); // Allow by default
+                        .setUpdatedInput(permissionRequest.getRequest().getInput()); // Allow by default
             }
 
             @Override

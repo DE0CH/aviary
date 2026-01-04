@@ -1,13 +1,16 @@
 package com.alibaba.qwen.code.cli.session;
 
-import java.io.IOException;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.qwen.code.cli.QwenCodeCli;
+import com.alibaba.qwen.code.cli.protocol.data.AssistantUsage;
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
+import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.TextAssistantContent;
+import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ThingkingAssistantContent;
+import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolResultAssistantContent;
+import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolUseAssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Allow;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior.Operation;
@@ -17,6 +20,7 @@ import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlPermissionRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
+import com.alibaba.qwen.code.cli.session.event.AssistantContentConsumers;
 import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
@@ -34,19 +38,43 @@ class SessionTest {
     private static final Logger log = LoggerFactory.getLogger(SessionTest.class);
 
     @Test
-    void partialSendPromptSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
+    void partialSendPromptSuccessfully() throws SessionControlException, SessionSendPromptException {
         Session session = QwenCodeCli.newSession(new TransportOptions().setIncludePartialMessages(true));
         session.sendPrompt("in the dir src/test/temp/, create file empty file test.touch", new SessionEventSimpleConsumers() {
+        }.setDefaultPermissionOperation(Operation.allow).setBlockConsumer(new AssistantContentConsumers() {
             @Override
-            public void onAssistantMessageIncludePartial(Session session, List<AssistantContent> assistantContents,
-                    AssistantMessageOutputType assistantMessageOutputType) {
-                log.info("onAssistantMessageIncludePartial: {}", JSON.toJSONString(assistantContents));
+            public void onText(Session session, TextAssistantContent textAssistantContent) {
+                log.info("receive textAssistantContent {}", textAssistantContent);
             }
-        }.setDefaultPermissionOperation(Operation.allow));
+
+            @Override
+            public void onThinking(Session session, ThingkingAssistantContent thingkingAssistantContent) {
+                log.info("receive thingkingAssistantContent {}", thingkingAssistantContent);
+            }
+
+            @Override
+            public void onToolUse(Session session, ToolUseAssistantContent toolUseAssistantContent) {
+                log.info("receive toolUseAssistantContent {}", toolUseAssistantContent);
+            }
+
+            @Override
+            public void onToolResult(Session session, ToolResultAssistantContent toolResultAssistantContent) {
+                log.info("receive toolResultAssistantContent {}", toolResultAssistantContent);
+            }
+
+            public void onOtherContent(Session session, AssistantContent<?> other) {
+                log.info("receive otherContent {}", other);
+            }
+
+            @Override
+            public void onUsage(Session session, AssistantUsage assistantUsage) {
+                log.info("receive assistantUsage {}", assistantUsage);
+            }
+        }));
     }
 
     @Test
-    void setPermissionModeSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
+    void setPermissionModeSuccessfully() throws SessionControlException, SessionSendPromptException {
         Session session = QwenCodeCli.newSession(new TransportOptions());
 
         log.info(session.setPermissionMode(PermissionMode.YOLO).map(s -> s ? "setPermissionMode 1 success" : "setPermissionMode 1 error")
@@ -72,7 +100,7 @@ class SessionTest {
     }
 
     @Test
-    void sendPromptAndSetModelSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
+    void sendPromptAndSetModelSuccessfully() throws SessionControlException, SessionSendPromptException {
         Session session = QwenCodeCli.newSession(new TransportOptions());
 
         log.info(session.setModel("qwen3-coder-flash").map(s -> s ? "setModel 1 success" : "setModel 1 error").orElse("setModel 1 unknown"));
@@ -97,7 +125,7 @@ class SessionTest {
     }
 
     @Test
-    void sendPromptAndInterruptContinueSuccessfully() throws IOException, SessionControlException, SessionSendPromptException {
+    void sendPromptAndInterruptContinueSuccessfully() throws SessionControlException, SessionSendPromptException {
         Session session = QwenCodeCli.newSession();
 
         SessionEventConsumers sessionEventConsumers = new SessionEventSimpleConsumers() {

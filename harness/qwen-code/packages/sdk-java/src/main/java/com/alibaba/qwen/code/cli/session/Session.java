@@ -31,6 +31,7 @@ import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
 import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
 import com.alibaba.qwen.code.cli.transport.Transport;
+import com.alibaba.qwen.code.cli.transport.TransportOptions;
 import com.alibaba.qwen.code.cli.utils.MyConcurrentUtils;
 import com.alibaba.qwen.code.cli.utils.Timeout;
 
@@ -38,6 +39,9 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Manages a session with the Qwen Code CLI, handling communication, sending prompts, and processing responses.
+ */
 public class Session {
     private static final Logger log = LoggerFactory.getLogger(Session.class);
     private final Transport transport;
@@ -45,6 +49,24 @@ public class Session {
     private SDKSystemMessage lastSdkSystemMessage;
     private final Timeout defaultEventTimeout = Timeout.TIMEOUT_60_SECONDS;
 
+    /**
+     * Checks if the session is configured for streaming.
+     *
+     * @return true if streaming is enabled, false otherwise
+     */
+    public boolean isStreaming() {
+        return Optional.ofNullable(transport)
+                .map(Transport::getTransportOptions)
+                .map(TransportOptions::getIncludePartialMessages)
+                .orElse(false);
+    }
+
+    /**
+     * Constructs a new session with the specified transport.
+     *
+     * @param transport The transport layer to use for communication
+     * @throws SessionControlException if the transport is not available
+     */
     public Session(Transport transport) throws SessionControlException {
         if (transport == null || !transport.isAvailable()) {
             throw new SessionControlException("Transport is not available");
@@ -53,6 +75,11 @@ public class Session {
         start();
     }
 
+    /**
+     * Starts the session by initializing communication with the CLI.
+     *
+     * @throws SessionControlException if initialization fails
+     */
     public void start() throws SessionControlException {
         try {
             if (!transport.isAvailable()) {
@@ -67,6 +94,11 @@ public class Session {
         }
     }
 
+    /**
+     * Closes the session and releases resources.
+     *
+     * @throws SessionControlException if closing fails
+     */
     public void close() throws SessionControlException {
         try {
             transport.close();
@@ -75,11 +107,24 @@ public class Session {
         }
     }
 
+    /**
+     * Interrupts the current operation in the CLI.
+     *
+     * @return An optional boolean indicating success of the interrupt operation
+     * @throws SessionControlException if the operation fails
+     */
     public Optional<Boolean> interrupt() throws SessionControlException {
         checkAvailable();
         return processControlRequest(new CLIControlRequest<CLIControlInterruptRequest>().setRequest(new CLIControlInterruptRequest()).toString());
     }
 
+    /**
+     * Sets the model to be used in the session.
+     *
+     * @param modelName The name of the model to use
+     * @return An optional boolean indicating success of the operation
+     * @throws SessionControlException if the operation fails
+     */
     public Optional<Boolean> setModel(String modelName) throws SessionControlException {
         checkAvailable();
         CLIControlSetModelRequest cliControlSetModelRequest = new CLIControlSetModelRequest();
@@ -87,6 +132,13 @@ public class Session {
         return processControlRequest(new CLIControlRequest<CLIControlSetModelRequest>().setRequest(cliControlSetModelRequest).toString());
     }
 
+    /**
+     * Sets the permission mode for the session.
+     *
+     * @param permissionMode The permission mode to use
+     * @return An optional boolean indicating success of the operation
+     * @throws SessionControlException if the operation fails
+     */
     public Optional<Boolean> setPermissionMode(PermissionMode permissionMode) throws SessionControlException {
         checkAvailable();
         CLIControlSetPermissionModeRequest cliControlSetPermissionModeRequest = new CLIControlSetPermissionModeRequest();
@@ -110,10 +162,21 @@ public class Session {
         }
     }
 
+    /**
+     * Continues the current session.
+     *
+     * @throws SessionControlException if the operation fails
+     */
     public void continueSession() throws SessionControlException {
         resumeSession(getSessionId());
     }
 
+    /**
+     * Resumes a session with the specified ID.
+     *
+     * @param sessionId The ID of the session to resume
+     * @throws SessionControlException if the operation fails
+     */
     public void resumeSession(String sessionId) throws SessionControlException {
         if (StringUtils.isNotBlank(sessionId)) {
             transport.getTransportOptions().setResumeSessionId(sessionId);
@@ -121,6 +184,14 @@ public class Session {
         this.start();
     }
 
+    /**
+     * Sends a prompt to the CLI and processes the response.
+     *
+     * @param prompt The prompt to send to the CLI
+     * @param sessionEventConsumers Consumers for handling different types of events
+     * @throws SessionSendPromptException if sending the prompt fails
+     * @throws SessionControlException if a control operation fails
+     */
     public void sendPrompt(String prompt, SessionEventConsumers sessionEventConsumers) throws SessionSendPromptException, SessionControlException {
         checkAvailable();
         try {
@@ -137,7 +208,8 @@ public class Session {
                             Optional.ofNullable(sessionEventConsumers.onAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("stream_event".equals(messageType)) {
-                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onPartialAssistantMessage(this, jsonObject.to(SDKPartialAssistantMessage.class)),
+                    MyConcurrentUtils.runAndWait(
+                            () -> sessionEventConsumers.onPartialAssistantMessage(this, jsonObject.to(SDKPartialAssistantMessage.class)),
                             Optional.ofNullable(sessionEventConsumers.onPartialAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("user".equals(messageType)) {
@@ -234,14 +306,29 @@ public class Session {
         return false;
     }
 
+    /**
+     * Gets the current session ID.
+     *
+     * @return The session ID, or null if not available
+     */
     public String getSessionId() {
         return Optional.ofNullable(lastSdkSystemMessage).map(SDKSystemMessage::getSessionId).orElse(null);
     }
 
+    /**
+     * Checks if the session is available for operations.
+     *
+     * @return true if the session is available, false otherwise
+     */
     public boolean isAvailable() {
         return transport.isAvailable();
     }
 
+    /**
+     * Gets the capabilities of the CLI.
+     *
+     * @return A Capabilities object representing the CLI's capabilities
+     */
     public Capabilities getCapabilities() {
         return Optional.ofNullable(lastCliControlInitializeResponse).map(CLIControlInitializeResponse::getCapabilities).orElse(new Capabilities());
     }

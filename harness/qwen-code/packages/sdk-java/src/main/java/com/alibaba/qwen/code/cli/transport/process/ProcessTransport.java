@@ -22,6 +22,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+/**
+ * Implementation of the Transport interface that communicates with the Qwen CLI via a process.
+ */
 public class ProcessTransport implements Transport {
     private static final Logger log = LoggerFactory.getLogger(ProcessTransport.class);
     private final TransportOptions transportOptions;
@@ -36,14 +39,32 @@ public class ProcessTransport implements Transport {
 
     private final AtomicBoolean reading = new AtomicBoolean(false);
 
+    /**
+     * Constructs a new ProcessTransport with default options.
+     *
+     * @throws IOException if starting the process fails
+     */
     public ProcessTransport() throws IOException {
         this(new TransportOptions());
     }
 
+    /**
+     * Constructs a new ProcessTransport with the specified options.
+     *
+     * @param transportOptions The transport options to use
+     * @throws IOException if starting the process fails
+     */
     public ProcessTransport(TransportOptions transportOptions) throws IOException {
         this(transportOptions, (line) -> log.error("process error: {}", line));
     }
 
+    /**
+     * Constructs a new ProcessTransport with the specified options and error handler.
+     *
+     * @param transportOptions The transport options to use
+     * @param errorHandler The error handler to use
+     * @throws IOException if starting the process fails
+     */
     public ProcessTransport(TransportOptions transportOptions, Consumer<String> errorHandler) throws IOException {
         this.transportOptions = transportOptions;
         this.errorHandler = errorHandler;

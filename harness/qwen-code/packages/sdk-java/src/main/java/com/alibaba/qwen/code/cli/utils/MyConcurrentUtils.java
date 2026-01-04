@@ -9,9 +9,18 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Utility class for concurrent operations.
+ */
 public class MyConcurrentUtils {
     private static final Logger log = LoggerFactory.getLogger(MyConcurrentUtils.class);
 
+    /**
+     * Runs a task and waits for it to complete with a timeout.
+     *
+     * @param runnable The task to run
+     * @param timeOut The timeout for the operation
+     */
     public static void runAndWait(Runnable runnable, Timeout timeOut) {
         CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
             try {
@@ -34,6 +43,17 @@ public class MyConcurrentUtils {
         }
     }
 
+    /**
+     * Runs a task that returns a value and waits for it to complete with a timeout.
+     *
+     * @param supplier The task to run
+     * @param timeOut The timeout for the operation
+     * @param <T> The type of the result
+     * @return The result of the task
+     * @throws ExecutionException if an execution error occurs
+     * @throws InterruptedException if the operation is interrupted
+     * @throws TimeoutException if the operation times out
+     */
     public static <T> T runAndWait(Supplier<T> supplier, Timeout timeOut)
             throws ExecutionException, InterruptedException, TimeoutException {
         CompletableFuture<T> future = CompletableFuture.supplyAsync(() -> {
@@ -52,6 +72,12 @@ public class MyConcurrentUtils {
         }
     }
 
+    /**
+     * Runs a task asynchronously with an error callback.
+     *
+     * @param runnable The task to run
+     * @param errorCallback The error callback
+     */
     public static void asyncRun(Runnable runnable, BiConsumer<Void, Throwable> errorCallback) {
         CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
             try {

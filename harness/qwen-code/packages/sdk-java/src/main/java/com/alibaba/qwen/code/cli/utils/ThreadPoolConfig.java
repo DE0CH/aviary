@@ -9,6 +9,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+/**
+ * Configuration for the thread pool used by the SDK.
+ */
 public class ThreadPoolConfig {
     private static final ThreadPoolExecutor defaultExecutor = new ThreadPoolExecutor(
             10, 30, 60L, TimeUnit.SECONDS,
@@ -27,10 +30,21 @@ public class ThreadPoolConfig {
     );
 
     private static Supplier<ThreadPoolExecutor> executorSupplier;
+
+    /**
+     * Sets the supplier for the executor.
+     *
+     * @param executorSupplier The supplier for the executor
+     */
     public static void setExecutorSupplier(Supplier<ThreadPoolExecutor> executorSupplier) {
         ThreadPoolConfig.executorSupplier = executorSupplier;
     }
 
+    /**
+     * Gets the default executor.
+     *
+     * @return The default executor
+     */
     public static ThreadPoolExecutor getDefaultExecutor() {
         return defaultExecutor;
     }
