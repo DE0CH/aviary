@@ -11,6 +11,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Utility class for concurrent operations.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class MyConcurrentUtils {
     private static final Logger log = LoggerFactory.getLogger(MyConcurrentUtils.class);
@@ -50,9 +53,9 @@ public class MyConcurrentUtils {
      * @param timeOut The timeout for the operation
      * @param <T> The type of the result
      * @return The result of the task
-     * @throws ExecutionException if an execution error occurs
-     * @throws InterruptedException if the operation is interrupted
-     * @throws TimeoutException if the operation times out
+     * @throws java.util.concurrent.ExecutionException if an execution error occurs
+     * @throws java.lang.InterruptedException if the operation is interrupted
+     * @throws java.util.concurrent.TimeoutException if the operation times out
      */
     public static <T> T runAndWait(Supplier<T> supplier, Timeout timeOut)
             throws ExecutionException, InterruptedException, TimeoutException {

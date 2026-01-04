@@ -7,6 +7,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a user message in the SDK protocol.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "user")
 public class SDKUserMessage extends MessageBase {

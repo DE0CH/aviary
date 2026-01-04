@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.JSON;
 
 /**
  * Represents usage information for an assistant message.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class AssistantUsage {
     /**
@@ -62,6 +65,11 @@ public class AssistantUsage {
         this.usage = usage;
     }
 
+    /**
+     * <p>toString.</p>
+     *
+     * @return a {@link java.lang.String} object.
+     */
     public String toString() {
         return JSON.toJSONString(this);
     }

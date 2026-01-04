@@ -7,6 +7,9 @@ import com.alibaba.qwen.code.cli.protocol.message.assistant.event.StreamEvent;
 
 /**
  * Represents a partial assistant message during streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "stream_event")
 public class SDKPartialAssistantMessage extends MessageBase {

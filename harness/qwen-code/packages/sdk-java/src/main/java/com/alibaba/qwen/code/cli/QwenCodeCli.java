@@ -25,6 +25,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Main entry point for interacting with the Qwen Code CLI. Provides static methods for simple queries and session management.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class QwenCodeCli {
     private static final Logger log = LoggerFactory.getLogger(QwenCodeCli.class);

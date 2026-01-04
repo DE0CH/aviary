@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.protocol.data;
 
 /**
  * Represents usage information for a specific model.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class ModelUsage {
     /**

@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.session.exception;
 
 /**
  * Exception thrown when sending a prompt in a session fails.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class SessionSendPromptException extends Exception {
     /**

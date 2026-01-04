@@ -8,6 +8,8 @@ import com.alibaba.qwen.code.cli.protocol.message.MessageBase;
  * Represents a control response from the CLI.
  *
  * @param <R> The type of the response object
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "control_response")
 public class CLIControlResponse<R> extends MessageBase {

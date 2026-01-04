@@ -10,6 +10,8 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent;
  * Abstract base class for content blocks in assistant messages.
  *
  * @param <C> The type of content
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "ContentBlock", seeAlso = { TextBlock.class, ToolResultBlock.class, ThinkingBlock.class, ToolUseBlock.class })
 public abstract class ContentBlock<C> implements AssistantContent<C> {
@@ -26,6 +28,7 @@ public abstract class ContentBlock<C> implements AssistantContent<C> {
      */
     protected String messageId;
 
+    /** {@inheritDoc} */
     @Override
     public String getType() {
         return type;
@@ -58,6 +61,7 @@ public abstract class ContentBlock<C> implements AssistantContent<C> {
         this.annotations = annotations;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getMessageId() {
         return messageId;
@@ -72,6 +76,11 @@ public abstract class ContentBlock<C> implements AssistantContent<C> {
         this.messageId = messageId;
     }
 
+    /**
+     * <p>toString.</p>
+     *
+     * @return a {@link java.lang.String} object.
+     */
     public String toString() {
         return JSON.toJSONString(this);
     }

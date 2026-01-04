@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a deny behavior that rejects an operation.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "operation", typeName = "deny")
 public class Deny extends Behavior {

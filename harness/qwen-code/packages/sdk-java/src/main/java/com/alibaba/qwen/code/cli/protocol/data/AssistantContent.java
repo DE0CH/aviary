@@ -6,6 +6,8 @@ import java.util.Map;
  * Represents content from the assistant in a Qwen Code session.
  *
  * @param <C> The type of content
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public interface AssistantContent<C> {
     /**

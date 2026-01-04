@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.session.exception;
 
 /**
  * Exception thrown when a session control operation fails.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class SessionControlException extends Exception {
     /**

@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.protocol.message;
 
 /**
  * Represents a message in the Qwen Code protocol.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public interface Message {
     /**

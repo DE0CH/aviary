@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Base class for stream events during message streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "StreamEvent",
         seeAlso = {MessageStartStreamEvent.class, MessageStopStreamEvent.class, ContentBlockStartEvent.class, ContentBlockStopEvent.class,

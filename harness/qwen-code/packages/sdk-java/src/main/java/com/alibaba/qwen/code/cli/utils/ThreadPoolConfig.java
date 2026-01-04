@@ -11,6 +11,9 @@ import java.util.function.Supplier;
 
 /**
  * Configuration for the thread pool used by the SDK.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class ThreadPoolConfig {
     private static final ThreadPoolExecutor defaultExecutor = new ThreadPoolExecutor(

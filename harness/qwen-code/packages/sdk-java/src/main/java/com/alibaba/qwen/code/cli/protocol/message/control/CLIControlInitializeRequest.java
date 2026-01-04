@@ -5,6 +5,9 @@ import com.alibaba.qwen.code.cli.protocol.data.InitializeConfig;
 
 /**
  * Represents a control initialize request to the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIControlInitializeRequest {
     /**

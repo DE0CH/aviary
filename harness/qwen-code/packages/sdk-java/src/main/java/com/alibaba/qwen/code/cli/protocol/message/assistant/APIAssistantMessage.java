@@ -8,6 +8,9 @@ import com.alibaba.qwen.code.cli.protocol.message.assistant.block.ContentBlock;
 
 /**
  * Represents an API assistant message.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class APIAssistantMessage {
     /**

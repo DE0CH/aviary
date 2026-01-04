@@ -13,6 +13,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolUseAssistant
 
 /**
  * Represents a content block delta event during streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "content_block_delta")
 public class ContentBlockDeltaEvent extends StreamEvent {

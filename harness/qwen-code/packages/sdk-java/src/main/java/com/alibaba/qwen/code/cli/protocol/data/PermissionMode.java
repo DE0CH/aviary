@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.protocol.data;
 
 /**
  * Represents different permission modes for the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public enum PermissionMode {
     /**

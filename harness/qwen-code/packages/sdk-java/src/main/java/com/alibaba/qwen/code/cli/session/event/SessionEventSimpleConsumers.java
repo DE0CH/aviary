@@ -31,16 +31,22 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Simple implementation of SessionEventConsumers that provides basic implementations for all methods.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class SessionEventSimpleConsumers implements SessionEventConsumers {
+    /** {@inheritDoc} */
     @Override
     public void onSystemMessage(Session session, SDKSystemMessage systemMessage) {
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onResultMessage(Session session, SDKResultMessage resultMessage) {
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onAssistantMessage(Session session, SDKAssistantMessage assistantMessage) {
         List<ContentBlock<?>> contentBlocks = assistantMessage.getMessage().getContent();
@@ -54,6 +60,7 @@ public class SessionEventSimpleConsumers implements SessionEventConsumers {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onPartialAssistantMessage(Session session, SDKPartialAssistantMessage partialAssistantMessage) {
         StreamEvent event = partialAssistantMessage.getEvent();
@@ -67,6 +74,12 @@ public class SessionEventSimpleConsumers implements SessionEventConsumers {
         consumeAssistantContent(session, contentBlockDeltaEvent.getDelta());
     }
 
+    /**
+     * <p>consumeAssistantContent.</p>
+     *
+     * @param session a {@link com.alibaba.qwen.code.cli.session.Session} object.
+     * @param assistantContent a {@link com.alibaba.qwen.code.cli.protocol.data.AssistantContent} object.
+     */
     protected void consumeAssistantContent(Session session, AssistantContent<?> assistantContent) {
         if (assistantContent instanceof TextAssistantContent) {
             assistantContentConsumers.onText(session, (TextAssistantContent) assistantContent);
@@ -81,23 +94,28 @@ public class SessionEventSimpleConsumers implements SessionEventConsumers {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onUserMessage(Session session, SDKUserMessage userMessage) {
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onOtherMessage(Session session, String message) {
     }
 
+    /** {@inheritDoc} */
     @Override
     public void onControlResponse(Session session, CLIControlResponse<?> cliControlResponse) {
     }
 
+    /** {@inheritDoc} */
     @Override
     public CLIControlResponse<?> onControlRequest(Session session, CLIControlRequest<?> cliControlRequest) {
         return new CLIControlResponse<>();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest) {
         if (Operation.deny.equals(this.defaultPermissionOperation)) {
@@ -107,46 +125,55 @@ public class SessionEventSimpleConsumers implements SessionEventConsumers {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onSystemMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onResultMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onAssistantMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onPartialAssistantMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onUserMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onOtherMessageTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onControlResponseTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onControlRequestTimeout(Session session) {
         return defaultEventTimeout;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Timeout onPermissionRequestTimeout(Session session) {
         return defaultEventTimeout;

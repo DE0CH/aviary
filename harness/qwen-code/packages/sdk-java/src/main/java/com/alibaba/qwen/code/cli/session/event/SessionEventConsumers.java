@@ -14,6 +14,9 @@ import com.alibaba.qwen.code.cli.utils.Timeout;
 
 /**
  * Interface for handling different types of events during a session.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public interface SessionEventConsumers {
     /**

@@ -4,6 +4,9 @@ import com.alibaba.qwen.code.cli.protocol.data.Capabilities;
 
 /**
  * Represents a control initialize response from the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIControlInitializeResponse {
     /**

@@ -6,6 +6,9 @@ import com.alibaba.qwen.code.cli.protocol.message.assistant.block.ContentBlock;
 
 /**
  * Represents a content block start event during message streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "content_block_start")
 public class ContentBlockStartEvent extends StreamEvent{

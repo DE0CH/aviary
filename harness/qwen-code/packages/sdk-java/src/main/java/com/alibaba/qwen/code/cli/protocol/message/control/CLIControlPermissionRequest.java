@@ -7,6 +7,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 
 /**
  * Represents a control permission request to the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIControlPermissionRequest {
     /**

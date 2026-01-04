@@ -8,6 +8,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a system message from the SDK.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "system")
 public class SDKSystemMessage extends MessageBase {

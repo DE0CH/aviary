@@ -6,6 +6,9 @@ import com.alibaba.qwen.code.cli.protocol.message.MessageBase;
 
 /**
  * Represents an SDK assistant message.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "assistant")
 public class SDKAssistantMessage extends MessageBase {
@@ -38,6 +41,7 @@ public class SDKAssistantMessage extends MessageBase {
         this.type = "assistant";
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getMessageId() {
         return this.getUuid();

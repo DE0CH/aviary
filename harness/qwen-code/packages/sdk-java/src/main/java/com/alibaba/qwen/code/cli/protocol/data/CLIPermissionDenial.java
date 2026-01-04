@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 
 /**
  * Represents a permission denial from the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIPermissionDenial {
     /**

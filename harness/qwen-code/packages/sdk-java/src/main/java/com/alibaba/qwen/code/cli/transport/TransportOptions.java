@@ -8,6 +8,9 @@ import com.alibaba.qwen.code.cli.utils.Timeout;
 
 /**
  * Configuration options for the transport layer.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class TransportOptions implements Cloneable {
     /**
@@ -395,6 +398,7 @@ public class TransportOptions implements Cloneable {
         return this;
     }
 
+    /** {@inheritDoc} */
     @Override
     public TransportOptions clone() {
         try {

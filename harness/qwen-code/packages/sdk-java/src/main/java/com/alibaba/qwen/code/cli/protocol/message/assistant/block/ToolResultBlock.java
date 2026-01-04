@@ -6,6 +6,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolResultAssist
 
 /**
  * Represents a tool result content block.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "tool_result")
 public class ToolResultBlock extends ContentBlock<String> implements ToolResultAssistantContent {
@@ -81,6 +84,7 @@ public class ToolResultBlock extends ContentBlock<String> implements ToolResultA
         this.isError = isError;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getContentOfAssistant() {
         return content;

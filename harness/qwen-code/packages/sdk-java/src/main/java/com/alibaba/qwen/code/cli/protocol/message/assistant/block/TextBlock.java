@@ -5,6 +5,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.TextAssistantCon
 
 /**
  * Represents a text content block.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "text")
 public class TextBlock extends ContentBlock<String> implements TextAssistantContent {
@@ -31,6 +34,7 @@ public class TextBlock extends ContentBlock<String> implements TextAssistantCont
         this.text = text;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getContentOfAssistant() {
         return text;

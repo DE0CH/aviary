@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a message start event during message streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeName = "message_start")
 public class MessageStartStreamEvent extends StreamEvent{

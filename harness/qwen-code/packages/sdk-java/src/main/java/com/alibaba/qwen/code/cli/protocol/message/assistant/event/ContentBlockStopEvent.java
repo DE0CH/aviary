@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a content block stop event during message streaming.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "content_block_stop")
 public class ContentBlockStopEvent extends StreamEvent{

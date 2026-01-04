@@ -10,6 +10,8 @@ import com.alibaba.qwen.code.cli.protocol.message.MessageBase;
  * Represents a control request to the CLI.
  *
  * @param <R> The type of the request object
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "control_request")
 public class CLIControlRequest<R> extends MessageBase {

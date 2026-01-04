@@ -11,6 +11,9 @@ import com.alibaba.qwen.code.cli.protocol.data.Usage;
 
 /**
  * Represents a result message from the SDK.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "result")
 public class SDKResultMessage extends MessageBase {

@@ -6,6 +6,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents an allow behavior that permits an operation.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "operation", typeName = "allow")
 public class Allow extends Behavior {

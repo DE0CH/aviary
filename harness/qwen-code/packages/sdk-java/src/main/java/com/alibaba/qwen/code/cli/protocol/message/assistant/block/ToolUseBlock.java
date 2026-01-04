@@ -9,6 +9,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolUseAssistant
 
 /**
  * Represents a tool use content block.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "tool_use")
 public class ToolUseBlock extends ContentBlock<Map<String, Object>> implements ToolUseAssistantContent {
@@ -98,14 +101,20 @@ public class ToolUseBlock extends ContentBlock<Map<String, Object>> implements T
     }
 
     /**
-     * Sets the list of annotations.
+     * {@inheritDoc}
      *
-     * @param annotations The list of annotations
+     * Sets the list of annotations.
      */
+    @Override
     public void setAnnotations(List<Annotation> annotations) {
         this.annotations = annotations;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Gets the content of the assistant.
+     */
     @Override
     public Map<String, Object> getContentOfAssistant() {
         return Collections.emptyMap();

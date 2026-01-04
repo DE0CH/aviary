@@ -5,6 +5,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ThingkingAssista
 
 /**
  * Represents a thinking content block.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "thinking")
 public class ThinkingBlock extends ContentBlock<String> implements ThingkingAssistantContent {
@@ -53,6 +56,7 @@ public class ThinkingBlock extends ContentBlock<String> implements ThingkingAssi
         this.signature = signature;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getContentOfAssistant() {
         return thinking;

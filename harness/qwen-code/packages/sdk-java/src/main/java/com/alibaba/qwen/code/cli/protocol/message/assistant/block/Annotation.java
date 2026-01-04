@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 
 /**
  * Represents an annotation for a content block.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class Annotation {
     /**

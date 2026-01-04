@@ -41,6 +41,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Manages a session with the Qwen Code CLI, handling communication, sending prompts, and processing responses.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class Session {
     private static final Logger log = LoggerFactory.getLogger(Session.class);
@@ -65,7 +68,7 @@ public class Session {
      * Constructs a new session with the specified transport.
      *
      * @param transport The transport layer to use for communication
-     * @throws SessionControlException if the transport is not available
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the transport is not available
      */
     public Session(Transport transport) throws SessionControlException {
         if (transport == null || !transport.isAvailable()) {
@@ -78,7 +81,7 @@ public class Session {
     /**
      * Starts the session by initializing communication with the CLI.
      *
-     * @throws SessionControlException if initialization fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if initialization fails
      */
     public void start() throws SessionControlException {
         try {
@@ -97,7 +100,7 @@ public class Session {
     /**
      * Closes the session and releases resources.
      *
-     * @throws SessionControlException if closing fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if closing fails
      */
     public void close() throws SessionControlException {
         try {
@@ -111,7 +114,7 @@ public class Session {
      * Interrupts the current operation in the CLI.
      *
      * @return An optional boolean indicating success of the interrupt operation
-     * @throws SessionControlException if the operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the operation fails
      */
     public Optional<Boolean> interrupt() throws SessionControlException {
         checkAvailable();
@@ -123,7 +126,7 @@ public class Session {
      *
      * @param modelName The name of the model to use
      * @return An optional boolean indicating success of the operation
-     * @throws SessionControlException if the operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the operation fails
      */
     public Optional<Boolean> setModel(String modelName) throws SessionControlException {
         checkAvailable();
@@ -137,7 +140,7 @@ public class Session {
      *
      * @param permissionMode The permission mode to use
      * @return An optional boolean indicating success of the operation
-     * @throws SessionControlException if the operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the operation fails
      */
     public Optional<Boolean> setPermissionMode(PermissionMode permissionMode) throws SessionControlException {
         checkAvailable();
@@ -165,7 +168,7 @@ public class Session {
     /**
      * Continues the current session.
      *
-     * @throws SessionControlException if the operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the operation fails
      */
     public void continueSession() throws SessionControlException {
         resumeSession(getSessionId());
@@ -175,7 +178,7 @@ public class Session {
      * Resumes a session with the specified ID.
      *
      * @param sessionId The ID of the session to resume
-     * @throws SessionControlException if the operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if the operation fails
      */
     public void resumeSession(String sessionId) throws SessionControlException {
         if (StringUtils.isNotBlank(sessionId)) {
@@ -189,8 +192,8 @@ public class Session {
      *
      * @param prompt The prompt to send to the CLI
      * @param sessionEventConsumers Consumers for handling different types of events
-     * @throws SessionSendPromptException if sending the prompt fails
-     * @throws SessionControlException if a control operation fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException if sending the prompt fails
+     * @throws com.alibaba.qwen.code.cli.session.exception.SessionControlException if a control operation fails
      */
     public void sendPrompt(String prompt, SessionEventConsumers sessionEventConsumers) throws SessionSendPromptException, SessionControlException {
         checkAvailable();

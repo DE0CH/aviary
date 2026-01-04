@@ -5,6 +5,9 @@ import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 
 /**
  * Represents a control permission response from the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIControlPermissionResponse {
     /**

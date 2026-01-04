@@ -6,6 +6,9 @@ import org.apache.commons.lang3.Validate;
 
 /**
  * Represents a timeout value with a time unit.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class Timeout {
     /**

@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Base class for behavior objects that define how the CLI should handle requests.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "operation", typeName = "Behavior", seeAlso = {Allow.class, Deny.class})
 public class Behavior {

@@ -4,6 +4,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 
 /**
  * Extends the Usage class with additional usage information.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class ExtendedUsage extends Usage {
     /**

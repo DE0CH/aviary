@@ -5,6 +5,9 @@ import com.alibaba.fastjson2.annotation.JSONField;
 
 /**
  * Represents usage information for a message.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class Usage {
     /**
@@ -123,6 +126,11 @@ public class Usage {
         this.totalTokens = totalTokens;
     }
 
+    /**
+     * <p>toString.</p>
+     *
+     * @return a {@link java.lang.String} object.
+     */
     public String toString() {
         return JSON.toJSONString(this);
     }

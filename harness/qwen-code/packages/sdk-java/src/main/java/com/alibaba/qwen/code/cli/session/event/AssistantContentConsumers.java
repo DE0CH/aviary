@@ -10,6 +10,9 @@ import com.alibaba.qwen.code.cli.session.Session;
 
 /**
  * Interface for handling different types of assistant content during a session.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public interface AssistantContentConsumers {
     /**

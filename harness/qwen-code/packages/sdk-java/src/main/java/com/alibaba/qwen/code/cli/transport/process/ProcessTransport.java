@@ -24,6 +24,9 @@ import java.util.function.Function;
 
 /**
  * Implementation of the Transport interface that communicates with the Qwen CLI via a process.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class ProcessTransport implements Transport {
     private static final Logger log = LoggerFactory.getLogger(ProcessTransport.class);
@@ -42,7 +45,7 @@ public class ProcessTransport implements Transport {
     /**
      * Constructs a new ProcessTransport with default options.
      *
-     * @throws IOException if starting the process fails
+     * @throws java.io.IOException if starting the process fails
      */
     public ProcessTransport() throws IOException {
         this(new TransportOptions());
@@ -52,7 +55,7 @@ public class ProcessTransport implements Transport {
      * Constructs a new ProcessTransport with the specified options.
      *
      * @param transportOptions The transport options to use
-     * @throws IOException if starting the process fails
+     * @throws java.io.IOException if starting the process fails
      */
     public ProcessTransport(TransportOptions transportOptions) throws IOException {
         this(transportOptions, (line) -> log.error("process error: {}", line));
@@ -63,7 +66,7 @@ public class ProcessTransport implements Transport {
      *
      * @param transportOptions The transport options to use
      * @param errorHandler The error handler to use
-     * @throws IOException if starting the process fails
+     * @throws java.io.IOException if starting the process fails
      */
     public ProcessTransport(TransportOptions transportOptions, Consumer<String> errorHandler) throws IOException {
         this.transportOptions = transportOptions;
@@ -71,16 +74,19 @@ public class ProcessTransport implements Transport {
         start();
     }
 
+    /** {@inheritDoc} */
     @Override
     public TransportOptions getTransportOptions() {
         return transportOptions;
     }
 
+    /** {@inheritDoc} */
     @Override
     public boolean isReading() {
         return reading.get();
     }
 
+    /** {@inheritDoc} */
     @Override
     public void start() throws IOException {
         TransportOptionsAdapter transportOptionsAdapter = new TransportOptionsAdapter(transportOptions);
@@ -104,6 +110,7 @@ public class ProcessTransport implements Transport {
         startErrorReading();
     }
 
+    /** {@inheritDoc} */
     @Override
     public void close() throws IOException {
         if (processInput != null) {
@@ -120,11 +127,13 @@ public class ProcessTransport implements Transport {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public boolean isAvailable() {
         return process != null && process.isAlive();
     }
 
+    /** {@inheritDoc} */
     @Override
     public String inputWaitForOneLine(String message) throws IOException, ExecutionException, InterruptedException, TimeoutException {
         return inputWaitForOneLine(message, turnTimeout);
@@ -150,6 +159,7 @@ public class ProcessTransport implements Transport {
         }
     }
 
+    /** {@inheritDoc} */
     @Override
     public void inputWaitForMultiLine(String message, Function<String, Boolean> callBackFunction) throws IOException {
         inputWaitForMultiLine(message, callBackFunction, turnTimeout);
@@ -161,6 +171,7 @@ public class ProcessTransport implements Transport {
         MyConcurrentUtils.runAndWait(() -> iterateOutput(callBackFunction), timeOut);
     }
 
+    /** {@inheritDoc} */
     @Override
     public void inputNoWaitResponse(String message) throws IOException {
         log.debug("input message to process: {}", message);

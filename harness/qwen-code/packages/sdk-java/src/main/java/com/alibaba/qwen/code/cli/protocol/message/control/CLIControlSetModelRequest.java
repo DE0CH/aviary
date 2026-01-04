@@ -2,6 +2,9 @@ package com.alibaba.qwen.code.cli.protocol.message.control;
 
 /**
  * Represents a control request to set the model in the CLI.
+ *
+ * @author skyfire
+ * @version $Id: 0.0.1
  */
 public class CLIControlSetModelRequest {
     /**
