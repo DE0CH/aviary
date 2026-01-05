@@ -6,6 +6,7 @@ The Qwen Code Java SDK is a minimum experimental SDK for programmatic access to 
 
 - Java >= 1.8
 - Maven >= 3.6.0 (for building from source)
+- qwen-code >= 0.5.0
 
 ### Dependencies
 
