@@ -123,6 +123,8 @@ public static void runStreamingExample() {
 }
 ```
 
+other examples see src/test/java/com/alibaba/qwen/code/cli/example
+
 ## Architecture
 
 The SDK follows a layered architecture:
