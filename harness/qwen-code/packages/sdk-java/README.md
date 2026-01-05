@@ -13,7 +13,6 @@ The Qwen Code Java SDK is a minimum experimental SDK for programmatic access to 
 - **Utilities**: org.apache.commons:commons-lang3
 - **JSON Processing**: com.alibaba.fastjson2:fastjson2
 - **Testing**: JUnit 5 (org.junit.jupiter:junit-jupiter)
--
 
 ## Installation
 
