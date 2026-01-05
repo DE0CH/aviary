@@ -1,14 +1,14 @@
-package com.alibaba.qwen.code.cli.session.event;
+package com.alibaba.qwen.code.cli.session.event.consumers;
 
-import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 import com.alibaba.qwen.code.cli.protocol.message.SDKResultMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKSystemMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKUserMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKPartialAssistantMessage;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlPermissionRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlRequestPayload;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlResponsePayload;
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.utils.Timeout;
 
@@ -82,86 +82,77 @@ public interface SessionEventConsumers {
      * @param cliControlRequest The control request
      * @return The control response
      */
-    CLIControlResponse<?> onControlRequest(Session session, CLIControlRequest<?> cliControlRequest);
-
-    /**
-     * Handles permission requests.
-     *
-     * @param session The session
-     * @param permissionRequest The permission request
-     * @return The behavior for the permission request
-     */
-    Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest);
+    CLIControlResponse<? extends ControlResponsePayload> onControlRequest(Session session, CLIControlRequest<? extends ControlRequestPayload> cliControlRequest);
 
     /**
      * Gets timeout for system message handling.
      *
      * @param session The session
+     * @param systemMessage The system message
      * @return The timeout for system message handling
      */
-    Timeout onSystemMessageTimeout(Session session);
+    Timeout onSystemMessageTimeout(Session session, SDKSystemMessage systemMessage);
 
     /**
      * Gets timeout for result message handling.
      *
      * @param session The session
+     * @param resultMessage The result message
      * @return The timeout for result message handling
      */
-    Timeout onResultMessageTimeout(Session session);
+    Timeout onResultMessageTimeout(Session session, SDKResultMessage resultMessage);
 
     /**
      * Gets timeout for assistant message handling.
      *
      * @param session The session
+     * @param assistantMessage The assistant message
      * @return The timeout for assistant message handling
      */
-    Timeout onAssistantMessageTimeout(Session session);
+    Timeout onAssistantMessageTimeout(Session session, SDKAssistantMessage assistantMessage);
 
     /**
      * Gets timeout for partial assistant message handling.
      *
      * @param session The session
+     * @param partialAssistantMessage The partial assistant message
      * @return The timeout for partial assistant message handling
      */
-    Timeout onPartialAssistantMessageTimeout(Session session);
+    Timeout onPartialAssistantMessageTimeout(Session session, SDKPartialAssistantMessage partialAssistantMessage);
 
     /**
      * Gets timeout for user message handling.
      *
      * @param session The session
+     * @param userMessage The user message
      * @return The timeout for user message handling
      */
-    Timeout onUserMessageTimeout(Session session);
+    Timeout onUserMessageTimeout(Session session, SDKUserMessage userMessage);
 
     /**
      * Gets timeout for other message handling.
      *
      * @param session The session
+     * @param message The message
      * @return The timeout for other message handling
      */
-    Timeout onOtherMessageTimeout(Session session);
+    Timeout onOtherMessageTimeout(Session session, String message);
 
     /**
      * Gets timeout for control response handling.
      *
      * @param session The session
+     * @param cliControlResponse The control response
      * @return The timeout for control response handling
      */
-    Timeout onControlResponseTimeout(Session session);
+    Timeout onControlResponseTimeout(Session session, CLIControlResponse<?> cliControlResponse);
 
     /**
      * Gets timeout for control request handling.
      *
      * @param session The session
+     * @param cliControlRequest The control request
      * @return The timeout for control request handling
      */
-    Timeout onControlRequestTimeout(Session session);
-
-    /**
-     * Gets timeout for permission request handling.
-     *
-     * @param session The session
-     * @return The timeout for permission request handling
-     */
-    Timeout onPermissionRequestTimeout(Session session);
+    Timeout onControlRequestTimeout(Session session, CLIControlRequest<?> cliControlRequest);
 }

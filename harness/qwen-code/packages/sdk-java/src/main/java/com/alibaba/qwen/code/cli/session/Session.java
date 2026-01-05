@@ -1,9 +1,6 @@
 package com.alibaba.qwen.code.cli.session;
 
-import java.io.IOException;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -11,23 +8,21 @@ import com.alibaba.fastjson2.JSONReader.Feature;
 import com.alibaba.fastjson2.TypeReference;
 import com.alibaba.qwen.code.cli.protocol.data.Capabilities;
 import com.alibaba.qwen.code.cli.protocol.data.PermissionMode;
-import com.alibaba.qwen.code.cli.protocol.data.behavior.Allow;
-import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 import com.alibaba.qwen.code.cli.protocol.message.SDKResultMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKSystemMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKUserMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKPartialAssistantMessage;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeResponse;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInterruptRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlPermissionRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlPermissionResponse;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlInitializeRequest;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlInitializeResponse;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlInterruptRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlSetModelRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlSetPermissionModeRequest;
-import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlSetModelRequest;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlSetPermissionModeRequest;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlRequestPayload;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlResponsePayload;
+import com.alibaba.qwen.code.cli.session.event.consumers.SessionEventConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
 import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
 import com.alibaba.qwen.code.cli.transport.Transport;
@@ -204,29 +199,37 @@ public class Session {
                 if ("system".equals(messageType)) {
                     lastSdkSystemMessage = jsonObject.to(SDKSystemMessage.class);
                     MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onSystemMessage(this, lastSdkSystemMessage),
-                            Optional.ofNullable(sessionEventConsumers.onSystemMessageTimeout(this)).orElse(defaultEventTimeout));
+                            Optional.ofNullable(sessionEventConsumers.onSystemMessageTimeout(this, lastSdkSystemMessage))
+                                    .orElse(defaultEventTimeout));
                     return false;
                 } else if ("assistant".equals(messageType)) {
-                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onAssistantMessage(this, jsonObject.to(SDKAssistantMessage.class)),
-                            Optional.ofNullable(sessionEventConsumers.onAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
+                    SDKAssistantMessage assistantMessage = jsonObject.to(SDKAssistantMessage.class);
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onAssistantMessage(this, assistantMessage),
+                            Optional.ofNullable(sessionEventConsumers.onAssistantMessageTimeout(this, assistantMessage)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("stream_event".equals(messageType)) {
+                    SDKPartialAssistantMessage sdkPartialAssistantMessage = jsonObject.to(SDKPartialAssistantMessage.class);
                     MyConcurrentUtils.runAndWait(
-                            () -> sessionEventConsumers.onPartialAssistantMessage(this, jsonObject.to(SDKPartialAssistantMessage.class)),
-                            Optional.ofNullable(sessionEventConsumers.onPartialAssistantMessageTimeout(this)).orElse(defaultEventTimeout));
+                            () -> sessionEventConsumers.onPartialAssistantMessage(this, sdkPartialAssistantMessage),
+                            Optional.ofNullable(sessionEventConsumers.onPartialAssistantMessageTimeout(this, sdkPartialAssistantMessage))
+                                    .orElse(defaultEventTimeout));
                     return false;
                 } else if ("user".equals(messageType)) {
+                    SDKUserMessage sdkUserMessage = jsonObject.to(SDKUserMessage.class, Feature.FieldBased);
                     MyConcurrentUtils.runAndWait(
-                            () -> sessionEventConsumers.onUserMessage(this, jsonObject.to(SDKUserMessage.class, Feature.FieldBased)),
-                            Optional.ofNullable(sessionEventConsumers.onUserMessageTimeout(this)).orElse(defaultEventTimeout));
+                            () -> sessionEventConsumers.onUserMessage(this, sdkUserMessage),
+                            Optional.ofNullable(sessionEventConsumers.onUserMessageTimeout(this, sdkUserMessage)).orElse(defaultEventTimeout));
                     return false;
                 } else if ("result".equals(messageType)) {
-                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onResultMessage(this, jsonObject.to(SDKResultMessage.class)),
-                            Optional.ofNullable(sessionEventConsumers.onResultMessageTimeout(this)).orElse(defaultEventTimeout));
+                    SDKResultMessage sdkResultMessage = jsonObject.to(SDKResultMessage.class);
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onResultMessage(this, sdkResultMessage),
+                            Optional.ofNullable(sessionEventConsumers.onResultMessageTimeout(this, sdkResultMessage)).orElse(defaultEventTimeout));
                     return true;
                 } else if ("control_response".equals(messageType)) {
-                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onControlResponse(this, jsonObject.to(CLIControlResponse.class)),
-                            Optional.ofNullable(sessionEventConsumers.onControlResponseTimeout(this)).orElse(defaultEventTimeout));
+                    CLIControlResponse<? extends ControlResponsePayload> controlResponse = jsonObject.to(
+                            new TypeReference<CLIControlResponse<? extends ControlResponsePayload>>() {});
+                    MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onControlResponse(this, controlResponse),
+                            Optional.ofNullable(sessionEventConsumers.onControlResponseTimeout(this, controlResponse)).orElse(defaultEventTimeout));
                     if (!"error".equals(jsonObject.getString("subtype"))) {
                         return false;
                     } else {
@@ -234,79 +237,34 @@ public class Session {
                         return "error".equals(jsonObject.getString("subtype"));
                     }
                 } else if ("control_request".equals(messageType)) {
-                    return processControlRequestInThePrompting(jsonObject, sessionEventConsumers);
+                    CLIControlResponse<? extends ControlResponsePayload> controlResponse;
+                    try {
+                        CLIControlRequest<? extends ControlRequestPayload> controlRequest = jsonObject.to(
+                                new TypeReference<CLIControlRequest<? extends ControlRequestPayload>>() {});
+                        controlResponse = MyConcurrentUtils.runAndWait(
+                                () -> sessionEventConsumers.onControlRequest(this, controlRequest),
+                                Optional.ofNullable(sessionEventConsumers.onControlRequestTimeout(this, controlRequest)).orElse(defaultEventTimeout));
+                    } catch (Exception e) {
+                        log.error("Failed to process control request", e);
+                        controlResponse = new CLIControlResponse<>();
+                    }
+                    try {
+                        transport.inputNoWaitResponse(Optional.ofNullable(controlResponse).map(CLIControlResponse::toString)
+                                .orElse(new CLIControlResponse<ControlResponsePayload>().toString()));
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to send control response", e);
+                    }
+                    return false;
                 } else {
                     log.warn("unknown message type: {}", messageType);
                     MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onOtherMessage(this, line),
-                            Optional.ofNullable(sessionEventConsumers.onOtherMessageTimeout(this)).orElse(defaultEventTimeout));
+                            Optional.ofNullable(sessionEventConsumers.onOtherMessageTimeout(this, line)).orElse(defaultEventTimeout));
                     return false;
                 }
             });
         } catch (Exception e) {
             throw new SessionSendPromptException("Failed to send prompt", e);
         }
-    }
-
-    private boolean processControlRequestInThePrompting(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers) {
-        String subType = Optional.of(jsonObject)
-                .map(cr -> cr.getJSONObject("request"))
-                .map(r -> r.getString("subtype"))
-                .orElse("");
-        if ("can_use_tool".equals(subType)) {
-            try {
-                return processPermissionResponse(jsonObject, sessionEventConsumers);
-            } catch (IOException | ExecutionException | InterruptedException | TimeoutException e) {
-                log.error("Failed to process permission response", e);
-                return false;
-            }
-        } else {
-            CLIControlResponse<?> cliControlResponse;
-            try {
-                cliControlResponse = MyConcurrentUtils.runAndWait(
-                        () -> sessionEventConsumers.onControlRequest(this, jsonObject.to(new TypeReference<CLIControlRequest<?>>() {})),
-                        Optional.ofNullable(sessionEventConsumers.onControlRequestTimeout(this)).orElse(defaultEventTimeout));
-            } catch (Exception e) {
-                log.error("Failed to process control request", e);
-                return false;
-            }
-
-            if (cliControlResponse != null) {
-                try {
-                    transport.inputNoWaitResponse(cliControlResponse.toString());
-                } catch (Exception e) {
-                    log.error("Failed to process control response", e);
-                    return false;
-                }
-            }
-            return false;
-        }
-    }
-
-    private boolean processPermissionResponse(JSONObject jsonObject, SessionEventConsumers sessionEventConsumers)
-            throws IOException, ExecutionException, InterruptedException, TimeoutException {
-        CLIControlRequest<CLIControlPermissionRequest> permissionRequest = jsonObject.to(
-                new TypeReference<CLIControlRequest<CLIControlPermissionRequest>>() {});
-
-        Behavior behavior = Optional.ofNullable(MyConcurrentUtils.runAndWait(() -> sessionEventConsumers.onPermissionRequest(this, permissionRequest),
-                        Optional.ofNullable(sessionEventConsumers.onPermissionRequestTimeout(this)).orElse(defaultEventTimeout)))
-                .map(b -> {
-                    if (b instanceof Allow) {
-                        Allow allow = (Allow) b;
-                        if (allow.getUpdatedInput() == null) {
-                            allow.setUpdatedInput(permissionRequest.getRequest().getInput());
-                        }
-                    }
-                    return b;
-                })
-                .orElse(Behavior.defaultBehavior());
-        CLIControlResponse<CLIControlPermissionResponse> permissionResponse = new CLIControlResponse<>();
-        permissionResponse.createResponse().setResponse(new CLIControlPermissionResponse().setBehavior(behavior)).setRequestId(
-                permissionRequest.getRequestId());
-        String permissionMessage = permissionResponse.toString();
-        log.debug("send permission message to agent: {}", permissionMessage);
-        transport.inputNoWaitResponse(permissionMessage);
-
-        return false;
     }
 
     /**

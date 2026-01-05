@@ -11,18 +11,14 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.TextAssistantCon
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ThingkingAssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolResultAssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolUseAssistantContent;
-import com.alibaba.qwen.code.cli.protocol.data.behavior.Allow;
-import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior.Operation;
 import com.alibaba.qwen.code.cli.protocol.message.SDKResultMessage;
 import com.alibaba.qwen.code.cli.protocol.message.SDKSystemMessage;
 import com.alibaba.qwen.code.cli.protocol.message.assistant.SDKAssistantMessage;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlPermissionRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
-import com.alibaba.qwen.code.cli.session.event.AssistantContentConsumers;
-import com.alibaba.qwen.code.cli.session.event.SessionEventConsumers;
-import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.AssistantContentSimpleConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.SessionEventConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.session.exception.SessionControlException;
 import com.alibaba.qwen.code.cli.session.exception.SessionSendPromptException;
 import com.alibaba.qwen.code.cli.transport.TransportOptions;
@@ -41,7 +37,7 @@ class SessionTest {
     void partialSendPromptSuccessfully() throws SessionControlException, SessionSendPromptException {
         Session session = QwenCodeCli.newSession(new TransportOptions().setIncludePartialMessages(true));
         session.sendPrompt("in the dir src/test/temp/, create file empty file test.touch", new SessionEventSimpleConsumers() {
-        }.setDefaultPermissionOperation(Operation.allow).setBlockConsumer(new AssistantContentConsumers() {
+        }.setAssistantContentConsumer(new AssistantContentSimpleConsumers() {
             @Override
             public void onText(Session session, TextAssistantContent textAssistantContent) {
                 log.info("receive textAssistantContent {}", textAssistantContent);
@@ -70,7 +66,7 @@ class SessionTest {
             public void onUsage(Session session, AssistantUsage assistantUsage) {
                 log.info("receive assistantUsage {}", assistantUsage);
             }
-        }));
+        }.setDefaultPermissionOperation(Operation.allow)));
     }
 
     @Test
@@ -89,12 +85,8 @@ class SessionTest {
                 .orElse("setPermissionMode 3 unknown"));
         session.sendPrompt("rename test.touch to test_rename.touch", new SessionEventSimpleConsumers());
 
-        session.sendPrompt("rename test.touch to test_rename.touch again user will allow", new SessionEventSimpleConsumers() {
-            public Behavior onPermissionRequest(Session session, CLIControlRequest<CLIControlPermissionRequest> permissionRequest) {
-                log.info("permissionRequest: {}", permissionRequest);
-                return new Allow().setUpdatedInput(permissionRequest.getRequest().getInput());
-            }
-        });
+        session.sendPrompt("rename test.touch to test_rename.touch again user will allow",
+                new SessionEventSimpleConsumers().setAssistantContentConsumer(new AssistantContentSimpleConsumers().setDefaultPermissionOperation(Operation.allow)));
 
         session.close();
     }
@@ -112,13 +104,13 @@ class SessionTest {
         log.info(session.setModel("qwen3-coder-plus").map(s -> s ? "setModel 2 success" : "setModel 2 error").orElse("setModel 2 unknown"));
         writeSplitLine("setModel 1 end");
 
-        session.sendPrompt("查看下当前目录有多少个文件", new SessionEventSimpleConsumers());
+        session.sendPrompt("Check how many files are in the current directory", new SessionEventSimpleConsumers());
         writeSplitLine("prompt 2 end");
 
         log.info(session.setModel("qwen3-max").map(s -> s ? "setModel 3 success" : "setModel 3 error").orElse("setModel 3 unknown"));
         writeSplitLine("setModel 1 end");
 
-        session.sendPrompt("查看下当前目录有多少个xml文件", new SessionEventSimpleConsumers());
+        session.sendPrompt("Check how many xml files are in the current directory", new SessionEventSimpleConsumers());
         writeSplitLine("prompt 3 end");
 
         session.close();
@@ -159,13 +151,9 @@ class SessionTest {
             public void onOtherMessage(Session session, String message) {
                 log.info("otherMessage: {}", message);
             }
-
-            @Override
-            public Timeout onPermissionRequestTimeout(Session session) {
-                return Timeout.TIMEOUT_30_MINUTES;
-            }
         }.setDefaultEventTimeout(new Timeout(90L, TimeUnit.SECONDS));
-        session.sendPrompt("查看下当前目录有多少个文件", sessionEventConsumers);
+
+        session.sendPrompt("Check how many files are in the current directory", sessionEventConsumers);
         writeSplitLine("prompt 1 end");
 
         session.continueSession();

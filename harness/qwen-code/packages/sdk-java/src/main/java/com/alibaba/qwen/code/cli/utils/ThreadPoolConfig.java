@@ -17,7 +17,7 @@ import java.util.function.Supplier;
  */
 public class ThreadPoolConfig {
     private static final ThreadPoolExecutor defaultExecutor = new ThreadPoolExecutor(
-            10, 30, 60L, TimeUnit.SECONDS,
+            30, 100, 60L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(300),
             new ThreadFactory() {
                 private final AtomicInteger threadNumber = new AtomicInteger(1);

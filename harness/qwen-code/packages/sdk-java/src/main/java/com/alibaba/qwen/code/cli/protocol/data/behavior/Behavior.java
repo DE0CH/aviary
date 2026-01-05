@@ -53,6 +53,10 @@ public class Behavior {
      * @return The default behavior
      */
     public static Behavior defaultBehavior() {
+        return denyBehavior();
+    }
+
+    public static Behavior denyBehavior() {
         return new Deny().setMessage("Default Behavior Permission denied");
     }
 }

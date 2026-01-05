@@ -1,4 +1,4 @@
-package com.alibaba.qwen.code.cli.protocol.message.control;
+package com.alibaba.qwen.code.cli.protocol.message.control.payload;
 
 /**
  * Represents a control response for setting the model in the CLI.

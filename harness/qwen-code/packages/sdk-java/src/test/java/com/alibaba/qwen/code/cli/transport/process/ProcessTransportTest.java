@@ -7,8 +7,8 @@ import java.util.concurrent.TimeoutException;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.TypeReference;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeRequest;
-import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlInitializeResponse;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlInitializeRequest;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.CLIControlInitializeResponse;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlRequest;
 import com.alibaba.qwen.code.cli.protocol.message.control.CLIControlResponse;
 import com.alibaba.qwen.code.cli.protocol.message.SDKUserMessage;

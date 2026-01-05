@@ -5,6 +5,7 @@ import java.util.UUID;
 import com.alibaba.fastjson2.annotation.JSONField;
 import com.alibaba.fastjson2.annotation.JSONType;
 import com.alibaba.qwen.code.cli.protocol.message.MessageBase;
+import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlRequestPayload;
 
 /**
  * Represents a control request to the CLI.
@@ -14,7 +15,7 @@ import com.alibaba.qwen.code.cli.protocol.message.MessageBase;
  * @version $Id: 0.0.1
  */
 @JSONType(typeKey = "type", typeName = "control_request")
-public class CLIControlRequest<R> extends MessageBase {
+public class CLIControlRequest<R extends ControlRequestPayload> extends MessageBase {
     /**
      * The ID of the request.
      */
@@ -41,7 +42,7 @@ public class CLIControlRequest<R> extends MessageBase {
      * @param <T> The type of the request object
      * @return A new control request instance
      */
-    public static <T> CLIControlRequest<T> create(T request) {
+    public static <T extends ControlRequestPayload> CLIControlRequest<T> create(T request) {
         CLIControlRequest<T> controlRequest = new CLIControlRequest<>();
         controlRequest.setRequest(request);
         return controlRequest;

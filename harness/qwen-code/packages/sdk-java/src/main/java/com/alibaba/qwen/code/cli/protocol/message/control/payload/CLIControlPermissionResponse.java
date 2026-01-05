@@ -1,6 +1,7 @@
-package com.alibaba.qwen.code.cli.protocol.message.control;
+package com.alibaba.qwen.code.cli.protocol.message.control.payload;
 
 import com.alibaba.fastjson2.annotation.JSONField;
+import com.alibaba.fastjson2.annotation.JSONType;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
 
 /**
@@ -9,35 +10,18 @@ import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior;
  * @author skyfire
  * @version $Id: 0.0.1
  */
-public class CLIControlPermissionResponse {
-    /**
-     * The subtype of the response ("can_use_tool").
-     */
-    private String subtype = "can_use_tool";
+@JSONType(typeKey = "subtype", typeName = "can_use_tool")
+public class CLIControlPermissionResponse extends ControlResponsePayload {
+    public CLIControlPermissionResponse() {
+        super();
+        this.subtype = "can_use_tool";
+    }
 
     /**
      * The behavior for the permission request.
      */
     @JSONField(unwrapped = true)
     Behavior behavior;
-
-    /**
-     * Gets the subtype of the response.
-     *
-     * @return The subtype of the response
-     */
-    public String getSubtype() {
-        return subtype;
-    }
-
-    /**
-     * Sets the subtype of the response.
-     *
-     * @param subtype The subtype of the response
-     */
-    public void setSubtype(String subtype) {
-        this.subtype = subtype;
-    }
 
     /**
      * Gets the behavior for the permission request.

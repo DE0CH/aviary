@@ -12,8 +12,9 @@ import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolResultAssist
 import com.alibaba.qwen.code.cli.protocol.data.AssistantContent.ToolUseAssistantContent;
 import com.alibaba.qwen.code.cli.protocol.data.behavior.Behavior.Operation;
 import com.alibaba.qwen.code.cli.session.Session;
-import com.alibaba.qwen.code.cli.session.event.AssistantContentConsumers;
-import com.alibaba.qwen.code.cli.session.event.SessionEventSimpleConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.AssistantContentConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.AssistantContentSimpleConsumers;
+import com.alibaba.qwen.code.cli.session.event.consumers.SessionEventSimpleConsumers;
 import com.alibaba.qwen.code.cli.transport.Transport;
 import com.alibaba.qwen.code.cli.transport.TransportOptions;
 import com.alibaba.qwen.code.cli.transport.process.ProcessTransport;
@@ -51,7 +52,7 @@ public class QwenCodeCli {
      */
     public static List<String> simpleQuery(String prompt, TransportOptions transportOptions) {
         final List<String> response = new ArrayList<>();
-        MyConcurrentUtils.runAndWait(() -> simpleQuery(prompt, transportOptions, new AssistantContentConsumers() {
+        MyConcurrentUtils.runAndWait(() -> simpleQuery(prompt, transportOptions, new AssistantContentSimpleConsumers() {
             @Override
             public void onText(Session session, TextAssistantContent textAssistantContent) {
                 response.add(textAssistantContent.getText());
@@ -80,7 +81,7 @@ public class QwenCodeCli {
             public void onUsage(Session session, AssistantUsage assistantUsage) {
                 log.info("received usage {} of message {}", assistantUsage.getUsage(), assistantUsage.getMessageId());
             }
-        }), Timeout.TIMEOUT_30_MINUTES);
+        }.setDefaultPermissionOperation(Operation.allow)), Timeout.TIMEOUT_30_MINUTES);
         return response;
     }
 
@@ -95,8 +96,7 @@ public class QwenCodeCli {
         Session session = newSession(transportOptions);
         try {
             session.sendPrompt(prompt, new SessionEventSimpleConsumers()
-                    .setDefaultPermissionOperation(Operation.allow)
-                    .setBlockConsumer(assistantContentConsumers));
+                    .setAssistantContentConsumer(assistantContentConsumers));
         } catch (Exception e) {
             throw new RuntimeException("sendPrompt error!", e);
         } finally {

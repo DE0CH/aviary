@@ -1,9 +1,10 @@
-package com.alibaba.qwen.code.cli.protocol.message.control;
+package com.alibaba.qwen.code.cli.protocol.message.control.payload;
 
 import java.util.List;
 import java.util.Map;
 
 import com.alibaba.fastjson2.annotation.JSONField;
+import com.alibaba.fastjson2.annotation.JSONType;
 
 /**
  * Represents a control permission request to the CLI.
@@ -11,11 +12,12 @@ import com.alibaba.fastjson2.annotation.JSONField;
  * @author skyfire
  * @version $Id: 0.0.1
  */
-public class CLIControlPermissionRequest {
-    /**
-     * The subtype of the request.
-     */
-    private String subtype;
+@JSONType(typeKey = "subtype", typeName = "can_use_tool")
+public class CLIControlPermissionRequest extends ControlRequestPayload {
+    public CLIControlPermissionRequest() {
+        super();
+        this.subtype = "can_use_tool";
+    }
 
     /**
      * The name of the tool requesting permission.
@@ -45,24 +47,6 @@ public class CLIControlPermissionRequest {
      */
     @JSONField(name = "blocked_path")
     private String blockedPath;
-
-    /**
-     * Gets the subtype of the request.
-     *
-     * @return The subtype of the request
-     */
-    public String getSubtype() {
-        return subtype;
-    }
-
-    /**
-     * Sets the subtype of the request.
-     *
-     * @param subtype The subtype of the request
-     */
-    public void setSubtype(String subtype) {
-        this.subtype = subtype;
-    }
 
     /**
      * Gets the name of the tool requesting permission.

@@ -1,6 +1,7 @@
-package com.alibaba.qwen.code.cli.protocol.message.control;
+package com.alibaba.qwen.code.cli.protocol.message.control.payload;
 
 import com.alibaba.fastjson2.annotation.JSONField;
+import com.alibaba.fastjson2.annotation.JSONType;
 import com.alibaba.qwen.code.cli.protocol.data.InitializeConfig;
 
 /**
@@ -9,35 +10,18 @@ import com.alibaba.qwen.code.cli.protocol.data.InitializeConfig;
  * @author skyfire
  * @version $Id: 0.0.1
  */
-public class CLIControlInitializeRequest {
-    /**
-     * The subtype of the request.
-     */
-    String subtype = "initialize";
+@JSONType(typeKey = "subtype", typeName = "initialize")
+public class CLIControlInitializeRequest extends ControlRequestPayload {
+    public CLIControlInitializeRequest() {
+        super();
+        this.subtype = "initialize";
+    }
 
     /**
      * The initialization configuration.
      */
     @JSONField(unwrapped = true)
     InitializeConfig initializeConfig = new InitializeConfig();
-
-    /**
-     * Gets the subtype of the request.
-     *
-     * @return The subtype of the request
-     */
-    public String getSubtype() {
-        return subtype;
-    }
-
-    /**
-     * Sets the subtype of the request.
-     *
-     * @param subtype The subtype of the request
-     */
-    public void setSubtype(String subtype) {
-        this.subtype = subtype;
-    }
 
     /**
      * Gets the initialization configuration.
