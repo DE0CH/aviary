@@ -63,17 +63,18 @@ class ProcessTransportTest {
             return "result".equals(JSON.parseObject(line).getString("type"));
         });
 
-        String userMessage2 = new SDKUserMessage().setSessionId(sessionId).setContent("请使用中文").toString();
+        String userMessage2 = new SDKUserMessage().setSessionId(sessionId).setContent("Please respond in Chinese").toString();
         transport.inputWaitForMultiLine(userMessage2, line -> {
             return "result".equals(JSON.parseObject(line).getString("type"));
         });
 
-        String userMessage3 = new SDKUserMessage().setSessionId(sessionId).setContent("当前工作区有多少个文件").toString();
+
+        String userMessage3 = new SDKUserMessage().setSessionId(sessionId).setContent("How many files are there in the current workspace").toString();
         transport.inputWaitForMultiLine(userMessage3, line -> {
             return "result".equals(JSON.parseObject(line).getString("type"));
         });
 
-        String userMessage4 = new SDKUserMessage().setSessionId("session-sec" + UUID.randomUUID()).setContent("有多少个xml文件").toString();
+        String userMessage4 = new SDKUserMessage().setSessionId("session-sec" + UUID.randomUUID()).setContent("How many XML files are there").toString();
         transport.inputWaitForMultiLine(userMessage4, line -> {
             return "result".equals(JSON.parseObject(line).getString("type"));
         });

@@ -161,7 +161,7 @@ class SessionTest {
         writeSplitLine("prompt 2 end");
 
         session.continueSession();
-        session.sendPrompt("当前目录有多少个java文件", sessionEventConsumers);
+        session.sendPrompt("How many Java files are in the current directory", sessionEventConsumers);
         writeSplitLine("prompt 3 end");
 
         session.close();
