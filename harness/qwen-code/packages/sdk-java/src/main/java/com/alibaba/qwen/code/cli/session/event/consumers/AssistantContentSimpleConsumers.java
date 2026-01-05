@@ -16,6 +16,9 @@ import com.alibaba.qwen.code.cli.protocol.message.control.payload.ControlRespons
 import com.alibaba.qwen.code.cli.session.Session;
 import com.alibaba.qwen.code.cli.utils.Timeout;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Simple implementation of AssistantContentConsumers that provides empty implementations for all methods.
  *
@@ -28,6 +31,7 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onText(Session session, TextAssistantContent textAssistantContent) {
+        log.debug("Received textAssistantContent {}", textAssistantContent.getText());
     }
 
     /**
@@ -35,6 +39,7 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onThinking(Session session, ThingkingAssistantContent thingkingAssistantContent) {
+        log.debug("Received thingkingAssistantContent {}", thingkingAssistantContent.getThinking());
     }
 
     /**
@@ -42,6 +47,7 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onToolUse(Session session, ToolUseAssistantContent toolUseAssistantContent) {
+        log.debug("Received toolUseAssistantContent {}", toolUseAssistantContent.getInput());
     }
 
     /**
@@ -49,6 +55,9 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onToolResult(Session session, ToolResultAssistantContent toolResultAssistantContent) {
+        if (log.isDebugEnabled()) {
+            log.debug("Received toolResultAssistantContent {}", toolResultAssistantContent);
+        }
     }
 
     /**
@@ -56,6 +65,9 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onOtherContent(Session session, AssistantContent<?> other) {
+        if (log.isDebugEnabled()) {
+            log.debug("Received other content {}", other);
+        }
     }
 
     /**
@@ -64,8 +76,10 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
     @Override
     public Behavior onPermissionRequest(Session session, CLIControlPermissionRequest permissionRequest) {
         if (Operation.deny.equals(this.defaultPermissionOperation)) {
+            log.info("use defaultPermissionOperation Permission denied.");
             return new Deny().setMessage("Permission denied.");
         } else {
+            log.info("use defaultPermissionOperation Permission allowed.");
             return new Allow().setUpdatedInput(permissionRequest.getInput());
         }
     }
@@ -80,6 +94,7 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      */
     @Override
     public void onUsage(Session session, AssistantUsage AssistantUsage) {
+        log.info("received usage {} of message {}", AssistantUsage.getUsage(), AssistantUsage.getMessageId());
     }
 
     /**
@@ -173,4 +188,6 @@ public class AssistantContentSimpleConsumers implements AssistantContentConsumer
      * The default event timeout.
      */
     protected Timeout defaultEventTimeout = Timeout.TIMEOUT_60_SECONDS;
+
+    private static final Logger log = LoggerFactory.getLogger(AssistantContentSimpleConsumers.class);
 }
