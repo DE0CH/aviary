@@ -113,7 +113,7 @@ The project uses Checkstyle for code formatting and style enforcement. The confi
 
 ### Documentation
 
-- API documentation should follow JavaDoc conventions
+- API documentation should follow Javadoc conventions
 - Update README files when adding new features
 - Include examples in documentation
 
