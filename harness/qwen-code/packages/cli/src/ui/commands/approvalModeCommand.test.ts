@@ -146,6 +146,25 @@ describe('approvalModeCommand', () => {
     });
   });
 
+  describe('untrusted folder handling', () => {
+    it('should return error when setApprovalMode throws (e.g., untrusted folder)', async () => {
+      const errorMessage =
+        'Cannot enable privileged approval modes in an untrusted folder.';
+      mockSetApprovalMode.mockImplementation(() => {
+        throw new Error(errorMessage);
+      });
+
+      const result = (await approvalModeCommand.action?.(
+        mockContext,
+        'yolo',
+      )) as MessageActionReturn;
+
+      expect(result.type).toBe('message');
+      expect(result.messageType).toBe('error');
+      expect(result.content).toBe(errorMessage);
+    });
+  });
+
   it('should not have subcommands', () => {
     expect(approvalModeCommand.subCommands).toBeUndefined();
   });

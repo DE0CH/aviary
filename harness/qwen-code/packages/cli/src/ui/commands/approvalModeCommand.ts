@@ -63,7 +63,15 @@ export const approvalModeCommand: SlashCommand = {
     // Set the mode for current session only (not persisted)
     const { config } = context.services;
     if (config) {
-      config.setApprovalMode(mode);
+      try {
+        config.setApprovalMode(mode);
+      } catch (e) {
+        return {
+          type: 'message',
+          messageType: 'error',
+          content: (e as Error).message,
+        };
+      }
     }
 
     return {
