@@ -229,43 +229,17 @@ export class ShellToolInvocation extends BaseToolInvocation<
       }
 
       if (shouldRunInBackground) {
-        // Check for obvious startup errors from captured output
-        const outputStr =
-          typeof cumulativeOutput === 'string'
-            ? cumulativeOutput
-            : JSON.stringify(cumulativeOutput);
-
-        const errorPatterns = [
-          'is not recognized as an internal or external command',
-          'The system cannot find the path specified',
-          'Access is denied',
-          'command not found',
-          'No such file or directory',
-          'Permission denied',
-        ];
-
-        const hasEarlyError = errorPatterns.some((pat) =>
-          outputStr.includes(pat),
-        );
-
-        if (hasEarlyError) {
-          return {
-            llmContent: `Command failed to start: ${outputStr}`,
-            returnDisplay: `Command failed to start: ${outputStr}`,
-            error: {
-              type: ToolErrorType.EXECUTION_FAILED,
-              message: `Command failed to start: ${outputStr}`,
-            },
-          };
-        }
-
+        // For background tasks, return immediately with PID info
+        // Note: We cannot reliably detect startup errors for background processes
+        // since their stdio is typically detached/ignored
         const pidMsg = pid ? ` PID: ${pid}` : '';
-        const winHint = isWindows
-          ? ' (Note: Use taskkill /F /T /PID <pid> to stop)'
-          : '';
+        const killHint = isWindows
+          ? ' (Use taskkill /F /T /PID <pid> to stop)'
+          : ' (Use kill <pid> to stop)';
+
         return {
-          llmContent: `Background command started.${pidMsg}${winHint}`,
-          returnDisplay: `Background command started.${pidMsg}${winHint}`,
+          llmContent: `Background command started.${pidMsg}${killHint}`,
+          returnDisplay: `Background command started.${pidMsg}${killHint}`,
         };
       }
 
