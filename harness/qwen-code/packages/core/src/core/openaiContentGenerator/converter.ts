@@ -803,17 +803,6 @@ export class OpenAIContentConverter {
         }
       }
 
-      // Handle reasoning content
-      const delta = choice.delta as typeof choice.delta & {
-        reasoning_content?: string;
-      };
-      if (delta.reasoning_content) {
-        parts.push({
-          text: delta.reasoning_content,
-          thought: true,
-        });
-      }
-
       // Handle tool calls using the streaming parser
       if (choice.delta?.tool_calls) {
         for (const toolCall of choice.delta.tool_calls) {
