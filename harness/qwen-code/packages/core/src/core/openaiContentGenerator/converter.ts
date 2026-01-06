@@ -696,17 +696,6 @@ export class OpenAIContentConverter {
       parts.push({ text: choice.message.content });
     }
 
-    // Handle reasoning content
-    const message = choice.message as typeof choice.message & {
-      reasoning_content?: string;
-    };
-    if (message.reasoning_content) {
-      parts.push({
-        text: message.reasoning_content,
-        thought: true,
-      } as unknown as Part);
-    }
-
     // Handle tool calls
     if (choice.message.tool_calls) {
       for (const toolCall of choice.message.tool_calls) {

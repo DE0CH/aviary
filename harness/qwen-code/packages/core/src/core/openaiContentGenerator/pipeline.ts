@@ -249,11 +249,6 @@ export class ContentGenerationPipeline {
     ) {
       (
         baseRequest as OpenAI.Chat.ChatCompletionCreateParams & {
-          extra_body?: Record<string, unknown>;
-        }
-      ).extra_body = { enable_thinking: true };
-      (
-        baseRequest as OpenAI.Chat.ChatCompletionCreateParams & {
           enable_thinking?: boolean;
         }
       ).enable_thinking = true;
