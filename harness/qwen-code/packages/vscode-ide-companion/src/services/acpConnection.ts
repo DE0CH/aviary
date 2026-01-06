@@ -146,6 +146,8 @@ export class AcpConnection {
       console.error(
         `[ACP qwen] Process exited with code: ${code}, signal: ${signal}`,
       );
+      // Clear pending requests when process exits
+      this.pendingRequests.clear();
     });
 
     // Wait for process to start
