@@ -13,15 +13,12 @@ import {
   type MessageActionReturn,
 } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
-import type { LoadedSettings } from '../../config/settings.js';
 
 describe('approvalModeCommand', () => {
   let mockContext: CommandContext;
-  let mockSetValue: ReturnType<typeof vi.fn>;
   let mockSetApprovalMode: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    mockSetValue = vi.fn();
     mockSetApprovalMode = vi.fn();
     mockContext = createMockCommandContext({
       services: {
@@ -29,13 +26,6 @@ describe('approvalModeCommand', () => {
           getApprovalMode: () => 'default',
           setApprovalMode: mockSetApprovalMode,
         },
-        settings: {
-          // Use empty merged so ?? fallback triggers, allowing us to verify
-          // the exact mode passed to setApprovalMode
-          merged: {},
-          setValue: mockSetValue,
-          forScope: () => ({}),
-        } as unknown as LoadedSettings,
       },
     });
   });
@@ -68,7 +58,7 @@ describe('approvalModeCommand', () => {
     expect(result.dialog).toBe('approval-mode');
   });
 
-  describe('direct mode setting', () => {
+  describe('direct mode setting (session-only)', () => {
     it('should set approval mode to "plan" when argument is "plan"', async () => {
       const result = (await approvalModeCommand.action?.(
         mockContext,
@@ -78,11 +68,6 @@ describe('approvalModeCommand', () => {
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
       expect(result.content).toContain('plan');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'plan',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('plan');
     });
 
@@ -95,11 +80,6 @@ describe('approvalModeCommand', () => {
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
       expect(result.content).toContain('yolo');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'yolo',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('yolo');
     });
 
@@ -112,11 +92,6 @@ describe('approvalModeCommand', () => {
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
       expect(result.content).toContain('auto-edit');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'auto-edit',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('auto-edit');
     });
 
@@ -129,11 +104,6 @@ describe('approvalModeCommand', () => {
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
       expect(result.content).toContain('default');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'default',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('default');
     });
 
@@ -145,11 +115,6 @@ describe('approvalModeCommand', () => {
 
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'yolo',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('yolo');
     });
 
@@ -161,11 +126,6 @@ describe('approvalModeCommand', () => {
 
       expect(result.type).toBe('message');
       expect(result.messageType).toBe('info');
-      expect(mockSetValue).toHaveBeenCalledWith(
-        'User',
-        'tools.approvalMode',
-        'plan',
-      );
       expect(mockSetApprovalMode).toHaveBeenCalledWith('plan');
     });
   });
@@ -182,7 +142,6 @@ describe('approvalModeCommand', () => {
       expect(result.content).toContain('invalid-mode');
       expect(result.content).toContain('plan');
       expect(result.content).toContain('yolo');
-      expect(mockSetValue).not.toHaveBeenCalled();
       expect(mockSetApprovalMode).not.toHaveBeenCalled();
     });
   });
@@ -191,49 +150,7 @@ describe('approvalModeCommand', () => {
     expect(approvalModeCommand.subCommands).toBeUndefined();
   });
 
-  describe('completion', () => {
-    it('should have completion function', () => {
-      expect(approvalModeCommand.completion).toBeDefined();
-    });
-
-    it('should return all modes when partial arg is empty', async () => {
-      const completions = await approvalModeCommand.completion?.(
-        mockContext,
-        '',
-      );
-
-      expect(completions).toContain('plan');
-      expect(completions).toContain('default');
-      expect(completions).toContain('auto-edit');
-      expect(completions).toContain('yolo');
-    });
-
-    it('should filter modes based on partial arg', async () => {
-      const completions = await approvalModeCommand.completion?.(
-        mockContext,
-        'p',
-      );
-
-      expect(completions).toContain('plan');
-      expect(completions).not.toContain('yolo');
-    });
-
-    it('should filter modes case-insensitively', async () => {
-      const completions = await approvalModeCommand.completion?.(
-        mockContext,
-        'A',
-      );
-
-      expect(completions).toContain('auto-edit');
-    });
-
-    it('should return empty array when no modes match', async () => {
-      const completions = await approvalModeCommand.completion?.(
-        mockContext,
-        'xyz',
-      );
-
-      expect(completions).toEqual([]);
-    });
+  it('should not have completion function', () => {
+    expect(approvalModeCommand.completion).toBeUndefined();
   });
 });

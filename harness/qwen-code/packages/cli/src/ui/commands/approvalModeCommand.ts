@@ -12,9 +12,8 @@ import type {
 } from './types.js';
 import { CommandKind } from './types.js';
 import { t } from '../../i18n/index.js';
-import type { ApprovalMode} from '@qwen-code/qwen-code-core';
+import type { ApprovalMode } from '@qwen-code/qwen-code-core';
 import { APPROVAL_MODES } from '@qwen-code/qwen-code-core';
-import { SettingScope } from '../../config/settings.js';
 
 /**
  * Parses the argument string and returns the corresponding ApprovalMode if valid.
@@ -61,11 +60,10 @@ export const approvalModeCommand: SlashCommand = {
       };
     }
 
-    // Set the mode directly
-    const { config, settings } = context.services;
-    if (config && settings) {
-      settings.setValue(SettingScope.User, 'tools.approvalMode', mode);
-      config.setApprovalMode(settings.merged.tools?.approvalMode ?? mode);
+    // Set the mode for current session only (not persisted)
+    const { config } = context.services;
+    if (config) {
+      config.setApprovalMode(mode);
     }
 
     return {
@@ -73,17 +71,5 @@ export const approvalModeCommand: SlashCommand = {
       messageType: 'info',
       content: t('Approval mode set to "{{mode}}"', { mode }),
     };
-  },
-  completion: async (
-    _context: CommandContext,
-    partialArg: string,
-  ): Promise<string[]> => {
-    const trimmed = partialArg.trim().toLowerCase();
-    if (!trimmed) {
-      return [...APPROVAL_MODES];
-    }
-    return APPROVAL_MODES.filter((mode) =>
-      mode.toLowerCase().startsWith(trimmed),
-    );
   },
 };
