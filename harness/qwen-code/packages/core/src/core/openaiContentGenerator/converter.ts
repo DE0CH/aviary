@@ -752,7 +752,7 @@ export class OpenAIContentConverter {
         usage.prompt_tokens_details?.cached_tokens ??
         extendedUsage.cached_tokens ??
         0;
-      const reasoningTokens =
+      const thinkingTokens =
         usage.completion_tokens_details?.reasoning_tokens || 0;
 
       // If we only have total tokens but no breakdown, estimate the split
@@ -771,7 +771,7 @@ export class OpenAIContentConverter {
         candidatesTokenCount: finalCompletionTokens,
         totalTokenCount: totalTokens,
         cachedContentTokenCount: cachedTokens,
-        thoughtsTokenCount: reasoningTokens,
+        thoughtsTokenCount: thinkingTokens,
       };
     }
 
