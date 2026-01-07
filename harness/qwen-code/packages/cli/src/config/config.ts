@@ -10,22 +10,24 @@ import {
   Config,
   DEFAULT_QWEN_EMBEDDING_MODEL,
   DEFAULT_MEMORY_FILE_FILTERING_OPTIONS,
-  EditTool,
   FileDiscoveryService,
   getCurrentGeminiMdFilename,
   loadServerHierarchicalMemory,
   setGeminiMdFilename as setServerGeminiMdFilename,
-  ShellTool,
-  WriteFileTool,
   resolveTelemetrySettings,
   FatalConfigError,
   Storage,
   InputFormat,
   OutputFormat,
+  isToolEnabled,
   SessionService,
   type ResumedSessionData,
   type FileFilteringOptions,
   type MCPServerConfig,
+  type ToolName,
+  EditTool,
+  ShellTool,
+  WriteFileTool,
 } from '@qwen-code/qwen-code-core';
 import { extensionsCommand } from '../commands/extensions.js';
 import type { Settings } from './settings.js';
@@ -836,6 +838,28 @@ export async function loadCliConfig(
   // However, if stream-json input is used, control can be requested via JSON messages,
   // so tools should not be excluded in that case.
   const extraExcludes: string[] = [];
+  const resolvedCoreTools = argv.coreTools || settings.tools?.core || [];
+  const resolvedAllowedTools =
+    argv.allowedTools || settings.tools?.allowed || [];
+  const isExplicitlyEnabled = (toolName: ToolName): boolean => {
+    if (resolvedCoreTools.length > 0) {
+      if (isToolEnabled(toolName, resolvedCoreTools, [])) {
+        return true;
+      }
+    }
+    if (resolvedAllowedTools.length > 0) {
+      if (isToolEnabled(toolName, resolvedAllowedTools, [])) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const excludeUnlessExplicit = (toolName: ToolName): void => {
+    if (!isExplicitlyEnabled(toolName)) {
+      extraExcludes.push(toolName);
+    }
+  };
+
   if (
     !interactive &&
     !argv.experimentalAcp &&
@@ -844,12 +868,15 @@ export async function loadCliConfig(
     switch (approvalMode) {
       case ApprovalMode.PLAN:
       case ApprovalMode.DEFAULT:
-        // In default non-interactive mode, all tools that require approval are excluded.
-        extraExcludes.push(ShellTool.Name, EditTool.Name, WriteFileTool.Name);
+        // In default non-interactive mode, all tools that require approval are excluded,
+        // unless explicitly enabled via coreTools/allowedTools.
+        excludeUnlessExplicit(ShellTool.Name as ToolName);
+        excludeUnlessExplicit(EditTool.Name as ToolName);
+        excludeUnlessExplicit(WriteFileTool.Name as ToolName);
         break;
       case ApprovalMode.AUTO_EDIT:
         // In auto-edit non-interactive mode, only tools that still require a prompt are excluded.
-        extraExcludes.push(ShellTool.Name);
+        excludeUnlessExplicit(ShellTool.Name as ToolName);
         break;
       case ApprovalMode.YOLO:
         // No extra excludes for YOLO mode.
