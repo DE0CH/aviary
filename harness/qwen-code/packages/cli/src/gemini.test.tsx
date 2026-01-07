@@ -460,7 +460,9 @@ describe('gemini.tsx main function kitty protocol', () => {
       telemetryOutfile: undefined,
       allowedMcpServerNames: undefined,
       allowedTools: undefined,
+      acp: undefined,
       experimentalAcp: undefined,
+      experimentalSkills: undefined,
       extensions: undefined,
       listExtensions: undefined,
       openaiLogging: undefined,
@@ -637,5 +639,38 @@ describe('startInteractiveUI', () => {
     // We need a small delay to let it execute
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not check for updates when update nag is disabled', async () => {
+    const { checkForUpdates } = await import('./ui/utils/updateCheck.js');
+
+    const mockInitializationResult = {
+      authError: null,
+      themeError: null,
+      shouldOpenAuthDialog: false,
+      geminiMdFileCount: 0,
+    };
+
+    const settingsWithUpdateNagDisabled = {
+      merged: {
+        general: {
+          disableUpdateNag: true,
+        },
+        ui: {
+          hideWindowTitle: false,
+        },
+      },
+    } as LoadedSettings;
+
+    await startInteractiveUI(
+      mockConfig,
+      settingsWithUpdateNagDisabled,
+      mockStartupWarnings,
+      mockWorkspaceRoot,
+      mockInitializationResult,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(checkForUpdates).not.toHaveBeenCalled();
   });
 });
