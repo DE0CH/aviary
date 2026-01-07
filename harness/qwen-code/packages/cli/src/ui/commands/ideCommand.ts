@@ -204,22 +204,10 @@ export const ideCommand = async (): Promise<SlashCommand> => {
       }
       if (!installer) {
         const ideName = ideClient.getDetectedIdeDisplayName();
-        const isVSCode = currentIDE.name === 'vscode';
-        let type: 'error' | 'info' = 'error';
-        let message: string;
-        if (isVSCode) {
-          // VS Code
-          message = `No installer is available for ${ideName}. Please install the '${QWEN_CODE_COMPANION_EXTENSION_NAME}' extension manually from the marketplace.`;
-        } else {
-          // NO VS Code
-          type = 'info';
-          message = `Automatic installation is not supported for ${ideName}. Please install the extension manually or install '${QWEN_CODE_COMPANION_EXTENSION_NAME}' in VS Code. If you have installed it before, please ignore the reminder and directly connect the ide extension`;
-        }
-
         context.ui.addItem(
           {
-            type,
-            text: message,
+            type: 'error',
+            text: `Automatic installation is not supported for ${ideName}. Please install the '${QWEN_CODE_COMPANION_EXTENSION_NAME}' extension manually from the marketplace.`,
           },
           Date.now(),
         );

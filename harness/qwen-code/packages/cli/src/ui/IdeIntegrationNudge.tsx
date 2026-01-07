@@ -74,7 +74,7 @@ export function IdeIntegrationNudge({
   const installText = isInSandbox
     ? `Note: In sandbox environments, IDE integration requires manual setup on the host system. If you select Yes, you'll receive instructions on how to set this up.`
     : isExtensionPreInstalled
-      ? `The IDE extension appears to be already installed. If you select Yes, the CLI will connect to your ${
+      ? `If you select Yes, the CLI will connect to your ${
           ideName ?? 'editor'
         } and have access to your open files and display diffs directly.`
       : `If you select Yes, we'll install an extension that allows the CLI to access your open files and display diffs directly in ${
