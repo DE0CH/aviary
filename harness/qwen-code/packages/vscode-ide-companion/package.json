@@ -28,9 +28,66 @@
     "ide companion"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:qwenCode.chatView.panel",
+    "onView:qwenCode.chatView.secondary",
+    "onCommand:qwen-code.setChatLocation.editor",
+    "onCommand:qwen-code.setChatLocation.panel",
+    "onCommand:qwen-code.setChatLocation.secondary",
+    "onCommand:qwen-code.openChat"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Qwen Code Companion",
+      "properties": {
+        "qwen-code.chat.location": {
+          "type": "string",
+          "default": "editor",
+          "enum": [
+            "editor",
+            "panel",
+            "secondary"
+          ],
+          "description": "选择聊天界面放置的位置：编辑器标签页（默认）、底部面板或 Secondary Side Bar。修改后需重新打开聊天。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "qwenCodePanel",
+          "title": "Qwen Code",
+          "icon": "assets/icon.png",
+          "when": "qwenCode.chatLocation == 'panel'"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "qwenCodeSecondary",
+          "title": "Qwen Code",
+          "icon": "assets/icon.png",
+          "when": "qwenCode.chatLocation == 'secondary'"
+        }
+      ]
+    },
+    "views": {
+      "qwenCodePanel": [
+        {
+          "id": "qwenCode.chatView.panel",
+          "name": "Qwen Code",
+          "icon": "assets/icon.png",
+          "when": "qwenCode.chatLocation == 'panel'"
+        }
+      ],
+      "qwenCodeSecondary": [
+        {
+          "id": "qwenCode.chatView.secondary",
+          "name": "Qwen Code",
+          "icon": "assets/icon.png",
+          "when": "qwenCode.chatLocation == 'secondary'"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "qwen-diff-editable"
@@ -63,6 +120,24 @@
       {
         "command": "qwen-code.login",
         "title": "Qwen Code: Login"
+      },
+      {
+        "command": "qwen-code.setChatLocation.editor",
+        "title": "Qwen Code: 将聊天放在编辑器标签页"
+      },
+      {
+        "command": "qwen-code.setChatLocation.panel",
+        "title": "Qwen Code: 将聊天放在底部面板"
+      },
+      {
+        "command": "qwen-code.setChatLocation.secondary",
+        "title": "Qwen Code: 将聊天放在 Secondary Bar"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "qwenCode.chatLocationMenu",
+        "label": "Qwen Code: 聊天位置"
       }
     ],
     "menus": {
@@ -94,6 +169,27 @@
         {
           "command": "qwen-code.openChat",
           "group": "navigation"
+        },
+        {
+          "submenu": "qwenCode.chatLocationMenu",
+          "group": "navigation@2"
+        }
+      ],
+      "qwenCode.chatLocationMenu": [
+        {
+          "command": "qwen-code.setChatLocation.editor",
+          "group": "1_editor",
+          "when": "qwenCode.chatLocation != 'editor'"
+        },
+        {
+          "command": "qwen-code.setChatLocation.panel",
+          "group": "2_panel",
+          "when": "qwenCode.chatLocation != 'panel'"
+        },
+        {
+          "command": "qwen-code.setChatLocation.secondary",
+          "group": "3_secondary",
+          "when": "qwenCode.chatLocation != 'secondary'"
         }
       ]
     },

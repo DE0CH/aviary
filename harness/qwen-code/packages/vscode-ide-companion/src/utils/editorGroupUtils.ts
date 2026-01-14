@@ -7,12 +7,23 @@
 import * as vscode from 'vscode';
 import { openChatCommand } from '../commands/index.js';
 
+function isEditorHostedChat(): boolean {
+  const location = vscode.workspace
+    .getConfiguration('qwen-code')
+    .get<string>('chat.location', 'editor');
+  return location === 'editor';
+}
+
 /**
  * Find the editor group immediately to the left of the Qwen chat webview.
  * - If the chat webview group is the leftmost group, returns undefined.
  * - Uses the webview tab viewType 'mainThreadWebview-qwenCode.chat'.
  */
 export function findLeftGroupOfChatWebview(): vscode.ViewColumn | undefined {
+  if (!isEditorHostedChat()) {
+    return undefined;
+  }
+
   try {
     const groups = vscode.window.tabGroups.all;
 
@@ -92,6 +103,10 @@ function waitForTabGroupsCondition(
 export async function ensureLeftGroupOfChatWebview(): Promise<
   vscode.ViewColumn | undefined
 > {
+  if (!isEditorHostedChat()) {
+    return undefined;
+  }
+
   // First try to find an existing left neighbor
   const existing = findLeftGroupOfChatWebview();
   if (existing !== undefined) {
