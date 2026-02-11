@@ -18,6 +18,7 @@ import {
   StreamEventType,
   type StreamEvent,
 } from './geminiChat.js';
+import { StreamContentError } from './openaiContentGenerator/pipeline.js';
 import type { Config } from '../config/config.js';
 import { setSimulate429 } from '../utils/testUtils.js';
 import { uiTelemetryService } from '../telemetry/uiTelemetry.js';
@@ -928,6 +929,80 @@ describe('GeminiChat', () => {
         role: 'user',
         parts: [{ text: 'test' }],
       });
+    });
+
+    it('should retry on TPM throttling StreamContentError with fixed delay', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const tpmError = new StreamContentError('Throttling: TPM(1/1)');
+        async function* failingStreamGenerator() {
+          throw tpmError;
+           
+          yield {} as GenerateContentResponse;
+        }
+        const failingStream = failingStreamGenerator();
+        const successStream = (async function* () {
+          yield {
+            candidates: [
+              {
+                content: { parts: [{ text: 'Success after TPM retry' }] },
+                finishReason: 'STOP',
+              },
+            ],
+          } as unknown as GenerateContentResponse;
+        })();
+
+        vi.mocked(mockContentGenerator.generateContentStream)
+          .mockResolvedValueOnce(failingStream)
+          .mockResolvedValueOnce(successStream);
+
+        const stream = await chat.sendMessageStream(
+          'test-model',
+          { message: 'test' },
+          'prompt-id-tpm-retry',
+        );
+
+        const iterator = stream[Symbol.asyncIterator]();
+        const first = await iterator.next();
+
+        expect(first.done).toBe(false);
+        expect(first.value.type).toBe(StreamEventType.RETRY);
+
+        // Resume generator to schedule the TPM delay, then advance timers.
+        const secondPromise = iterator.next();
+        await vi.advanceTimersByTimeAsync(60_000);
+        const second = await secondPromise;
+
+        expect(second.done).toBe(false);
+        expect(second.value.type).toBe(StreamEventType.RETRY);
+
+        const events: StreamEvent[] = [first.value, second.value];
+
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) break;
+          events.push(next.value);
+        }
+
+        expect(
+          mockContentGenerator.generateContentStream,
+        ).toHaveBeenCalledTimes(2);
+        expect(
+          events.filter((e) => e.type === StreamEventType.RETRY),
+        ).toHaveLength(2);
+        expect(
+          events.some(
+            (e) =>
+              e.type === StreamEventType.CHUNK &&
+              e.value.candidates?.[0]?.content?.parts?.[0]?.text ===
+                'Success after TPM retry',
+          ),
+        ).toBe(true);
+        expect(mockLogContentRetry).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     describe('API error retry behavior', () => {

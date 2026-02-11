@@ -652,4 +652,98 @@ describe('TPM throttling retry handling', () => {
     expect(delays[1]).toBeGreaterThanOrEqual(100 * 0.7);
     expect(delays[1]).toBeLessThanOrEqual(100 * 1.3);
   });
+
+  it('should handle TPM throttling error without status property', async () => {
+    // 真实场景：错误只有 message，没有 status=429
+    const tpmError = new Error('Throttling: TPM(10680324/10000000)');
+    // 注意：故意不设 tpmError.status = 429
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(tpmError)
+      .mockResolvedValue('success');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    // Fast-forward 1 minute for TPM delay
+    await vi.advanceTimersByTimeAsync(60000);
+
+    // 这个测试验证：即使错误没有 status=429，TPM 检查也应该正常工作
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should handle nested TPM error object without top-level status', async () => {
+    // 模拟 API 直接返回的嵌套错误格式
+    const nestedTpmError = {
+      error: {
+        message: 'Throttling: TPM(10680324/10000000)',
+        type: 'Throttling',
+        code: '429',
+      },
+    };
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(nestedTpmError)
+      .mockResolvedValue('success');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    // Fast-forward 1 minute for TPM delay
+    await vi.advanceTimersByTimeAsync(60000);
+
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('should retry multiple times for consecutive TPM throttling errors', async () => {
+    const tpmError: HttpError = new Error('Throttling: TPM(10680324/10000000)');
+    tpmError.status = 429;
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(tpmError) // First TPM error
+      .mockRejectedValueOnce(tpmError) // Second TPM error
+      .mockResolvedValue('success');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 5,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    // Fast-forward 2 minutes for two TPM delays
+    await vi.advanceTimersByTimeAsync(120000);
+
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('should eventually throw after maxAttempts TPM throttling errors', async () => {
+    const tpmError: HttpError = new Error('Throttling: TPM(10680324/10000000)');
+    tpmError.status = 429;
+
+    const fn = vi.fn().mockRejectedValue(tpmError);
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    // Fast-forward time for all TPM delays (3 attempts = 2 retries)
+    await vi.advanceTimersByTimeAsync(120000);
+
+    await expect(promise).rejects.toThrow('Throttling: TPM(10680324/10000000)');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
 });

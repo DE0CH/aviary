@@ -115,12 +115,14 @@ export async function retryWithBackoff<T>(
         );
       }
 
-      // Check if we've exhausted retries or shouldn't retry
-      if (attempt >= maxAttempts || !shouldRetryOnError(error as Error)) {
+      // Check if we've exhausted retries
+      if (attempt >= maxAttempts) {
         throw error;
       }
 
       // Check for TPM throttling error - use fixed 1 minute delay
+      // This check is prioritized over shouldRetryOnError because TPM errors
+      // may not have a standard HTTP status code (like 429) but still need retry
       if (isTPMThrottlingError(error)) {
         const tpmDelayMs = 60000; // 1 minute
         debugLogger.warn(
@@ -131,6 +133,11 @@ export async function retryWithBackoff<T>(
         // Reset currentDelay for next potential non-TPM error
         currentDelay = initialDelayMs;
         continue;
+      }
+
+      // Check if we shouldn't retry based on error type
+      if (!shouldRetryOnError(error as Error)) {
+        throw error;
       }
 
       const retryAfterMs =
