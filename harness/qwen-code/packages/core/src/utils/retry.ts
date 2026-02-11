@@ -8,6 +8,7 @@ import type { GenerateContentResponse } from '@google/genai';
 import { AuthType } from '../core/contentGenerator.js';
 import { isQwenQuotaExceededError } from './quotaErrorDetection.js';
 import { createDebugLogger } from './debugLogger.js';
+import { isStructuredError, isApiError } from './quotaErrorDetection.js';
 
 const debugLogger = createDebugLogger('RETRY');
 
@@ -168,43 +169,11 @@ export async function retryWithBackoff<T>(
  * @returns True if the error is a TPM throttling error.
  */
 export function isTPMThrottlingError(error: unknown): boolean {
-  const checkMessage = (message: string): boolean => message.includes('Throttling: TPM(');
-
-  if (typeof error === 'string') {
-    return checkMessage(error);
-  }
-
-import { isStructuredError, isApiError } from './quotaErrorDetection.js';
-
-export function isTPMThrottlingError(error: unknown): boolean {
   const checkMessage = (msg: string) => msg.includes('Throttling: TPM(');
 
   if (typeof error === 'string') return checkMessage(error);
   if (isStructuredError(error)) return checkMessage(error.message);
   if (isApiError(error)) return checkMessage(error.error.message);
-
-  return false;
-}
-    // Check error.message
-    if ('message' in error && typeof (error as Error).message === 'string') {
-      if (checkMessage((error as Error).message)) {
-        return true;
-      }
-    }
-
-    // Check error.error.message (nested error)
-    if (
-      'error' in error &&
-      typeof (error as { error?: { message?: string } }).error === 'object' &&
-      (error as { error?: { message?: string } }).error !== null
-    ) {
-      const nestedMessage = (error as { error: { message?: string } }).error
-        .message;
-      if (typeof nestedMessage === 'string' && checkMessage(nestedMessage)) {
-        return true;
-      }
-    }
-  }
 
   return false;
 }
