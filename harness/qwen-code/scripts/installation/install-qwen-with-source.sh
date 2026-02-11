@@ -353,40 +353,67 @@ install_qwen_code() {
         echo "  Upgrading to the latest version..."
     fi
 
-    # Check if running as root
+    # Determine npm install command
+    # Priority: 1) npm without sudo (if it works), 2) npm with sudo, 3) sudo with preserved PATH
     USER_ID=$(id -u) || true
-    if [[ "${USER_ID}" -eq 0 ]]; then
-        # Running as root, no need for sudo
-        NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
+    NPM_INSTALL_CMD=""
+    USE_SUDO=false
+
+    # First, try npm directly without sudo
+    if npm --version >/dev/null 2>&1; then
+        # Check if npm can write to global directory
+        if npm install -g --dry-run @qwen-code/qwen-code@latest >/dev/null 2>&1; then
+            NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
+            USE_SUDO=false
+        else
+            # npm exists but needs elevated permissions
+            if [[ "${USER_ID}" -eq 0 ]]; then
+                NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
+                USE_SUDO=false
+            else
+                NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
+                USE_SUDO=true
+            fi
+        fi
     else
-        # Not root, use sudo
-        NPM_INSTALL_CMD="sudo npm install -g @qwen-code/qwen-code@latest"
+        echo "✗ npm is not available in PATH"
+        exit 1
     fi
 
     # Install/Upgrade Qwen Code globally
     # Note: Don't suppress output to allow sudo password prompt to be visible
-    if ${NPM_INSTALL_CMD}; then
-        echo "✓ Qwen Code installed/upgraded successfully!"
-
-        # Create/Update source.json only if source parameter was provided
-        if [[ "${SOURCE}" != "unknown" ]]; then
-            create_source_json
+    if [[ "${USE_SUDO}" == true ]]; then
+        # Use sudo with preserved PATH to find npm in user environment
+        if sudo -E env "PATH=$PATH" npm install -g @qwen-code/qwen-code@latest; then
+            echo "✓ Qwen Code installed/upgraded successfully!"
         else
-            echo "  (Skipping source.json creation - no source specified)"
-        fi
-
-        # Verify installation
-        if command_exists qwen; then
-            QWEN_VERSION=$(qwen --version 2>/dev/null || echo "unknown")
-            echo "✓ Qwen Code is available as 'qwen' command"
-            echo "  Installed version: ${QWEN_VERSION}"
-        else
-            echo "⚠ Qwen Code installed but not in PATH"
-            echo "  You may need to restart your terminal"
+            echo "✗ Failed to install Qwen Code"
+            exit 1
         fi
     else
-        echo "✗ Failed to install Qwen Code"
-        exit 1
+        if ${NPM_INSTALL_CMD}; then
+            echo "✓ Qwen Code installed/upgraded successfully!"
+        else
+            echo "✗ Failed to install Qwen Code"
+            exit 1
+        fi
+    fi
+
+    # Create/Update source.json only if source parameter was provided
+    if [[ "${SOURCE}" != "unknown" ]]; then
+        create_source_json
+    else
+        echo "  (Skipping source.json creation - no source specified)"
+    fi
+
+    # Verify installation
+    if command_exists qwen; then
+        QWEN_VERSION=$(qwen --version 2>/dev/null || echo "unknown")
+        echo "✓ Qwen Code is available as 'qwen' command"
+        echo "  Installed version: ${QWEN_VERSION}"
+    else
+        echo "⚠ Qwen Code installed but not in PATH"
+        echo "  You may need to restart your terminal"
     fi
 }
 
