@@ -531,7 +531,7 @@ describe('ContentGenerationPipeline', () => {
                 finish_reason: 'error_finish',
               },
             ],
-          } as OpenAI.Chat.ChatCompletionChunk;
+          } as unknown as OpenAI.Chat.ChatCompletionChunk;
         },
       };
 
