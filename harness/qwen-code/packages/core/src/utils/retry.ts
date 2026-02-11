@@ -174,7 +174,17 @@ export function isTPMThrottlingError(error: unknown): boolean {
     return checkMessage(error);
   }
 
-  if (typeof error === 'object' && error !== null) {
+import { isStructuredError, isApiError } from './quotaErrorDetection.js';
+
+export function isTPMThrottlingError(error: unknown): boolean {
+  const checkMessage = (msg: string) => msg.includes('Throttling: TPM(');
+
+  if (typeof error === 'string') return checkMessage(error);
+  if (isStructuredError(error)) return checkMessage(error.message);
+  if (isApiError(error)) return checkMessage(error.error.message);
+
+  return false;
+}
     // Check error.message
     if ('message' in error && typeof (error as Error).message === 'string') {
       if (checkMessage((error as Error).message)) {
