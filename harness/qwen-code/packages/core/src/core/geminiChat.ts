@@ -17,7 +17,13 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import { createUserContent } from '@google/genai';
-import { getErrorStatus, retryWithBackoff } from '../utils/retry.js';
+import {
+  getErrorStatus,
+  retryWithBackoff,
+  isTPMThrottlingError,
+} from '../utils/retry.js';
+import { StreamContentError } from './openaiContentGenerator/pipeline.js';
+import { createDebugLogger } from '../utils/debugLogger.js';
 import type { Config } from '../config/config.js';
 import { hasCycleInSchema } from '../tools/tools.js';
 import type { StructuredError } from './turn.js';
@@ -31,6 +37,8 @@ import {
   ContentRetryFailureEvent,
 } from '../telemetry/types.js';
 import { uiTelemetryService } from '../telemetry/uiTelemetry.js';
+
+const debugLogger = createDebugLogger('QWEN_CODE_CHAT');
 
 export enum StreamEventType {
   /** A regular content chunk from the API. */
@@ -57,6 +65,16 @@ interface ContentRetryOptions {
 const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
   maxAttempts: 2, // 1 initial call + 1 retry
   initialDelayMs: 500,
+};
+
+/**
+ * Options for retrying on TPM (Tokens Per Minute) throttling errors.
+ * These errors occur when the API rate limit is exceeded and are returned
+ * as stream content (finish_reason="error_finish") rather than HTTP errors.
+ */
+const TPM_RETRY_OPTIONS = {
+  maxRetries: 3,
+  delayMs: 60_000, // 1 minute - TPM quota typically resets within a minute window
 };
 /**
  * Returns true if the response is valid, false otherwise.
@@ -268,6 +286,7 @@ export class GeminiChat {
     return (async function* () {
       try {
         let lastError: unknown = new Error('Request failed after all retries.');
+        let tpmRetryCount = 0;
 
         for (
           let attempt = 0;
@@ -275,7 +294,7 @@ export class GeminiChat {
           attempt++
         ) {
           try {
-            if (attempt > 0) {
+            if (attempt > 0 || tpmRetryCount > 0) {
               yield { type: StreamEventType.RETRY };
             }
 
@@ -294,6 +313,29 @@ export class GeminiChat {
             break;
           } catch (error) {
             lastError = error;
+
+            // Handle TPM throttling errors returned as stream content.
+            // These arrive as StreamContentError with finish_reason="error_finish"
+            // from the pipeline, containing the throttling message in the content.
+            if (
+              (error instanceof StreamContentError ||
+                isTPMThrottlingError(error)) &&
+              tpmRetryCount < TPM_RETRY_OPTIONS.maxRetries
+            ) {
+              tpmRetryCount++;
+              debugLogger.warn(
+                `TPM throttling detected (retry ${tpmRetryCount}/${TPM_RETRY_OPTIONS.maxRetries}). ` +
+                  `Waiting ${TPM_RETRY_OPTIONS.delayMs / 1000}s before retrying...`,
+              );
+              yield { type: StreamEventType.RETRY };
+              // Don't count TPM retries against the content retry limit
+              attempt--;
+              await new Promise((res) =>
+                setTimeout(res, TPM_RETRY_OPTIONS.delayMs),
+              );
+              continue;
+            }
+
             const isContentError = error instanceof InvalidStreamError;
 
             if (isContentError) {
