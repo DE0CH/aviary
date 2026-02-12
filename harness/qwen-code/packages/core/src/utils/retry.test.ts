@@ -740,6 +740,11 @@ describe('TPM throttling retry handling', () => {
       maxDelayMs: 1000,
     });
 
+    // Attach a rejection handler BEFORE advancing timers to prevent Node.js
+    // from reporting an unhandled rejection. The rejection occurs during
+    // advanceTimersByTimeAsync when maxAttempts is exhausted.
+    promise.catch(() => {});
+
     // Fast-forward time for all TPM delays (3 attempts = 2 retries)
     await vi.advanceTimersByTimeAsync(120000);
 
