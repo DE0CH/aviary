@@ -935,7 +935,9 @@ describe('GeminiChat', () => {
       vi.useFakeTimers();
 
       try {
-        const tpmError = new StreamContentError('Throttling: TPM(1/1)');
+        const tpmError = new StreamContentError(
+          '{"error":{"code":"429","message":"Throttling: TPM(1/1)"}}',
+        );
         async function* failingStreamGenerator() {
           throw tpmError;
 
@@ -1014,7 +1016,7 @@ describe('GeminiChat', () => {
         );
         async function* failingStreamGenerator() {
           throw glmError;
-           
+
           yield {} as GenerateContentResponse;
         }
         const failingStream = failingStreamGenerator();
@@ -1047,7 +1049,7 @@ describe('GeminiChat', () => {
 
         // Resume generator to schedule the rate limit delay, then advance timers.
         const secondPromise = iterator.next();
-        await vi.advanceTimersByTimeAsync(1_500);
+        await vi.advanceTimersByTimeAsync(60_000);
         const second = await secondPromise;
 
         expect(second.done).toBe(false);
@@ -1060,8 +1062,8 @@ describe('GeminiChat', () => {
         ) {
           expect(second.value.retryInfo.reason).toContain('速率限制');
           expect(second.value.retryInfo.attempt).toBe(1);
-          expect(second.value.retryInfo.maxRetries).toBe(3);
-          expect(second.value.retryInfo.delayMs).toBe(1500);
+          expect(second.value.retryInfo.maxRetries).toBe(10);
+          expect(second.value.retryInfo.delayMs).toBe(60000);
         }
 
         const events: StreamEvent[] = [first.value, second.value];

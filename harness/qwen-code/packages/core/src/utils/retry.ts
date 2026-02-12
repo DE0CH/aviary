@@ -6,9 +6,8 @@
 
 import type { GenerateContentResponse } from '@google/genai';
 import { AuthType } from '../core/contentGenerator.js';
-import { isQwenQuotaExceededError } from './quotaErrorDetection.js';
+import { isQwenQuotaExceededError, isApiError } from './quotaErrorDetection.js';
 import { createDebugLogger } from './debugLogger.js';
-import { isStructuredError, isApiError } from './quotaErrorDetection.js';
 
 const debugLogger = createDebugLogger('RETRY');
 
@@ -27,7 +26,6 @@ export interface RetryOptions {
 
 export interface RateLimitRetryInfo {
   reason: string;
-  delayMs?: number;
 }
 
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
@@ -37,11 +35,10 @@ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   shouldRetryOnError: defaultShouldRetry,
 };
 
-// Z.AI GLM rate limit code reference: https://docs.z.ai/api-reference/api-code
-const GLM_RATE_LIMIT_CODE = '1302';
-
-// DashScope/Model Studio TPM rate limit reference: https://help.aliyun.com/zh/model-studio/rate-limit
-const TPM_RATE_LIMIT_DELAY_MS = 60000;
+// Known rate-limit error codes across providers.
+// 429  - Standard HTTP "Too Many Requests" (DashScope TPM, OpenAI, etc.)
+// 1302 - Z.AI GLM rate limit (https://docs.z.ai/api-reference/api-code)
+const RATE_LIMIT_ERROR_CODES = new Set(['429', '1302']);
 
 /**
  * Default predicate function to determine if a retry should be attempted.
@@ -126,29 +123,8 @@ export async function retryWithBackoff<T>(
         );
       }
 
-      // Check if we've exhausted retries
-      if (attempt >= maxAttempts) {
-        throw error;
-      }
-
-      // Check for rate-limit / throttling errors with a fixed delay.
-      // This check is prioritized over shouldRetryOnError because provider
-      // rate-limit errors may not have a standard HTTP status code (like 429)
-      // but still need retry (e.g., TPM throttling).
-      const rateLimitInfo = getRateLimitRetryInfo(error);
-      if (rateLimitInfo?.delayMs !== undefined) {
-        debugLogger.warn(
-          `Attempt ${attempt} failed with rate limit error. Retrying after ${rateLimitInfo.delayMs}ms...`,
-          error,
-        );
-        await delay(rateLimitInfo.delayMs);
-        // Reset currentDelay for next potential non-rate-limit error
-        currentDelay = initialDelayMs;
-        continue;
-      }
-
-      // Check if we shouldn't retry based on error type
-      if (!rateLimitInfo && !shouldRetryOnError(error as Error)) {
+      // Check if we've exhausted retries or shouldn't retry
+      if (attempt >= maxAttempts || !shouldRetryOnError(error as Error)) {
         throw error;
       }
 
@@ -181,112 +157,57 @@ export async function retryWithBackoff<T>(
 }
 
 /**
- * Checks if an error is a TPM (Tokens Per Minute) throttling error.
- * These errors occur when the API rate limit is exceeded for TPM.
- * Example: {"error":{"message":"Throttling: TPM(10680324/10000000)","type":"Throttling","code":"429"}}
- * @param error The error object.
- * @returns True if the error is a TPM throttling error.
- */
-export function isTPMThrottlingError(error: unknown): boolean {
-  const checkMessage = (msg: string) => msg.includes('Throttling: TPM(');
-
-  if (typeof error === 'string') return checkMessage(error);
-  if (error instanceof Error) return checkMessage(error.message);
-  if (isStructuredError(error)) return checkMessage(error.message);
-  if (isApiError(error)) return checkMessage(error.error.message);
-
-  return false;
-}
-
-/**
- * Checks if an error is a GLM rate limit error (code 1302).
- *
- * @param error The error object.
- * @returns True if the error matches GLM rate limit code 1302.
- */
-export function isGLMRateLimitError(error: unknown): boolean {
-  const matchesCode = (code: unknown): boolean =>
-    code !== undefined && String(code) === GLM_RATE_LIMIT_CODE;
-
-  if (isApiError(error)) {
-    return matchesCode(error.error.code);
-  }
-
-  if (isStructuredError(error) && !(error instanceof Error)) {
-    return false;
-  }
-
-  const message = getErrorMessage(error);
-  if (!message) {
-    return false;
-  }
-
-  const parsed = extractErrorDetailsFromString(message);
-  if (parsed && matchesCode(parsed.code)) {
-    return true;
-  }
-
-  return (
-    message.includes(`"code":"${GLM_RATE_LIMIT_CODE}"`) ||
-    message.includes(`"code":${GLM_RATE_LIMIT_CODE}`)
-  );
-}
-
-/**
- * Checks if an error is a rate-limit / throttling error from any provider.
- * This is a superset of isTPMThrottlingError that also covers:
- * - GLM rate limit: {"error":{"code":"1302","message":"您的账户已达到速率限制..."}}
- * - General throttling: "Throttling: ..."
- * - English rate limit messages
- *
- * @param error The error object.
- * @returns True if the error is a rate-limit or throttling error.
- */
-export function isRateLimitThrottlingError(error: unknown): boolean {
-  if (isTPMThrottlingError(error)) return true;
-  if (isGLMRateLimitError(error)) return true;
-
-  const checkMessage = (msg: string): boolean => {
-    const lower = msg.toLowerCase();
-    return (
-      lower.includes('速率限制') ||
-      lower.includes('throttling:') ||
-      (lower.includes('rate') && lower.includes('limit'))
-    );
-  };
-
-  const message = getErrorMessage(error);
-  if (message) return checkMessage(message);
-
-  return false;
-}
-
-/**
  * Returns rate-limit retry info when an error is detected as rate-limited.
- * For TPM throttling errors, a fixed 60s delay is returned. For other
- * provider rate-limit errors, delayMs is left undefined so callers can apply
- * their own backoff strategy.
+ * Returns a human-readable reason for the UI. Retry delay is determined by
+ * the caller (e.g., fixed 60s in geminiChat.ts).
  */
 export function getRateLimitRetryInfo(
   error: unknown,
 ): RateLimitRetryInfo | null {
-  if (!isRateLimitThrottlingError(error)) {
+  if (!getRateLimitCode(error)) {
     return null;
   }
+  return { reason: getRateLimitReason(error) };
+}
 
-  return {
-    reason: getRateLimitReason(error),
-    delayMs: isTPMThrottlingError(error) ? TPM_RATE_LIMIT_DELAY_MS : undefined,
-  };
+// ---------------------------------------------------------------------------
+// Private helpers for rate-limit detection
+// ---------------------------------------------------------------------------
+
+/** Extracts the rate-limit code if present in the error. */
+function getRateLimitCode(error: unknown): string | undefined {
+  // Direct code on nested error object: { error: { code: "429" } }
+  if (isApiError(error)) {
+    const code = String(error.error.code);
+    if (RATE_LIMIT_ERROR_CODES.has(code)) {
+      return code;
+    }
+  }
+
+  // Try to extract code from JSON embedded in error message string
+  const message = getErrorMessage(error);
+  if (message) {
+    const details = extractErrorDetailsFromString(message);
+    if (details?.code !== undefined) {
+      const code = String(details.code);
+      if (RATE_LIMIT_ERROR_CODES.has(code)) {
+        return code;
+      }
+    }
+  }
+
+  // Fallback to HTTP status 429
+  const status = getErrorStatus(error);
+  if (status === 429) {
+    return '429';
+  }
+
+  return undefined;
 }
 
 function getRateLimitReason(error: unknown): string {
   if (isApiError(error)) {
     return error.error.message;
-  }
-
-  if (isStructuredError(error)) {
-    return error.message;
   }
 
   if (error instanceof Error) {
@@ -303,7 +224,6 @@ function getRateLimitReason(error: unknown): string {
 function getErrorMessage(error: unknown): string | undefined {
   if (typeof error === 'string') return error;
   if (error instanceof Error) return error.message;
-  if (isStructuredError(error)) return error.message;
   if (isApiError(error)) return error.error.message;
   return undefined;
 }

@@ -79,21 +79,14 @@ const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
 
 /**
  * Options for retrying on rate-limit throttling errors returned as stream content.
+ * Fixed 60s delay matches the DashScope per-minute quota window.
+ * 10 retries aligns with Claude Code's retry behavior.
  */
 const RATE_LIMIT_RETRY_OPTIONS = {
-  maxRetries: 3,
+  maxRetries: 10,
+  delayMs: 60000,
 };
 
-const RATE_LIMIT_BACKOFF_OPTIONS = {
-  initialDelayMs: 1500,
-  maxDelayMs: 30000,
-};
-
-function getRateLimitBackoffDelay(retryCount: number): number {
-  const delay =
-    RATE_LIMIT_BACKOFF_OPTIONS.initialDelayMs * 2 ** (retryCount - 1);
-  return Math.min(RATE_LIMIT_BACKOFF_OPTIONS.maxDelayMs, delay);
-}
 /**
  * Returns true if the response is valid, false otherwise.
  *
@@ -342,9 +335,7 @@ export class GeminiChat {
               rateLimitRetryCount < RATE_LIMIT_RETRY_OPTIONS.maxRetries
             ) {
               rateLimitRetryCount++;
-              const delayMs =
-                rateLimitInfo.delayMs ??
-                getRateLimitBackoffDelay(rateLimitRetryCount);
+              const delayMs = RATE_LIMIT_RETRY_OPTIONS.delayMs;
               debugLogger.warn(
                 `Rate limit throttling detected (retry ${rateLimitRetryCount}/${RATE_LIMIT_RETRY_OPTIONS.maxRetries}). ` +
                   `Waiting ${delayMs / 1000}s before retrying...`,
