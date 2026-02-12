@@ -54,6 +54,19 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to fix npm global directory permissions
+fix_npm_permissions() {
+    echo "Fixing npm global directory permissions..."
+    # 1. Change ownership of the entire .npm-global directory to current user
+    sudo chown -R $(whoami):staff ~/.npm-global 2>/dev/null || true
+
+    # 2. Fix directory permissions (ensure user has full read/write/execute permissions)
+    chmod -R u+rwX ~/.npm-global 2>/dev/null || true
+
+    # 3. Specifically fix parent directory permissions (to prevent mkdir failures)
+    chmod u+rwx ~/.npm-global ~/.npm-global/lib ~/.npm-global/lib/node_modules 2>/dev/null || true
+}
+
 # Function to check and install Node.js
 install_nodejs() {
     if command_exists node; then
@@ -68,7 +81,7 @@ install_nodejs() {
             install_nodejs_via_nvm
         elif [[ "${NODE_MAJOR_VERSION}" -ge 20 ]]; then
             echo "✓ Node.js is already installed: ${NODE_VERSION}"
-            
+
             # Check npm after confirming Node.js exists
             if ! command_exists npm; then
                 echo "⚠ npm not found, installing npm..."
@@ -91,6 +104,11 @@ install_nodejs() {
                         exit 1
                     fi
                 fi
+            fi
+
+            # Check if npm global directory has permission issues
+            if ! npm config get prefix >/dev/null 2>&1; then
+                fix_npm_permissions
             fi
 
             return 0
@@ -353,48 +371,24 @@ install_qwen_code() {
         echo "  Upgrading to the latest version..."
     fi
 
-    # Determine npm install command
-    # Priority: 1) npm without sudo (if it works), 2) npm with sudo, 3) sudo with preserved PATH
-    USER_ID=$(id -u) || true
-    NPM_INSTALL_CMD=""
-    USE_SUDO=false
-
-    # First, try npm directly without sudo
-    if npm --version >/dev/null 2>&1; then
-        # Check if npm can write to global directory
-        if npm install -g --dry-run @qwen-code/qwen-code@latest >/dev/null 2>&1; then
-            NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
-            USE_SUDO=false
-        else
-            # npm exists but needs elevated permissions
-            if [[ "${USER_ID}" -eq 0 ]]; then
-                NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
-                USE_SUDO=false
-            else
-                NPM_INSTALL_CMD="npm install -g @qwen-code/qwen-code@latest"
-                USE_SUDO=true
-            fi
-        fi
+    # First, try to install without sudo (user level)
+    echo "  Attempting to install Qwen Code with current user permissions..."
+    if npm install -g @qwen-code/qwen-code@latest 2>/dev/null; then
+        echo "✓ Qwen Code installed/upgraded successfully!"
     else
-        echo "✗ npm is not available in PATH"
-        exit 1
-    fi
+        # Installation failed, likely due to permissions
+        echo "  Installation failed with user permissions, attempting to fix permissions..."
 
-    # Install/Upgrade Qwen Code globally
-    # Note: Don't suppress output to allow sudo password prompt to be visible
-    if [[ "${USE_SUDO}" == true ]]; then
-        # Use sudo with preserved PATH to find npm in user environment
-        if sudo -E env "PATH=$PATH" npm install -g @qwen-code/qwen-code@latest; then
-            echo "✓ Qwen Code installed/upgraded successfully!"
+        # Fix npm global directory permissions
+        fix_npm_permissions
+
+        # Try again after fixing permissions
+        if npm install -g @qwen-code/qwen-code@latest 2>/dev/null; then
+            echo "✓ Qwen Code installed/upgraded successfully after permission fix!"
         else
-            echo "✗ Failed to install Qwen Code"
-            exit 1
-        fi
-    else
-        if ${NPM_INSTALL_CMD}; then
-            echo "✓ Qwen Code installed/upgraded successfully!"
-        else
-            echo "✗ Failed to install Qwen Code"
+            # Both attempts failed
+            echo "✗ Failed to install Qwen Code even after permission fix"
+            echo "  Please check your system permissions or contact support"
             exit 1
         fi
     fi
