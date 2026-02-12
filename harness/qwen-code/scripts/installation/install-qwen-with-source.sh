@@ -58,7 +58,8 @@ command_exists() {
 fix_npm_permissions() {
     echo "Fixing npm global directory permissions..."
     # 1. Change ownership of the entire .npm-global directory to current user
-    sudo chown -R "$(whoami)":staff ~/.npm-global 2>/dev/null || true
+    #    Using only user ownership without specifying a group for cross-platform compatibility
+    sudo chown -R "$(whoami)" ~/.npm-global 2>/dev/null || true
 
     # 2. Fix directory permissions (ensure user has full read/write/execute permissions)
     chmod -R u+rwX ~/.npm-global 2>/dev/null || true
