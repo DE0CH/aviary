@@ -10,6 +10,8 @@ import { Query } from './Query.js';
 import type { QueryOptions } from '../types/types.js';
 import { QueryOptionsSchema } from '../types/queryOptionsSchema.js';
 import { SdkLogger } from '../utils/logger.js';
+import { randomUUID } from 'node:crypto';
+import { validateSessionId } from '../utils/validation.js';
 
 export type { QueryOptions };
 
@@ -40,6 +42,9 @@ export function query({
 
   const abortController = options.abortController ?? new AbortController();
 
+  // Generate or use provided session ID for SDK-CLI alignment
+  const sessionId = options.resume ?? options.sessionId ?? randomUUID();
+
   const transport = new ProcessTransport({
     pathToQwenExecutable,
     spawnInfo,
@@ -58,11 +63,13 @@ export function query({
     authType: options.authType,
     includePartialMessages: options.includePartialMessages,
     resume: options.resume,
+    sessionId,
   });
 
   const queryOptions: QueryOptions = {
     ...options,
     abortController,
+    sessionId,
   };
 
   const queryInstance = new Query(transport, queryOptions, isSingleTurn);
@@ -105,6 +112,16 @@ function validateOptions(options: QueryOptions): SpawnInfo | undefined {
       .map((err) => `${err.path.join('.')}: ${err.message}`)
       .join('; ');
     throw new Error(`Invalid QueryOptions: ${errors}`);
+  }
+
+  // Validate sessionId format if provided
+  if (options.sessionId) {
+    validateSessionId(options.sessionId, 'sessionId');
+  }
+
+  // Validate resume format if provided
+  if (options.resume) {
+    validateSessionId(options.resume, 'resume');
   }
 
   try {
