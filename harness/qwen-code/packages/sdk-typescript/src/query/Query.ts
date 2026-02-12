@@ -83,6 +83,7 @@ export class Query implements AsyncIterable<SDKMessage> {
   private firstResultReceivedResolve?: () => void;
 
   private readonly isSingleTurn: boolean;
+  private abortHandler: (() => void) | null = null;
 
   constructor(
     transport: Transport,
@@ -125,12 +126,13 @@ export class Query implements AsyncIterable<SDKMessage> {
         logger.error('Error during abort cleanup:', err);
       });
     } else {
-      this.abortController.signal.addEventListener('abort', () => {
+      this.abortHandler = () => {
         this.inputStream.error(new AbortError('Query aborted by user'));
         this.close().catch((err) => {
           logger.error('Error during abort cleanup:', err);
         });
-      });
+      };
+      this.abortController.signal.addEventListener('abort', this.abortHandler);
     }
 
     this.initialized = this.initialize();
@@ -718,6 +720,15 @@ export class Query implements AsyncIterable<SDKMessage> {
     }
 
     this.closed = true;
+
+    // Remove abort listener to prevent memory leak
+    if (this.abortHandler) {
+      this.abortController.signal.removeEventListener(
+        'abort',
+        this.abortHandler,
+      );
+      this.abortHandler = null;
+    }
 
     for (const pending of this.pendingControlRequests.values()) {
       pending.abortController.abort();
