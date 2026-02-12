@@ -180,14 +180,14 @@ export class ContentGenerationPipeline {
       // Stage 2e: Stream completed successfully
       context.duration = Date.now() - context.startTime;
     } catch (error) {
+      // Clear streaming tool calls on error to prevent data pollution
+      this.converter.resetStreamingToolCalls();
+
       // Re-throw StreamContentError directly so it can be handled by
       // the caller's retry logic (e.g., TPM throttling retry in sendMessageStream)
       if (error instanceof StreamContentError) {
         throw error;
       }
-
-      // Clear streaming tool calls on error to prevent data pollution
-      this.converter.resetStreamingToolCalls();
 
       // Use shared error handling logic
       await this.handleError(error, context, request);
