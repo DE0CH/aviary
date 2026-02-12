@@ -57,15 +57,24 @@ command_exists() {
 # Function to fix npm global directory permissions
 fix_npm_permissions() {
     echo "Fixing npm global directory permissions..."
-    # 1. Change ownership of the entire .npm-global directory to current user
+    
+    # Get the actual npm global directory
+    NPM_GLOBAL_DIR=$(npm config get prefix 2>/dev/null)
+    if [[ -z "${NPM_GLOBAL_DIR}" ]] || [[ "${NPM_GLOBAL_DIR}" == *"error"* ]]; then
+        # Fallback to default if npm config fails
+        NPM_GLOBAL_DIR="${HOME}/.npm-global"
+        echo "Warning: Could not determine npm prefix, using fallback: ${NPM_GLOBAL_DIR}"
+    fi
+    
+    # 1. Change ownership of the entire npm global directory to current user
     #    Using only user ownership without specifying a group for cross-platform compatibility
-    sudo chown -R "$(whoami)" ~/.npm-global 2>/dev/null || true
+    sudo chown -R "$(whoami)" "${NPM_GLOBAL_DIR}" 2>/dev/null || true
 
     # 2. Fix directory permissions (ensure user has full read/write/execute permissions)
-    chmod -R u+rwX ~/.npm-global 2>/dev/null || true
+    chmod -R u+rwX "${NPM_GLOBAL_DIR}" 2>/dev/null || true
 
     # 3. Specifically fix parent directory permissions (to prevent mkdir failures)
-    chmod u+rwx ~/.npm-global ~/.npm-global/lib ~/.npm-global/lib/node_modules 2>/dev/null || true
+    chmod u+rwx "${NPM_GLOBAL_DIR}" "${NPM_GLOBAL_DIR}/lib" "${NPM_GLOBAL_DIR}/lib/node_modules" 2>/dev/null || true
 }
 
 # Function to check and install Node.js
@@ -393,7 +402,6 @@ install_qwen_code() {
         fi
     fi
 
-    # First, try to install without sudo (user level)
     echo "  Attempting to install Qwen Code with current user permissions..."
     if npm install -g @qwen-code/qwen-code@latest 2>/dev/null; then
         echo "✓ Qwen Code installed/upgraded successfully!"
