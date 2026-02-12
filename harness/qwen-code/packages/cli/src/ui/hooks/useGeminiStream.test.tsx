@@ -2296,6 +2296,107 @@ describe('useGeminiStream', () => {
       });
     });
 
+    it('should show a retry countdown and update pending history over time', async () => {
+      vi.useFakeTimers();
+      try {
+        let resolveStream: (() => void) | undefined;
+        mockSendMessageStream.mockReturnValue(
+          (async function* () {
+            yield {
+              type: ServerGeminiEventType.Retry,
+              retryInfo: {
+                reason: 'Rate limit exceeded',
+                attempt: 1,
+                maxRetries: 3,
+                delayMs: 3000,
+              },
+            };
+            await new Promise<void>((resolve) => {
+              resolveStream = resolve;
+            });
+            yield {
+              type: ServerGeminiEventType.Finished,
+              value: { reason: 'STOP', usageMetadata: undefined },
+            };
+          })(),
+        );
+
+        const { result } = renderHook(() =>
+          useGeminiStream(
+            new MockedGeminiClientClass(mockConfig),
+            [],
+            mockAddItem,
+            mockConfig,
+            mockLoadedSettings,
+            mockOnDebugMessage,
+            mockHandleSlashCommand,
+            false,
+            () => 'vscode' as EditorType,
+            () => {},
+            () => Promise.resolve(),
+            false,
+            () => {},
+            () => {},
+            () => {},
+            false, // visionModelPreviewEnabled
+            () => {},
+            80,
+            24,
+          ),
+        );
+
+        act(() => {
+          void result.current.submitQuery('Trigger retry');
+        });
+
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        // Error line should be rendered as ERROR type
+        const errorItem = result.current.pendingHistoryItems.find(
+          (item) => item.type === MessageType.ERROR,
+        );
+        expect(errorItem?.text).toContain('Rate limit exceeded');
+
+        // Countdown line should be rendered as retry_countdown type
+        const countdownItem = result.current.pendingHistoryItems.find(
+          (item) => item.type === ('retry_countdown' as MessageType),
+        );
+        expect(countdownItem?.text).toContain('Retrying in 3 seconds');
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+        });
+
+        const countdownAfterOneSecond = result.current.pendingHistoryItems.find(
+          (item) => item.type === ('retry_countdown' as MessageType),
+        );
+        expect(countdownAfterOneSecond?.text).toContain(
+          'Retrying in 2 seconds',
+        );
+
+        resolveStream?.();
+
+        await act(async () => {
+          await Promise.resolve();
+          await vi.runAllTimersAsync();
+        });
+
+        // Both error and countdown should be cleared after retry succeeds
+        const remainingError = result.current.pendingHistoryItems.find(
+          (item) => item.type === MessageType.ERROR,
+        );
+        const remainingCountdown = result.current.pendingHistoryItems.find(
+          (item) => item.type === ('retry_countdown' as MessageType),
+        );
+        expect(remainingError).toBeUndefined();
+        expect(remainingCountdown).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should memoize pendingHistoryItems', () => {
       mockUseReactToolScheduler.mockReturnValue([
         [],

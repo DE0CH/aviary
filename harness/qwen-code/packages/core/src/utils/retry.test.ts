@@ -9,7 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { HttpError } from './retry.js';
 import {
   getErrorStatus,
+  getRateLimitRetryInfo,
+  isGLMRateLimitError,
   isTPMThrottlingError,
+  isRateLimitThrottlingError,
   retryWithBackoff,
 } from './retry.js';
 import { setSimulate429 } from './testUtils.js';
@@ -578,6 +581,119 @@ describe('isTPMThrottlingError', () => {
   });
 });
 
+describe('isRateLimitThrottlingError', () => {
+  it('should detect TPM throttling errors (superset of isTPMThrottlingError)', () => {
+    expect(
+      isRateLimitThrottlingError('Throttling: TPM(10680324/10000000)'),
+    ).toBe(true);
+    expect(
+      isRateLimitThrottlingError(
+        new Error('Throttling: TPM(10680324/10000000)'),
+      ),
+    ).toBe(true);
+  });
+
+  it('should detect GLM rate limit error (Chinese message)', () => {
+    const glmError = new Error(
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
+    );
+    expect(isRateLimitThrottlingError(glmError)).toBe(true);
+  });
+
+  it('should detect GLM rate limit from nested error object', () => {
+    const error = {
+      error: {
+        message: '您的账户已达到速率限制，请您控制请求频率',
+        code: '1302',
+      },
+    };
+    expect(isRateLimitThrottlingError(error)).toBe(true);
+  });
+
+  it('should detect general Throttling: prefix errors', () => {
+    expect(
+      isRateLimitThrottlingError(new Error('Throttling: RPM exceeded')),
+    ).toBe(true);
+    expect(
+      isRateLimitThrottlingError('Throttling: concurrent limit reached'),
+    ).toBe(true);
+  });
+
+  it('should detect English rate limit errors', () => {
+    expect(isRateLimitThrottlingError(new Error('Rate limit exceeded'))).toBe(
+      true,
+    );
+    expect(
+      isRateLimitThrottlingError({
+        error: { message: 'API rate limit reached. Please slow down.' },
+      }),
+    ).toBe(true);
+  });
+
+  it('should return false for non-rate-limit errors', () => {
+    expect(isRateLimitThrottlingError('Regular error message')).toBe(false);
+    expect(isRateLimitThrottlingError(new Error('Connection refused'))).toBe(
+      false,
+    );
+    expect(isRateLimitThrottlingError(null)).toBe(false);
+    expect(isRateLimitThrottlingError(undefined)).toBe(false);
+    expect(isRateLimitThrottlingError(429)).toBe(false);
+  });
+});
+
+describe('isGLMRateLimitError', () => {
+  it('should detect GLM rate limit error from JSON string', () => {
+    const glmError =
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}';
+    expect(isGLMRateLimitError(glmError)).toBe(true);
+  });
+
+  it('should detect GLM rate limit error from Error object', () => {
+    const glmError = new Error(
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
+    );
+    expect(isGLMRateLimitError(glmError)).toBe(true);
+  });
+
+  it('should detect GLM rate limit from nested error object', () => {
+    const error = {
+      error: {
+        message: '您的账户已达到速率限制，请您控制请求频率',
+        code: '1302',
+      },
+    };
+    expect(isGLMRateLimitError(error)).toBe(true);
+  });
+
+  it('should return false for non-GLM errors', () => {
+    expect(isGLMRateLimitError('Rate limit exceeded')).toBe(false);
+    expect(isGLMRateLimitError(new Error('Throttling: TPM(1/1)'))).toBe(false);
+  });
+});
+
+describe('getRateLimitRetryInfo', () => {
+  it('should return fixed delay for TPM throttling errors', () => {
+    const info = getRateLimitRetryInfo('Throttling: TPM(1/1)');
+    expect(info).not.toBeNull();
+    expect(info?.delayMs).toBe(60000);
+  });
+
+  it('should return no fixed delay for GLM 1302 rate limit errors', () => {
+    const info = getRateLimitRetryInfo(
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
+    );
+    expect(info).not.toBeNull();
+    expect(info?.delayMs).toBeUndefined();
+  });
+
+  it('should extract a human-readable reason from JSON error strings', () => {
+    const info = getRateLimitRetryInfo(
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
+    );
+    expect(info?.reason).toBe('您的账户已达到速率限制，请您控制请求频率');
+  });
+});
+
 describe('TPM throttling retry handling', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -750,5 +866,90 @@ describe('TPM throttling retry handling', () => {
 
     await expect(promise).rejects.toThrow('Throttling: TPM(10680324/10000000)');
     expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('should use exponential backoff for GLM rate limit errors when delay is unknown', async () => {
+    const glmError = new Error(
+      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
+    );
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(glmError)
+      .mockResolvedValue('success');
+
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    const delays = setTimeoutSpy.mock.calls.map((call) => call[1] as number);
+    expect(delays[0]).toBeGreaterThanOrEqual(100 * 0.7);
+    expect(delays[0]).toBeLessThanOrEqual(100 * 1.3);
+  });
+
+  it('should use exponential backoff for general English rate limit errors', async () => {
+    const rateLimitError = new Error('Rate limit exceeded. Please slow down.');
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValue('success');
+
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    const delays = setTimeoutSpy.mock.calls.map((call) => call[1] as number);
+    expect(delays[0]).toBeGreaterThanOrEqual(100 * 0.7);
+    expect(delays[0]).toBeLessThanOrEqual(100 * 1.3);
+  });
+
+  it('should retry nested GLM rate limit error objects with backoff', async () => {
+    const nestedGlmError = {
+      error: {
+        message: '您的账户已达到速率限制，请您控制请求频率',
+        code: '1302',
+      },
+    };
+
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(nestedGlmError)
+      .mockResolvedValue('success');
+
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+
+    const promise = retryWithBackoff(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 100,
+      maxDelayMs: 1000,
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toBe('success');
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    const delays = setTimeoutSpy.mock.calls.map((call) => call[1] as number);
+    expect(delays[0]).toBeGreaterThanOrEqual(100 * 0.7);
+    expect(delays[0]).toBeLessThanOrEqual(100 * 1.3);
   });
 });

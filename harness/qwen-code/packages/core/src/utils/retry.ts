@@ -25,12 +25,23 @@ export interface RetryOptions {
   authType?: string;
 }
 
+export interface RateLimitRetryInfo {
+  reason: string;
+  delayMs?: number;
+}
+
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   maxAttempts: 7,
   initialDelayMs: 1500,
   maxDelayMs: 30000, // 30 seconds
   shouldRetryOnError: defaultShouldRetry,
 };
+
+// Z.AI GLM rate limit code reference: https://docs.z.ai/api-reference/api-code
+const GLM_RATE_LIMIT_CODE = '1302';
+
+// DashScope/Model Studio TPM rate limit reference: https://help.aliyun.com/zh/model-studio/rate-limit
+const TPM_RATE_LIMIT_DELAY_MS = 60000;
 
 /**
  * Default predicate function to determine if a retry should be attempted.
@@ -120,23 +131,24 @@ export async function retryWithBackoff<T>(
         throw error;
       }
 
-      // Check for TPM throttling error - use fixed 1 minute delay
-      // This check is prioritized over shouldRetryOnError because TPM errors
-      // may not have a standard HTTP status code (like 429) but still need retry
-      if (isTPMThrottlingError(error)) {
-        const tpmDelayMs = 60000; // 1 minute
+      // Check for rate-limit / throttling errors with a fixed delay.
+      // This check is prioritized over shouldRetryOnError because provider
+      // rate-limit errors may not have a standard HTTP status code (like 429)
+      // but still need retry (e.g., TPM throttling).
+      const rateLimitInfo = getRateLimitRetryInfo(error);
+      if (rateLimitInfo?.delayMs !== undefined) {
         debugLogger.warn(
-          `Attempt ${attempt} failed with TPM throttling error. Retrying after ${tpmDelayMs}ms (1 minute)...`,
+          `Attempt ${attempt} failed with rate limit error. Retrying after ${rateLimitInfo.delayMs}ms...`,
           error,
         );
-        await delay(tpmDelayMs);
-        // Reset currentDelay for next potential non-TPM error
+        await delay(rateLimitInfo.delayMs);
+        // Reset currentDelay for next potential non-rate-limit error
         currentDelay = initialDelayMs;
         continue;
       }
 
       // Check if we shouldn't retry based on error type
-      if (!shouldRetryOnError(error as Error)) {
+      if (!rateLimitInfo && !shouldRetryOnError(error as Error)) {
         throw error;
       }
 
@@ -179,10 +191,160 @@ export function isTPMThrottlingError(error: unknown): boolean {
   const checkMessage = (msg: string) => msg.includes('Throttling: TPM(');
 
   if (typeof error === 'string') return checkMessage(error);
+  if (error instanceof Error) return checkMessage(error.message);
   if (isStructuredError(error)) return checkMessage(error.message);
   if (isApiError(error)) return checkMessage(error.error.message);
 
   return false;
+}
+
+/**
+ * Checks if an error is a GLM rate limit error (code 1302).
+ *
+ * @param error The error object.
+ * @returns True if the error matches GLM rate limit code 1302.
+ */
+export function isGLMRateLimitError(error: unknown): boolean {
+  const matchesCode = (code: unknown): boolean =>
+    code !== undefined && String(code) === GLM_RATE_LIMIT_CODE;
+
+  if (isApiError(error)) {
+    return matchesCode(error.error.code);
+  }
+
+  if (isStructuredError(error) && !(error instanceof Error)) {
+    return false;
+  }
+
+  const message = getErrorMessage(error);
+  if (!message) {
+    return false;
+  }
+
+  const parsed = extractErrorDetailsFromString(message);
+  if (parsed && matchesCode(parsed.code)) {
+    return true;
+  }
+
+  return (
+    message.includes(`"code":"${GLM_RATE_LIMIT_CODE}"`) ||
+    message.includes(`"code":${GLM_RATE_LIMIT_CODE}`)
+  );
+}
+
+/**
+ * Checks if an error is a rate-limit / throttling error from any provider.
+ * This is a superset of isTPMThrottlingError that also covers:
+ * - GLM rate limit: {"error":{"code":"1302","message":"您的账户已达到速率限制..."}}
+ * - General throttling: "Throttling: ..."
+ * - English rate limit messages
+ *
+ * @param error The error object.
+ * @returns True if the error is a rate-limit or throttling error.
+ */
+export function isRateLimitThrottlingError(error: unknown): boolean {
+  if (isTPMThrottlingError(error)) return true;
+  if (isGLMRateLimitError(error)) return true;
+
+  const checkMessage = (msg: string): boolean => {
+    const lower = msg.toLowerCase();
+    return (
+      lower.includes('速率限制') ||
+      lower.includes('throttling:') ||
+      (lower.includes('rate') && lower.includes('limit'))
+    );
+  };
+
+  const message = getErrorMessage(error);
+  if (message) return checkMessage(message);
+
+  return false;
+}
+
+/**
+ * Returns rate-limit retry info when an error is detected as rate-limited.
+ * For TPM throttling errors, a fixed 60s delay is returned. For other
+ * provider rate-limit errors, delayMs is left undefined so callers can apply
+ * their own backoff strategy.
+ */
+export function getRateLimitRetryInfo(
+  error: unknown,
+): RateLimitRetryInfo | null {
+  if (!isRateLimitThrottlingError(error)) {
+    return null;
+  }
+
+  return {
+    reason: getRateLimitReason(error),
+    delayMs: isTPMThrottlingError(error) ? TPM_RATE_LIMIT_DELAY_MS : undefined,
+  };
+}
+
+function getRateLimitReason(error: unknown): string {
+  if (isApiError(error)) {
+    return error.error.message;
+  }
+
+  if (isStructuredError(error)) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return extractReasonFromString(error.message);
+  }
+
+  if (typeof error === 'string') {
+    return extractReasonFromString(error);
+  }
+
+  return String(error);
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (isStructuredError(error)) return error.message;
+  if (isApiError(error)) return error.error.message;
+  return undefined;
+}
+
+function extractReasonFromString(message: string): string {
+  const parsed = extractErrorDetailsFromString(message);
+  if (parsed?.message) {
+    return parsed.message;
+  }
+  return message;
+}
+
+function extractErrorDetailsFromString(
+  message: string,
+): { code?: unknown; message?: string } | null {
+  const trimmed = message.trim().replace(/^data:\s*/i, '');
+  if (!trimmed.startsWith('{')) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const errorObject =
+      'error' in parsed &&
+      typeof (parsed as { error?: unknown }).error === 'object'
+        ? (parsed as { error: Record<string, unknown> }).error
+        : (parsed as Record<string, unknown>);
+    const code = errorObject?.['code'];
+    const messageValue =
+      typeof errorObject?.['message'] === 'string'
+        ? errorObject['message']
+        : undefined;
+    if (code === undefined && messageValue === undefined) {
+      return null;
+    }
+    return { code, message: messageValue };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -20,9 +20,8 @@ import { createUserContent } from '@google/genai';
 import {
   getErrorStatus,
   retryWithBackoff,
-  isTPMThrottlingError,
+  getRateLimitRetryInfo,
 } from '../utils/retry.js';
-import { StreamContentError } from './openaiContentGenerator/pipeline.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import type { Config } from '../config/config.js';
 import { hasCycleInSchema } from '../tools/tools.js';
@@ -48,9 +47,20 @@ export enum StreamEventType {
   RETRY = 'retry',
 }
 
+export interface RetryInfo {
+  /** Human-readable error reason. */
+  reason: string;
+  /** Current retry attempt (1-based). */
+  attempt: number;
+  /** Max retries allowed. */
+  maxRetries: number;
+  /** Delay in milliseconds before the retry happens. */
+  delayMs: number;
+}
+
 export type StreamEvent =
   | { type: StreamEventType.CHUNK; value: GenerateContentResponse }
-  | { type: StreamEventType.RETRY };
+  | { type: StreamEventType.RETRY; retryInfo?: RetryInfo };
 
 /**
  * Options for retrying due to invalid content from the model.
@@ -68,14 +78,22 @@ const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
 };
 
 /**
- * Options for retrying on TPM (Tokens Per Minute) throttling errors.
- * These errors occur when the API rate limit is exceeded and are returned
- * as stream content (finish_reason="error_finish") rather than HTTP errors.
+ * Options for retrying on rate-limit throttling errors returned as stream content.
  */
-const TPM_RETRY_OPTIONS = {
+const RATE_LIMIT_RETRY_OPTIONS = {
   maxRetries: 3,
-  delayMs: 60_000, // 1 minute - TPM quota typically resets within a minute window
 };
+
+const RATE_LIMIT_BACKOFF_OPTIONS = {
+  initialDelayMs: 1500,
+  maxDelayMs: 30000,
+};
+
+function getRateLimitBackoffDelay(retryCount: number): number {
+  const delay =
+    RATE_LIMIT_BACKOFF_OPTIONS.initialDelayMs * 2 ** (retryCount - 1);
+  return Math.min(RATE_LIMIT_BACKOFF_OPTIONS.maxDelayMs, delay);
+}
 /**
  * Returns true if the response is valid, false otherwise.
  *
@@ -286,7 +304,7 @@ export class GeminiChat {
     return (async function* () {
       try {
         let lastError: unknown = new Error('Request failed after all retries.');
-        let tpmRetryCount = 0;
+        let rateLimitRetryCount = 0;
 
         for (
           let attempt = 0;
@@ -294,7 +312,7 @@ export class GeminiChat {
           attempt++
         ) {
           try {
-            if (attempt > 0 || tpmRetryCount > 0) {
+            if (attempt > 0 || rateLimitRetryCount > 0) {
               yield { type: StreamEventType.RETRY };
             }
 
@@ -314,25 +332,35 @@ export class GeminiChat {
           } catch (error) {
             lastError = error;
 
-            // Handle TPM throttling errors returned as stream content.
+            // Handle rate-limit / throttling errors returned as stream content.
             // These arrive as StreamContentError with finish_reason="error_finish"
             // from the pipeline, containing the throttling message in the content.
+            // Covers TPM throttling, GLM rate limits, and other provider throttling.
+            const rateLimitInfo = getRateLimitRetryInfo(error);
             if (
-              (error instanceof StreamContentError ||
-                isTPMThrottlingError(error)) &&
-              tpmRetryCount < TPM_RETRY_OPTIONS.maxRetries
+              rateLimitInfo &&
+              rateLimitRetryCount < RATE_LIMIT_RETRY_OPTIONS.maxRetries
             ) {
-              tpmRetryCount++;
+              rateLimitRetryCount++;
+              const delayMs =
+                rateLimitInfo.delayMs ??
+                getRateLimitBackoffDelay(rateLimitRetryCount);
               debugLogger.warn(
-                `TPM throttling detected (retry ${tpmRetryCount}/${TPM_RETRY_OPTIONS.maxRetries}). ` +
-                  `Waiting ${TPM_RETRY_OPTIONS.delayMs / 1000}s before retrying...`,
+                `Rate limit throttling detected (retry ${rateLimitRetryCount}/${RATE_LIMIT_RETRY_OPTIONS.maxRetries}). ` +
+                  `Waiting ${delayMs / 1000}s before retrying...`,
               );
-              yield { type: StreamEventType.RETRY };
-              // Don't count TPM retries against the content retry limit
+              yield {
+                type: StreamEventType.RETRY,
+                retryInfo: {
+                  reason: rateLimitInfo.reason,
+                  attempt: rateLimitRetryCount,
+                  maxRetries: RATE_LIMIT_RETRY_OPTIONS.maxRetries,
+                  delayMs,
+                },
+              };
+              // Don't count rate-limit retries against the content retry limit
               attempt--;
-              await new Promise((res) =>
-                setTimeout(res, TPM_RETRY_OPTIONS.delayMs),
-              );
+              await new Promise((res) => setTimeout(res, delayMs));
               continue;
             }
 

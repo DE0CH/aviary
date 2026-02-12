@@ -26,7 +26,7 @@ import {
   UnauthorizedError,
   toFriendlyError,
 } from '../utils/errors.js';
-import type { GeminiChat } from './geminiChat.js';
+import type { GeminiChat, RetryInfo } from './geminiChat.js';
 import {
   getThoughtText,
   parseThought,
@@ -67,6 +67,7 @@ export enum GeminiEventType {
 
 export type ServerGeminiRetryEvent = {
   type: GeminiEventType.Retry;
+  retryInfo?: RetryInfo;
 };
 
 export interface StructuredError {
@@ -255,7 +256,10 @@ export class Turn {
 
         // Handle the new RETRY event
         if (streamEvent.type === 'retry') {
-          yield { type: GeminiEventType.Retry };
+          yield {
+            type: GeminiEventType.Retry,
+            retryInfo: streamEvent.retryInfo,
+          };
           continue; // Skip to the next event in the stream
         }
 
