@@ -143,6 +143,8 @@ export default {
     'Открытие полной документации Qwen Code в браузере',
   'Configuration not available.': 'Конфигурация недоступна.',
   'change the auth method': 'Изменение метода авторизации',
+  'Configure authentication information for login':
+    'Настройка аутентификационной информации для входа',
   'Copy the last result or code snippet to clipboard':
     'Копирование последнего результата или фрагмента кода в буфер обмена',
 
@@ -952,6 +954,11 @@ export default {
   'Terms of Services and Privacy Notice for Qwen Code':
     'Условия обслуживания и уведомление о конфиденциальности для Qwen Code',
   'Qwen OAuth': 'Qwen OAuth',
+  'Login with QwenChat account to use daily free quota.':
+    'Войдите с помощью аккаунта QwenChat, чтобы использовать ежедневную бесплатную квоту.',
+  'API-KEY': 'API-KEY',
+  'Use coding plan credentials or your own api-keys/providers.':
+    'Используйте учетные данные Coding Plan или свои собственные API-ключи/провайдеры.',
   OpenAI: 'OpenAI',
   'Failed to login. Message: {{message}}':
     'Не удалось войти. Сообщение: {{message}}',
@@ -1375,4 +1382,53 @@ export default {
     'Вы можете быстро переключать режим разрешений с помощью Shift+Tab или /approval-mode.',
   'You can switch permission mode quickly with Tab or /approval-mode.':
     'Вы можете быстро переключать режим разрешений с помощью Tab или /approval-mode.',
+
+  // ============================================================================
+  // Custom API-KEY Configuration
+  // ============================================================================
+  'For advanced users who want to configure models manually.':
+    'Для продвинутых пользователей, которые хотят настраивать модели вручную.',
+  'Please configure your models in settings.json:':
+    'Пожалуйста, настройте ваши модели в settings.json:',
+  'Set API key via environment variable (e.g., OPENAI_API_KEY)':
+    'Установите ключ API через переменную окружения (например, OPENAI_API_KEY)',
+  "Add model configuration to modelProviders['openai'] (or other auth types)":
+    "Добавьте конфигурацию модели в modelProviders['openai'] (или другие типы аутентификации)",
+  'Each provider needs: id, envKey (required), plus optional baseUrl, generationConfig':
+    'Каждому провайдеру нужны: id, envKey (обязательно), а также опциональные baseUrl, generationConfig',
+  'Use /model command to select your preferred model from the configured list':
+    'Используйте команду /model, чтобы выбрать предпочитаемую модель из настроенного списка',
+  'Supported auth types: openai, anthropic, gemini, vertex-ai, etc.':
+    'Поддерживаемые типы аутентификации: openai, anthropic, gemini, vertex-ai и др.',
+
+  // ============================================================================
+  // Coding Plan Authentication
+  // ============================================================================
+  'Please enter your API key:': 'Пожалуйста, введите ваш API-ключ:',
+  'API key cannot be empty.': 'API-ключ не может быть пустым.',
+  'You can get your exclusive Coding Plan API-KEY here:':
+    'Получите свой эксклюзивный API-KEY Coding Plan здесь:',
+  'New model configurations are available for Bailian Coding Plan. Update now?':
+    'Доступны новые конфигурации моделей для Bailian Coding Plan. Обновить сейчас?',
+  'Coding Plan configuration updated successfully. New models are now available.':
+    'Конфигурация Coding Plan успешно обновлена. Новые модели теперь доступны.',
+  'Coding Plan API key not found. Please re-authenticate with Coding Plan.':
+    'API-ключ Coding Plan не найден. Пожалуйста, повторно авторизуйтесь с Coding Plan.',
+  'Failed to update Coding Plan configuration: {{message}}':
+    'Не удалось обновить конфигурацию Coding Plan: {{message}}',
+
+  // ============================================================================
+  // Auth Dialog - View Titles and Labels
+  // ============================================================================
+  'Coding Plan': 'Coding Plan',
+  "Paste your api key of Bailian Coding Plan and you're all set!":
+    'Вставьте ваш API-ключ Bailian Coding Plan и всё готово!',
+  Custom: 'Пользовательский',
+  'More instructions about configuring `modelProviders` manually.':
+    'Дополнительные инструкции по ручной настройке `modelProviders`.',
+  'Select API-KEY configuration mode:': 'Выберите режим конфигурации API-KEY:',
+  '(Press Escape to go back)': '(Нажмите Escape для возврата)',
+  '(Press Enter to submit, Escape to cancel)':
+    '(Нажмите Enter для отправки, Escape для отмены)',
+  'More instructions please check:': 'Дополнительные инструкции см.:',
 };
