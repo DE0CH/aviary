@@ -147,7 +147,7 @@ check_nvm_complete() {
         echo "⚠ Incomplete NVM: nvm command unavailable"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -372,6 +372,27 @@ install_qwen_code() {
         echo "  Upgrading to the latest version..."
     fi
 
+    # Check if .npmrc contains incompatible settings for nvm
+    if [[ -f "${HOME}/.npmrc" ]]; then
+        if grep -q "prefix\|globalconfig" "${HOME}/.npmrc"; then
+            echo "⚠ Found incompatible settings in ~/.npmrc for NVM"
+            echo "  Creating temporary backup and removing incompatible settings..."
+            
+            # Backup .npmrc file
+            cp "${HOME}/.npmrc" "${HOME}/.npmrc.backup.before.qwen.install"
+            
+            # Create temporary .npmrc without incompatible settings
+            grep -v -E '^(prefix|globalconfig)' "${HOME}/.npmrc" > "${HOME}/.npmrc.temp.for.qwen.install"
+            
+            # Use the temporary .npmrc
+            mv "${HOME}/.npmrc" "${HOME}/.npmrc.original"
+            mv "${HOME}/.npmrc.temp.for.qwen.install" "${HOME}/.npmrc"
+            
+            # Remember to restore later
+            RESTORE_NPMRC=true
+        fi
+    fi
+
     # First, try to install without sudo (user level)
     echo "  Attempting to install Qwen Code with current user permissions..."
     if npm install -g @qwen-code/qwen-code@latest 2>/dev/null; then
@@ -390,8 +411,21 @@ install_qwen_code() {
             # Both attempts failed
             echo "✗ Failed to install Qwen Code even after permission fix"
             echo "  Please check your system permissions or contact support"
+            # Restore .npmrc if we backed it up
+            if [[ "${RESTORE_NPMRC}" = true ]]; then
+                mv "${HOME}/.npmrc" "${HOME}/.npmrc.temp.after.failed.install"
+                mv "${HOME}/.npmrc.original" "${HOME}/.npmrc"
+                echo "  Restored original ~/.npmrc file"
+            fi
             exit 1
         fi
+    fi
+
+    # Restore original .npmrc file if we modified it
+    if [[ "${RESTORE_NPMRC}" = true ]]; then
+        mv "${HOME}/.npmrc" "${HOME}/.npmrc.temp.after.successful.install"
+        mv "${HOME}/.npmrc.original" "${HOME}/.npmrc"
+        echo "  Restored original ~/.npmrc file"
     fi
 
     # Create/Update source.json only if source parameter was provided
@@ -437,6 +471,9 @@ EOF
 
 # Main execution
 main() {
+    # Initialize variables
+    RESTORE_NPMRC=false
+    
     # Step 1: Check and install Node.js
     install_nodejs
     echo ""
@@ -449,7 +486,7 @@ main() {
     echo "✓ Installation completed!"
     echo "==========================================="
     echo ""
-    
+
     # Check if qwen is immediately available
     if command_exists qwen; then
         echo "✓ Qwen Code is ready to use!"
@@ -458,7 +495,7 @@ main() {
     else
         echo "⚠ To start using Qwen Code, please run one of the following commands:"
         echo ""
-        
+
         # Detect user's shell
         USER_SHELL=$(basename "${SHELL}")
 
@@ -476,7 +513,7 @@ main() {
             [[ -f "${HOME}/.bashrc" ]] && echo "  source ~/.bashrc"
             [[ -f "${HOME}/.bash_profile" ]] && echo "  source ~/.bash_profile"
         fi
-        
+
         echo ""
         echo "Or simply restart your terminal, then run: qwen"
     fi
@@ -484,4 +521,3 @@ main() {
 
 # Run main function
 main "$@"
-main
