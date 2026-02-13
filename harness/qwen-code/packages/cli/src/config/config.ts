@@ -151,7 +151,7 @@ export interface CliArgs {
   /** Resume a specific session by its ID */
   resume: string | undefined;
   /** Specify a session ID without session resumption */
-  'session-id': string | undefined;
+  sessionId: string | undefined;
   maxSessionTurns: number | undefined;
   coreTools: string[] | undefined;
   excludeTools: string[] | undefined;
@@ -554,14 +554,11 @@ export async function parseArguments(): Promise<CliArgs> {
           if (argv['continue'] && argv['resume']) {
             return 'Cannot use both --continue and --resume together. Use --continue to resume the latest session, or --resume <sessionId> to resume a specific session.';
           }
-          if (argv['session-id'] && (argv['continue'] || argv['resume'])) {
+          if (argv['sessionId'] && (argv['continue'] || argv['resume'])) {
             return 'Cannot use --session-id with --continue or --resume. Use --session-id to start a new session with a specific ID, or use --continue/--resume to resume an existing session.';
           }
-          if (
-            argv['session-id'] &&
-            !isValidUUID(argv['session-id'] as string)
-          ) {
-            return `Invalid --session-id: "${argv['session-id']}". Must be a valid UUID (e.g., "123e4567-e89b-12d3-a456-426614174000").`;
+          if (argv['sessionId'] && !isValidUUID(argv['sessionId'] as string)) {
+            return `Invalid --session-id: "${argv['sessionId']}". Must be a valid UUID (e.g., "123e4567-e89b-12d3-a456-426614174000").`;
           }
           if (argv['resume'] && !isValidUUID(argv['resume'] as string)) {
             return `Invalid --resume: "${argv['resume']}". Must be a valid UUID (e.g., "123e4567-e89b-12d3-a456-426614174000").`;
@@ -930,17 +927,17 @@ export async function loadCliConfig(
         process.exit(1);
       }
     }
-  } else if (argv['session-id']) {
+  } else if (argv['sessionId']) {
     // Use provided session ID without session resumption
     // Check if session ID is already in use
     const sessionService = new SessionService(cwd);
-    const exists = await sessionService.sessionExists(argv['session-id']);
+    const exists = await sessionService.sessionExists(argv['sessionId']);
     if (exists) {
-      const message = `Error: Session Id ${argv['session-id']} is already in use.`;
+      const message = `Error: Session Id ${argv['sessionId']} is already in use.`;
       writeStderrLine(message);
       process.exit(1);
     }
-    sessionId = argv['session-id'];
+    sessionId = argv['sessionId'];
   }
 
   const modelProvidersConfig = settings.modelProviders;
