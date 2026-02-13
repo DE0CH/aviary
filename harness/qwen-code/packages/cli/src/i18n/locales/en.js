@@ -1371,6 +1371,13 @@ export default {
     'Failed to open browser. Check out the extensions gallery at {{url}}',
 
   // ============================================================================
+  // Retry / Rate Limit
+  // ============================================================================
+  'Rate limit error: {{reason}}': 'Rate limit error: {{reason}}',
+  'Retrying in {{seconds}} seconds… (attempt {{attempt}}/{{maxRetries}})':
+    'Retrying in {{seconds}} seconds… (attempt {{attempt}}/{{maxRetries}})',
+
+  // ============================================================================
   // Coding Plan Authentication
   // ============================================================================
   'Please enter your API key:': 'Please enter your API key:',

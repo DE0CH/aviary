@@ -65,6 +65,7 @@ import path from 'node:path';
 import { useSessionStats } from '../contexts/SessionContext.js';
 import { useKeypress } from './useKeypress.js';
 import type { LoadedSettings } from '../../config/settings.js';
+import { t } from '../../i18n/index.js';
 
 const debugLogger = createDebugLogger('GEMINI_STREAM');
 
@@ -125,6 +126,16 @@ export const useGeminiStream = (
   const [thought, setThought] = useState<ThoughtSummary | null>(null);
   const [pendingHistoryItem, pendingHistoryItemRef, setPendingHistoryItem] =
     useStateAndRef<HistoryItemWithoutId | null>(null);
+  const [pendingRetryErrorItem, setPendingRetryErrorItem] =
+    useState<HistoryItemWithoutId | null>(null);
+  const [
+    pendingRetryCountdownItem,
+    pendingRetryCountdownItemRef,
+    setPendingRetryCountdownItem,
+  ] = useStateAndRef<HistoryItemWithoutId | null>(null);
+  const retryCountdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const processedMemoryToolsRef = useRef<Set<string>>(new Set());
   const {
     startNewPrompt,
@@ -188,6 +199,69 @@ export const useGeminiStream = (
   ] = useState<{
     onComplete: (result: { userSelection: 'disable' | 'keep' }) => void;
   } | null>(null);
+
+  const stopRetryCountdownTimer = useCallback(() => {
+    if (retryCountdownTimerRef.current) {
+      clearInterval(retryCountdownTimerRef.current);
+      retryCountdownTimerRef.current = null;
+    }
+  }, []);
+
+  const clearRetryCountdown = useCallback(() => {
+    stopRetryCountdownTimer();
+    setPendingRetryErrorItem(null);
+    setPendingRetryCountdownItem(null);
+  }, [setPendingRetryCountdownItem, stopRetryCountdownTimer]);
+
+  const startRetryCountdown = useCallback(
+    (retryInfo: {
+      message?: string;
+      attempt: number;
+      maxRetries: number;
+      delayMs: number;
+    }) => {
+      stopRetryCountdownTimer();
+      const startTime = Date.now();
+      const { message, attempt, maxRetries, delayMs } = retryInfo;
+      const retryReasonText =
+        message ?? t('Rate limit exceeded. Please wait and try again.');
+
+      // Error line stays static (red with ✕ prefix)
+      setPendingRetryErrorItem({
+        type: MessageType.ERROR,
+        text: retryReasonText,
+      });
+
+      // Countdown line updates every second (dim/secondary color)
+      const updateCountdown = () => {
+        const elapsedMs = Date.now() - startTime;
+        const remainingMs = Math.max(0, delayMs - elapsedMs);
+        const remainingSec = Math.ceil(remainingMs / 1000);
+
+        setPendingRetryCountdownItem({
+          type: 'retry_countdown',
+          text: t(
+            'Retrying in {{seconds}} seconds… (attempt {{attempt}}/{{maxRetries}})',
+            {
+              seconds: String(remainingSec),
+              attempt: String(attempt),
+              maxRetries: String(maxRetries),
+            },
+          ),
+        } as HistoryItemWithoutId);
+
+        if (remainingMs <= 0) {
+          stopRetryCountdownTimer();
+        }
+      };
+
+      updateCountdown();
+      retryCountdownTimerRef.current = setInterval(updateCountdown, 1000);
+    },
+    [setPendingRetryCountdownItem, stopRetryCountdownTimer],
+  );
+
+  useEffect(() => () => stopRetryCountdownTimer(), [stopRetryCountdownTimer]);
 
   const onExec = useCallback(async (done: Promise<void>) => {
     setIsResponding(true);
@@ -295,6 +369,7 @@ export const useGeminiStream = (
       Date.now(),
     );
     setPendingHistoryItem(null);
+    clearRetryCountdown();
     onCancelSubmit();
     setIsResponding(false);
     setShellInputFocused(false);
@@ -305,6 +380,7 @@ export const useGeminiStream = (
     onCancelSubmit,
     pendingHistoryItemRef,
     setShellInputFocused,
+    clearRetryCountdown,
     config,
     getPromptCount,
   ]);
@@ -609,10 +685,17 @@ export const useGeminiStream = (
         { type: MessageType.INFO, text: 'User cancelled the request.' },
         userMessageTimestamp,
       );
+      clearRetryCountdown();
       setIsResponding(false);
       setThought(null); // Reset thought when user cancels
     },
-    [addItem, pendingHistoryItemRef, setPendingHistoryItem, setThought],
+    [
+      addItem,
+      pendingHistoryItemRef,
+      setPendingHistoryItem,
+      setThought,
+      clearRetryCountdown,
+    ],
   );
 
   const handleErrorEvent = useCallback(
@@ -631,9 +714,17 @@ export const useGeminiStream = (
         },
         userMessageTimestamp,
       );
+      clearRetryCountdown();
       setThought(null); // Reset thought when there's an error
     },
-    [addItem, pendingHistoryItemRef, setPendingHistoryItem, config, setThought],
+    [
+      addItem,
+      pendingHistoryItemRef,
+      setPendingHistoryItem,
+      config,
+      setThought,
+      clearRetryCountdown,
+    ],
   );
 
   const handleCitationEvent = useCallback(
@@ -693,8 +784,9 @@ export const useGeminiStream = (
           userMessageTimestamp,
         );
       }
+      clearRetryCountdown();
     },
-    [addItem],
+    [addItem, clearRetryCountdown],
   );
 
   const handleChatCompressionEvent = useCallback(
@@ -853,7 +945,16 @@ export const useGeminiStream = (
             loopDetectedRef.current = true;
             break;
           case ServerGeminiEventType.Retry:
-            // Will add the missing logic later
+            // Clear any pending partial content from the failed attempt
+            if (pendingHistoryItemRef.current) {
+              setPendingHistoryItem(null);
+            }
+            // Show retry info if available (rate-limit / throttling errors)
+            if (event.retryInfo) {
+              startRetryCountdown(event.retryInfo);
+            } else if (!pendingRetryCountdownItemRef.current) {
+              clearRetryCountdown();
+            }
             break;
           default: {
             // enforces exhaustive switch-case
@@ -878,7 +979,12 @@ export const useGeminiStream = (
       handleMaxSessionTurnsEvent,
       handleSessionTokenLimitExceededEvent,
       handleCitationEvent,
+      startRetryCountdown,
+      clearRetryCountdown,
       setThought,
+      pendingHistoryItemRef,
+      setPendingHistoryItem,
+      pendingRetryCountdownItemRef,
     ],
   );
 
@@ -1216,10 +1322,18 @@ export const useGeminiStream = (
 
   const pendingHistoryItems = useMemo(
     () =>
-      [pendingHistoryItem, pendingToolCallGroupDisplay].filter(
-        (i) => i !== undefined && i !== null,
-      ),
-    [pendingHistoryItem, pendingToolCallGroupDisplay],
+      [
+        pendingHistoryItem,
+        pendingRetryErrorItem,
+        pendingRetryCountdownItem,
+        pendingToolCallGroupDisplay,
+      ].filter((i) => i !== undefined && i !== null),
+    [
+      pendingHistoryItem,
+      pendingRetryErrorItem,
+      pendingRetryCountdownItem,
+      pendingToolCallGroupDisplay,
+    ],
   );
 
   useEffect(() => {
