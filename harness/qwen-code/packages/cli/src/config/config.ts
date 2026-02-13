@@ -932,6 +932,14 @@ export async function loadCliConfig(
     }
   } else if (argv['session-id']) {
     // Use provided session ID without session resumption
+    // Check if session ID is already in use
+    const sessionService = new SessionService(cwd);
+    const exists = await sessionService.sessionExists(argv['session-id']);
+    if (exists) {
+      const message = `Error: Session Id ${argv['session-id']} is already in use.`;
+      writeStderrLine(message);
+      process.exit(1);
+    }
     sessionId = argv['session-id'];
   }
 

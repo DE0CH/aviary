@@ -89,9 +89,16 @@ export function query({
     (async () => {
       try {
         await queryInstance.initialized;
+        // Skip writing if transport has already exited with an error
+        if (transport.exitError) {
+          return;
+        }
         transport.write(serializeJsonLine(message));
       } catch (err) {
-        logger.error('Error sending single-turn prompt:', err);
+        // Only log error if it's not due to transport already being closed
+        if (!transport.exitError) {
+          logger.error('Error sending single-turn prompt:', err);
+        }
       }
     })();
   } else {

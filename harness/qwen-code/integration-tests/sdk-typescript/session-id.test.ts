@@ -28,7 +28,8 @@ describe('Session ID Support (E2E)', () => {
 
   beforeEach(async () => {
     helper = new SDKTestHelper();
-    testDir = await helper.setup('session-id');
+    // Enable chat recording for session-id tests to allow duplicate session detection
+    testDir = await helper.setup('session-id', { chatRecording: true });
   });
 
   afterEach(async () => {
@@ -371,6 +372,117 @@ describe('Session ID Support (E2E)', () => {
       } finally {
         await q.close();
       }
+    });
+  });
+
+  describe('Session ID Duplicate Detection', () => {
+    it('should reject duplicate sessionId with error', async () => {
+      // Valid UUID v4
+      const customSessionId = 'dddddddd-eeee-4fff-aaaa-bbbbbbbbbbbb';
+
+      // First query: create a session with the custom session ID
+      const q1 = query({
+        prompt: 'Say hello',
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
+          sessionId: customSessionId,
+          debug: false,
+        },
+      });
+
+      // Consume the first query to completion and close it
+      try {
+        for await (const _msg of q1) {
+          // consume
+        }
+      } finally {
+        await q1.close();
+      }
+
+      // Second query: try to use the same session ID
+      // This should fail because the session ID is already in use
+      // CLI will exit with code 1 when detecting duplicate session ID
+      const q2 = query({
+        prompt: 'Say hello again',
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
+          sessionId: customSessionId,
+          debug: false,
+        },
+      });
+
+      // The error should be propagated and the iteration should throw
+      // When iterating over messages, if CLI exits with code 1 (duplicate session ID),
+      // the error should be thrown during iteration
+      await expect(async () => {
+        for await (const _msg of q2) {
+          // consume
+        }
+      }).rejects.toThrow(/CLI process exited with code 1/);
+
+      await q2.close();
+    });
+
+    it('should throw error when CLI exits with non-zero code', async () => {
+      // Valid UUID v4
+      const customSessionId = 'eeeeeeee-ffff-4aaa-bbbb-cccccccccccc';
+
+      // First query: create a session and properly close it after completion
+      const q1 = query({
+        prompt: 'Say hello',
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
+          sessionId: customSessionId,
+          debug: false,
+        },
+      });
+
+      try {
+        for await (const _msg of q1) {
+          // consume
+        }
+      } finally {
+        await q1.close();
+      }
+
+      // Second query with same session ID
+      // When using the same session ID, CLI will detect the duplicate and exit with code 1
+      const q2 = query({
+        prompt: 'Say hello again',
+        options: {
+          ...SHARED_TEST_OPTIONS,
+          cwd: testDir,
+          sessionId: customSessionId,
+          debug: false,
+        },
+      });
+
+      let errorCaught = false;
+      let errorMessage = '';
+
+      try {
+        // Iterate over messages - the error should be thrown during iteration
+        // because CLI exits with code 1 when detecting duplicate session ID
+        for await (const _msg of q2) {
+          // consume
+        }
+      } catch (error) {
+        errorCaught = true;
+        // CLI errors are written directly to console (stderr inherit mode)
+        // SDK only reports the exit status, not the error message
+        expect(error instanceof Error).toBe(true);
+        errorMessage = error instanceof Error ? error.message : String(error);
+        // Verify the error message contains the expected exit code
+        expect(errorMessage).toContain('CLI process exited with code 1');
+      } finally {
+        await q2.close();
+      }
+
+      // Verify that an error was actually caught during message iteration
+      expect(errorCaught).toBe(true);
     });
   });
 
