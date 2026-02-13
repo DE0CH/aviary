@@ -9,7 +9,6 @@ import type { Mock, MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useGeminiStream } from './useGeminiStream.js';
-import { useKeypress } from './useKeypress.js';
 import * as atCommandProcessor from './atCommandProcessor.js';
 import type {
   TrackedToolCall,
@@ -110,10 +109,6 @@ vi.mock('./useVisionAutoSwitch.js', () => ({
     handleVisionSwitch: mockHandleVisionSwitch,
     restoreOriginalModel: mockRestoreOriginalModel,
   })),
-}));
-
-vi.mock('./useKeypress.js', () => ({
-  useKeypress: vi.fn(),
 }));
 
 vi.mock('./shellCommandProcessor.js', () => ({
@@ -839,28 +834,8 @@ describe('useGeminiStream', () => {
     expect(result.current.streamingState).toBe(StreamingState.Responding);
   });
 
-  describe('User Cancellation', () => {
-    let keypressCallback: (key: any) => void;
-    const mockUseKeypress = useKeypress as Mock;
-
-    beforeEach(() => {
-      // Capture the callback passed to useKeypress
-      mockUseKeypress.mockImplementation((callback, options) => {
-        if (options.isActive) {
-          keypressCallback = callback;
-        } else {
-          keypressCallback = () => {};
-        }
-      });
-    });
-
-    const simulateEscapeKeyPress = () => {
-      act(() => {
-        keypressCallback({ name: 'escape' });
-      });
-    };
-
-    it('should cancel an in-progress stream when escape is pressed', async () => {
+  describe('Cancellation', () => {
+    it('should cancel an in-progress stream when cancelOngoingRequest is called', async () => {
       const mockStream = (async function* () {
         yield { type: 'content', value: 'Part 1' };
         // Keep the stream open
@@ -880,8 +855,10 @@ describe('useGeminiStream', () => {
         expect(result.current.streamingState).toBe(StreamingState.Responding);
       });
 
-      // Simulate escape key press
-      simulateEscapeKeyPress();
+      // Call cancelOngoingRequest directly
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       // Verify cancellation message is added
       await waitFor(() => {
@@ -898,7 +875,7 @@ describe('useGeminiStream', () => {
       expect(result.current.streamingState).toBe(StreamingState.Idle);
     });
 
-    it('should call onCancelSubmit handler when escape is pressed', async () => {
+    it('should call onCancelSubmit handler when cancelOngoingRequest is called', async () => {
       const cancelSubmitSpy = vi.fn();
       const mockStream = (async function* () {
         yield { type: 'content', value: 'Part 1' };
@@ -936,12 +913,14 @@ describe('useGeminiStream', () => {
         result.current.submitQuery('test query');
       });
 
-      simulateEscapeKeyPress();
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       expect(cancelSubmitSpy).toHaveBeenCalled();
     });
 
-    it('should call setShellInputFocused(false) when escape is pressed', async () => {
+    it('should call setShellInputFocused(false) when cancelOngoingRequest is called', async () => {
       const setShellInputFocusedSpy = vi.fn();
       const mockStream = (async function* () {
         yield { type: 'content', value: 'Part 1' };
@@ -978,18 +957,22 @@ describe('useGeminiStream', () => {
         result.current.submitQuery('test query');
       });
 
-      simulateEscapeKeyPress();
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       expect(setShellInputFocusedSpy).toHaveBeenCalledWith(false);
     });
 
-    it('should not do anything if escape is pressed when not responding', () => {
+    it('should not do anything if cancelOngoingRequest is called when not responding', () => {
       const { result } = renderTestHook();
 
       expect(result.current.streamingState).toBe(StreamingState.Idle);
 
-      // Simulate escape key press
-      simulateEscapeKeyPress();
+      // Call cancelOngoingRequest
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       // No change should happen, no cancellation message
       expect(mockAddItem).not.toHaveBeenCalledWith(
@@ -1024,7 +1007,9 @@ describe('useGeminiStream', () => {
       });
 
       // Cancel the request
-      simulateEscapeKeyPress();
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       // Allow the stream to continue
       act(() => {
@@ -1072,7 +1057,9 @@ describe('useGeminiStream', () => {
       expect(result.current.streamingState).toBe(StreamingState.Responding);
 
       // Try to cancel
-      simulateEscapeKeyPress();
+      act(() => {
+        result.current.cancelOngoingRequest();
+      });
 
       // Nothing should happen because the state is not `Responding`
       expect(abortSpy).not.toHaveBeenCalled();
