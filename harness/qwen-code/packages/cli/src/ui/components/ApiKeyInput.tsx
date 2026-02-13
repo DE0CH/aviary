@@ -8,7 +8,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { Box, Text } from 'ink';
 import { TextInput } from './shared/TextInput.js';
-import { Colors } from '../colors.js';
+import { theme } from '../semantic-colors.js';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { t } from '../../i18n/index.js';
 import Link from 'ink-link';
@@ -52,7 +52,7 @@ export function ApiKeyInput({
       <TextInput value={apiKey} onChange={setApiKey} placeholder="sk-sp-..." />
       {error && (
         <Box marginTop={1}>
-          <Text color={Colors.AccentRed}>{error}</Text>
+          <Text color={theme.status.error}>{error}</Text>
         </Box>
       )}
       <Box marginTop={1}>
@@ -60,13 +60,13 @@ export function ApiKeyInput({
       </Box>
       <Box marginTop={0}>
         <Link url={CODING_PLAN_API_KEY_URL} fallback={false}>
-          <Text color={Colors.AccentGreen} underline>
+          <Text color={theme.status.success} underline>
             {CODING_PLAN_API_KEY_URL}
           </Text>
         </Link>
       </Box>
       <Box marginTop={1}>
-        <Text color={Colors.Gray}>
+        <Text color={theme.text.secondary}>
           {t('(Press Enter to submit, Escape to cancel)')}
         </Text>
       </Box>
