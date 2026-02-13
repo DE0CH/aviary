@@ -128,8 +128,11 @@ export const useGeminiStream = (
     useStateAndRef<HistoryItemWithoutId | null>(null);
   const [pendingRetryErrorItem, setPendingRetryErrorItem] =
     useState<HistoryItemWithoutId | null>(null);
-  const [pendingRetryCountdownItem, setPendingRetryCountdownItem] =
-    useState<HistoryItemWithoutId | null>(null);
+  const [
+    pendingRetryCountdownItem,
+    pendingRetryCountdownItemRef,
+    setPendingRetryCountdownItem,
+  ] = useStateAndRef<HistoryItemWithoutId | null>(null);
   const retryCountdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
@@ -208,23 +211,25 @@ export const useGeminiStream = (
     stopRetryCountdownTimer();
     setPendingRetryErrorItem(null);
     setPendingRetryCountdownItem(null);
-  }, [stopRetryCountdownTimer]);
+  }, [setPendingRetryCountdownItem, stopRetryCountdownTimer]);
 
   const startRetryCountdown = useCallback(
     (retryInfo: {
-      reason: string;
+      message?: string;
       attempt: number;
       maxRetries: number;
       delayMs: number;
     }) => {
       stopRetryCountdownTimer();
       const startTime = Date.now();
-      const { reason, attempt, maxRetries, delayMs } = retryInfo;
+      const { message, attempt, maxRetries, delayMs } = retryInfo;
+      const retryReasonText =
+        message ?? t('Rate limit exceeded. Please wait and try again.');
 
       // Error line stays static (red with ✕ prefix)
       setPendingRetryErrorItem({
         type: MessageType.ERROR,
-        text: t('Rate limit error: {{reason}}', { reason }),
+        text: retryReasonText,
       });
 
       // Countdown line updates every second (dim/secondary color)
@@ -253,7 +258,7 @@ export const useGeminiStream = (
       updateCountdown();
       retryCountdownTimerRef.current = setInterval(updateCountdown, 1000);
     },
-    [stopRetryCountdownTimer],
+    [setPendingRetryCountdownItem, stopRetryCountdownTimer],
   );
 
   useEffect(() => () => stopRetryCountdownTimer(), [stopRetryCountdownTimer]);
@@ -947,7 +952,7 @@ export const useGeminiStream = (
             // Show retry info if available (rate-limit / throttling errors)
             if (event.retryInfo) {
               startRetryCountdown(event.retryInfo);
-            } else {
+            } else if (!pendingRetryCountdownItemRef.current) {
               clearRetryCountdown();
             }
             break;
@@ -979,6 +984,7 @@ export const useGeminiStream = (
       setThought,
       pendingHistoryItemRef,
       setPendingHistoryItem,
+      pendingRetryCountdownItemRef,
     ],
   );
 

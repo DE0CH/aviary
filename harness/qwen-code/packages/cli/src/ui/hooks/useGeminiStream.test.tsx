@@ -67,7 +67,12 @@ const MockedUserPromptEvent = vi.hoisted(() =>
 const MockedApiCancelEvent = vi.hoisted(() =>
   vi.fn().mockImplementation(() => {}),
 );
-const mockParseAndFormatApiError = vi.hoisted(() => vi.fn());
+const mockParseAndFormatApiError = vi.hoisted(() =>
+  vi.fn(
+    (msg: unknown) =>
+      `[API Error: ${typeof msg === 'string' ? msg : 'An unknown error occurred.'}]`,
+  ),
+);
 const mockLogApiCancel = vi.hoisted(() => vi.fn());
 
 // Vision auto-switch mocks (hoisted)
@@ -121,22 +126,6 @@ vi.mock('./atCommandProcessor.js');
 
 vi.mock('../utils/markdownUtilities.js', () => ({
   findLastSafeSplitPoint: vi.fn((s: string) => s.length),
-}));
-
-vi.mock('./useStateAndRef.js', () => ({
-  useStateAndRef: vi.fn((initial) => {
-    let val = initial;
-    const ref = { current: val };
-    const setVal = vi.fn((updater) => {
-      if (typeof updater === 'function') {
-        val = updater(val);
-      } else {
-        val = updater;
-      }
-      ref.current = val;
-    });
-    return [val, ref, setVal];
-  }),
 }));
 
 vi.mock('./useLogger.js', () => ({
@@ -2305,11 +2294,14 @@ describe('useGeminiStream', () => {
             yield {
               type: ServerGeminiEventType.Retry,
               retryInfo: {
-                reason: 'Rate limit exceeded',
+                message: '[API Error: Rate limit exceeded]',
                 attempt: 1,
                 maxRetries: 3,
                 delayMs: 3000,
               },
+            };
+            yield {
+              type: ServerGeminiEventType.Retry,
             };
             await new Promise<void>((resolve) => {
               resolveStream = resolve;
@@ -2353,16 +2345,33 @@ describe('useGeminiStream', () => {
           await Promise.resolve();
         });
 
-        // Error line should be rendered as ERROR type
-        const errorItem = result.current.pendingHistoryItems.find(
-          (item) => item.type === MessageType.ERROR,
-        );
+        const findErrorItem = () =>
+          result.current.pendingHistoryItems.find(
+            (item) => item.type === MessageType.ERROR,
+          );
+        const findCountdownItem = () =>
+          result.current.pendingHistoryItems.find(
+            (item) => item.type === 'retry_countdown',
+          );
+
+        let errorItem = findErrorItem();
+        let countdownItem = findCountdownItem();
+        for (
+          let attempts = 0;
+          attempts < 5 && (!errorItem || !countdownItem);
+          attempts++
+        ) {
+          await act(async () => {
+            await Promise.resolve();
+          });
+          errorItem = findErrorItem();
+          countdownItem = findCountdownItem();
+        }
+
+        // Error line should be rendered as ERROR type (wrapped by parseAndFormatApiError)
         expect(errorItem?.text).toContain('Rate limit exceeded');
 
         // Countdown line should be rendered as retry_countdown type
-        const countdownItem = result.current.pendingHistoryItems.find(
-          (item) => item.type === ('retry_countdown' as MessageType),
-        );
         expect(countdownItem?.text).toContain('Retrying in 3 seconds');
 
         await act(async () => {
@@ -2370,7 +2379,7 @@ describe('useGeminiStream', () => {
         });
 
         const countdownAfterOneSecond = result.current.pendingHistoryItems.find(
-          (item) => item.type === ('retry_countdown' as MessageType),
+          (item) => item.type === 'retry_countdown',
         );
         expect(countdownAfterOneSecond?.text).toContain(
           'Retrying in 2 seconds',
@@ -2388,7 +2397,7 @@ describe('useGeminiStream', () => {
           (item) => item.type === MessageType.ERROR,
         );
         const remainingCountdown = result.current.pendingHistoryItems.find(
-          (item) => item.type === ('retry_countdown' as MessageType),
+          (item) => item.type === 'retry_countdown',
         );
         expect(remainingError).toBeUndefined();
         expect(remainingCountdown).toBeUndefined();

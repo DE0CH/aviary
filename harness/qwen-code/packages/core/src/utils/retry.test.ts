@@ -7,11 +7,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { HttpError } from './retry.js';
-import {
-  getErrorStatus,
-  getRateLimitRetryInfo,
-  retryWithBackoff,
-} from './retry.js';
+import { getErrorStatus, retryWithBackoff } from './retry.js';
 import { setSimulate429 } from './testUtils.js';
 import { AuthType } from '../core/contentGenerator.js';
 
@@ -534,30 +530,5 @@ describe('getErrorStatus', () => {
     expect(getErrorStatus({})).toBeUndefined();
     expect(getErrorStatus({ response: {} })).toBeUndefined();
     expect(getErrorStatus({ error: {} })).toBeUndefined();
-  });
-});
-
-describe('getRateLimitRetryInfo', () => {
-  it('should extract reason from TPM throttling error', () => {
-    const info = getRateLimitRetryInfo(
-      new Error(
-        '{"error":{"code":"429","message":"Throttling: TPM(10680324/10000000)"}}',
-      ),
-    );
-    expect(info).not.toBeNull();
-    expect(info?.reason).toBe('Throttling: TPM(10680324/10000000)');
-  });
-
-  it('should extract reason from GLM rate limit error', () => {
-    const info = getRateLimitRetryInfo(
-      '{"error":{"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}}',
-    );
-    expect(info).not.toBeNull();
-    expect(info?.reason).toBe('您的账户已达到速率限制，请您控制请求频率');
-  });
-
-  it('should return null for non-rate-limit errors', () => {
-    expect(getRateLimitRetryInfo(new Error('Connection refused'))).toBeNull();
-    expect(getRateLimitRetryInfo('some error')).toBeNull();
   });
 });

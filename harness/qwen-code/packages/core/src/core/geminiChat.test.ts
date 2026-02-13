@@ -1055,12 +1055,11 @@ describe('GeminiChat', () => {
         expect(second.done).toBe(false);
         expect(second.value.type).toBe(StreamEventType.RETRY);
 
-        // Verify retryInfo contains the GLM error reason
+        // Verify retryInfo contains retry metadata
         if (
           second.value.type === StreamEventType.RETRY &&
           second.value.retryInfo
         ) {
-          expect(second.value.retryInfo.reason).toContain('速率限制');
           expect(second.value.retryInfo.attempt).toBe(1);
           expect(second.value.retryInfo.maxRetries).toBe(10);
           expect(second.value.retryInfo.delayMs).toBe(60000);

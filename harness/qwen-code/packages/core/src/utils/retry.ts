@@ -6,7 +6,7 @@
 
 import type { GenerateContentResponse } from '@google/genai';
 import { AuthType } from '../core/contentGenerator.js';
-import { isQwenQuotaExceededError, isApiError } from './quotaErrorDetection.js';
+import { isQwenQuotaExceededError } from './quotaErrorDetection.js';
 import { createDebugLogger } from './debugLogger.js';
 
 const debugLogger = createDebugLogger('RETRY');
@@ -24,21 +24,12 @@ export interface RetryOptions {
   authType?: string;
 }
 
-export interface RateLimitRetryInfo {
-  reason: string;
-}
-
 const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   maxAttempts: 7,
   initialDelayMs: 1500,
   maxDelayMs: 30000, // 30 seconds
   shouldRetryOnError: defaultShouldRetry,
 };
-
-// Known rate-limit error codes across providers.
-// 429  - Standard HTTP "Too Many Requests" (DashScope TPM, OpenAI, etc.)
-// 1302 - Z.AI GLM rate limit (https://docs.z.ai/api-reference/api-code)
-const RATE_LIMIT_ERROR_CODES = new Set(['429', '1302']);
 
 /**
  * Default predicate function to determine if a retry should be attempted.
@@ -154,117 +145,6 @@ export async function retryWithBackoff<T>(
   // This line should theoretically be unreachable due to the throw in the catch block.
   // Added for type safety and to satisfy the compiler that a promise is always returned.
   throw new Error('Retry attempts exhausted');
-}
-
-/**
- * Returns rate-limit retry info when an error is detected as rate-limited.
- * Returns a human-readable reason for the UI. Retry delay is determined by
- * the caller (e.g., fixed 60s in geminiChat.ts).
- */
-export function getRateLimitRetryInfo(
-  error: unknown,
-): RateLimitRetryInfo | null {
-  if (!getRateLimitCode(error)) {
-    return null;
-  }
-  return { reason: getRateLimitReason(error) };
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers for rate-limit detection
-// ---------------------------------------------------------------------------
-
-/** Extracts the rate-limit code if present in the error. */
-function getRateLimitCode(error: unknown): string | undefined {
-  // Direct code on nested error object: { error: { code: "429" } }
-  if (isApiError(error)) {
-    const code = String(error.error.code);
-    if (RATE_LIMIT_ERROR_CODES.has(code)) {
-      return code;
-    }
-  }
-
-  // Try to extract code from JSON embedded in error message string
-  const message = getErrorMessage(error);
-  if (message) {
-    const details = extractErrorDetailsFromString(message);
-    if (details?.code !== undefined) {
-      const code = String(details.code);
-      if (RATE_LIMIT_ERROR_CODES.has(code)) {
-        return code;
-      }
-    }
-  }
-
-  // Fallback to HTTP status 429
-  const status = getErrorStatus(error);
-  if (status === 429) {
-    return '429';
-  }
-
-  return undefined;
-}
-
-function getRateLimitReason(error: unknown): string {
-  if (isApiError(error)) {
-    return error.error.message;
-  }
-
-  if (error instanceof Error) {
-    return extractReasonFromString(error.message);
-  }
-
-  if (typeof error === 'string') {
-    return extractReasonFromString(error);
-  }
-
-  return String(error);
-}
-
-function getErrorMessage(error: unknown): string | undefined {
-  if (typeof error === 'string') return error;
-  if (error instanceof Error) return error.message;
-  if (isApiError(error)) return error.error.message;
-  return undefined;
-}
-
-function extractReasonFromString(message: string): string {
-  const parsed = extractErrorDetailsFromString(message);
-  if (parsed?.message) {
-    return parsed.message;
-  }
-  return message;
-}
-
-function extractErrorDetailsFromString(
-  message: string,
-): { code?: unknown; message?: string } | null {
-  const trimmed = message.trim().replace(/^data:\s*/i, '');
-  if (!trimmed.startsWith('{')) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-    const errorObject =
-      'error' in parsed &&
-      typeof (parsed as { error?: unknown }).error === 'object'
-        ? (parsed as { error: Record<string, unknown> }).error
-        : (parsed as Record<string, unknown>);
-    const code = errorObject?.['code'];
-    const messageValue =
-      typeof errorObject?.['message'] === 'string'
-        ? errorObject['message']
-        : undefined;
-    if (code === undefined && messageValue === undefined) {
-      return null;
-    }
-    return { code, message: messageValue };
-  } catch {
-    return null;
-  }
 }
 
 /**

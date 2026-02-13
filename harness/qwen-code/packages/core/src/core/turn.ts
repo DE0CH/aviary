@@ -26,7 +26,8 @@ import {
   UnauthorizedError,
   toFriendlyError,
 } from '../utils/errors.js';
-import type { GeminiChat, RetryInfo } from './geminiChat.js';
+import type { GeminiChat } from './geminiChat.js';
+import type { RetryInfo } from '../utils/rateLimit.js';
 import {
   getThoughtText,
   parseThought,

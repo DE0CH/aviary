@@ -17,12 +17,10 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import { createUserContent } from '@google/genai';
-import {
-  getErrorStatus,
-  retryWithBackoff,
-  getRateLimitRetryInfo,
-} from '../utils/retry.js';
+import { getErrorStatus, retryWithBackoff } from '../utils/retry.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
+import { parseAndFormatApiError } from '../utils/errorParsing.js';
+import { isRateLimitError, type RetryInfo } from '../utils/rateLimit.js';
 import type { Config } from '../config/config.js';
 import { hasCycleInSchema } from '../tools/tools.js';
 import type { StructuredError } from './turn.js';
@@ -45,17 +43,6 @@ export enum StreamEventType {
   /** A signal that a retry is about to happen. The UI should discard any partial
    * content from the attempt that just failed. */
   RETRY = 'retry',
-}
-
-export interface RetryInfo {
-  /** Human-readable error reason. */
-  reason: string;
-  /** Current retry attempt (1-based). */
-  attempt: number;
-  /** Max retries allowed. */
-  maxRetries: number;
-  /** Delay in milliseconds before the retry happens. */
-  delayMs: number;
 }
 
 export type StreamEvent =
@@ -329,13 +316,16 @@ export class GeminiChat {
             // These arrive as StreamContentError with finish_reason="error_finish"
             // from the pipeline, containing the throttling message in the content.
             // Covers TPM throttling, GLM rate limits, and other provider throttling.
-            const rateLimitInfo = getRateLimitRetryInfo(error);
+            const isRateLimit = isRateLimitError(error);
             if (
-              rateLimitInfo &&
+              isRateLimit &&
               rateLimitRetryCount < RATE_LIMIT_RETRY_OPTIONS.maxRetries
             ) {
               rateLimitRetryCount++;
               const delayMs = RATE_LIMIT_RETRY_OPTIONS.delayMs;
+              const message = parseAndFormatApiError(
+                error instanceof Error ? error.message : String(error),
+              );
               debugLogger.warn(
                 `Rate limit throttling detected (retry ${rateLimitRetryCount}/${RATE_LIMIT_RETRY_OPTIONS.maxRetries}). ` +
                   `Waiting ${delayMs / 1000}s before retrying...`,
@@ -343,7 +333,7 @@ export class GeminiChat {
               yield {
                 type: StreamEventType.RETRY,
                 retryInfo: {
-                  reason: rateLimitInfo.reason,
+                  message,
                   attempt: rateLimitRetryCount,
                   maxRetries: RATE_LIMIT_RETRY_OPTIONS.maxRetries,
                   delayMs,
