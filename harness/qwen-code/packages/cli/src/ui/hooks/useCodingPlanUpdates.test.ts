@@ -7,33 +7,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { useCodingPlanUpdates } from './useCodingPlanUpdates.js';
-import { CODING_PLAN_ENV_KEY } from '../../constants/codingPlan.js';
+import {
+  CODING_PLAN_ENV_KEY,
+  CODING_PLAN_INTL_ENV_KEY,
+  CODING_PLAN_BASE_URL,
+  CODING_PLAN_INTL_BASE_URL,
+  CODING_PLAN_VERSION,
+  CODING_PLAN_INTL_VERSION,
+} from '../../constants/codingPlan.js';
 import { AuthType } from '@qwen-code/qwen-code-core';
-
-// Mock the constants module
-vi.mock('../../constants/codingPlan.js', async () => {
-  const actual = await vi.importActual('../../constants/codingPlan.js');
-  return {
-    ...actual,
-    CODING_PLAN_VERSION: 'test-version-hash',
-    CODING_PLAN_MODELS: [
-      {
-        id: 'test-model-1',
-        name: 'Test Model 1',
-        baseUrl: 'https://test.example.com/v1',
-        description: 'Test model 1',
-        envKey: 'BAILIAN_CODING_PLAN_API_KEY',
-      },
-      {
-        id: 'test-model-2',
-        name: 'Test Model 2',
-        baseUrl: 'https://test.example.com/v1',
-        description: 'Test model 2',
-        envKey: 'BAILIAN_CODING_PLAN_API_KEY',
-      },
-    ],
-  };
-});
 
 describe('useCodingPlanUpdates', () => {
   const mockSettings = {
@@ -57,6 +39,7 @@ describe('useCodingPlanUpdates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env[CODING_PLAN_ENV_KEY];
+    delete process.env[CODING_PLAN_INTL_ENV_KEY];
   });
 
   describe('version comparison', () => {
@@ -74,8 +57,8 @@ describe('useCodingPlanUpdates', () => {
       expect(result.current.codingPlanUpdateRequest).toBeUndefined();
     });
 
-    it('should not show update prompt when versions match', () => {
-      mockSettings.merged.codingPlan = { version: 'test-version-hash' };
+    it('should not show update prompt when China versions match', () => {
+      mockSettings.merged.codingPlan = { version: CODING_PLAN_VERSION };
 
       const { result } = renderHook(() =>
         useCodingPlanUpdates(
@@ -88,7 +71,23 @@ describe('useCodingPlanUpdates', () => {
       expect(result.current.codingPlanUpdateRequest).toBeUndefined();
     });
 
-    it('should show update prompt when versions differ', async () => {
+    it('should not show update prompt when Global versions match', () => {
+      mockSettings.merged.codingPlan = {
+        versionIntl: CODING_PLAN_INTL_VERSION,
+      };
+
+      const { result } = renderHook(() =>
+        useCodingPlanUpdates(
+          mockSettings as never,
+          mockConfig as never,
+          mockAddItem,
+        ),
+      );
+
+      expect(result.current.codingPlanUpdateRequest).toBeUndefined();
+    });
+
+    it('should show update prompt when China versions differ', async () => {
       mockSettings.merged.codingPlan = { version: 'old-version-hash' };
 
       const { result } = renderHook(() =>
@@ -103,21 +102,38 @@ describe('useCodingPlanUpdates', () => {
         expect(result.current.codingPlanUpdateRequest).toBeDefined();
       });
 
+      expect(result.current.codingPlanUpdateRequest?.prompt).toContain('China');
+    });
+
+    it('should show update prompt when Global versions differ', async () => {
+      mockSettings.merged.codingPlan = { versionIntl: 'old-version-hash' };
+
+      const { result } = renderHook(() =>
+        useCodingPlanUpdates(
+          mockSettings as never,
+          mockConfig as never,
+          mockAddItem,
+        ),
+      );
+
+      await waitFor(() => {
+        expect(result.current.codingPlanUpdateRequest).toBeDefined();
+      });
+
       expect(result.current.codingPlanUpdateRequest?.prompt).toContain(
-        'New model configurations',
+        'Global',
       );
     });
   });
 
   describe('update execution', () => {
-    it('should execute update when user confirms', async () => {
-      process.env[CODING_PLAN_ENV_KEY] = 'test-api-key';
+    it('should execute China region update when user confirms', async () => {
       mockSettings.merged.codingPlan = { version: 'old-version-hash' };
       mockSettings.merged.modelProviders = {
         [AuthType.USE_OPENAI]: [
           {
-            id: 'test-model-1',
-            baseUrl: 'https://test.example.com/v1',
+            id: 'test-model-china-1',
+            baseUrl: CODING_PLAN_BASE_URL,
             envKey: CODING_PLAN_ENV_KEY,
           },
           {
@@ -150,22 +166,81 @@ describe('useCodingPlanUpdates', () => {
         expect(mockSettings.setValue).toHaveBeenCalled();
       });
 
-      // Should update version
+      // Should update version with correct hash
       expect(mockSettings.setValue).toHaveBeenCalledWith(
         expect.anything(),
         'codingPlan.version',
-        'test-version-hash',
+        CODING_PLAN_VERSION,
       );
 
       // Should reload and refresh auth
       expect(mockConfig.reloadModelProvidersConfig).toHaveBeenCalled();
       expect(mockConfig.refreshAuth).toHaveBeenCalledWith(AuthType.USE_OPENAI);
 
-      // Should show success message
+      // Should show success message with region info
       expect(mockAddItem).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'info',
-          text: expect.stringContaining('updated successfully'),
+          text: expect.stringContaining('Coding Plan'),
+        }),
+        expect.any(Number),
+      );
+    });
+
+    it('should execute Global region update when user confirms', async () => {
+      mockSettings.merged.codingPlan = { versionIntl: 'old-version-hash' };
+      mockSettings.merged.modelProviders = {
+        [AuthType.USE_OPENAI]: [
+          {
+            id: 'test-model-global-1',
+            baseUrl: CODING_PLAN_INTL_BASE_URL,
+            envKey: CODING_PLAN_INTL_ENV_KEY,
+          },
+          {
+            id: 'custom-model',
+            baseUrl: 'https://custom.example.com',
+            envKey: 'CUSTOM_API_KEY',
+          },
+        ],
+      };
+      mockConfig.refreshAuth.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() =>
+        useCodingPlanUpdates(
+          mockSettings as never,
+          mockConfig as never,
+          mockAddItem,
+        ),
+      );
+
+      await waitFor(() => {
+        expect(result.current.codingPlanUpdateRequest).toBeDefined();
+      });
+
+      // Confirm the update
+      await result.current.codingPlanUpdateRequest!.onConfirm(true);
+
+      // Wait for async update to complete
+      await waitFor(() => {
+        expect(mockSettings.setValue).toHaveBeenCalled();
+      });
+
+      // Should update versionIntl with correct hash
+      expect(mockSettings.setValue).toHaveBeenCalledWith(
+        expect.anything(),
+        'codingPlan.versionIntl',
+        CODING_PLAN_INTL_VERSION,
+      );
+
+      // Should reload and refresh auth
+      expect(mockConfig.reloadModelProvidersConfig).toHaveBeenCalled();
+      expect(mockConfig.refreshAuth).toHaveBeenCalledWith(AuthType.USE_OPENAI);
+
+      // Should show success message with Global region info
+      expect(mockAddItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'info',
+          text: expect.stringContaining('Global'),
         }),
         expect.any(Number),
       );
@@ -194,8 +269,82 @@ describe('useCodingPlanUpdates', () => {
       expect(mockConfig.reloadModelProvidersConfig).not.toHaveBeenCalled();
     });
 
+    it('should only update configs for the specific region', async () => {
+      mockSettings.merged.codingPlan = { version: 'old-version-hash' };
+      const chinaConfig = {
+        id: 'test-model-china-1',
+        baseUrl: CODING_PLAN_BASE_URL,
+        envKey: CODING_PLAN_ENV_KEY,
+      };
+      const globalConfig = {
+        id: 'test-model-global-1',
+        baseUrl: CODING_PLAN_INTL_BASE_URL,
+        envKey: CODING_PLAN_INTL_ENV_KEY,
+      };
+      const customConfig = {
+        id: 'custom-model',
+        baseUrl: 'https://custom.example.com',
+        envKey: 'CUSTOM_API_KEY',
+      };
+      mockSettings.merged.modelProviders = {
+        [AuthType.USE_OPENAI]: [chinaConfig, globalConfig, customConfig],
+      };
+      mockConfig.refreshAuth.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() =>
+        useCodingPlanUpdates(
+          mockSettings as never,
+          mockConfig as never,
+          mockAddItem,
+        ),
+      );
+
+      await waitFor(() => {
+        expect(result.current.codingPlanUpdateRequest).toBeDefined();
+      });
+
+      await result.current.codingPlanUpdateRequest!.onConfirm(true);
+
+      // Wait for async update to complete
+      await waitFor(() => {
+        expect(mockSettings.setValue).toHaveBeenCalled();
+      });
+
+      // Get the updated configs passed to setValue
+      const setValueCalls = mockSettings.setValue.mock.calls;
+      const modelProvidersCall = setValueCalls.find((call: unknown[]) =>
+        (call[1] as string).includes('modelProviders'),
+      );
+
+      // Should preserve Global config and custom config, only update China configs
+      expect(modelProvidersCall).toBeDefined();
+      const updatedConfigs = modelProvidersCall![2] as Array<
+        Record<string, unknown>
+      >;
+
+      // Should have new China configs + preserved Global config + custom config
+      expect(updatedConfigs.length).toBeGreaterThanOrEqual(3);
+
+      // Should contain the Global config (not modified)
+      expect(
+        updatedConfigs.some(
+          (c: Record<string, unknown>) => c['id'] === 'test-model-global-1',
+        ),
+      ).toBe(true);
+
+      // Should contain the custom config
+      expect(
+        updatedConfigs.some(
+          (c: Record<string, unknown>) => c['id'] === 'custom-model',
+        ),
+      ).toBe(true);
+
+      // Should reload and refresh auth
+      expect(mockConfig.reloadModelProvidersConfig).toHaveBeenCalled();
+      expect(mockConfig.refreshAuth).toHaveBeenCalledWith(AuthType.USE_OPENAI);
+    });
+
     it('should preserve non-Coding Plan configs during update', async () => {
-      process.env[CODING_PLAN_ENV_KEY] = 'test-api-key';
       mockSettings.merged.codingPlan = { version: 'old-version-hash' };
       const customConfig = {
         id: 'custom-model',
@@ -205,8 +354,8 @@ describe('useCodingPlanUpdates', () => {
       mockSettings.merged.modelProviders = {
         [AuthType.USE_OPENAI]: [
           {
-            id: 'test-model-1',
-            baseUrl: 'https://test.example.com/v1',
+            id: 'test-model-china-1',
+            baseUrl: CODING_PLAN_BASE_URL,
             envKey: CODING_PLAN_ENV_KEY,
           },
           customConfig,
@@ -233,10 +382,38 @@ describe('useCodingPlanUpdates', () => {
         // Should preserve custom config - verify setValue was called
         expect(mockSettings.setValue).toHaveBeenCalled();
       });
+
+      // Get the updated configs passed to setValue
+      const setValueCalls = mockSettings.setValue.mock.calls;
+      const modelProvidersCall = setValueCalls.find((call: unknown[]) =>
+        (call[1] as string).includes('modelProviders'),
+      );
+
+      // Should preserve custom config
+      expect(modelProvidersCall).toBeDefined();
+      const updatedConfigs = modelProvidersCall![2] as Array<
+        Record<string, unknown>
+      >;
+      expect(
+        updatedConfigs.some(
+          (c: Record<string, unknown>) => c['id'] === 'custom-model',
+        ),
+      ).toBe(true);
     });
 
-    it('should handle missing API key error', async () => {
+    it('should handle update errors gracefully', async () => {
       mockSettings.merged.codingPlan = { version: 'old-version-hash' };
+      mockSettings.merged.modelProviders = {
+        [AuthType.USE_OPENAI]: [
+          {
+            id: 'test-model-china-1',
+            baseUrl: CODING_PLAN_BASE_URL,
+            envKey: CODING_PLAN_ENV_KEY,
+          },
+        ],
+      };
+      // Simulate an error during refreshAuth
+      mockConfig.refreshAuth.mockRejectedValue(new Error('Network error'));
 
       const { result } = renderHook(() =>
         useCodingPlanUpdates(
@@ -253,12 +430,14 @@ describe('useCodingPlanUpdates', () => {
       await result.current.codingPlanUpdateRequest!.onConfirm(true);
 
       // Should show error message
-      expect(mockAddItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-        }),
-        expect.any(Number),
-      );
+      await waitFor(() => {
+        expect(mockAddItem).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+          }),
+          expect.any(Number),
+        );
+      });
     });
   });
 

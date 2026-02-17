@@ -1253,12 +1253,29 @@ export default {
   // ============================================================================
   'API-KEY': 'API-KEY',
   'Coding Plan': 'Coding Plan',
+  'Coding Plan (Bailian, China)': 'Coding Plan (百炼, 中国)',
+  'Coding Plan (Bailian, Global/Intl)': 'Coding Plan (百炼, 全球/国际)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     '粘贴您的百炼 Coding Plan API Key，即可完成设置！',
+  "Paste your api key of Coding Plan (Global/Intl) and you're all set!":
+    '粘贴您的 Coding Plan (全球/国际) API Key，即可完成设置！',
   Custom: '自定义',
   'More instructions about configuring `modelProviders` manually.':
     '关于手动配置 `modelProviders` 的更多说明。',
   'Select API-KEY configuration mode:': '选择 API-KEY 配置模式：',
   '(Press Escape to go back)': '(按 Escape 键返回)',
   '(Press Enter to submit, Escape to cancel)': '(按 Enter 提交，Escape 取消)',
+
+  // ============================================================================
+  // Coding Plan International Updates
+  // ============================================================================
+  'New model configurations are available for Bailian Coding Plan (China). Update now?':
+    '百炼 Coding Plan (中国) 有新的模型配置可用。是否立即更新？',
+  'New model configurations are available for Coding Plan (Global/Intl). Update now?':
+    'Coding Plan (全球/国际) 有新的模型配置可用。是否立即更新？',
+  '{{region}} configuration updated successfully. New models are now available.':
+    '{{region}} 配置更新成功。新模型现已可用。',
+  'Authenticated successfully with {{region}}. API key is stored in settings.env.':
+    '成功通过 {{region}} 认证。API Key 已存储在 settings.env 中。',
+  'Coding Plan (Global/Intl)': 'Coding Plan (全球/国际)',
 };
