@@ -1432,11 +1432,11 @@ export default {
   // ============================================================================
   'Coding Plan': 'Coding Plan',
   'Coding Plan (Bailian, China)': 'Coding Plan (Bailian, China)',
-  'Coding Plan (Bailian, Global/Intl)': 'Coding Plan (Bailian, Global/Intl)',
+  'Bailian Coding Plan (Global/Intl)': 'Bailian Coding Plan (Global/Intl)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     'Cole sua chave de API do Bailian Coding Plan e pronto!',
-  "Paste your api key of Coding Plan (Global/Intl) and you're all set!":
-    'Cole sua chave de API do Coding Plan (Global/Intl) e pronto!',
+  "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!":
+    'Cole sua chave de API do Bailian Coding Plan (Global/Intl) e pronto!',
   Custom: 'Personalizado',
   'More instructions about configuring `modelProviders` manually.':
     'Mais instruções sobre como configurar `modelProviders` manualmente.',
@@ -1452,11 +1452,10 @@ export default {
   // ============================================================================
   'New model configurations are available for Bailian Coding Plan (China). Update now?':
     'Novas configurações de modelo estão disponíveis para o Bailian Coding Plan (China). Atualizar agora?',
-  'New model configurations are available for Coding Plan (Global/Intl). Update now?':
-    'Novas configurações de modelo estão disponíveis para o Coding Plan (Global/Intl). Atualizar agora?',
+  'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?':
+    'Novas configurações de modelo estão disponíveis para o Bailian Coding Plan (Global/Intl). Atualizar agora?',
   '{{region}} configuration updated successfully. New models are now available.':
     'Configuração do {{region}} atualizada com sucesso. Novos modelos agora estão disponíveis.',
   'Authenticated successfully with {{region}}. API key is stored in settings.env.':
     'Autenticado com sucesso com {{region}}. A chave de API está armazenada em settings.env.',
-  'Coding Plan (Global/Intl)': 'Coding Plan (Global/Intl)',
 };

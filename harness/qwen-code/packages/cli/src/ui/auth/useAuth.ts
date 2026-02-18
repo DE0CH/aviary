@@ -33,6 +33,7 @@ import {
   getCodingPlanConfig,
   isCodingPlanConfig,
   CodingPlanRegion,
+  CODING_PLAN_ENV_KEY,
 } from '../../constants/codingPlan.js';
 
 export type { QwenAuthState } from '../hooks/useQwenAuth.js';
@@ -298,23 +299,22 @@ export const useAuthCommand = (
         setAuthError(null);
 
         // Get configuration based on region
-        const codingPlanConfig = getCodingPlanConfig(region);
-        const { template, envKey, version } = codingPlanConfig;
+        const { template, version, regionName } = getCodingPlanConfig(region);
 
         // Get persist scope
         const persistScope = getPersistScopeForModelSelection(settings);
 
-        // Store api-key in settings.env
-        settings.setValue(persistScope, `env.${envKey}`, apiKey);
+        // Store api-key in settings.env (unified env key)
+        settings.setValue(persistScope, `env.${CODING_PLAN_ENV_KEY}`, apiKey);
 
         // Sync to process.env immediately so refreshAuth can read the apiKey
-        process.env[envKey] = apiKey;
+        process.env[CODING_PLAN_ENV_KEY] = apiKey;
 
         // Generate model configs from template
         const newConfigs: ProviderModelConfig[] = template.map(
           (templateConfig) => ({
             ...templateConfig,
-            envKey,
+            envKey: CODING_PLAN_ENV_KEY,
           }),
         );
 
@@ -324,14 +324,9 @@ export const useAuthCommand = (
             settings.merged.modelProviders as ModelProvidersConfig | undefined
           )?.[AuthType.USE_OPENAI] || [];
 
-        // Identify Coding Plan configs by baseUrl + envKey for the given region
-        // Remove existing Coding Plan configs to ensure template changes are applied
-        const checkIsCodingPlanConfig = (config: ProviderModelConfig) =>
-          isCodingPlanConfig(config.baseUrl, config.envKey, region);
-
-        // Filter out existing Coding Plan configs for this region, keep user custom configs
+        // Filter out all existing Coding Plan configs (mutually exclusive)
         const nonCodingPlanConfigs = existingConfigs.filter(
-          (existing) => !checkIsCodingPlanConfig(existing),
+          (existing) => !isCodingPlanConfig(existing.baseUrl, existing.envKey),
         );
 
         // Add new Coding Plan configs at the beginning
@@ -351,13 +346,11 @@ export const useAuthCommand = (
           AuthType.USE_OPENAI,
         );
 
-        // Persist coding plan version for future update detection
-        // Store version with region suffix to distinguish between China and Intl versions
-        const versionKey =
-          region === CodingPlanRegion.GLOBAL
-            ? 'codingPlan.versionIntl'
-            : 'codingPlan.version';
-        settings.setValue(persistScope, versionKey, version);
+        // Persist coding plan region
+        settings.setValue(persistScope, 'codingPlan.region', region);
+
+        // Persist coding plan version (single field for backward compatibility)
+        settings.setValue(persistScope, 'codingPlan.version', version);
 
         // If there are configs, use the first one as the model
         if (updatedConfigs.length > 0 && updatedConfigs[0]?.id) {
@@ -387,16 +380,12 @@ export const useAuthCommand = (
         onAuthChange?.();
 
         // Add success message
-        const regionLabel =
-          region === CodingPlanRegion.GLOBAL
-            ? 'Coding Plan (Global/Intl)'
-            : 'Coding Plan';
         addItem(
           {
             type: MessageType.INFO,
             text: t(
               'Authenticated successfully with {{region}}. API key is stored in settings.env.',
-              { region: regionLabel },
+              { region: regionName },
             ),
           },
           Date.now(),

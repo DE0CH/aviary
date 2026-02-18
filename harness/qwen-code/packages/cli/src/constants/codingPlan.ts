@@ -22,77 +22,10 @@ export enum CodingPlanRegion {
 export type CodingPlanTemplate = ModelConfig[];
 
 /**
- * Environment variable key for storing the coding plan API key (China/Bailian)
+ * Environment variable key for storing the coding plan API key.
+ * Unified key for both regions since they are mutually exclusive.
  */
 export const CODING_PLAN_ENV_KEY = 'BAILIAN_CODING_PLAN_API_KEY';
-
-/**
- * Environment variable key for storing the coding plan API key (Global/Intl)
- */
-export const CODING_PLAN_INTL_ENV_KEY = 'BAILIAN_CODING_PLAN_INTL_API_KEY';
-
-/**
- * Base URL for China/Bailian Coding Plan
- */
-export const CODING_PLAN_BASE_URL = 'https://coding.dashscope.aliyuncs.com/v1';
-
-/**
- * Base URL for Global/Intl Coding Plan
- */
-export const CODING_PLAN_INTL_BASE_URL =
-  'https://coding-intl.dashscope.aliyuncs.com/v1';
-
-/**
- * CODING_PLAN_MODELS defines the model configurations for coding-plan mode (China/Bailian).
- */
-export const CODING_PLAN_MODELS: CodingPlanTemplate = [
-  {
-    id: 'qwen3-coder-plus',
-    name: 'qwen3-coder-plus',
-    baseUrl: CODING_PLAN_BASE_URL,
-    description: 'qwen3-coder-plus model from Bailian Coding Plan',
-    envKey: CODING_PLAN_ENV_KEY,
-  },
-  {
-    id: 'qwen3-max-2026-01-23',
-    name: 'qwen3-max-2026-01-23',
-    description:
-      'qwen3-max model with thinking enabled from Bailian Coding Plan',
-    baseUrl: CODING_PLAN_BASE_URL,
-    envKey: CODING_PLAN_ENV_KEY,
-    generationConfig: {
-      extra_body: {
-        enable_thinking: true,
-      },
-    },
-  },
-];
-
-/**
- * CODING_PLAN_INTL_MODELS defines the model configurations for coding-plan mode (Global/Intl).
- */
-export const CODING_PLAN_INTL_MODELS: CodingPlanTemplate = [
-  {
-    id: 'qwen3-coder-plus',
-    name: 'qwen3-coder-plus',
-    baseUrl: CODING_PLAN_INTL_BASE_URL,
-    description: 'qwen3-coder-plus model from Coding Plan (Global/Intl)',
-    envKey: CODING_PLAN_INTL_ENV_KEY,
-  },
-  {
-    id: 'qwen3-max-2026-01-23',
-    name: 'qwen3-max-2026-01-23',
-    description:
-      'qwen3-max model with thinking enabled from Coding Plan (Global/Intl)',
-    baseUrl: CODING_PLAN_INTL_BASE_URL,
-    envKey: CODING_PLAN_INTL_ENV_KEY,
-    generationConfig: {
-      extra_body: {
-        enable_thinking: true,
-      },
-    },
-  },
-];
 
 /**
  * Computes the version hash for the coding plan template.
@@ -106,81 +39,149 @@ export function computeCodingPlanVersion(template: CodingPlanTemplate): string {
 }
 
 /**
- * Current version of the China/Bailian coding plan template.
- * Computed at runtime from the template content.
+ * Generate the complete coding plan template for a specific region.
+ * China region uses legacy description to maintain backward compatibility.
+ * Global region uses new description with region indicator.
+ * @param region - The region to generate template for
+ * @returns Complete model configuration array for the region
  */
-export const CODING_PLAN_VERSION = computeCodingPlanVersion(CODING_PLAN_MODELS);
+export function generateCodingPlanTemplate(
+  region: CodingPlanRegion,
+): CodingPlanTemplate {
+  if (region === CodingPlanRegion.CHINA) {
+    // China region uses legacy fields to maintain backward compatibility
+    // This ensures existing users don't get prompted for unnecessary updates
+    return [
+      {
+        id: 'qwen3-coder-plus',
+        name: 'qwen3-coder-plus',
+        baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+        description: 'qwen3-coder-plus model from Bailian Coding Plan',
+        envKey: CODING_PLAN_ENV_KEY,
+      },
+      {
+        id: 'qwen3-max-2026-01-23',
+        name: 'qwen3-max-2026-01-23',
+        description:
+          'qwen3-max model with thinking enabled from Bailian Coding Plan',
+        baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+        envKey: CODING_PLAN_ENV_KEY,
+        generationConfig: {
+          extra_body: {
+            enable_thinking: true,
+          },
+        },
+      },
+    ];
+  }
+
+  // Global region uses new description with region indicator
+  return [
+    {
+      id: 'qwen3-coder-plus',
+      name: 'qwen3-coder-plus',
+      baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
+      description: 'qwen3-coder-plus model from Coding Plan (Global/Intl)',
+      envKey: CODING_PLAN_ENV_KEY,
+    },
+    {
+      id: 'qwen3-max-2026-01-23',
+      name: 'qwen3-max-2026-01-23',
+      description:
+        'qwen3-max model with thinking enabled from Coding Plan (Global/Intl)',
+      baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
+      envKey: CODING_PLAN_ENV_KEY,
+      generationConfig: {
+        extra_body: {
+          enable_thinking: true,
+        },
+      },
+    },
+  ];
+}
 
 /**
- * Current version of the Global/Intl coding plan template.
- * Computed at runtime from the template content.
+ * Get the complete configuration for a specific region.
+ * @param region - The region to use
+ * @returns Object containing template, baseUrl, and version
  */
-export const CODING_PLAN_INTL_VERSION = computeCodingPlanVersion(
-  CODING_PLAN_INTL_MODELS,
-);
+export function getCodingPlanConfig(region: CodingPlanRegion) {
+  const template = generateCodingPlanTemplate(region);
+  const baseUrl =
+    region === CodingPlanRegion.CHINA
+      ? 'https://coding.dashscope.aliyuncs.com/v1'
+      : 'https://coding-intl.dashscope.aliyuncs.com/v1';
+  const regionName =
+    region === CodingPlanRegion.CHINA
+      ? 'Bailian Coding Plan (China)'
+      : 'Bailian Coding Plan (Global/Intl)';
+
+  return {
+    template,
+    baseUrl,
+    regionName,
+    version: computeCodingPlanVersion(template),
+  };
+}
 
 /**
- * All coding plan templates for both regions.
- * Used for update detection and filtering.
+ * Get all unique base URLs for coding plan (used for filtering/config detection).
+ * @returns Array of base URLs
  */
-export const ALL_CODING_PLAN_TEMPLATES: CodingPlanTemplate = [
-  ...CODING_PLAN_MODELS,
-  ...CODING_PLAN_INTL_MODELS,
-];
+export function getCodingPlanBaseUrls(): string[] {
+  return [
+    'https://coding.dashscope.aliyuncs.com/v1',
+    'https://coding-intl.dashscope.aliyuncs.com/v1',
+  ];
+}
 
 /**
- * Check if a config belongs to any Coding Plan template (China or Intl).
+ * Check if a config belongs to Coding Plan (any region).
+ * Returns the region if matched, or false if not a Coding Plan config.
  * @param baseUrl - The baseUrl to check
  * @param envKey - The envKey to check
- * @param region - Optional region to limit the check to a specific region
- * @returns true if the config matches any Coding Plan template
+ * @returns The region if matched, false otherwise
  */
 export function isCodingPlanConfig(
   baseUrl: string | undefined,
   envKey: string | undefined,
-  region?: CodingPlanRegion,
-): boolean {
+): CodingPlanRegion | false {
   if (!baseUrl || !envKey) {
     return false;
   }
 
-  // If region is specified, only check that region's templates
-  if (region === CodingPlanRegion.GLOBAL) {
-    return CODING_PLAN_INTL_MODELS.some(
-      (template) => template.baseUrl === baseUrl && template.envKey === envKey,
-    );
-  } else if (region === CodingPlanRegion.CHINA) {
-    return CODING_PLAN_MODELS.some(
-      (template) => template.baseUrl === baseUrl && template.envKey === envKey,
-    );
+  // Must use the unified envKey
+  if (envKey !== CODING_PLAN_ENV_KEY) {
+    return false;
   }
 
-  // No region specified, check all templates
-  return ALL_CODING_PLAN_TEMPLATES.some(
-    (template) => template.baseUrl === baseUrl && template.envKey === envKey,
-  );
+  // Check which region's baseUrl matches
+  if (baseUrl === 'https://coding.dashscope.aliyuncs.com/v1') {
+    return CodingPlanRegion.CHINA;
+  }
+  if (baseUrl === 'https://coding-intl.dashscope.aliyuncs.com/v1') {
+    return CodingPlanRegion.GLOBAL;
+  }
+
+  return false;
 }
 
 /**
- * Get the appropriate template and env key for the selected region.
- * @param region - The region to use (default: CHINA)
- * @returns Object containing template, envKey, version, and baseUrl
+ * Get region from baseUrl.
+ * @param baseUrl - The baseUrl to check
+ * @returns The region if matched, null otherwise
  */
-export function getCodingPlanConfig(
-  region: CodingPlanRegion = CodingPlanRegion.CHINA,
-) {
-  if (region === CodingPlanRegion.GLOBAL) {
-    return {
-      template: CODING_PLAN_INTL_MODELS,
-      envKey: CODING_PLAN_INTL_ENV_KEY,
-      version: CODING_PLAN_INTL_VERSION,
-      baseUrl: CODING_PLAN_INTL_BASE_URL,
-    };
+export function getRegionFromBaseUrl(
+  baseUrl: string | undefined,
+): CodingPlanRegion | null {
+  if (!baseUrl) return null;
+
+  if (baseUrl === 'https://coding.dashscope.aliyuncs.com/v1') {
+    return CodingPlanRegion.CHINA;
   }
-  return {
-    template: CODING_PLAN_MODELS,
-    envKey: CODING_PLAN_ENV_KEY,
-    version: CODING_PLAN_VERSION,
-    baseUrl: CODING_PLAN_BASE_URL,
-  };
+  if (baseUrl === 'https://coding-intl.dashscope.aliyuncs.com/v1') {
+    return CodingPlanRegion.GLOBAL;
+  }
+
+  return null;
 }

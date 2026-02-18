@@ -1418,11 +1418,11 @@ export default {
   // ============================================================================
   'Coding Plan': 'Coding Plan',
   'Coding Plan (Bailian, China)': 'Coding Plan (Bailian, China)',
-  'Coding Plan (Bailian, Global/Intl)': 'Coding Plan (Bailian, Global/Intl)',
+  'Bailian Coding Plan (Global/Intl)': 'Bailian Coding Plan (Global/Intl)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     'Fügen Sie Ihren Bailian Coding Plan API-Schlüssel ein und Sie sind bereit!',
-  "Paste your api key of Coding Plan (Global/Intl) and you're all set!":
-    'Fügen Sie Ihren Coding Plan (Global/Intl) API-Schlüssel ein und Sie sind bereit!',
+  "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!":
+    'Fügen Sie Ihren Bailian Coding Plan (Global/Intl) API-Schlüssel ein und Sie sind bereit!',
   Custom: 'Benutzerdefiniert',
   'More instructions about configuring `modelProviders` manually.':
     'Weitere Anweisungen zur manuellen Konfiguration von `modelProviders`.',
@@ -1438,11 +1438,10 @@ export default {
   // ============================================================================
   'New model configurations are available for Bailian Coding Plan (China). Update now?':
     'Neue Modellkonfigurationen sind für Bailian Coding Plan (China) verfügbar. Jetzt aktualisieren?',
-  'New model configurations are available for Coding Plan (Global/Intl). Update now?':
-    'Neue Modellkonfigurationen sind für Coding Plan (Global/Intl) verfügbar. Jetzt aktualisieren?',
+  'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?':
+    'Neue Modellkonfigurationen sind für Bailian Coding Plan (Global/Intl) verfügbar. Jetzt aktualisieren?',
   '{{region}} configuration updated successfully. New models are now available.':
     '{{region}}-Konfiguration erfolgreich aktualisiert. Neue Modelle sind jetzt verfügbar.',
   'Authenticated successfully with {{region}}. API key is stored in settings.env.':
     'Erfolgreich mit {{region}} authentifiziert. API-Schlüssel ist in settings.env gespeichert.',
-  'Coding Plan (Global/Intl)': 'Coding Plan (Global/Intl)',
 };

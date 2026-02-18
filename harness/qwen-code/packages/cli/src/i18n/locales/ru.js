@@ -1422,12 +1422,12 @@ export default {
   // ============================================================================
   'Coding Plan': 'Coding Plan',
   'Coding Plan (Bailian, China)': 'Coding Plan (Bailian, Китай)',
-  'Coding Plan (Bailian, Global/Intl)':
-    'Coding Plan (Bailian, Глобальный/Международный)',
+  'Bailian Coding Plan (Global/Intl)':
+    'Bailian Coding Plan (Глобальный/Международный)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     'Вставьте ваш API-ключ Bailian Coding Plan и всё готово!',
-  "Paste your api key of Coding Plan (Global/Intl) and you're all set!":
-    'Вставьте ваш API-ключ Coding Plan (Глобальный/Международный) и всё готово!',
+  "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!":
+    'Вставьте ваш API-ключ Bailian Coding Plan (Глобальный/Международный) и всё готово!',
   Custom: 'Пользовательский',
   'More instructions about configuring `modelProviders` manually.':
     'Дополнительные инструкции по ручной настройке `modelProviders`.',
@@ -1442,11 +1442,10 @@ export default {
   // ============================================================================
   'New model configurations are available for Bailian Coding Plan (China). Update now?':
     'Доступны новые конфигурации моделей для Bailian Coding Plan (Китай). Обновить сейчас?',
-  'New model configurations are available for Coding Plan (Global/Intl). Update now?':
-    'Доступны новые конфигурации моделей для Coding Plan (Глобальный/Международный). Обновить сейчас?',
+  'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?':
+    'Доступны новые конфигурации моделей для Bailian Coding Plan (Глобальный/Международный). Обновить сейчас?',
   '{{region}} configuration updated successfully. New models are now available.':
     'Конфигурация {{region}} успешно обновлена. Новые модели теперь доступны.',
   'Authenticated successfully with {{region}}. API key is stored in settings.env.':
     'Успешная аутентификация с {{region}}. API-ключ сохранён в settings.env.',
-  'Coding Plan (Global/Intl)': 'Coding Plan (Глобальный/Международный)',
 };

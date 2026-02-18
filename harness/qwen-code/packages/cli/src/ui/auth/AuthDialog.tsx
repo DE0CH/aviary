@@ -80,7 +80,7 @@ export function AuthDialog(): React.JSX.Element {
     },
     {
       key: 'coding-plan-intl',
-      label: t('Coding Plan (Bailian, Global/Intl)'),
+      label: t('Bailian Coding Plan (Global/Intl)'),
       value: 'coding-plan-intl' as ApiKeySubMode,
     },
     {
@@ -259,10 +259,12 @@ export function AuthDialog(): React.JSX.Element {
       </Box>
       <Box marginTop={1} paddingLeft={2}>
         <Text color={theme.text.secondary}>
-          {apiKeySubItems[apiKeySubModeIndex]?.value === 'coding-plan'
-            ? t("Paste your api key of Bailian Coding Plan and you're all set!")
-            : t(
+          {apiKeySubItems[apiKeySubModeIndex]?.value === 'custom'
+            ? t(
                 'More instructions about configuring `modelProviders` manually.',
+              )
+            : t(
+                "Paste your api key of Bailian Coding Plan and you're all set!",
               )}
         </Text>
       </Box>

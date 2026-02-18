@@ -11,10 +11,9 @@ import type { LoadedSettings } from '../../config/settings.js';
 import { getPersistScopeForModelSelection } from '../../config/modelProvidersScope.js';
 import {
   isCodingPlanConfig,
-  CODING_PLAN_VERSION,
-  CODING_PLAN_INTL_VERSION,
   getCodingPlanConfig,
   CodingPlanRegion,
+  CODING_PLAN_ENV_KEY,
 } from '../../constants/codingPlan.js';
 import { t } from '../../i18n/index.js';
 
@@ -43,7 +42,7 @@ export function useCodingPlanUpdates(
   /**
    * Execute the Coding Plan configuration update.
    * Removes old Coding Plan configs and replaces them with new ones from the template.
-   * Automatically detects whether the user is using China or Intl version.
+   * Uses the region from settings.codingPlan.region (defaults to CHINA).
    */
   const executeUpdate = useCallback(
     async (region: CodingPlanRegion = CodingPlanRegion.CHINA) => {
@@ -58,24 +57,23 @@ export function useCodingPlanUpdates(
               | undefined
           )?.[AuthType.USE_OPENAI] || [];
 
-        // Filter out Coding Plan configs for the given region (keep user custom configs)
+        // Filter out all Coding Plan configs (since they are mutually exclusive)
+        // Keep only non-Coding-Plan user custom configs
         const nonCodingPlanConfigs = currentConfigs.filter(
           (cfg) =>
             !isCodingPlanConfig(
               cfg['baseUrl'] as string | undefined,
               cfg['envKey'] as string | undefined,
-              region,
             ),
         );
 
-        // Get the correct configuration based on region
-        const codingPlanConfig = getCodingPlanConfig(region);
-        const { template, envKey, version } = codingPlanConfig;
+        // Get the configuration for the current region
+        const { template, version, regionName } = getCodingPlanConfig(region);
 
         // Generate new configs from template
         const newConfigs = template.map((templateConfig) => ({
           ...templateConfig,
-          envKey,
+          envKey: CODING_PLAN_ENV_KEY,
         }));
 
         // Combine: new Coding Plan configs at the front, user configs preserved
@@ -91,12 +89,11 @@ export function useCodingPlanUpdates(
           updatedConfigs,
         );
 
-        // Update the version with region-specific key
-        const versionKey =
-          region === CodingPlanRegion.GLOBAL
-            ? 'codingPlan.versionIntl'
-            : 'codingPlan.version';
-        settings.setValue(persistScope, versionKey, version);
+        // Update the version (single version field for backward compatibility)
+        settings.setValue(persistScope, 'codingPlan.version', version);
+
+        // Update the region
+        settings.setValue(persistScope, 'codingPlan.region', region);
 
         // Hot-reload model providers configuration
         const updatedModelProviders = {
@@ -112,16 +109,12 @@ export function useCodingPlanUpdates(
         // Refresh auth with the new configuration
         await config.refreshAuth(AuthType.USE_OPENAI);
 
-        const regionLabel =
-          region === CodingPlanRegion.GLOBAL
-            ? 'Coding Plan (Global/Intl)'
-            : 'Coding Plan';
         addItem(
           {
             type: 'info',
             text: t(
               '{{region}} configuration updated successfully. New models are now available.',
-              { region: regionLabel },
+              { region: regionName },
             ),
           },
           Date.now(),
@@ -148,56 +141,46 @@ export function useCodingPlanUpdates(
 
   /**
    * Check for version mismatch and prompt user for update if needed.
+   * Uses the region from settings.codingPlan.region (defaults to CHINA if not set).
    */
   const checkForUpdates = useCallback(() => {
     const mergedSettings = settings.merged as {
-      codingPlan?: { version?: string; versionIntl?: string };
+      codingPlan?: {
+        version?: string;
+        region?: CodingPlanRegion;
+      };
     };
 
-    const savedChinaVersion = mergedSettings.codingPlan?.version;
-    const savedIntlVersion = mergedSettings.codingPlan?.versionIntl;
+    // Get the region (default to CHINA if not set)
+    const region = mergedSettings.codingPlan?.region ?? CodingPlanRegion.CHINA;
 
-    // Determine which version the user is using based on saved version
-    // Check China version first
-    if (savedChinaVersion) {
-      if (savedChinaVersion !== CODING_PLAN_VERSION) {
-        // China version mismatch - prompt for update
-        setUpdateRequest({
-          prompt: t(
-            'New model configurations are available for Bailian Coding Plan (China). Update now?',
-          ),
-          onConfirm: async (confirmed: boolean) => {
-            setUpdateRequest(undefined);
-            if (confirmed) {
-              await executeUpdate(CodingPlanRegion.CHINA);
-            }
-          },
-        });
-        return;
-      }
-    }
-
-    // Check Intl version
-    if (savedIntlVersion) {
-      if (savedIntlVersion !== CODING_PLAN_INTL_VERSION) {
-        // Intl version mismatch - prompt for update
-        setUpdateRequest({
-          prompt: t(
-            'New model configurations are available for Coding Plan (Global/Intl). Update now?',
-          ),
-          onConfirm: async (confirmed: boolean) => {
-            setUpdateRequest(undefined);
-            if (confirmed) {
-              await executeUpdate(CodingPlanRegion.GLOBAL);
-            }
-          },
-        });
-        return;
-      }
-    }
+    // Get the saved version for the current region
+    const savedVersion = mergedSettings.codingPlan?.version;
 
     // If no version is stored, user hasn't used Coding Plan yet - skip check
-    return;
+    if (!savedVersion) {
+      return;
+    }
+
+    // Get current version for the region
+    const currentVersion = getCodingPlanConfig(region).version;
+
+    // Check if version matches
+    if (savedVersion !== currentVersion) {
+      const { regionName } = getCodingPlanConfig(region);
+      setUpdateRequest({
+        prompt: t(
+          'New model configurations are available for {{region}}. Update now?',
+          { region: regionName },
+        ),
+        onConfirm: async (confirmed: boolean) => {
+          setUpdateRequest(undefined);
+          if (confirmed) {
+            await executeUpdate(region);
+          }
+        },
+      });
+    }
   }, [settings, executeUpdate]);
 
   // Check for updates on mount

@@ -1419,11 +1419,11 @@ export default {
   // ============================================================================
   'Coding Plan': 'Coding Plan',
   'Coding Plan (Bailian, China)': 'Coding Plan (Bailian, China)',
-  'Coding Plan (Bailian, Global/Intl)': 'Coding Plan (Bailian, Global/Intl)',
+  'Bailian Coding Plan (Global/Intl)': 'Bailian Coding Plan (Global/Intl)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     "Paste your api key of Bailian Coding Plan and you're all set!",
-  "Paste your api key of Coding Plan (Global/Intl) and you're all set!":
-    "Paste your api key of Coding Plan (Global/Intl) and you're all set!",
+  "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!":
+    "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!",
   Custom: 'Custom',
   'More instructions about configuring `modelProviders` manually.':
     'More instructions about configuring `modelProviders` manually.',
@@ -1437,11 +1437,10 @@ export default {
   // ============================================================================
   'New model configurations are available for Bailian Coding Plan (China). Update now?':
     'New model configurations are available for Bailian Coding Plan (China). Update now?',
-  'New model configurations are available for Coding Plan (Global/Intl). Update now?':
-    'New model configurations are available for Coding Plan (Global/Intl). Update now?',
+  'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?':
+    'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?',
   '{{region}} configuration updated successfully. New models are now available.':
     '{{region}} configuration updated successfully. New models are now available.',
   'Authenticated successfully with {{region}}. API key is stored in settings.env.':
     'Authenticated successfully with {{region}}. API key is stored in settings.env.',
-  'Coding Plan (Global/Intl)': 'Coding Plan (Global/Intl)',
 };
