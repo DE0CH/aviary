@@ -190,6 +190,18 @@ Use the `/model` command at any time to switch between all configured models.
   "modelProviders": {
     "openai": [
       {
+        "id": "qwen3.5-plus",
+        "name": "qwen3.5-plus (Coding Plan)",
+        "baseUrl": "https://coding.dashscope.aliyuncs.com/v1",
+        "description": "qwen3.5-plus with thinking enabled from Bailian Coding Plan",
+        "envKey": "BAILIAN_CODING_PLAN_API_KEY",
+        "generationConfig": {
+          "extra_body": {
+            "enable_thinking": true
+          }
+        }
+      },
+      {
         "id": "qwen3-coder-plus",
         "name": "qwen3-coder-plus (Coding Plan)",
         "baseUrl": "https://coding.dashscope.aliyuncs.com/v1",
@@ -212,7 +224,7 @@ Use the `/model` command at any time to switch between all configured models.
 }
 ```
 
-> Subscribe to the Coding Plan at [Alibaba Cloud Bailian](https://bailian.console.aliyun.com/cn-beijing/?tab=globalset#/efm/coding_plan).
+> Subscribe to the Coding Plan and get your API key at [Alibaba Cloud Bailian](https://modelstudio.console.aliyun.com/?tab=dashboard#/efm/coding_plan).
 
 </details>
 

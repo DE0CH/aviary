@@ -53,6 +53,19 @@ export function generateCodingPlanTemplate(
     // This ensures existing users don't get prompted for unnecessary updates
     return [
       {
+        id: 'qwen3.5-plus',
+        name: 'qwen3.5-plus',
+        description:
+          'qwen3.5-plus model with thinking enabled from Bailian Coding Plan',
+        baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+        envKey: CODING_PLAN_ENV_KEY,
+        generationConfig: {
+          extra_body: {
+            enable_thinking: true,
+          },
+        },
+      },
+      {
         id: 'qwen3-coder-plus',
         name: 'qwen3-coder-plus',
         baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
@@ -77,6 +90,19 @@ export function generateCodingPlanTemplate(
 
   // Global region uses new description with region indicator
   return [
+    {
+      id: 'qwen3.5-plus',
+      name: 'qwen3.5-plus',
+      description:
+        'qwen3.5-plus model with thinking enabled from Coding Plan (Global/Intl)',
+      baseUrl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
+      envKey: CODING_PLAN_ENV_KEY,
+      generationConfig: {
+        extra_body: {
+          enable_thinking: true,
+        },
+      },
+    },
     {
       id: 'qwen3-coder-plus',
       name: 'qwen3-coder-plus',
