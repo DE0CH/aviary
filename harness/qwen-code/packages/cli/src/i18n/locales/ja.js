@@ -929,11 +929,12 @@ export default {
   // ============================================================================
   'Coding Plan': 'Coding Plan',
   'Coding Plan (Bailian, China)': 'Coding Plan (Bailian, 中国)',
-  'Bailian Coding Plan (Global/Intl)': 'Bailian Coding Plan (グローバル/国際)',
+  'Coding Plan (Bailian, Global/Intl)':
+    'Coding Plan (Bailian, グローバル/国際)',
   "Paste your api key of Bailian Coding Plan and you're all set!":
     'Bailian Coding PlanのAPIキーを貼り付けるだけで準備完了です！',
-  "Paste your api key of Bailian Coding Plan (Global/Intl) and you're all set!":
-    'Bailian Coding Plan (グローバル/国際) のAPIキーを貼り付けるだけで準備完了です！',
+  "Paste your api key of Coding Plan (Bailian, Global/Intl) and you're all set!":
+    'Coding Plan (Bailian, グローバル/国際) のAPIキーを貼り付けるだけで準備完了です！',
   Custom: 'カスタム',
   'More instructions about configuring `modelProviders` manually.':
     '`modelProviders`を手動で設定する方法の詳細はこちら。',
@@ -946,12 +947,14 @@ export default {
   // ============================================================================
   // Coding Plan International Updates
   // ============================================================================
+  'New model configurations are available for {{region}}. Update now?':
+    '{{region}} の新しいモデル設定が利用可能です。今すぐ更新しますか？',
   'New model configurations are available for Bailian Coding Plan (China). Update now?':
     'Bailian Coding Plan (中国) の新しいモデル設定が利用可能です。今すぐ更新しますか？',
-  'New model configurations are available for Bailian Coding Plan (Global/Intl). Update now?':
-    'Bailian Coding Plan (グローバル/国際) の新しいモデル設定が利用可能です。今すぐ更新しますか？',
-  '{{region}} configuration updated successfully. New models are now available.':
-    '{{region}} の設定が正常に更新されました。新しいモデルが利用可能になりました。',
+  'New model configurations are available for Coding Plan (Bailian, Global/Intl). Update now?':
+    'Coding Plan (Bailian, グローバル/国際) の新しいモデル設定が利用可能です。今すぐ更新しますか？',
+  '{{region}} configuration updated successfully. Model switched to "{{model}}".':
+    '{{region}} の設定が正常に更新されました。モデルが "{{model}}" に切り替わりました。',
   'Authenticated successfully with {{region}}. API key is stored in settings.env.':
     '{{region}} での認証に成功しました。APIキーは settings.env に保存されています。',
 };

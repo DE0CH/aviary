@@ -80,7 +80,7 @@ export function AuthDialog(): React.JSX.Element {
     },
     {
       key: 'coding-plan-intl',
-      label: t('Bailian Coding Plan (Global/Intl)'),
+      label: t('Coding Plan (Bailian, Global/Intl)'),
       value: 'coding-plan-intl' as ApiKeySubMode,
     },
     {

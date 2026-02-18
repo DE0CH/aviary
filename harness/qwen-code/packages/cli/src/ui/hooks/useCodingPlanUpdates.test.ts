@@ -33,6 +33,7 @@ describe('useCodingPlanUpdates', () => {
   const mockConfig = {
     reloadModelProvidersConfig: vi.fn(),
     refreshAuth: vi.fn(),
+    getModel: vi.fn().mockReturnValue('qwen-max'),
   };
 
   const mockAddItem = vi.fn();

@@ -82,7 +82,22 @@ export function useCodingPlanUpdates(
           ...(nonCodingPlanConfigs as Array<Record<string, unknown>>),
         ] as Array<Record<string, unknown>>;
 
-        // Persist updated model providers
+        // Hot-reload model providers configuration first (in-memory only)
+        const updatedModelProviders = {
+          ...(settings.merged.modelProviders as
+            | Record<string, unknown>
+            | undefined),
+          [AuthType.USE_OPENAI]: updatedConfigs,
+        };
+        config.reloadModelProvidersConfig(
+          updatedModelProviders as unknown as ModelProvidersConfig,
+        );
+
+        // Refresh auth with the new configuration
+        // This validates the configuration before persisting
+        await config.refreshAuth(AuthType.USE_OPENAI);
+
+        // Persist to settings only after successful auth refresh
         settings.setValue(
           persistScope,
           `modelProviders.${AuthType.USE_OPENAI}`,
@@ -95,26 +110,14 @@ export function useCodingPlanUpdates(
         // Update the region
         settings.setValue(persistScope, 'codingPlan.region', region);
 
-        // Hot-reload model providers configuration
-        const updatedModelProviders = {
-          ...(settings.merged.modelProviders as
-            | Record<string, unknown>
-            | undefined),
-          [AuthType.USE_OPENAI]: updatedConfigs,
-        };
-        config.reloadModelProvidersConfig(
-          updatedModelProviders as unknown as ModelProvidersConfig,
-        );
-
-        // Refresh auth with the new configuration
-        await config.refreshAuth(AuthType.USE_OPENAI);
+        const activeModel = config.getModel();
 
         addItem(
           {
             type: 'info',
             text: t(
-              '{{region}} configuration updated successfully. New models are now available.',
-              { region: regionName },
+              '{{region}} configuration updated successfully. Model switched to "{{model}}".',
+              { region: regionName, model: activeModel },
             ),
           },
           Date.now(),
