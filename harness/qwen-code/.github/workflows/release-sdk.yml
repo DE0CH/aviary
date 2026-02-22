@@ -363,13 +363,12 @@ jobs:
 
           # Get previous release notes if available
           PREVIOUS_NOTES=$(gh release view "sdk-typescript-${PREVIOUS_RELEASE_TAG}" --json body -q '.body' 2>/dev/null || echo 'See commit history for changes.')
-          echo "${PREVIOUS_NOTES}" >> "${NOTES_FILE}"
+          printf '%s\n' "${PREVIOUS_NOTES}" >> "${NOTES_FILE}"
 
           # Create GitHub release
           gh release create "sdk-typescript-${RELEASE_TAG}" \
             --target "${TARGET}" \
             --title "SDK TypeScript Release ${RELEASE_TAG}" \
-            --notes-start-tag "sdk-typescript-${PREVIOUS_RELEASE_TAG}" \
             --notes-file "${NOTES_FILE}" \
             ${PRERELEASE_FLAG}
 
