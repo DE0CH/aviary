@@ -1,0 +1,1 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"I've received your modified request. I'll respond to the modified version.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":120,"totalTokenCount":150}}]}

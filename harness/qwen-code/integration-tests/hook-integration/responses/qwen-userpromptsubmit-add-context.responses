@@ -1,0 +1,1 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"The hook has added additional context to your request.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":120,"totalTokenCount":150}}]}

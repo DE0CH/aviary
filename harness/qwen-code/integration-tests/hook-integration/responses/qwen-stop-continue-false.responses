@@ -1,0 +1,2 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"I understand you'd like me to continue. Let me do more work.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"I've completed the additional work you requested.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":150,"totalTokenCount":180}}]}

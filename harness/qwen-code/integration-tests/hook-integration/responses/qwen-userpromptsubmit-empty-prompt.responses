@@ -1,0 +1,1 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Empty prompt received and handled.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":50,"totalTokenCount":70}}]}
