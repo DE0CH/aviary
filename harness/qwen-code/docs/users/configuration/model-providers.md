@@ -253,12 +253,7 @@ export VLLM_API_KEY="not-needed"
 
 > [!note]
 >
-> <<<<<<< HEAD
-> The `extra_body` parameter is **only supported for OpenAI-compatible providers** (`openai`, `qwen-oauth`). It is ignored for Anthropic, Gemini, and Vertex AI providers.
-> =======
 > The `extra_body` parameter is **only supported for OpenAI-compatible providers** (`openai`, `qwen-oauth`). It is ignored for Anthropic, and Gemini providers.
->
-> > > > > > > main
 
 ## Alibaba Cloud Coding Plan
 
