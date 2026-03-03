@@ -9,24 +9,14 @@ import type {
   ToolConfirmationOutcome,
   ToolConfirmationPayload,
 } from '../tools/tools.js';
-import type { ToolCall } from '../core/coreToolScheduler.js';
 
 export enum MessageBusType {
   TOOL_CONFIRMATION_REQUEST = 'tool-confirmation-request',
   TOOL_CONFIRMATION_RESPONSE = 'tool-confirmation-response',
   TOOL_EXECUTION_SUCCESS = 'tool-execution-success',
   TOOL_EXECUTION_FAILURE = 'tool-execution-failure',
-  TOOL_CALLS_UPDATE = 'tool-calls-update',
-  ASK_USER_REQUEST = 'ask-user-request',
-  ASK_USER_RESPONSE = 'ask-user-response',
   HOOK_EXECUTION_REQUEST = 'hook-execution-request',
   HOOK_EXECUTION_RESPONSE = 'hook-execution-response',
-}
-
-export interface ToolCallsUpdateMessage {
-  type: MessageBusType.TOOL_CALLS_UPDATE;
-  toolCalls: ToolCall[];
-  schedulerId: string;
 }
 
 export interface ToolConfirmationRequest {
@@ -97,11 +87,6 @@ export type SerializableConfirmationDetails =
       toolDisplayName: string;
     }
   | {
-      type: 'ask_user';
-      title: string;
-      questions: Question[];
-    }
-  | {
       type: 'exit_plan_mode';
       title: string;
       planPath: string;
@@ -134,51 +119,10 @@ export interface HookExecutionResponse {
   error?: Error;
 }
 
-export interface QuestionOption {
-  label: string;
-  description: string;
-}
-
-export enum QuestionType {
-  CHOICE = 'choice',
-  TEXT = 'text',
-  YESNO = 'yesno',
-}
-
-export interface Question {
-  question: string;
-  header: string;
-  /** Question type: 'choice' renders selectable options, 'text' renders free-form input, 'yesno' renders a binary Yes/No choice. */
-  type: QuestionType;
-  /** Selectable choices. REQUIRED when type='choice'. IGNORED for 'text' and 'yesno'. */
-  options?: QuestionOption[];
-  /** Allow multiple selections. Only applies when type='choice'. */
-  multiSelect?: boolean;
-  /** Placeholder hint text. For type='text', shown in the input field. For type='choice', shown in the "Other" custom input. */
-  placeholder?: string;
-}
-
-export interface AskUserRequest {
-  type: MessageBusType.ASK_USER_REQUEST;
-  questions: Question[];
-  correlationId: string;
-}
-
-export interface AskUserResponse {
-  type: MessageBusType.ASK_USER_RESPONSE;
-  correlationId: string;
-  answers: { [questionIndex: string]: string };
-  /** When true, indicates the user cancelled the dialog without submitting answers */
-  cancelled?: boolean;
-}
-
 export type Message =
   | ToolConfirmationRequest
   | ToolConfirmationResponse
   | ToolExecutionSuccess
   | ToolExecutionFailure
-  | AskUserRequest
-  | AskUserResponse
-  | ToolCallsUpdateMessage
   | HookExecutionRequest
   | HookExecutionResponse;
