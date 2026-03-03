@@ -1,1 +1,1 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Sequential hook 1 executed first.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"The first hook blocked the request. Second hook was not executed.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

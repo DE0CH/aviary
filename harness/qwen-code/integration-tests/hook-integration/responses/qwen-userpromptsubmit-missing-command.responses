@@ -1,1 +1,1 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"The command was not found but continuing.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"The hook command was not found but I continued processing your request.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

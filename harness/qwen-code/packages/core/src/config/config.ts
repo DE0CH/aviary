@@ -688,7 +688,7 @@ export class Config {
       enabledExtensionOverrides: this.overrideExtensions,
       isWorkspaceTrusted: this.isTrustedFolder(),
     });
-    this.enableHooks = params.enableHooks ?? true;
+    this.enableHooks = params.enableHooks ?? false;
     this.hooks = params.hooks;
   }
 

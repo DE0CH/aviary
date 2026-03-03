@@ -1187,6 +1187,16 @@ const SETTINGS_SCHEMA = {
       'Hook configurations for extending CLI behavior at various lifecycle points.',
     showInDialog: false,
     properties: {
+      enabled: {
+        type: 'boolean',
+        label: 'Enable Hooks',
+        category: 'Advanced',
+        requiresRestart: false,
+        default: false,
+        description:
+          'Enable the hooks feature. When enabled, hooks defined in UserPromptSubmit and Stop will be executed.',
+        showInDialog: false,
+      },
       disabled: {
         type: 'array',
         label: 'Disabled Hooks',

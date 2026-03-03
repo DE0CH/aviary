@@ -1,1 +1,1 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"There was a warning but the request continues.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"The hook had a non-blocking error but I continued processing your request.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

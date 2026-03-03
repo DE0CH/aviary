@@ -1,1 +1,1 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Parallel hooks executed with mixed results.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Parallel hooks executed with mixed results - one succeeded, one failed.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

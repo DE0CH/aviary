@@ -145,6 +145,7 @@ export class TestRig {
   testName?: string;
   _lastRunStdout?: string;
   _interactiveOutput = '';
+  _fakeResponsesPath?: string;
 
   constructor() {
     this.bundlePath = join(__dirname, '..', 'dist/cli.js');
@@ -160,12 +161,20 @@ export class TestRig {
 
   setup(
     testName: string,
-    options: { settings?: Record<string, unknown> } = {},
+    options: {
+      settings?: Record<string, unknown>;
+      fakeResponsesPath?: string;
+    } = {},
   ) {
     this.testName = testName;
     const sanitizedName = sanitizeTestName(testName);
     this.testDir = join(env['INTEGRATION_TEST_FILE_DIR']!, sanitizedName);
     mkdirSync(this.testDir, { recursive: true });
+
+    // Store fake responses path for use in run()
+    if (options.fakeResponsesPath) {
+      this._fakeResponsesPath = options.fakeResponsesPath;
+    }
 
     // Create a settings file to point the CLI to the local collector
     const qwenDir = join(this.testDir, '.qwen');
@@ -188,6 +197,16 @@ export class TestRig {
       join(qwenDir, 'settings.json'),
       JSON.stringify(settings, null, 2),
     );
+  }
+
+  /**
+   * Creates a script file in the test directory and returns its path.
+   * Useful for creating hook scripts that need to be executed.
+   */
+  createScript(fileName: string, content: string): string {
+    const filePath = join(this.testDir!, fileName);
+    writeFileSync(filePath, content, { mode: 0o755 });
+    return filePath;
   }
 
   createFile(fileName: string, content: string) {
@@ -256,10 +275,16 @@ export class TestRig {
 
     commandArgs.push(...args);
 
+    // Set up environment with fake responses path if configured
+    const childEnv = { ...process.env };
+    if (this._fakeResponsesPath) {
+      childEnv['QWEN_FAKE_RESPONSES_PATH'] = this._fakeResponsesPath;
+    }
+
     const child = spawn(command, commandArgs, {
       cwd: this.testDir!,
       stdio: 'pipe',
-      env: process.env,
+      env: childEnv,
     });
 
     let stdout = '';
