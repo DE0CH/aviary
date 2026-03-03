@@ -1177,24 +1177,24 @@ const SETTINGS_SCHEMA = {
     showInDialog: false,
   },
 
-  hooks: {
+  hooksConfig: {
     type: 'object',
-    label: 'Hooks',
+    label: 'Hooks Config',
     category: 'Advanced',
     requiresRestart: false,
     default: {},
     description:
-      'Hook configurations for extending CLI behavior at various lifecycle points.',
+      'Hook configurations for intercepting and customizing agent behavior.',
     showInDialog: false,
     properties: {
       enabled: {
         type: 'boolean',
         label: 'Enable Hooks',
         category: 'Advanced',
-        requiresRestart: false,
-        default: false,
+        requiresRestart: true,
+        default: true,
         description:
-          'Enable the hooks feature. When enabled, hooks defined in UserPromptSubmit and Stop will be executed.',
+          'Canonical toggle for the hooks system. When disabled, no hooks will be executed.',
         showInDialog: false,
       },
       disabled: {
@@ -1204,10 +1204,23 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: [] as string[],
         description:
-          'List of hook names to disable. Hooks in this list will not be executed.',
+          'List of hook names (commands) that should be disabled. Hooks in this list will not execute even if configured.',
         showInDialog: false,
         mergeStrategy: MergeStrategy.UNION,
       },
+    },
+  },
+
+  hooks: {
+    type: 'object',
+    label: 'Hooks',
+    category: 'Advanced',
+    requiresRestart: false,
+    default: {},
+    description:
+      'Hook event configurations for extending CLI behavior at various lifecycle points.',
+    showInDialog: false,
+    properties: {
       UserPromptSubmit: {
         type: 'array',
         label: 'Before Agent Hooks',

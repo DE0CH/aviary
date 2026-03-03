@@ -1034,8 +1034,9 @@ export async function loadCliConfig(
       format: outputSettingsFormat,
     },
     hooks: settings.hooks,
+    hooksConfig: settings.hooksConfig,
     enableHooks:
-      argv.experimentalHooks === true || settings.hooks?.enabled === true,
+      argv.experimentalHooks === true || settings.hooksConfig?.enabled === true,
     channel: argv.channel,
     // Precedence: explicit CLI flag > settings file > default(true).
     // NOTE: do NOT set a yargs default for `chat-recording`, otherwise argv will

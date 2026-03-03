@@ -388,6 +388,8 @@ export interface ConfigParameters {
   enableHooks?: boolean;
   /** Hooks configuration from settings */
   hooks?: Record<string, unknown>;
+  /** Hooks config settings (enabled, disabled list) */
+  hooksConfig?: Record<string, unknown>;
   /** Warnings generated during configuration resolution */
   warnings?: string[];
 }
@@ -532,6 +534,7 @@ export class Config {
   private readonly defaultFileEncoding: FileEncodingType;
   private readonly enableHooks: boolean;
   private readonly hooks?: Record<string, unknown>;
+  private readonly hooksConfig?: Record<string, unknown>;
   private hookSystem?: HookSystem;
   private messageBus?: MessageBus;
 
@@ -690,6 +693,7 @@ export class Config {
     });
     this.enableHooks = params.enableHooks ?? false;
     this.hooks = params.hooks;
+    this.hooksConfig = params.hooksConfig;
   }
 
   /**
@@ -1506,9 +1510,9 @@ export class Config {
    * This is used by the HookRegistry to filter out disabled hooks.
    */
   getDisabledHooks(): string[] {
-    const hooks = this.hooks;
-    if (!hooks) return [];
-    const disabled = hooks['disabled'];
+    const hooksConfig = this.hooksConfig;
+    if (!hooksConfig) return [];
+    const disabled = hooksConfig['disabled'];
     return Array.isArray(disabled) ? (disabled as string[]) : [];
   }
 
