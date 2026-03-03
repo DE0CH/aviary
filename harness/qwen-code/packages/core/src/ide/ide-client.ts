@@ -586,7 +586,33 @@ export class IdeClient {
     }
 
     // Legacy discovery for VSCode extension < v0.5.1.
-    return this.getLegacyConnectionConfig(portFromEnv);
+    const legacyConfig = await this.getLegacyConnectionConfig(portFromEnv);
+    if (legacyConfig) {
+      return legacyConfig;
+    }
+
+    // Scan lock directory as a last resort when neither env var nor legacy
+    // file is available (e.g. code-server where the env var is not injected).
+    // Configs are sorted by modification time (most recent first). Pick the
+    // first one whose workspace matches the current working directory.
+    if (!portFromEnv) {
+      const ideDir = Storage.getGlobalIdeDir();
+      const configs = await this.getAllConnectionConfigs(ideDir);
+      if (configs.length > 0) {
+        debugLogger.debug(
+          `Discovered ${configs.length} IDE lock file(s) via directory scan`,
+        );
+        const cwd = process.cwd();
+        const match = configs.find(
+          (c) =>
+            c.workspacePath !== undefined &&
+            IdeClient.validateWorkspacePath(c.workspacePath, cwd).isValid,
+        );
+        return match ?? configs[0];
+      }
+    }
+
+    return undefined;
   }
 
   // Legacy connection files were written in the global temp directory.
@@ -781,20 +807,41 @@ export class IdeClient {
   }
 
   private async establishHttpConnection(port: string): Promise<boolean> {
+    const ideHost = await getIdeServerHost();
+    const connected = await this.tryHttpConnect(port, ideHost);
+    if (connected) {
+      return true;
+    }
+
+    // If the primary host failed and it was host.docker.internal, try
+    // 127.0.0.1 as fallback. This handles cases like code-server in Docker
+    // where the extension runs inside the container rather than on the host.
+    if (ideHost === CONTAINER_HOST) {
+      debugLogger.debug(
+        `Connection to ${CONTAINER_HOST}:${port} failed, retrying with ${LOCAL_HOST}`,
+      );
+      return this.tryHttpConnect(port, LOCAL_HOST);
+    }
+
+    return false;
+  }
+
+  private async tryHttpConnect(port: string, host: string): Promise<boolean> {
     let transport: StreamableHTTPClientTransport | undefined;
     try {
-      debugLogger.debug('Attempting to connect to IDE via HTTP SSE');
+      debugLogger.debug(
+        `Attempting to connect to IDE via HTTP at ${host}:${port}`,
+      );
       this.client = new Client({
         name: 'streamable-http-client',
         // TODO(#3487): use the CLI version here.
         version: '1.0.0',
       });
 
-      const ideHost = await getIdeServerHost();
       transport = new StreamableHTTPClientTransport(
-        new URL(`http://${ideHost}:${port}/mcp`),
+        new URL(`http://${host}:${port}/mcp`),
         {
-          fetch: this.createProxyAwareFetch(ideHost),
+          fetch: this.createProxyAwareFetch(host),
           requestInit: {
             headers: this.authToken
               ? { Authorization: `Bearer ${this.authToken}` }
@@ -810,7 +857,8 @@ export class IdeClient {
       await this.discoverTools();
       this.setState(IDEConnectionStatus.Connected);
       return true;
-    } catch (_error) {
+    } catch (error) {
+      debugLogger.debug(`HTTP connection to ${host}:${port} failed:`, error);
       if (transport) {
         try {
           await transport.close();
@@ -898,15 +946,9 @@ async function isHostResolvable(hostname: string): Promise<boolean> {
 /**
  * Determine the IDE server host to connect to.
  *
- * In container environments (Docker, Podman, etc.), the CLI needs to reach the
- * host machine where the IDE extension is running. `host.docker.internal` is
- * available in Docker Desktop but may not exist in Linux Docker or code-server.
- *
- * Logic:
- * 1. If inside a container (`/.dockerenv` or `/run/.containerenv`), verify
- *    `host.docker.internal` is DNS-resolvable.
- * 2. Use it if reachable; otherwise fall back to `127.0.0.1`.
- * 3. Outside containers, always use `127.0.0.1`.
+ * In container environments (`/.dockerenv` or `/run/.containerenv`), verify
+ * `host.docker.internal` is DNS-resolvable and use it if reachable.
+ * Otherwise fall back to `127.0.0.1`.
  *
  * Results are cached; concurrent calls share a single lookup.
  */
