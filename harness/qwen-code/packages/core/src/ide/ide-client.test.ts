@@ -205,7 +205,7 @@ describe('IdeClient', () => {
       );
     });
 
-    it('should retry HTTP connection with 127.0.0.1 when host.docker.internal fails', async () => {
+    it('should fall back to host.docker.internal when localhost fails in container', async () => {
       process.env['QWEN_CODE_IDE_SERVER_PORT'] = '9090';
       vi.mocked(fs.promises.readFile).mockRejectedValue(
         new Error('File not found'),
@@ -223,20 +223,22 @@ describe('IdeClient', () => {
         family: 4,
       });
       mockClient.connect
-        .mockRejectedValueOnce(new Error('primary host unreachable'))
+        .mockRejectedValueOnce(new Error('localhost unreachable'))
         .mockResolvedValueOnce(undefined);
 
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();
 
+      // Localhost is always tried first.
       expect(StreamableHTTPClientTransport).toHaveBeenNthCalledWith(
         1,
-        new URL('http://host.docker.internal:9090/mcp'),
+        new URL('http://127.0.0.1:9090/mcp'),
         expect.any(Object),
       );
+      // In a container, host.docker.internal is used as fallback.
       expect(StreamableHTTPClientTransport).toHaveBeenNthCalledWith(
         2,
-        new URL('http://127.0.0.1:9090/mcp'),
+        new URL('http://host.docker.internal:9090/mcp'),
         expect.any(Object),
       );
       expect(ideClient.getConnectionStatus().status).toBe(
@@ -474,6 +476,54 @@ describe('IdeClient', () => {
         path.join('/home/test', '.qwen', 'ide'),
       );
     });
+
+    it('should return undefined when scanned lock files do not match current workspace', async () => {
+      vi.mocked(fs.promises.readFile).mockImplementation(
+        async (filePath: fs.PathLike | FileHandle) => {
+          const file = String(filePath);
+          if (file === path.join('/tmp', 'qwen-code-ide-server-12345.json')) {
+            throw new Error('not found');
+          }
+          if (file === path.join('/home/test', '.qwen', 'ide', '1000.lock')) {
+            return JSON.stringify({
+              port: '1000',
+              workspacePath: '/another/workspace',
+            });
+          }
+          if (file === path.join('/home/test', '.qwen', 'ide', '2000.lock')) {
+            return JSON.stringify({
+              port: '2000',
+              workspacePath: '/yet/another/workspace',
+            });
+          }
+          throw new Error(`unexpected path: ${file}`);
+        },
+      );
+      (
+        vi.mocked(fs.promises.readdir) as Mock<
+          (path: fs.PathLike) => Promise<string[]>
+        >
+      ).mockResolvedValue(['1000.lock', '2000.lock']);
+      (
+        vi.mocked(fs.promises.stat) as Mock<
+          (path: fs.PathLike) => Promise<fs.Stats>
+        >
+      ).mockImplementation(async (filePath: fs.PathLike) => {
+        const file = String(filePath);
+        return {
+          mtimeMs: file.endsWith('2000.lock') ? 2000 : 1000,
+        } as fs.Stats;
+      });
+
+      const ideClient = await IdeClient.getInstance();
+      const result = await (
+        ideClient as unknown as {
+          getConnectionConfigFromFile: () => Promise<unknown>;
+        }
+      ).getConnectionConfigFromFile();
+
+      expect(result).toBeUndefined();
+    });
   });
 
   describe('isDiffingEnabled', () => {
@@ -686,56 +736,6 @@ describe('getIdeServerHost', () => {
 
     expect(host).toBe('127.0.0.1');
     expect(dnsLookupMock).toHaveBeenCalledWith('host.docker.internal');
-  });
-
-  it('should use host.docker.internal in HTTP connection URL when in container', async () => {
-    _resetCachedIdeServerHost();
-    vi.mocked(fs.existsSync).mockImplementation(
-      (filePath: fs.PathLike) => filePath === '/.dockerenv',
-    );
-    mockDnsResolvable(true);
-
-    // Reset singleton for this test
-    (
-      IdeClient as unknown as {
-        instancePromise: Promise<IdeClient> | null;
-      }
-    ).instancePromise = null;
-    process.env['QWEN_CODE_IDE_WORKSPACE_PATH'] = '/test/workspace';
-    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace/sub-dir');
-    vi.mocked(detectIde).mockReturnValue(IDE_DEFINITIONS.vscode);
-    vi.mocked(getIdeProcessInfo).mockResolvedValue({
-      pid: 12345,
-      command: 'test-ide',
-    });
-    vi.mocked(os.tmpdir).mockReturnValue('/tmp');
-    vi.mocked(os.homedir).mockReturnValue('/home/test');
-
-    const mockClient = {
-      connect: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn(),
-      setNotificationHandler: vi.fn(),
-      callTool: vi.fn(),
-      request: vi.fn(),
-    } as unknown as Mocked<Client>;
-    vi.mocked(Client).mockReturnValue(mockClient);
-    vi.mocked(StreamableHTTPClientTransport).mockReturnValue({
-      close: vi.fn(),
-    } as unknown as Mocked<StreamableHTTPClientTransport>);
-
-    process.env['QWEN_CODE_IDE_SERVER_PORT'] = '8080';
-    const config = { port: '8080' };
-    vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
-
-    const ideClient = await IdeClient.getInstance();
-    await ideClient.connect();
-
-    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
-      new URL('http://host.docker.internal:8080/mcp'),
-      expect.any(Object),
-    );
-
-    delete process.env['QWEN_CODE_IDE_SERVER_PORT'];
   });
 
   it('should perform only one DNS lookup when called concurrently', async () => {

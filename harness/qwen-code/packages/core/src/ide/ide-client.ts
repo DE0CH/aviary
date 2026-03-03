@@ -608,7 +608,7 @@ export class IdeClient {
             c.workspacePath !== undefined &&
             IdeClient.validateWorkspacePath(c.workspacePath, cwd).isValid,
         );
-        return match ?? configs[0];
+        return match;
       }
     }
 
@@ -807,20 +807,23 @@ export class IdeClient {
   }
 
   private async establishHttpConnection(port: string): Promise<boolean> {
-    const ideHost = await getIdeServerHost();
-    const connected = await this.tryHttpConnect(port, ideHost);
+    // Always try localhost first. This covers the most common scenarios:
+    // non-container environments, and code-server where the extension runs
+    // inside the same container as the CLI.
+    const connected = await this.tryHttpConnect(port, LOCAL_HOST);
     if (connected) {
       return true;
     }
 
-    // If the primary host failed and it was host.docker.internal, try
-    // 127.0.0.1 as fallback. This handles cases like code-server in Docker
-    // where the extension runs inside the container rather than on the host.
+    // If localhost failed and we are inside a container, the IDE server may
+    // be running on the host machine (e.g. VS Code Dev Containers). Try
+    // host.docker.internal as a fallback when it is DNS-resolvable.
+    const ideHost = await getIdeServerHost();
     if (ideHost === CONTAINER_HOST) {
       debugLogger.debug(
-        `Connection to ${CONTAINER_HOST}:${port} failed, retrying with ${LOCAL_HOST}`,
+        `Connection to ${LOCAL_HOST}:${port} failed, retrying with ${CONTAINER_HOST}`,
       );
-      return this.tryHttpConnect(port, LOCAL_HOST);
+      return this.tryHttpConnect(port, CONTAINER_HOST);
     }
 
     return false;
