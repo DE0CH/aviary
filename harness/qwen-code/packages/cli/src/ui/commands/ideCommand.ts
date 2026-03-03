@@ -133,38 +133,10 @@ async function setIdeModeAndSyncConnection(
   }
 }
 
-const CLOUD_IDE_ENV_LABELS = [
-  { key: 'CODESPACES', label: 'GitHub Codespaces' },
-  { key: 'CLOUD_SHELL', label: 'Cloud Shell' },
-  { key: 'EDITOR_IN_CLOUD_SHELL', label: 'Cloud Shell' },
-  { key: 'DEVCONTAINER', label: 'Dev Container' },
-] as const;
-
-function isEnabledEnvVar(name: string): boolean {
-  const value = process.env[name];
-  return (
-    value !== undefined && value !== '' && value !== 'false' && value !== '0'
-  );
-}
-
-function getCloudIdeEnvironments(): string[] {
-  const envNames = new Set<string>();
-  for (const env of CLOUD_IDE_ENV_LABELS) {
-    if (isEnabledEnvVar(env.key)) {
-      envNames.add(env.label);
-    }
-  }
-  return [...envNames];
-}
-
 export const ideCommand = async (): Promise<SlashCommand> => {
   const ideClient = await IdeClient.getInstance();
   const currentIDE = ideClient.getCurrentIde();
-  const cloudEnvironments = getCloudIdeEnvironments();
-  const isInCloudIde = cloudEnvironments.length > 0;
-
-  // Allow IDE integration in cloud environments even without detected IDE
-  if (!currentIDE && !isInCloudIde) {
+  if (!currentIDE) {
     return {
       name: 'ide',
       get description() {
@@ -200,18 +172,6 @@ export const ideCommand = async (): Promise<SlashCommand> => {
     action: async (): Promise<SlashCommandActionReturn> => {
       const { messageType, content } =
         await getIdeStatusMessageWithFiles(ideClient);
-
-      // Add cloud IDE environment info if applicable
-      if (isInCloudIde) {
-        const additionalInfo = `\n\nEnvironment: ${cloudEnvironments.join(', ')}\nNote: In cloud IDE environments, the IDE extension must be installed on the host machine.`;
-
-        return {
-          type: 'message',
-          messageType,
-          content: content + additionalInfo,
-        } as const;
-      }
-
       return {
         type: 'message',
         messageType,
@@ -223,31 +183,27 @@ export const ideCommand = async (): Promise<SlashCommand> => {
   const installCommand: SlashCommand = {
     name: 'install',
     get description() {
-      const ideName =
-        ideClient.getDetectedIdeDisplayName() ??
-        (isInCloudIde ? 'Cloud IDE' : 'IDE');
+      const ideName = ideClient.getDetectedIdeDisplayName() ?? 'IDE';
       return t('install required IDE companion for {{ideName}}', {
         ideName,
       });
     },
     kind: CommandKind.BUILT_IN,
     action: async (context) => {
-      const installer = currentIDE ? getIdeInstaller(currentIDE) : null;
+      const installer = getIdeInstaller(currentIDE);
       const isSandBox = !!process.env['SANDBOX'];
-
-      // In cloud IDE environments, the extension must be installed on the host
-      if (isInCloudIde || isSandBox) {
+      if (isSandBox) {
         context.ui.addItem(
           {
             type: 'info',
-            text: `IDE integration needs to be installed on the host. If you have already installed it, you can directly connect the IDE by running /ide enable.\n\nTo install the extension:\n1. Open your IDE on the host machine\n2. Install the '${QWEN_CODE_COMPANION_EXTENSION_NAME}' extension from the marketplace\n3. Run /ide enable in this terminal`,
+            text: `IDE integration needs to be installed on the host. If you have already installed it, you can directly connect the ide`,
           },
           Date.now(),
         );
         return;
       }
       if (!installer) {
-        const ideName = ideClient.getDetectedIdeDisplayName() ?? 'your IDE';
+        const ideName = ideClient.getDetectedIdeDisplayName();
         context.ui.addItem(
           {
             type: 'error',
@@ -328,25 +284,13 @@ export const ideCommand = async (): Promise<SlashCommand> => {
       );
       await setIdeModeAndSyncConnection(context.services.config!, true);
       const { messageType, content } = getIdeStatusMessage(ideClient);
-
-      // Provide additional guidance for cloud IDE environments
-      if (messageType === 'error' && isInCloudIde) {
-        context.ui.addItem(
-          {
-            type: 'error',
-            text: `${content}\n\nTroubleshooting tips for cloud IDE:\n1. Make sure the '${QWEN_CODE_COMPANION_EXTENSION_NAME}' extension is installed on your host IDE\n2. The extension should be running in your IDE on the host machine\n3. Try restarting the terminal in your cloud IDE\n4. Check that your workspace is properly synced between the container and host`,
-          },
-          Date.now(),
-        );
-      } else {
-        context.ui.addItem(
-          {
-            type: messageType,
-            text: content,
-          },
-          Date.now(),
-        );
-      }
+      context.ui.addItem(
+        {
+          type: messageType,
+          text: content,
+        },
+        Date.now(),
+      );
     },
   };
 

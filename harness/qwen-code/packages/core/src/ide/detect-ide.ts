@@ -16,48 +16,13 @@ export const IDE_DEFINITIONS = {
   vscodefork: { name: 'vscodefork', displayName: 'IDE' },
 } as const;
 
-export const IDE_SERVER_HOSTS = {
-  local: '127.0.0.1',
-  container: 'host.docker.internal',
-} as const;
-
-const CLOUD_IDE_RUNTIME_ENV_LABELS = [
-  { key: 'CODESPACES', label: 'GitHub Codespaces' },
-  { key: 'CLOUD_SHELL', label: 'Cloud Shell' },
-  { key: 'EDITOR_IN_CLOUD_SHELL', label: 'Cloud Shell' },
-  { key: 'DEVCONTAINER', label: 'Dev Container' },
-] as const;
-
 export interface IdeInfo {
   name: string;
   displayName: string;
 }
 
-function isEnabledEnvVar(name: string): boolean {
-  const value = process.env[name];
-  return (
-    value !== undefined && value !== '' && value !== 'false' && value !== '0'
-  );
-}
-
 export function isCloudShell(): boolean {
-  return (
-    isEnabledEnvVar('EDITOR_IN_CLOUD_SHELL') || isEnabledEnvVar('CLOUD_SHELL')
-  );
-}
-
-export function isCloudIdeRuntime(): boolean {
-  return CLOUD_IDE_RUNTIME_ENV_LABELS.some((env) => isEnabledEnvVar(env.key));
-}
-
-export function getCloudIdeEnvironmentLabels(): string[] {
-  const labels = new Set<string>();
-  for (const env of CLOUD_IDE_RUNTIME_ENV_LABELS) {
-    if (isEnabledEnvVar(env.key)) {
-      labels.add(env.label);
-    }
-  }
-  return [...labels];
+  return !!(process.env['EDITOR_IN_CLOUD_SHELL'] || process.env['CLOUD_SHELL']);
 }
 
 export function detectIdeFromEnv(): IdeInfo {
@@ -70,7 +35,7 @@ export function detectIdeFromEnv(): IdeInfo {
   if (process.env['CURSOR_TRACE_ID']) {
     return IDE_DEFINITIONS.cursor;
   }
-  if (isEnabledEnvVar('CODESPACES')) {
+  if (process.env['CODESPACES']) {
     return IDE_DEFINITIONS.codespaces;
   }
   if (isCloudShell()) {
@@ -116,21 +81,6 @@ export function detectIde(
       name: ideInfoFromFile.name,
       displayName: ideInfoFromFile.displayName,
     };
-  }
-
-  if (isEnabledEnvVar('CODESPACES')) {
-    return IDE_DEFINITIONS.codespaces;
-  }
-  if (isCloudShell()) {
-    return IDE_DEFINITIONS.cloudshell;
-  }
-  if (isEnabledEnvVar('DEVCONTAINER')) {
-    // Dev container could be VS Code based
-    if (process.env['TERM_PROGRAM'] === 'vscode') {
-      const ide = detectIdeFromEnv();
-      return verifyVSCode(ide, ideProcessInfo);
-    }
-    return undefined;
   }
 
   // Only VSCode-based integrations are currently supported.

@@ -7,12 +7,7 @@
 import * as dns from 'node:dns';
 import * as fs from 'node:fs';
 import { isSubpath } from '../utils/paths.js';
-import {
-  detectIde,
-  IDE_SERVER_HOSTS,
-  isCloudIdeRuntime,
-  type IdeInfo,
-} from '../ide/detect-ide.js';
+import { detectIde, type IdeInfo } from '../ide/detect-ide.js';
 import { ideContextStore } from './ideContext.js';
 import { Storage } from '../config/storage.js';
 import {
@@ -140,14 +135,7 @@ export class IdeClient {
   }
 
   async connect(): Promise<void> {
-    const isInCloudIde = isCloudIdeRuntime();
-    const targetIdeDisplayName = this.currentIde?.displayName
-      ? this.currentIde.displayName
-      : isInCloudIde
-        ? 'Cloud IDE'
-        : 'your IDE';
-
-    if (!this.currentIde && !isInCloudIde) {
+    if (!this.currentIde) {
       this.setState(
         IDEConnectionStatus.Disconnected,
         `IDE integration is not supported in your current environment. To use this feature, run Qwen Code in one of these supported IDEs: VS Code or VS Code forks`,
@@ -213,7 +201,7 @@ export class IdeClient {
 
     this.setState(
       IDEConnectionStatus.Disconnected,
-      `Failed to connect to IDE companion extension in ${targetIdeDisplayName}. Please ensure the extension is running. To install the extension, run /ide install.`,
+      `Failed to connect to IDE companion extension in ${this.currentIde.displayName}. Please ensure the extension is running. To install the extension, run /ide install.`,
       true,
     );
   }
@@ -685,14 +673,10 @@ export class IdeClient {
   }
 
   private createProxyAwareFetch(ideHost: string) {
-    // ignore proxy for '127.0.0.1' and 'host.docker.internal' by default
-    // to allow connecting to the ide mcp server even when HTTP_PROXY is set
+    // Ignore proxy for IDE server host to allow connecting to the ide mcp
+    // server even when HTTP_PROXY is set
     const existingNoProxy = process.env['NO_PROXY'] || '';
-    const noProxyHosts = [existingNoProxy, IDE_SERVER_HOSTS.local];
-    // Add the IDE host to no_proxy if it's host.docker.internal
-    if (ideHost === IDE_SERVER_HOSTS.container) {
-      noProxyHosts.push(ideHost);
-    }
+    const noProxyHosts = [existingNoProxy, ideHost];
     const agent = new EnvHttpProxyAgent({
       noProxy: noProxyHosts.filter(Boolean).join(','),
     });
@@ -873,116 +857,82 @@ export class IdeClient {
   }
 }
 
+const CONTAINER_HOST = 'host.docker.internal';
+const LOCAL_HOST = '127.0.0.1';
+const DNS_LOOKUP_TIMEOUT_MS = 3_000;
+
 /**
- * Cached IDE server host result to avoid repeated DNS lookups.
+ * Cached promise for IDE server host. Caching the promise itself handles both
+ * result caching and concurrent-call deduplication in one mechanism: a resolved
+ * promise returns instantly, and a pending promise is shared across callers.
  */
-let cachedIdeServerHost: string | undefined;
+let hostPromise: Promise<string> | undefined;
 
 /**
- * In-flight promise for concurrent lookups to prevent redundant DNS queries.
- */
-let lookupPromise: Promise<string> | undefined;
-
-const IDE_HOST_LOOKUP_TIMEOUT_MS = 3_000;
-
-/**
- * Reset the cached IDE server host. Exported for testing only.
+ * Reset the cached host promise. Exported for testing only.
  * @internal
  */
 export function _resetCachedIdeServerHost(): void {
-  cachedIdeServerHost = undefined;
-  lookupPromise = undefined;
+  hostPromise = undefined;
 }
 
 /**
- * Check if a hostname is resolvable via DNS lookup.
+ * Check if a hostname is DNS-resolvable, with a timeout guard.
  */
-function checkHostReachable(hostname: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      debugLogger.debug(
-        `DNS lookup timed out for ${hostname} after ${IDE_HOST_LOOKUP_TIMEOUT_MS}ms`,
+async function isHostResolvable(hostname: string): Promise<boolean> {
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('DNS lookup timeout')),
+        DNS_LOOKUP_TIMEOUT_MS,
       );
-      resolve(false);
-    }, IDE_HOST_LOOKUP_TIMEOUT_MS);
-    timeout.unref?.();
-
-    dns.lookup(hostname, (err) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolve(!err);
+      timer.unref?.();
     });
-  });
+    await Promise.race([dns.promises.lookup(hostname), timeout]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Determine the IDE server host to connect to.
  *
  * In container environments (Docker, Podman, etc.), the CLI needs to reach the
- * host machine where the IDE extension is running. The conventional hostname
- * `host.docker.internal` is typically available in Docker Desktop but may not
- * exist in Linux Docker or other container runtimes (e.g. code-server remote).
+ * host machine where the IDE extension is running. `host.docker.internal` is
+ * available in Docker Desktop but may not exist in Linux Docker or code-server.
  *
- * This function:
- * 1. Detects if we are inside a container (via `/.dockerenv`, `/run/.containerenv`,
- *    or cloud IDE environment variables like CODESPACES, CLOUD_SHELL, DEVCONTAINER).
- * 2. If so, performs an async DNS check to verify `host.docker.internal` is resolvable.
- * 3. Falls back to `127.0.0.1` if the hostname is not reachable.
+ * Logic:
+ * 1. If inside a container (`/.dockerenv` or `/run/.containerenv`), verify
+ *    `host.docker.internal` is DNS-resolvable.
+ * 2. Use it if reachable; otherwise fall back to `127.0.0.1`.
+ * 3. Outside containers, always use `127.0.0.1`.
+ *
+ * Results are cached; concurrent calls share a single lookup.
  */
-async function doLookup(): Promise<string> {
-  // Check for Docker container
-  const isInDocker =
+async function resolveIdeServerHost(): Promise<string> {
+  const isInContainer =
     fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
 
-  const isInContainer = isInDocker || isCloudIdeRuntime();
-
-  if (isInContainer) {
-    const reachable = await checkHostReachable(IDE_SERVER_HOSTS.container);
-    if (reachable) {
-      debugLogger.debug(
-        'Container detected, host.docker.internal is reachable',
-      );
-      cachedIdeServerHost = IDE_SERVER_HOSTS.container;
-    } else {
-      debugLogger.debug(
-        'Container detected, but host.docker.internal is NOT reachable, falling back to 127.0.0.1',
-      );
-      cachedIdeServerHost = IDE_SERVER_HOSTS.local;
-    }
-  } else {
-    cachedIdeServerHost = IDE_SERVER_HOSTS.local;
+  if (!isInContainer) {
+    return LOCAL_HOST;
   }
 
-  return cachedIdeServerHost;
+  const reachable = await isHostResolvable(CONTAINER_HOST);
+  if (reachable) {
+    debugLogger.debug('Container detected, host.docker.internal is reachable');
+    return CONTAINER_HOST;
+  }
+
+  debugLogger.debug(
+    'Container detected, but host.docker.internal is NOT reachable, falling back to 127.0.0.1',
+  );
+  return LOCAL_HOST;
 }
 
 export async function getIdeServerHost(): Promise<string> {
-  // Return cached result if available
-  if (cachedIdeServerHost !== undefined) {
-    return cachedIdeServerHost;
+  if (!hostPromise) {
+    hostPromise = resolveIdeServerHost();
   }
-
-  // If a lookup is already in progress, wait for it to complete
-  if (lookupPromise !== undefined) {
-    return lookupPromise;
-  }
-
-  // Start a new lookup and store the promise for concurrent callers
-  lookupPromise = doLookup();
-
-  try {
-    const result = await lookupPromise;
-    return result;
-  } finally {
-    // Clear the in-flight promise so future calls use the cache
-    lookupPromise = undefined;
-  }
+  return hostPromise;
 }

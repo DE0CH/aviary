@@ -27,19 +27,8 @@ describe('ideCommand', () => {
   let mockIdeClient: core.IdeClient;
   let platformSpy: MockInstance;
 
-  const cloudEnvKeys = [
-    'CODESPACES',
-    'CLOUD_SHELL',
-    'EDITOR_IN_CLOUD_SHELL',
-    'DEVCONTAINER',
-  ] as const;
-
   beforeEach(() => {
     vi.resetAllMocks();
-    for (const key of cloudEnvKeys) {
-      delete process.env[key];
-    }
-    delete process.env['SANDBOX'];
 
     mockIdeClient = {
       reconnect: vi.fn(),
@@ -178,41 +167,6 @@ describe('ideCommand', () => {
         messageType: 'error',
         content: `🔴 Disconnected: ${details}`,
       });
-    });
-
-    it('should include cloud env hint when in cloud shell runtime', async () => {
-      vi.mocked(mockIdeClient.getCurrentIde).mockReturnValue(undefined);
-      process.env['EDITOR_IN_CLOUD_SHELL'] = '1';
-      vi.mocked(mockIdeClient.getConnectionStatus).mockReturnValue({
-        status: core.IDEConnectionStatus.Disconnected,
-      });
-
-      const command = await ideCommand();
-      const result = await command.subCommands!.find(
-        (c) => c.name === 'status',
-      )!.action!(mockContext, '');
-
-      expect(result).toEqual({
-        type: 'message',
-        messageType: 'error',
-        content:
-          '🔴 Disconnected\n\nEnvironment: Cloud Shell\nNote: In cloud IDE environments, the IDE extension must be installed on the host machine.',
-      });
-    });
-  });
-
-  describe('cloud runtime detection', () => {
-    it('should allow /ide command in cloud env even if IDE is not detected', async () => {
-      vi.mocked(mockIdeClient.getCurrentIde).mockReturnValue(undefined);
-      vi.mocked(mockIdeClient.getConnectionStatus).mockReturnValue({
-        status: core.IDEConnectionStatus.Disconnected,
-      });
-      process.env['CODESPACES'] = '1';
-
-      const command = await ideCommand();
-
-      expect(command.name).toBe('ide');
-      expect(command.subCommands).toHaveLength(3);
     });
   });
 
