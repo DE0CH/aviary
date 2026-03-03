@@ -19,3 +19,4 @@ gha-creds-*.json
 junit.xml
 Thumbs.db
 packages/vscode-ide-companion/schemas/settings.schema.json
+packages/cli/src/services/insight/templates/insightTemplate.ts
