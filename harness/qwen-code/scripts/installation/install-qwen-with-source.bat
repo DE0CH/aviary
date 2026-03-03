@@ -138,6 +138,7 @@ echo.
 echo ===========================================
 echo SUCCESS: Installation completed!
 echo The source information is stored in %USERPROFILE%\.qwen\source.json
+echo INFO: Please restart your terminal and run: qwen
 echo.
 echo ===========================================
 

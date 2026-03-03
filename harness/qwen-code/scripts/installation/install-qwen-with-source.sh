@@ -541,7 +541,8 @@ main() {
     if command_exists qwen; then
         log_success "Qwen Code is ready to use!"
         echo ""
-        echo "You can now run: qwen"
+        log_info "Please restart your terminal and run: qwen"
+        echo ""
     else
         log_warning "To start using Qwen Code, please run:"
         echo ""
@@ -549,7 +550,7 @@ main() {
         PROFILE_FILE=$(get_shell_profile)
         echo "  source ${PROFILE_FILE}"
         echo ""
-        echo "Or simply restart your terminal, then run: qwen"
+        log_info "Or simply restart your terminal, then run: qwen"
     fi
 }
 
