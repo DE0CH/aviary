@@ -133,15 +133,35 @@ async function setIdeModeAndSyncConnection(
   }
 }
 
+const CLOUD_IDE_ENV_LABELS = [
+  { key: 'CODESPACES', label: 'GitHub Codespaces' },
+  { key: 'CLOUD_SHELL', label: 'Cloud Shell' },
+  { key: 'EDITOR_IN_CLOUD_SHELL', label: 'Cloud Shell' },
+  { key: 'DEVCONTAINER', label: 'Dev Container' },
+] as const;
+
+function isEnabledEnvVar(name: string): boolean {
+  const value = process.env[name];
+  return (
+    value !== undefined && value !== '' && value !== 'false' && value !== '0'
+  );
+}
+
+function getCloudIdeEnvironments(): string[] {
+  const envNames = new Set<string>();
+  for (const env of CLOUD_IDE_ENV_LABELS) {
+    if (isEnabledEnvVar(env.key)) {
+      envNames.add(env.label);
+    }
+  }
+  return [...envNames];
+}
+
 export const ideCommand = async (): Promise<SlashCommand> => {
   const ideClient = await IdeClient.getInstance();
   const currentIDE = ideClient.getCurrentIde();
-
-  // Check if we're in a cloud IDE environment
-  const isInCloudIde =
-    process.env['CODESPACES'] === 'true' ||
-    process.env['CLOUD_SHELL'] === 'true' ||
-    process.env['DEVCONTAINER'] === 'true';
+  const cloudEnvironments = getCloudIdeEnvironments();
+  const isInCloudIde = cloudEnvironments.length > 0;
 
   // Allow IDE integration in cloud environments even without detected IDE
   if (!currentIDE && !isInCloudIde) {
@@ -183,14 +203,7 @@ export const ideCommand = async (): Promise<SlashCommand> => {
 
       // Add cloud IDE environment info if applicable
       if (isInCloudIde) {
-        const envInfo = [];
-        if (process.env['CODESPACES'] === 'true')
-          envInfo.push('GitHub Codespaces');
-        if (process.env['CLOUD_SHELL'] === 'true') envInfo.push('Cloud Shell');
-        if (process.env['DEVCONTAINER'] === 'true')
-          envInfo.push('Dev Container');
-
-        const additionalInfo = `\n\nEnvironment: ${envInfo.join(', ')}\nNote: In cloud IDE environments, the IDE extension must be installed on the host machine.`;
+        const additionalInfo = `\n\nEnvironment: ${cloudEnvironments.join(', ')}\nNote: In cloud IDE environments, the IDE extension must be installed on the host machine.`;
 
         return {
           type: 'message',

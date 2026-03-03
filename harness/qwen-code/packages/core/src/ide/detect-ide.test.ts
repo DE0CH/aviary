@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectIde, IDE_DEFINITIONS } from './detect-ide.js';
+import {
+  detectIde,
+  getCloudIdeEnvironmentLabels,
+  IDE_DEFINITIONS,
+  isCloudIdeRuntime,
+} from './detect-ide.js';
 
 describe('detectIde', () => {
   const ideProcessInfo = { pid: 123, command: 'some/path/to/code' };
@@ -19,8 +24,10 @@ describe('detectIde', () => {
     vi.stubEnv('CODESPACES', '');
     vi.stubEnv('EDITOR_IN_CLOUD_SHELL', '');
     vi.stubEnv('CLOUD_SHELL', '');
+    vi.stubEnv('DEVCONTAINER', '');
     vi.stubEnv('TERM_PRODUCT', '');
     vi.stubEnv('MONOSPACE_ENV', '');
+    vi.stubEnv('TERM_PROGRAM', '');
   });
 
   afterEach(() => {
@@ -53,6 +60,12 @@ describe('detectIde', () => {
   it('should detect Codespaces', () => {
     vi.stubEnv('TERM_PROGRAM', 'vscode');
     vi.stubEnv('CODESPACES', 'true');
+    expect(detectIde(ideProcessInfo)).toBe(IDE_DEFINITIONS.codespaces);
+  });
+
+  it('should detect Codespaces when env value is 1', () => {
+    vi.stubEnv('TERM_PROGRAM', 'vscode');
+    vi.stubEnv('CODESPACES', '1');
     expect(detectIde(ideProcessInfo)).toBe(IDE_DEFINITIONS.codespaces);
   });
 
@@ -91,6 +104,18 @@ describe('detectIde', () => {
     vi.stubEnv('MONOSPACE_ENV', '');
     expect(detectIde(ideProcessInfoNoCode)).toBe(IDE_DEFINITIONS.vscodefork);
   });
+
+  it('should return undefined in a dev container when TERM_PROGRAM is not vscode', () => {
+    vi.stubEnv('DEVCONTAINER', 'true');
+    vi.stubEnv('TERM_PROGRAM', '');
+    expect(detectIde(ideProcessInfo)).toBeUndefined();
+  });
+
+  it('should detect VSCode in a dev container when TERM_PROGRAM is vscode', () => {
+    vi.stubEnv('DEVCONTAINER', 'true');
+    vi.stubEnv('TERM_PROGRAM', 'vscode');
+    expect(detectIde(ideProcessInfo)).toBe(IDE_DEFINITIONS.vscode);
+  });
 });
 
 describe('detectIde with ideInfoFromFile', () => {
@@ -103,8 +128,10 @@ describe('detectIde with ideInfoFromFile', () => {
     vi.stubEnv('CODESPACES', '');
     vi.stubEnv('EDITOR_IN_CLOUD_SHELL', '');
     vi.stubEnv('CLOUD_SHELL', '');
+    vi.stubEnv('DEVCONTAINER', '');
     vi.stubEnv('TERM_PRODUCT', '');
     vi.stubEnv('MONOSPACE_ENV', '');
+    vi.stubEnv('TERM_PROGRAM', '');
   });
 
   afterEach(() => {
@@ -133,5 +160,46 @@ describe('detectIde with ideInfoFromFile', () => {
     expect(detectIde(ideProcessInfo, ideInfoFromFile)).toBe(
       IDE_DEFINITIONS.vscode,
     );
+  });
+});
+
+describe('cloud IDE runtime helpers', () => {
+  beforeEach(() => {
+    vi.stubEnv('CODESPACES', '');
+    vi.stubEnv('CLOUD_SHELL', '');
+    vi.stubEnv('EDITOR_IN_CLOUD_SHELL', '');
+    vi.stubEnv('DEVCONTAINER', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('should return false when all cloud runtime env vars are disabled', () => {
+    vi.stubEnv('CODESPACES', '0');
+    vi.stubEnv('CLOUD_SHELL', 'false');
+    vi.stubEnv('EDITOR_IN_CLOUD_SHELL', '');
+    vi.stubEnv('DEVCONTAINER', '');
+
+    expect(isCloudIdeRuntime()).toBe(false);
+    expect(getCloudIdeEnvironmentLabels()).toEqual([]);
+  });
+
+  it('should return cloud labels from enabled env vars', () => {
+    vi.stubEnv('CODESPACES', '1');
+    vi.stubEnv('CLOUD_SHELL', 'true');
+
+    expect(isCloudIdeRuntime()).toBe(true);
+    expect(getCloudIdeEnvironmentLabels()).toEqual([
+      'GitHub Codespaces',
+      'Cloud Shell',
+    ]);
+  });
+
+  it('should deduplicate Cloud Shell label', () => {
+    vi.stubEnv('CLOUD_SHELL', '1');
+    vi.stubEnv('EDITOR_IN_CLOUD_SHELL', '1');
+
+    expect(getCloudIdeEnvironmentLabels()).toEqual(['Cloud Shell']);
   });
 });

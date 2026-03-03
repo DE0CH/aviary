@@ -55,7 +55,14 @@ vi.mock('./process-utils.js');
 vi.mock('@modelcontextprotocol/sdk/client/index.js');
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js');
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js');
-vi.mock('./detect-ide.js');
+vi.mock('./detect-ide.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./detect-ide.js')>();
+  return {
+    ...actual,
+    detectIde: vi.fn(),
+    isCloudIdeRuntime: vi.fn(() => false),
+  };
+});
 vi.mock('node:os');
 
 describe('IdeClient', () => {
@@ -65,8 +72,11 @@ describe('IdeClient', () => {
 
   beforeEach(async () => {
     // Reset singleton instance and cached host for test isolation
-    (IdeClient as unknown as { instance: IdeClient | undefined }).instance =
-      undefined;
+    (
+      IdeClient as unknown as {
+        instancePromise: Promise<IdeClient> | null;
+      }
+    ).instancePromise = null;
     _resetCachedIdeServerHost();
 
     // Mock environment variables
@@ -616,8 +626,11 @@ describe('getIdeServerHost', () => {
     mockDnsLookup(true);
 
     // Reset singleton for this test
-    (IdeClient as unknown as { instance: IdeClient | undefined }).instance =
-      undefined;
+    (
+      IdeClient as unknown as {
+        instancePromise: Promise<IdeClient> | null;
+      }
+    ).instancePromise = null;
     process.env['QWEN_CODE_IDE_WORKSPACE_PATH'] = '/test/workspace';
     vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace/sub-dir');
     vi.mocked(detectIde).mockReturnValue(IDE_DEFINITIONS.vscode);

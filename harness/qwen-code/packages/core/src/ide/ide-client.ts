@@ -7,7 +7,12 @@
 import * as dns from 'node:dns';
 import * as fs from 'node:fs';
 import { isSubpath } from '../utils/paths.js';
-import { detectIde, type IdeInfo } from '../ide/detect-ide.js';
+import {
+  detectIde,
+  IDE_SERVER_HOSTS,
+  isCloudIdeRuntime,
+  type IdeInfo,
+} from '../ide/detect-ide.js';
 import { ideContextStore } from './ideContext.js';
 import { Storage } from '../config/storage.js';
 import {
@@ -135,11 +140,12 @@ export class IdeClient {
   }
 
   async connect(): Promise<void> {
-    // Check if we're in a cloud IDE environment
-    const isInCloudIde =
-      process.env['CODESPACES'] === 'true' ||
-      process.env['CLOUD_SHELL'] === 'true' ||
-      process.env['DEVCONTAINER'] === 'true';
+    const isInCloudIde = isCloudIdeRuntime();
+    const targetIdeDisplayName = this.currentIde?.displayName
+      ? this.currentIde.displayName
+      : isInCloudIde
+        ? 'Cloud IDE'
+        : 'your IDE';
 
     if (!this.currentIde && !isInCloudIde) {
       this.setState(
@@ -148,16 +154,6 @@ export class IdeClient {
         false,
       );
       return;
-    }
-
-    // In cloud IDE environments, we still try to connect even if currentIde is undefined
-    // because the IDE extension might be running on the host
-    if (!this.currentIde && isInCloudIde) {
-      // Set a default IDE info for cloud environments
-      this.currentIde = {
-        name: 'cloud-ide',
-        displayName: 'Cloud IDE',
-      };
     }
 
     this.setState(IDEConnectionStatus.Connecting);
@@ -217,7 +213,7 @@ export class IdeClient {
 
     this.setState(
       IDEConnectionStatus.Disconnected,
-      `Failed to connect to IDE companion extension in ${this.currentIde?.displayName ?? 'your IDE'}. Please ensure the extension is running. To install the extension, run /ide install.`,
+      `Failed to connect to IDE companion extension in ${targetIdeDisplayName}. Please ensure the extension is running. To install the extension, run /ide install.`,
       true,
     );
   }
@@ -692,9 +688,9 @@ export class IdeClient {
     // ignore proxy for '127.0.0.1' and 'host.docker.internal' by default
     // to allow connecting to the ide mcp server even when HTTP_PROXY is set
     const existingNoProxy = process.env['NO_PROXY'] || '';
-    const noProxyHosts = [existingNoProxy, '127.0.0.1'];
+    const noProxyHosts = [existingNoProxy, IDE_SERVER_HOSTS.local];
     // Add the IDE host to no_proxy if it's host.docker.internal
-    if (ideHost === 'host.docker.internal') {
+    if (ideHost === IDE_SERVER_HOSTS.container) {
       noProxyHosts.push(ideHost);
     }
     const agent = new EnvHttpProxyAgent({
@@ -946,29 +942,23 @@ async function doLookup(): Promise<string> {
   const isInDocker =
     fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
 
-  // Check for cloud IDE environments
-  const isInCodespaces = process.env['CODESPACES'] === 'true';
-  const isInCloudShell = process.env['CLOUD_SHELL'] === 'true';
-  const isInDevContainer = process.env['DEVCONTAINER'] === 'true';
-
-  const isInContainer =
-    isInDocker || isInCodespaces || isInCloudShell || isInDevContainer;
+  const isInContainer = isInDocker || isCloudIdeRuntime();
 
   if (isInContainer) {
-    const reachable = await checkHostReachable('host.docker.internal');
+    const reachable = await checkHostReachable(IDE_SERVER_HOSTS.container);
     if (reachable) {
       debugLogger.debug(
         'Container detected, host.docker.internal is reachable',
       );
-      cachedIdeServerHost = 'host.docker.internal';
+      cachedIdeServerHost = IDE_SERVER_HOSTS.container;
     } else {
       debugLogger.debug(
         'Container detected, but host.docker.internal is NOT reachable, falling back to 127.0.0.1',
       );
-      cachedIdeServerHost = '127.0.0.1';
+      cachedIdeServerHost = IDE_SERVER_HOSTS.local;
     }
   } else {
-    cachedIdeServerHost = '127.0.0.1';
+    cachedIdeServerHost = IDE_SERVER_HOSTS.local;
   }
 
   return cachedIdeServerHost;
