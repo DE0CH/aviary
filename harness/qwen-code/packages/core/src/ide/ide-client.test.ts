@@ -21,6 +21,7 @@ import {
   _resetCachedIdeServerHost,
 } from './ide-client.js';
 import * as fs from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import * as dns from 'node:dns';
 import { getIdeProcessInfo } from './process-utils.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -428,7 +429,7 @@ describe('IdeClient', () => {
       };
 
       vi.mocked(fs.promises.readFile).mockImplementation(
-        async (filePath: fs.PathLike) => {
+        async (filePath: fs.PathLike | FileHandle) => {
           const file = String(filePath);
           if (file === path.join('/tmp', 'qwen-code-ide-server-12345.json')) {
             throw new Error('not found');
