@@ -1,1 +1,0 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Hello! I can help you. What would you like me to do?","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

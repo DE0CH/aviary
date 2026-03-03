@@ -1,1 +1,0 @@
-{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"I have received the final context from the stop hook and included it in my response.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":100,"totalTokenCount":120}}]}

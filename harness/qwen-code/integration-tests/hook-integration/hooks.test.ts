@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { join } from 'node:path';
 import { TestRig, validateModelOutput } from '../test-helper.js';
 
 /**
- * Path to responses directory for mock LLM responses
- */
-const RESPONSES_DIR = join(import.meta.dirname, 'responses');
-
-/**
  * Hooks System Integration Tests
- * Tests for complete hook system flow including UserPromptSubmit, Stop hooks
- * Uses responses files for deterministic testing
+ *
+ * Tests for complete hook system flow including:
+ * - UserPromptSubmit hooks: Triggered before prompt is sent to LLM
+ * - Stop hooks: Triggered when agent is about to stop
+ *
+ * Test categories:
+ * - Single hook scenarios (allow, block, modify, context, etc.)
+ * - Multiple hooks scenarios (parallel, sequential, mixed)
+ * - Error handling (timeout, missing command, exit codes)
+ * - Combined hooks (multiple hook types in same session)
  */
 describe('Hooks System Integration', () => {
   let rig: TestRig;
@@ -25,7 +27,10 @@ describe('Hooks System Integration', () => {
     }
   });
 
-  // ==================== UserPromptSubmit Hooks ====================
+  // ==========================================================================
+  // UserPromptSubmit Hooks
+  // Triggered before user prompt is sent to the LLM for processing
+  // ==========================================================================
   describe('UserPromptSubmit Hooks', () => {
     describe('Allow Decision', () => {
       it('should allow prompt when hook returns allow decision', async () => {
@@ -33,10 +38,6 @@ describe('Hooks System Integration', () => {
           "console.log(JSON.stringify({decision: 'allow', reason: 'approved by hook'}));";
 
         await rig.setup('ups-allow-decision', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -67,10 +68,6 @@ describe('Hooks System Integration', () => {
           "console.log(JSON.stringify({decision: 'allow', reason: 'Tool execution approved'}));";
 
         await rig.setup('ups-allow-tool', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -106,10 +103,6 @@ describe('Hooks System Integration', () => {
         const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Prompt blocked by security policy'}));`;
 
         await rig.setup('ups-block-decision', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-block.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -140,10 +133,6 @@ describe('Hooks System Integration', () => {
         const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'File writing blocked by security policy'}));`;
 
         await rig.setup('ups-block-tool', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-block.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -185,10 +174,6 @@ describe('Hooks System Integration', () => {
         const modifyScript = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {hookEventName: 'UserPromptSubmit', modifiedPrompt: 'Modified prompt content', additionalContext: 'Context added by hook'}}));`;
 
         await rig.setup('ups-modify-prompt', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-modify.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -219,10 +204,6 @@ describe('Hooks System Integration', () => {
         const contextScript = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'Extra context information from hook'}}));`;
 
         await rig.setup('ups-add-context', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-add-context.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -251,10 +232,6 @@ describe('Hooks System Integration', () => {
     describe('Timeout Handling', () => {
       it('should continue execution when hook times out', async () => {
         await rig.setup('ups-timeout', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-timeout.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -284,10 +261,6 @@ describe('Hooks System Integration', () => {
     describe('Error Handling', () => {
       it('should continue execution when hook exits with non-blocking error (exit code 1)', async () => {
         await rig.setup('ups-nonblocking-error', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-error-nonblocking.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -315,10 +288,6 @@ describe('Hooks System Integration', () => {
 
       it('should block execution when hook exits with blocking error (exit code 2)', async () => {
         await rig.setup('ups-blocking-error', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-error-blocking.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -346,10 +315,6 @@ describe('Hooks System Integration', () => {
 
       it('should continue execution when hook command does not exist', async () => {
         await rig.setup('ups-missing-command', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-missing-command.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -391,10 +356,6 @@ console.log(JSON.stringify({
 `;
 
         await rig.setup('ups-correct-input', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -425,10 +386,6 @@ console.log(JSON.stringify({
         const systemMsgScript = `console.log(JSON.stringify({decision: 'allow', systemMessage: 'This is a system message from hook'}));`;
 
         await rig.setup('ups-system-message', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -453,16 +410,473 @@ console.log(JSON.stringify({
         expect(result).toBeDefined();
       });
     });
+
+    describe('Multiple UserPromptSubmit Hooks', () => {
+      it('should block when one of multiple parallel hooks returns block', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'Allowed'}));`;
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Blocked by security policy'}));`;
+
+        await rig.setup('ups-multi-one-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'ups-allow-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // When any hook blocks, the result should reflect the block
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should block when first sequential hook returns block', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'First hook blocks'}));`;
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'This should not run'}));`;
+
+        await rig.setup('ups-seq-first-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-seq-block-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'ups-seq-allow-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // First hook blocks, second should not run
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should block when second sequential hook returns block', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'First allows'}));`;
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Second hook blocks'}));`;
+
+        await rig.setup('ups-seq-second-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'ups-seq-first-allow',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-seq-second-block',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // Second hook blocks after first allows
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle multiple hooks all returning allow', async () => {
+        const allow1Script = `console.log(JSON.stringify({decision: 'allow', reason: 'First allows'}));`;
+        const allow2Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Second allows'}));`;
+        const allow3Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Third allows'}));`;
+
+        await rig.setup('ups-multi-all-allow', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allow1Script}"`,
+                      name: 'ups-allow-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allow2Script}"`,
+                      name: 'ups-allow-2',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allow3Script}"`,
+                      name: 'ups-allow-3',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        // All hooks allow, should complete normally
+        expect(result).toBeDefined();
+        expect(result.length).toBeGreaterThan(0);
+      });
+
+      it('should handle multiple hooks all returning block', async () => {
+        const block1Script = `console.log(JSON.stringify({decision: 'block', reason: 'First blocks'}));`;
+        const block2Script = `console.log(JSON.stringify({decision: 'block', reason: 'Second blocks'}));`;
+
+        await rig.setup('ups-multi-all-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${block1Script}"`,
+                      name: 'ups-block-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${block2Script}"`,
+                      name: 'ups-block-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // All hooks block
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should concatenate additional context from multiple hooks', async () => {
+        const context1Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'context from hook 1'}}));`;
+        const context2Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'context from hook 2'}}));`;
+
+        await rig.setup('ups-multi-context', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${context1Script}"`,
+                      name: 'ups-context-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${context2Script}"`,
+                      name: 'ups-context-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        expect(result).toBeDefined();
+      });
+
+      it('should handle hook with error alongside blocking hook', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Blocked'}));`;
+
+        await rig.setup('ups-error-with-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: '/nonexistent/command',
+                      name: 'ups-error-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // Block should still work despite error in other hook
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle hook timeout alongside blocking hook', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Blocked while other times out'}));`;
+
+        await rig.setup('ups-timeout-with-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: 'sleep 60',
+                      name: 'ups-timeout-hook',
+                      timeout: 1000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // Block should work despite timeout in other hook
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle multiple hook groups with different configurations', async () => {
+        const allow1Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Group 1 allows'}));`;
+        const allow2Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Group 2 allows'}));`;
+
+        await rig.setup('ups-multi-groups', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allow1Script}"`,
+                      name: 'ups-group1-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allow2Script}"`,
+                      name: 'ups-group2-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        expect(result).toBeDefined();
+      });
+
+      it('should block when one group blocks in multiple hook groups', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'Group 1 allows'}));`;
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Group 2 blocks'}));`;
+
+        await rig.setup('ups-multi-groups-one-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'ups-group1-allow',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'ups-group2-block',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Create a file');
+        // One group blocks, should be blocked
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle modified prompt from multiple hooks', async () => {
+        const modify1Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {modifiedPrompt: 'Modified by hook 1'}}));`;
+        const modify2Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {modifiedPrompt: 'Modified by hook 2'}}));`;
+
+        await rig.setup('ups-multi-modify', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${modify1Script}"`,
+                      name: 'ups-modify-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${modify2Script}"`,
+                      name: 'ups-modify-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        expect(result).toBeDefined();
+      });
+
+      it('should handle system messages from multiple hooks', async () => {
+        const msg1Script = `console.log(JSON.stringify({decision: 'allow', systemMessage: 'System message 1'}));`;
+        const msg2Script = `console.log(JSON.stringify({decision: 'allow', systemMessage: 'System message 2'}));`;
+
+        await rig.setup('ups-multi-system-msg', {
+          settings: {
+            hooks: {
+              enabled: true,
+              UserPromptSubmit: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${msg1Script}"`,
+                      name: 'ups-msg-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${msg2Script}"`,
+                      name: 'ups-msg-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        expect(result).toBeDefined();
+      });
+    });
   });
 
-  // ==================== Stop Hooks ====================
+  // ==========================================================================
+  // Stop Hooks
+  // Triggered when the agent is about to stop execution
+  // ==========================================================================
   describe('Stop Hooks', () => {
     describe('Allow Decision', () => {
       it('should allow stopping when hook returns allow decision', async () => {
         const allowStopScript = `console.log(JSON.stringify({decision: 'allow', reason: 'Stop allowed'}));`;
 
         await rig.setup('stop-allow', {
-          fakeResponsesPath: join(RESPONSES_DIR, 'qwen-stop-allow.responses'),
           settings: {
             hooks: {
               enabled: true,
@@ -491,7 +905,6 @@ console.log(JSON.stringify({
         const allowFinalScript = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'Final context from stop hook'}}));`;
 
         await rig.setup('stop-allow-final', {
-          fakeResponsesPath: join(RESPONSES_DIR, 'qwen-stop-allow.responses'),
           settings: {
             hooks: {
               enabled: true,
@@ -518,15 +931,72 @@ console.log(JSON.stringify({
       });
     });
 
+    describe('Block Decision', () => {
+      it('should block stopping when hook returns block decision', async () => {
+        const blockStopScript = `console.log(JSON.stringify({decision: 'block', reason: 'Stop blocked by security policy'}));`;
+
+        await rig.setup('stop-block-decision', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockStopScript}"`,
+                      name: 'stop-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say hello');
+        // Blocked stop should show the block reason
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should block stopping with custom reason', async () => {
+        const blockReasonScript = `console.log(JSON.stringify({decision: 'block', reason: 'Custom block reason: task incomplete'}));`;
+
+        await rig.setup('stop-block-custom-reason', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockReasonScript}"`,
+                      name: 'stop-block-reason-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say goodbye');
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+    });
+
     describe('Continue False', () => {
       it('should request continue execution when hook returns continue: false', async () => {
         const continueScript = `console.log(JSON.stringify({continue: false, stopReason: 'More work needed'}));`;
 
         await rig.setup('stop-continue-false', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-stop-continue-false.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -558,10 +1028,6 @@ console.log(JSON.stringify({
         const contextScript = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'Final context from hook'}}));`;
 
         await rig.setup('stop-add-context', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-stop-add-context.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -591,10 +1057,6 @@ console.log(JSON.stringify({
         const context2Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'context2'}}));`;
 
         await rig.setup('stop-multi-context', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-stop-add-context.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -631,10 +1093,6 @@ console.log(JSON.stringify({
         const reasonScript = `console.log(JSON.stringify({decision: 'allow', stopReason: 'Custom stop reason from hook'}));`;
 
         await rig.setup('stop-set-reason', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-stop-set-reason.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -663,7 +1121,6 @@ console.log(JSON.stringify({
     describe('Timeout Handling', () => {
       it('should continue stopping when hook times out', async () => {
         await rig.setup('stop-timeout', {
-          fakeResponsesPath: join(RESPONSES_DIR, 'qwen-stop-timeout.responses'),
           settings: {
             hooks: {
               enabled: true,
@@ -693,7 +1150,6 @@ console.log(JSON.stringify({
     describe('Error Handling', () => {
       it('should continue stopping when hook has non-blocking error', async () => {
         await rig.setup('stop-error', {
-          fakeResponsesPath: join(RESPONSES_DIR, 'qwen-stop-error.responses'),
           settings: {
             hooks: {
               enabled: true,
@@ -721,7 +1177,6 @@ console.log(JSON.stringify({
 
       it('should continue stopping when hook command does not exist', async () => {
         await rig.setup('stop-missing-command', {
-          fakeResponsesPath: join(RESPONSES_DIR, 'qwen-stop-error.responses'),
           settings: {
             hooks: {
               enabled: true,
@@ -753,10 +1208,6 @@ console.log(JSON.stringify({
         const systemMsgScript = `console.log(JSON.stringify({decision: 'allow', systemMessage: 'Final system message from stop hook'}));`;
 
         await rig.setup('stop-system-message', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-stop-with-message.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -781,9 +1232,388 @@ console.log(JSON.stringify({
         expect(result).toBeDefined();
       });
     });
+
+    describe('Multiple Stop Hooks', () => {
+      it('should block when one of multiple parallel stop hooks returns block', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'Stop allowed'}));`;
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Stop blocked by security policy'}));`;
+
+        await rig.setup('stop-multi-one-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'stop-allow-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say multi stop');
+        // When any hook blocks, the result should reflect the block
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should block when first sequential stop hook returns block', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'First hook blocks stop'}));`;
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'This should not run'}));`;
+
+        await rig.setup('stop-seq-first-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-seq-block-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'stop-seq-allow-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say sequential stop');
+        // First hook blocks, second should not run
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should block when second sequential stop hook returns block', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'First allows'}));`;
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Second hook blocks stop'}));`;
+
+        await rig.setup('stop-seq-second-blocks', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  sequential: true,
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'stop-seq-first-allow',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-seq-second-block',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say seq second blocks');
+        // Second hook blocks after first allows
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle multiple stop hooks all returning allow', async () => {
+        const allow1Script = `console.log(JSON.stringify({decision: 'allow', reason: 'First allows'}));`;
+        const allow2Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Second allows'}));`;
+        const allow3Script = `console.log(JSON.stringify({decision: 'allow', reason: 'Third allows'}));`;
+
+        await rig.setup('stop-multi-all-allow', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allow1Script}"`,
+                      name: 'stop-allow-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allow2Script}"`,
+                      name: 'stop-allow-2',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${allow3Script}"`,
+                      name: 'stop-allow-3',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say all allow');
+        // All hooks allow, should complete normally
+        expect(result).toBeDefined();
+        expect(result.length).toBeGreaterThan(0);
+      });
+
+      it('should handle multiple stop hooks all returning block', async () => {
+        const block1Script = `console.log(JSON.stringify({decision: 'block', reason: 'First blocks'}));`;
+        const block2Script = `console.log(JSON.stringify({decision: 'block', reason: 'Second blocks'}));`;
+
+        await rig.setup('stop-multi-all-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${block1Script}"`,
+                      name: 'stop-block-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${block2Script}"`,
+                      name: 'stop-block-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say all block');
+        // All hooks block
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle multiple continue: false from different stop hooks', async () => {
+        const continue1Script = `console.log(JSON.stringify({continue: false, stopReason: 'First needs more work'}));`;
+        const continue2Script = `console.log(JSON.stringify({continue: false, stopReason: 'Second needs more work'}));`;
+
+        await rig.setup('stop-multi-continue-false', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${continue1Script}"`,
+                      name: 'stop-continue-1',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${continue2Script}"`,
+                      name: 'stop-continue-2',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say multi continue');
+        // Multiple continue: false should be handled
+        expect(result).toBeDefined();
+      });
+
+      it('should handle mixed allow and continue: false in stop hooks', async () => {
+        const allowScript = `console.log(JSON.stringify({decision: 'allow', reason: 'Allow stop'}));`;
+        const continueScript = `console.log(JSON.stringify({continue: false, stopReason: 'Need more work'}));`;
+
+        await rig.setup('stop-mixed-allow-continue', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${allowScript}"`,
+                      name: 'stop-allow-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${continueScript}"`,
+                      name: 'stop-continue-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say mixed');
+        expect(result).toBeDefined();
+      });
+
+      it('should handle block with higher priority than continue: false', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Security block'}));`;
+        const continueScript = `console.log(JSON.stringify({continue: false, stopReason: 'Need more work'}));`;
+
+        await rig.setup('stop-block-vs-continue', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-block-priority',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${continueScript}"`,
+                      name: 'stop-continue-lower',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say block priority');
+        // Block should take priority
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle stop hook with error alongside blocking hook', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Blocked'}));`;
+
+        await rig.setup('stop-error-with-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: '/nonexistent/command',
+                      name: 'stop-error-hook',
+                      timeout: 5000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say error with block');
+        // Block should still work despite error in other hook
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+
+      it('should handle stop hook timeout alongside blocking hook', async () => {
+        const blockScript = `console.log(JSON.stringify({decision: 'block', reason: 'Blocked while other times out'}));`;
+
+        await rig.setup('stop-timeout-with-block', {
+          settings: {
+            hooks: {
+              enabled: true,
+              Stop: [
+                {
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: 'sleep 60',
+                      name: 'stop-timeout-hook',
+                      timeout: 1000,
+                    },
+                    {
+                      type: 'command',
+                      command: `node -e "${blockScript}"`,
+                      name: 'stop-block-hook',
+                      timeout: 5000,
+                    },
+                  ],
+                },
+              ],
+            },
+            trusted: true,
+          },
+        });
+
+        const result = await rig.run('Say timeout with block');
+        // Block should work despite timeout in other hook
+        expect(result).toBeDefined();
+        expect(result.toLowerCase()).toContain('block');
+      });
+    });
   });
 
-  // ==================== Multiple Hooks ====================
+  // ==========================================================================
+  // Multiple Hooks (General)
+  // Tests for hook execution modes: sequential vs parallel
+  // ==========================================================================
   describe('Multiple Hooks', () => {
     describe('Sequential Execution', () => {
       it('should execute hooks sequentially when sequential: true', async () => {
@@ -791,10 +1621,6 @@ console.log(JSON.stringify({
         const hook2Script = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'second'}}));`;
 
         await rig.setup('multi-sequential', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-sequential-passthrough.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -831,10 +1657,6 @@ console.log(JSON.stringify({
         const allowScript = `console.log(JSON.stringify({decision: 'allow'}));`;
 
         await rig.setup('multi-first-blocks', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-sequential-first-blocks.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -872,10 +1694,6 @@ console.log(JSON.stringify({
         const passScript2 = `console.log(JSON.stringify({decision: 'allow', hookSpecificOutput: {additionalContext: 'received passthrough'}}));`;
 
         await rig.setup('multi-passthrough', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-sequential-passthrough.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -914,10 +1732,6 @@ console.log(JSON.stringify({
         const hook2Script = `console.log(JSON.stringify({decision: 'allow'}));`;
 
         await rig.setup('multi-parallel', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -952,10 +1766,6 @@ console.log(JSON.stringify({
         const allowScript = `console.log(JSON.stringify({decision: 'allow'}));`;
 
         await rig.setup('multi-mixed', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-parallel-mixed-results.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -992,10 +1802,6 @@ console.log(JSON.stringify({
         const allowScript = `console.log(JSON.stringify({decision: 'allow'}));`;
 
         await rig.setup('multi-or-logic', {
-          fakeResponsesPath: join(
-            RESPONSES_DIR,
-            'qwen-userpromptsubmit-allow.responses',
-          ),
           settings: {
             hooks: {
               enabled: true,
@@ -1029,17 +1835,16 @@ console.log(JSON.stringify({
     });
   });
 
-  // ==================== Combined Hooks ====================
+  // ==========================================================================
+  // Combined Hooks
+  // Tests for using multiple hook types (UserPromptSubmit + Stop) together
+  // ==========================================================================
   describe('Combined Hooks', () => {
     it('should execute both Stop and UserPromptSubmit hooks in same session', async () => {
       const stopScript = `console.log(JSON.stringify({decision: 'allow'}));`;
       const upsScript = `console.log(JSON.stringify({decision: 'allow'}));`;
 
       await rig.setup('combined-both-hooks', {
-        fakeResponsesPath: join(
-          RESPONSES_DIR,
-          'qwen-userpromptsubmit-allow.responses',
-        ),
         settings: {
           hooksConfig: { enabled: true },
           hooks: {
@@ -1077,14 +1882,13 @@ console.log(JSON.stringify({
     });
   });
 
-  // ==================== Hook Script File Tests ====================
+  // ==========================================================================
+  // Hook Script File Tests
+  // Tests for executing hooks from external script files
+  // ==========================================================================
   describe('Hook Script File Tests', () => {
     it('should execute hook from script file', async () => {
       await rig.setup('script-file-hook', {
-        fakeResponsesPath: join(
-          RESPONSES_DIR,
-          'qwen-userpromptsubmit-allow.responses',
-        ),
         settings: {
           hooksConfig: { enabled: true },
           hooks: {
@@ -1112,10 +1916,6 @@ console.log(JSON.stringify({
 
     it('should execute blocking hook from script file', async () => {
       await rig.setup('script-file-block-hook', {
-        fakeResponsesPath: join(
-          RESPONSES_DIR,
-          'qwen-userpromptsubmit-block.responses',
-        ),
         settings: {
           hooksConfig: { enabled: true },
           hooks: {
