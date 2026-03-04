@@ -84,7 +84,7 @@ describe('normalizeContent', () => {
     expect(normalizeContent(contentWithBOM)).toBe('Hello World');
   });
 
-  it('preserves BOM-like characters that are not at the very beginning', () => {
+  it('preserves BOM-like characters not at the beginning', () => {
     const content = 'Hello\uFEFFWorld';
     expect(normalizeContent(content)).toBe('Hello\uFEFFWorld');
   });
@@ -113,7 +113,7 @@ describe('normalizeContent', () => {
     expect(normalizeContent('')).toBe('');
   });
 
-  it('handles strings without any newlines or BOM', () => {
+  it('handles strings without newlines or BOM', () => {
     expect(normalizeContent('Just a single line')).toBe('Just a single line');
   });
 });
