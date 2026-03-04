@@ -28,6 +28,7 @@ import {
   processSingleFileContent,
   detectBOM,
   readFileWithEncoding,
+  readFileWithEncodingInfo,
   detectFileEncoding,
   fileExists,
 } from './fileUtils.js';
@@ -444,6 +445,64 @@ describe('fileUtils', () => {
         expect(result).toContain('hello');
         expect(result).toContain('你好世界');
         expect(result).toContain('函数返回值正确');
+      });
+    });
+
+    describe('readFileWithEncodingInfo', () => {
+      it('should return bom: false and encoding utf-8 for plain UTF-8 file', async () => {
+        const filePath = path.join(testDir, 'info-utf8.txt');
+        await fsPromises.writeFile(filePath, 'Hello', 'utf8');
+
+        const result = await readFileWithEncodingInfo(filePath);
+        expect(result.content).toBe('Hello');
+        expect(result.encoding).toBe('utf-8');
+        expect(result.bom).toBe(false);
+      });
+
+      it('should return bom: true and encoding utf-8 for UTF-8 BOM file', async () => {
+        const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
+        const filePath = path.join(testDir, 'info-utf8-bom.txt');
+        await fsPromises.writeFile(
+          filePath,
+          Buffer.concat([utf8Bom, Buffer.from('Hello', 'utf8')]),
+        );
+
+        const result = await readFileWithEncodingInfo(filePath);
+        expect(result.content).toBe('Hello');
+        expect(result.encoding).toBe('utf-8');
+        expect(result.bom).toBe(true);
+      });
+
+      it('should return bom: true and encoding utf-16le for UTF-16LE BOM file', async () => {
+        const utf16leBom = Buffer.from([0xff, 0xfe]);
+        const utf16leContent = Buffer.from('Hi', 'utf16le');
+        const filePath = path.join(testDir, 'info-utf16le.txt');
+        await fsPromises.writeFile(
+          filePath,
+          Buffer.concat([utf16leBom, utf16leContent]),
+        );
+
+        const result = await readFileWithEncodingInfo(filePath);
+        expect(result.content).toBe('Hi');
+        expect(result.encoding).toBe('utf-16le');
+        // Non-UTF-8 BOM should also be flagged so it is preserved on write-back
+        expect(result.bom).toBe(true);
+      });
+
+      it('should return bom: false for GBK file (no BOM)', async () => {
+        const gbkBuffer = Buffer.from([
+          0xc4, 0xe3, 0xba, 0xc3, 0xca, 0xc0, 0xbd, 0xe7, 0xd5, 0xe2, 0xca,
+          0xc7, 0xd6, 0xd0, 0xce, 0xc4, 0xc4, 0xda, 0xc8, 0xdd, 0xd3, 0xc3,
+          0xd3, 0xda, 0xb2, 0xe2, 0xca, 0xd4, 0xb1, 0xe0, 0xc2, 0xeb, 0xbc,
+          0xec, 0xb2, 0xe2,
+        ]);
+        const filePath = path.join(testDir, 'info-gbk.txt');
+        await fsPromises.writeFile(filePath, gbkBuffer);
+
+        const result = await readFileWithEncodingInfo(filePath);
+        expect(result.bom).toBe(false);
+        expect(result.encoding).toBe('gb18030');
+        expect(result.content).toBe('你好世界这是中文内容用于测试编码检测');
       });
     });
 

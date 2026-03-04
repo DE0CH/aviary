@@ -7,8 +7,16 @@
 import fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { globSync } from 'glob';
-import { readFileWithEncoding } from '../utils/fileUtils.js';
-import { iconvEncode, iconvEncodingExists } from '../utils/iconvHelper.js';
+import {
+  readFileWithEncoding,
+  readFileWithEncodingInfo,
+} from '../utils/fileUtils.js';
+import type { FileReadResult } from '../utils/fileUtils.js';
+import {
+  iconvEncode,
+  iconvEncodingExists,
+  isUtf8CompatibleEncoding,
+} from '../utils/iconvHelper.js';
 
 /**
  * Supported file encodings for new files.
@@ -34,6 +42,15 @@ export interface FileSystemService {
    * @returns The file content as a string
    */
   readTextFile(filePath: string): Promise<string>;
+
+  /**
+   * Read text content from a file, returning both the content and encoding metadata.
+   * Combines readTextFile + detectFileBOM + detectFileEncoding into a single I/O pass.
+   *
+   * @param filePath - The path to the file to read
+   * @returns The file content, encoding name, and whether a UTF-8 BOM was present
+   */
+  readTextFileWithInfo(filePath: string): Promise<FileReadResult>;
 
   /**
    * Write text content to a file
@@ -103,12 +120,28 @@ function hasUTF8BOM(buffer: Buffer): boolean {
 }
 
 /**
- * Check whether an encoding name represents a UTF-8 compatible encoding
- * that doesn't require iconv-lite for writing.
+ * Return the BOM byte sequence for a given encoding name, or null if the
+ * encoding does not use a standard BOM. Used when writing back a file that
+ * originally had a BOM so the BOM is preserved.
  */
-function isUtf8CompatibleEncoding(encoding: string): boolean {
+function getBOMBytesForEncoding(encoding: string): Buffer | null {
   const lower = encoding.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return lower === 'utf8' || lower === 'ascii' || lower === 'usascii';
+  switch (lower) {
+    case 'utf8':
+      return Buffer.from([0xef, 0xbb, 0xbf]);
+    case 'utf16le':
+    case 'utf16':
+      return Buffer.from([0xff, 0xfe]);
+    case 'utf16be':
+      return Buffer.from([0xfe, 0xff]);
+    case 'utf32le':
+    case 'utf32':
+      return Buffer.from([0xff, 0xfe, 0x00, 0x00]);
+    case 'utf32be':
+      return Buffer.from([0x00, 0x00, 0xfe, 0xff]);
+    default:
+      return null;
+  }
 }
 
 /**
@@ -120,6 +153,12 @@ export class StandardFileSystemService implements FileSystemService {
     return readFileWithEncoding(filePath);
   }
 
+  async readTextFileWithInfo(filePath: string): Promise<FileReadResult> {
+    // Single I/O pass: returns content, encoding, and BOM flag together,
+    // eliminating the need for separate detectFileEncoding / detectFileBOM calls.
+    return readFileWithEncodingInfo(filePath);
+  }
+
   async writeTextFile(
     filePath: string,
     content: string,
@@ -128,19 +167,30 @@ export class StandardFileSystemService implements FileSystemService {
     const bom = options?.bom ?? false;
     const encoding = options?.encoding;
 
-    // Check if a non-UTF-8 encoding is specified and supported
+    // Check if a non-UTF-8 encoding is specified and supported by iconv-lite
     const isNonUtf8Encoding =
       encoding &&
       !isUtf8CompatibleEncoding(encoding) &&
       iconvEncodingExists(encoding);
 
     if (isNonUtf8Encoding) {
-      // Non-UTF-8 encoding (e.g. GBK, Big5, Shift_JIS) — use iconv-lite to encode
+      // Non-UTF-8 encoding (e.g. GBK, Big5, Shift_JIS, UTF-16LE, UTF-32BE…)
+      // Use iconv-lite to encode the content. When the file originally had a BOM
+      // (bom: true), prepend the correct BOM bytes for this encoding so the
+      // byte-order mark is preserved on write-back.
       const encoded = iconvEncode(content, encoding);
-      await fs.writeFile(filePath, encoded);
+      if (bom) {
+        const bomBytes = getBOMBytesForEncoding(encoding);
+        await fs.writeFile(
+          filePath,
+          bomBytes ? Buffer.concat([bomBytes, encoded]) : encoded,
+        );
+      } else {
+        await fs.writeFile(filePath, encoded);
+      }
     } else if (bom) {
-      // Prepend UTF-8 BOM (EF BB BF)
-      // If content already starts with BOM character, strip it first to avoid double BOM
+      // UTF-8 BOM: prepend EF BB BF
+      // If content already starts with the BOM character, strip it first to avoid double BOM.
       const normalizedContent =
         content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
       const bomBuffer = Buffer.from([0xef, 0xbb, 0xbf]);

@@ -27,7 +27,7 @@ import { ToolNames, ToolDisplayNames } from './tool-names.js';
 import { logFileOperation } from '../telemetry/loggers.js';
 import { FileOperationEvent } from '../telemetry/types.js';
 import { FileOperation } from '../telemetry/metrics.js';
-import { getSpecificMimeType, detectFileEncoding } from '../utils/fileUtils.js';
+import { getSpecificMimeType } from '../utils/fileUtils.js';
 import { getLanguageFromFilePath } from '../utils/language-detection.js';
 import type {
   ModifiableDeclarativeTool,
@@ -145,17 +145,15 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
       | undefined = undefined;
 
     try {
-      currentContent = await this.config
+      const fileInfo = await this.config
         .getFileSystemService()
-        .readTextFile(params.file_path);
+        .readTextFileWithInfo(params.file_path);
       // Normalize line endings to LF for consistent processing.
-      currentContent = currentContent.replace(/\r\n/g, '\n');
+      currentContent = fileInfo.content.replace(/\r\n/g, '\n');
       fileExists = true;
-      // Detect encoding and BOM to preserve original file characteristics on write-back
-      encoding = await detectFileEncoding(params.file_path);
-      bom = await this.config
-        .getFileSystemService()
-        .detectFileBOM(params.file_path);
+      // Encoding and BOM are returned from the same I/O pass, avoiding redundant reads.
+      encoding = fileInfo.encoding;
+      bom = fileInfo.bom;
     } catch (err: unknown) {
       if (!isNodeError(err) || err.code !== 'ENOENT') {
         // Rethrow unexpected FS errors (permissions, etc.)
