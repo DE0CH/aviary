@@ -57,7 +57,7 @@ export class AcpFileSystemService implements FileSystemService {
   async writeTextFile(
     filePath: string,
     content: string,
-    options?: { bom?: boolean },
+    options?: { bom?: boolean; encoding?: string },
   ): Promise<void> {
     if (!this.capabilities.writeTextFile) {
       return this.fallback.writeTextFile(filePath, content, options);

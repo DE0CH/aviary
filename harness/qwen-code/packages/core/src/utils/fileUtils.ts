@@ -9,10 +9,12 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import type { PartUnion } from '@google/genai';
 import mime from 'mime/lite';
+import { iconvDecode, iconvEncodingExists } from './iconvHelper.js';
 import { ToolErrorType } from '../tools/tool-error.js';
 import { BINARY_EXTENSIONS } from './ignorePatterns.js';
 import type { Config } from '../config/config.js';
 import { createDebugLogger } from './debugLogger.js';
+import { detectEncodingFromBuffer } from './systemEncoding.js';
 
 const debugLogger = createDebugLogger('FILE_UTILS');
 
@@ -118,8 +120,32 @@ function decodeUTF32(buf: Buffer, littleEndian: boolean): string {
 }
 
 /**
+ * Check whether a buffer is valid UTF-8 by attempting a strict decode.
+ * If any invalid byte sequence is encountered, TextDecoder with `fatal: true` throws.
+ */
+function isValidUtf8(buffer: Buffer): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check whether an encoding name represents a UTF-8 compatible encoding
+ * that Node's Buffer can handle natively.
+ */
+function isUtf8Compatible(encoding: string): boolean {
+  const lower = encoding.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return lower === 'utf8' || lower === 'ascii' || lower === 'usascii';
+}
+
+/**
  * Read a file as text, honoring BOM encodings (UTF‑8/16/32) and stripping the BOM.
- * Falls back to utf8 when no BOM is present.
+ * For files without BOM, validates UTF-8 first. If invalid UTF-8, uses chardet
+ * to detect encoding (e.g. GBK, Big5, Shift_JIS) and iconv-lite to decode.
+ * Falls back to utf8 when detection fails.
  */
 export async function readFileWithEncoding(filePath: string): Promise<string> {
   // Read the file once; detect BOM and decode from the single buffer.
@@ -127,27 +153,108 @@ export async function readFileWithEncoding(filePath: string): Promise<string> {
   if (full.length === 0) return '';
 
   const bom = detectBOM(full);
-  if (!bom) {
-    // No BOM → treat as UTF‑8
+  if (bom) {
+    // Strip BOM and decode per encoding
+    const content = full.subarray(bom.bomLength);
+    switch (bom.encoding) {
+      case 'utf8':
+        return content.toString('utf8');
+      case 'utf16le':
+        return content.toString('utf16le');
+      case 'utf16be':
+        return decodeUTF16BE(content);
+      case 'utf32le':
+        return decodeUTF32(content, true);
+      case 'utf32be':
+        return decodeUTF32(content, false);
+      default:
+        // Defensive fallback; should be unreachable
+        return content.toString('utf8');
+    }
+  }
+
+  // No BOM — check if it's valid UTF-8 first (fast path for the common case)
+  if (isValidUtf8(full)) {
     return full.toString('utf8');
   }
 
-  // Strip BOM and decode per encoding
-  const content = full.subarray(bom.bomLength);
-  switch (bom.encoding) {
-    case 'utf8':
-      return content.toString('utf8');
-    case 'utf16le':
-      return content.toString('utf16le');
-    case 'utf16be':
-      return decodeUTF16BE(content);
-    case 'utf32le':
-      return decodeUTF32(content, true);
-    case 'utf32be':
-      return decodeUTF32(content, false);
-    default:
-      // Defensive fallback; should be unreachable
-      return content.toString('utf8');
+  // Not valid UTF-8 — try chardet-based encoding detection
+  const detected = detectEncodingFromBuffer(full);
+  if (detected && !isUtf8Compatible(detected)) {
+    try {
+      if (iconvEncodingExists(detected)) {
+        return iconvDecode(full, detected);
+      }
+    } catch (e) {
+      debugLogger.warn(
+        `Failed to decode file ${filePath} as ${detected}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // Final fallback: UTF-8 with replacement characters
+  return full.toString('utf8');
+}
+
+/**
+ * Detect the encoding of a file by reading a sample from its beginning.
+ * Returns the encoding name (e.g. 'utf-8', 'gbk', 'shift_jis').
+ * Uses BOM detection first, then UTF-8 validation, then chardet as fallback.
+ */
+export async function detectFileEncoding(filePath: string): Promise<string> {
+  let fh: fs.promises.FileHandle | null = null;
+  try {
+    fh = await fs.promises.open(filePath, 'r');
+    const stats = await fh.stat();
+    if (stats.size === 0) return 'utf-8';
+
+    // Read a sample (up to 8KB) for detection
+    const sampleSize = Math.min(8192, stats.size);
+    const buf = Buffer.alloc(sampleSize);
+    const { bytesRead } = await fh.read(buf, 0, sampleSize, 0);
+    if (bytesRead === 0) return 'utf-8';
+    const sample = buf.subarray(0, bytesRead);
+
+    // 1. Check for BOM
+    const bom = detectBOM(sample);
+    if (bom) {
+      switch (bom.encoding) {
+        case 'utf8':
+          return 'utf-8';
+        case 'utf16le':
+          return 'utf-16le';
+        case 'utf16be':
+          return 'utf-16be';
+        case 'utf32le':
+          return 'utf-32le';
+        case 'utf32be':
+          return 'utf-32be';
+        default:
+          return 'utf-8';
+      }
+    }
+
+    // 2. Validate UTF-8
+    if (isValidUtf8(sample)) return 'utf-8';
+
+    // 3. Use chardet for detection
+    const detected = detectEncodingFromBuffer(sample);
+    if (detected && !isUtf8Compatible(detected)) {
+      return detected;
+    }
+
+    return 'utf-8';
+  } catch {
+    // If file can't be read, default to UTF-8
+    return 'utf-8';
+  } finally {
+    if (fh) {
+      try {
+        await fh.close();
+      } catch {
+        // Ignore close errors
+      }
+    }
   }
 }
 

@@ -7,6 +7,8 @@
 import fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { globSync } from 'glob';
+import { readFileWithEncoding } from '../utils/fileUtils.js';
+import { iconvEncode, iconvEncodingExists } from '../utils/iconvHelper.js';
 
 /**
  * Supported file encodings for new files.
@@ -74,6 +76,14 @@ export interface WriteTextFileOptions {
    * @default false
    */
   bom?: boolean;
+
+  /**
+   * The encoding to use when writing the file.
+   * If specified and not UTF-8 compatible, iconv-lite will be used to encode.
+   * This is used to preserve the original encoding of non-UTF-8 files (e.g. GBK, Big5).
+   * @default undefined (writes as UTF-8)
+   */
+  encoding?: string;
 }
 
 /**
@@ -93,11 +103,21 @@ function hasUTF8BOM(buffer: Buffer): boolean {
 }
 
 /**
+ * Check whether an encoding name represents a UTF-8 compatible encoding
+ * that doesn't require iconv-lite for writing.
+ */
+function isUtf8CompatibleEncoding(encoding: string): boolean {
+  const lower = encoding.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return lower === 'utf8' || lower === 'ascii' || lower === 'usascii';
+}
+
+/**
  * Standard file system implementation
  */
 export class StandardFileSystemService implements FileSystemService {
   async readTextFile(filePath: string): Promise<string> {
-    return fs.readFile(filePath, FileEncoding.UTF8);
+    // Use encoding-aware reader that handles BOM and non-UTF-8 encodings (e.g. GBK)
+    return readFileWithEncoding(filePath);
   }
 
   async writeTextFile(
@@ -106,8 +126,19 @@ export class StandardFileSystemService implements FileSystemService {
     options?: WriteTextFileOptions,
   ): Promise<void> {
     const bom = options?.bom ?? false;
+    const encoding = options?.encoding;
 
-    if (bom) {
+    // Check if a non-UTF-8 encoding is specified and supported
+    const isNonUtf8Encoding =
+      encoding &&
+      !isUtf8CompatibleEncoding(encoding) &&
+      iconvEncodingExists(encoding);
+
+    if (isNonUtf8Encoding) {
+      // Non-UTF-8 encoding (e.g. GBK, Big5, Shift_JIS) — use iconv-lite to encode
+      const encoded = iconvEncode(content, encoding);
+      await fs.writeFile(filePath, encoded);
+    } else if (bom) {
       // Prepend UTF-8 BOM (EF BB BF)
       // If content already starts with BOM character, strip it first to avoid double BOM
       const normalizedContent =

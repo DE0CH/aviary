@@ -37,7 +37,7 @@ import { IdeClient } from '../ide/ide-client.js';
 import { logFileOperation } from '../telemetry/loggers.js';
 import { FileOperationEvent } from '../telemetry/types.js';
 import { FileOperation } from '../telemetry/metrics.js';
-import { getSpecificMimeType } from '../utils/fileUtils.js';
+import { getSpecificMimeType, detectFileEncoding } from '../utils/fileUtils.js';
 import { getLanguageFromFilePath } from '../utils/language-detection.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 
@@ -243,17 +243,23 @@ class WriteFileToolInvocation extends BaseToolInvocation<
       // Check if file exists and has BOM to preserve encoding
       // For new files, use the configured default encoding
       let useBOM = false;
+      let detectedEncoding: string | undefined;
       if (!isNewFile) {
         useBOM = await this.config
           .getFileSystemService()
           .detectFileBOM(file_path);
+        // Detect encoding to preserve non-UTF-8 encodings (e.g. GBK, Big5)
+        detectedEncoding = await detectFileEncoding(file_path);
       } else {
         useBOM = this.config.getDefaultFileEncoding() === FileEncoding.UTF8_BOM;
       }
 
       await this.config
         .getFileSystemService()
-        .writeTextFile(file_path, fileContent, { bom: useBOM });
+        .writeTextFile(file_path, fileContent, {
+          bom: useBOM,
+          encoding: detectedEncoding,
+        });
 
       // Generate diff for display result
       const fileName = path.basename(file_path);

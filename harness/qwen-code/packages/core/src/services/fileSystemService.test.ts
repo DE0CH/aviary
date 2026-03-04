@@ -10,6 +10,16 @@ import { StandardFileSystemService } from './fileSystemService.js';
 
 vi.mock('fs/promises');
 
+vi.mock('../utils/fileUtils.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/fileUtils.js')>();
+  return {
+    ...actual,
+    readFileWithEncoding: vi.fn(),
+  };
+});
+
+import { readFileWithEncoding } from '../utils/fileUtils.js';
+
 describe('StandardFileSystemService', () => {
   let fileSystem: StandardFileSystemService;
 
@@ -23,19 +33,19 @@ describe('StandardFileSystemService', () => {
   });
 
   describe('readTextFile', () => {
-    it('should read file content using fs', async () => {
+    it('should read file content using readFileWithEncoding', async () => {
       const testContent = 'Hello, World!';
-      vi.mocked(fs.readFile).mockResolvedValue(testContent);
+      vi.mocked(readFileWithEncoding).mockResolvedValue(testContent);
 
       const result = await fileSystem.readTextFile('/test/file.txt');
 
-      expect(fs.readFile).toHaveBeenCalledWith('/test/file.txt', 'utf-8');
+      expect(readFileWithEncoding).toHaveBeenCalledWith('/test/file.txt');
       expect(result).toBe(testContent);
     });
 
-    it('should propagate fs.readFile errors', async () => {
+    it('should propagate readFileWithEncoding errors', async () => {
       const error = new Error('ENOENT: File not found');
-      vi.mocked(fs.readFile).mockRejectedValue(error);
+      vi.mocked(readFileWithEncoding).mockRejectedValue(error);
 
       await expect(fileSystem.readTextFile('/test/file.txt')).rejects.toThrow(
         'ENOENT: File not found',
@@ -119,6 +129,32 @@ describe('StandardFileSystemService', () => {
         }
       }
       expect(bomCount).toBe(1);
+    });
+    it('should write file with non-UTF-8 encoding using iconv-lite', async () => {
+      vi.mocked(fs.writeFile).mockResolvedValue();
+
+      await fileSystem.writeTextFile('/test/file.txt', '你好世界', {
+        encoding: 'gbk',
+      });
+
+      // Verify that fs.writeFile was called with a Buffer (iconv-encoded)
+      const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
+      expect(writeCall[0]).toBe('/test/file.txt');
+      expect(writeCall[1]).toBeInstanceOf(Buffer);
+    });
+
+    it('should write file as UTF-8 when encoding is utf-8', async () => {
+      vi.mocked(fs.writeFile).mockResolvedValue();
+
+      await fileSystem.writeTextFile('/test/file.txt', 'Hello', {
+        encoding: 'utf-8',
+      });
+
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        '/test/file.txt',
+        'Hello',
+        'utf-8',
+      );
     });
   });
 
