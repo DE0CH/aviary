@@ -548,6 +548,43 @@ describe('loadCliConfig', () => {
     vi.restoreAllMocks();
   });
 
+  it('should reset context file names to QWEN.md and AGENTS.md by default', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const settings: Settings = {};
+    const setGeminiMdFilenameSpy = vi.spyOn(
+      ServerConfig,
+      'setGeminiMdFilename',
+    );
+
+    await loadCliConfig(settings, argv);
+
+    expect(setGeminiMdFilenameSpy).toHaveBeenCalledTimes(1);
+    expect(setGeminiMdFilenameSpy).toHaveBeenCalledWith([
+      ServerConfig.DEFAULT_CONTEXT_FILENAME,
+      ServerConfig.AGENT_CONTEXT_FILENAME,
+    ]);
+  });
+
+  it('should use configured context file name when settings.context.fileName is set', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const settings: Settings = {
+      context: {
+        fileName: 'CUSTOM_AGENTS.md',
+      },
+    };
+    const setGeminiMdFilenameSpy = vi.spyOn(
+      ServerConfig,
+      'setGeminiMdFilename',
+    );
+
+    await loadCliConfig(settings, argv);
+
+    expect(setGeminiMdFilenameSpy).toHaveBeenCalledTimes(1);
+    expect(setGeminiMdFilenameSpy).toHaveBeenCalledWith('CUSTOM_AGENTS.md');
+  });
+
   it('should propagate stream-json formats to config', async () => {
     process.argv = [
       'node',

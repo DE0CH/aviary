@@ -6,12 +6,13 @@
 
 import {
   ApprovalMode,
+  AGENT_CONTEXT_FILENAME,
   AuthType,
   Config,
+  DEFAULT_CONTEXT_FILENAME,
   DEFAULT_QWEN_EMBEDDING_MODEL,
   FileDiscoveryService,
   FileEncoding,
-  getCurrentGeminiMdFilename,
   loadServerHierarchicalMemory,
   setGeminiMdFilename as setServerGeminiMdFilename,
   resolveTelemetrySettings,
@@ -688,8 +689,11 @@ export async function loadCliConfig(
   if (settings.context?.fileName) {
     setServerGeminiMdFilename(settings.context.fileName);
   } else {
-    // Reset to default if not provided in settings.
-    setServerGeminiMdFilename(getCurrentGeminiMdFilename());
+    // Reset to default context filenames if not provided in settings.
+    setServerGeminiMdFilename([
+      DEFAULT_CONTEXT_FILENAME,
+      AGENT_CONTEXT_FILENAME,
+    ]);
   }
 
   // Automatically load output-language.md if it exists
