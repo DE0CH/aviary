@@ -51,7 +51,10 @@ export class AcpConnection {
   onSessionUpdate: (data: SessionNotification) => void = () => {};
   onPermissionRequest: (data: RequestPermissionRequest) => Promise<{
     optionId: string;
-  }> = () => Promise.resolve({ optionId: 'allow_once' });
+  }> = (data) =>
+    Promise.resolve({
+      optionId: this.resolvePermissionOptionId(data) || '',
+    });
   onAuthenticateUpdate: (data: AuthenticateUpdateNotification) => void =
     () => {};
   onEndTurn: (reason?: string) => void = () => {};
@@ -189,10 +192,17 @@ export class AcpConnection {
             if (outcome === 'cancelled') {
               return { outcome: { outcome: 'cancelled' } };
             }
+            const selectedOptionId = self.resolvePermissionOptionId(
+              permissionData,
+              optionId,
+            );
+            if (!selectedOptionId) {
+              return { outcome: { outcome: 'cancelled' } };
+            }
             return {
               outcome: {
                 outcome: 'selected',
-                optionId: optionId || 'allow_once',
+                optionId: selectedOptionId,
               },
             };
           } catch (_error) {
@@ -271,6 +281,36 @@ export class AcpConnection {
     return this.sdkConnection;
   }
 
+  private resolvePermissionOptionId(
+    request: RequestPermissionRequest,
+    preferredOptionId?: string,
+  ): string | undefined {
+    // ACP permission options expose two different identifiers:
+    // - `kind` (e.g. "allow_once"), used for UX intent
+    // - `optionId` (e.g. "proceed_once"), which the CLI parses as ToolConfirmationOutcome.
+    // We must always return a real optionId from request.options; sending `kind`
+    // as optionId (like "allow_once") will fail enum parsing on the CLI side.
+    const options = Array.isArray(request.options) ? request.options : [];
+    if (options.length === 0) {
+      return undefined;
+    }
+
+    if (
+      preferredOptionId &&
+      options.some((option) => option.optionId === preferredOptionId)
+    ) {
+      return preferredOptionId;
+    }
+
+    return (
+      options.find((option) => option.kind === 'allow_once')?.optionId ||
+      options.find((option) => option.optionId === 'proceed_once')?.optionId ||
+      options.find((option) => option.optionId.includes('proceed_once'))
+        ?.optionId ||
+      options[0]?.optionId
+    );
+  }
+
   async authenticate(methodId?: string): Promise<AuthenticateResponse> {
     const conn = this.ensureConnection();
     const authMethodId = methodId || 'default';
@@ -326,7 +366,10 @@ export class AcpConnection {
         cwd,
         mcpServers: [],
       });
-      console.log('[ACP] Session load succeeded');
+      console.log(
+        '[ACP] Session load succeeded. Response:',
+        JSON.stringify(response),
+      );
       this.sessionId = sessionId;
       return response;
     } catch (error) {

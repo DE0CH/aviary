@@ -29,6 +29,7 @@ import { QwenSessionUpdateHandler } from './qwenSessionUpdateHandler.js';
 import { authMethod } from '../types/acpTypes.js';
 import {
   extractModelInfoFromNewSessionResult,
+  extractSessionModeState,
   extractSessionModelState,
 } from '../utils/acpModelInfo.js';
 import { isAuthenticationRequiredError } from '../utils/authErrors.js';
@@ -65,6 +66,18 @@ export class QwenAgentManager {
 
   // Callback storage
   private callbacks: QwenAgentCallbacks = {};
+  // Baseline state from session/new (default/settings-backed), used to clear stale
+  // UI mode/model when session/load response omits optional fields.
+  private baselineModeId: ApprovalModeValue = 'default';
+  private baselineAvailableModes:
+    | Array<{
+        id: ApprovalModeValue;
+        name: string;
+        description: string;
+      }>
+    | undefined;
+  private baselineModelInfo: ModelInfo | null = null;
+  private baselineAvailableModels: ModelInfo[] = [];
 
   constructor() {
     this.connection = new AcpConnection();
@@ -175,9 +188,14 @@ export class QwenAgentManager {
     ) => {
       if (this.callbacks.onPermissionRequest) {
         const optionId = await this.callbacks.onPermissionRequest(data);
-        return { optionId };
+        return {
+          optionId:
+            this.resolvePermissionOptionId(data, optionId) ||
+            this.resolvePermissionOptionId(data) ||
+            '',
+        };
       }
-      return { optionId: 'allow_once' };
+      return { optionId: this.resolvePermissionOptionId(data) || '' };
     };
 
     this.connection.onEndTurn = (reason?: string) => {
@@ -252,10 +270,12 @@ export class QwenAgentManager {
       options,
     );
     if (res.modelInfo && this.callbacks.onModelInfo) {
+      this.baselineModelInfo = res.modelInfo;
       this.callbacks.onModelInfo(res.modelInfo);
     }
     // Emit available models from connect result
     if (res.availableModels && res.availableModels.length > 0) {
+      this.baselineAvailableModels = res.availableModels;
       console.log(
         '[QwenAgentManager] Emitting availableModels from connect():',
         res.availableModels.map((m) => m.modelId),
@@ -263,6 +283,21 @@ export class QwenAgentManager {
       if (this.callbacks.onAvailableModels) {
         this.callbacks.onAvailableModels(res.availableModels);
       }
+    }
+    if (res.currentModeId) {
+      this.baselineModeId = res.currentModeId;
+      this.callbacks.onModeChanged?.(res.currentModeId);
+    }
+    if (res.availableModes) {
+      this.baselineAvailableModes = res.availableModes;
+      this.callbacks.onModeInfo?.({
+        currentModeId: res.currentModeId ?? this.baselineModeId,
+        availableModes: res.availableModes,
+      });
+    } else if (res.currentModeId) {
+      this.callbacks.onModeInfo?.({
+        currentModeId: res.currentModeId,
+      });
     }
     return res;
   }
@@ -944,19 +979,8 @@ export class QwenAgentManager {
         '[QwenAgentManager] Session load succeeded. Response:',
         JSON.stringify(response).substring(0, 200),
       );
-
-      // Extract model/mode state from load response (same shape as newSession)
-      const modelInfo = extractModelInfoFromNewSessionResult(response);
-      if (modelInfo && this.callbacks.onModelInfo) {
-        this.callbacks.onModelInfo(modelInfo);
-      }
-      const modelState = extractSessionModelState(response);
-      if (
-        modelState?.availableModels &&
-        modelState.availableModels.length > 0
-      ) {
-        this.callbacks.onAvailableModels?.(modelState.availableModels);
-      }
+      this.applySessionStateFromResult(response);
+      this.restoreBaselineSessionStateAfterLoad(response);
 
       return response;
     } catch (error) {
@@ -1168,35 +1192,7 @@ export class QwenAgentManager {
           }
         }
 
-        const modelInfo =
-          extractModelInfoFromNewSessionResult(newSessionResult);
-        if (modelInfo && this.callbacks.onModelInfo) {
-          this.callbacks.onModelInfo(modelInfo);
-        }
-
-        // Extract and emit available models
-        const modelState = extractSessionModelState(newSessionResult);
-        console.log(
-          '[QwenAgentManager] Extracted model state from session/new:',
-          modelState,
-        );
-        if (
-          modelState?.availableModels &&
-          modelState.availableModels.length > 0
-        ) {
-          console.log(
-            '[QwenAgentManager] Emitting availableModels:',
-            modelState.availableModels,
-          );
-          if (this.callbacks.onAvailableModels) {
-            this.callbacks.onAvailableModels(modelState.availableModels);
-          }
-        } else {
-          console.warn(
-            '[QwenAgentManager] No availableModels found in session/new response. Raw models field:',
-            (newSessionResult as Record<string, unknown>)?.models,
-          );
-        }
+        this.applySessionStateFromResult(newSessionResult);
 
         const newSessionId = this.connection.currentSessionId;
         console.log(
@@ -1387,5 +1383,86 @@ export class QwenAgentManager {
    */
   get currentSessionId(): string | null {
     return this.connection.currentSessionId;
+  }
+
+  private applySessionStateFromResult(result: unknown): void {
+    const modelInfo = extractModelInfoFromNewSessionResult(result);
+    if (modelInfo) {
+      this.baselineModelInfo = modelInfo;
+      this.callbacks.onModelInfo?.(modelInfo);
+    }
+
+    const modelState = extractSessionModelState(result);
+    if (modelState?.availableModels && modelState.availableModels.length > 0) {
+      this.baselineAvailableModels = modelState.availableModels;
+      this.callbacks.onAvailableModels?.(modelState.availableModels);
+    }
+
+    const modeState = extractSessionModeState(result);
+    if (modeState?.currentModeId) {
+      this.baselineModeId = modeState.currentModeId;
+      this.callbacks.onModeChanged?.(modeState.currentModeId);
+    }
+    if (modeState?.availableModes && modeState.availableModes.length > 0) {
+      this.baselineAvailableModes = modeState.availableModes;
+    }
+    if (modeState) {
+      this.callbacks.onModeInfo?.({
+        currentModeId: modeState.currentModeId ?? this.baselineModeId,
+        availableModes: modeState.availableModes ?? this.baselineAvailableModes,
+      });
+    }
+  }
+
+  private restoreBaselineSessionStateAfterLoad(result: unknown): void {
+    const obj = (result || {}) as Record<string, unknown>;
+    const hasModes = !!obj['modes'];
+    const hasModels = !!obj['models'];
+
+    if (!hasModes) {
+      this.callbacks.onModeInfo?.({
+        currentModeId: this.baselineModeId,
+        availableModes: this.baselineAvailableModes,
+      });
+      this.callbacks.onModeChanged?.(this.baselineModeId);
+    }
+
+    if (!hasModels) {
+      if (this.baselineModelInfo) {
+        this.callbacks.onModelInfo?.(this.baselineModelInfo);
+      }
+      if (this.baselineAvailableModels.length > 0) {
+        this.callbacks.onAvailableModels?.(this.baselineAvailableModels);
+      }
+    }
+  }
+
+  private resolvePermissionOptionId(
+    request: RequestPermissionRequest,
+    preferredOptionId?: string,
+  ): string | undefined {
+    // Keep this mapping aligned with AcpConnection.resolvePermissionOptionId:
+    // Webview callbacks may provide a semantic choice (allow/reject) while the
+    // CLI requires a concrete ToolConfirmationOutcome optionId.
+    // Always normalize to an optionId that exists in request.options.
+    const options = Array.isArray(request.options) ? request.options : [];
+    if (options.length === 0) {
+      return undefined;
+    }
+
+    if (
+      preferredOptionId &&
+      options.some((option) => option.optionId === preferredOptionId)
+    ) {
+      return preferredOptionId;
+    }
+
+    return (
+      options.find((option) => option.kind === 'allow_once')?.optionId ||
+      options.find((option) => option.optionId === 'proceed_once')?.optionId ||
+      options.find((option) => option.optionId.includes('proceed_once'))
+        ?.optionId ||
+      options[0]?.optionId
+    );
   }
 }
