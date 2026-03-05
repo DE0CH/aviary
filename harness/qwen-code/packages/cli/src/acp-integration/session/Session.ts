@@ -53,7 +53,8 @@ import type {
   SetSessionModelRequest,
   SetSessionModelResponse,
   ToolCallContent,
- AgentSideConnection} from '@agentclientprotocol/sdk';
+  AgentSideConnection,
+} from '@agentclientprotocol/sdk';
 import type { LoadedSettings } from '../../config/settings.js';
 import { z } from 'zod';
 import { normalizePartList } from '../../utils/nonInteractiveHelpers.js';
