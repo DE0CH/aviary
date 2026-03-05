@@ -17,7 +17,7 @@ import {
   extractModelInfoFromNewSessionResult,
   extractSessionModelState,
 } from '../utils/acpModelInfo.js';
-import type { ModelInfo } from '../types/acpTypes.js';
+import type { ModelInfo } from '@agentclientprotocol/sdk';
 
 export interface QwenConnectionResult {
   sessionCreated: boolean;

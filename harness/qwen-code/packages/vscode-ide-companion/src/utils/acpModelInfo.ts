@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { AcpMeta, ModelInfo } from '../types/acpTypes.js';
+import type { ModelInfo } from '@agentclientprotocol/sdk';
+
+type AcpMeta = Record<string, unknown>;
 
 const asMeta = (value: unknown): AcpMeta | null | undefined => {
   if (value === null) {

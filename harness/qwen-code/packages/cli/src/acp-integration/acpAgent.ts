@@ -214,7 +214,16 @@ class QwenAgent implements Agent {
     }
 
     await this.createAndStoreSession(config, sessionData.conversation);
-    return null as unknown as LoadSessionResponse;
+
+    const modesData = this.buildModesData(config);
+    const availableModels = this.buildAvailableModels(config);
+    const configOptions = this.buildConfigOptions(config);
+
+    return {
+      modes: modesData,
+      models: availableModels,
+      configOptions,
+    };
   }
 
   async unstable_listSessions(
@@ -321,6 +330,13 @@ class QwenAgent implements Agent {
       throw new Error(`Session not found: ${params.sessionId}`);
     }
     await session.cancelPendingPrompt();
+  }
+
+  async extMethod(
+    method: string,
+    _params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    throw RequestError.methodNotFound(method);
   }
 
   // --- private helpers ---
