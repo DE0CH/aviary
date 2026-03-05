@@ -604,6 +604,35 @@ describe('loadCliConfig', () => {
     expect(config.getIncludePartialMessages()).toBe(true);
   });
 
+  it('should reset context filenames to defaults when context.fileName is not configured', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const settings: Settings = {};
+    const defaultContextFiles = ['QWEN.md', 'AGENTS.md'];
+    const getAllSpy = vi
+      .spyOn(ServerConfig, 'getAllGeminiMdFilenames')
+      .mockReturnValue(defaultContextFiles);
+    const setFilenameSpy = vi.spyOn(ServerConfig, 'setGeminiMdFilename');
+
+    await loadCliConfig(settings, argv);
+
+    expect(getAllSpy).toHaveBeenCalledTimes(1);
+    expect(setFilenameSpy).toHaveBeenCalledWith(defaultContextFiles);
+  });
+
+  it('should use context.fileName from settings when provided', async () => {
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const settings: Settings = { context: { fileName: 'CUSTOM_CONTEXT.md' } };
+    const getAllSpy = vi.spyOn(ServerConfig, 'getAllGeminiMdFilenames');
+    const setFilenameSpy = vi.spyOn(ServerConfig, 'setGeminiMdFilename');
+
+    await loadCliConfig(settings, argv);
+
+    expect(setFilenameSpy).toHaveBeenCalledWith('CUSTOM_CONTEXT.md');
+    expect(getAllSpy).not.toHaveBeenCalled();
+  });
+
   it('should initialize native LSP service when enabled', async () => {
     process.argv = ['node', 'script.js', '--experimental-lsp'];
     const argv = await parseArguments();
