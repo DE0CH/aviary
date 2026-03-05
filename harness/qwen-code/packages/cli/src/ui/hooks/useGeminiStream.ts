@@ -1080,8 +1080,13 @@ export const useGeminiStream = (
       if (!options?.isContinuation) {
         setModelSwitchedFromQuotaError(false);
         // Commit any pending retry error to history (without hint) since the
-        // user is starting a new conversation turn
-        if (pendingRetryCountdownItemRef.current) {
+        // user is starting a new conversation turn.
+        // Clear both countdown-based errors AND static errors (those without
+        // an active countdown timer, e.g. "Press Ctrl+Y to retry").
+        if (
+          pendingRetryCountdownItemRef.current ||
+          pendingRetryErrorItemRef.current
+        ) {
           clearRetryCountdown();
         }
       }
@@ -1176,7 +1181,8 @@ export const useGeminiStream = (
           }
           // Only clear auto-retry countdown errors (those with an active timer).
           // Do NOT clear static error+hint from handleErrorEvent — those should
-          // remain visible until the user presses Ctrl+Y to retry.
+          // remain visible until the user presses Ctrl+Y to retry or starts
+          // a new conversation turn (cleared in submitQuery).
           if (retryCountdownTimerRef.current) {
             clearRetryCountdown();
           }
@@ -1223,6 +1229,7 @@ export const useGeminiStream = (
       handleLoopDetectedEvent,
       clearRetryCountdown,
       pendingRetryCountdownItemRef,
+      pendingRetryErrorItemRef,
       setPendingRetryErrorItem,
     ],
   );
