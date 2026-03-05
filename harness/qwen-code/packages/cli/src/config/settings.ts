@@ -14,6 +14,7 @@ import {
   QWEN_DIR,
   getErrorMessage,
   Storage,
+  createDebugLogger,
 } from '@qwen-code/qwen-code-core';
 import stripJsonComments from 'strip-json-comments';
 import { DefaultLight } from '../ui/themes/default-light.js';
@@ -31,6 +32,8 @@ import { resolveEnvVarsInObject } from '../utils/envVarResolver.js';
 import { customDeepMerge, type MergeableObject } from '../utils/deepMerge.js';
 import { updateSettingsFilePreservingFormat } from '../utils/commentJson.js';
 import { writeStderrLine } from '../utils/stdioHelpers.js';
+
+const debugLogger = createDebugLogger('SETTINGS');
 
 function getMergeStrategyForPath(path: string[]): MergeStrategy | undefined {
   let current: SettingDefinition | undefined = undefined;
@@ -564,7 +567,7 @@ function getSettingsFileKeyWarnings(
     );
   }
 
-  // Unknown top-level keys.
+  // Unknown top-level keys — log silently to debug output.
   const schemaKeys = new Set(Object.keys(getSettingsSchema()));
   for (const key of Object.keys(settings)) {
     if (key === SETTINGS_VERSION_KEY) {
@@ -577,8 +580,8 @@ function getSettingsFileKeyWarnings(
       continue;
     }
 
-    warnings.push(
-      `Warning: Unknown setting '${key}' will be ignored in ${settingsFilePath}.`,
+    debugLogger.warn(
+      `Unknown setting '${key}' will be ignored in ${settingsFilePath}.`,
     );
   }
 
