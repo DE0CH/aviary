@@ -20,6 +20,14 @@ export const ToolListStep: React.FC<ToolListStepProps> = ({
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  // 动态计算工具名称列的最大宽度（基于实际内容）
+  const toolNameWidth = useMemo(() => {
+    if (tools.length === 0) return 30;
+    const maxLength = Math.max(...tools.map((t) => t.name.length));
+    // 最小 30，最大 50，留一些余量
+    return Math.min(Math.max(maxLength + 2, 30), 50);
+  }, [tools]);
+
   // 计算可视区域的起始索引（滚动窗口）
   const scrollOffset = useMemo(() => {
     if (tools.length <= VISIBLE_TOOLS_COUNT) {
@@ -97,6 +105,7 @@ export const ToolListStep: React.FC<ToolListStepProps> = ({
 
           return (
             <Box key={tool.name}>
+              {/* 选择器和序号 */}
               <Box minWidth={4}>
                 <Text
                   color={isSelected ? theme.text.accent : theme.text.primary}
@@ -105,28 +114,25 @@ export const ToolListStep: React.FC<ToolListStepProps> = ({
                 </Text>
                 <Text color={theme.text.secondary}>{actualIndex + 1}.</Text>
               </Box>
-              <Text
-                color={isSelected ? theme.text.accent : theme.text.primary}
-                wrap="truncate"
-              >
-                {tool.name}
-              </Text>
+              {/* 工具名称 - 固定宽度 */}
+              <Box width={toolNameWidth}>
+                <Text
+                  color={isSelected ? theme.text.accent : theme.text.primary}
+                  wrap="truncate"
+                >
+                  {tool.name}
+                </Text>
+              </Box>
               {/* 显示无效工具警告 */}
               {!tool.isValid && (
-                <>
-                  <Text color={theme.text.secondary}> </Text>
-                  <Text color={theme.status.warning}>
-                    {t('invalid: {{reason}}', {
-                      reason: tool.invalidReason || t('unknown'),
-                    })}
-                  </Text>
-                </>
+                <Text color={theme.status.warning}>
+                  {t('invalid: {{reason}}', {
+                    reason: tool.invalidReason || t('unknown'),
+                  })}
+                </Text>
               )}
               {annotations && tool.isValid && (
-                <>
-                  <Text color={theme.text.secondary}> </Text>
-                  <Text color={theme.text.secondary}>{annotations}</Text>
-                </>
+                <Text color={theme.text.secondary}>{annotations}</Text>
               )}
             </Box>
           );

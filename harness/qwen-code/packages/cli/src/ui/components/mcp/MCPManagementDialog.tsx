@@ -407,7 +407,9 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
 
     return (
       <Box>
-        <Text bold>{headerText}</Text>
+        <Text color={theme.text.accent} bold>
+          {headerText}
+        </Text>
       </Box>
     );
   }, [getCurrentStep, selectedServer, selectedTool]);
@@ -415,11 +417,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
   // Render step content
   const renderStepContent = useCallback(() => {
     if (isLoading) {
-      return (
-        <Box>
-          <Text color={theme.text.secondary}>{t('Loading...')}</Text>
-        </Box>
-      );
+      return <Text color={theme.text.secondary}>{t('Loading...')}</Text>;
     }
 
     const currentStep = getCurrentStep();

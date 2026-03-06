@@ -27,6 +27,14 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
     [servers],
   );
 
+  // 动态计算服务器名称列的最大宽度（基于实际内容）
+  const serverNameWidth = useMemo(() => {
+    if (servers.length === 0) return 20;
+    const maxLength = Math.max(...servers.map((s) => s.name.length));
+    // 最小 20，最大 35，留一些余量
+    return Math.min(Math.max(maxLength + 2, 20), 35);
+  }, [servers]);
+
   // 计算扁平化的服务器列表用于导航
   const flatServers = useMemo(() => {
     const result: MCPServerDisplayInfo[] = [];
@@ -119,13 +127,19 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
                       {isSelected ? '❯' : ' '}
                     </Text>
                   </Box>
-                  <Text
-                    color={isSelected ? theme.text.accent : theme.text.primary}
-                    wrap="truncate"
-                  >
-                    {server.name}
-                  </Text>
+                  {/* 服务器名称 - 固定宽度 */}
+                  <Box width={serverNameWidth}>
+                    <Text
+                      color={
+                        isSelected ? theme.text.accent : theme.text.primary
+                      }
+                      wrap="truncate"
+                    >
+                      {server.name}
+                    </Text>
+                  </Box>
                   <Text color={theme.text.secondary}> · </Text>
+                  {/* 状态图标和文本 */}
                   <Text
                     color={
                       statusColor === 'green'
@@ -135,19 +149,7 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
                           : theme.status.error
                     }
                   >
-                    {getStatusIcon(server.status)}
-                  </Text>
-                  <Text
-                    color={
-                      statusColor === 'green'
-                        ? theme.status.success
-                        : statusColor === 'yellow'
-                          ? theme.status.warning
-                          : theme.status.error
-                    }
-                  >
-                    {' '}
-                    {t(server.status)}
+                    {getStatusIcon(server.status)} {t(server.status)}
                   </Text>
                   {/* 显示 Scope 和禁用状态 */}
                   <Text color={theme.text.secondary}> [{server.scope}]</Text>
@@ -172,7 +174,7 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
 
       {/* 提示信息 */}
       {servers.some((s) => s.status === 'disconnected') && (
-        <Box marginTop={1}>
+        <Box>
           <Text color={theme.status.warning}>
             ※ {t('Run qwen --debug to see error logs')}
           </Text>

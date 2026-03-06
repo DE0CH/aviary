@@ -17,6 +17,9 @@ import {
   formatServerCommand,
 } from '../utils.js';
 
+// 标签列宽度
+const LABEL_WIDTH = 15;
+
 type ServerAction = 'view-tools' | 'reconnect' | 'toggle-disable';
 
 export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
@@ -91,8 +94,10 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       {/* 服务器详情 */}
       <Box flexDirection="column">
         <Box>
-          <Text color={theme.text.primary}>{t('Status:')}</Text>
-          <Box marginLeft={2}>
+          <Box width={LABEL_WIDTH}>
+            <Text color={theme.text.primary}>{t('Status:')}</Text>
+          </Box>
+          <Box>
             <Text
               color={
                 statusColor === 'green'
@@ -110,9 +115,11 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
           </Box>
         </Box>
 
-        <Box marginTop={1}>
-          <Text color={theme.text.primary}>{t('Source:')}</Text>
-          <Box marginLeft={2}>
+        <Box>
+          <Box width={LABEL_WIDTH}>
+            <Text color={theme.text.primary}>{t('Source:')}</Text>
+          </Box>
+          <Box>
             <Text color={theme.text.secondary}>
               {server.scope === 'user'
                 ? t('User Settings')
@@ -123,25 +130,31 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
           </Box>
         </Box>
 
-        <Box marginTop={1}>
-          <Text color={theme.text.primary}>{t('Command:')}</Text>
-          <Box marginLeft={2}>
+        <Box>
+          <Box width={LABEL_WIDTH}>
+            <Text color={theme.text.primary}>{t('Command:')}</Text>
+          </Box>
+          <Box>
             <Text wrap="truncate">{formatServerCommand(server)}</Text>
           </Box>
         </Box>
 
         {server.config.cwd && (
-          <Box marginTop={1}>
-            <Text color={theme.text.primary}>{t('Working Directory:')}</Text>
-            <Box marginLeft={2}>
+          <Box>
+            <Box width={LABEL_WIDTH}>
+              <Text color={theme.text.primary}>{t('Working Directory:')}</Text>
+            </Box>
+            <Box>
               <Text wrap="truncate">{server.config.cwd}</Text>
             </Box>
           </Box>
         )}
 
-        <Box marginTop={1}>
-          <Text color={theme.text.primary}>{t('Capabilities:')}</Text>
-          <Box marginLeft={2}>
+        <Box>
+          <Box width={LABEL_WIDTH}>
+            <Text color={theme.text.primary}>{t('Capabilities:')}</Text>
+          </Box>
+          <Box>
             <Text>
               {server.toolCount > 0 ? t('tools') : ''}
               {server.toolCount > 0 && server.promptCount > 0 ? ', ' : ''}
@@ -150,9 +163,11 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
           </Box>
         </Box>
 
-        <Box marginTop={1}>
-          <Text color={theme.text.primary}>{t('Tools:')}</Text>
-          <Box marginLeft={2}>
+        <Box>
+          <Box width={LABEL_WIDTH}>
+            <Text color={theme.text.primary}>{t('Tools:')}</Text>
+          </Box>
+          <Box>
             <Text>
               {server.toolCount}{' '}
               {server.toolCount === 1 ? t('tool') : t('tools')}
@@ -168,9 +183,11 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
         </Box>
 
         {server.errorMessage && (
-          <Box marginTop={1}>
-            <Text color={theme.status.error}>{t('Error:')}</Text>
-            <Box marginLeft={2}>
+          <Box>
+            <Box width={LABEL_WIDTH}>
+              <Text color={theme.status.error}>{t('Error:')}</Text>
+            </Box>
+            <Box>
               <Text color={theme.status.error} wrap="wrap">
                 {server.errorMessage}
               </Text>
@@ -180,7 +197,7 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       </Box>
 
       {/* 操作列表 */}
-      <Box marginTop={1}>
+      <Box>
         <RadioButtonSelect<ServerAction>
           items={actions}
           onHighlight={(value: ServerAction) => setSelectedAction(value)}
