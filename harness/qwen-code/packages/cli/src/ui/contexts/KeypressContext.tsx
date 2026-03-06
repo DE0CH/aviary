@@ -47,6 +47,8 @@ export const DRAG_COMPLETION_TIMEOUT_MS = 100; // Broadcast full path after 100m
 export const SINGLE_QUOTE = "'";
 export const DOUBLE_QUOTE = '"';
 
+// Kitty keypad private-use keycodes (0xE000-0xE026)
+// Reference: https://sw.kovidgoyal.net/kitty/keyboard-protocol/#functional-key-definitions
 const KITTY_KEYPAD_PRINTABLE_KEYCODE_TO_CHAR: Record<number, string> = {
   57399: '0',
   57400: '1',
@@ -63,6 +65,7 @@ const KITTY_KEYPAD_PRINTABLE_KEYCODE_TO_CHAR: Record<number, string> = {
   57411: '*',
   57412: '-',
   57413: '+',
+  // 57414 is keypad Enter - handled separately via CSI~ sequence
   57415: '=',
   57416: ',',
 };
