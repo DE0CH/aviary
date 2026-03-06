@@ -127,6 +127,8 @@ export interface UIState {
   isAgentsManagerDialogOpen: boolean;
   // Extensions manager dialog
   isExtensionsManagerDialogOpen: boolean;
+  // MCP dialog
+  isMcpDialogOpen: boolean;
   // Feedback dialog
   isFeedbackDialogOpen: boolean;
 }

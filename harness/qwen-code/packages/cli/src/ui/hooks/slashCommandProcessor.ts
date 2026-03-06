@@ -79,6 +79,7 @@ interface SlashCommandProcessorActions {
   openSubagentCreateDialog: () => void;
   openAgentsManagerDialog: () => void;
   openExtensionsManagerDialog: () => void;
+  openMcpDialog: () => void;
 }
 
 /**
@@ -476,6 +477,9 @@ export const useSlashCommandProcessor = (
                       return { type: 'handled' };
                     case 'subagent_list':
                       actions.openAgentsManagerDialog();
+                      return { type: 'handled' };
+                    case 'mcp':
+                      actions.openMcpDialog();
                       return { type: 'handled' };
                     case 'approval-mode':
                       actions.openApprovalModeDialog();

@@ -103,6 +103,7 @@ import { useInitializationAuthError } from './hooks/useInitializationAuthError.j
 import { useSubagentCreateDialog } from './hooks/useSubagentCreateDialog.js';
 import { useAgentsManagerDialog } from './hooks/useAgentsManagerDialog.js';
 import { useExtensionsManagerDialog } from './hooks/useExtensionsManagerDialog.js';
+import { useMcpDialog } from './hooks/useMcpDialog.js';
 import { useAttentionNotifications } from './hooks/useAttentionNotifications.js';
 import {
   requestConsentInteractive,
@@ -499,6 +500,7 @@ export const AppContainer = (props: AppContainerProps) => {
     openExtensionsManagerDialog,
     closeExtensionsManagerDialog,
   } = useExtensionsManagerDialog();
+  const { isMcpDialogOpen, openMcpDialog, closeMcpDialog } = useMcpDialog();
 
   const slashCommandActions = useMemo(
     () => ({
@@ -522,6 +524,7 @@ export const AppContainer = (props: AppContainerProps) => {
       openSubagentCreateDialog,
       openAgentsManagerDialog,
       openExtensionsManagerDialog,
+      openMcpDialog,
       openResumeDialog,
     }),
     [
@@ -538,6 +541,7 @@ export const AppContainer = (props: AppContainerProps) => {
       openSubagentCreateDialog,
       openAgentsManagerDialog,
       openExtensionsManagerDialog,
+      openMcpDialog,
       openResumeDialog,
     ],
   );
@@ -1307,6 +1311,7 @@ export const AppContainer = (props: AppContainerProps) => {
     showIdeRestartPrompt ||
     isSubagentCreateDialogOpen ||
     isAgentsManagerDialogOpen ||
+    isMcpDialogOpen ||
     isApprovalModeDialogOpen ||
     isResumeDialogOpen ||
     isExtensionsManagerDialogOpen;
@@ -1421,6 +1426,8 @@ export const AppContainer = (props: AppContainerProps) => {
       isAgentsManagerDialogOpen,
       // Extensions manager dialog
       isExtensionsManagerDialogOpen,
+      // MCP dialog
+      isMcpDialogOpen,
       // Feedback dialog
       isFeedbackDialogOpen,
     }),
@@ -1513,6 +1520,8 @@ export const AppContainer = (props: AppContainerProps) => {
       isAgentsManagerDialogOpen,
       // Extensions manager dialog
       isExtensionsManagerDialogOpen,
+      // MCP dialog
+      isMcpDialogOpen,
       // Feedback dialog
       isFeedbackDialogOpen,
     ],
@@ -1556,6 +1565,8 @@ export const AppContainer = (props: AppContainerProps) => {
       closeAgentsManagerDialog,
       // Extensions manager dialog
       closeExtensionsManagerDialog,
+      // MCP dialog
+      closeMcpDialog,
       // Resume session dialog
       openResumeDialog,
       closeResumeDialog,
@@ -1601,6 +1612,8 @@ export const AppContainer = (props: AppContainerProps) => {
       closeAgentsManagerDialog,
       // Extensions manager dialog
       closeExtensionsManagerDialog,
+      // MCP dialog
+      closeMcpDialog,
       // Resume session dialog
       openResumeDialog,
       closeResumeDialog,
