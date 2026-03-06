@@ -39,8 +39,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-allow-decision', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -69,8 +69,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-allow-tool', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -104,8 +104,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-block-decision', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -133,8 +133,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-block-tool', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -174,8 +174,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-modify-prompt', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -204,8 +204,8 @@ describe('Hooks System Integration', () => {
 
         await rig.setup('ups-add-context', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -232,8 +232,8 @@ describe('Hooks System Integration', () => {
       it('should continue execution when hook times out', async () => {
         await rig.setup('ups-timeout', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -261,8 +261,8 @@ describe('Hooks System Integration', () => {
       it('should continue execution when hook exits with non-blocking error (exit code 1)', async () => {
         await rig.setup('ups-nonblocking-error', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -288,8 +288,8 @@ describe('Hooks System Integration', () => {
       it('should block execution when hook exits with blocking error (exit code 2)', async () => {
         await rig.setup('ups-blocking-error', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -315,8 +315,8 @@ describe('Hooks System Integration', () => {
       it('should block execution when hook command does not exist', async () => {
         await rig.setup('ups-missing-command', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -355,8 +355,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-correct-input', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -385,8 +385,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-system-message', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -416,8 +416,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-one-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -454,8 +454,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-seq-first-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   sequential: true,
@@ -487,8 +487,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-seq-second-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   sequential: true,
@@ -524,8 +524,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-all-allow', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -567,8 +567,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-all-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -602,8 +602,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-context', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -636,8 +636,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-error-with-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -670,8 +670,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-timeout-with-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -705,8 +705,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-groups', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -745,8 +745,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-groups-one-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -784,8 +784,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-modify', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   sequential: true,
@@ -820,8 +820,8 @@ console.log(JSON.stringify({
 
         await rig.setup('ups-multi-system-msg', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -862,8 +862,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-allow', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -890,8 +890,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-allow-final', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -923,8 +923,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-block-decision', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -942,11 +942,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say hello');
-        // When Stop hook blocks, agent continues execution instead of stopping
-        // So we should get a valid response (not an error containing "block")
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say hello', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should continue execution with custom reason', async () => {
@@ -955,8 +955,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-block-custom-reason', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -974,10 +974,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say goodbye');
-        // When Stop hook blocks, agent continues execution instead of stopping
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say goodbye', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
     });
 
@@ -987,8 +988,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-continue-false', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1006,9 +1007,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say continue');
-        // When continue: false, the agent may try to continue
-        expect(result).toBeDefined();
+        // Add --max-session-turns to prevent infinite loop when continue: false
+        // When continue: false, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say continue', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
     });
 
@@ -1018,8 +1021,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-add-context', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1047,8 +1050,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-multi-context', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1083,8 +1086,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-set-reason', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1111,8 +1114,8 @@ console.log(JSON.stringify({
       it('should continue stopping when hook times out', async () => {
         await rig.setup('stop-timeout', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1140,8 +1143,8 @@ console.log(JSON.stringify({
       it('should continue stopping when hook has non-blocking error', async () => {
         await rig.setup('stop-error', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1167,8 +1170,8 @@ console.log(JSON.stringify({
       it('should continue stopping when hook command does not exist', async () => {
         await rig.setup('stop-missing-command', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1198,8 +1201,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-system-message', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1230,8 +1233,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-multi-one-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1255,10 +1258,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say multi stop');
-        // When Stop hook blocks, agent continues execution instead of stopping
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say multi stop', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should continue execution when first sequential stop hook returns block', async () => {
@@ -1268,8 +1272,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-seq-first-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   sequential: true,
@@ -1294,10 +1298,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say sequential stop');
-        // When Stop hook blocks, agent continues execution instead of stopping
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say sequential stop', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should continue execution when second sequential stop hook returns block', async () => {
@@ -1307,8 +1312,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-seq-second-blocks', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   sequential: true,
@@ -1333,10 +1338,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say seq second blocks');
-        // When Stop hook blocks, agent continues execution instead of stopping
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say seq second blocks', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle multiple stop hooks all returning allow', async () => {
@@ -1346,8 +1352,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-multi-all-allow', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1389,8 +1395,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-multi-all-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1414,10 +1420,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say all block');
-        // When Stop hooks block, agent continues execution instead of stopping
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
+        // Add --max-session-turns to prevent infinite loop when Stop hooks block
+        // When Stop hooks block, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say all block', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle multiple continue: false from different stop hooks', async () => {
@@ -1426,8 +1433,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-multi-continue-false', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1451,9 +1458,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say multi continue');
-        // Multiple continue: false should be handled
-        expect(result).toBeDefined();
+        // Add --max-session-turns to prevent infinite loop when continue: false
+        // When continue: false, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say multi continue', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle mixed allow and continue: false in stop hooks', async () => {
@@ -1462,8 +1471,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-mixed-allow-continue', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1487,8 +1496,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say mixed');
-        expect(result).toBeDefined();
+        // Add --max-session-turns to prevent infinite loop when continue: false
+        // When continue: false, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say mixed', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle block with higher priority than continue: false', async () => {
@@ -1497,8 +1509,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-block-vs-continue', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1522,10 +1534,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say block priority');
-        // Block should take priority
-        expect(result).toBeDefined();
-        expect(result.toLowerCase()).toContain('block');
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say block priority', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle stop hook with error alongside blocking hook', async () => {
@@ -1533,8 +1546,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-error-with-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1558,10 +1571,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say error with block');
-        // Block should still work despite error in other hook
-        expect(result).toBeDefined();
-        expect(result.toLowerCase()).toContain('block');
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say error with block', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
 
       it('should handle stop hook timeout alongside blocking hook', async () => {
@@ -1569,8 +1583,8 @@ console.log(JSON.stringify({
 
         await rig.setup('stop-timeout-with-block', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               Stop: [
                 {
                   hooks: [
@@ -1594,10 +1608,11 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say timeout with block');
-        // Block should work despite timeout in other hook
-        expect(result).toBeDefined();
-        expect(result.toLowerCase()).toContain('block');
+        // Add --max-session-turns to prevent infinite loop when Stop hook blocks
+        // When Stop hook blocks, agent continues until max turns is reached (exit code 53)
+        await expect(
+          rig.run('Say timeout with block', '--max-session-turns', '2'),
+        ).rejects.toThrow(/max session turns|code 53/i);
       });
     });
   });
@@ -1614,8 +1629,8 @@ console.log(JSON.stringify({
 
         await rig.setup('multi-sequential', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   sequential: true,
@@ -1689,8 +1704,8 @@ console.log(JSON.stringify({
 
         await rig.setup('multi-passthrough', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   sequential: true,
@@ -1727,8 +1742,8 @@ console.log(JSON.stringify({
 
         await rig.setup('multi-parallel', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -1757,12 +1772,14 @@ console.log(JSON.stringify({
       });
 
       it('should handle mixed success/failure results from parallel hooks', async () => {
+        // For UserPromptSubmit hooks, command execution failure is treated as a blocking error
+        // So when one hook fails, the entire operation is blocked
         const allowScript = `console.log(JSON.stringify({decision: 'allow'}));`;
 
         await rig.setup('multi-mixed', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
@@ -1786,9 +1803,10 @@ console.log(JSON.stringify({
           },
         });
 
-        const result = await rig.run('Say mixed');
-        // Mixed results: one succeeds, one fails - should continue
-        expect(result).toBeDefined();
+        // UserPromptSubmit hook command failure blocks the operation
+        await expect(rig.run('Say mixed')).rejects.toThrow(
+          /blocked|error|nonexistent/i,
+        );
       });
 
       it('should allow when any hook returns allow in parallel (OR logic)', async () => {
@@ -1797,8 +1815,8 @@ console.log(JSON.stringify({
 
         await rig.setup('multi-or-logic', {
           settings: {
+            hooksConfig: { enabled: true },
             hooks: {
-              enabled: true,
               UserPromptSubmit: [
                 {
                   hooks: [
