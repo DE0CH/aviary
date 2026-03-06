@@ -949,11 +949,11 @@ describe('GeminiChat', async () => {
         );
         await expectStreamExhaustion(stream);
 
-        // Should be called 6 times (1 initial + 5 transient retries)
+        // Should be called 3 times (1 initial + 2 transient retries)
         expect(
           mockContentGenerator.generateContentStream,
-        ).toHaveBeenCalledTimes(6);
-        expect(mockLogContentRetry).toHaveBeenCalledTimes(5);
+        ).toHaveBeenCalledTimes(3);
+        expect(mockLogContentRetry).toHaveBeenCalledTimes(2);
         expect(mockLogContentRetryFailure).toHaveBeenCalledTimes(1);
 
         // History should still contain the user message.
