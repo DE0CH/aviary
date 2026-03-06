@@ -2,7 +2,7 @@
 
 > [!tip]
 >
-> **Authentication / API keys:** Authentication (Qwen OAuth vs OpenAI-compatible API) and auth-related environment variables (like `OPENAI_API_KEY`) are documented in **[Authentication](../configuration/auth)**.
+> **Authentication / API keys:** Authentication (Qwen OAuth, Alibaba Cloud Coding Plan, or API Key) and auth-related environment variables (like `OPENAI_API_KEY`) are documented in **[Authentication](../configuration/auth)**.
 
 > [!note]
 >
@@ -43,7 +43,33 @@ Qwen Code uses JSON settings files for persistent configuration. There are four 
 In addition to a project settings file, a project's `.qwen` directory can contain other project-specific files related to Qwen Code's operation, such as:
 
 - [Custom sandbox profiles](../features/sandbox) (e.g. `.qwen/sandbox-macos-custom.sb`, `.qwen/sandbox.Dockerfile`).
-- [Agent Skills](../features/skills) (experimental) under `.qwen/skills/` (each Skill is a directory containing a `SKILL.md`).
+- [Agent Skills](../features/skills) under `.qwen/skills/` (each Skill is a directory containing a `SKILL.md`).
+
+### Configuration migration
+
+Qwen Code automatically migrates legacy configuration settings to the new format. Old settings files are backed up before migration. The following settings have been renamed from negative (`disable*`) to positive (`enable*`) naming:
+
+| Old Setting                              | New Setting                                 | Notes                              |
+| ---------------------------------------- | ------------------------------------------- | ---------------------------------- |
+| `disableAutoUpdate` + `disableUpdateNag` | `general.enableAutoUpdate`                  | Consolidated into a single setting |
+| `disableLoadingPhrases`                  | `ui.accessibility.enableLoadingPhrases`     |                                    |
+| `disableFuzzySearch`                     | `context.fileFiltering.enableFuzzySearch`   |                                    |
+| `disableCacheControl`                    | `model.generationConfig.enableCacheControl` |                                    |
+
+> [!note]
+>
+> **Boolean value inversion:** When migrating, boolean values are inverted (e.g., `disableAutoUpdate: true` becomes `enableAutoUpdate: false`).
+
+#### Consolidation policy for `disableAutoUpdate` and `disableUpdateNag`
+
+When both legacy settings are present with different values, the migration follows this policy: if **either** `disableAutoUpdate` **or** `disableUpdateNag` is `true`, then `enableAutoUpdate` becomes `false`:
+
+| `disableAutoUpdate` | `disableUpdateNag` | Migrated `enableAutoUpdate` |
+| ------------------- | ------------------ | --------------------------- |
+| `false`             | `false`            | `true`                      |
+| `false`             | `true`             | `false`                     |
+| `true`              | `false`            | `false`                     |
+| `true`              | `true`             | `false`                     |
 
 ### Available settings in `settings.json`
 
@@ -51,14 +77,14 @@ Settings are organized into categories. All settings should be placed within the
 
 #### general
 
-| Setting                         | Type    | Description                                                                                                | Default     |
-| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- | ----------- |
-| `general.preferredEditor`       | string  | The preferred editor to open files in.                                                                     | `undefined` |
-| `general.vimMode`               | boolean | Enable Vim keybindings.                                                                                    | `false`     |
-| `general.disableAutoUpdate`     | boolean | Disable automatic updates.                                                                                 | `false`     |
-| `general.disableUpdateNag`      | boolean | Disable update notification prompts.                                                                       | `false`     |
-| `general.gitCoAuthor`           | boolean | Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code. | `true`      |
-| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery.                                                                 | `false`     |
+| Setting                         | Type    | Description                                                                                                                                                                     | Default     |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `general.preferredEditor`       | string  | The preferred editor to open files in.                                                                                                                                          | `undefined` |
+| `general.vimMode`               | boolean | Enable Vim keybindings.                                                                                                                                                         | `false`     |
+| `general.enableAutoUpdate`      | boolean | Enable automatic update checks and installations on startup.                                                                                                                    | `true`      |
+| `general.gitCoAuthor`           | boolean | Automatically add a Co-authored-by trailer to git commit messages when commits are made through Qwen Code.                                                                      | `true`      |
+| `general.checkpointing.enabled` | boolean | Enable session checkpointing for recovery.                                                                                                                                      | `false`     |
+| `general.defaultFileEncoding`   | string  | Default encoding for new files. Use `"utf-8"` (default) for UTF-8 without BOM, or `"utf-8-bom"` for UTF-8 with BOM. Only change this if your project specifically requires BOM. | `"utf-8"`   |
 
 #### output
 
@@ -68,21 +94,21 @@ Settings are organized into categories. All settings should be placed within the
 
 #### ui
 
-| Setting                                  | Type             | Description                                                                                                                                                                                                                                                                                                                                                                                                         | Default     |
-| ---------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `ui.theme`                               | string           | The color theme for the UI. See [Themes](../configuration/themes) for available options.                                                                                                                                                                                                                                                                                                                            | `undefined` |
-| `ui.customThemes`                        | object           | Custom theme definitions.                                                                                                                                                                                                                                                                                                                                                                                           | `{}`        |
-| `ui.hideWindowTitle`                     | boolean          | Hide the window title bar.                                                                                                                                                                                                                                                                                                                                                                                          | `false`     |
-| `ui.hideTips`                            | boolean          | Hide helpful tips in the UI.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
-| `ui.hideBanner`                          | boolean          | Hide the application banner.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
-| `ui.hideFooter`                          | boolean          | Hide the footer from the UI.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
-| `ui.showMemoryUsage`                     | boolean          | Display memory usage information in the UI.                                                                                                                                                                                                                                                                                                                                                                         | `false`     |
-| `ui.showLineNumbers`                     | boolean          | Show line numbers in code blocks in the CLI output.                                                                                                                                                                                                                                                                                                                                                                 | `true`      |
-| `ui.showCitations`                       | boolean          | Show citations for generated text in the chat.                                                                                                                                                                                                                                                                                                                                                                      | `true`      |
-| `enableWelcomeBack`                      | boolean          | Show welcome back dialog when returning to a project with conversation history. When enabled, Qwen Code will automatically detect if you're returning to a project with a previously generated project summary (`.qwen/PROJECT_SUMMARY.md`) and show a dialog allowing you to continue your previous conversation or start fresh. This feature integrates with the `/summary` command and quit confirmation dialog. | `true`      |
-| `ui.accessibility.disableLoadingPhrases` | boolean          | Disable loading phrases for accessibility.                                                                                                                                                                                                                                                                                                                                                                          | `false`     |
-| `ui.accessibility.screenReader`          | boolean          | Enables screen reader mode, which adjusts the TUI for better compatibility with screen readers.                                                                                                                                                                                                                                                                                                                     | `false`     |
-| `ui.customWittyPhrases`                  | array of strings | A list of custom phrases to display during loading states. When provided, the CLI will cycle through these phrases instead of the default ones.                                                                                                                                                                                                                                                                     | `[]`        |
+| Setting                                 | Type             | Description                                                                                                                                                                                                                                                                                                                                                                                                         | Default     |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `ui.theme`                              | string           | The color theme for the UI. See [Themes](../configuration/themes) for available options.                                                                                                                                                                                                                                                                                                                            | `undefined` |
+| `ui.customThemes`                       | object           | Custom theme definitions.                                                                                                                                                                                                                                                                                                                                                                                           | `{}`        |
+| `ui.hideWindowTitle`                    | boolean          | Hide the window title bar.                                                                                                                                                                                                                                                                                                                                                                                          | `false`     |
+| `ui.hideTips`                           | boolean          | Hide helpful tips in the UI.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
+| `ui.hideBanner`                         | boolean          | Hide the application banner.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
+| `ui.hideFooter`                         | boolean          | Hide the footer from the UI.                                                                                                                                                                                                                                                                                                                                                                                        | `false`     |
+| `ui.showMemoryUsage`                    | boolean          | Display memory usage information in the UI.                                                                                                                                                                                                                                                                                                                                                                         | `false`     |
+| `ui.showLineNumbers`                    | boolean          | Show line numbers in code blocks in the CLI output.                                                                                                                                                                                                                                                                                                                                                                 | `true`      |
+| `ui.showCitations`                      | boolean          | Show citations for generated text in the chat.                                                                                                                                                                                                                                                                                                                                                                      | `true`      |
+| `enableWelcomeBack`                     | boolean          | Show welcome back dialog when returning to a project with conversation history. When enabled, Qwen Code will automatically detect if you're returning to a project with a previously generated project summary (`.qwen/PROJECT_SUMMARY.md`) and show a dialog allowing you to continue your previous conversation or start fresh. This feature integrates with the `/summary` command and quit confirmation dialog. | `true`      |
+| `ui.accessibility.enableLoadingPhrases` | boolean          | Enable loading phrases (disable for accessibility).                                                                                                                                                                                                                                                                                                                                                                 | `true`      |
+| `ui.accessibility.screenReader`         | boolean          | Enables screen reader mode, which adjusts the TUI for better compatibility with screen readers.                                                                                                                                                                                                                                                                                                                     | `false`     |
+| `ui.customWittyPhrases`                 | array of strings | A list of custom phrases to display during loading states. When provided, the CLI will cycle through these phrases instead of the default ones.                                                                                                                                                                                                                                                                     | `[]`        |
 
 #### ide
 
@@ -99,18 +125,18 @@ Settings are organized into categories. All settings should be placed within the
 
 #### model
 
-| Setting                                            | Type    | Description                                                                                                                                                                                                                                                                                                                                                            | Default     |
-| -------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `model.name`                                       | string  | The Qwen model to use for conversations.                                                                                                                                                                                                                                                                                                                               | `undefined` |
-| `model.maxSessionTurns`                            | number  | Maximum number of user/model/tool turns to keep in a session. -1 means unlimited.                                                                                                                                                                                                                                                                                      | `-1`        |
-| `model.summarizeToolOutput`                        | object  | Enables or disables the summarization of tool output. You can specify the token budget for the summarization using the `tokenBudget` setting. Note: Currently only the `run_shell_command` tool is supported. For example `{"run_shell_command": {"tokenBudget": 2000}}`                                                                                               | `undefined` |
-| `model.generationConfig`                           | object  | Advanced overrides passed to the underlying content generator. Supports request controls such as `timeout`, `maxRetries`, `disableCacheControl`, and `customHeaders` (custom HTTP headers for API requests), along with fine-tuning knobs under `samplingParams` (for example `temperature`, `top_p`, `max_tokens`). Leave unset to rely on provider defaults.         | `undefined` |
-| `model.chatCompression.contextPercentageThreshold` | number  | Sets the threshold for chat history compression as a percentage of the model's total token limit. This is a value between 0 and 1 that applies to both automatic compression and the manual `/compress` command. For example, a value of `0.6` will trigger compression when the chat history exceeds 60% of the token limit. Use `0` to disable compression entirely. | `0.7`       |
-| `model.skipNextSpeakerCheck`                       | boolean | Skip the next speaker check.                                                                                                                                                                                                                                                                                                                                           | `false`     |
-| `model.skipLoopDetection`                          | boolean | Disables loop detection checks. Loop detection prevents infinite loops in AI responses but can generate false positives that interrupt legitimate workflows. Enable this option if you experience frequent false positive loop detection interruptions.                                                                                                                | `false`     |
-| `model.skipStartupContext`                         | boolean | Skips sending the startup workspace context (environment summary and acknowledgement) at the beginning of each session. Enable this if you prefer to provide context manually or want to save tokens on startup.                                                                                                                                                       | `false`     |
-| `model.enableOpenAILogging`                        | boolean | Enables logging of OpenAI API calls for debugging and analysis. When enabled, API requests and responses are logged to JSON files.                                                                                                                                                                                                                                     | `false`     |
-| `model.openAILoggingDir`                           | string  | Custom directory path for OpenAI API logs. If not specified, defaults to `logs/openai` in the current working directory. Supports absolute paths, relative paths (resolved from current working directory), and `~` expansion (home directory).                                                                                                                        | `undefined` |
+| Setting                                            | Type    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Default     |
+| -------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `model.name`                                       | string  | The Qwen model to use for conversations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `undefined` |
+| `model.maxSessionTurns`                            | number  | Maximum number of user/model/tool turns to keep in a session. -1 means unlimited.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `-1`        |
+| `model.summarizeToolOutput`                        | object  | Enables or disables the summarization of tool output. You can specify the token budget for the summarization using the `tokenBudget` setting. Note: Currently only the `run_shell_command` tool is supported. For example `{"run_shell_command": {"tokenBudget": 2000}}`                                                                                                                                                                                                                                                                                             | `undefined` |
+| `model.generationConfig`                           | object  | Advanced overrides passed to the underlying content generator. Supports request controls such as `timeout`, `maxRetries`, `enableCacheControl`, `contextWindowSize` (override model's context window size), `modalities` (override auto-detected input modalities), `customHeaders` (custom HTTP headers for API requests), and `extra_body` (additional body parameters for OpenAI-compatible API requests only), along with fine-tuning knobs under `samplingParams` (for example `temperature`, `top_p`, `max_tokens`). Leave unset to rely on provider defaults. | `undefined` |
+| `model.chatCompression.contextPercentageThreshold` | number  | Sets the threshold for chat history compression as a percentage of the model's total token limit. This is a value between 0 and 1 that applies to both automatic compression and the manual `/compress` command. For example, a value of `0.6` will trigger compression when the chat history exceeds 60% of the token limit. Use `0` to disable compression entirely.                                                                                                                                                                                               | `0.7`       |
+| `model.skipNextSpeakerCheck`                       | boolean | Skip the next speaker check.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `false`     |
+| `model.skipLoopDetection`                          | boolean | Disables loop detection checks. Loop detection prevents infinite loops in AI responses but can generate false positives that interrupt legitimate workflows. Enable this option if you experience frequent false positive loop detection interruptions.                                                                                                                                                                                                                                                                                                              | `false`     |
+| `model.skipStartupContext`                         | boolean | Skips sending the startup workspace context (environment summary and acknowledgement) at the beginning of each session. Enable this if you prefer to provide context manually or want to save tokens on startup.                                                                                                                                                                                                                                                                                                                                                     | `false`     |
+| `model.enableOpenAILogging`                        | boolean | Enables logging of OpenAI API calls for debugging and analysis. When enabled, API requests and responses are logged to JSON files.                                                                                                                                                                                                                                                                                                                                                                                                                                   | `false`     |
+| `model.openAILoggingDir`                           | string  | Custom directory path for OpenAI API logs. If not specified, defaults to `logs/openai` in the current working directory. Supports absolute paths, relative paths (resolved from current working directory), and `~` expansion (home directory).                                                                                                                                                                                                                                                                                                                      | `undefined` |
 
 **Example model.generationConfig:**
 
@@ -119,10 +145,16 @@ Settings are organized into categories. All settings should be placed within the
   "model": {
     "generationConfig": {
       "timeout": 60000,
-      "disableCacheControl": false,
+      "contextWindowSize": 128000,
+      "modalities": {
+        "image": true
+      },
+      "enableCacheControl": true,
       "customHeaders": {
-        "X-Request-ID": "req-123",
-        "X-User-ID": "user-456"
+        "X-Client-Request-ID": "req-123"
+      },
+      "extra_body": {
+        "enable_thinking": true
       },
       "samplingParams": {
         "temperature": 0.2,
@@ -134,7 +166,19 @@ Settings are organized into categories. All settings should be placed within the
 }
 ```
 
-The `customHeaders` field allows you to add custom HTTP headers to all API requests. This is useful for request tracing, monitoring, API gateway routing, or when different models require different headers. If `customHeaders` is defined in `modelProviders[].generationConfig.customHeaders`, it will be used directly; otherwise, headers from `model.generationConfig.customHeaders` will be used. No merging occurs between the two levels.
+**contextWindowSize:**
+
+Overrides the default context window size for the selected model. Qwen Code determines the context window using built-in defaults based on model name matching, with a constant fallback value. Use this setting when a provider's effective context limit differs from Qwen Code's default. This value defines the model's assumed maximum context capacity, not a per-request token limit.
+
+**modalities:**
+
+Overrides the auto-detected input modalities for the selected model. Qwen Code automatically detects supported modalities (image, PDF, audio, video) based on model name pattern matching. Use this setting when the auto-detection is incorrect — for example, to enable `pdf` for a model that supports it but isn't recognized. Format: `{ "image": true, "pdf": true, "audio": true, "video": true }`. Omit a key or set it to `false` for unsupported types.
+
+**customHeaders:**
+
+Allows you to add custom HTTP headers to all API requests. This is useful for request tracing, monitoring, API gateway routing, or when different models require different headers. If `customHeaders` is defined in `modelProviders[].generationConfig.customHeaders`, it will be used directly; otherwise, headers from `model.generationConfig.customHeaders` will be used. No merging occurs between the two levels.
+
+The `extra_body` field allows you to add custom parameters to the request body sent to the API. This is useful for provider-specific options that are not covered by the standard configuration fields. **Note: This field is only supported for OpenAI-compatible providers (`openai`, `qwen-oauth`). It is ignored for Anthropic and Gemini providers.** If `extra_body` is defined in `modelProviders[].generationConfig.extra_body`, it will be used directly; otherwise, values from `model.generationConfig.extra_body` will be used.
 
 **model.openAILoggingDir examples:**
 
@@ -142,119 +186,25 @@ The `customHeaders` field allows you to add custom HTTP headers to all API reque
 - `"./custom-logs"` - Logs to `./custom-logs` relative to current directory
 - `"/tmp/openai-logs"` - Logs to absolute path `/tmp/openai-logs`
 
-#### modelProviders
-
-Use `modelProviders` to declare curated model lists per auth type that the `/model` picker can switch between. Keys must be valid auth types (`openai`, `anthropic`, `gemini`, `vertex-ai`, etc.). Each entry requires an `id` and **must include `envKey`**, with optional `name`, `description`, `baseUrl`, and `generationConfig`. Credentials are never persisted in settings; the runtime reads them from `process.env[envKey]`. Qwen OAuth models remain hard-coded and cannot be overridden.
-
-##### Example
-
-```json
-{
-  "modelProviders": {
-    "openai": [
-      {
-        "id": "gpt-4o",
-        "name": "GPT-4o",
-        "envKey": "OPENAI_API_KEY",
-        "baseUrl": "https://api.openai.com/v1",
-        "generationConfig": {
-          "timeout": 60000,
-          "maxRetries": 3,
-          "customHeaders": {
-            "X-Model-Version": "v1.0",
-            "X-Request-Priority": "high"
-          },
-          "samplingParams": { "temperature": 0.2 }
-        }
-      }
-    ],
-    "anthropic": [
-      {
-        "id": "claude-3-5-sonnet",
-        "envKey": "ANTHROPIC_API_KEY",
-        "baseUrl": "https://api.anthropic.com/v1"
-      }
-    ],
-    "gemini": [
-      {
-        "id": "gemini-2.0-flash",
-        "name": "Gemini 2.0 Flash",
-        "envKey": "GEMINI_API_KEY",
-        "baseUrl": "https://generativelanguage.googleapis.com"
-      }
-    ],
-    "vertex-ai": [
-      {
-        "id": "gemini-1.5-pro-vertex",
-        "envKey": "GOOGLE_API_KEY",
-        "baseUrl": "https://generativelanguage.googleapis.com"
-      }
-    ]
-  }
-}
-```
-
-> [!note]
-> Only the `/model` command exposes non-default auth types. Anthropic, Gemini, Vertex AI, etc., must be defined via `modelProviders`. The `/auth` command intentionally lists only the built-in Qwen OAuth and OpenAI flows.
-
-##### Resolution layers and atomicity
-
-The effective auth/model/credential values are chosen per field using the following precedence (first present wins). You can combine `--auth-type` with `--model` to point directly at a provider entry; these CLI flags run before other layers.
-
-| Layer (highest → lowest)   | authType                            | model                                           | apiKey                                              | baseUrl                                              | apiKeyEnvKey           | proxy                             |
-| -------------------------- | ----------------------------------- | ----------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------- | ---------------------- | --------------------------------- |
-| Programmatic overrides     | `/auth `                            | `/auth` input                                   | `/auth` input                                       | `/auth` input                                        | —                      | —                                 |
-| Model provider selection   | —                                   | `modelProvider.id`                              | `env[modelProvider.envKey]`                         | `modelProvider.baseUrl`                              | `modelProvider.envKey` | —                                 |
-| CLI arguments              | `--auth-type`                       | `--model`                                       | `--openaiApiKey` (or provider-specific equivalents) | `--openaiBaseUrl` (or provider-specific equivalents) | —                      | —                                 |
-| Environment variables      | —                                   | Provider-specific mapping (e.g. `OPENAI_MODEL`) | Provider-specific mapping (e.g. `OPENAI_API_KEY`)   | Provider-specific mapping (e.g. `OPENAI_BASE_URL`)   | —                      | —                                 |
-| Settings (`settings.json`) | `security.auth.selectedType`        | `model.name`                                    | `security.auth.apiKey`                              | `security.auth.baseUrl`                              | —                      | —                                 |
-| Default / computed         | Falls back to `AuthType.QWEN_OAUTH` | Built-in default (OpenAI ⇒ `qwen3-coder-plus`)  | —                                                   | —                                                    | —                      | `Config.getProxy()` if configured |
-
-\*When present, CLI auth flags override settings. Otherwise, `security.auth.selectedType` or the implicit default determine the auth type. Qwen OAuth and OpenAI are the only auth types surfaced without extra configuration.
-
-Model-provider sourced values are applied atomically: once a provider model is active, every field it defines is protected from lower layers until you manually clear credentials via `/auth`. The final `generationConfig` is the projection across all layers—lower layers only fill gaps left by higher ones, and the provider layer remains impenetrable.
-
-The merge strategy for `modelProviders` is REPLACE: the entire `modelProviders` from project settings will override the corresponding section in user settings, rather than merging the two.
-
-##### Generation config layering
-
-Per-field precedence for `generationConfig`:
-
-1. Programmatic overrides (e.g. runtime `/model`, `/auth` changes)
-2. `modelProviders[authType][].generationConfig`
-3. `settings.model.generationConfig`
-4. Content-generator defaults (`getDefaultGenerationConfig` for OpenAI, `getParameterValue` for Gemini, etc.)
-
-`samplingParams` and `customHeaders` are both treated atomically; provider values replace the entire object. If `modelProviders[].generationConfig` defines these fields, they are used directly; otherwise, values from `model.generationConfig` are used. No merging occurs between provider and global configuration levels. Defaults from the content generator apply last so each provider retains its tuned baseline.
-
-##### Selection persistence and recommendations
-
-> [!important]
-> Define `modelProviders` in the user-scope `~/.qwen/settings.json` whenever possible and avoid persisting credential overrides in any scope. Keeping the provider catalog in user settings prevents merge/override conflicts between project and user scopes and ensures `/auth` and `/model` updates always write back to a consistent scope.
-
-- `/model` and `/auth` persist `model.name` (where applicable) and `security.auth.selectedType` to the closest writable scope that already defines `modelProviders`; otherwise they fall back to the user scope. This keeps workspace/user files in sync with the active provider catalog.
-- Without `modelProviders`, the resolver mixes CLI/env/settings layers, which is fine for single-provider setups but cumbersome when frequently switching. Define provider catalogs whenever multi-model workflows are common so that switches stay atomic, source-attributed, and debuggable.
-
 #### context
 
 | Setting                                           | Type                       | Description                                                                                                                                                                                                                                                                                                                                                           | Default     |
 | ------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | `context.fileName`                                | string or array of strings | The name of the context file(s).                                                                                                                                                                                                                                                                                                                                      | `undefined` |
 | `context.importFormat`                            | string                     | The format to use when importing memory.                                                                                                                                                                                                                                                                                                                              | `undefined` |
-| `context.discoveryMaxDirs`                        | number                     | Maximum number of directories to search for memory.                                                                                                                                                                                                                                                                                                                   | `200`       |
 | `context.includeDirectories`                      | array                      | Additional directories to include in the workspace context. Specifies an array of additional absolute or relative paths to include in the workspace context. Missing directories will be skipped with a warning by default. Paths can use `~` to refer to the user's home directory. This setting can be combined with the `--include-directories` command-line flag. | `[]`        |
 | `context.loadFromIncludeDirectories`              | boolean                    | Controls the behavior of the `/memory refresh` command. If set to `true`, `QWEN.md` files should be loaded from all directories that are added. If set to `false`, `QWEN.md` should only be loaded from the current directory.                                                                                                                                        | `false`     |
 | `context.fileFiltering.respectGitIgnore`          | boolean                    | Respect .gitignore files when searching.                                                                                                                                                                                                                                                                                                                              | `true`      |
 | `context.fileFiltering.respectQwenIgnore`         | boolean                    | Respect .qwenignore files when searching.                                                                                                                                                                                                                                                                                                                             | `true`      |
 | `context.fileFiltering.enableRecursiveFileSearch` | boolean                    | Whether to enable searching recursively for filenames under the current tree when completing `@` prefixes in the prompt.                                                                                                                                                                                                                                              | `true`      |
-| `context.fileFiltering.disableFuzzySearch`        | boolean                    | When `true`, disables the fuzzy search capabilities when searching for files, which can improve performance on projects with a large number of files.                                                                                                                                                                                                                 | `false`     |
+| `context.fileFiltering.enableFuzzySearch`         | boolean                    | When `true`, enables fuzzy search capabilities when searching for files. Set to `false` to improve performance on projects with a large number of files.                                                                                                                                                                                                              | `true`      |
 
 #### Troubleshooting File Search Performance
 
 If you are experiencing performance issues with file searching (e.g., with `@` completions), especially in projects with a very large number of files, here are a few things you can try in order of recommendation:
 
 1. **Use `.qwenignore`:** Create a `.qwenignore` file in your project root to exclude directories that contain a large number of files that you don't need to reference (e.g., build artifacts, logs, `node_modules`). Reducing the total number of files crawled is the most effective way to improve performance.
-2. **Disable Fuzzy Search:** If ignoring files is not enough, you can disable fuzzy search by setting `disableFuzzySearch` to `true` in your `settings.json` file. This will use a simpler, non-fuzzy matching algorithm, which can be faster.
+2. **Disable Fuzzy Search:** If ignoring files is not enough, you can disable fuzzy search by setting `enableFuzzySearch` to `false` in your `settings.json` file. This will use a simpler, non-fuzzy matching algorithm, which can be faster.
 3. **Disable Recursive File Search:** As a last resort, you can disable recursive file search entirely by setting `enableRecursiveFileSearch` to `false`. This will be the fastest option as it avoids a recursive crawl of your project. However, it means you will need to type the full path to files when using `@` completions.
 
 #### tools
@@ -274,7 +224,6 @@ If you are experiencing performance issues with file searching (e.g., with `@` c
 | `tools.enableToolOutputTruncation`   | boolean           | Enable truncation of large tool outputs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `true`      | Requires restart: Yes                                                                                                                                                                                                                                |
 | `tools.truncateToolOutputThreshold`  | number            | Truncate tool output if it is larger than this many characters. Applies to Shell, Grep, Glob, ReadFile and ReadManyFiles tools.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `25000`     | Requires restart: Yes                                                                                                                                                                                                                                |
 | `tools.truncateToolOutputLines`      | number            | Maximum lines or entries kept when truncating tool output. Applies to Shell, Grep, Glob, ReadFile and ReadManyFiles tools.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `1000`      | Requires restart: Yes                                                                                                                                                                                                                                |
-| `tools.autoAccept`                   | boolean           | Controls whether the CLI automatically accepts and executes tool calls that are considered safe (e.g., read-only operations) without explicit user confirmation. If set to `true`, the CLI will bypass the confirmation prompt for tools deemed safe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `false`     |                                                                                                                                                                                                                                                      |
 
 #### mcp
 
@@ -287,6 +236,15 @@ If you are experiencing performance issues with file searching (e.g., with `@` c
 > [!note]
 >
 > **Security Note for MCP servers:** These settings use simple string matching on MCP server names, which can be modified. If you're a system administrator looking to prevent users from bypassing this, consider configuring the `mcpServers` at the system settings level such that the user will not be able to configure any MCP servers of their own. This should not be used as an airtight security mechanism.
+
+#### lsp
+
+> [!warning]
+> **Experimental Feature**: LSP support is currently experimental and disabled by default. Enable it using the `--experimental-lsp` command line flag.
+
+Language Server Protocol (LSP) provides code intelligence features like go-to-definition, find references, and diagnostics.
+
+LSP server configuration is done through `.lsp.json` files in your project root directory, not through `settings.json`. See the [LSP documentation](../features/lsp) for configuration details and examples.
 
 #### security
 
@@ -356,7 +314,6 @@ Here is an example of a `settings.json` file with the nested structure, new as o
   },
   "ui": {
     "theme": "GitHub",
-    "hideBanner": true,
     "hideTips": false,
     "customWittyPhrases": [
       "You forget a thousand things every day. Make sure this is one of 'em",
@@ -480,8 +437,8 @@ Arguments passed directly when running the CLI can override other configurations
 | `--telemetry-otlp-protocol`  |       | Sets the OTLP protocol for telemetry (`grpc` or `http`).                                                                                                                                |                                        | Defaults to `grpc`. See [telemetry](../../developers/development/telemetry) for more information.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `--telemetry-log-prompts`    |       | Enables logging of prompts for telemetry.                                                                                                                                               |                                        | See [telemetry](../../developers/development/telemetry) for more information.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `--checkpointing`            |       | Enables [checkpointing](../features/checkpointing).                                                                                                                                     |                                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `--acp`                      |       | Enables ACP mode (Agent Control Protocol). Useful for IDE/editor integrations like [Zed](../integration-zed).                                                                           |                                        | Stable. Replaces the deprecated `--experimental-acp` flag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `--experimental-skills`      |       | Enables experimental [Agent Skills](../features/skills) (registers the `skill` tool and loads Skills from `.qwen/skills/` and `~/.qwen/skills/`).                                       |                                        | Experimental.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `--acp`                      |       | Enables ACP mode (Agent Client Protocol). Useful for IDE/editor integrations like [Zed](../integration-zed).                                                                            |                                        | Stable. Replaces the deprecated `--experimental-acp` flag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `--experimental-lsp`         |       | Enables experimental [LSP (Language Server Protocol)](../features/lsp) feature for code intelligence (go-to-definition, find references, diagnostics, etc.).                            |                                        | Experimental. Requires language servers to be installed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--extensions`               | `-e`  | Specifies a list of extensions to use for the session.                                                                                                                                  | Extension names                        | If not provided, all available extensions are used. Use the special term `qwen -e none` to disable all extensions. Example: `qwen -e my-extension -e my-other-extension`                                                                                                                                                                                                                                                                                                                                                                                        |
 | `--list-extensions`          | `-l`  | Lists all available extensions and exits.                                                                                                                                               |                                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `--proxy`                    |       | Sets the proxy for the CLI.                                                                                                                                                             | Proxy URL                              | Example: `--proxy http://localhost:7890`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -529,16 +486,13 @@ Here's a conceptual example of what a context file at the root of a TypeScript p
 
 This example demonstrates how you can provide general project context, specific coding conventions, and even notes about particular files or components. The more relevant and precise your context files are, the better the AI can assist you. Project-specific context files are highly encouraged to establish conventions and context.
 
-- **Hierarchical Loading and Precedence:** The CLI implements a sophisticated hierarchical memory system by loading context files (e.g., `QWEN.md`) from several locations. Content from files lower in this list (more specific) typically overrides or supplements content from files higher up (more general). The exact concatenation order and final context can be inspected using the `/memory show` command. The typical loading order is:
+- **Hierarchical Loading and Precedence:** The CLI implements a hierarchical memory system by loading context files (e.g., `QWEN.md`) from several locations. Content from files lower in this list (more specific) typically overrides or supplements content from files higher up (more general). The exact concatenation order and final context can be inspected using the `/memory show` command. The typical loading order is:
   1. **Global Context File:**
      - Location: `~/.qwen/<configured-context-filename>` (e.g., `~/.qwen/QWEN.md` in your user home directory).
      - Scope: Provides default instructions for all your projects.
   2. **Project Root & Ancestors Context Files:**
      - Location: The CLI searches for the configured context file in the current working directory and then in each parent directory up to either the project root (identified by a `.git` folder) or your home directory.
      - Scope: Provides context relevant to the entire project or a significant portion of it.
-  3. **Sub-directory Context Files (Contextual/Local):**
-     - Location: The CLI also scans for the configured context file in subdirectories _below_ the current working directory (respecting common ignore patterns like `node_modules`, `.git`, etc.). The breadth of this search is limited to 200 directories by default, but can be configured with the `context.discoveryMaxDirs` setting in your `settings.json` file.
-     - Scope: Allows for highly specific instructions relevant to a particular component, module, or subsection of your project.
 - **Concatenation & UI Indication:** The contents of all found context files are concatenated (with separators indicating their origin and path) and provided as part of the system prompt. The CLI footer displays the count of loaded context files, giving you a quick visual cue about the active instructional context.
 - **Importing Content:** You can modularize your context files by importing other Markdown files using the `@path/to/file.md` syntax. For more details, see the [Memory Import Processor documentation](../configuration/memory).
 - **Commands for Memory Management:**

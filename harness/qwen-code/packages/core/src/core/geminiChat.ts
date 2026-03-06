@@ -16,8 +16,11 @@ import type {
   Tool,
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
-import { ApiError, createUserContent } from '@google/genai';
-import { retryWithBackoff } from '../utils/retry.js';
+import { createUserContent } from '@google/genai';
+import { getErrorStatus, retryWithBackoff } from '../utils/retry.js';
+import { createDebugLogger } from '../utils/debugLogger.js';
+import { parseAndFormatApiError } from '../utils/errorParsing.js';
+import { isRateLimitError, type RetryInfo } from '../utils/rateLimit.js';
 import type { Config } from '../config/config.js';
 import { hasCycleInSchema } from '../tools/tools.js';
 import type { StructuredError } from './turn.js';
@@ -30,8 +33,9 @@ import {
   ContentRetryEvent,
   ContentRetryFailureEvent,
 } from '../telemetry/types.js';
-import { handleFallback } from '../fallback/handler.js';
 import { uiTelemetryService } from '../telemetry/uiTelemetry.js';
+
+const debugLogger = createDebugLogger('QWEN_CODE_CHAT');
 
 export enum StreamEventType {
   /** A regular content chunk from the API. */
@@ -43,7 +47,7 @@ export enum StreamEventType {
 
 export type StreamEvent =
   | { type: StreamEventType.CHUNK; value: GenerateContentResponse }
-  | { type: StreamEventType.RETRY };
+  | { type: StreamEventType.RETRY; retryInfo?: RetryInfo };
 
 /**
  * Options for retrying due to invalid content from the model.
@@ -59,6 +63,27 @@ const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
   maxAttempts: 2, // 1 initial call + 1 retry
   initialDelayMs: 500,
 };
+
+// Some providers occasionally return transient stream anomalies: either an
+// empty stream (usage metadata only, no candidates), a stream that finishes
+// normally but contains no usable text, or a stream cut off without a finish
+// reason. All are retried with an independent budget (similar to rate-limit
+// retries) so they do not consume each other's retry budgets.
+const INVALID_STREAM_RETRY_CONFIG = {
+  maxRetries: 2,
+  initialDelayMs: 2000,
+};
+
+/**
+ * Options for retrying on rate-limit throttling errors returned as stream content.
+ * Fixed 60s delay matches the DashScope per-minute quota window.
+ * 10 retries aligns with Claude Code's retry behavior.
+ */
+const RATE_LIMIT_RETRY_OPTIONS = {
+  maxRetries: 10,
+  delayMs: 60000,
+};
+
 /**
  * Returns true if the response is valid, false otherwise.
  *
@@ -269,6 +294,14 @@ export class GeminiChat {
     return (async function* () {
       try {
         let lastError: unknown = new Error('Request failed after all retries.');
+        let rateLimitRetryCount = 0;
+        let invalidStreamRetryCount = 0;
+
+        // Read per-config overrides; fall back to built-in defaults.
+        const cgConfig = self.config.getContentGeneratorConfig();
+        const maxRateLimitRetries =
+          cgConfig?.maxRetries ?? RATE_LIMIT_RETRY_OPTIONS.maxRetries;
+        const extraRetryErrorCodes = cgConfig?.retryErrorCodes;
 
         for (
           let attempt = 0;
@@ -276,7 +309,11 @@ export class GeminiChat {
           attempt++
         ) {
           try {
-            if (attempt > 0) {
+            if (
+              attempt > 0 ||
+              rateLimitRetryCount > 0 ||
+              invalidStreamRetryCount > 0
+            ) {
               yield { type: StreamEventType.RETRY };
             }
 
@@ -295,10 +332,77 @@ export class GeminiChat {
             break;
           } catch (error) {
             lastError = error;
-            const isContentError = error instanceof InvalidStreamError;
 
+            // Handle rate-limit / throttling errors returned as stream content.
+            // These arrive as StreamContentError with finish_reason="error_finish"
+            // from the pipeline, containing the throttling message in the content.
+            // Covers TPM throttling, GLM rate limits, and other provider throttling.
+            const isRateLimit = isRateLimitError(error, extraRetryErrorCodes);
+            if (isRateLimit && rateLimitRetryCount < maxRateLimitRetries) {
+              rateLimitRetryCount++;
+              const delayMs = RATE_LIMIT_RETRY_OPTIONS.delayMs;
+              const message = parseAndFormatApiError(
+                error instanceof Error ? error.message : String(error),
+              );
+              debugLogger.warn(
+                `Rate limit throttling detected (retry ${rateLimitRetryCount}/${maxRateLimitRetries}). ` +
+                  `Waiting ${delayMs / 1000}s before retrying...`,
+              );
+              yield {
+                type: StreamEventType.RETRY,
+                retryInfo: {
+                  message,
+                  attempt: rateLimitRetryCount,
+                  maxRetries: maxRateLimitRetries,
+                  delayMs,
+                },
+              };
+              // Don't count rate-limit retries against the content retry limit
+              attempt--;
+              await new Promise((res) => setTimeout(res, delayMs));
+              continue;
+            }
+
+            // Transient stream anomalies (NO_FINISH_REASON / NO_RESPONSE_TEXT):
+            // independent retry budget, similar to rate-limit handling.
+            // Does NOT consume the content retry budget.
+            const isTransientStreamError = error instanceof InvalidStreamError;
+            if (
+              isTransientStreamError &&
+              invalidStreamRetryCount < INVALID_STREAM_RETRY_CONFIG.maxRetries
+            ) {
+              invalidStreamRetryCount++;
+              const delayMs =
+                INVALID_STREAM_RETRY_CONFIG.initialDelayMs *
+                invalidStreamRetryCount;
+              debugLogger.warn(
+                `Invalid stream [${(error as InvalidStreamError).type}] ` +
+                  `(retry ${invalidStreamRetryCount}/${INVALID_STREAM_RETRY_CONFIG.maxRetries}). ` +
+                  `Waiting ${delayMs / 1000}s before retrying...`,
+              );
+              logContentRetry(
+                self.config,
+                new ContentRetryEvent(
+                  invalidStreamRetryCount - 1,
+                  (error as InvalidStreamError).type,
+                  delayMs,
+                  model,
+                ),
+              );
+              yield { type: StreamEventType.RETRY };
+              // Don't count transient retries against content retry limit.
+              attempt--;
+              await new Promise((res) => setTimeout(res, delayMs));
+              continue;
+            }
+            // Transient budget exhausted — stop immediately.
+            if (isTransientStreamError) {
+              break;
+            }
+
+            // Other content validation errors (e.g. NO_FINISH_REASON).
+            const isContentError = error instanceof InvalidStreamError;
             if (isContentError) {
-              // Check if we have more attempts left.
               if (attempt < INVALID_CONTENT_RETRY_OPTIONS.maxAttempts - 1) {
                 logContentRetry(
                   self.config,
@@ -325,11 +429,12 @@ export class GeminiChat {
 
         if (lastError) {
           if (lastError instanceof InvalidStreamError) {
+            const totalAttempts = invalidStreamRetryCount + 1;
             logContentRetryFailure(
               self.config,
               new ContentRetryFailureEvent(
-                INVALID_CONTENT_RETRY_OPTIONS.maxAttempts,
-                (lastError as InvalidStreamError).type,
+                totalAttempts,
+                lastError.type,
                 model,
               ),
             );
@@ -357,22 +462,20 @@ export class GeminiChat {
         },
         prompt_id,
       );
-    const onPersistent429Callback = async (
-      authType?: string,
-      error?: unknown,
-    ) => await handleFallback(this.config, model, authType, error);
-
     const streamResponse = await retryWithBackoff(apiCall, {
       shouldRetryOnError: (error: unknown) => {
-        if (error instanceof ApiError && error.message) {
-          if (error.status === 400) return false;
+        if (error instanceof Error) {
           if (isSchemaDepthError(error.message)) return false;
-          if (error.status === 429) return true;
-          if (error.status >= 500 && error.status < 600) return true;
+          if (isInvalidArgumentError(error.message)) return false;
         }
+
+        const status = getErrorStatus(error);
+        if (status === 400) return false;
+        if (status === 429) return true;
+        if (status && status >= 500 && status < 600) return true;
+
         return false;
       },
-      onPersistent429: onPersistent429Callback,
       authType: this.config.getContentGeneratorConfig()?.authType,
     });
 
@@ -512,8 +615,11 @@ export class GeminiChat {
     let hasFinishReason = false;
 
     for await (const chunk of streamResponse) {
-      hasFinishReason =
+      // Use ||= to avoid later usage-only chunks (no candidates) overwriting
+      // a finishReason that was already seen in an earlier chunk.
+      hasFinishReason ||=
         chunk?.candidates?.some((candidate) => candidate.finishReason) ?? false;
+
       if (isValidResponse(chunk)) {
         const content = chunk.candidates?.[0]?.content;
         if (content?.parts) {
@@ -529,10 +635,10 @@ export class GeminiChat {
       // Collect token usage for consolidated recording
       if (chunk.usageMetadata) {
         usageMetadata = chunk.usageMetadata;
-        if (chunk.usageMetadata.promptTokenCount !== undefined) {
-          uiTelemetryService.setLastPromptTokenCount(
-            chunk.usageMetadata.promptTokenCount,
-          );
+        const lastPromptTokenCount =
+          usageMetadata.totalTokenCount ?? usageMetadata.promptTokenCount;
+        if (lastPromptTokenCount) {
+          uiTelemetryService.setLastPromptTokenCount(lastPromptTokenCount);
         }
       }
 

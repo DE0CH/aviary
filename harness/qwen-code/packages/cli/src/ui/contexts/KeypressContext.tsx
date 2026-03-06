@@ -8,6 +8,7 @@ import type { Config } from '@qwen-code/qwen-code-core';
 import {
   KittySequenceOverflowEvent,
   logKittySequenceOverflow,
+  createDebugLogger,
 } from '@qwen-code/qwen-code-core';
 import { useStdin } from 'ink';
 import type React from 'react';
@@ -35,6 +36,7 @@ import {
   MODIFIER_ALT_BIT,
   MODIFIER_CTRL_BIT,
 } from '../utils/platformConstants.js';
+import { clipboardHasImage } from '../utils/clipboardUtils.js';
 
 import { FOCUS_IN, FOCUS_OUT } from '../hooks/useFocus.js';
 
@@ -53,6 +55,7 @@ export interface Key {
   paste: boolean;
   sequence: string;
   kittyProtocol?: boolean;
+  pasteImage?: boolean;
 }
 
 export type KeypressHandler = (key: Key) => void;
@@ -60,11 +63,13 @@ export type KeypressHandler = (key: Key) => void;
 interface KeypressContextValue {
   subscribe: (handler: KeypressHandler) => void;
   unsubscribe: (handler: KeypressHandler) => void;
+  pasteWorkaround: boolean;
 }
 
 const KeypressContext = createContext<KeypressContextValue | undefined>(
   undefined,
 );
+const debugLogger = createDebugLogger('KEYPRESS');
 
 export function useKeypressContext() {
   const context = useContext(KeypressContext);
@@ -387,7 +392,7 @@ export function KeypressProvider({
       }
     };
 
-    const handleKeypress = (_: unknown, key: Key) => {
+    const handleKeypress = async (_: unknown, key: Key) => {
       if (key.sequence === FOCUS_IN || key.sequence === FOCUS_OUT) {
         return;
       }
@@ -397,14 +402,28 @@ export function KeypressProvider({
       }
       if (key.name === 'paste-end') {
         isPaste = false;
-        broadcast({
-          name: '',
-          ctrl: false,
-          meta: false,
-          shift: false,
-          paste: true,
-          sequence: pasteBuffer.toString(),
-        });
+        if (pasteBuffer.toString().length > 0) {
+          broadcast({
+            name: '',
+            ctrl: false,
+            meta: false,
+            shift: false,
+            paste: true,
+            sequence: pasteBuffer.toString(),
+          });
+        } else {
+          const hasImage = await clipboardHasImage();
+          broadcast({
+            name: '',
+            ctrl: false,
+            meta: false,
+            shift: false,
+            paste: true,
+            pasteImage: hasImage,
+            sequence: pasteBuffer.toString(),
+          });
+        }
+
         pasteBuffer = Buffer.alloc(0);
         return;
       }
@@ -486,7 +505,7 @@ export function KeypressProvider({
         key.sequence === `${ESC}${KITTY_CTRL_C}`
       ) {
         if (kittySequenceBuffer && debugKeystrokeLogging) {
-          console.log(
+          debugLogger.debug(
             '[DEBUG] Kitty buffer cleared on Ctrl+C:',
             kittySequenceBuffer,
           );
@@ -520,7 +539,7 @@ export function KeypressProvider({
           kittySequenceBuffer += key.sequence;
 
           if (debugKeystrokeLogging) {
-            console.log(
+            debugLogger.debug(
               '[DEBUG] Kitty buffer accumulating:',
               kittySequenceBuffer,
             );
@@ -538,7 +557,7 @@ export function KeypressProvider({
               const nextStart = kittySequenceBuffer.indexOf(`${ESC}[`, 1);
               if (nextStart > 0) {
                 if (debugKeystrokeLogging) {
-                  console.log(
+                  debugLogger.debug(
                     '[DEBUG] Skipping incomplete/invalid CSI prefix:',
                     kittySequenceBuffer.slice(0, nextStart),
                   );
@@ -554,12 +573,12 @@ export function KeypressProvider({
                 parsed.length,
               );
               if (kittySequenceBuffer.length > parsed.length) {
-                console.log(
+                debugLogger.debug(
                   '[DEBUG] Kitty sequence parsed successfully (prefix):',
                   parsedSequence,
                 );
               } else {
-                console.log(
+                debugLogger.debug(
                   '[DEBUG] Kitty sequence parsed successfully:',
                   parsedSequence,
                 );
@@ -576,12 +595,12 @@ export function KeypressProvider({
             const codes = Array.from(kittySequenceBuffer).map((ch) =>
               ch.charCodeAt(0),
             );
-            console.warn('Kitty sequence buffer has char codes:', codes);
+            debugLogger.warn('Kitty sequence buffer has char codes:', codes);
           }
 
           if (kittySequenceBuffer.length > MAX_KITTY_SEQUENCE_LENGTH) {
             if (debugKeystrokeLogging) {
-              console.log(
+              debugLogger.debug(
                 '[DEBUG] Kitty buffer overflow, clearing:',
                 kittySequenceBuffer,
               );
@@ -719,6 +738,7 @@ export function KeypressProvider({
     };
 
     let rl: readline.Interface;
+
     if (usePassthrough) {
       rl = readline.createInterface({
         input: keypressStream,
@@ -799,7 +819,9 @@ export function KeypressProvider({
   ]);
 
   return (
-    <KeypressContext.Provider value={{ subscribe, unsubscribe }}>
+    <KeypressContext.Provider
+      value={{ subscribe, unsubscribe, pasteWorkaround }}
+    >
       {children}
     </KeypressContext.Provider>
   );

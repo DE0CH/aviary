@@ -15,6 +15,8 @@ export const AGENT_METHODS = {
   session_prompt: 'session/prompt',
   session_list: 'session/list',
   session_set_mode: 'session/set_mode',
+  session_set_model: 'session/set_model',
+  session_set_config_option: 'session/set_config_option',
 };
 
 export const CLIENT_METHODS = {
@@ -58,7 +60,7 @@ export type CancelNotification = z.infer<typeof cancelNotificationSchema>;
 
 export type AuthenticateRequest = z.infer<typeof authenticateRequestSchema>;
 
-export type NewSessionResponse = z.infer<typeof newSessionResponseSchema>;
+// Note: NewSessionResponse type is defined later after newSessionResponseSchema
 
 export type LoadSessionResponse = z.infer<typeof loadSessionResponseSchema>;
 
@@ -266,39 +268,51 @@ export const modelInfoSchema = z.object({
   name: z.string(),
 });
 
+export const setModelRequestSchema = z.object({
+  sessionId: z.string(),
+  modelId: z.string(),
+});
+
+export const setModelResponseSchema = z.object({
+  modelId: z.string(),
+});
+
+export type SetModelRequest = z.infer<typeof setModelRequestSchema>;
+export type SetModelResponse = z.infer<typeof setModelResponseSchema>;
+
 export const sessionModelStateSchema = z.object({
   _meta: acpMetaSchema,
   availableModels: z.array(modelInfoSchema),
   currentModelId: modelIdSchema,
 });
 
-export const newSessionResponseSchema = z.object({
-  sessionId: z.string(),
-  models: sessionModelStateSchema,
-});
+// Note: newSessionResponseSchema is defined later in the file after modesDataSchema
 
 export const loadSessionResponseSchema = z.null();
 
 export const sessionListItemSchema = z.object({
   cwd: z.string(),
-  filePath: z.string(),
+  filePath: z.string().optional(),
   gitBranch: z.string().optional(),
-  messageCount: z.number(),
-  mtime: z.number(),
-  prompt: z.string(),
+  messageCount: z.number().optional(),
+  mtime: z.number().optional(),
+  prompt: z.string().optional(),
   sessionId: z.string(),
-  startTime: z.string(),
+  startTime: z.string().optional(),
+  title: z.string(),
+  updatedAt: z.string(),
 });
 
 export const listSessionsResponseSchema = z.object({
-  hasMore: z.boolean(),
-  items: z.array(sessionListItemSchema),
+  hasMore: z.boolean().optional(),
+  items: z.array(sessionListItemSchema).optional(),
   nextCursor: z.number().optional(),
+  sessions: z.array(sessionListItemSchema),
 });
 
 export const listSessionsRequestSchema = z.object({
   cursor: z.number().optional(),
-  cwd: z.string(),
+  cwd: z.string().optional(),
   size: z.number().optional(),
 });
 
@@ -353,6 +367,11 @@ export type Usage = z.infer<typeof usageSchema>;
 export const sessionUpdateMetaSchema = z.object({
   usage: usageSchema.optional().nullable(),
   durationMs: z.number().optional().nullable(),
+  toolName: z.string().optional().nullable(),
+  parentToolCallId: z.string().optional().nullable(),
+  subagentType: z.string().optional().nullable(),
+  /** Server-side timestamp (ms since epoch) for correct message ordering */
+  timestamp: z.number().optional().nullable(),
 });
 
 export type SessionUpdateMeta = z.infer<typeof sessionUpdateMetaSchema>;
@@ -387,12 +406,21 @@ export const promptCapabilitiesSchema = z.object({
 export const agentCapabilitiesSchema = z.object({
   loadSession: z.boolean().optional(),
   promptCapabilities: promptCapabilitiesSchema.optional(),
+  sessionCapabilities: z
+    .object({
+      list: z.object({}).optional(),
+      resume: z.object({}).optional(),
+    })
+    .optional(),
 });
 
 export const authMethodSchema = z.object({
+  args: z.array(z.string()).optional(),
   description: z.string().nullable(),
+  env: z.record(z.string()).optional(),
   id: z.string(),
   name: z.string(),
+  type: z.string().optional(),
 });
 
 export const clientResponseSchema = z.union([
@@ -429,6 +457,51 @@ export const modesDataSchema = z.object({
   currentModeId: approvalModeValueSchema,
   availableModes: z.array(modeInfoSchema),
 });
+
+export const configOptionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  category: z.string(),
+  type: z.string(),
+  currentValue: z.string(),
+  options: z.array(
+    z.object({
+      value: z.string(),
+      name: z.string(),
+      description: z.string(),
+    }),
+  ),
+});
+
+export type ConfigOption = z.infer<typeof configOptionSchema>;
+
+export const setConfigOptionRequestSchema = z.object({
+  sessionId: z.string(),
+  configId: z.string(),
+  value: z.unknown(),
+});
+
+export const setConfigOptionResponseSchema = z.object({
+  configOptions: z.array(configOptionSchema),
+});
+
+export type SetConfigOptionRequest = z.infer<
+  typeof setConfigOptionRequestSchema
+>;
+export type SetConfigOptionResponse = z.infer<
+  typeof setConfigOptionResponseSchema
+>;
+
+// newSessionResponseSchema includes modes and configOptions for ACP/Zed integration
+export const newSessionResponseSchema = z.object({
+  sessionId: z.string(),
+  models: sessionModelStateSchema,
+  modes: modesDataSchema,
+  configOptions: z.array(configOptionSchema),
+});
+
+export type NewSessionResponse = z.infer<typeof newSessionResponseSchema>;
 
 export const agentInfoSchema = z.object({
   name: z.string(),
@@ -544,6 +617,7 @@ export const sessionUpdateSchema = z.union([
   z.object({
     content: contentBlockSchema,
     sessionUpdate: z.literal('user_message_chunk'),
+    _meta: sessionUpdateMetaSchema.optional().nullable(),
   }),
   z.object({
     content: contentBlockSchema,
@@ -560,6 +634,7 @@ export const sessionUpdateSchema = z.union([
     kind: toolKindSchema,
     locations: z.array(toolCallLocationSchema).optional(),
     rawInput: z.unknown().optional(),
+    _meta: sessionUpdateMetaSchema.optional().nullable(),
     sessionUpdate: z.literal('tool_call'),
     status: toolCallStatusSchema,
     title: z.string(),
@@ -571,6 +646,7 @@ export const sessionUpdateSchema = z.union([
     locations: z.array(toolCallLocationSchema).optional().nullable(),
     rawInput: z.unknown().optional(),
     rawOutput: z.unknown().optional(),
+    _meta: sessionUpdateMetaSchema.optional().nullable(),
     sessionUpdate: z.literal('tool_call_update'),
     status: toolCallStatusSchema.optional().nullable(),
     title: z.string().optional().nullable(),
@@ -592,6 +668,7 @@ export const agentResponseSchema = z.union([
   promptResponseSchema,
   listSessionsResponseSchema,
   setModeResponseSchema,
+  setModelResponseSchema,
 ]);
 
 export const requestPermissionRequestSchema = z.object({
@@ -624,6 +701,8 @@ export const agentRequestSchema = z.union([
   promptRequestSchema,
   listSessionsRequestSchema,
   setModeRequestSchema,
+  setModelRequestSchema,
+  setConfigOptionRequestSchema,
 ]);
 
 export const agentNotificationSchema = sessionNotificationSchema;

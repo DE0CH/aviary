@@ -41,23 +41,36 @@ export interface ResolvedCliGenerationConfig {
   generationConfig: Partial<ContentGeneratorConfig>;
   /** Source attribution for each resolved field */
   sources: ContentGeneratorConfigSources;
+  /** Warnings generated during resolution */
+  warnings: string[];
 }
 
 export function getAuthTypeFromEnv(): AuthType | undefined {
-  if (process.env['OPENAI_API_KEY']) {
-    return AuthType.USE_OPENAI;
-  }
   if (process.env['QWEN_OAUTH']) {
     return AuthType.QWEN_OAUTH;
   }
 
-  if (process.env['GEMINI_API_KEY']) {
+  if (
+    process.env['OPENAI_API_KEY'] &&
+    process.env['OPENAI_MODEL'] &&
+    process.env['OPENAI_BASE_URL']
+  ) {
+    return AuthType.USE_OPENAI;
+  }
+
+  if (process.env['GEMINI_API_KEY'] && process.env['GEMINI_MODEL']) {
     return AuthType.USE_GEMINI;
   }
-  if (process.env['GOOGLE_API_KEY']) {
+
+  if (process.env['GOOGLE_API_KEY'] && process.env['GOOGLE_MODEL']) {
     return AuthType.USE_VERTEX_AI;
   }
-  if (process.env['ANTHROPIC_API_KEY']) {
+
+  if (
+    process.env['ANTHROPIC_API_KEY'] &&
+    process.env['ANTHROPIC_MODEL'] &&
+    process.env['ANTHROPIC_BASE_URL']
+  ) {
     return AuthType.USE_ANTHROPIC;
   }
 
@@ -118,11 +131,6 @@ export function resolveCliGenerationConfig(
 
   const resolved = resolveModelConfig(configSources);
 
-  // Log warnings if any
-  for (const warning of resolved.warnings) {
-    console.warn(warning);
-  }
-
   // Resolve OpenAI logging config (CLI-specific, not part of core resolver)
   const enableOpenAILogging =
     (typeof argv.openaiLogging === 'undefined'
@@ -146,5 +154,6 @@ export function resolveCliGenerationConfig(
     baseUrl: resolved.config.baseUrl || '',
     generationConfig,
     sources: resolved.sources,
+    warnings: resolved.warnings,
   };
 }

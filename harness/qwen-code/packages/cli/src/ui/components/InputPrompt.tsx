@@ -22,7 +22,11 @@ import { useKeypress } from '../hooks/useKeypress.js';
 import { keyMatchers, Command } from '../keyMatchers.js';
 import type { CommandContext, SlashCommand } from '../commands/types.js';
 import type { Config } from '@qwen-code/qwen-code-core';
-import { ApprovalMode } from '@qwen-code/qwen-code-core';
+import {
+  ApprovalMode,
+  Storage,
+  createDebugLogger,
+} from '@qwen-code/qwen-code-core';
 import {
   parseInputForHighlighting,
   buildSegmentsForVisualSlice,
@@ -36,6 +40,21 @@ import {
 import * as path from 'node:path';
 import { SCREEN_READER_USER_PREFIX } from '../textConstants.js';
 import { useShellFocusState } from '../contexts/ShellFocusContext.js';
+import { useUIState } from '../contexts/UIStateContext.js';
+import { useUIActions } from '../contexts/UIActionsContext.js';
+import { useKeypressContext } from '../contexts/KeypressContext.js';
+import { FEEDBACK_DIALOG_KEYS } from '../FeedbackDialog.js';
+
+/**
+ * Represents an attachment (e.g., pasted image) displayed above the input prompt
+ */
+export interface Attachment {
+  id: string; // Unique identifier (timestamp)
+  path: string; // Full file path
+  filename: string; // Filename only (for display)
+}
+
+const debugLogger = createDebugLogger('INPUT_PROMPT');
 export interface InputPromptProps {
   buffer: TextBuffer;
   onSubmit: (value: string) => void;
@@ -52,6 +71,9 @@ export interface InputPromptProps {
   setShellModeActive: (value: boolean) => void;
   approvalMode: ApprovalMode;
   onEscapePromptChange?: (showPrompt: boolean) => void;
+  onToggleShortcuts?: () => void;
+  showShortcuts?: boolean;
+  onSuggestionsVisibilityChange?: (visible: boolean) => void;
   vimHandleInput?: (key: Key) => boolean;
   isEmbeddedShellFocused?: boolean;
 }
@@ -81,6 +103,10 @@ export const calculatePromptWidths = (terminalWidth: number) => {
   } as const;
 };
 
+// Large paste placeholder thresholds
+const LARGE_PASTE_CHAR_THRESHOLD = 1000;
+const LARGE_PASTE_LINE_THRESHOLD = 10;
+
 export const InputPrompt: React.FC<InputPromptProps> = ({
   buffer,
   onSubmit,
@@ -96,16 +122,58 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   setShellModeActive,
   approvalMode,
   onEscapePromptChange,
+  onToggleShortcuts,
+  showShortcuts,
+  onSuggestionsVisibilityChange,
   vimHandleInput,
   isEmbeddedShellFocused,
 }) => {
   const isShellFocused = useShellFocusState();
+  const uiState = useUIState();
+  const uiActions = useUIActions();
+  const { pasteWorkaround } = useKeypressContext();
   const [justNavigatedHistory, setJustNavigatedHistory] = useState(false);
   const [escPressCount, setEscPressCount] = useState(0);
   const [showEscapePrompt, setShowEscapePrompt] = useState(false);
   const escapeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [recentPasteTime, setRecentPasteTime] = useState<number | null>(null);
   const pasteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Attachment state for clipboard images
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isAttachmentMode, setIsAttachmentMode] = useState(false);
+  const [selectedAttachmentIndex, setSelectedAttachmentIndex] = useState(-1);
+  // Large paste placeholder handling
+  const [pendingPastes, setPendingPastes] = useState<Map<string, string>>(
+    new Map(),
+  );
+  // Track active placeholder IDs for each charCount to enable reuse
+  const activePlaceholderIds = useRef<Map<number, Set<number>>>(new Map());
+
+  // Parse placeholder to extract charCount and ID
+  const parsePlaceholder = useCallback(
+    (placeholder: string): { charCount: number; id: number } | null => {
+      const match = placeholder.match(
+        /^\[Pasted Content (\d+) chars\](?: #(\d+))?$/,
+      );
+      if (!match) return null;
+      const charCount = parseInt(match[1], 10);
+      const id = match[2] ? parseInt(match[2], 10) : 1;
+      return { charCount, id };
+    },
+    [],
+  );
+
+  // Free a placeholder ID when deleted so it can be reused
+  const freePlaceholderId = useCallback((charCount: number, id: number) => {
+    const activeIds = activePlaceholderIds.current.get(charCount);
+    if (activeIds) {
+      activeIds.delete(id);
+      if (activeIds.size === 0) {
+        activePlaceholderIds.current.delete(charCount);
+      }
+    }
+  }, []);
 
   const [dirs, setDirs] = useState<readonly string[]>(
     config.getWorkspaceContext().getDirectories(),
@@ -135,6 +203,8 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     commandContext,
     reverseSearchActive,
     config,
+    // Suppress completion when history navigation just occurred
+    !justNavigatedHistory,
   );
 
   const reverseSearchCompletion = useReverseSearchCompletion(
@@ -173,6 +243,25 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     }
   }, [showEscapePrompt, onEscapePromptChange]);
 
+  // Helper to generate unique placeholder for large pastes
+  // Reuses IDs that have been freed up from deleted placeholders
+  const nextLargePastePlaceholder = useCallback((charCount: number): string => {
+    const activeIds = activePlaceholderIds.current.get(charCount) || new Set();
+
+    // Find smallest available ID (starting from 1)
+    let id = 1;
+    while (activeIds.has(id)) {
+      id++;
+    }
+
+    // Mark as active
+    activeIds.add(id);
+    activePlaceholderIds.current.set(charCount, activeIds);
+
+    const base = `[Pasted Content ${charCount} chars]`;
+    return id === 1 ? base : `${base} #${id}`;
+  }, []);
+
   // Clear escape prompt timer on unmount
   useEffect(
     () => () => {
@@ -188,13 +277,46 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   const handleSubmitAndClear = useCallback(
     (submittedValue: string) => {
-      if (shellModeActive) {
-        shellHistory.addCommandToHistory(submittedValue);
+      // Expand any large paste placeholders to their full content before submitting
+      let finalValue = submittedValue;
+      if (pendingPastes.size > 0) {
+        const placeholders = Array.from(pendingPastes.keys()).sort(
+          (a, b) => b.length - a.length,
+        );
+        const escapedPlaceholders = placeholders.map((placeholderValue) =>
+          placeholderValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        );
+        const placeholderRegex = new RegExp(escapedPlaceholders.join('|'), 'g');
+        finalValue = finalValue.replace(
+          placeholderRegex,
+          (matchedPlaceholder) =>
+            pendingPastes.get(matchedPlaceholder) ?? matchedPlaceholder,
+        );
+        setPendingPastes(new Map());
+        activePlaceholderIds.current.clear();
       }
+      if (shellModeActive) {
+        shellHistory.addCommandToHistory(finalValue);
+      }
+
+      // Convert attachments to @references and prepend to the message
+      if (attachments.length > 0) {
+        const attachmentRefs = attachments
+          .map((att) => `@${path.relative(config.getTargetDir(), att.path)}`)
+          .join(' ');
+        finalValue = `${attachmentRefs}\n\n${finalValue.trim()}`;
+      }
+
       // Clear the buffer *before* calling onSubmit to prevent potential re-submission
       // if onSubmit triggers a re-render while the buffer still holds the old value.
       buffer.setText('');
-      onSubmit(submittedValue);
+      onSubmit(finalValue);
+
+      // Clear attachments after submit
+      setAttachments([]);
+      setIsAttachmentMode(false);
+      setSelectedAttachmentIndex(-1);
+
       resetCompletionState();
       resetReverseSearchCompletionState();
     },
@@ -205,6 +327,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       shellModeActive,
       shellHistory,
       resetReverseSearchCompletionState,
+      attachments,
+      config,
+      pendingPastes,
     ],
   );
 
@@ -219,9 +344,9 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const inputHistory = useInputHistory({
     userMessages,
     onSubmit: handleSubmitAndClear,
-    isActive:
-      (!completion.showSuggestions || completion.suggestions.length === 1) &&
-      !shellModeActive,
+    // History navigation (Ctrl+P/N) now always works since completion navigation
+    // only uses arrow keys. Only disable in shell mode.
+    isActive: !shellModeActive,
     currentQuery: buffer.text,
     onChange: customSetTextAndResetCompletionSignal,
   });
@@ -245,52 +370,45 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   ]);
 
   // Handle clipboard image pasting with Ctrl+V
-  const handleClipboardImage = useCallback(async () => {
+  const handleClipboardImage = useCallback(async (validated = false) => {
     try {
-      if (await clipboardHasImage()) {
-        const imagePath = await saveClipboardImage(config.getTargetDir());
+      const hasImage = validated || (await clipboardHasImage());
+      if (hasImage) {
+        const imagePath = await saveClipboardImage(Storage.getGlobalTempDir());
         if (imagePath) {
           // Clean up old images
-          cleanupOldClipboardImages(config.getTargetDir()).catch(() => {
+          cleanupOldClipboardImages(Storage.getGlobalTempDir()).catch(() => {
             // Ignore cleanup errors
           });
 
-          // Get relative path from current directory
-          const relativePath = path.relative(config.getTargetDir(), imagePath);
-
-          // Insert @path reference at cursor position
-          const insertText = `@${relativePath}`;
-          const currentText = buffer.text;
-          const [row, col] = buffer.cursor;
-
-          // Calculate offset from row/col
-          let offset = 0;
-          for (let i = 0; i < row; i++) {
-            offset += buffer.lines[i].length + 1; // +1 for newline
-          }
-          offset += col;
-
-          // Add spaces around the path if needed
-          let textToInsert = insertText;
-          const charBefore = offset > 0 ? currentText[offset - 1] : '';
-          const charAfter =
-            offset < currentText.length ? currentText[offset] : '';
-
-          if (charBefore && charBefore !== ' ' && charBefore !== '\n') {
-            textToInsert = ' ' + textToInsert;
-          }
-          if (!charAfter || (charAfter !== ' ' && charAfter !== '\n')) {
-            textToInsert = textToInsert + ' ';
-          }
-
-          // Insert at cursor position
-          buffer.replaceRangeByOffset(offset, offset, textToInsert);
+          // Add as attachment instead of inserting @reference into text
+          const filename = path.basename(imagePath);
+          const newAttachment: Attachment = {
+            id: String(Date.now()),
+            path: imagePath,
+            filename,
+          };
+          setAttachments((prev) => [...prev, newAttachment]);
         }
       }
     } catch (error) {
-      console.error('Error handling clipboard image:', error);
+      debugLogger.error('Error handling clipboard image:', error);
     }
-  }, [buffer, config]);
+  }, []);
+
+  // Handle deletion of an attachment from the list
+  const handleAttachmentDelete = useCallback((index: number) => {
+    setAttachments((prev) => {
+      const newList = prev.filter((_, i) => i !== index);
+      if (newList.length === 0) {
+        setIsAttachmentMode(false);
+        setSelectedAttachmentIndex(-1);
+      } else {
+        setSelectedAttachmentIndex(Math.min(index, newList.length - 1));
+      }
+      return newList;
+    });
+  }, []);
 
   const handleInput = useCallback(
     (key: Key) => {
@@ -317,13 +435,47 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           pasteTimeoutRef.current = null;
         }, 500);
 
+        // Handle large pastes by showing a placeholder
+        const pasted = key.sequence.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const charCount = [...pasted].length; // Proper Unicode char count
+        const lineCount = pasted.split('\n').length;
+
         // Ensure we never accidentally interpret paste as regular input.
-        buffer.handleInput(key);
+        if (key.pasteImage) {
+          handleClipboardImage(true);
+        } else if (
+          charCount > LARGE_PASTE_CHAR_THRESHOLD ||
+          lineCount > LARGE_PASTE_LINE_THRESHOLD
+        ) {
+          const placeholder = nextLargePastePlaceholder(charCount);
+          setPendingPastes((prev) => {
+            const next = new Map(prev);
+            next.set(placeholder, pasted);
+            return next;
+          });
+          // Insert the placeholder as regular text
+          buffer.insert(placeholder, { paste: false });
+        } else {
+          // Normal paste handling for small content
+          buffer.handleInput(key);
+        }
         return;
       }
 
       if (vimHandleInput && vimHandleInput(key)) {
         return;
+      }
+
+      // Handle feedback dialog keyboard interactions when dialog is open
+      if (uiState.isFeedbackDialogOpen) {
+        // If it's one of the feedback option keys (1-4), let FeedbackDialog handle it
+        if ((FEEDBACK_DIALOG_KEYS as readonly string[]).includes(key.name)) {
+          return;
+        } else {
+          // For any other key, close feedback dialog temporarily and continue with normal processing
+          uiActions.temporaryCloseFeedbackDialog();
+          // Continue processing the key for normal input handling
+        }
       }
 
       // Reset ESC count and hide prompt on any non-ESC key
@@ -338,9 +490,29 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         buffer.text === '' &&
         !completion.showSuggestions
       ) {
+        // Hide shortcuts when toggling shell mode
+        if (showShortcuts && onToggleShortcuts) {
+          onToggleShortcuts();
+        }
         setShellModeActive(!shellModeActive);
         buffer.setText(''); // Clear the '!' from input
         return;
+      }
+
+      // Toggle keyboard shortcuts display with "?" when buffer is empty
+      if (
+        key.sequence === '?' &&
+        buffer.text === '' &&
+        !completion.showSuggestions &&
+        onToggleShortcuts
+      ) {
+        onToggleShortcuts();
+        return;
+      }
+
+      // Hide shortcuts on any other key press
+      if (showShortcuts && onToggleShortcuts) {
+        onToggleShortcuts();
       }
 
       if (keyMatchers[Command.ESCAPE](key)) {
@@ -407,6 +579,16 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
           resetCompletionState();
           resetEscapeState();
         }
+        return;
+      }
+
+      // Ctrl+Y: Retry the last failed request.
+      // This shortcut is available when:
+      // - There is a failed request in the current session
+      // - The stream is not currently responding or waiting for confirmation
+      // If no failed request exists, a message will be shown to the user.
+      if (keyMatchers[Command.RETRY_LAST](key)) {
+        uiActions.handleRetryLastPrompt();
         return;
       }
 
@@ -525,6 +707,55 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         }
       }
 
+      // Attachment mode handling - process before history navigation
+      if (isAttachmentMode && attachments.length > 0) {
+        if (key.name === 'left') {
+          setSelectedAttachmentIndex((i) => Math.max(0, i - 1));
+          return;
+        }
+        if (key.name === 'right') {
+          setSelectedAttachmentIndex((i) =>
+            Math.min(attachments.length - 1, i + 1),
+          );
+          return;
+        }
+        if (keyMatchers[Command.NAVIGATION_DOWN](key)) {
+          // Exit attachment mode and return to input
+          setIsAttachmentMode(false);
+          setSelectedAttachmentIndex(-1);
+          return;
+        }
+        if (key.name === 'backspace' || key.name === 'delete') {
+          handleAttachmentDelete(selectedAttachmentIndex);
+          return;
+        }
+        if (key.name === 'return' || key.name === 'escape') {
+          setIsAttachmentMode(false);
+          setSelectedAttachmentIndex(-1);
+          return;
+        }
+        // For other keys, exit attachment mode and let input handle them
+        setIsAttachmentMode(false);
+        setSelectedAttachmentIndex(-1);
+        // Continue to process the key in input
+      }
+
+      // Enter attachment mode when pressing up at the first line with attachments
+      if (
+        !isAttachmentMode &&
+        attachments.length > 0 &&
+        !shellModeActive &&
+        !reverseSearchActive &&
+        !commandSearchActive &&
+        buffer.visualCursor[0] === 0 &&
+        buffer.visualScrollRow === 0 &&
+        keyMatchers[Command.NAVIGATION_UP](key)
+      ) {
+        setIsAttachmentMode(true);
+        setSelectedAttachmentIndex(attachments.length - 1);
+        return;
+      }
+
       if (!shellModeActive) {
         if (keyMatchers[Command.REVERSE_SEARCH](key)) {
           setCommandSearchActive(true);
@@ -574,8 +805,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
       if (keyMatchers[Command.SUBMIT](key)) {
         if (buffer.text.trim()) {
-          // Check if a paste operation occurred recently to prevent accidental auto-submission
-          if (recentPasteTime !== null) {
+          // Check if a paste operation occurred recently to prevent accidental auto-submission.
+          // Only applies when pasteWorkaround is enabled (Windows or Node < 20), where bracketed
+          // paste markers may not work reliably and Enter key events can leak from pasted text.
+          if (pasteWorkaround && recentPasteTime !== null) {
             // Paste occurred recently, ignore this submit to prevent auto-execution
             return;
           }
@@ -644,6 +877,54 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         return;
       }
 
+      // Handle backspace with placeholder-aware deletion
+      if (
+        key.name === 'backspace' ||
+        key.sequence === '\x7f' ||
+        (key.ctrl && key.name === 'h')
+      ) {
+        const text = buffer.text;
+        const [row, col] = buffer.cursor;
+
+        // Calculate the offset where the cursor is
+        let offset = 0;
+        for (let i = 0; i < row; i++) {
+          offset += buffer.lines[i].length + 1; // +1 for newline
+        }
+        offset += col;
+
+        // Check if we're at the end of any placeholder
+        let placeholderDeleted = false;
+        for (const placeholder of pendingPastes.keys()) {
+          const placeholderStart = offset - placeholder.length;
+          if (
+            placeholderStart >= 0 &&
+            text.slice(placeholderStart, offset) === placeholder
+          ) {
+            // Delete the entire placeholder
+            buffer.replaceRangeByOffset(placeholderStart, offset, '');
+            // Remove from pendingPastes and free the ID for reuse
+            setPendingPastes((prev) => {
+              const next = new Map(prev);
+              next.delete(placeholder);
+              return next;
+            });
+            const parsed = parsePlaceholder(placeholder);
+            if (parsed) {
+              freePlaceholderId(parsed.charCount, parsed.id);
+            }
+            placeholderDeleted = true;
+            break;
+          }
+        }
+
+        if (!placeholderDeleted) {
+          // Normal backspace behavior
+          buffer.backspace();
+        }
+        return;
+      }
+
       // Fall back to the text buffer's default input handling for all other keys
       buffer.handleInput(key);
     },
@@ -670,6 +951,19 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
       recentPasteTime,
       commandSearchActive,
       commandSearchCompletion,
+      onToggleShortcuts,
+      showShortcuts,
+      uiState,
+      isAttachmentMode,
+      attachments,
+      selectedAttachmentIndex,
+      handleAttachmentDelete,
+      uiActions,
+      pasteWorkaround,
+      nextLargePastePlaceholder,
+      pendingPastes,
+      parsePlaceholder,
+      freePlaceholderId,
     ],
   );
 
@@ -689,6 +983,13 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
   const activeCompletion = getActiveCompletion();
   const shouldShowSuggestions = activeCompletion.showSuggestions;
 
+  // Notify parent about suggestions visibility changes
+  useEffect(() => {
+    if (onSuggestionsVisibilityChange) {
+      onSuggestionsVisibilityChange(shouldShowSuggestions);
+    }
+  }, [shouldShowSuggestions, onSuggestionsVisibilityChange]);
+
   const showAutoAcceptStyling =
     !shellModeActive && approvalMode === ApprovalMode.AUTO_EDIT;
   const showYoloStyling =
@@ -700,10 +1001,10 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
     statusColor = theme.ui.symbol;
     statusText = t('Shell mode');
   } else if (showYoloStyling) {
-    statusColor = theme.status.error;
+    statusColor = theme.status.errorDim;
     statusText = t('YOLO mode');
   } else if (showAutoAcceptStyling) {
-    statusColor = theme.status.warning;
+    statusColor = theme.status.warningDim;
     statusText = t('Accepting edits');
   }
 
@@ -714,6 +1015,23 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
 
   return (
     <>
+      {attachments.length > 0 && (
+        <Box marginLeft={2} marginBottom={0}>
+          <Text color={theme.text.secondary}>{t('Attachments: ')}</Text>
+          {attachments.map((att, idx) => (
+            <Text
+              key={att.id}
+              color={
+                isAttachmentMode && idx === selectedAttachmentIndex
+                  ? theme.status.success
+                  : theme.text.secondary
+              }
+            >
+              [{att.filename}]{idx < attachments.length - 1 ? ' ' : ''}
+            </Text>
+          ))}
+        </Box>
+      )}
       <Box
         borderStyle="single"
         borderTop={true}
@@ -721,7 +1039,6 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         borderLeft={false}
         borderRight={false}
         borderColor={borderColor}
-        paddingX={1}
       >
         <Text
           color={statusColor ?? theme.text.accent}
@@ -852,7 +1169,7 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
         </Box>
       </Box>
       {shouldShowSuggestions && (
-        <Box paddingRight={2}>
+        <Box marginLeft={2} marginRight={2}>
           <SuggestionsDisplay
             suggestions={activeCompletion.suggestions}
             activeIndex={activeCompletion.activeSuggestionIndex}
@@ -869,6 +1186,16 @@ export const InputPrompt: React.FC<InputPromptProps> = ({
             }
             expandedIndex={expandedSuggestionIndex}
           />
+        </Box>
+      )}
+      {/* Attachment hints - show when there are attachments and no suggestions visible */}
+      {attachments.length > 0 && !shouldShowSuggestions && (
+        <Box marginLeft={2} marginRight={2}>
+          <Text color={theme.text.secondary}>
+            {isAttachmentMode
+              ? t('← → select, Delete to remove, ↓ to exit')
+              : t('↑ to manage attachments')}
+          </Text>
         </Box>
       )}
     </>

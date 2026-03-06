@@ -23,6 +23,7 @@ import {
   ToolConfirmationOutcome,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
+  SkillTool,
 } from '../index.js';
 import type { ToolCall, WaitingToolCall } from './coreToolScheduler.js';
 import {
@@ -253,7 +254,6 @@ describe('CoreToolScheduler', () => {
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       getChatRecordingService: () => undefined,
@@ -331,7 +331,6 @@ describe('CoreToolScheduler', () => {
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null,
       getChatRecordingService: () => undefined,
@@ -368,17 +367,17 @@ describe('CoreToolScheduler', () => {
   describe('getToolSuggestion', () => {
     it('should suggest the top N closest tool names for a typo', () => {
       // Create mocked tool registry
+      const mockToolRegistry = {
+        getAllToolNames: () => ['list_files', 'read_file', 'write_file'],
+        getTool: () => undefined, // No SkillTool in this test
+      } as unknown as ToolRegistry;
       const mockConfig = {
         getToolRegistry: () => mockToolRegistry,
-        getUseSmartEdit: () => false,
         getUseModelRouter: () => false,
         getGeminiClient: () => null, // No client needed for these tests
         getExcludeTools: () => undefined,
         isInteractive: () => true,
       } as unknown as Config;
-      const mockToolRegistry = {
-        getAllToolNames: () => ['list_files', 'read_file', 'write_file'],
-      } as unknown as ToolRegistry;
 
       // Create scheduler
       const scheduler = new CoreToolScheduler({
@@ -409,12 +408,12 @@ describe('CoreToolScheduler', () => {
       // Create mocked tool registry
       const mockToolRegistry = {
         getAllToolNames: () => ['list_files', 'read_file'],
+        getTool: () => undefined, // No SkillTool in this test
       } as unknown as ToolRegistry;
 
       // Create mocked config with excluded tools
       const mockConfig = {
         getToolRegistry: () => mockToolRegistry,
-        getUseSmartEdit: () => false,
         getUseModelRouter: () => false,
         getGeminiClient: () => null,
         getExcludeTools: () => ['write_file', 'edit', 'run_shell_command'],
@@ -439,12 +438,12 @@ describe('CoreToolScheduler', () => {
       // Create mocked tool registry
       const mockToolRegistry = {
         getAllToolNames: () => ['list_files', 'read_file'],
+        getTool: () => undefined, // No SkillTool in this test
       } as unknown as ToolRegistry;
 
       // Create mocked config with excluded tools
       const mockConfig = {
         getToolRegistry: () => mockToolRegistry,
-        getUseSmartEdit: () => false,
         getUseModelRouter: () => false,
         getGeminiClient: () => null,
         getExcludeTools: () => ['write_file', 'edit'],
@@ -465,6 +464,61 @@ describe('CoreToolScheduler', () => {
       expect(hallucinatedTool).not.toContain(
         'not available in the current environment',
       );
+    });
+
+    it('should suggest using Skill tool when unknown tool name matches a skill name', () => {
+      // Create a mock that passes instanceof SkillTool check
+      const mockSkillTool = Object.create(SkillTool.prototype);
+      mockSkillTool.getAvailableSkillNames = () => [
+        'pdf',
+        'xlsx',
+        'frontend-design',
+      ];
+
+      // Create mocked tool registry that returns the mock SkillTool
+      const mockToolRegistry = {
+        getAllToolNames: () => ['skill', 'list_files', 'read_file'],
+        getTool: (name: string) =>
+          name === 'skill' ? mockSkillTool : undefined,
+      } as unknown as ToolRegistry;
+
+      // Create mocked config
+      const mockConfig = {
+        getToolRegistry: () => mockToolRegistry,
+        getUseModelRouter: () => false,
+        getGeminiClient: () => null,
+        getExcludeTools: () => undefined,
+        isInteractive: () => true,
+      } as unknown as Config;
+
+      // Create scheduler
+      const scheduler = new CoreToolScheduler({
+        config: mockConfig,
+        getPreferredEditor: () => 'vscode',
+        onEditorClose: vi.fn(),
+      });
+
+      // Test that when unknown tool name matches a skill name, we get skill-specific message
+      // @ts-expect-error accessing private method
+      const skillMessage = scheduler.getToolNotFoundMessage('pdf');
+      expect(skillMessage).toContain('is a skill name, not a tool name');
+      expect(skillMessage).toContain('skill');
+      expect(skillMessage).toContain('skill: "pdf"');
+      // Should NOT contain the standard "not found in registry" prefix
+      expect(skillMessage).not.toContain('not found in registry');
+
+      // Test another skill name
+      // @ts-expect-error accessing private method
+      const xlsxMessage = scheduler.getToolNotFoundMessage('xlsx');
+      expect(xlsxMessage).toContain('is a skill name, not a tool name');
+      expect(xlsxMessage).toContain('skill: "xlsx"');
+
+      // Test that non-skill names still use standard message with Levenshtein suggestions
+      // @ts-expect-error accessing private method
+      const nonSkillMessage = scheduler.getToolNotFoundMessage('list_fils');
+      expect(nonSkillMessage).toContain('not found in registry');
+      expect(nonSkillMessage).toContain('Did you mean');
+      expect(nonSkillMessage).not.toContain('is a skill name');
     });
   });
 
@@ -510,7 +564,6 @@ describe('CoreToolScheduler', () => {
           DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
         getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
         getToolRegistry: () => mockToolRegistry,
-        getUseSmartEdit: () => false,
         getUseModelRouter: () => false,
         getGeminiClient: () => null,
         getChatRecordingService: () => undefined,
@@ -597,7 +650,6 @@ describe('CoreToolScheduler', () => {
           DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
         getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
         getToolRegistry: () => mockToolRegistry,
-        getUseSmartEdit: () => false,
         getUseModelRouter: () => false,
         getGeminiClient: () => null,
         getChatRecordingService: () => undefined,
@@ -687,7 +739,6 @@ describe('CoreToolScheduler with payload', () => {
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       isInteractive: () => true, // Required to prevent auto-denial of tool calls
@@ -800,11 +851,11 @@ describe('convertToFunctionResponse', () => {
           name: toolName,
           id: callId,
           response: {
-            output: 'Binary content of type image/png was processed.',
+            output: '',
           },
+          parts: [{ inlineData: { mimeType: 'image/png', data: 'base64...' } }],
         },
       },
-      llmContent,
     ]);
   });
 
@@ -819,11 +870,15 @@ describe('convertToFunctionResponse', () => {
           name: toolName,
           id: callId,
           response: {
-            output: 'Binary content of type application/pdf was processed.',
+            output: '',
           },
+          parts: [
+            {
+              fileData: { mimeType: 'application/pdf', fileUri: 'gs://...' },
+            },
+          ],
         },
       },
-      llmContent,
     ]);
   });
 
@@ -834,15 +889,22 @@ describe('convertToFunctionResponse', () => {
       { text: 'Another text part' },
     ];
     const result = convertToFunctionResponse(toolName, callId, llmContent);
+    // All content should be inside the FunctionResponse:
+    // - text parts joined into response.output
+    // - media parts in response.parts
     expect(result).toEqual([
       {
         functionResponse: {
           name: toolName,
           id: callId,
-          response: { output: 'Tool execution succeeded.' },
+          response: {
+            output: 'Some textual description\nAnother text part',
+          },
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: 'base64data...' } },
+          ],
         },
       },
-      ...llmContent,
     ]);
   });
 
@@ -857,11 +919,13 @@ describe('convertToFunctionResponse', () => {
           name: toolName,
           id: callId,
           response: {
-            output: 'Binary content of type image/gif was processed.',
+            output: '',
           },
+          parts: [
+            { inlineData: { mimeType: 'image/gif', data: 'gifdata...' } },
+          ],
         },
       },
-      ...llmContent,
     ]);
   });
 
@@ -1011,7 +1075,6 @@ describe('CoreToolScheduler edit cancellation', () => {
         getProjectTempDir: () => '/tmp',
       },
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       isInteractive: () => true, // Required to prevent auto-denial of tool calls
@@ -1121,7 +1184,6 @@ describe('CoreToolScheduler YOLO mode', () => {
       getTruncateToolOutputThreshold: () =>
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       getChatRecordingService: () => undefined,
@@ -1363,7 +1425,6 @@ describe('CoreToolScheduler request queueing', () => {
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       getChatRecordingService: () => undefined,
@@ -1496,7 +1557,6 @@ describe('CoreToolScheduler request queueing', () => {
       getTruncateToolOutputThreshold: () =>
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       getChatRecordingService: () => undefined,
@@ -1599,7 +1659,6 @@ describe('CoreToolScheduler request queueing', () => {
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
       getToolRegistry: () => mockToolRegistry,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       getChatRecordingService: () => undefined,
@@ -1672,7 +1731,6 @@ describe('CoreToolScheduler request queueing', () => {
       getTruncateToolOutputThreshold: () =>
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null, // No client needed for these tests
       isInteractive: () => true, // Required to prevent auto-denial of tool calls
@@ -1801,6 +1859,175 @@ describe('CoreToolScheduler request queueing', () => {
   });
 });
 
+describe('CoreToolScheduler truncated output protection', () => {
+  function createTruncationTestScheduler(
+    tool: TestApprovalTool | MockTool,
+    toolNames: string[],
+  ) {
+    const onAllToolCallsComplete = vi.fn();
+    const onToolCallsUpdate = vi.fn();
+
+    const mockToolRegistry = {
+      getTool: () => tool,
+      getAllToolNames: () => toolNames,
+      getFunctionDeclarations: () => [],
+      tools: new Map(),
+    } as unknown as ToolRegistry;
+
+    const mockConfig = {
+      getSessionId: () => 'test-session-id',
+      getUsageStatisticsEnabled: () => true,
+      getDebugMode: () => false,
+      getApprovalMode: () => ApprovalMode.AUTO_EDIT,
+      getAllowedTools: () => [],
+      getExcludeTools: () => undefined,
+      getContentGeneratorConfig: () => ({
+        model: 'test-model',
+        authType: 'gemini',
+      }),
+      getShellExecutionConfig: () => ({
+        terminalWidth: 90,
+        terminalHeight: 30,
+      }),
+      storage: {
+        getProjectTempDir: () => '/tmp',
+      },
+      getTruncateToolOutputThreshold: () =>
+        DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
+      getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
+      getToolRegistry: () => mockToolRegistry,
+      getUseModelRouter: () => false,
+      getGeminiClient: () => null,
+      getChatRecordingService: () => undefined,
+      isInteractive: () => true,
+    } as unknown as Config;
+
+    const scheduler = new CoreToolScheduler({
+      config: mockConfig,
+      onAllToolCallsComplete,
+      onToolCallsUpdate,
+      getPreferredEditor: () => 'vscode',
+      onEditorClose: vi.fn(),
+    });
+
+    return { scheduler, onAllToolCallsComplete };
+  }
+
+  it('should reject Kind.Edit tool calls when wasOutputTruncated is true', async () => {
+    const declarativeTool = new TestApprovalTool({
+      getApprovalMode: () => ApprovalMode.AUTO_EDIT,
+    } as unknown as Config);
+    const { scheduler, onAllToolCallsComplete } = createTruncationTestScheduler(
+      declarativeTool,
+      [TestApprovalTool.Name],
+    );
+
+    await scheduler.schedule(
+      [
+        {
+          callId: '1',
+          name: TestApprovalTool.Name,
+          args: { id: 'test-truncated' },
+          isClientInitiated: false,
+          prompt_id: 'prompt-id-truncated',
+          wasOutputTruncated: true,
+        },
+      ],
+      new AbortController().signal,
+    );
+
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalled();
+    });
+
+    const completedCalls = onAllToolCallsComplete.mock
+      .calls[0][0] as ToolCall[];
+    expect(completedCalls).toHaveLength(1);
+    const completedCall = completedCalls[0];
+    expect(completedCall.status).toBe('error');
+
+    if (completedCall.status === 'error') {
+      const errorMessage = completedCall.response.error?.message;
+      expect(errorMessage).toContain('truncated due to max_tokens limit');
+      expect(errorMessage).toContain(
+        'rejected to prevent writing truncated content',
+      );
+    }
+  });
+
+  it('should allow Kind.Edit tool calls when wasOutputTruncated is false', async () => {
+    const declarativeTool = new TestApprovalTool({
+      getApprovalMode: () => ApprovalMode.AUTO_EDIT,
+    } as unknown as Config);
+    const { scheduler, onAllToolCallsComplete } = createTruncationTestScheduler(
+      declarativeTool,
+      [TestApprovalTool.Name],
+    );
+
+    await scheduler.schedule(
+      [
+        {
+          callId: '1',
+          name: TestApprovalTool.Name,
+          args: { id: 'test-normal' },
+          isClientInitiated: false,
+          prompt_id: 'prompt-id-normal',
+          wasOutputTruncated: false,
+        },
+      ],
+      new AbortController().signal,
+    );
+
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalled();
+    });
+
+    const completedCalls = onAllToolCallsComplete.mock
+      .calls[0][0] as ToolCall[];
+    expect(completedCalls).toHaveLength(1);
+    // Should succeed (not error) since wasOutputTruncated is false
+    expect(completedCalls[0].status).toBe('success');
+  });
+
+  it('should allow non-Edit tools when wasOutputTruncated is true', async () => {
+    const mockTool = new MockTool({
+      name: 'mockReadTool',
+      execute: async () => ({
+        llmContent: 'read result',
+        returnDisplay: 'read result',
+      }),
+    });
+    const { scheduler, onAllToolCallsComplete } = createTruncationTestScheduler(
+      mockTool,
+      ['mockReadTool'],
+    );
+
+    await scheduler.schedule(
+      [
+        {
+          callId: '1',
+          name: 'mockReadTool',
+          args: {},
+          isClientInitiated: false,
+          prompt_id: 'prompt-id-read-truncated',
+          wasOutputTruncated: true,
+        },
+      ],
+      new AbortController().signal,
+    );
+
+    await vi.waitFor(() => {
+      expect(onAllToolCallsComplete).toHaveBeenCalled();
+    });
+
+    const completedCalls = onAllToolCallsComplete.mock
+      .calls[0][0] as ToolCall[];
+    expect(completedCalls).toHaveLength(1);
+    // Non-Edit tools should still execute even when output was truncated
+    expect(completedCalls[0].status).toBe('success');
+  });
+});
+
 describe('CoreToolScheduler Sequential Execution', () => {
   it('should execute tool calls in a batch sequentially', async () => {
     // Arrange
@@ -1867,7 +2094,6 @@ describe('CoreToolScheduler Sequential Execution', () => {
       getTruncateToolOutputThreshold: () =>
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null,
       getChatRecordingService: () => undefined,
@@ -1988,7 +2214,6 @@ describe('CoreToolScheduler Sequential Execution', () => {
       getTruncateToolOutputThreshold: () =>
         DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
       getTruncateToolOutputLines: () => DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
-      getUseSmartEdit: () => false,
       getUseModelRouter: () => false,
       getGeminiClient: () => null,
       getChatRecordingService: () => undefined,

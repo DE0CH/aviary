@@ -11,6 +11,7 @@ import { defaultKeyBindings } from '../config/keyBindings.js';
 import type { Key } from './hooks/useKeypress.js';
 
 describe('keyMatchers', () => {
+  const isWindows = process.platform === 'win32';
   const createKey = (name: string, mods: Partial<Key> = {}): Key => ({
     name,
     ctrl: false,
@@ -38,10 +39,10 @@ describe('keyMatchers', () => {
     [Command.NAVIGATION_DOWN]: (key: Key) => key.name === 'down',
     [Command.ACCEPT_SUGGESTION]: (key: Key) =>
       key.name === 'tab' || (key.name === 'return' && !key.ctrl),
-    [Command.COMPLETION_UP]: (key: Key) =>
-      key.name === 'up' || (key.ctrl && key.name === 'p'),
-    [Command.COMPLETION_DOWN]: (key: Key) =>
-      key.name === 'down' || (key.ctrl && key.name === 'n'),
+    // Completion navigation only uses arrow keys (not Ctrl+P/N)
+    // to allow Ctrl+P/N to always navigate history
+    [Command.COMPLETION_UP]: (key: Key) => key.name === 'up',
+    [Command.COMPLETION_DOWN]: (key: Key) => key.name === 'down',
     [Command.ESCAPE]: (key: Key) => key.name === 'escape',
     [Command.SUBMIT]: (key: Key) =>
       key.name === 'return' && !key.ctrl && !key.meta && !key.paste,
@@ -49,8 +50,8 @@ describe('keyMatchers', () => {
       key.name === 'return' && (key.ctrl || key.meta || key.paste),
     [Command.OPEN_EXTERNAL_EDITOR]: (key: Key) =>
       key.ctrl && (key.name === 'x' || key.sequence === '\x18'),
-    [Command.PASTE_CLIPBOARD_IMAGE]: (key: Key) => key.ctrl && key.name === 'v',
-    [Command.SHOW_ERROR_DETAILS]: (key: Key) => key.ctrl && key.name === 'o',
+    [Command.PASTE_CLIPBOARD_IMAGE]: (key: Key) =>
+      (isWindows ? key.meta : key.ctrl || key.meta) && key.name === 'v',
     [Command.TOGGLE_TOOL_DESCRIPTIONS]: (key: Key) =>
       key.ctrl && key.name === 't',
     [Command.TOGGLE_IDE_CONTEXT_DETAIL]: (key: Key) =>
@@ -58,6 +59,7 @@ describe('keyMatchers', () => {
     [Command.QUIT]: (key: Key) => key.ctrl && key.name === 'c',
     [Command.EXIT]: (key: Key) => key.ctrl && key.name === 'd',
     [Command.SHOW_MORE_LINES]: (key: Key) => key.ctrl && key.name === 's',
+    [Command.RETRY_LAST]: (key: Key) => key.ctrl && key.name === 'y',
     [Command.REVERSE_SEARCH]: (key: Key) => key.ctrl && key.name === 'r',
     [Command.SUBMIT_REVERSE_SEARCH]: (key: Key) =>
       key.name === 'return' && !key.ctrl,
@@ -164,14 +166,26 @@ describe('keyMatchers', () => {
       negative: [createKey('return', { ctrl: true }), createKey('space')],
     },
     {
+      // Completion navigation only uses arrow keys (not Ctrl+P/N)
+      // to allow Ctrl+P/N to always navigate history
       command: Command.COMPLETION_UP,
-      positive: [createKey('up'), createKey('p', { ctrl: true })],
-      negative: [createKey('p'), createKey('down')],
+      positive: [createKey('up')],
+      negative: [
+        createKey('p'),
+        createKey('down'),
+        createKey('p', { ctrl: true }),
+      ],
     },
     {
+      // Completion navigation only uses arrow keys (not Ctrl+P/N)
+      // to allow Ctrl+P/N to always navigate history
       command: Command.COMPLETION_DOWN,
-      positive: [createKey('down'), createKey('n', { ctrl: true })],
-      negative: [createKey('n'), createKey('up')],
+      positive: [createKey('down')],
+      negative: [
+        createKey('n'),
+        createKey('up'),
+        createKey('n', { ctrl: true }),
+      ],
     },
 
     // Text input
@@ -205,16 +219,15 @@ describe('keyMatchers', () => {
     },
     {
       command: Command.PASTE_CLIPBOARD_IMAGE,
-      positive: [createKey('v', { ctrl: true })],
-      negative: [createKey('v'), createKey('c', { ctrl: true })],
+      positive: isWindows
+        ? [createKey('v', { meta: true })]
+        : [createKey('v', { ctrl: true }), createKey('v', { meta: true })],
+      negative: isWindows
+        ? [createKey('v', { ctrl: true }), createKey('v')]
+        : [createKey('v'), createKey('c', { ctrl: true })],
     },
 
     // App level bindings
-    {
-      command: Command.SHOW_ERROR_DETAILS,
-      positive: [createKey('o', { ctrl: true })],
-      negative: [createKey('o'), createKey('e', { ctrl: true })],
-    },
     {
       command: Command.TOGGLE_TOOL_DESCRIPTIONS,
       positive: [createKey('t', { ctrl: true })],
@@ -239,6 +252,11 @@ describe('keyMatchers', () => {
       command: Command.SHOW_MORE_LINES,
       positive: [createKey('s', { ctrl: true })],
       negative: [createKey('s'), createKey('l', { ctrl: true })],
+    },
+    {
+      command: Command.RETRY_LAST,
+      positive: [createKey('y', { ctrl: true })],
+      negative: [createKey('y'), createKey('r', { ctrl: true })],
     },
 
     // Shell commands

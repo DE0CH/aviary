@@ -45,12 +45,12 @@ export enum Command {
   PASTE_CLIPBOARD_IMAGE = 'pasteClipboardImage',
 
   // App level bindings
-  SHOW_ERROR_DETAILS = 'showErrorDetails',
   TOGGLE_TOOL_DESCRIPTIONS = 'toggleToolDescriptions',
   TOGGLE_IDE_CONTEXT_DETAIL = 'toggleIDEContextDetail',
   QUIT = 'quit',
   EXIT = 'exit',
   SHOW_MORE_LINES = 'showMoreLines',
+  RETRY_LAST = 'retryLast',
 
   // Shell commands
   REVERSE_SEARCH = 'reverseSearch',
@@ -79,6 +79,7 @@ export interface KeyBinding {
   command?: boolean;
   /** Paste operation requirement: true=must be paste, false=must not be paste, undefined=ignore */
   paste?: boolean;
+  meta?: boolean;
 }
 
 /**
@@ -122,9 +123,10 @@ export const defaultKeyBindings: KeyBindingConfig = {
 
   // Auto-completion
   [Command.ACCEPT_SUGGESTION]: [{ key: 'tab' }, { key: 'return', ctrl: false }],
-  // Completion navigation (arrow or Ctrl+P/N)
-  [Command.COMPLETION_UP]: [{ key: 'up' }, { key: 'p', ctrl: true }],
-  [Command.COMPLETION_DOWN]: [{ key: 'down' }, { key: 'n', ctrl: true }],
+  // Completion navigation uses only arrow keys
+  // Ctrl+P/N are reserved for history navigation (HISTORY_UP/DOWN)
+  [Command.COMPLETION_UP]: [{ key: 'up' }],
+  [Command.COMPLETION_DOWN]: [{ key: 'down' }],
 
   // Text input
   // Must also exclude shift to allow shift+enter for newline
@@ -152,15 +154,24 @@ export const defaultKeyBindings: KeyBindingConfig = {
     { key: 'x', ctrl: true },
     { sequence: '\x18', ctrl: true },
   ],
-  [Command.PASTE_CLIPBOARD_IMAGE]: [{ key: 'v', ctrl: true }],
+  [Command.PASTE_CLIPBOARD_IMAGE]:
+    process.platform === 'win32'
+      ? [
+          { key: 'v', command: true },
+          { key: 'v', meta: true },
+        ]
+      : [
+          { key: 'v', ctrl: true },
+          { key: 'v', command: true },
+        ],
 
   // App level bindings
-  [Command.SHOW_ERROR_DETAILS]: [{ key: 'o', ctrl: true }],
   [Command.TOGGLE_TOOL_DESCRIPTIONS]: [{ key: 't', ctrl: true }],
   [Command.TOGGLE_IDE_CONTEXT_DETAIL]: [{ key: 'g', ctrl: true }],
   [Command.QUIT]: [{ key: 'c', ctrl: true }],
   [Command.EXIT]: [{ key: 'd', ctrl: true }],
   [Command.SHOW_MORE_LINES]: [{ key: 's', ctrl: true }],
+  [Command.RETRY_LAST]: [{ key: 'y', ctrl: true }],
 
   // Shell commands
   [Command.REVERSE_SEARCH]: [{ key: 'r', ctrl: true }],

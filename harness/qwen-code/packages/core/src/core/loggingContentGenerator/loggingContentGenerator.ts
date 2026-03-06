@@ -31,7 +31,10 @@ import {
   logApiRequest,
   logApiResponse,
 } from '../../telemetry/loggers.js';
-import type { ContentGenerator } from '../contentGenerator.js';
+import type {
+  ContentGenerator,
+  ContentGeneratorConfig,
+} from '../contentGenerator.js';
 import { isStructuredError } from '../../utils/quotaErrorDetection.js';
 import { OpenAIContentConverter } from '../openaiContentGenerator/converter.js';
 import { OpenAILogger } from '../../utils/openaiLogger.js';
@@ -50,9 +53,11 @@ export class LoggingContentGenerator implements ContentGenerator {
   constructor(
     private readonly wrapped: ContentGenerator,
     private readonly config: Config,
+    generatorConfig: ContentGeneratorConfig,
   ) {
-    const generatorConfig = this.config.getContentGeneratorConfig();
-    if (generatorConfig?.enableOpenAILogging) {
+    // Extract fields needed for initialization from passed config
+    // (config.getContentGeneratorConfig() may not be available yet during refreshAuth)
+    if (generatorConfig.enableOpenAILogging) {
       this.openaiLogger = new OpenAILogger(generatorConfig.openAILoggingDir);
       this.schemaCompliance = generatorConfig.schemaCompliance;
     }
@@ -89,7 +94,7 @@ export class LoggingContentGenerator implements ContentGenerator {
         model,
         durationMs,
         prompt_id,
-        this.config.getContentGeneratorConfig()?.authType,
+        this.config.getAuthType(),
         usageMetadata,
         responseText,
       ),
@@ -126,7 +131,7 @@ export class LoggingContentGenerator implements ContentGenerator {
         errorMessage,
         durationMs,
         prompt_id,
-        this.config.getContentGeneratorConfig()?.authType,
+        this.config.getAuthType(),
         errorType,
         errorStatus,
       ),
@@ -149,13 +154,12 @@ export class LoggingContentGenerator implements ContentGenerator {
         response.modelVersion || req.model,
         userPromptId,
         response.usageMetadata,
-        JSON.stringify(response),
       );
       await this.logOpenAIInteraction(openaiRequest, response);
       return response;
     } catch (error) {
       const durationMs = Date.now() - startTime;
-      this._logApiError(undefined, durationMs, error, req.model, userPromptId);
+      this._logApiError('', durationMs, error, req.model, userPromptId);
       await this.logOpenAIInteraction(openaiRequest, undefined, error);
       throw error;
     }
@@ -174,7 +178,7 @@ export class LoggingContentGenerator implements ContentGenerator {
       stream = await this.wrapped.generateContentStream(req, userPromptId);
     } catch (error) {
       const durationMs = Date.now() - startTime;
-      this._logApiError(undefined, durationMs, error, req.model, userPromptId);
+      this._logApiError('', durationMs, error, req.model, userPromptId);
       await this.logOpenAIInteraction(openaiRequest, undefined, error);
       throw error;
     }
@@ -214,7 +218,6 @@ export class LoggingContentGenerator implements ContentGenerator {
         responses[0]?.modelVersion || model,
         userPromptId,
         lastUsageMetadata,
-        JSON.stringify(responses),
       );
       const consolidatedResponse =
         this.consolidateGeminiResponsesForLogging(responses);
@@ -222,7 +225,7 @@ export class LoggingContentGenerator implements ContentGenerator {
     } catch (error) {
       const durationMs = Date.now() - startTime;
       this._logApiError(
-        undefined,
+        responses[0]?.responseId ?? '',
         durationMs,
         error,
         responses[0]?.modelVersion || model,

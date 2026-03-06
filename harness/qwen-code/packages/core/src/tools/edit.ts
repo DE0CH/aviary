@@ -20,6 +20,7 @@ import { makeRelative, shortenPath } from '../utils/paths.js';
 import { isNodeError } from '../utils/errors.js';
 import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../config/config.js';
+import { FileEncoding } from '../services/fileSystemService.js';
 import { DEFAULT_DIFF_OPTIONS, getDiffStat } from './diffOptions.js';
 import { ReadFileTool } from './read-file.js';
 import { ToolNames, ToolDisplayNames } from './tool-names.js';
@@ -34,12 +35,15 @@ import type {
 } from './modifiable-tool.js';
 import { IdeClient } from '../ide/ide-client.js';
 import { safeLiteralReplace } from '../utils/textUtils.js';
+import { createDebugLogger } from '../utils/debugLogger.js';
 import {
   countOccurrences,
   extractEditSnippet,
   maybeAugmentOldStringForDeletion,
   normalizeEditStrings,
 } from '../utils/editHelper.js';
+
+const debugLogger = createDebugLogger('EDIT');
 
 export function applyReplacement(
   currentContent: string | null,
@@ -104,6 +108,10 @@ interface CalculatedEdit {
   occurrences: number;
   error?: { display: string; raw: string; type: ToolErrorType };
   isNewFile: boolean;
+  /** Detected encoding of the existing file (e.g. 'utf-8', 'gbk') */
+  encoding: string;
+  /** Whether the existing file has a UTF-8 BOM */
+  bom: boolean;
 }
 
 class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
@@ -130,17 +138,22 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
     let finalNewString = params.new_string;
     let finalOldString = params.old_string;
     let occurrences = 0;
+    let encoding = 'utf-8';
+    let bom = false;
     let error:
       | { display: string; raw: string; type: ToolErrorType }
       | undefined = undefined;
 
     try {
-      currentContent = await this.config
+      const fileInfo = await this.config
         .getFileSystemService()
-        .readTextFile(params.file_path);
+        .readTextFileWithInfo(params.file_path);
       // Normalize line endings to LF for consistent processing.
-      currentContent = currentContent.replace(/\r\n/g, '\n');
+      currentContent = fileInfo.content.replace(/\r\n/g, '\n');
       fileExists = true;
+      // Encoding and BOM are returned from the same I/O pass, avoiding redundant reads.
+      encoding = fileInfo.encoding;
+      bom = fileInfo.bom;
     } catch (err: unknown) {
       if (!isNodeError(err) || err.code !== 'ENOENT') {
         // Rethrow unexpected FS errors (permissions, etc.)
@@ -234,6 +247,8 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
       occurrences,
       error,
       isNewFile,
+      encoding,
+      bom,
     };
   }
 
@@ -256,12 +271,12 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
         throw error;
       }
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.log(`Error preparing edit: ${errorMsg}`);
+      debugLogger.warn(`Error preparing edit: ${errorMsg}`);
       return false;
     }
 
     if (editData.error) {
-      console.log(`Error: ${editData.error.display}`);
+      debugLogger.warn(`Error: ${editData.error.display}`);
       return false;
     }
 
@@ -367,9 +382,25 @@ class EditToolInvocation implements ToolInvocation<EditToolParams, ToolResult> {
 
     try {
       this.ensureParentDirectoriesExist(this.params.file_path);
-      await this.config
-        .getFileSystemService()
-        .writeTextFile(this.params.file_path, editData.newContent);
+
+      // For new files, apply default file encoding setting
+      // For existing files, preserve the original encoding (BOM and charset)
+      if (editData.isNewFile) {
+        const useBOM =
+          this.config.getDefaultFileEncoding() === FileEncoding.UTF8_BOM;
+        await this.config
+          .getFileSystemService()
+          .writeTextFile(this.params.file_path, editData.newContent, {
+            bom: useBOM,
+          });
+      } else {
+        await this.config
+          .getFileSystemService()
+          .writeTextFile(this.params.file_path, editData.newContent, {
+            bom: editData.bom,
+            encoding: editData.encoding,
+          });
+      }
 
       const fileName = path.basename(this.params.file_path);
       const originallyProposedContent =
