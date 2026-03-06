@@ -6,40 +6,47 @@
 
 import * as vscode from 'vscode';
 import type { DiffManager } from '../diff-manager.js';
-import type { WebViewProvider } from '../webview/WebViewProvider.js';
+import type { WebViewProvider } from '../webview/providers/WebViewProvider.js';
+import { CHAT_VIEW_ID_SIDEBAR } from '../constants/viewIds.js';
 
 type Logger = (message: string) => void;
-export type ChatHostLocation = 'editor' | 'panel' | 'secondary';
 
 export const runQwenCodeCommand = 'qwen-code.runQwenCode';
 export const showDiffCommand = 'qwenCode.showDiff';
 export const openChatCommand = 'qwen-code.openChat';
 export const openNewChatTabCommand = 'qwenCode.openNewChatTab';
 export const loginCommand = 'qwen-code.login';
-export const setChatLocationEditorCommand = 'qwen-code.setChatLocation.editor';
-export const setChatLocationPanelCommand = 'qwen-code.setChatLocation.panel';
-export const setChatLocationSecondaryCommand =
-  'qwen-code.setChatLocation.secondary';
+export const focusChatCommand = 'qwen-code.focusChat';
+export const newConversationCommand = 'qwen-code.newConversation';
+export const showLogsCommand = 'qwen-code.showLogs';
 
+/**
+ * Register all Qwen Code chat-related commands.
+ *
+ * All chat positions (editor tab, sidebar, panel, secondary sidebar) are
+ * available simultaneously. `openChat` and `newConversation` always open an
+ * editor tab, while `focusChat` focuses the primary sidebar view.
+ *
+ * @param context - VS Code extension context for subscription management
+ * @param log - Logger function for debug output
+ * @param diffManager - Diff manager for showing file diffs
+ * @param getWebViewProviders - Returns all active editor-tab WebView providers
+ * @param createWebViewProvider - Factory to create a new editor-tab WebView provider
+ * @param outputChannel - Optional output channel for the showLogs command
+ */
 export function registerNewCommands(
   context: vscode.ExtensionContext,
   log: Logger,
   diffManager: DiffManager,
   getWebViewProviders: () => WebViewProvider[],
   createWebViewProvider: () => WebViewProvider,
-  getChatHostLocation: () => ChatHostLocation,
-  focusChatView: () => Promise<void>,
+  outputChannel?: vscode.OutputChannel,
 ): void {
   const disposables: vscode.Disposable[] = [];
 
+  // Open Chat: show the most recent editor tab or create a new one
   disposables.push(
     vscode.commands.registerCommand(openChatCommand, async () => {
-      const host = getChatHostLocation();
-      if (host !== 'editor') {
-        await focusChatView();
-        return;
-      }
-
       const providers = getWebViewProviders();
       if (providers.length > 0) {
         await providers[providers.length - 1].show();
@@ -75,19 +82,10 @@ export function registerNewCommands(
     ),
   );
 
+  // Open New Chat Tab: always create a new editor tab
   disposables.push(
     vscode.commands.registerCommand(openNewChatTabCommand, async () => {
-      const host = getChatHostLocation();
-      if (host !== 'editor') {
-        vscode.window.showInformationMessage(
-          '当前配置使用面板/Secondary Bar 承载聊天，暂不支持多标签。将为你聚焦现有聊天视图。',
-        );
-        await focusChatView();
-        return;
-      }
-
       const provider = createWebViewProvider();
-      // Session restoration is now disabled by default, so no need to suppress it
       await provider.show();
     }),
   );
@@ -105,74 +103,33 @@ export function registerNewCommands(
     }),
   );
 
-  const updateChatLocation = async (location: ChatHostLocation) => {
-    const current = getChatHostLocation();
-    if (current === location) {
-      log(`[Command] Chat location unchanged (${location}), focusing view`);
-      await focusChatView();
-      return;
-    }
-
-    const target: vscode.ConfigurationTarget =
-      vscode.workspace.workspaceFolders?.length && vscode.workspace.name
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
-
-    try {
-      await vscode.workspace
-        .getConfiguration('qwen-code')
-        .update('chat.location', location, target);
-      log(
-        `[Command] Chat location set to ${location} (target=${target}; prev=${current})`,
-      );
-      // Update context immediately so view container visibility switches without reload
-      await vscode.commands.executeCommand(
-        'setContext',
-        'qwenCode.chatLocation',
-        location,
-      );
-
-      // Dispose existing editor-hosted chat panels when moving to panel/secondary to avoid confusion.
-      if (location !== 'editor') {
-        for (const provider of getWebViewProviders()) {
-          try {
-            provider.getPanel()?.dispose();
-          } catch (error) {
-            log(
-              `[Command] Failed to dispose chat panel during relocation: ${error}`,
-            );
-          }
-        }
-      }
-
-      // Small delay to ensure context has updated before focusing
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await focusChatView();
-      void vscode.window.showInformationMessage(
-        `聊天位置已切换为 ${location === 'editor' ? '编辑器标签页' : location === 'panel' ? '底部面板' : 'Secondary Bar'}，已尝试为你打开对应位置。如未生效，请重载窗口。`,
-      );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      log(`[Command] Failed to set chat location: ${msg}`);
-      void vscode.window.showErrorMessage(
-        `切换聊天位置失败：${msg}。可在 Settings 搜索 "Qwen Code Chat Location" 手动修改。`,
-      );
-    }
-  };
-
+  // Focus Chat: bring the primary sidebar chat view to front
   disposables.push(
-    vscode.commands.registerCommand(setChatLocationEditorCommand, async () => {
-      await updateChatLocation('editor');
+    vscode.commands.registerCommand(focusChatCommand, async () => {
+      await vscode.commands.executeCommand(`${CHAT_VIEW_ID_SIDEBAR}.focus`);
     }),
-    vscode.commands.registerCommand(setChatLocationPanelCommand, async () => {
-      await updateChatLocation('panel');
-    }),
-    vscode.commands.registerCommand(
-      setChatLocationSecondaryCommand,
-      async () => {
-        await updateChatLocation('secondary');
-      },
-    ),
   );
+
+  // New Conversation: open a new editor tab for a fresh conversation
+  disposables.push(
+    vscode.commands.registerCommand(newConversationCommand, async () => {
+      const provider = createWebViewProvider();
+      await provider.show();
+    }),
+  );
+
+  // Show Logs: reveal the output channel
+  disposables.push(
+    vscode.commands.registerCommand(showLogsCommand, async () => {
+      if (outputChannel) {
+        outputChannel.show(true);
+      } else {
+        vscode.window.showWarningMessage(
+          'Qwen Code Companion log channel is not available.',
+        );
+      }
+    }),
+  );
+
   context.subscriptions.push(...disposables);
 }

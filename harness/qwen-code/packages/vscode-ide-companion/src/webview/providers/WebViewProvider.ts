@@ -5,17 +5,17 @@
  */
 
 import * as vscode from 'vscode';
-import { QwenAgentManager } from '../services/qwenAgentManager.js';
-import { ConversationStore } from '../services/conversationStore.js';
-import type { AcpPermissionRequest } from '../types/acpTypes.js';
-import type { ModelInfo } from '../types/acpTypes.js';
-import type { PermissionResponseMessage } from '../types/webviewMessageTypes.js';
-import { PanelManager } from '../webview/PanelManager.js';
-import { MessageHandler } from '../webview/MessageHandler.js';
-import { WebViewContent } from '../webview/WebViewContent.js';
-import { getFileName } from './utils/webviewUtils.js';
-import { type ApprovalModeValue } from '../types/approvalModeValueTypes.js';
-import { isAuthenticationRequiredError } from '../utils/authErrors.js';
+import { QwenAgentManager } from '../../services/qwenAgentManager.js';
+import { ConversationStore } from '../../services/conversationStore.js';
+import type { AcpPermissionRequest } from '../../types/acpTypes.js';
+import type { ModelInfo } from '../../types/acpTypes.js';
+import type { PermissionResponseMessage } from '../../types/webviewMessageTypes.js';
+import { PanelManager } from './PanelManager.js';
+import { MessageHandler } from './MessageHandler.js';
+import { WebViewContent } from './WebViewContent.js';
+import { getFileName } from '../utils/webviewUtils.js';
+import { type ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
+import { isAuthenticationRequiredError } from '../../utils/authErrors.js';
 
 export class WebViewProvider {
   private panelManager: PanelManager;

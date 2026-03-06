@@ -14,43 +14,20 @@ import {
   IDE_DEFINITIONS,
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
-import { WebViewProvider } from './webview/WebViewProvider.js';
+import { WebViewProvider } from './webview/providers/WebViewProvider.js';
+import { ChatWebviewViewProvider } from './webview/providers/ChatWebviewViewProvider.js';
 import {
-  ChatWebviewViewProvider,
   CHAT_VIEW_ID_PANEL,
   CHAT_VIEW_ID_SECONDARY,
-} from './webview/ChatWebviewViewProvider.js';
-import {
-  registerNewCommands,
-  type ChatHostLocation,
-} from './commands/index.js';
+  CHAT_VIEW_ID_SIDEBAR,
+} from './constants/viewIds.js';
+import { registerNewCommands } from './commands/index.js';
 import { ReadonlyFileSystemProvider } from './services/readonlyFileSystemProvider.js';
 import { isWindows } from './utils/platform.js';
 
 const CLI_IDE_COMPANION_IDENTIFIER = 'qwenlm.qwen-code-vscode-ide-companion';
 const INFO_MESSAGE_SHOWN_KEY = 'qwenCodeInfoMessageShown';
 export const DIFF_SCHEME = 'qwen-diff';
-const CHAT_LOCATION_SETTING_KEY = 'chat.location';
-
-function getChatHostLocation(): ChatHostLocation {
-  const location = vscode.workspace
-    .getConfiguration('qwen-code')
-    .get<string>(CHAT_LOCATION_SETTING_KEY, 'editor');
-
-  if (location === 'panel' || location === 'secondary') {
-    return location;
-  }
-  return 'editor';
-}
-
-async function setChatLocationContext(location: ChatHostLocation) {
-  console.log('[Extension] setChatLocationContext ->', location);
-  await vscode.commands.executeCommand(
-    'setContext',
-    'qwenCode.chatLocation',
-    location,
-  );
-}
 
 /**
  * IDE environments where the installation greeting is hidden.  In these
@@ -172,9 +149,6 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   );
 
-  const initialChatLocation = getChatHostLocation();
-  await setChatLocationContext(initialChatLocation);
-
   // Helper function to create a new WebView provider instance
   const createWebViewProvider = (): WebViewProvider => {
     const provider = new WebViewProvider(context, context.extensionUri);
@@ -182,43 +156,24 @@ export async function activate(context: vscode.ExtensionContext) {
     return provider;
   };
 
-  // Register WebviewView hosts (panel and secondary sidebar). They are shown based on config conditions.
-  const chatViewProviderPanel = new ChatWebviewViewProvider(
-    createWebViewProvider(),
-    context.extensionUri,
-    'panel',
-  );
-  const chatViewProviderSecondary = new ChatWebviewViewProvider(
-    createWebViewProvider(),
-    context.extensionUri,
-    'secondary',
-  );
-  console.log(
-    '[Extension] Registering WebviewView providers for panel and secondary',
-  );
-  const panelProviderDisposable = vscode.window.registerWebviewViewProvider(
+  // Register WebviewView hosts for all positions (sidebar, panel, secondary).
+  // Providers are lazily instantiated — the factory is only called when VS Code
+  // actually opens the view, keeping startup lightweight.
+  const chatViewIds = [
+    CHAT_VIEW_ID_SIDEBAR,
     CHAT_VIEW_ID_PANEL,
-    chatViewProviderPanel,
-    {
-      webviewOptions: { retainContextWhenHidden: true },
-    },
-  );
-  const secondaryProviderDisposable = vscode.window.registerWebviewViewProvider(
     CHAT_VIEW_ID_SECONDARY,
-    chatViewProviderSecondary,
-    {
-      webviewOptions: { retainContextWhenHidden: true },
-    },
-  );
-  console.log(
-    '[Extension] WebviewView providers registered:',
-    panelProviderDisposable ? 'panel' : 'panel (missing)',
-    secondaryProviderDisposable ? 'secondary' : 'secondary (missing)',
-  );
-  context.subscriptions.push(
-    panelProviderDisposable,
-    secondaryProviderDisposable,
-  );
+  ] as const;
+
+  for (const viewId of chatViewIds) {
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(
+        viewId,
+        new ChatWebviewViewProvider(createWebViewProvider),
+        { webviewOptions: { retainContextWhenHidden: true } },
+      ),
+    );
+  }
 
   // Register WebView panel serializer for persistence across reloads
   context.subscriptions.push(
@@ -257,43 +212,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  const focusChatView = async () => {
-    const host = getChatHostLocation();
-    if (host === 'editor') {
-      const providers = webViewProviders;
-      if (providers.length > 0) {
-        await providers[providers.length - 1].show();
-      } else {
-        const provider = createWebViewProvider();
-        await provider.show();
-      }
-      return;
-    }
-
-    const viewId =
-      host === 'secondary' ? CHAT_VIEW_ID_SECONDARY : CHAT_VIEW_ID_PANEL;
-    try {
-      // Ensure the view provider is registered and ready before focusing
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      await vscode.commands.executeCommand(`${viewId}.focus`);
-
-      // Wait a bit more to ensure the view has initialized
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    } catch (err) {
-      log(`Failed to focus chat view (${viewId}): ${err}`);
-      // Try to ensure the view provider exists by creating new ones if needed
-      try {
-        const currentProviders = webViewProviders;
-        if (currentProviders.length === 0) {
-          createWebViewProvider(); // Create a new provider if none exist
-        }
-        await vscode.commands.executeCommand(`${viewId}.focus`);
-      } catch (retryErr) {
-        log(`Retry failed to focus chat view (${viewId}): ${retryErr}`);
-      }
-    }
-  };
-
   // Register newly added commands via commands module
   registerNewCommands(
     context,
@@ -301,56 +219,13 @@ export async function activate(context: vscode.ExtensionContext) {
     diffManager,
     () => webViewProviders,
     createWebViewProvider,
-    getChatHostLocation,
-    focusChatView,
+    logger,
   );
 
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (doc.uri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(doc.uri);
-      }
-    }),
-    vscode.workspace.onDidChangeConfiguration(async (event) => {
-      if (event.affectsConfiguration('qwen-code.chat.location')) {
-        const newLocation = getChatHostLocation();
-        log(
-          `[Extension] Configuration changed: chat.location -> ${newLocation}`,
-        );
-        await setChatLocationContext(newLocation);
-        if (newLocation !== 'editor') {
-          for (const provider of webViewProviders) {
-            try {
-              provider.getPanel()?.dispose();
-            } catch (err) {
-              log(
-                `[Extension] Failed to dispose chat panel after location change: ${err}`,
-              );
-            }
-          }
-        }
-
-        // Focus the appropriate view after config change
-        if (newLocation === 'panel' || newLocation === 'secondary') {
-          const viewId =
-            newLocation === 'secondary'
-              ? CHAT_VIEW_ID_SECONDARY
-              : CHAT_VIEW_ID_PANEL;
-          try {
-            // Give VS Code a moment to update the context and UI
-            await new Promise((resolve) => setTimeout(resolve, 300));
-            await vscode.commands.executeCommand(`${viewId}.focus`);
-
-            // Refresh the view to ensure content appears
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            // Trigger a re-render by focusing again after a delay
-            await vscode.commands.executeCommand(`${viewId}.focus`);
-          } catch (err) {
-            log(
-              `[Extension] Failed to focus chat view after location change: ${err}`,
-            );
-          }
-        }
       }
     }),
     vscode.workspace.registerTextDocumentContentProvider(
