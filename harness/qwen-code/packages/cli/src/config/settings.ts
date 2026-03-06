@@ -34,7 +34,6 @@ import { resolveEnvVarsInObject } from '../utils/envVarResolver.js';
 import { setNestedPropertySafe } from '../utils/settingsUtils.js';
 import { customDeepMerge } from '../utils/deepMerge.js';
 import { updateSettingsFilePreservingFormat } from '../utils/commentJson.js';
-const debugLogger = createDebugLogger('SETTINGS');
 import { runMigrations, needsMigration } from './migration/index.js';
 import {
   V1_TO_V2_MIGRATION_MAP,
