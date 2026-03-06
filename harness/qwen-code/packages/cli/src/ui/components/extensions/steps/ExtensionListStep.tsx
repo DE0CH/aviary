@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -24,6 +24,26 @@ export const ExtensionListStep = ({
   onExtensionSelect,
 }: ExtensionListStepProps) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
+
+  // Calculate max widths for each column for alignment
+  const { maxNameWidth, maxVersionWidth, maxStatusWidth } = useMemo(() => {
+    let maxName = 0;
+    let maxVersion = 0;
+    let maxStatus = 0;
+    for (const ext of extensions) {
+      maxName = Math.max(maxName, ext.name.length);
+      maxVersion = Math.max(maxVersion, ext.version.length);
+      const statusLength = ext.isActive
+        ? t('active').length
+        : t('disabled').length;
+      maxStatus = Math.max(maxStatus, statusLength);
+    }
+    return {
+      maxNameWidth: maxName,
+      maxVersionWidth: maxVersion,
+      maxStatusWidth: maxStatus,
+    };
+  }, [extensions]);
 
   // Reset selection when extensions change
   useEffect(() => {
@@ -119,15 +139,21 @@ export const ExtensionListStep = ({
             {isSelected ? '●' : ' '}
           </Text>
         </Box>
-        <Text
-          color={isSelected ? theme.text.accent : theme.text.primary}
-          wrap="truncate"
-        >
-          {extension.name}
+        <Box width={maxNameWidth} flexShrink={0}>
+          <Text
+            color={isSelected ? theme.text.accent : theme.text.primary}
+            wrap="truncate"
+          >
+            {extension.name}
+          </Text>
+        </Box>
+        <Box width={maxVersionWidth + 3} flexShrink={0}>
           <Text color={theme.text.secondary}> v{extension.version}</Text>
-          <Text color={activeColor}> ({activeString})</Text>
-          {stateText && <Text color={stateColor}> [{stateText}]</Text>}
-        </Text>
+        </Box>
+        <Box width={maxStatusWidth + 3} flexShrink={0}>
+          <Text color={activeColor}>({activeString})</Text>
+        </Box>
+        {stateText && <Text color={stateColor}>[{stateText}]</Text>}
       </Box>
     );
   };

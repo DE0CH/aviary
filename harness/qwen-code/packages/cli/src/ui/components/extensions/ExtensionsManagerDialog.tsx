@@ -351,7 +351,9 @@ export function ExtensionsManagerDialog({
 
     return (
       <Box>
-        <Text bold>{getStepHeaderText()}</Text>
+        <Text color={theme.text.accent} bold>
+          {getStepHeaderText()}
+        </Text>
       </Box>
     );
   }, [getCurrentStep, selectedExtension]);
