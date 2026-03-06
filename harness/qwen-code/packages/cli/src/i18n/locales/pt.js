@@ -896,18 +896,84 @@ export default {
   'Yes, allow always for this session': 'Sim, permitir sempre para esta sessão',
 
   // MCP Management - Core translations
+  'Manage MCP servers': 'Gerenciar servidores MCP',
+  'Server Detail': 'Detalhes do servidor',
+  'Disable Server': 'Desativar servidor',
+  Tools: 'Ferramentas',
+  'Tool Detail': 'Detalhes da ferramenta',
+  'MCP Management': 'Gerenciamento MCP',
+  'Loading...': 'Carregando...',
+  'Unknown step': 'Etapa desconhecida',
+  'Esc to back': 'Esc para voltar',
+  '↑↓ to navigate · Enter to select · Esc to close':
+    '↑↓ navegar · Enter selecionar · Esc fechar',
+  '↑↓ to navigate · Enter to select · Esc to back':
+    '↑↓ navegar · Enter selecionar · Esc voltar',
+  '↑↓ to navigate · Enter to confirm · Esc to back':
+    '↑↓ navegar · Enter confirmar · Esc voltar',
+  'User Settings (global)': 'Configurações do usuário (global)',
+  'Workspace Settings (project-specific)':
+    'Configurações do workspace (específico do projeto)',
+  'Disable server:': 'Desativar servidor:',
+  'Select where to add the server to the exclude list:':
+    'Selecione onde adicionar o servidor à lista de exclusão:',
+  'Press Enter to confirm, Esc to cancel':
+    'Enter para confirmar, Esc para cancelar',
   Disable: 'Desativar',
   Enable: 'Ativar',
   Reconnect: 'Reconectar',
   'View tools': 'Ver ferramentas',
+  'Status:': 'Status:',
+  'Source:': 'Fonte:',
+  'Command:': 'Comando:',
+  'Working Directory:': 'Diretório de trabalho:',
+  'Capabilities:': 'Capacidades:',
+  'No server selected': 'Nenhum servidor selecionado',
   '(disabled)': '(desativado)',
   'Error:': 'Erro:',
   Extension: 'Extensão',
   tool: 'ferramenta',
+  tools: 'ferramentas',
   connected: 'conectado',
   connecting: 'conectando',
   disconnected: 'desconectado',
   error: 'erro',
+
+  // MCP Server List
+  'User MCPs': 'MCPs do usuário',
+  'Project MCPs': 'MCPs do projeto',
+  'Extension MCPs': 'MCPs de extensão',
+  server: 'servidor',
+  servers: 'servidores',
+  'Add MCP servers to your settings to get started.':
+    'Adicione servidores MCP às suas configurações para começar.',
+  'Run qwen --debug to see error logs':
+    'Execute qwen --debug para ver os logs de erro',
+
+  // MCP Tool List
+  'No tools available for this server.':
+    'Nenhuma ferramenta disponível para este servidor.',
+  destructive: 'destrutivo',
+  'read-only': 'somente leitura',
+  'open-world': 'mundo aberto',
+  idempotent: 'idempotente',
+  'Tools for {{name}}': 'Ferramentas para {{name}}',
+  '{{current}}/{{total}}': '{{current}}/{{total}}',
+
+  // MCP Tool Detail
+  required: 'obrigatório',
+  Type: 'Tipo',
+  Enum: 'Enumeração',
+  Parameters: 'Parâmetros',
+  'No tool selected': 'Nenhuma ferramenta selecionada',
+  Annotations: 'Anotações',
+  Title: 'Título',
+  'Read Only': 'Somente leitura',
+  Destructive: 'Destrutivo',
+  Idempotent: 'Idempotente',
+  'Open World': 'Mundo aberto',
+  Server: 'Servidor',
+
   // Invalid tool related translations
   '{{count}} invalid tools': '{{count}} ferramentas inválidas',
   invalid: 'inválido',

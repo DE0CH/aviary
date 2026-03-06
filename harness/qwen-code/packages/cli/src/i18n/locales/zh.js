@@ -712,7 +712,9 @@ export default {
   Tools: '工具',
   'Tool Detail': '工具详情',
   'MCP Management': 'MCP 管理',
+  'Loading...': '加载中...',
   'Unknown step': '未知步骤',
+  'Esc to back': 'Esc 返回',
   '↑↓ to navigate · Enter to select · Esc to close':
     '↑↓ 导航 · Enter 选择 · Esc 关闭',
   '↑↓ to navigate · Enter to select · Esc to back':
@@ -733,10 +735,49 @@ export default {
   'Error:': '错误：',
   Extension: '扩展',
   tool: '工具',
+  tools: '个工具',
   connected: '已连接',
   connecting: '连接中',
   disconnected: '已断开',
   error: '错误',
+
+  // MCP Server List
+  'User MCPs': '用户 MCP',
+  'Project MCPs': '项目 MCP',
+  'Extension MCPs': '扩展 MCP',
+  server: '个服务器',
+  servers: '个服务器',
+  'Add MCP servers to your settings to get started.':
+    '请在设置中添加 MCP 服务器以开始使用。',
+  'Run qwen --debug to see error logs': '运行 qwen --debug 查看错误日志',
+
+  // MCP Server Detail
+  'Status:': '状态：',
+  'Command:': '命令：',
+  'Working Directory:': '工作目录：',
+  'Capabilities:': '功能：',
+
+  // MCP Tool List
+  'No tools available for this server.': '此服务器没有可用工具。',
+  destructive: '破坏性',
+  'read-only': '只读',
+  'open-world': '开放世界',
+  idempotent: '幂等',
+  'Tools for {{name}}': '{{name}} 的工具',
+  '{{current}}/{{total}}': '{{current}}/{{total}}',
+
+  // MCP Tool Detail
+  Type: '类型',
+  Parameters: '参数',
+  'No tool selected': '未选择工具',
+  Annotations: '注解',
+  Title: '标题',
+  'Read Only': '只读',
+  Destructive: '破坏性',
+  Idempotent: '幂等',
+  'Open World': '开放世界',
+  Server: '服务器',
+
   // Invalid tool related translations
   '{{count}} invalid tools': '{{count}} 个无效工具',
   invalid: '无效',

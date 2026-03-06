@@ -1492,4 +1492,71 @@ export default {
     'Конфигурация {{region}} успешно обновлена. Модель переключена на "{{model}}".',
   'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).':
     'Успешная аутентификация с {{region}}. API-ключ и конфигурации моделей сохранены в settings.json (резервная копия создана).',
+
+  // ============================================================================
+  // MCP Management Dialog
+  // ============================================================================
+  'MCP Management': 'Управление MCP',
+  'Server List': 'Список серверов',
+  'Server Detail': 'Детали сервера',
+  'Disable Server': 'Отключить сервер',
+  'Tool List': 'Список инструментов',
+  'Tool Detail': 'Детали инструмента',
+  'Loading...': 'Загрузка...',
+  'Unknown step': 'Неизвестный шаг',
+  'Esc to back': 'Esc для возврата',
+  '↑↓ to navigate · Enter to select · Esc to close':
+    '↑↓ навигация · Enter выбрать · Esc закрыть',
+  '↑↓ to navigate · Enter to select · Esc to back':
+    '↑↓ навигация · Enter выбрать · Esc назад',
+  '↑↓ to navigate · Enter to confirm · Esc to back':
+    '↑↓ навигация · Enter подтвердить · Esc назад',
+  'User Settings (global)': 'Настройки пользователя (глобальные)',
+  'Workspace Settings (project-specific)':
+    'Настройки рабочего пространства (проектные)',
+  'Disable server:': 'Отключить сервер:',
+  'Select where to add the server to the exclude list:':
+    'Выберите, где добавить сервер в список исключений:',
+  'Press Enter to confirm, Esc to cancel':
+    'Enter для подтверждения, Esc для отмены',
+  'Status:': 'Статус:',
+  'Command:': 'Команда:',
+  'Working Directory:': 'Рабочий каталог:',
+  'Capabilities:': 'Возможности:',
+  'No server selected': 'Сервер не выбран',
+
+  // MCP Server List
+  'User MCPs': 'MCP пользователя',
+  'Project MCPs': 'MCP проекта',
+  'Extension MCPs': 'MCP расширений',
+  server: 'сервер',
+  servers: 'серверов',
+  'Add MCP servers to your settings to get started.':
+    'Добавьте серверы MCP в настройки, чтобы начать.',
+  'Run qwen --debug to see error logs':
+    'Запустите qwen --debug для просмотра журналов ошибок',
+
+  // MCP Tool List
+  'No tools available for this server.':
+    'Для этого сервера нет доступных инструментов.',
+  destructive: 'деструктивный',
+  'read-only': 'только чтение',
+  'open-world': 'открытый мир',
+  idempotent: 'идемпотентный',
+  'Tools for {{name}}': 'Инструменты для {{name}}',
+  '{{current}}/{{total}}': '{{current}}/{{total}}',
+
+  // MCP Tool Detail
+  required: 'обязательный',
+  Type: 'Тип',
+  Enum: 'Перечисление',
+  Parameters: 'Параметры',
+  'No tool selected': 'Инструмент не выбран',
+  Annotations: 'Аннотации',
+  Title: 'Заголовок',
+  'Read Only': 'Только чтение',
+  Destructive: 'Деструктивный',
+  Idempotent: 'Идемпотентный',
+  'Open World': 'Открытый мир',
+  Server: 'Сервер',
 };

@@ -630,18 +630,83 @@ export default {
   'Yes, allow always for this session': 'はい、このセッションで常に許可',
 
   // MCP Management - Core translations
+  'Manage MCP servers': 'MCPサーバーを管理',
+  'Server Detail': 'サーバー詳細',
+  'Disable Server': 'サーバーを無効化',
+  Tools: 'ツール',
+  'Tool Detail': 'ツール詳細',
+  'MCP Management': 'MCP管理',
+  'Loading...': '読み込み中...',
+  'Unknown step': '不明なステップ',
+  'Esc to back': 'Esc 戻る',
+  '↑↓ to navigate · Enter to select · Esc to close':
+    '↑↓ ナビゲート · Enter 選択 · Esc 閉じる',
+  '↑↓ to navigate · Enter to select · Esc to back':
+    '↑↓ ナビゲート · Enter 選択 · Esc 戻る',
+  '↑↓ to navigate · Enter to confirm · Esc to back':
+    '↑↓ ナビゲート · Enter 確認 · Esc 戻る',
+  'User Settings (global)': 'ユーザー設定（グローバル）',
+  'Workspace Settings (project-specific)':
+    'ワークスペース設定（プロジェクト固有）',
+  'Disable server:': 'サーバーを無効化:',
+  'Select where to add the server to the exclude list:':
+    'サーバーを除外リストに追加する場所を選択してください:',
+  'Press Enter to confirm, Esc to cancel': 'Enter で確認、Esc でキャンセル',
   Disable: '無効化',
   Enable: '有効化',
   Reconnect: '再接続',
   'View tools': 'ツールを表示',
+  'Status:': 'ステータス:',
+  'Source:': 'ソース:',
+  'Command:': 'コマンド:',
+  'Working Directory:': '作業ディレクトリ:',
+  'Capabilities:': '機能:',
+  'No server selected': 'サーバーが選択されていません',
   '(disabled)': '(無効)',
   'Error:': 'エラー:',
   Extension: '拡張機能',
   tool: 'ツール',
+  tools: 'ツール',
   connected: '接続済み',
   connecting: '接続中',
   disconnected: '切断済み',
   error: 'エラー',
+
+  // MCP Server List
+  'User MCPs': 'ユーザーMCP',
+  'Project MCPs': 'プロジェクトMCP',
+  'Extension MCPs': '拡張機能MCP',
+  server: 'サーバー',
+  servers: 'サーバー',
+  'Add MCP servers to your settings to get started.':
+    '設定にMCPサーバーを追加して開始してください。',
+  'Run qwen --debug to see error logs':
+    'qwen --debug を実行してエラーログを確認してください',
+
+  // MCP Tool List
+  'No tools available for this server.':
+    'このサーバーには使用可能なツールがありません。',
+  destructive: '破壊的',
+  'read-only': '読み取り専用',
+  'open-world': 'オープンワールド',
+  idempotent: '冪等',
+  'Tools for {{name}}': '{{name}} のツール',
+  '{{current}}/{{total}}': '{{current}}/{{total}}',
+
+  // MCP Tool Detail
+  required: '必須',
+  Type: '型',
+  Enum: '列挙',
+  Parameters: 'パラメータ',
+  'No tool selected': 'ツールが選択されていません',
+  Annotations: '注釈',
+  Title: 'タイトル',
+  'Read Only': '読み取り専用',
+  Destructive: '破壊的',
+  Idempotent: '冪等',
+  'Open World': 'オープンワールド',
+  Server: 'サーバー',
+
   // Invalid tool related translations
   '{{count}} invalid tools': '{{count}} 個の無効なツール',
   invalid: '無効',

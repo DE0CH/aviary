@@ -754,7 +754,9 @@ export default {
   Tools: 'Tools',
   'Tool Detail': 'Tool Detail',
   'MCP Management': 'MCP Management',
+  'Loading...': 'Loading...',
   'Unknown step': 'Unknown step',
+  'Esc to back': 'Esc to back',
   '↑↓ to navigate · Enter to select · Esc to close':
     '↑↓ to navigate · Enter to select · Esc to close',
   '↑↓ to navigate · Enter to select · Esc to back':
@@ -777,15 +779,51 @@ export default {
   'Command:': 'Command:',
   'Working Directory:': 'Working Directory:',
   'Capabilities:': 'Capabilities:',
+  'No server selected': 'No server selected',
   prompts: 'prompts',
   '(disabled)': '(disabled)',
   'Error:': 'Error:',
   Extension: 'Extension',
   tool: 'tool',
+  tools: 'tools',
   connected: 'connected',
   connecting: 'connecting',
   disconnected: 'disconnected',
   error: 'error',
+
+  // MCP Server List
+  'User MCPs': 'User MCPs',
+  'Project MCPs': 'Project MCPs',
+  'Extension MCPs': 'Extension MCPs',
+  server: 'server',
+  servers: 'servers',
+  'Add MCP servers to your settings to get started.':
+    'Add MCP servers to your settings to get started.',
+  'Run qwen --debug to see error logs': 'Run qwen --debug to see error logs',
+
+  // MCP Tool List
+  'No tools available for this server.': 'No tools available for this server.',
+  destructive: 'destructive',
+  'read-only': 'read-only',
+  'open-world': 'open-world',
+  idempotent: 'idempotent',
+  'Tools for {{name}}': 'Tools for {{name}}',
+  '{{current}}/{{total}}': '{{current}}/{{total}}',
+
+  // MCP Tool Detail
+  required: 'required',
+  Type: 'Type',
+  Enum: 'Enum',
+  Parameters: 'Parameters',
+  'No tool selected': 'No tool selected',
+  Annotations: 'Annotations',
+  Title: 'Title',
+  'Read Only': 'Read Only',
+  Destructive: 'Destructive',
+  Idempotent: 'Idempotent',
+  'Open World': 'Open World',
+  Server: 'Server',
+
   // Invalid tool related translations
   '{{count}} invalid tools': '{{count}} invalid tools',
   invalid: 'invalid',
