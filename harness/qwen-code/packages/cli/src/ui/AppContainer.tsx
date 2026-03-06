@@ -100,8 +100,6 @@ import { t } from '../i18n/index.js';
 import { useWelcomeBack } from './hooks/useWelcomeBack.js';
 import { useDialogClose } from './hooks/useDialogClose.js';
 import { useInitializationAuthError } from './hooks/useInitializationAuthError.js';
-import { type VisionSwitchOutcome } from './components/ModelSwitchDialog.js';
-import { processVisionSwitchOutcome } from './hooks/useVisionAutoSwitch.js';
 import { useSubagentCreateDialog } from './hooks/useSubagentCreateDialog.js';
 import { useAgentsManagerDialog } from './hooks/useAgentsManagerDialog.js';
 import { useMcpDialog } from './hooks/useMcpDialog.js';
@@ -498,18 +496,6 @@ export const AppContainer = (props: AppContainerProps) => {
   } = useAgentsManagerDialog();
   const { isMcpDialogOpen, openMcpDialog, closeMcpDialog } = useMcpDialog();
 
-  // Vision model auto-switch dialog state (must be before slashCommandActions)
-  const [isVisionSwitchDialogOpen, setIsVisionSwitchDialogOpen] =
-    useState(false);
-  const [visionSwitchResolver, setVisionSwitchResolver] = useState<{
-    resolve: (result: {
-      modelOverride?: string;
-      persistSessionModel?: string;
-      showGuidance?: boolean;
-    }) => void;
-    reject: () => void;
-  } | null>(null);
-
   const slashCommandActions = useMemo(
     () => ({
       openAuthDialog,
@@ -567,38 +553,13 @@ export const AppContainer = (props: AppContainerProps) => {
     historyManager.loadHistory,
     refreshStatic,
     toggleVimEnabled,
+    isProcessing,
     setIsProcessing,
     setGeminiMdFileCount,
     slashCommandActions,
     extensionsUpdateStateInternal,
     isConfigInitialized,
     logger,
-  );
-
-  // Vision switch handlers
-  const handleVisionSwitchRequired = useCallback(
-    async (_query: unknown) =>
-      new Promise<{
-        modelOverride?: string;
-        persistSessionModel?: string;
-        showGuidance?: boolean;
-      }>((resolve, reject) => {
-        setVisionSwitchResolver({ resolve, reject });
-        setIsVisionSwitchDialogOpen(true);
-      }),
-    [],
-  );
-
-  const handleVisionSwitchSelect = useCallback(
-    (outcome: VisionSwitchOutcome) => {
-      setIsVisionSwitchDialogOpen(false);
-      if (visionSwitchResolver) {
-        const result = processVisionSwitchOutcome(outcome);
-        visionSwitchResolver.resolve(result);
-        setVisionSwitchResolver(null);
-      }
-    },
-    [visionSwitchResolver],
   );
 
   // onDebugMessage should log to debug logfile, not update footer debugMessage
@@ -672,6 +633,7 @@ export const AppContainer = (props: AppContainerProps) => {
     pendingHistoryItems: pendingGeminiHistoryItems,
     thought,
     cancelOngoingRequest,
+    retryLastPrompt,
     handleApprovalModeChange,
     activePtyId,
     loopDetectionConfirmationRequest,
@@ -691,11 +653,9 @@ export const AppContainer = (props: AppContainerProps) => {
     setModelSwitchedFromQuotaError,
     refreshStatic,
     () => cancelHandlerRef.current(),
-    settings.merged.experimental?.visionModelPreview ?? false, // visionModelPreviewEnabled
     setEmbeddedShellFocused,
     terminalWidth,
     terminalHeight,
-    handleVisionSwitchRequired, // onVisionSwitchRequired
   );
 
   // Track whether suggestions are visible for Tab key handling
@@ -850,7 +810,6 @@ export const AppContainer = (props: AppContainerProps) => {
       !isThemeDialogOpen &&
       !isEditorDialogOpen &&
       !showWelcomeBackDialog &&
-      !isVisionSwitchDialogOpen &&
       welcomeBackChoice !== 'restart' &&
       geminiClient?.isInitialized?.()
     ) {
@@ -866,7 +825,6 @@ export const AppContainer = (props: AppContainerProps) => {
     isThemeDialogOpen,
     isEditorDialogOpen,
     showWelcomeBackDialog,
-    isVisionSwitchDialogOpen,
     welcomeBackChoice,
     geminiClient,
   ]);
@@ -1338,7 +1296,6 @@ export const AppContainer = (props: AppContainerProps) => {
     isThemeDialogOpen ||
     isSettingsDialogOpen ||
     isModelDialogOpen ||
-    isVisionSwitchDialogOpen ||
     isPermissionsDialogOpen ||
     isAuthDialogOpen ||
     isAuthenticating ||
@@ -1451,8 +1408,6 @@ export const AppContainer = (props: AppContainerProps) => {
       extensionsUpdateState,
       activePtyId,
       embeddedShellFocused,
-      // Vision switch dialog
-      isVisionSwitchDialogOpen,
       // Welcome back dialog
       showWelcomeBackDialog,
       welcomeBackInfo,
@@ -1545,8 +1500,6 @@ export const AppContainer = (props: AppContainerProps) => {
       activePtyId,
       historyManager,
       embeddedShellFocused,
-      // Vision switch dialog
-      isVisionSwitchDialogOpen,
       // Welcome back dialog
       showWelcomeBackDialog,
       welcomeBackInfo,
@@ -1589,9 +1542,8 @@ export const AppContainer = (props: AppContainerProps) => {
       onSuggestionsVisibilityChange: setHasSuggestionsVisible,
       refreshStatic,
       handleFinalSubmit,
+      handleRetryLastPrompt: retryLastPrompt,
       handleClearScreen,
-      // Vision switch dialog
-      handleVisionSwitchSelect,
       // Welcome back dialog
       handleWelcomeBackSelection,
       handleWelcomeBackClose,
@@ -1636,8 +1588,8 @@ export const AppContainer = (props: AppContainerProps) => {
       handleEscapePromptChange,
       refreshStatic,
       handleFinalSubmit,
+      retryLastPrompt,
       handleClearScreen,
-      handleVisionSwitchSelect,
       handleWelcomeBackSelection,
       handleWelcomeBackClose,
       // Subagent dialogs
