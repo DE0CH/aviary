@@ -147,10 +147,10 @@ export const ExtensionListStep = ({
             {extension.name}
           </Text>
         </Box>
-        <Box width={maxVersionWidth + 3} flexShrink={0}>
+        <Box width={maxVersionWidth + 8} flexShrink={0}>
           <Text color={theme.text.secondary}> v{extension.version}</Text>
         </Box>
-        <Box width={maxStatusWidth + 3} flexShrink={0}>
+        <Box width={maxStatusWidth + 8} flexShrink={0}>
           <Text color={activeColor}>({activeString})</Text>
         </Box>
         {stateText && <Text color={stateColor}>[{stateText}]</Text>}
