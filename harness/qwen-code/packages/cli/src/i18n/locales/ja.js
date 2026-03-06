@@ -975,8 +975,12 @@ export default {
     '{{region}} の新しいモデル設定が利用可能です。今すぐ更新しますか？',
   '{{region}} configuration updated successfully. Model switched to "{{model}}".':
     '{{region}} の設定が正常に更新されました。モデルが "{{model}}" に切り替わりました。',
-  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).':
-    '{{region}} での認証に成功しました。APIキーとモデル設定が settings.json に保存されました（バックアップ済み）。',
+  '{{region}} configuration updated successfully.':
+    '{{region}} の設定が正常に更新されました。',
+  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.':
+    '{{region}} での認証に成功しました。APIキーとモデル設定が settings.json に保存されました。',
+  'Tip: Use /model to switch between available Coding Plan models.':
+    'ヒント: /model で利用可能な Coding Plan モデルを切り替えられます。',
 
   // ============================================================================
   // Ask User Question Tool

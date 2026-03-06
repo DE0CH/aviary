@@ -1472,8 +1472,12 @@ export default {
     'Доступны новые конфигурации моделей для {{region}}. Обновить сейчас?',
   '{{region}} configuration updated successfully. Model switched to "{{model}}".':
     'Конфигурация {{region}} успешно обновлена. Модель переключена на "{{model}}".',
-  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).':
-    'Успешная аутентификация с {{region}}. API-ключ и конфигурации моделей сохранены в settings.json (резервная копия создана).',
+  '{{region}} configuration updated successfully.':
+    'Конфигурация {{region}} успешно обновлена.',
+  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.':
+    'Успешная аутентификация с {{region}}. API-ключ и конфигурации моделей сохранены в settings.json.',
+  'Tip: Use /model to switch between available Coding Plan models.':
+    'Совет: Используйте /model для переключения между доступными моделями Coding Plan.',
 
   // ============================================================================
   // Ask User Question Tool

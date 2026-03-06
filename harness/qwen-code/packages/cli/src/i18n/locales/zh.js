@@ -1289,8 +1289,11 @@ export default {
     '{{region}} 有新的模型配置可用。是否立即更新？',
   '{{region}} configuration updated successfully. Model switched to "{{model}}".':
     '{{region}} 配置更新成功。模型已切换至 "{{model}}"。',
-  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).':
-    '成功通过 {{region}} 认证。API Key 和模型配置已保存至 settings.json（已备份）。',
+  '{{region}} configuration updated successfully.': '{{region}} 配置更新成功。',
+  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.':
+    '成功通过 {{region}} 认证。API Key 和模型配置已保存至 settings.json。',
+  'Tip: Use /model to switch between available Coding Plan models.':
+    '提示：使用 /model 切换可用的 Coding Plan 模型。',
 
   // ============================================================================
   // Ask User Question Tool

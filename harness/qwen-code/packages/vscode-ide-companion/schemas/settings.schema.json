@@ -380,9 +380,9 @@
           "type": "object",
           "properties": {
             "enableInteractiveShell": {
-              "description": "Use node-pty for an interactive shell experience. Fallback to child_process still applies.",
+              "description": "Use node-pty for an interactive shell experience. Falls back to child_process if PTY is unavailable.",
               "type": "boolean",
-              "default": false
+              "default": true
             },
             "pager": {
               "description": "The pager command to use for shell output. Defaults to `cat`.",
