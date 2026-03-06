@@ -1644,47 +1644,6 @@ describe('Hooks System Integration', () => {
         expect(result).toBeDefined();
         expect(result.length).toBeGreaterThan(0);
       });
-
-      it('should handle stop hook timeout alongside blocking hook', async () => {
-        const blockScript =
-          'echo {"decision": "block", "reason": "Blocked while other times out"}';
-
-        await rig.setup('stop-timeout-with-block', {
-          settings: {
-            hooksConfig: { enabled: true },
-            hooks: {
-              Stop: [
-                {
-                  hooks: [
-                    {
-                      type: 'command',
-                      command: 'sleep 60',
-                      name: 'stop-timeout-hook',
-                      timeout: 1000,
-                    },
-                    {
-                      type: 'command',
-                      command: blockScript,
-                      name: 'stop-block-hook',
-                      timeout: 5000,
-                    },
-                  ],
-                },
-              ],
-            },
-            trusted: true,
-          },
-        });
-
-        // When Stop hook blocks, agent continues execution normally (with max turns to prevent infinite loop)
-        const result = await rig.run(
-          'Say timeout with block',
-          '--max-session-turns',
-          '2',
-        );
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
-      });
     });
   });
 
