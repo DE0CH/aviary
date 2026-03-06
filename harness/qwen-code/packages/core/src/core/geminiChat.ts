@@ -70,7 +70,7 @@ const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
 // reason. All are retried with an independent budget (similar to rate-limit
 // retries) so they do not consume each other's retry budgets.
 const INVALID_STREAM_RETRY_CONFIG = {
-  maxRetries: 5,
+  maxRetries: 2,
   initialDelayMs: 2000,
 };
 
