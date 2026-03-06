@@ -1559,4 +1559,10 @@ export default {
   Idempotent: 'Идемпотентный',
   'Open World': 'Открытый мир',
   Server: 'Сервер',
+  '{{region}} configuration updated successfully.':
+    'Конфигурация {{region}} успешно обновлена.',
+  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.':
+    'Успешная аутентификация с {{region}}. API-ключ и конфигурации моделей сохранены в settings.json.',
+  'Tip: Use /model to switch between available Coding Plan models.':
+    'Совет: Используйте /model для переключения между доступными моделями Coding Plan.',
 };

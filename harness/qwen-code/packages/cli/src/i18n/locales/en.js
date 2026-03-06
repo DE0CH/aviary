@@ -1542,6 +1542,10 @@ export default {
     'New model configurations are available for {{region}}. Update now?',
   '{{region}} configuration updated successfully. Model switched to "{{model}}".':
     '{{region}} configuration updated successfully. Model switched to "{{model}}".',
-  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).':
-    'Authenticated successfully with {{region}}. API key and model configs saved to settings.json (backed up).',
+  '{{region}} configuration updated successfully.':
+    '{{region}} configuration updated successfully.',
+  'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.':
+    'Authenticated successfully with {{region}}. API key and model configs saved to settings.json.',
+  'Tip: Use /model to switch between available Coding Plan models.':
+    'Tip: Use /model to switch between available Coding Plan models.',
 };
