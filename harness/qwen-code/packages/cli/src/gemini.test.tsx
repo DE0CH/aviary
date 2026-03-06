@@ -262,7 +262,7 @@ describe('gemini.tsx main function', () => {
       'isRaw',
     );
     Object.defineProperty(process.stdin, 'isTTY', {
-      value: true,
+      value: false, // 在 stream-json 模式下应为 false
       configurable: true,
     });
     Object.defineProperty(process.stdin, 'isRaw', {
@@ -344,6 +344,9 @@ describe('gemini.tsx main function', () => {
       getInputFormat: () => 'stream-json',
       getContentGeneratorConfig: () => ({ authType: 'test-auth' }),
       getWarnings: () => [],
+      getUsageStatisticsEnabled: () => true,
+      getSessionId: () => 'test-session-id',
+      getOutputFormat: () => OutputFormat.TEXT,
     } as unknown as Config;
 
     vi.mocked(loadCliConfig).mockResolvedValue(configStub);
@@ -442,6 +445,7 @@ describe('gemini.tsx main function kitty protocol', () => {
       getScreenReader: () => false,
       getGeminiMdFileCount: () => 0,
       getWarnings: () => [],
+      getUsageStatisticsEnabled: () => true,
     } as unknown as Config);
     vi.mocked(loadSettings).mockReturnValue({
       errors: [],
