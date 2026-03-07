@@ -38,10 +38,12 @@
     "onCommand:qwen-code.showLogs"
   ],
   "contributes": {
-    "configuration": {
-      "title": "Qwen Code Companion",
-      "properties": {}
-    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.qwen/settings.json",
+        "url": "./schemas/settings.schema.json"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -226,6 +228,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.14.1",
     "@qwen-code/webui": "*",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "cors": "^2.8.5",
