@@ -1244,15 +1244,6 @@ export class QwenAgentManager {
   }
 
   /**
-   * Clear the current session so the next `createNewSession()` call will
-   * create a fresh session instead of reusing the existing one.
-   * Only resets the session manager state; the ACP child process stays alive.
-   */
-  clearCurrentSession(): void {
-    this.connection.resetSessionState();
-  }
-
-  /**
    * Cancel current prompt
    */
   async cancelCurrentPrompt(): Promise<void> {

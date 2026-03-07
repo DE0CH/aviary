@@ -430,15 +430,6 @@ export class AcpConnection {
   }
 
   /**
-   * Reset session manager state without disconnecting the child process.
-   * Clears the current session ID so that the next `newSession()` call creates
-   * a fresh session instead of reusing the existing one.
-   */
-  resetSessionState(): void {
-    this.sessionManager.reset();
-  }
-
-  /**
    * Check if connected
    */
   get isConnected(): boolean {
