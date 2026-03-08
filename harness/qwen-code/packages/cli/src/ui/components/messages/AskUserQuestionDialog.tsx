@@ -57,13 +57,8 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
     ? null
     : confirmationDetails.questions[currentQuestionIndex];
   const isMultiSelect = currentQuestion?.multiSelect ?? false;
-  // Multi-select: options + custom input + submit; Single-select: options + custom input
-  const totalOptions = currentQuestion
-    ? currentQuestion.options.length + (isMultiSelect ? 2 : 1)
-    : 2;
-  const submitOptionIndex = currentQuestion
-    ? currentQuestion.options.length + 1
-    : -1;
+  // Options + custom input ("Other")
+  const totalOptions = currentQuestion ? currentQuestion.options.length + 1 : 2;
 
   // Check if the custom input option is selected
   const isCustomInputSelected =
@@ -246,9 +241,6 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
             }));
           }
         }
-        if (selectedIndex === submitOptionIndex) {
-          handleMultiSelectSubmit();
-        }
         return;
       }
 
@@ -266,32 +258,13 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
           return;
         }
 
-        // Handle multi-select
+        // Handle multi-select: Enter advances to next question / submits
         if (isMultiSelect && currentQuestion) {
           // Custom input is handled by TextInput's onSubmit
           if (selectedIndex === currentQuestion.options.length) {
             return;
           }
-          // Submit option
-          if (selectedIndex === submitOptionIndex) {
-            handleMultiSelectSubmit();
-            return;
-          }
-          // Toggle predefined option (same as Space)
-          if (selectedIndex < currentQuestion.options.length) {
-            const option = currentQuestion.options[selectedIndex];
-            if (option) {
-              const current = multiSelectedOptions[currentQuestionIndex] ?? [];
-              const isChecked = current.includes(option.label);
-              const updated = isChecked
-                ? current.filter((l) => l !== option.label)
-                : [...current, option.label];
-              setMultiSelectedOptions((prev) => ({
-                ...prev,
-                [currentQuestionIndex]: updated,
-              }));
-            }
-          }
+          handleMultiSelectSubmit();
           return;
         }
 
@@ -450,7 +423,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
       )}
 
       {/* Question */}
-      <Box marginBottom={1}>
+      <Box flexDirection="column" marginBottom={1}>
         {!hasMultipleQuestions && (
           <Box marginBottom={1}>
             <Text color={theme.text.accent} bold>
@@ -572,23 +545,6 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
             </Box>
           )}
         </Box>
-
-        {/* Submit option for multi-select */}
-        {isMultiSelect && (
-          <Box>
-            <Text
-              color={
-                selectedIndex === submitOptionIndex
-                  ? theme.text.accent
-                  : theme.text.primary
-              }
-              bold={selectedIndex === submitOptionIndex}
-            >
-              {selectedIndex === submitOptionIndex ? '❯ ' : '  '}
-              {submitOptionIndex + 1}. {t('Submit')}
-            </Text>
-          </Box>
-        )}
       </Box>
 
       {/* Help text */}
@@ -596,11 +552,17 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
         <Box>
           <Text dimColor>
             {hasMultipleQuestions
-              ? t(
-                  '↑/↓: Navigate | ←/→: Switch tabs | Space/Enter: Toggle | Esc: Cancel',
-                )
+              ? isMultiSelect
+                ? t(
+                    '↑/↓: Navigate | ←/→: Switch tabs | Space: Toggle | Enter: Confirm | Esc: Cancel',
+                  )
+                : t(
+                    '↑/↓: Navigate | ←/→: Switch tabs | Enter: Select | Esc: Cancel',
+                  )
               : isMultiSelect
-                ? t('↑/↓: Navigate | Space/Enter: Toggle | Esc: Cancel')
+                ? t(
+                    '↑/↓: Navigate | Space: Toggle | Enter: Confirm | Esc: Cancel',
+                  )
                 : t('↑/↓: Navigate | Enter: Select | Esc: Cancel')}
           </Text>
         </Box>

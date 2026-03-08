@@ -130,7 +130,7 @@ describe('<AskUserQuestionDialog />', () => {
       expect(output).toContain('Switch tabs');
     });
 
-    it('renders multi-select with checkboxes and submit option', () => {
+    it('renders multi-select with checkboxes', () => {
       const details = createConfirmationDetails({
         questions: [createSingleQuestion({ multiSelect: true })],
       });
@@ -145,8 +145,8 @@ describe('<AskUserQuestionDialog />', () => {
 
       const output = lastFrame();
       expect(output).toContain('[ ]');
-      expect(output).toContain('Submit');
-      expect(output).toContain('Space/Enter: Toggle');
+      expect(output).toContain('Space: Toggle');
+      expect(output).toContain('Enter: Confirm');
     });
   });
 
@@ -322,29 +322,7 @@ describe('<AskUserQuestionDialog />', () => {
       unmount();
     });
 
-    it('toggles options with Enter', async () => {
-      const onConfirm = vi.fn();
-      const details = createConfirmationDetails({
-        questions: [createSingleQuestion({ multiSelect: true })],
-      });
-
-      const { stdin, lastFrame, unmount } = renderWithProviders(
-        <AskUserQuestionDialog
-          confirmationDetails={details}
-          onConfirm={onConfirm}
-        />,
-      );
-      await wait();
-
-      // Enter to toggle first option
-      stdin.write('\r');
-      await wait();
-
-      expect(lastFrame()).toContain('[✓]');
-      unmount();
-    });
-
-    it('selects option with Space and submits for multi-select question', async () => {
+    it('submits multi-select with Space to toggle then Enter to confirm', async () => {
       const onConfirm = vi.fn();
       const details = createConfirmationDetails({
         questions: [createSingleQuestion({ multiSelect: true })],
@@ -362,13 +340,7 @@ describe('<AskUserQuestionDialog />', () => {
       stdin.write(' ');
       await wait();
 
-      // Move to "Submit" option (3 options + custom input + submit)
-      for (let i = 0; i < 4; i++) {
-        stdin.write('\u001B[B');
-        await wait();
-      }
-
-      // Space on submit option should submit selected values
+      // Enter to confirm and submit
       stdin.write('\r');
       await wait();
 

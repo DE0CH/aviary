@@ -14,11 +14,8 @@ import type {
 } from '../../types/chatTypes.js';
 import type { ApprovalModeValue } from '../../types/approvalModeValueTypes.js';
 import type { PlanEntry } from '../../types/chatTypes.js';
-import type {
-  ModelInfo,
-  AvailableCommand,
-  Question,
-} from '../../types/acpTypes.js';
+import type { ModelInfo, AvailableCommand } from '@agentclientprotocol/sdk';
+import type { Question } from '../../types/acpTypes.js';
 
 const FORCE_CLEAR_STREAM_END_REASONS = new Set([
   'user_cancelled',
@@ -45,10 +42,6 @@ interface UseWebViewMessagesProps {
     setNextCursor: (cursor: number | undefined) => void;
     setHasMore: (hasMore: boolean) => void;
     setIsLoading: (loading: boolean) => void;
-    handleSaveSessionResponse: (response: {
-      success: boolean;
-      message?: string;
-    }) => void;
   };
 
   // File context
@@ -95,6 +88,7 @@ interface UseWebViewMessagesProps {
     appendStreamChunk: (chunk: string) => void;
     endStreaming: () => void;
     breakAssistantSegment: () => void;
+    breakThinkingSegment: () => void;
     appendThinkingChunk: (chunk: string) => void;
     clearThinking: () => void;
     setWaitingForResponse: (message: string) => void;
@@ -630,6 +624,7 @@ export const useWebViewMessages = ({
 
             // Split assistant stream so subsequent chunks start a new assistant message
             handlers.messageHandling.breakAssistantSegment();
+            handlers.messageHandling.breakThinkingSegment();
           }
           break;
         }
@@ -717,6 +712,7 @@ export const useWebViewMessages = ({
 
               // Split assistant message segments, keep rendering blocks independent
               handlers.messageHandling.breakAssistantSegment?.();
+              handlers.messageHandling.breakThinkingSegment?.();
             } catch (_error) {
               console.warn(
                 '[useWebViewMessages] failed to push/merge plan snapshot toolcall:',
@@ -742,6 +738,7 @@ export const useWebViewMessages = ({
             (status === 'completed' || status === 'failed');
           if (isStart || isFinalUpdate) {
             handlers.messageHandling.breakAssistantSegment();
+            handlers.messageHandling.breakThinkingSegment();
           }
 
           // While long-running tools (e.g., execute/bash/command) are in progress,
@@ -963,11 +960,6 @@ export const useWebViewMessages = ({
               requestId,
             );
           }
-          break;
-        }
-
-        case 'saveSessionResponse': {
-          handlers.sessionManagement.handleSaveSessionResponse(message.data);
           break;
         }
 
