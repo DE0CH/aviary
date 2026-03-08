@@ -402,8 +402,6 @@ describe('<AskUserQuestionDialog />', () => {
       stdin.write('Orange');
       await wait();
 
-      console.log(lastFrame());
-
       expect(lastFrame()).toContain('Orange');
       unmount();
     });

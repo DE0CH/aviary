@@ -224,9 +224,9 @@ export class AcpMessageHandler {
     answers?: Record<string, string>;
   }> {
     try {
-      // Check if this is an ask_user_question request
-      const isInteract =
-        params.toolCall?.toolCallId?.includes('ask_user_question');
+      // Check if this is an ask_user_question request by inspecting rawInput
+      // (toolCallId is model-generated and unreliable for detection)
+      const isInteract = Array.isArray(params.toolCall?.rawInput?.questions);
 
       if (isInteract) {
         // Handle ask_user_question separately
@@ -286,7 +286,8 @@ export class AcpMessageHandler {
           },
         };
       }
-    } catch (_error) {
+    } catch (error) {
+      console.error('[ACP] handlePermissionRequest failed:', error);
       return {
         outcome: {
           outcome: 'rejected',

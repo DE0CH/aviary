@@ -175,6 +175,7 @@ export const AskUserQuestionDialog: FC<AskUserQuestionDialogProps> = ({
         const updated = {
           ...answerState,
           selectedOption: option.label,
+          customInput: undefined,
         };
         setAnswers({ ...answers, [currentQuestionIndex]: updated });
 

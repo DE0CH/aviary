@@ -37,7 +37,6 @@ export interface Question {
 
 export interface AskUserQuestionParams {
   questions: Question[];
-  answers?: Record<string, string>;
   metadata?: {
     source?: string;
   };
@@ -115,16 +114,6 @@ const askUserQuestionToolSchemaData: FunctionDeclaration = {
           },
           required: ['question', 'header', 'options', 'multiSelect'],
           additionalProperties: false,
-        },
-      },
-      answers: {
-        description: 'User answers collected by the permission component',
-        type: 'object',
-        propertyNames: {
-          type: 'string',
-        },
-        additionalProperties: {
-          type: 'string',
         },
       },
       metadata: {

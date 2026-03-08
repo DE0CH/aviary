@@ -53,7 +53,17 @@ export class WebViewProvider {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
     this.panelManager = new PanelManager(extensionUri, () => {
-      // Panel dispose callback
+      // Panel dispose callback — unblock any pending ACP Promises
+      if (this.pendingPermissionResolve) {
+        this.pendingPermissionResolve('cancel');
+        this.pendingPermissionResolve = null;
+        this.pendingPermissionRequest = null;
+      }
+      if (this.pendingAskUserQuestionResolve) {
+        this.pendingAskUserQuestionResolve({ optionId: 'cancel' });
+        this.pendingAskUserQuestionResolve = null;
+        this.pendingAskUserQuestionRequest = null;
+      }
       this.disposables.forEach((d) => d.dispose());
     });
     this.messageHandler = new MessageHandler(
@@ -1422,6 +1432,17 @@ export class WebViewProvider {
    * Dispose the WebView provider and clean up resources
    */
   dispose(): void {
+    // Unblock any pending ACP Promises before tearing down
+    if (this.pendingPermissionResolve) {
+      this.pendingPermissionResolve('cancel');
+      this.pendingPermissionResolve = null;
+      this.pendingPermissionRequest = null;
+    }
+    if (this.pendingAskUserQuestionResolve) {
+      this.pendingAskUserQuestionResolve({ optionId: 'cancel' });
+      this.pendingAskUserQuestionResolve = null;
+      this.pendingAskUserQuestionRequest = null;
+    }
     this.panelManager.dispose();
     this.agentManager.disconnect();
     this.disposables.forEach((d) => d.dispose());

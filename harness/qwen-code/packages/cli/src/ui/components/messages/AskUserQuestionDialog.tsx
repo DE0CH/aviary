@@ -127,7 +127,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
     } else {
       if (currentQuestionIndex < totalTabs - 1) {
         setTimeout(() => {
-          setCurrentQuestionIndex(currentQuestionIndex + 1);
+          setCurrentQuestionIndex((prev) => Math.min(prev + 1, totalTabs - 1));
           setSelectedIndex(0);
         }, 150);
       }
@@ -166,7 +166,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
       // Auto-advance to next tab
       if (currentQuestionIndex < totalTabs - 1) {
         setTimeout(() => {
-          setCurrentQuestionIndex(currentQuestionIndex + 1);
+          setCurrentQuestionIndex((prev) => Math.min(prev + 1, totalTabs - 1));
           setSelectedIndex(0);
         }, 150);
       }
@@ -314,7 +314,9 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
               // Auto-advance to next tab after selection
               if (currentQuestionIndex < totalTabs - 1) {
                 setTimeout(() => {
-                  setCurrentQuestionIndex(currentQuestionIndex + 1);
+                  setCurrentQuestionIndex((prev) =>
+                    Math.min(prev + 1, totalTabs - 1),
+                  );
                   setSelectedIndex(0);
                 }, 150);
               }
@@ -352,7 +354,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
             );
           })}
           <Box>
-            <Text color={theme.text.link} bold>
+            <Text color={theme.text.accent} bold>
               ▸ {t('Submit')}
             </Text>
           </Box>
@@ -368,7 +370,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
                 <Text>
                   {q.header}:{' '}
                   {answer ? (
-                    <Text color={theme.text.link}>{answer}</Text>
+                    <Text color={theme.text.accent}>{answer}</Text>
                   ) : (
                     <Text dimColor>{t('(not answered)')}</Text>
                   )}
@@ -386,7 +388,9 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
         <Box flexDirection="column">
           <Box>
             <Text
-              color={selectedIndex === 0 ? theme.text.link : theme.text.primary}
+              color={
+                selectedIndex === 0 ? theme.text.accent : theme.text.primary
+              }
               bold={selectedIndex === 0}
             >
               {selectedIndex === 0 ? '❯ ' : '  '}1. {t('Submit answers')}
@@ -394,7 +398,9 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
           </Box>
           <Box>
             <Text
-              color={selectedIndex === 1 ? theme.text.link : theme.text.primary}
+              color={
+                selectedIndex === 1 ? theme.text.accent : theme.text.primary
+              }
               bold={selectedIndex === 1}
             >
               {selectedIndex === 1 ? '❯ ' : '  '}2. {t('Cancel')}
@@ -424,7 +430,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
                 <Text
                   color={
                     idx === currentQuestionIndex
-                      ? theme.text.link
+                      ? theme.text.accent
                       : theme.text.primary
                   }
                   bold={idx === currentQuestionIndex}
@@ -447,7 +453,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
       <Box marginBottom={1}>
         {!hasMultipleQuestions && (
           <Box marginBottom={1}>
-            <Text color={theme.text.link} bold>
+            <Text color={theme.text.accent} bold>
               {currentQuestion!.header}
             </Text>
           </Box>
@@ -468,11 +474,15 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
             !isMultiSelect &&
             selectedOptions[currentQuestionIndex] === opt.label;
           const isHighlighted = isSelected || isAnswered || isMultiChecked;
+          // Calculate prefix width for description alignment:
+          // 2 (cursor) + checkbox (4 if multi) + number + ". " (2)
+          const prefixWidth =
+            2 + (isMultiSelect ? 4 : 0) + String(index + 1).length + 2;
           return (
             <Box key={index} flexDirection="column">
               <Box>
                 <Text
-                  color={isHighlighted ? theme.text.link : theme.text.primary}
+                  color={isHighlighted ? theme.text.accent : theme.text.primary}
                   bold={isHighlighted}
                 >
                   {isSelected ? '❯ ' : '  '}
@@ -482,7 +492,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
                 </Text>
               </Box>
               {opt.description && (
-                <Box marginLeft={4}>
+                <Box marginLeft={prefixWidth}>
                   <Text dimColor>{opt.description}</Text>
                 </Box>
               )}
@@ -495,7 +505,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
           {isCustomInputSelected ? (
             // Inline TextInput replaces the option text
             <Box>
-              <Text color={theme.text.link} bold>
+              <Text color={theme.text.accent} bold>
                 ❯{' '}
                 {isMultiSelect
                   ? customInputChecked[currentQuestionIndex]
@@ -534,7 +544,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
                 color={
                   isCustomInputAnswer ||
                   customInputChecked[currentQuestionIndex]
-                    ? theme.text.link
+                    ? theme.text.accent
                     : theme.text.primary
                 }
                 bold={
@@ -569,7 +579,7 @@ export const AskUserQuestionDialog: React.FC<AskUserQuestionDialogProps> = ({
             <Text
               color={
                 selectedIndex === submitOptionIndex
-                  ? theme.text.link
+                  ? theme.text.accent
                   : theme.text.primary
               }
               bold={selectedIndex === submitOptionIndex}

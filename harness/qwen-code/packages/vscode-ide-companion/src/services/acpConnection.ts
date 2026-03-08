@@ -51,7 +51,7 @@ export class AcpConnection {
   onAskUserQuestion: (data: AskUserQuestionRequest) => Promise<{
     optionId: string;
     answers?: Record<string, string>;
-  }> = () => Promise.resolve({ optionId: 'proceed_once' });
+  }> = () => Promise.resolve({ optionId: 'cancel' });
   // Called after successful initialize() with the initialize result
   onInitialized: (init: unknown) => void = () => {};
 
