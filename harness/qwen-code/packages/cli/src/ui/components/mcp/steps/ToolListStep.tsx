@@ -105,14 +105,13 @@ export const ToolListStep: React.FC<ToolListStepProps> = ({
 
           return (
             <Box key={tool.name}>
-              {/* 选择器和序号 */}
-              <Box minWidth={4}>
+              {/* 选择器 */}
+              <Box minWidth={2}>
                 <Text
                   color={isSelected ? theme.text.accent : theme.text.primary}
                 >
                   {isSelected ? '❯' : ' '}
                 </Text>
-                <Text color={theme.text.secondary}>{actualIndex + 1}.</Text>
               </Box>
               {/* 工具名称 - 固定宽度 */}
               <Box width={toolNameWidth}>
