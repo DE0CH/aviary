@@ -633,6 +633,9 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
       case MCP_MANAGEMENT_STEPS.TOOL_DETAIL:
         footerText = t('Esc to back');
         break;
+      case MCP_MANAGEMENT_STEPS.AUTHENTICATE:
+        footerText = t('Press Enter to start authentication, Esc to go back');
+        break;
       default:
         footerText = t('Esc to close');
     }

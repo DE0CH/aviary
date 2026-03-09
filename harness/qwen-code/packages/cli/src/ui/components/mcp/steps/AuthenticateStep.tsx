@@ -154,19 +154,9 @@ export const AuthenticateStep: React.FC<AuthenticateStepProps> = ({
 
       {/* Action hints */}
       <Box>
-        {authState === 'idle' && (
-          <Text color={theme.text.secondary}>
-            {t('Press Enter to start authentication, Esc to go back')}
-          </Text>
-        )}
         {authState === 'authenticating' && (
           <Text color={theme.text.secondary}>
             {t('Authenticating... Please complete the login in your browser.')}
-          </Text>
-        )}
-        {(authState === 'success' || authState === 'error') && (
-          <Text color={theme.text.secondary}>
-            {t('Press Enter or Esc to go back')}
           </Text>
         )}
       </Box>
