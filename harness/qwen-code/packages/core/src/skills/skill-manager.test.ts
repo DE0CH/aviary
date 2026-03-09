@@ -504,17 +504,35 @@ Skill 3 content`);
     });
   });
 
-  describe('getSkillsBaseDir', () => {
-    it('should return project-level base dir', () => {
-      const baseDir = manager.getSkillsBaseDir('project');
+  describe('getSkillsBaseDirs', () => {
+    it('should return all project-level base dirs', () => {
+      const baseDirs = manager.getSkillsBaseDirs('project');
 
-      expect(baseDir).toBe(path.join('/test/project', '.qwen', 'skills'));
+      expect(baseDirs).toHaveLength(5);
+      expect(baseDirs).toContain(path.join('/test/project', '.qwen', 'skills'));
+      expect(baseDirs).toContain(
+        path.join('/test/project', '.agent', 'skills'),
+      );
+      expect(baseDirs).toContain(
+        path.join('/test/project', '.cursor', 'skills'),
+      );
+      expect(baseDirs).toContain(
+        path.join('/test/project', '.codex', 'skills'),
+      );
+      expect(baseDirs).toContain(
+        path.join('/test/project', '.claude', 'skills'),
+      );
     });
 
-    it('should return user-level base dir', () => {
-      const baseDir = manager.getSkillsBaseDir('user');
+    it('should return all user-level base dirs', () => {
+      const baseDirs = manager.getSkillsBaseDirs('user');
 
-      expect(baseDir).toBe(path.join('/home/user', '.qwen', 'skills'));
+      expect(baseDirs).toHaveLength(5);
+      expect(baseDirs).toContain(path.join('/home/user', '.qwen', 'skills'));
+      expect(baseDirs).toContain(path.join('/home/user', '.agent', 'skills'));
+      expect(baseDirs).toContain(path.join('/home/user', '.cursor', 'skills'));
+      expect(baseDirs).toContain(path.join('/home/user', '.codex', 'skills'));
+      expect(baseDirs).toContain(path.join('/home/user', '.claude', 'skills'));
     });
   });
 
