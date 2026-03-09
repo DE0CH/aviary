@@ -90,13 +90,6 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* 服务器统计 */}
-      <Box marginBottom={1}>
-        <Text color={theme.text.secondary}>
-          {servers.length} {servers.length === 1 ? t('server') : t('servers')}
-        </Text>
-      </Box>
-
       {/* 分组服务器列表 */}
       {groupedServers.map((group, groupIndex) => (
         <Box key={group.source} flexDirection="column" marginBottom={1}>
@@ -109,7 +102,7 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
               </Text>
             )}
           </Text>
-          <Box flexDirection="column" marginTop={1}>
+          <Box flexDirection="column">
             {group.servers.map((server, itemIndex) => {
               const isSelected =
                 groupIndex === currentPosition.groupIndex &&
