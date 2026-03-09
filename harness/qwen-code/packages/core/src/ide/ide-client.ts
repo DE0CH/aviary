@@ -27,14 +27,6 @@ import { EnvHttpProxyAgent } from 'undici';
 import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { IDE_REQUEST_TIMEOUT_MS } from './constants.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
-import {
-  getAllConnectionConfigs,
-  getFallbackConnectionConfigs,
-  getWorkspaceMatchingConnectionConfig,
-  readConnectionConfigFromLockFile,
-  type IdeConnectionConfig,
-  type StdioConfig,
-} from './ide-connection-config.js';
 
 const debugLogger = createDebugLogger('IDE');
 
@@ -58,6 +50,32 @@ export enum IDEConnectionStatus {
   Disconnected = 'disconnected',
   Connecting = 'connecting',
 }
+
+type StdioConfig = {
+  command: string;
+  args: string[];
+};
+
+type ConnectionConfig = {
+  port?: string;
+  authToken?: string;
+  stdio?: StdioConfig;
+};
+
+type IdeConnectionConfig = ConnectionConfig & {
+  workspacePath?: string;
+  ideInfo?: IdeInfo;
+  ppid?: number;
+};
+
+type ParsedConnectionLockFile = {
+  file: string;
+  fullPath: string;
+  mtimeMs: number;
+  parsed: IdeConnectionConfig;
+};
+
+const STALE_LOCK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function getRealPath(path: string): string {
   try {
@@ -142,7 +160,6 @@ export class IdeClient {
     this.setState(IDEConnectionStatus.Connecting);
 
     this.connectionConfig = await this.getConnectionConfigFromFile();
-
     if (this.connectionConfig?.authToken) {
       this.authToken = this.connectionConfig.authToken;
     }
@@ -168,8 +185,6 @@ export class IdeClient {
         if (connected) {
           return;
         }
-        // The connection failed, possibly because the IDE server restarted on a different port.
-        // Try to connect using other lock files as fallback.
         const fallbackConnected = await this.tryFallbackPorts();
         if (fallbackConnected) {
           return;
@@ -576,28 +591,29 @@ export class IdeClient {
   > {
     const portFromEnv = this.getPortFromEnv();
     const ideDir = Storage.getGlobalIdeDir();
-    const allConfigs = await getAllConnectionConfigs(ideDir);
+    const configs = await this.getAllConnectionConfigs(ideDir);
 
     if (portFromEnv) {
-      const lockFileConfig = await readConnectionConfigFromLockFile(
-        ideDir,
-        portFromEnv,
-      );
-      if (lockFileConfig) {
-        return lockFileConfig;
+      try {
+        const lockFile = path.join(ideDir, `${portFromEnv}.lock`);
+        const lockFileContents = await fs.promises.readFile(lockFile, 'utf8');
+        return JSON.parse(lockFileContents);
+      } catch (_) {
+        // Fall through to legacy discovery.
       }
     }
 
+    // Legacy discovery for VSCode extension < v0.5.1.
     const legacyConfig = await this.getLegacyConnectionConfig(portFromEnv);
     if (legacyConfig) {
       return legacyConfig;
     }
 
-    return getWorkspaceMatchingConnectionConfig(
-      allConfigs,
-      process.cwd(),
-      (workspacePath, cwd) =>
-        IdeClient.validateWorkspacePath(workspacePath, cwd).isValid,
+    const cwd = process.cwd();
+    return configs.find(
+      (config) =>
+        config.workspacePath !== undefined &&
+        IdeClient.validateWorkspacePath(config.workspacePath, cwd).isValid,
     );
   }
 
@@ -637,20 +653,152 @@ export class IdeClient {
     return undefined;
   }
 
-  private async tryFallbackPorts(): Promise<boolean> {
-    const configs = await getAllConnectionConfigs(Storage.getGlobalIdeDir());
-    const fallbackConfigs = getFallbackConnectionConfigs(configs, {
-      cwd: process.cwd(),
-      currentPort: this.connectionConfig?.port,
-      matchesWorkspace: (workspacePath, cwd) =>
-        IdeClient.validateWorkspacePath(workspacePath, cwd).isValid,
-    });
+  protected async getAllConnectionConfigs(
+    ideDir: string,
+  ): Promise<IdeConnectionConfig[]> {
+    const fileRegex = /^\d+\.lock$/;
+    let lockFiles: string[];
+    try {
+      lockFiles = (await fs.promises.readdir(ideDir))
+        .map((file) => file.toString())
+        .filter((file) => fileRegex.test(file));
+    } catch (e) {
+      debugLogger.debug('Failed to read IDE connection directory:', e);
+      return [];
+    }
 
-    for (const config of fallbackConfigs) {
+    const fileContents = await Promise.all(
+      lockFiles.map(async (file) => {
+        const fullPath = path.join(ideDir, file);
+        try {
+          const stat = await fs.promises.stat(fullPath);
+          const content = await fs.promises.readFile(fullPath, 'utf8');
+          try {
+            return {
+              file,
+              fullPath,
+              mtimeMs: stat.mtimeMs,
+              parsed: JSON.parse(content) as IdeConnectionConfig,
+            };
+          } catch (error) {
+            debugLogger.debug('Failed to parse JSON from lock file: ', error);
+            return undefined;
+          }
+        } catch (error) {
+          debugLogger.debug('Failed to read/stat IDE lock file:', error);
+          return undefined;
+        }
+      }),
+    );
+
+    const parsedLockFiles = fileContents.filter(
+      (lockFile): lockFile is ParsedConnectionLockFile =>
+        lockFile !== undefined,
+    );
+    const activeLockFiles = await Promise.all(
+      parsedLockFiles.map(async (lockFile) => ({
+        lockFile,
+        isStale: await this.cleanupStaleLockFile(lockFile),
+      })),
+    );
+
+    const staleCount = activeLockFiles.filter(({ isStale }) => isStale).length;
+    if (staleCount > 0) {
+      debugLogger.debug(
+        `[cleanupStaleLockFiles] Cleaned up ${staleCount} stale lock file(s)`,
+      );
+    }
+
+    return activeLockFiles
+      .filter(({ isStale }) => !isStale)
+      .map(({ lockFile }) => lockFile)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map(({ parsed }) => parsed);
+  }
+
+  private async cleanupStaleLockFile({
+    file,
+    fullPath,
+    mtimeMs,
+    parsed,
+  }: ParsedConnectionLockFile): Promise<boolean> {
+    try {
+      if (parsed.ppid) {
+        try {
+          process.kill(parsed.ppid, 0);
+          return false;
+        } catch {
+          debugLogger.debug(
+            `[cleanupStaleLockFiles] Removing lock file "${file}" - ppid ${parsed.ppid} no longer exists`,
+          );
+          await fs.promises.unlink(fullPath);
+          return true;
+        }
+      }
+
+      if (parsed.workspacePath) {
+        if (fs.existsSync(parsed.workspacePath)) {
+          return false;
+        }
+
+        debugLogger.debug(
+          `[cleanupStaleLockFiles] Removing lock file "${file}" - workspace doesn't exist`,
+        );
+        await fs.promises.unlink(fullPath);
+        return true;
+      }
+
+      if (Date.now() - mtimeMs > STALE_LOCK_MAX_AGE_MS) {
+        debugLogger.debug(
+          `[cleanupStaleLockFiles] Removing lock file "${file}" - older than 7 days`,
+        );
+        await fs.promises.unlink(fullPath);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      debugLogger.debug(
+        `[cleanupStaleLockFiles] Error checking lock file "${file}":`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  private async tryFallbackPorts(): Promise<boolean> {
+    const cwd = process.cwd();
+    const currentPort = this.connectionConfig?.port;
+    const configs = await this.getAllConnectionConfigs(
+      Storage.getGlobalIdeDir(),
+    );
+    const workspaceMatches: IdeConnectionConfig[] = [];
+    const otherConfigs: IdeConnectionConfig[] = [];
+
+    for (const config of configs) {
+      if (!config.port || config.port === currentPort) {
+        continue;
+      }
+
+      if (
+        config.workspacePath !== undefined &&
+        IdeClient.validateWorkspacePath(config.workspacePath, cwd).isValid
+      ) {
+        workspaceMatches.push(config);
+      } else {
+        otherConfigs.push(config);
+      }
+    }
+
+    for (const config of [...workspaceMatches, ...otherConfigs]) {
+      const port = config.port;
+      if (!port) {
+        continue;
+      }
       if (config.authToken) {
         this.authToken = config.authToken;
       }
-      const connected = await this.establishHttpConnection(config.port!);
+      const connected = await this.establishHttpConnection(port);
       if (connected) {
         this.connectionConfig = config;
         return true;
@@ -782,6 +930,9 @@ export class IdeClient {
     // host.docker.internal as a fallback when it is DNS-resolvable.
     const ideHost = await getIdeServerHost();
     if (ideHost === CONTAINER_HOST) {
+      debugLogger.debug(
+        `Connection to ${LOCAL_HOST}:${port} failed, retrying with ${CONTAINER_HOST}`,
+      );
       return this.tryHttpConnect(port, CONTAINER_HOST);
     }
 
@@ -819,7 +970,8 @@ export class IdeClient {
       await this.discoverTools();
       this.setState(IDEConnectionStatus.Connected);
       return true;
-    } catch (_error) {
+    } catch (error) {
+      debugLogger.debug(`HTTP connection to ${host}:${port} failed:`, error);
       if (transport) {
         try {
           await transport.close();
@@ -837,6 +989,7 @@ export class IdeClient {
   }: StdioConfig): Promise<boolean> {
     let transport: StdioClientTransport | undefined;
     try {
+      debugLogger.debug('Attempting to connect to IDE via stdio');
       this.client = new Client({
         name: 'stdio-client',
         // TODO(#3487): use the CLI version here.
@@ -927,9 +1080,13 @@ async function resolveIdeServerHost(): Promise<string> {
 
   const reachable = await isHostResolvable(CONTAINER_HOST);
   if (reachable) {
+    debugLogger.debug('Container detected, host.docker.internal is reachable');
     return CONTAINER_HOST;
   }
 
+  debugLogger.debug(
+    'Container detected, but host.docker.internal is NOT reachable, falling back to 127.0.0.1',
+  );
   return LOCAL_HOST;
 }
 

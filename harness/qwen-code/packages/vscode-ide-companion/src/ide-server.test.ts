@@ -28,9 +28,6 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn(() => Promise.resolve(undefined)),
   chmod: vi.fn(() => Promise.resolve(undefined)),
   mkdir: vi.fn(() => Promise.resolve(undefined)),
-  readdir: vi.fn(() => Promise.resolve([])),
-  readFile: vi.fn(() => Promise.resolve('')),
-  stat: vi.fn(() => Promise.resolve({ mtimeMs: Date.now() })),
 }));
 
 vi.mock('node:os', async (importOriginal) => {
@@ -117,44 +114,6 @@ describe('IDEServer', () => {
       { uri: { fsPath: '/test/workspace1' } },
       { uri: { fsPath: '/test/workspace2' } },
     ];
-  });
-
-  it('should remove stale lock files before starting the server', async () => {
-    vi.mocked(fs.readdir).mockResolvedValue(['3000.lock'] as never);
-    vi.mocked(fs.readFile).mockResolvedValue(
-      JSON.stringify({
-        port: 3000,
-        workspacePath: '/stale/workspace',
-        ppid: 99999,
-        authToken: 'stale-auth-token',
-        ideName: 'VS Code',
-      }),
-    );
-    vi.mocked(fs.stat).mockResolvedValue({
-      mtimeMs: Date.now() - 1000,
-    } as never);
-    vi.spyOn(process, 'kill').mockImplementation((pid: number) => {
-      if (pid === 99999) {
-        throw new Error('ESRCH');
-      }
-      return true;
-    });
-
-    await ideServer.start(mockContext);
-
-    expect(fs.unlink).toHaveBeenCalledWith(
-      path.join('/home/test', '.qwen', 'ide', '3000.lock'),
-    );
-  });
-
-  it('should fail start when the lock file cannot be written', async () => {
-    vi.mocked(fs.writeFile).mockRejectedValueOnce(new Error('disk full'));
-
-    await expect(ideServer.start(mockContext)).rejects.toThrow(
-      'Failed to write IDE lock file: disk full',
-    );
-
-    expect(mockContext.environmentVariableCollection.clear).toHaveBeenCalled();
   });
 
   it('should set environment variables and workspace path on start with multiple folders', async () => {

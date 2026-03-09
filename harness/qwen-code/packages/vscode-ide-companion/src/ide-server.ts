@@ -40,7 +40,6 @@ class CORSError extends Error {
 const MCP_SESSION_ID_HEADER = 'mcp-session-id';
 const IDE_SERVER_PORT_ENV_VAR = 'QWEN_CODE_IDE_SERVER_PORT';
 const IDE_WORKSPACE_PATH_ENV_VAR = 'QWEN_CODE_IDE_WORKSPACE_PATH';
-const LOCK_FILE_REGEX = /^\d+\.lock$/;
 const QWEN_DIR = '.qwen';
 const IDE_DIR = 'ide';
 
@@ -102,43 +101,8 @@ async function writePortAndWorkspace({
     await fs.chmod(lockFile, 0o600);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to write IDE lock file: ${message}`);
+    log(`Failed to write IDE lock file: ${message}`);
   }
-}
-
-async function cleanupStaleLockFiles(
-  ideDir: string,
-  log: (message: string) => void,
-): Promise<void> {
-  let lockFiles: string[];
-  try {
-    lockFiles = (await fs.readdir(ideDir)).filter((file) =>
-      LOCK_FILE_REGEX.test(file),
-    );
-  } catch {
-    return;
-  }
-
-  await Promise.all(
-    lockFiles.map(async (file) => {
-      const lockFile = path.join(ideDir, file);
-      try {
-        const content = await fs.readFile(lockFile, 'utf8');
-        const parsed = JSON.parse(content) as { ppid?: number };
-        if (!parsed.ppid) {
-          return;
-        }
-        try {
-          process.kill(parsed.ppid, 0);
-        } catch {
-          log(`Removing stale IDE lock file: ${lockFile}`);
-          await fs.unlink(lockFile);
-        }
-      } catch {
-        return;
-      }
-    }),
-  );
 }
 
 function sendIdeContextUpdateNotification(
@@ -182,7 +146,7 @@ export class IDEServer {
   }
 
   start(context: vscode.ExtensionContext): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       this.context = context;
       this.authToken = randomUUID();
       const sessionsWithInitialNotification = new Set<string>();
@@ -376,17 +340,16 @@ export class IDEServer {
 
       this.server = app.listen(0, '127.0.0.1', async () => {
         const address = (this.server as HTTPServer).address();
-        if (!address || typeof address === 'string') {
-          resolve();
-          return;
-        }
-
-        try {
+        if (address && typeof address !== 'string') {
           this.port = address.port;
-          const ideDir = await getGlobalIdeDir();
-          await cleanupStaleLockFiles(ideDir, this.log);
-          // Name the lock file by port to support multiple server instances.
-          this.lockFile = path.join(ideDir, `${this.port}.lock`);
+          try {
+            const ideDir = await getGlobalIdeDir();
+            // Name the lock file by port to support multiple server instances.
+            this.lockFile = path.join(ideDir, `${this.port}.lock`);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.log(`Failed to determine IDE lock directory: ${message}`);
+          }
           this.log(`IDE server listening on http://127.0.0.1:${this.port}`);
 
           if (this.authToken && this.lockFile) {
@@ -398,15 +361,8 @@ export class IDEServer {
               log: this.log,
             });
           }
-          resolve();
-        } catch (err) {
-          try {
-            await this.stop();
-          } catch {
-            // Ignore stop errors; the original startup error is more useful.
-          }
-          reject(err);
         }
+        resolve();
       });
     });
   }
