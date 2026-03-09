@@ -391,42 +391,53 @@ You are a helpful assistant.
 
   describe('listSkills', () => {
     beforeEach(() => {
-      // Mock directory listing for skills directories (with Dirent objects)
-      vi.mocked(fs.readdir)
-        .mockResolvedValueOnce([
-          {
-            name: 'skill1',
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          },
-          {
-            name: 'skill2',
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          },
-          {
-            name: 'not-a-dir.txt',
-            isDirectory: () => false,
-            isFile: () => true,
-            isSymbolicLink: () => false,
-          },
-        ] as unknown as Awaited<ReturnType<typeof fs.readdir>>)
-        .mockResolvedValueOnce([
-          {
-            name: 'skill3',
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          },
-          {
-            name: 'skill1',
-            isDirectory: () => true,
-            isFile: () => false,
-            isSymbolicLink: () => false,
-          },
-        ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+      // Mock directory listing based on path to handle multiple base dirs per level
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(fs.readdir).mockImplementation((dirPath: any) => {
+        const pathStr = String(dirPath);
+        if (pathStr.includes('/test/project') && pathStr.includes('.qwen')) {
+          return Promise.resolve([
+            {
+              name: 'skill1',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+            {
+              name: 'skill2',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+            {
+              name: 'not-a-dir.txt',
+              isDirectory: () => false,
+              isFile: () => true,
+              isSymbolicLink: () => false,
+            },
+          ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+        }
+        if (pathStr.includes('/home/user') && pathStr.includes('.qwen')) {
+          return Promise.resolve([
+            {
+              name: 'skill3',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+            {
+              name: 'skill1',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+          ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+        }
+        // Other provider dirs (.agent, .cursor, .codex, .claude) return empty
+        return Promise.resolve(
+          [] as unknown as Awaited<ReturnType<typeof fs.readdir>>,
+        );
+      });
 
       vi.mocked(fs.access).mockResolvedValue(undefined);
 
