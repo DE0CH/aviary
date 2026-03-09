@@ -40,6 +40,7 @@ vi.mock('node:fs', async (importOriginal) => {
       readFile: vi.fn(),
       readdir: vi.fn(),
       stat: vi.fn(),
+      unlink: vi.fn(),
     },
     realpathSync: (p: string) => p,
     existsSync: vi.fn().mockReturnValue(false),
@@ -760,5 +761,374 @@ describe('getIdeServerHost', () => {
 
     expect(results.every((r) => r === 'host.docker.internal')).toBe(true);
     expect(dnsLookupMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Lock File Management', () => {
+  const mockFs = vi.mocked(fs.promises);
+  const mockExistsSync = vi.mocked(fs.existsSync);
+
+  beforeEach(async () => {
+    // Reset singleton instance for test isolation
+    (
+      IdeClient as unknown as {
+        instancePromise: Promise<IdeClient> | null;
+      }
+    ).instancePromise = null;
+    _resetCachedIdeServerHost();
+
+    // Mock environment
+    process.env['QWEN_CODE_IDE_WORKSPACE_PATH'] = '/test/workspace';
+    vi.mocked(detectIde).mockReturnValue(IDE_DEFINITIONS.vscode);
+    vi.mocked(getIdeProcessInfo).mockResolvedValue({
+      pid: 12345,
+      command: 'test-ide',
+    });
+    vi.mocked(os.tmpdir).mockReturnValue('/tmp');
+    vi.mocked(os.homedir).mockReturnValue('/home/test');
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+
+    // Reset mocks
+    mockFs.readFile.mockReset();
+    mockFs.readdir.mockReset();
+    mockFs.stat.mockReset();
+    mockFs.unlink.mockReset();
+    mockExistsSync.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env['QWEN_CODE_IDE_WORKSPACE_PATH'];
+  });
+
+  describe('getAllConnectionConfigs', () => {
+    it('should return empty array when ide directory does not exist', async () => {
+      mockFs.readdir.mockRejectedValue(new Error('ENOENT: no such directory'));
+
+      const ideClient = await IdeClient.getInstance();
+      const result = await (
+        ideClient as unknown as {
+          getAllConnectionConfigs: (ideDir: string) => Promise<unknown[]>;
+        }
+      ).getAllConnectionConfigs('/home/test/.qwen/ide');
+
+      expect(result).toEqual([]);
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+    });
+
+    it('should return all valid lock files sorted by mtime (newest first)', async () => {
+      const lockFiles = ['1000.lock', '2000.lock', '3000.lock'];
+      mockFs.readdir.mockResolvedValue(lockFiles as unknown as fs.Dirent[]);
+
+      const configs = [
+        { port: '1000', workspacePath: '/workspace/old', ppid: 100 },
+        { port: '2000', workspacePath: '/workspace/medium', ppid: 200 },
+        { port: '3000', workspacePath: '/workspace/new', ppid: 300 },
+      ];
+
+      mockFs.readFile.mockImplementation(
+        async (filePath: fs.PathLike | FileHandle) => {
+          const file = String(filePath);
+          if (file.endsWith('1000.lock')) return JSON.stringify(configs[0]);
+          if (file.endsWith('2000.lock')) return JSON.stringify(configs[1]);
+          if (file.endsWith('3000.lock')) return JSON.stringify(configs[2]);
+          throw new Error(`unexpected path: ${file}`);
+        },
+      );
+
+      mockFs.stat.mockImplementation(async (filePath: fs.PathLike) => {
+        const file = String(filePath);
+        return {
+          mtimeMs: file.endsWith('1000.lock')
+            ? 1000
+            : file.endsWith('2000.lock')
+              ? 2000
+              : 3000,
+        } as fs.Stats;
+      });
+
+      // All processes exist
+      vi.spyOn(process, 'kill').mockImplementation(() => undefined);
+      mockExistsSync.mockReturnValue(true);
+
+      const ideClient = await IdeClient.getInstance();
+      const result = await (
+        ideClient as unknown as {
+          getAllConnectionConfigs: (ideDir: string) => Promise<unknown[]>;
+        }
+      ).getAllConnectionConfigs('/home/test/.qwen/ide');
+
+      expect(result).toHaveLength(3);
+      expect((result[0] as { port: string }).port).toBe('3000'); // Newest first
+      expect((result[1] as { port: string }).port).toBe('2000');
+      expect((result[2] as { port: string }).port).toBe('1000');
+    });
+
+    it('should skip lock files with invalid JSON', async () => {
+      mockFs.readdir.mockResolvedValue([
+        '1000.lock',
+        '2000.lock',
+      ] as unknown as fs.Dirent[]);
+
+      mockFs.readFile.mockImplementation(
+        async (filePath: fs.PathLike | FileHandle) => {
+          const file = String(filePath);
+          if (file.endsWith('1000.lock')) return 'invalid json';
+          if (file.endsWith('2000.lock'))
+            return JSON.stringify({ port: '2000' });
+          throw new Error(`unexpected path: ${file}`);
+        },
+      );
+
+      mockFs.stat.mockImplementation(
+        async () => ({ mtimeMs: 1000 }) as fs.Stats,
+      );
+      vi.spyOn(process, 'kill').mockImplementation(() => undefined);
+      mockExistsSync.mockReturnValue(true);
+
+      const ideClient = await IdeClient.getInstance();
+      const result = await (
+        ideClient as unknown as {
+          getAllConnectionConfigs: (ideDir: string) => Promise<unknown[]>;
+        }
+      ).getAllConnectionConfigs('/home/test/.qwen/ide');
+
+      expect(result).toHaveLength(1);
+      expect((result[0] as { port: string }).port).toBe('2000');
+    });
+  });
+
+  describe('cleanupStaleLockFiles', () => {
+    it('should remove lock files older than 7 days', async () => {
+      const now = Date.now();
+      const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000 - 1000; // Slightly older than 7 days
+
+      const configs = [
+        {
+          file: 'old.lock',
+          parsed: { port: '1000', ppid: 100, mtimeMs: sevenDaysAgo },
+          fullPath: '/home/test/.qwen/ide/old.lock',
+        },
+      ];
+
+      // Mock process.kill to throw error for ppid 100 (process doesn't exist)
+      vi.spyOn(process, 'kill').mockImplementationOnce((_pid: number) => {
+        throw new Error('ESRCH: no such process');
+      });
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).toHaveBeenCalledWith(
+        '/home/test/.qwen/ide/old.lock',
+      );
+    });
+
+    it('should remove lock files when ppid does not exist', async () => {
+      const now = Date.now();
+      const recentTime = now - 1000; // 1 second ago
+
+      const configs = [
+        {
+          file: 'orphan.lock',
+          parsed: { port: '1000', ppid: 99999, mtimeMs: recentTime },
+          fullPath: '/home/test/.qwen/ide/orphan.lock',
+        },
+      ];
+
+      // Process 99999 does not exist
+      vi.spyOn(process, 'kill').mockImplementationOnce((_pid: number) => {
+        throw new Error('ESRCH: no such process');
+      });
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).toHaveBeenCalledWith(
+        '/home/test/.qwen/ide/orphan.lock',
+      );
+    });
+
+    it('should keep lock files when ppid exists', async () => {
+      const now = Date.now();
+      const recentTime = now - 1000;
+
+      const configs = [
+        {
+          file: 'active.lock',
+          parsed: { port: '1000', ppid: 12345, mtimeMs: recentTime },
+          fullPath: '/home/test/.qwen/ide/active.lock',
+        },
+      ];
+
+      // Process 12345 exists
+      vi.spyOn(process, 'kill').mockImplementation(() => undefined);
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+    });
+
+    it('should remove lock files when workspace does not exist and ppid is not set', async () => {
+      const now = Date.now();
+      const recentTime = now - 1000;
+
+      const configs = [
+        {
+          file: 'no-workspace.lock',
+          parsed: {
+            port: '1000',
+            workspacePath: '/deleted/workspace',
+            mtimeMs: recentTime,
+          },
+          fullPath: '/home/test/.qwen/ide/no-workspace.lock',
+        },
+      ];
+
+      // No ppid, workspace does not exist
+      mockExistsSync.mockReturnValue(false);
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).toHaveBeenCalledWith(
+        '/home/test/.qwen/ide/no-workspace.lock',
+      );
+    });
+
+    it('should keep lock files when workspace exists and ppid is not set', async () => {
+      const now = Date.now();
+      const recentTime = now - 1000;
+
+      const configs = [
+        {
+          file: 'valid-workspace.lock',
+          parsed: {
+            port: '1000',
+            workspacePath: '/test/workspace',
+            mtimeMs: recentTime,
+          },
+          fullPath: '/home/test/.qwen/ide/valid-workspace.lock',
+        },
+      ];
+
+      // No ppid, workspace exists
+      mockExistsSync.mockReturnValue(true);
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+    });
+
+    it('should handle mixed scenarios - remove stale and keep active locks', async () => {
+      const now = Date.now();
+      const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000 - 1000;
+      const recentTime = now - 1000;
+
+      const configs = [
+        {
+          file: 'old.lock',
+          parsed: { port: '1000', ppid: 100, mtimeMs: sevenDaysAgo },
+          fullPath: '/home/test/.qwen/ide/old.lock',
+        },
+        {
+          file: 'orphan.lock',
+          parsed: { port: '2000', ppid: 99999, mtimeMs: recentTime },
+          fullPath: '/home/test/.qwen/ide/orphan.lock',
+        },
+        {
+          file: 'active.lock',
+          parsed: { port: '3000', ppid: 12345, mtimeMs: recentTime },
+          fullPath: '/home/test/.qwen/ide/active.lock',
+        },
+      ];
+
+      // Process 100 and 99999 do not exist, process 12345 exists
+      vi.spyOn(process, 'kill').mockImplementation((pid: number) => {
+        if (pid === 100 || pid === 99999) {
+          throw new Error('ESRCH: no such process');
+        }
+        return undefined;
+      });
+
+      const ideClient = await IdeClient.getInstance();
+      await (
+        ideClient as unknown as {
+          cleanupStaleLockFiles: (
+            configs: Array<{
+              file: string;
+              parsed: Record<string, unknown>;
+              fullPath: string;
+            }>,
+            ideDir: string,
+          ) => Promise<void>;
+        }
+      ).cleanupStaleLockFiles(configs, '/home/test/.qwen/ide');
+
+      expect(mockFs.unlink).toHaveBeenCalledTimes(2);
+      expect(mockFs.unlink).toHaveBeenCalledWith(
+        '/home/test/.qwen/ide/old.lock',
+      );
+      expect(mockFs.unlink).toHaveBeenCalledWith(
+        '/home/test/.qwen/ide/orphan.lock',
+      );
+    });
   });
 });
