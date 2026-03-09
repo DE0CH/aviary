@@ -33,7 +33,7 @@ export default {
   '!': '!',
   '!npm run start': '!npm run start',
   'start server': 'start server',
-  'Commands:': '命令:',
+  'Commands:': '命令：',
   'shell command': 'shell 命令',
   'Model Context Protocol command (from external servers)':
     '模型上下文协议命令（来自外部服务器）',
@@ -277,6 +277,68 @@ export default {
   'Failed to launch editor: {{error}}': '启动编辑器失败: {{error}}',
   'Failed to save and edit subagent: {{error}}':
     '保存并编辑子智能体失败: {{error}}',
+
+  // ============================================================================
+  // Extensions - Management Dialog
+  // ============================================================================
+  'Manage Extensions': '管理扩展',
+  'Extension Details': '扩展详情',
+  'View Extension': '查看扩展',
+  'Update Extension': '更新扩展',
+  'Disable Extension': '禁用扩展',
+  'Enable Extension': '启用扩展',
+  'Uninstall Extension': '卸载扩展',
+  'Select Scope': '选择作用域',
+  'User Scope': '用户作用域',
+  'Workspace Scope': '工作区作用域',
+  'No extensions found.': '未找到扩展。',
+  Active: '已启用',
+  Disabled: '已禁用',
+  'Update available': '有可用更新',
+  'Up to date': '已是最新',
+  'Checking...': '检查中...',
+  'Updating...': '更新中...',
+  Unknown: '未知',
+  Error: '错误',
+  'Version:': '版本：',
+  'Status:': '状态：',
+  'Are you sure you want to uninstall extension "{{name}}"?':
+    '确定要卸载扩展 "{{name}}" 吗？',
+  'This action cannot be undone.': '此操作无法撤销。',
+  'Extension "{{name}}" disabled successfully.': '扩展 "{{name}}" 禁用成功。',
+  'Extension "{{name}}" enabled successfully.': '扩展 "{{name}}" 启用成功。',
+  'Extension "{{name}}" updated successfully.': '扩展 "{{name}}" 更新成功。',
+  'Failed to update extension "{{name}}": {{error}}':
+    '更新扩展 "{{name}}" 失败：{{error}}',
+  'Select the scope for this action:': '选择此操作的作用域：',
+  'User - Applies to all projects': '用户 - 应用于所有项目',
+  'Workspace - Applies to current project only': '工作区 - 仅应用于当前项目',
+  // Extension dialog - missing keys
+  'Name:': '名称：',
+  'MCP Servers:': 'MCP 服务器：',
+  'Settings:': '设置：',
+  active: '已启用',
+  disabled: '已禁用',
+  'View Details': '查看详情',
+  'Update failed:': '更新失败：',
+  'Updating {{name}}...': '正在更新 {{name}}...',
+  'Update complete!': '更新完成！',
+  'User (global)': '用户（全局）',
+  'Workspace (project-specific)': '工作区（项目特定）',
+  'Disable "{{name}}" - Select Scope': '禁用 "{{name}}" - 选择作用域',
+  'Enable "{{name}}" - Select Scope': '启用 "{{name}}" - 选择作用域',
+  'No extension selected': '未选择扩展',
+  'Press Y/Enter to confirm, N/Esc to cancel': '按 Y/Enter 确认，N/Esc 取消',
+  'Y/Enter to confirm, N/Esc to cancel': 'Y/Enter 确认，N/Esc 取消',
+  '{{count}} extensions installed': '已安装 {{count}} 个扩展',
+  "Use '/extensions install' to install your first extension.":
+    "使用 '/extensions install' 安装您的第一个扩展。",
+  // Update status values
+  'up to date': '已是最新',
+  'update available': '有可用更新',
+  'checking...': '检查中...',
+  'not updatable': '不可更新',
+  error: '错误',
 
   // ============================================================================
   // Commands - General (continued)
@@ -739,7 +801,6 @@ export default {
   connected: '已连接',
   connecting: '连接中',
   disconnected: '已断开',
-  error: '错误',
 
   // MCP Server List
   'User MCPs': '用户 MCP',
@@ -752,7 +813,6 @@ export default {
   'Run qwen --debug to see error logs': '运行 qwen --debug 查看错误日志',
 
   // MCP Server Detail
-  'Status:': '状态：',
   'Command:': '命令：',
   'Working Directory:': '工作目录：',
   'Capabilities:': '功能：',
@@ -1359,6 +1419,16 @@ export default {
   // ============================================================================
   // Auth Dialog - View Titles and Labels
   // ============================================================================
+  'API-KEY': 'API-KEY',
+  'Coding Plan': 'Coding Plan',
+  "Paste your api key of Bailian Coding Plan and you're all set!":
+    '粘贴您的百炼 Coding Plan API Key，即可完成设置！',
+  Custom: '自定义',
+  'More instructions about configuring `modelProviders` manually.':
+    '关于手动配置 `modelProviders` 的更多说明。',
+  'Select API-KEY configuration mode:': '选择 API-KEY 配置模式：',
+  '(Press Escape to go back)': '(按 Escape 键返回)',
+  '(Press Enter to submit, Escape to cancel)': '(按 Enter 提交，Escape 取消)',
   'Select Region for Coding Plan': '选择 Coding Plan 区域',
   'Choose based on where your account is registered':
     '请根据您的账号注册地区选择',
@@ -1376,4 +1446,29 @@ export default {
     '成功通过 {{region}} 认证。API Key 和模型配置已保存至 settings.json。',
   'Tip: Use /model to switch between available Coding Plan models.':
     '提示：使用 /model 切换可用的 Coding Plan 模型。',
+
+  // ============================================================================
+  // Ask User Question Tool
+  // ============================================================================
+  'Please answer the following question(s):': '请回答以下问题：',
+  'Cannot ask user questions in non-interactive mode. Please run in interactive mode to use this tool.':
+    '无法在非交互模式下询问用户问题。请在交互模式下运行以使用此工具。',
+  'User declined to answer the questions.': '用户拒绝回答问题。',
+  'User has provided the following answers:': '用户提供了以下答案：',
+  'Failed to process user answers:': '处理用户答案失败：',
+  'Type something...': '输入内容...',
+  Submit: '提交',
+  'Submit answers': '提交答案',
+  Cancel: '取消',
+  'Your answers:': '您的答案：',
+  '(not answered)': '(未回答)',
+  'Ready to submit your answers?': '准备好提交您的答案了吗？',
+  '↑/↓: Navigate | ←/→: Switch tabs | Enter: Select':
+    '↑/↓: 导航 | ←/→: 切换标签页 | Enter: 选择',
+  '↑/↓: Navigate | ←/→: Switch tabs | Space/Enter: Toggle | Esc: Cancel':
+    '↑/↓: 导航 | ←/→: 切换标签页 | Space/Enter: 切换 | Esc: 取消',
+  '↑/↓: Navigate | Space/Enter: Toggle | Esc: Cancel':
+    '↑/↓: 导航 | Space/Enter: 切换 | Esc: 取消',
+  '↑/↓: Navigate | Enter: Select | Esc: Cancel':
+    '↑/↓: 导航 | Enter: 选择 | Esc: 取消',
 };

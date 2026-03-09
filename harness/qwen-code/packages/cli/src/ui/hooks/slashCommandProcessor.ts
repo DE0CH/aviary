@@ -78,6 +78,7 @@ interface SlashCommandProcessorActions {
   addConfirmUpdateExtensionRequest: (request: ConfirmationRequest) => void;
   openSubagentCreateDialog: () => void;
   openAgentsManagerDialog: () => void;
+  openExtensionsManagerDialog: () => void;
   openMcpDialog: () => void;
 }
 
@@ -485,6 +486,9 @@ export const useSlashCommandProcessor = (
                       return { type: 'handled' };
                     case 'resume':
                       actions.openResumeDialog();
+                      return { type: 'handled' };
+                    case 'extensions_manage':
+                      actions.openExtensionsManagerDialog();
                       return { type: 'handled' };
                     case 'help':
                       return { type: 'handled' };

@@ -149,6 +149,7 @@ export interface OpenDialogActionReturn {
     | 'permissions'
     | 'approval-mode'
     | 'resume'
+    | 'extensions_manage'
     | 'mcp';
 }
 
