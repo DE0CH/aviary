@@ -34,8 +34,6 @@ export interface MCPServerDisplayInfo {
   status: MCPServerStatus;
   /** 来源类型 */
   source: 'user' | 'project' | 'extension';
-  /** 配置所在的 scope */
-  scope: 'user' | 'workspace' | 'extension';
   /** 配置文件路径 */
   configPath?: string;
   /** 服务器配置 */
