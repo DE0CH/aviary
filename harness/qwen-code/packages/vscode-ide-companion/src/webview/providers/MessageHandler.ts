@@ -62,6 +62,15 @@ export class MessageHandler {
   }
 
   /**
+   * Set ask user question handler
+   */
+  setAskUserQuestionHandler(
+    handler: (message: AskUserQuestionResponseMessage) => void,
+  ): void {
+    this.router.setAskUserQuestionHandler(handler);
+  }
+
+  /**
    * Set login handler
    */
   setLoginHandler(handler: () => Promise<void>): void {

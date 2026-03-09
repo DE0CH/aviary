@@ -11,7 +11,11 @@ import type {
   RequestPermissionRequest,
   ModelInfo,
 } from '@agentclientprotocol/sdk';
-import type { PermissionResponseMessage } from '../../types/webviewMessageTypes.js';
+import type { AskUserQuestionRequest } from '../../types/acpTypes.js';
+import type {
+  PermissionResponseMessage,
+  AskUserQuestionResponseMessage,
+} from '../../types/webviewMessageTypes.js';
 import { PanelManager } from './PanelManager.js';
 import { MessageHandler } from './MessageHandler.js';
 import { WebViewContent } from './WebViewContent.js';
@@ -25,15 +29,17 @@ export class WebViewProvider {
   private agentManager: QwenAgentManager;
   private conversationStore: ConversationStore;
   private disposables: vscode.Disposable[] = [];
-  private currentWebview: vscode.Webview | null = null;
-  // Track webviews by view ID for better multi-view support
-  private webviews: Map<string, vscode.Webview> = new Map();
   private agentInitialized = false; // Track if agent has been initialized
   // Track a pending permission request and its resolver so extension commands
   // can "simulate" user choice from the command palette (e.g. after accepting
   // a diff, auto-allow read/execute, or auto-reject on cancel).
   private pendingPermissionRequest: RequestPermissionRequest | null = null;
   private pendingPermissionResolve: ((optionId: string) => void) | null = null;
+  // Track a pending ask user question request and its resolver
+  private pendingAskUserQuestionRequest: AskUserQuestionRequest | null = null;
+  private pendingAskUserQuestionResolve:
+    | ((result: { optionId: string; answers?: Record<string, string> }) => void)
+    | null = null;
   // Track current ACP mode id to influence permission/diff behavior
   private currentModeId: ApprovalModeValue | null = null;
   private authState: boolean | null = null;
@@ -47,8 +53,18 @@ export class WebViewProvider {
     this.agentManager = new QwenAgentManager();
     this.conversationStore = new ConversationStore(context);
     this.panelManager = new PanelManager(extensionUri, () => {
-      // Panel dispose callback
-      this.disposeWebviewDisposables();
+      // Panel dispose callback — unblock any pending ACP Promises
+      if (this.pendingPermissionResolve) {
+        this.pendingPermissionResolve('cancel');
+        this.pendingPermissionResolve = null;
+        this.pendingPermissionRequest = null;
+      }
+      if (this.pendingAskUserQuestionResolve) {
+        this.pendingAskUserQuestionResolve({ optionId: 'cancel' });
+        this.pendingAskUserQuestionResolve = null;
+        this.pendingAskUserQuestionRequest = null;
+      }
+      this.disposables.forEach((d) => d.dispose());
     });
     this.messageHandler = new MessageHandler(
       this.agentManager,
@@ -412,167 +428,60 @@ export class WebViewProvider {
         });
       },
     );
-  }
 
-  /**
-   * Dispose and reset all webview-scoped disposables (listeners bound per host)
-   */
-  private disposeWebviewDisposables(): void {
-    for (const disposable of this.disposables) {
-      try {
-        disposable.dispose();
-      } catch (_err) {
-        // Best-effort cleanup
-      }
-    }
-    this.disposables = [];
-    this.currentWebview = null;
-  }
-
-  private setupMessageListener(
-    webview: vscode.Webview,
-    titleSetter?: (title: string) => void,
-  ): void {
-    const disposable = webview.onDidReceiveMessage(
-      async (message: { type: string; data?: unknown }) => {
-        // Suppress UI-originated diff opens in auto/yolo mode
-        if (message.type === 'openDiff' && this.isAutoMode()) {
-          return;
-        }
-        // Sync initialization state when webview signals readiness
-        if (message.type === 'webviewReady') {
-          this.handleWebviewReady();
-          return;
-        }
-        // Allow webview to request updating the VS Code tab title
-        if (message.type === 'updatePanelTitle') {
-          const title = String(
-            (message.data as { title?: unknown } | undefined)?.title ?? '',
-          ).trim();
-          if (titleSetter) {
-            titleSetter(title || 'Qwen Code');
-          }
-          return;
-        }
-        await this.messageHandler.route(message);
-      },
-    );
-    this.disposables.push(disposable);
-  }
-
-  private setupEditorListeners(): void {
-    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
-      (editor) => {
-        // If switching to a non-text editor (like webview), keep the last state
-        if (!editor) {
-          // Don't update - keep previous state
-          return;
-        }
-
-        const filePath = editor.document.uri.fsPath || null;
-        const fileName = filePath ? getFileName(filePath) : null;
-
-        // Get selection info if there is any selected text
-        let selectionInfo = null;
-        if (editor && !editor.selection.isEmpty) {
-          const selection = editor.selection;
-          selectionInfo = {
-            startLine: selection.start.line + 1,
-            endLine: selection.end.line + 1,
-          };
-        }
-
+    this.agentManager.onAskUserQuestion(
+      async (request: AskUserQuestionRequest) => {
+        // Send ask user question request to WebView
         this.sendMessageToWebView({
-          type: 'activeEditorChanged',
-          data: { fileName, filePath, selection: selectionInfo },
+          type: 'askUserQuestion',
+          data: request,
+        });
+
+        // Wait for user response
+        return new Promise<{
+          optionId: string;
+          answers?: Record<string, string>;
+        }>((resolve) => {
+          // Cache the pending request and its resolver
+          this.pendingAskUserQuestionRequest = request;
+          this.pendingAskUserQuestionResolve = (result) => {
+            try {
+              resolve(result);
+            } finally {
+              // Always clear pending state
+              this.pendingAskUserQuestionRequest = null;
+              this.pendingAskUserQuestionResolve = null;
+              // Instruct the webview UI to close the dialog
+              this.sendMessageToWebView({
+                type: 'askUserQuestionResolved',
+                data: { optionId: result.optionId },
+              });
+            }
+          };
+          const handler = (message: AskUserQuestionResponseMessage) => {
+            if (message.type !== 'askUserQuestionResponse') {
+              return;
+            }
+
+            const { optionId, answers, cancelled } = message.data;
+
+            // Resolve with the result
+            if (cancelled) {
+              this.pendingAskUserQuestionResolve?.({
+                optionId: 'cancel',
+              });
+            } else {
+              this.pendingAskUserQuestionResolve?.({
+                optionId: optionId || 'proceed_once',
+                answers,
+              });
+            }
+          };
+          // Store handler in message handler
+          this.messageHandler.setAskUserQuestionHandler(handler);
         });
       },
     );
-    this.disposables.push(editorChangeDisposable);
-
-    const selectionChangeDisposable =
-      vscode.window.onDidChangeTextEditorSelection((event) => {
-        const editor = event.textEditor;
-        if (editor === vscode.window.activeTextEditor) {
-          const filePath = editor.document.uri.fsPath || null;
-          const fileName = filePath ? getFileName(filePath) : null;
-
-          // Get selection info if there is any selected text
-          let selectionInfo = null;
-          if (!event.selections[0].isEmpty) {
-            const selection = event.selections[0];
-            selectionInfo = {
-              startLine: selection.start.line + 1,
-              endLine: selection.end.line + 1,
-            };
-          }
-
-          this.sendMessageToWebView({
-            type: 'activeEditorChanged',
-            data: { fileName, filePath, selection: selectionInfo },
-          });
-        }
-      });
-    this.disposables.push(selectionChangeDisposable);
-  }
-
-  private sendInitialActiveEditorState(): void {
-    const initialEditor = vscode.window.activeTextEditor;
-    if (initialEditor) {
-      const filePath = initialEditor.document.uri.fsPath || null;
-      const fileName = filePath ? getFileName(filePath) : null;
-
-      let selectionInfo = null;
-      if (!initialEditor.selection.isEmpty) {
-        const selection = initialEditor.selection;
-        selectionInfo = {
-          startLine: selection.start.line + 1,
-          endLine: selection.end.line + 1,
-        };
-      }
-
-      this.sendMessageToWebView({
-        type: 'activeEditorChanged',
-        data: { fileName, filePath, selection: selectionInfo },
-      });
-    }
-  }
-
-  /**
-   * Common binding logic for both WebviewPanel and WebviewView hosts.
-   */
-  private async bindWebview(
-    webview: vscode.Webview,
-    options?: { titleSetter?: (title: string) => void; viewId?: string },
-  ): Promise<void> {
-    try {
-      console.log('[WebViewProvider] bindWebview start for host');
-      this.disposeWebviewDisposables();
-      this.currentWebview = webview;
-
-      // Store the webview in the map if viewId is provided
-      if (options?.viewId) {
-        this.webviews.set(options.viewId, webview);
-      }
-
-      webview.html = WebViewContent.generate(webview, this.extensionUri);
-
-      this.setupMessageListener(webview, options?.titleSetter);
-      this.setupEditorListeners();
-      this.sendInitialActiveEditorState();
-
-      // Attempt to restore authentication state and initialize connection
-      // Don't await this to prevent blocking the UI
-      this.attemptAuthStateRestoration().catch((error) => {
-        console.error('[WebViewProvider] Error in auth restoration:', error);
-      });
-      console.log('[WebViewProvider] bindWebview completed');
-    } catch (error) {
-      console.error('[WebViewProvider] Error in bindWebview:', error);
-      // Fallback to basic HTML if binding fails
-      webview.html = `<div>Initialization error: ${(error as Error).message || 'Unknown error'}</div>`;
-      throw error; // Re-throw so caller can handle it
-    }
   }
 
   async show(): Promise<void> {
@@ -597,75 +506,146 @@ export class WebViewProvider {
       return;
     }
 
+    // Set up state serialization
+    newPanel.onDidChangeViewState(() => {
+      console.log(
+        '[WebViewProvider] Panel view state changed, triggering serialization check',
+      );
+    });
+
     // Capture the Tab that corresponds to our WebviewPanel
     this.panelManager.captureTab();
 
     // Auto-lock editor group when opened in new column
     await this.panelManager.autoLockEditorGroup();
 
-    await this.bindWebview(newPanel.webview, {
-      titleSetter: (title: string) => {
-        try {
-          newPanel.title = title || 'Qwen Code';
-        } catch (_err) {
-          // Best-effort only
+    newPanel.webview.html = WebViewContent.generate(
+      newPanel,
+      this.extensionUri,
+    );
+
+    // Handle messages from WebView
+    newPanel.webview.onDidReceiveMessage(
+      async (message: { type: string; data?: unknown }) => {
+        // Suppress UI-originated diff opens in auto/yolo mode
+        if (message.type === 'openDiff' && this.isAutoMode()) {
+          return;
         }
+        if (message.type === 'webviewReady') {
+          this.handleWebviewReady();
+          return;
+        }
+        // Allow webview to request updating the VS Code tab title
+        if (message.type === 'updatePanelTitle') {
+          const title = String(
+            (message.data as { title?: unknown } | undefined)?.title ?? '',
+          ).trim();
+          const panelRef = this.panelManager.getPanel();
+          if (panelRef) {
+            panelRef.title = title || 'Qwen Code';
+          }
+          return;
+        }
+        await this.messageHandler.route(message);
       },
-    });
+      null,
+      this.disposables,
+    );
 
     // Listen for view state changes (no pin/lock; just keep tab reference fresh)
     this.panelManager.registerViewStateChangeHandler(this.disposables);
 
     // Register panel dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
-  }
 
-  /**
-   * Attach the chat experience to a WebviewView (panel/secondary sidebar host)
-   */
-  async attachToView(
-    webviewView: vscode.WebviewView,
-    viewId?: string,
-  ): Promise<void> {
-    console.log(
-      `[WebViewProvider] attachToView called for ${webviewView.viewType} (id=${viewId ?? 'unknown'})`,
+    // Listen for active editor changes and notify WebView
+    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
+      (editor) => {
+        // If switching to a non-text editor (like webview), keep the last state
+        if (!editor) {
+          // Don't update - keep previous state
+          return;
+        }
+
+        const filePath = editor.document.uri.fsPath || null;
+        const fileName = filePath ? getFileName(filePath) : null;
+
+        // Get selection info if there is any selected text
+        let selectionInfo = null;
+        if (editor && !editor.selection.isEmpty) {
+          const selection = editor.selection;
+          selectionInfo = {
+            startLine: selection.start.line + 1,
+            endLine: selection.end.line + 1,
+          };
+        }
+
+        // Update last known state
+
+        this.sendMessageToWebView({
+          type: 'activeEditorChanged',
+          data: { fileName, filePath, selection: selectionInfo },
+        });
+      },
     );
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, 'dist'),
-        vscode.Uri.joinPath(this.extensionUri, 'assets'),
-      ],
-    };
+    this.disposables.push(editorChangeDisposable);
 
-    try {
-      await this.bindWebview(webviewView.webview, {
-        titleSetter: (title: string) => {
-          try {
-            webviewView.title = title || 'Qwen Code';
-          } catch (_err) {
-            // Ignore title update errors
+    // Listen for text selection changes
+    const selectionChangeDisposable =
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        const editor = event.textEditor;
+        if (editor === vscode.window.activeTextEditor) {
+          const filePath = editor.document.uri.fsPath || null;
+          const fileName = filePath ? getFileName(filePath) : null;
+
+          // Get selection info if there is any selected text
+          let selectionInfo = null;
+          if (!event.selections[0].isEmpty) {
+            const selection = event.selections[0];
+            selectionInfo = {
+              startLine: selection.start.line + 1,
+              endLine: selection.end.line + 1,
+            };
           }
-        },
-        viewId, // Pass the viewId to bindWebview
+
+          // Update last known state
+
+          this.sendMessageToWebView({
+            type: 'activeEditorChanged',
+            data: { fileName, filePath, selection: selectionInfo },
+          });
+
+          // Mode callbacks are registered in constructor; no-op here
+        }
       });
-    } catch (error) {
-      console.error('[WebViewProvider] Error in attachToView:', error);
-      // Ensure some content is displayed even if binding fails
-      webviewView.webview.html = `<div>Error loading chat: ${error instanceof Error ? error.message : String(error)}</div>`;
+    this.disposables.push(selectionChangeDisposable);
+
+    // Send initial active editor state to WebView
+    const initialEditor = vscode.window.activeTextEditor;
+    if (initialEditor) {
+      const filePath = initialEditor.document.uri.fsPath || null;
+      const fileName = filePath ? getFileName(filePath) : null;
+
+      let selectionInfo = null;
+      if (!initialEditor.selection.isEmpty) {
+        const selection = initialEditor.selection;
+        selectionInfo = {
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        };
+      }
+
+      this.sendMessageToWebView({
+        type: 'activeEditorChanged',
+        data: { fileName, filePath, selection: selectionInfo },
+      });
     }
 
-    webviewView.onDidDispose(
-      () => {
-        // Remove the webview from the map on dispose
-        if (viewId) {
-          this.webviews.delete(viewId);
-        }
-        this.disposeWebviewDisposables();
-      },
-      null,
-      this.disposables,
+    // Attempt to restore authentication state and initialize connection
+    console.log(
+      '[WebViewProvider] Attempting to restore auth state and connection...',
     );
+    await this.attemptAuthStateRestoration();
   }
 
   /**
@@ -1091,33 +1071,6 @@ export class WebViewProvider {
    */
   private sendMessageToWebView(message: unknown): void {
     this.updateAuthStateFromMessage(message);
-
-    // Prioritize sending to current active webview
-    if (this.currentWebview) {
-      try {
-        void this.currentWebview.postMessage(message);
-        return;
-      } catch (_err) {
-        // Fallback to panel below
-      }
-    }
-
-    // If we have webviews stored by ID, try to send to all of them
-    if (this.webviews.size > 0) {
-      for (const [id, webview] of this.webviews) {
-        try {
-          void webview.postMessage(message);
-        } catch (err) {
-          console.error(
-            `[WebViewProvider] Error posting message to webview ${id}:`,
-            err,
-          );
-        }
-      }
-      return;
-    }
-
-    // Fallback to panel
     const panel = this.panelManager.getPanel();
     panel?.webview.postMessage(message);
   }
@@ -1249,18 +1202,53 @@ export class WebViewProvider {
       );
     }
 
-    await this.bindWebview(panel.webview, {
-      titleSetter: (title: string) => {
-        try {
+    panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
+
+    // Handle messages from WebView (restored panel)
+    panel.webview.onDidReceiveMessage(
+      async (message: { type: string; data?: unknown }) => {
+        // Suppress UI-originated diff opens in auto/yolo mode
+        if (message.type === 'openDiff' && this.isAutoMode()) {
+          return;
+        }
+        if (message.type === 'webviewReady') {
+          this.handleWebviewReady();
+          return;
+        }
+        if (message.type === 'updatePanelTitle') {
+          const title = String(
+            (message.data as { title?: unknown } | undefined)?.title ?? '',
+          ).trim();
           const panelRef = this.panelManager.getPanel();
           if (panelRef) {
             panelRef.title = title || 'Qwen Code';
           }
-        } catch (_err) {
-          // Ignore
+          return;
         }
+        // Handle ask user question response
+        if (message.type === 'askUserQuestionResponse') {
+          const askUserQuestionMsg = message as AskUserQuestionResponseMessage;
+          const answers = askUserQuestionMsg.data.answers || {};
+          const cancelled = askUserQuestionMsg.data.cancelled || false;
+
+          // Resolve the pending ask user question promise
+          if (cancelled) {
+            this.pendingAskUserQuestionResolve?.({
+              optionId: 'cancel',
+            });
+          } else {
+            this.pendingAskUserQuestionResolve?.({
+              optionId: 'proceed_once',
+              answers,
+            });
+          }
+          return;
+        }
+        await this.messageHandler.route(message);
       },
-    });
+      null,
+      this.disposables,
+    );
 
     // Register view state change handler
     this.panelManager.registerViewStateChangeHandler(this.disposables);
@@ -1268,10 +1256,97 @@ export class WebViewProvider {
     // Register dispose handler
     this.panelManager.registerDisposeHandler(this.disposables);
 
+    // Listen for active editor changes and notify WebView
+    const editorChangeDisposable = vscode.window.onDidChangeActiveTextEditor(
+      (editor) => {
+        // If switching to a non-text editor (like webview), keep the last state
+        if (!editor) {
+          // Don't update - keep previous state
+          return;
+        }
+
+        const filePath = editor.document.uri.fsPath || null;
+        const fileName = filePath ? getFileName(filePath) : null;
+
+        // Get selection info if there is any selected text
+        let selectionInfo = null;
+        if (editor && !editor.selection.isEmpty) {
+          const selection = editor.selection;
+          selectionInfo = {
+            startLine: selection.start.line + 1,
+            endLine: selection.end.line + 1,
+          };
+        }
+
+        // Update last known state
+
+        this.sendMessageToWebView({
+          type: 'activeEditorChanged',
+          data: { fileName, filePath, selection: selectionInfo },
+        });
+      },
+    );
+    this.disposables.push(editorChangeDisposable);
+
+    // Send initial active editor state to WebView
+    const initialEditor = vscode.window.activeTextEditor;
+    if (initialEditor) {
+      const filePath = initialEditor.document.uri.fsPath || null;
+      const fileName = filePath ? getFileName(filePath) : null;
+
+      let selectionInfo = null;
+      if (!initialEditor.selection.isEmpty) {
+        const selection = initialEditor.selection;
+        selectionInfo = {
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        };
+      }
+
+      this.sendMessageToWebView({
+        type: 'activeEditorChanged',
+        data: { fileName, filePath, selection: selectionInfo },
+      });
+    }
+
+    // Listen for text selection changes (restore path)
+    const selectionChangeDisposableRestore =
+      vscode.window.onDidChangeTextEditorSelection((event) => {
+        const editor = event.textEditor;
+        if (editor === vscode.window.activeTextEditor) {
+          const filePath = editor.document.uri.fsPath || null;
+          const fileName = filePath ? getFileName(filePath) : null;
+
+          // Get selection info if there is any selected text
+          let selectionInfo = null;
+          if (!event.selections[0].isEmpty) {
+            const selection = event.selections[0];
+            selectionInfo = {
+              startLine: selection.start.line + 1,
+              endLine: selection.end.line + 1,
+            };
+          }
+
+          // Update last known state
+
+          this.sendMessageToWebView({
+            type: 'activeEditorChanged',
+            data: { fileName, filePath, selection: selectionInfo },
+          });
+        }
+      });
+    this.disposables.push(selectionChangeDisposableRestore);
+
     // Capture the tab reference on restore
     this.panelManager.captureTab();
 
     console.log('[WebViewProvider] Panel restored successfully');
+
+    // Attempt to restore authentication state and initialize connection
+    console.log(
+      '[WebViewProvider] Attempting to restore auth state and connection after restore...',
+    );
+    await this.attemptAuthStateRestoration();
   }
 
   /**
@@ -1325,10 +1400,7 @@ export class WebViewProvider {
     // Reload content after restore
     const panel = this.panelManager.getPanel();
     if (panel) {
-      panel.webview.html = WebViewContent.generate(
-        panel.webview,
-        this.extensionUri,
-      );
+      panel.webview.html = WebViewContent.generate(panel, this.extensionUri);
     }
   }
 
@@ -1360,6 +1432,17 @@ export class WebViewProvider {
    * Dispose the WebView provider and clean up resources
    */
   dispose(): void {
+    // Unblock any pending ACP Promises before tearing down
+    if (this.pendingPermissionResolve) {
+      this.pendingPermissionResolve('cancel');
+      this.pendingPermissionResolve = null;
+      this.pendingPermissionRequest = null;
+    }
+    if (this.pendingAskUserQuestionResolve) {
+      this.pendingAskUserQuestionResolve({ optionId: 'cancel' });
+      this.pendingAskUserQuestionResolve = null;
+      this.pendingAskUserQuestionRequest = null;
+    }
     this.panelManager.dispose();
     this.agentManager.disconnect();
     this.disposables.forEach((d) => d.dispose());
