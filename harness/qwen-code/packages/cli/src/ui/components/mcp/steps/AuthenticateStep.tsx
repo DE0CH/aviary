@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -102,16 +102,14 @@ export const AuthenticateStep: React.FC<AuthenticateStepProps> = ({
     }
   }, [server, config, onSuccess]);
 
+  useEffect(() => {
+    runAuthentication();
+  });
+
   useKeypress(
     (key) => {
       if (key.name === 'escape') {
         onBack();
-      } else if (key.name === 'return') {
-        if (authState === 'idle') {
-          void runAuthentication();
-        } else if (authState === 'success' || authState === 'error') {
-          onBack();
-        }
       }
     },
     { isActive: true },

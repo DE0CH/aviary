@@ -27,7 +27,6 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
     [servers],
   );
 
-  // 动态计算服务器名称列的最大宽度（基于实际内容）
   const serverNameWidth = useMemo(() => {
     if (servers.length === 0) return 20;
     const maxLength = Math.max(...servers.map((s) => s.name.length));
@@ -35,7 +34,6 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
     return Math.min(Math.max(maxLength + 2, 20), 35);
   }, [servers]);
 
-  // 计算扁平化的服务器列表用于导航
   const flatServers = useMemo(() => {
     const result: MCPServerDisplayInfo[] = [];
     for (const group of groupedServers) {
@@ -44,7 +42,6 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
     return result;
   }, [groupedServers]);
 
-  // 键盘导航
   useKeypress(
     (key) => {
       if (key.name === 'up') {
@@ -71,7 +68,6 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
     );
   }
 
-  // 计算当前选中项在分组中的位置
   const getSelectionPosition = (globalIndex: number) => {
     let currentIndex = 0;
     for (const group of groupedServers) {
@@ -169,7 +165,7 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
 
       {/* 提示信息 */}
       {servers.some((s) => s.status === 'disconnected' && !s.isDisabled) && (
-        <Box>
+        <Box marginTop={1}>
           <Text color={theme.status.warning}>
             ※ {t('Run qwen --debug to see error logs')}
           </Text>

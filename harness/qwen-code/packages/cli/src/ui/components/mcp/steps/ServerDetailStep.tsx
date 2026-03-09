@@ -80,7 +80,7 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       value: 'toggle-disable',
     });
 
-    // 只在服务器配置了 OAuth 时显示认证选项
+    // 待补充准确的认证判断方案，暂时全部开放
     if (!server.isDisabled) {
       result.push({
         key: 'authenticate',
