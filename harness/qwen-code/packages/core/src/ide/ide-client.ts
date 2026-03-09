@@ -27,6 +27,14 @@ import { EnvHttpProxyAgent } from 'undici';
 import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { IDE_REQUEST_TIMEOUT_MS } from './constants.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
+import {
+  getAllConnectionConfigs,
+  getFallbackConnectionConfigs,
+  getWorkspaceMatchingConnectionConfig,
+  readConnectionConfigFromLockFile,
+  type IdeConnectionConfig,
+  type StdioConfig,
+} from './ide-connection-config.js';
 
 const debugLogger = createDebugLogger('IDE');
 
@@ -51,17 +59,6 @@ export enum IDEConnectionStatus {
   Connecting = 'connecting',
 }
 
-type StdioConfig = {
-  command: string;
-  args: string[];
-};
-
-type ConnectionConfig = {
-  port?: string;
-  authToken?: string;
-  stdio?: StdioConfig;
-};
-
 function getRealPath(path: string): string {
   try {
     return fs.realpathSync(path);
@@ -85,9 +82,7 @@ export class IdeClient {
   };
   private currentIde: IdeInfo | undefined;
   private ideProcessInfo: { pid: number; command: string } | undefined;
-  private connectionConfig:
-    | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
-    | undefined;
+  private connectionConfig: IdeConnectionConfig | undefined;
   private authToken: string | undefined;
   private diffResponses = new Map<string, (result: DiffUpdateResult) => void>();
   private statusListeners = new Set<(state: IDEConnectionState) => void>();
@@ -144,7 +139,6 @@ export class IdeClient {
       return;
     }
 
-    debugLogger.debug('[IdeClient] Setting state to Connecting');
     this.setState(IDEConnectionStatus.Connecting);
 
     this.connectionConfig = await this.getConnectionConfigFromFile();
@@ -578,56 +572,39 @@ export class IdeClient {
   }
 
   private async getConnectionConfigFromFile(): Promise<
-    | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
-    | undefined
+    IdeConnectionConfig | undefined
   > {
     const portFromEnv = this.getPortFromEnv();
-
-    // Always scan all lock files to clean up stale ones, even when portFromEnv is set
-    // This ensures orphaned lock files are cleaned up on every CLI invocation
     const ideDir = Storage.getGlobalIdeDir();
-    const allConfigs = await this.getAllConnectionConfigs(ideDir);
+    const allConfigs = await getAllConnectionConfigs(ideDir);
 
     if (portFromEnv) {
-      try {
-        const lockFile = path.join(ideDir, `${portFromEnv}.lock`);
-        const lockFileContents = await fs.promises.readFile(lockFile, 'utf8');
-        return JSON.parse(lockFileContents);
-      } catch (_e) {
-        // Fall through to use allConfigs which was already loaded
+      const lockFileConfig = await readConnectionConfigFromLockFile(
+        ideDir,
+        portFromEnv,
+      );
+      if (lockFileConfig) {
+        return lockFileConfig;
       }
     }
 
-    // Legacy connection files were written in the global temp directory.
     const legacyConfig = await this.getLegacyConnectionConfig(portFromEnv);
     if (legacyConfig) {
       return legacyConfig;
     }
 
-    // Scan lock directory as a last resort when neither env var nor legacy
-    // file is available (e.g. code-server where the env var is not injected).
-    // Configs are sorted by modification time (most recent first). Pick the
-    // first one whose workspace matches the current working directory.
-    if (allConfigs.length > 0) {
-      const cwd = process.cwd();
-      const match = allConfigs.find(
-        (c) =>
-          c.workspacePath !== undefined &&
-          IdeClient.validateWorkspacePath(c.workspacePath, cwd).isValid,
-      );
-      return match;
-    }
-
-    return undefined;
+    return getWorkspaceMatchingConnectionConfig(
+      allConfigs,
+      process.cwd(),
+      (workspacePath, cwd) =>
+        IdeClient.validateWorkspacePath(workspacePath, cwd).isValid,
+    );
   }
 
   // Legacy connection files were written in the global temp directory.
   private async getLegacyConnectionConfig(
     portFromEnv?: string,
-  ): Promise<
-    | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
-    | undefined
-  > {
+  ): Promise<IdeConnectionConfig | undefined> {
     if (this.ideProcessInfo) {
       try {
         const portFile = path.join(
@@ -660,190 +637,27 @@ export class IdeClient {
     return undefined;
   }
 
-  protected async getAllConnectionConfigs(
-    ideDir: string,
-  ): Promise<
-    Array<ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo }>
-  > {
-    const fileRegex = new RegExp('^\\d+\\.lock$');
-    let lockFiles: string[];
-    try {
-      lockFiles = (await fs.promises.readdir(ideDir)).filter((file) =>
-        fileRegex.test(file),
-      );
-    } catch (e) {
-      debugLogger.debug('Failed to read IDE connection directory:', e);
-      return [];
-    }
-
-    const fileContents = await Promise.all(
-      lockFiles.map(async (file) => {
-        const fullPath = path.join(ideDir, file);
-        try {
-          const stat = await fs.promises.stat(fullPath);
-          const content = await fs.promises.readFile(fullPath, 'utf8');
-          try {
-            const parsed = JSON.parse(content);
-            return { file, mtimeMs: stat.mtimeMs, parsed, fullPath };
-          } catch (e) {
-            debugLogger.debug('Failed to parse JSON from lock file: ', e);
-            return { file, mtimeMs: stat.mtimeMs, parsed: undefined, fullPath };
-          }
-        } catch (e) {
-          // If we can't stat/read the file, treat it as very old so it doesn't
-          // win ties, and skip parsing by returning undefined content.
-          debugLogger.debug('Failed to read/stat IDE lock file:', e);
-          return { file, mtimeMs: -Infinity, parsed: undefined, fullPath };
-        }
-      }),
-    );
-
-    const validConfigs = fileContents.filter(
-      ({ parsed }) => parsed !== undefined,
-    );
-
-    // Clean up stale lock files: remove locks whose ppid no longer exists
-    // or whose workspace path no longer exists (similar to Claude Code's cleanup strategy)
-    await this.cleanupStaleLockFiles(validConfigs, ideDir);
-
-    return validConfigs
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      .map(({ parsed }) => parsed);
-  }
-
-  /**
-   * Try to connect using fallback ports from lock files when the primary
-   * connection fails. This handles the case where the IDE server restarted
-   * on a different port but the old lock file wasn't cleaned up.
-   *
-   * @returns true if connected successfully, false otherwise
-   */
   private async tryFallbackPorts(): Promise<boolean> {
-    const ideDir = Storage.getGlobalIdeDir();
-    const configs = await this.getAllConnectionConfigs(ideDir);
+    const configs = await getAllConnectionConfigs(Storage.getGlobalIdeDir());
+    const fallbackConfigs = getFallbackConnectionConfigs(configs, {
+      cwd: process.cwd(),
+      currentPort: this.connectionConfig?.port,
+      matchesWorkspace: (workspacePath, cwd) =>
+        IdeClient.validateWorkspacePath(workspacePath, cwd).isValid,
+    });
 
-    if (configs.length === 0) {
-      return false;
-    }
-
-    const cwd = process.cwd();
-    const currentPort = this.connectionConfig?.port;
-
-    // First try: find a config with matching workspace path
-    for (const config of configs) {
-      if (
-        config.workspacePath !== undefined &&
-        IdeClient.validateWorkspacePath(config.workspacePath, cwd).isValid &&
-        config.port !== currentPort
-      ) {
-        if (config.authToken) {
-          this.authToken = config.authToken;
-        }
-        const connected = await this.establishHttpConnection(config.port!);
-        if (connected) {
-          this.connectionConfig = config;
-          return true;
-        }
+    for (const config of fallbackConfigs) {
+      if (config.authToken) {
+        this.authToken = config.authToken;
       }
-    }
-
-    // Second try: try the most recent config regardless of workspace match
-    for (const config of configs) {
-      if (config.port !== currentPort) {
-        if (config.authToken) {
-          this.authToken = config.authToken;
-        }
-        const connected = await this.establishHttpConnection(config.port!);
-        if (connected) {
-          this.connectionConfig = config;
-          return true;
-        }
+      const connected = await this.establishHttpConnection(config.port!);
+      if (connected) {
+        this.connectionConfig = config;
+        return true;
       }
     }
 
     return false;
-  }
-
-  /**
-   * Clean up stale lock files to prevent accumulation of orphaned locks.
-   * This is similar to Claude Code's lock file cleanup strategy.
-   *
-   * A lock file is considered stale if:
-   * 1. The ppid (parent process ID) no longer exists
-   * 2. The lock file is older than 7 days
-   */
-  private async cleanupStaleLockFiles(
-    configs: Array<{
-      file: string;
-      parsed: Record<string, unknown>;
-      fullPath: string;
-    }>,
-    _ideDir: string,
-  ): Promise<void> {
-    const now = Date.now();
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-    const cleanedCount = await Promise.all(
-      configs.map(async ({ file, parsed, fullPath }) => {
-        try {
-          // Check if the lock file is too old
-          const mtimeMs = parsed['mtimeMs'] as number;
-          const fileAge = now - mtimeMs;
-          if (fileAge > maxAge) {
-            debugLogger.debug(
-              `[cleanupStaleLockFiles] Removing lock file "${file}" - older than 7 days`,
-            );
-            await fs.promises.unlink(fullPath);
-            return true;
-          }
-
-          // Check if the ppid still exists (process is still running)
-          const ppid = parsed['ppid'] as number | undefined;
-          if (ppid) {
-            try {
-              // On Unix, we can check if a process exists by sending signal 0
-              // which doesn't actually send a signal but checks if the process exists
-              process.kill(ppid, 0);
-              // Process exists, lock is valid
-              return false;
-            } catch (_e) {
-              // Process doesn't exist, lock is stale - remove it
-              debugLogger.debug(
-                `[cleanupStaleLockFiles] Removing lock file "${file}" - ppid ${ppid} no longer exists`,
-              );
-              await fs.promises.unlink(fullPath);
-              return true;
-            }
-          }
-
-          // If ppid is not set, check if workspace path exists
-          const workspacePath = parsed['workspacePath'] as string | undefined;
-          if (workspacePath && fs.existsSync(workspacePath)) {
-            // Workspace exists, keep the lock file (be conservative when ppid is missing)
-            return false;
-          }
-
-          // Workspace doesn't exist, remove the lock file
-          debugLogger.debug(
-            `[cleanupStaleLockFiles] Removing lock file "${file}" - workspace doesn't exist`,
-          );
-          await fs.promises.unlink(fullPath);
-          return true;
-        } catch (_e) {
-          debugLogger.debug(
-            `[cleanupStaleLockFiles] Error checking lock file "${file}":`,
-            _e,
-          );
-          return false;
-        }
-      }),
-    );
-
-    const totalCleaned = cleanedCount.filter(Boolean).length;
-    if (totalCleaned > 0) {
-      debugLogger.debug(
-        `[cleanupStaleLockFiles] Cleaned up ${totalCleaned} stale lock file(s)`,
-      );
-    }
   }
 
   private createProxyAwareFetch(ideHost: string) {
@@ -977,6 +791,9 @@ export class IdeClient {
   private async tryHttpConnect(port: string, host: string): Promise<boolean> {
     let transport: StreamableHTTPClientTransport | undefined;
     try {
+      debugLogger.debug(
+        `Attempting to connect to IDE via HTTP at ${host}:${port}`,
+      );
       this.client = new Client({
         name: 'streamable-http-client',
         // TODO(#3487): use the CLI version here.
