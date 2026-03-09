@@ -73,6 +73,14 @@ describe('SkillManager', () => {
       if (yamlString.includes('name: regular-skill')) {
         return { name: 'regular-skill', description: 'A regular skill' };
       }
+      if (yamlString.includes('name: shared-skill')) {
+        const desc = yamlString.includes('From qwen dir')
+          ? 'From qwen dir'
+          : yamlString.includes('From agent dir')
+            ? 'From agent dir'
+            : 'A shared skill';
+        return { name: 'shared-skill', description: desc };
+      }
       if (!yamlString.includes('name:')) {
         return { description: 'A test skill' }; // Missing name case
       }
@@ -500,6 +508,66 @@ Skill 3 content`);
 
       expect(projectSkills).toHaveLength(2); // skill1, skill2
       expect(projectSkills.every((s) => s.level === 'project')).toBe(true);
+    });
+
+    it('should deduplicate same-name skills across provider dirs within a level', async () => {
+      // Override readdir to return the same skill name from both .qwen and .agent dirs
+      vi.mocked(fs.readdir).mockReset();
+      const projectQwenDir = path.join('/test/project', '.qwen', 'skills');
+      const projectAgentDir = path.join('/test/project', '.agent', 'skills');
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(fs.readdir).mockImplementation((dirPath: any) => {
+        const pathStr = String(dirPath);
+        if (pathStr === projectQwenDir) {
+          return Promise.resolve([
+            {
+              name: 'shared-skill',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+          ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+        }
+        if (pathStr === projectAgentDir) {
+          return Promise.resolve([
+            {
+              name: 'shared-skill',
+              isDirectory: () => true,
+              isFile: () => false,
+              isSymbolicLink: () => false,
+            },
+          ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+        }
+        return Promise.resolve(
+          [] as unknown as Awaited<ReturnType<typeof fs.readdir>>,
+        );
+      });
+
+      vi.mocked(fs.readFile).mockImplementation((filePath) => {
+        const pathStr = String(filePath);
+        if (pathStr.includes('.qwen') && pathStr.includes('shared-skill')) {
+          return Promise.resolve(
+            `---\nname: shared-skill\ndescription: From qwen dir\n---\nQwen content`,
+          );
+        }
+        if (pathStr.includes('.agent') && pathStr.includes('shared-skill')) {
+          return Promise.resolve(
+            `---\nname: shared-skill\ndescription: From agent dir\n---\nAgent content`,
+          );
+        }
+        return Promise.reject(new Error('File not found'));
+      });
+
+      const skills = await manager.listSkills({
+        level: 'project',
+        force: true,
+      });
+
+      // Only one instance should remain, from .qwen (first in PROVIDER_CONFIG_DIRS)
+      expect(skills).toHaveLength(1);
+      expect(skills[0].name).toBe('shared-skill');
+      expect(skills[0].description).toBe('From qwen dir');
     });
 
     it('should handle empty directories', async () => {

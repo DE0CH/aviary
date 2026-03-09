@@ -28,9 +28,9 @@ const QWEN_CONFIG_DIR = '.qwen';
 const PROVIDER_CONFIG_DIRS = [
   '.qwen',
   '.agent',
+  '.claude',
   '.cursor',
   '.codex',
-  '.claude',
 ];
 const SKILLS_CONFIG_DIR = 'skills';
 const SKILL_MANIFEST_FILE = 'SKILL.md';
@@ -467,12 +467,25 @@ export class SkillManager {
       return skills;
     }
 
+    // Iterate provider directories in PROVIDER_CONFIG_DIRS order.
+    // The first directory that contains a skill with a given name wins,
+    // so the order defines implicit precedence (.qwen > .agent > .cursor > ...).
     const baseDirs = this.getSkillsBaseDirs(level);
     const skills: SkillConfig[] = [];
-    for (let i = 0; i < baseDirs.length; i++) {
-      debugLogger.debug(`Loading ${level} level skills from: ${baseDirs[i]}`);
-      const skillsFromDir = await this.loadSkillsFromDir(baseDirs[i], level);
-      skills.push(...skillsFromDir);
+    const seenNames = new Set<string>();
+    for (const baseDir of baseDirs) {
+      debugLogger.debug(`Loading ${level} level skills from: ${baseDir}`);
+      const skillsFromDir = await this.loadSkillsFromDir(baseDir, level);
+      for (const skill of skillsFromDir) {
+        if (seenNames.has(skill.name)) {
+          debugLogger.debug(
+            `Skipping duplicate skill at ${level} level: ${skill.name} from ${baseDir}`,
+          );
+          continue;
+        }
+        seenNames.add(skill.name);
+        skills.push(skill);
+      }
     }
     debugLogger.debug(`Loaded ${skills.length} ${level} level skills`);
     return skills;
