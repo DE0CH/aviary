@@ -137,6 +137,23 @@ describe('activate', () => {
     expect(vscode.workspace.onDidGrantWorkspaceTrust).toHaveBeenCalled();
   });
 
+  it('should register webview view providers for all three positions (sidebar, panel, secondary)', async () => {
+    await activate(context);
+
+    // Verify registerWebviewViewProvider was called 3 times for the three view positions
+    const registerCalls = vi.mocked(vscode.window.registerWebviewViewProvider)
+      .mock.calls;
+    expect(registerCalls).toHaveLength(3);
+
+    // Extract view IDs from the calls
+    const viewIds = registerCalls.map((call) => call[0]);
+
+    // Verify all three view IDs are registered with consistent naming
+    expect(viewIds).toContain('qwen-code.chatView.sidebar');
+    expect(viewIds).toContain('qwen-code.chatView.panel');
+    expect(viewIds).toContain('qwen-code.chatView.secondary');
+  });
+
   it('should launch the Qwen Code when the user clicks the button', async () => {
     const showInformationMessageMock = vi
       .mocked(vscode.window.showInformationMessage)

@@ -28,7 +28,14 @@
     "ide companion"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:qwen-code.chatView.sidebar",
+    "onView:qwen-code.chatView.panel",
+    "onView:qwen-code.chatView.secondary",
+    "onCommand:qwen-code.openChat",
+    "onCommand:qwen-code.focusChat",
+    "onCommand:qwen-code.newConversation",
+    "onCommand:qwen-code.showLogs"
   ],
   "contributes": {
     "jsonValidation": [
@@ -40,44 +47,44 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "qwenCodeSidebar",
+          "id": "qwen-code-sidebar",
           "title": "Qwen Code",
           "icon": "assets/sidebar-icon.svg"
         }
       ],
       "panel": [
         {
-          "id": "qwenCodePanel",
+          "id": "qwen-code-panel",
           "title": "Qwen Code",
           "icon": "assets/icon.png"
         }
       ],
       "secondarySidebar": [
         {
-          "id": "qwenCodeSecondary",
+          "id": "qwen-code-secondary",
           "title": "Qwen Code",
           "icon": "assets/icon.png"
         }
       ]
     },
     "views": {
-      "qwenCodeSidebar": [
+      "qwen-code-sidebar": [
         {
           "type": "webview",
-          "id": "qwenCode.chatView.sidebar",
+          "id": "qwen-code.chatView.sidebar",
           "name": "Qwen Code"
         }
       ],
-      "qwenCodePanel": [
+      "qwen-code-panel": [
         {
-          "id": "qwenCode.chatView.panel",
+          "id": "qwen-code.chatView.panel",
           "name": "Qwen Code",
           "icon": "assets/icon.png"
         }
       ],
-      "qwenCodeSecondary": [
+      "qwen-code-secondary": [
         {
-          "id": "qwenCode.chatView.secondary",
+          "id": "qwen-code.chatView.secondary",
           "name": "Qwen Code",
           "icon": "assets/icon.png"
         }
