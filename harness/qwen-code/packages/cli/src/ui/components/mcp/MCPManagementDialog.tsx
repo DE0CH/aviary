@@ -20,6 +20,7 @@ import { ServerDetailStep } from './steps/ServerDetailStep.js';
 import { ToolListStep } from './steps/ToolListStep.js';
 import { ToolDetailStep } from './steps/ToolDetailStep.js';
 import { DisableScopeSelectStep } from './steps/DisableScopeSelectStep.js';
+import { AuthenticateStep } from './steps/AuthenticateStep.js';
 import { useConfig } from '../../contexts/ConfigContext.js';
 import {
   getMCPServerStatus,
@@ -225,6 +226,11 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
     handleNavigateToStep(MCP_MANAGEMENT_STEPS.TOOL_LIST);
   }, [handleNavigateToStep]);
 
+  // Authenticate
+  const handleAuthenticate = useCallback(() => {
+    handleNavigateToStep(MCP_MANAGEMENT_STEPS.AUTHENTICATE);
+  }, [handleNavigateToStep]);
+
   // Select tool
   const handleSelectTool = useCallback(
     (tool: MCPToolDisplayInfo) => {
@@ -401,6 +407,9 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
       case MCP_MANAGEMENT_STEPS.TOOL_DETAIL:
         headerText = selectedTool?.name || t('Tool Detail');
         break;
+      case MCP_MANAGEMENT_STEPS.AUTHENTICATE:
+        headerText = t('OAuth Authentication');
+        break;
       default:
         headerText = t('MCP Management');
     }
@@ -435,6 +444,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
             onViewTools={handleViewTools}
             onReconnect={handleReconnect}
             onDisable={handleDisable}
+            onAuthenticate={handleAuthenticate}
             onBack={handleNavigateBack}
           />
         );
@@ -463,6 +473,18 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
           <ToolDetailStep tool={selectedTool} onBack={handleNavigateBack} />
         );
 
+      case MCP_MANAGEMENT_STEPS.AUTHENTICATE:
+        return (
+          <AuthenticateStep
+            server={selectedServer}
+            onSuccess={() => {
+              // TODO: 认证成功后重新加载服务器列表
+              handleNavigateBack();
+            }}
+            onBack={handleNavigateBack}
+          />
+        );
+
       default:
         return (
           <Box>
@@ -480,6 +502,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
     handleViewTools,
     handleReconnect,
     handleDisable,
+    handleAuthenticate,
     handleNavigateBack,
     handleSelectTool,
     handleSelectDisableScope,

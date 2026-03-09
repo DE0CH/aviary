@@ -20,13 +20,18 @@ import {
 // 标签列宽度
 const LABEL_WIDTH = 15;
 
-type ServerAction = 'view-tools' | 'reconnect' | 'toggle-disable';
+type ServerAction =
+  | 'view-tools'
+  | 'reconnect'
+  | 'toggle-disable'
+  | 'authenticate';
 
 export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
   server,
   onViewTools,
   onReconnect,
   onDisable,
+  onAuthenticate,
   onBack,
 }) => {
   const [selectedAction, setSelectedAction] =
@@ -71,6 +76,16 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       value: 'toggle-disable',
     });
 
+    // 如果服务器配置了 OAuth，显示认证选项
+    if (server && !server.isDisabled) {
+      // TODO: 检查服务器是否有 OAuth 配置
+      result.push({
+        key: 'authenticate',
+        label: t('Authenticate'),
+        value: 'authenticate',
+      });
+    }
+
     return result;
   }, [server]);
 
@@ -88,6 +103,9 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
             break;
           case 'toggle-disable':
             onDisable?.();
+            break;
+          case 'authenticate':
+            onAuthenticate?.();
             break;
           default:
             break;
@@ -227,6 +245,9 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
                 break;
               case 'toggle-disable':
                 onDisable?.();
+                break;
+              case 'authenticate':
+                onAuthenticate?.();
                 break;
               default:
                 break;
