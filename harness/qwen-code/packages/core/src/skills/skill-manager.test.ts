@@ -391,11 +391,19 @@ You are a helpful assistant.
 
   describe('listSkills', () => {
     beforeEach(() => {
-      // Mock directory listing based on path to handle multiple base dirs per level
+      // Mock directory listing based on path to handle multiple base dirs per level.
+      // Use path.join to construct expected paths so separators match on all platforms.
+      const projectQwenSkillsDir = path.join(
+        '/test/project',
+        '.qwen',
+        'skills',
+      );
+      const userQwenSkillsDir = path.join('/home/user', '.qwen', 'skills');
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.mocked(fs.readdir).mockImplementation((dirPath: any) => {
         const pathStr = String(dirPath);
-        if (pathStr.includes('/test/project') && pathStr.includes('.qwen')) {
+        if (pathStr === projectQwenSkillsDir) {
           return Promise.resolve([
             {
               name: 'skill1',
@@ -417,7 +425,7 @@ You are a helpful assistant.
             },
           ] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
         }
-        if (pathStr.includes('/home/user') && pathStr.includes('.qwen')) {
+        if (pathStr === userQwenSkillsDir) {
           return Promise.resolve([
             {
               name: 'skill3',
