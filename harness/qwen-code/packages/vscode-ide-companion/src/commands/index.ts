@@ -87,6 +87,7 @@ export function registerNewCommands(
     vscode.commands.registerCommand(openNewChatTabCommand, async () => {
       const provider = createWebViewProvider();
       await provider.show();
+      await provider.createNewSession();
     }),
   );
 

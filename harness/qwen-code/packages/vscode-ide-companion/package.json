@@ -28,14 +28,7 @@
     "ide companion"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:qwenCode.chatView.panel",
-    "onView:qwenCode.chatView.secondary",
-    "onView:qwenCode.chatView.sidebar",
-    "onCommand:qwen-code.openChat",
-    "onCommand:qwen-code.focusChat",
-    "onCommand:qwen-code.newConversation",
-    "onCommand:qwen-code.showLogs"
+    "onStartupFinished"
   ],
   "contributes": {
     "jsonValidation": [
