@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -34,29 +34,45 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
 
   const statusColor = server ? getStatusColor(server.status) : 'gray';
 
-  const actions = [
-    {
-      key: 'view-tools',
-      get label() {
-        return t('View tools');
-      },
-      value: 'view-tools' as const,
-    },
-    {
-      key: 'reconnect',
-      get label() {
-        return t('Reconnect');
-      },
-      value: 'reconnect' as const,
-    },
-    {
+  // 根据服务器状态动态生成可用操作
+  const actions = useMemo(() => {
+    const result: Array<{
+      key: string;
+      label: string;
+      value: ServerAction;
+    }> = [];
+
+    if (!server) {
+      return result;
+    }
+
+    // 只在服务器未禁用且有工具时显示"查看工具"选项
+    if (!server.isDisabled && (server.toolCount ?? 0) > 0) {
+      result.push({
+        key: 'view-tools',
+        label: t('View tools'),
+        value: 'view-tools',
+      });
+    }
+
+    // 只在服务器未禁用且已断开连接时显示"重新连接"选项
+    if (!server.isDisabled && server.status === 'disconnected') {
+      result.push({
+        key: 'reconnect',
+        label: t('Reconnect'),
+        value: 'reconnect',
+      });
+    }
+
+    // 始终显示启用/禁用选项
+    result.push({
       key: 'toggle-disable',
-      get label() {
-        return server?.isDisabled ? t('Enable') : t('Disable');
-      },
-      value: 'toggle-disable' as const,
-    },
-  ];
+      label: server?.isDisabled ? t('Enable') : t('Disable'),
+      value: 'toggle-disable',
+    });
+
+    return result;
+  }, [server]);
 
   useKeypress(
     (key) => {
