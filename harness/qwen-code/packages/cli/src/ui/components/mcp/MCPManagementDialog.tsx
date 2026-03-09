@@ -324,17 +324,68 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
   }, [config, selectedServer, reloadServers]);
 
   // Handle disable/enable action
-  const handleDisable = useCallback(() => {
+  const handleDisable = useCallback(async () => {
     if (!selectedServer) return;
 
     // If server is already disabled, enable it directly
     if (selectedServer.isDisabled) {
       void handleEnableServer();
     } else {
-      // Otherwise navigate to disable scope selection
-      handleNavigateToStep(MCP_MANAGEMENT_STEPS.DISABLE_SCOPE_SELECT);
+      // Automatically determine the scope and disable without showing selection dialog
+      try {
+        setIsLoading(true);
+
+        const server = selectedServer;
+        const settings = loadSettings();
+
+        // Determine the scope based on server configuration location
+        let targetScope: 'user' | 'workspace' = 'user';
+        if (server.scope === 'extension') {
+          // Extension servers should not be disabled through user/workspace settings
+          // Show error message and return
+          debugLogger.warn(
+            `Cannot disable extension MCP server '${server.name}'`,
+          );
+          setIsLoading(false);
+          return;
+        } else if (server.scope === 'workspace') {
+          targetScope = 'workspace';
+        }
+
+        // Get current exclusion list for the target scope
+        const scopeSettings = settings.forScope(
+          targetScope === 'user' ? SettingScope.User : SettingScope.Workspace,
+        ).settings;
+        const currentExcluded = scopeSettings.mcp?.excluded || [];
+
+        // If server is not in exclusion list, add it
+        if (!currentExcluded.includes(server.name)) {
+          const newExcluded = [...currentExcluded, server.name];
+          settings.setValue(
+            targetScope === 'user' ? SettingScope.User : SettingScope.Workspace,
+            'mcp.excluded',
+            newExcluded,
+          );
+        }
+
+        // Use new disableMcpServer method to disable server
+        const toolRegistry = config.getToolRegistry();
+        if (toolRegistry) {
+          await toolRegistry.disableMcpServer(server.name);
+        }
+
+        // Reload server list
+        await reloadServers();
+      } catch (error) {
+        debugLogger.error(
+          `Error disabling server '${selectedServer.name}':`,
+          error,
+        );
+      } finally {
+        setIsLoading(false);
+      }
     }
-  }, [selectedServer, handleEnableServer, handleNavigateToStep]);
+  }, [selectedServer, handleEnableServer, config, reloadServers]);
 
   // Execute disable after selecting scope
   const handleSelectDisableScope = useCallback(
