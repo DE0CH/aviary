@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -34,9 +34,6 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
   onAuthenticate,
   onBack,
 }) => {
-  const [selectedAction, setSelectedAction] =
-    useState<ServerAction>('view-tools');
-
   const statusColor = server
     ? server.isDisabled
       ? 'yellow'
@@ -92,31 +89,10 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
     return result;
   }, [server]);
 
-  useEffect(() => {
-    setSelectedAction(server?.isDisabled ? 'toggle-disable' : 'view-tools');
-  }, [server?.isDisabled]);
-
   useKeypress(
     (key) => {
       if (key.name === 'escape') {
         onBack();
-      } else if (key.name === 'return') {
-        switch (selectedAction) {
-          case 'view-tools':
-            onViewTools();
-            break;
-          case 'reconnect':
-            onReconnect?.();
-            break;
-          case 'toggle-disable':
-            onDisable?.();
-            break;
-          case 'authenticate':
-            onAuthenticate?.();
-            break;
-          default:
-            break;
-        }
       }
     },
     { isActive: true },
@@ -232,9 +208,6 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
         <RadioButtonSelect<ServerAction>
           items={actions}
           showNumbers={false}
-          onHighlight={(value: ServerAction) => {
-            setSelectedAction(value);
-          }}
           onSelect={(value: ServerAction) => {
             switch (value) {
               case 'view-tools':
