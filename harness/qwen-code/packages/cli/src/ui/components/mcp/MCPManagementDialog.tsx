@@ -32,6 +32,7 @@ import {
 } from '@qwen-code/qwen-code-core';
 import { loadSettings, SettingScope } from '../../../config/settings.js';
 import { isToolValid, getToolInvalidReasons } from './utils.js';
+import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 
 const debugLogger = createDebugLogger('MCP_DIALOG');
 
@@ -39,6 +40,8 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
   onClose,
 }) => {
   const config = useConfig();
+  const { columns: width } = useTerminalSize();
+  const boxWidth = width - 4;
 
   const [servers, setServers] = useState<MCPServerDisplayInfo[]>([]);
   const [selectedServerIndex, setSelectedServerIndex] = useState<number>(-1);
@@ -440,39 +443,84 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
   // Render step header
   const renderStepHeader = useCallback(() => {
     const currentStep = getCurrentStep();
-    let headerText = '';
-
-    switch (currentStep) {
-      case MCP_MANAGEMENT_STEPS.SERVER_LIST:
-        headerText = t('Manage MCP servers');
-        break;
-      case MCP_MANAGEMENT_STEPS.SERVER_DETAIL:
-        headerText = selectedServer?.name || t('Server Detail');
-        break;
-      case MCP_MANAGEMENT_STEPS.DISABLE_SCOPE_SELECT:
-        headerText = t('Disable Server');
-        break;
-      case MCP_MANAGEMENT_STEPS.TOOL_LIST:
-        headerText = t('Tools');
-        break;
-      case MCP_MANAGEMENT_STEPS.TOOL_DETAIL:
-        headerText = selectedTool?.name || t('Tool Detail');
-        break;
-      case MCP_MANAGEMENT_STEPS.AUTHENTICATE:
-        headerText = t('OAuth Authentication');
-        break;
-      default:
-        headerText = t('MCP Management');
-    }
-
-    return (
-      <Box>
+    let headerText = (
+      <Box flexDirection="column">
         <Text color={theme.text.accent} bold>
-          {headerText}
+          {t('Manage MCP servers')}
+        </Text>
+        <Text color={theme.text.secondary}>
+          {servers.length} {servers.length === 1 ? t('server') : t('servers')}
         </Text>
       </Box>
     );
-  }, [getCurrentStep, selectedServer, selectedTool]);
+
+    switch (currentStep) {
+      case MCP_MANAGEMENT_STEPS.SERVER_DETAIL:
+        headerText = (
+          <Box>
+            <Text color={theme.text.accent} bold>
+              {selectedServer?.name || t('Server Detail')}
+            </Text>
+          </Box>
+        );
+        break;
+      case MCP_MANAGEMENT_STEPS.TOOL_LIST:
+        headerText = (
+          <Box flexDirection="column">
+            <Text color={theme.text.accent} bold>
+              {t('Tools for {{serverName}}', {
+                serverName: selectedServer?.name || 'Server',
+              })}
+            </Text>
+            <Text color={theme.text.secondary}>
+              ({getServerTools().length}{' '}
+              {getServerTools().length === 1 ? t('tool') : t('tools')})
+            </Text>
+          </Box>
+        );
+        break;
+      case MCP_MANAGEMENT_STEPS.TOOL_DETAIL:
+        headerText = (
+          <Box flexDirection="column">
+            <Box>
+              <Text color={theme.text.accent} bold>
+                {selectedTool?.name || t('Tool Detail')}
+              </Text>
+              {selectedTool?.annotations?.destructiveHint && (
+                <Text color={theme.status.error}>{'[destructive]'}</Text>
+              )}
+              {selectedTool?.annotations?.idempotentHint && (
+                <Text color={theme.status.warning}>{'[idempotent]'}</Text>
+              )}
+              {selectedTool?.annotations?.readOnlyHint && (
+                <Text color={theme.status.success}>{'[read-only]'}</Text>
+              )}
+              {selectedTool?.annotations?.openWorldHint && (
+                <Text color={theme.text.primary}>{'[open-world]'}</Text>
+              )}
+            </Box>
+            <Text color={theme.text.secondary}>
+              {selectedTool?.serverName || t('Server')}
+            </Text>
+          </Box>
+        );
+        break;
+      case MCP_MANAGEMENT_STEPS.AUTHENTICATE:
+        headerText = (
+          <Box>
+            <Text color={theme.text.accent} bold>
+              {t('OAuth Authentication')}
+            </Text>
+          </Box>
+        );
+        break;
+      case MCP_MANAGEMENT_STEPS.SERVER_LIST:
+      default:
+        break;
+    }
+
+    return headerText;
+  }, [getCurrentStep, selectedServer, selectedTool, getServerTools, servers]);
 
   // Render step content
   const renderStepContent = useCallback(() => {
@@ -610,14 +658,15 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
   );
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={boxWidth}>
       <Box
         borderStyle="single"
         borderColor={theme.border.default}
         flexDirection="column"
-        padding={1}
-        width="100%"
+        width={boxWidth}
         gap={1}
+        paddingLeft={1}
+        paddingRight={1}
       >
         {renderStepHeader()}
         {renderStepContent()}

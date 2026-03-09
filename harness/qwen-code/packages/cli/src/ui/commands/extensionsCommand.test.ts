@@ -35,18 +35,10 @@ const mockGetExtensions = vi.fn();
 const mockGetLoadedExtensions = vi.fn();
 const mockInstallExtension = vi.fn();
 
-const createMockExtensionManager = () => {
-  // Create a mock that passes instanceof ExtensionManager check
-  const mock = {
-    installExtension: mockInstallExtension,
-    getLoadedExtensions: mockGetLoadedExtensions,
-  };
-
-  // Set up prototype to pass instanceof check
-  Object.setPrototypeOf(mock, ExtensionManager.prototype);
-
-  return mock;
-};
+const createMockExtensionManager = () => ({
+  installExtension: mockInstallExtension,
+  getLoadedExtensions: mockGetLoadedExtensions,
+});
 
 describe('extensionsCommand', () => {
   let mockContext: CommandContext;

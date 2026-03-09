@@ -14,7 +14,6 @@ import { VISIBLE_TOOLS_COUNT } from '../constants.js';
 
 export const ToolListStep: React.FC<ToolListStepProps> = ({
   tools,
-  serverName,
   onSelect,
   onBack,
 }) => {
@@ -87,15 +86,6 @@ export const ToolListStep: React.FC<ToolListStepProps> = ({
 
   return (
     <Box flexDirection="column">
-      {/* 标题 */}
-      <Box marginBottom={1}>
-        <Text bold>{t('Tools for {{name}}', { name: serverName })}</Text>
-        <Text color={theme.text.secondary}>
-          {' '}
-          ({tools.length} {tools.length === 1 ? t('tool') : t('tools')})
-        </Text>
-      </Box>
-
       {/* 工具列表 */}
       <Box flexDirection="column">
         {displayTools.map((tool, index) => {

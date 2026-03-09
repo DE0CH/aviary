@@ -81,7 +81,7 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
     });
 
     // 只在服务器配置了 OAuth 时显示认证选项
-    if (!server.isDisabled && server.config.oauth?.enabled) {
+    if (!server.isDisabled) {
       result.push({
         key: 'authenticate',
         label: t('Authenticate'),

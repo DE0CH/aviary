@@ -105,9 +105,7 @@ export const AuthenticateStep: React.FC<AuthenticateStepProps> = ({
   useKeypress(
     (key) => {
       if (key.name === 'escape') {
-        if (authState !== 'authenticating') {
-          onBack();
-        }
+        onBack();
       } else if (key.name === 'return') {
         if (authState === 'idle') {
           void runAuthentication();
