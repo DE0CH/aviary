@@ -92,7 +92,28 @@ async function exploreAction(context: CommandContext, args: string) {
   }
 }
 
-async function listAction(_context: CommandContext, _args: string) {
+async function listAction(context: CommandContext, _args: string) {
+  const extensionManager = context.services.config?.getExtensionManager();
+
+  if (!(extensionManager instanceof ExtensionManager)) {
+    debugLogger.error(
+      `Cannot ${context.invocation?.name} extensions in this environment`,
+    );
+
+    // Show user-friendly error message
+    context.ui.addItem(
+      {
+        type: MessageType.ERROR,
+        text: t(
+          'Extension management is not available in the current environment. ' +
+            'This feature may not be supported in your current mode or configuration.',
+        ),
+      },
+      Date.now(),
+    );
+    return;
+  }
+
   return {
     type: 'dialog' as const,
     dialog: 'extensions_manage' as const,
