@@ -135,19 +135,7 @@ export class IdeClient {
   }
 
   async connect(): Promise<void> {
-    debugLogger.debug('[IdeClient] connect() called');
-    debugLogger.debug(
-      '[IdeClient] currentIde:',
-      this.currentIde?.name || 'null',
-    );
-    debugLogger.debug('[IdeClient] TERM_PROGRAM:', process.env['TERM_PROGRAM']);
-    debugLogger.debug(
-      '[IdeClient] CURSOR_TRACE_ID:',
-      process.env['CURSOR_TRACE_ID'],
-    );
-
     if (!this.currentIde) {
-      debugLogger.debug('[IdeClient] No current IDE detected, disconnecting');
       this.setState(
         IDEConnectionStatus.Disconnected,
         `IDE integration is not supported in your current environment. To use this feature, run Qwen Code in one of these supported IDEs: VS Code or VS Code forks`,
@@ -159,19 +147,7 @@ export class IdeClient {
     debugLogger.debug('[IdeClient] Setting state to Connecting');
     this.setState(IDEConnectionStatus.Connecting);
 
-    debugLogger.debug('[IdeClient] Getting connection config from file...');
     this.connectionConfig = await this.getConnectionConfigFromFile();
-    debugLogger.debug(
-      '[IdeClient] Connection config:',
-      this.connectionConfig
-        ? {
-            port: this.connectionConfig.port,
-            workspacePath:
-              this.connectionConfig.workspacePath?.substring(0, 50) + '...',
-            hasAuthToken: !!this.connectionConfig.authToken,
-          }
-        : 'null',
-    );
 
     if (this.connectionConfig?.authToken) {
       this.authToken = this.connectionConfig.authToken;
@@ -180,51 +156,33 @@ export class IdeClient {
       this.connectionConfig?.workspacePath ??
       process.env['QWEN_CODE_IDE_WORKSPACE_PATH'];
 
-    debugLogger.debug(
-      '[IdeClient] Workspace path:',
-      workspacePath?.substring(0, 50) + '...',
-    );
     const { isValid, error } = IdeClient.validateWorkspacePath(
       workspacePath,
       process.cwd(),
     );
 
     if (!isValid) {
-      debugLogger.debug('[IdeClient] Workspace path validation failed:', error);
       this.setState(IDEConnectionStatus.Disconnected, error, true);
       return;
     }
 
-    debugLogger.debug('[IdeClient] Workspace path validation passed');
-
     if (this.connectionConfig) {
       if (this.connectionConfig.port) {
-        debugLogger.debug(
-          '[IdeClient] Trying HTTP connection on port:',
-          this.connectionConfig.port,
-        );
         const connected = await this.establishHttpConnection(
           this.connectionConfig.port,
         );
         if (connected) {
-          debugLogger.debug('[IdeClient] HTTP connection successful');
           return;
         }
-        debugLogger.debug('[IdeClient] HTTP connection failed');
       }
       if (this.connectionConfig.stdio) {
-        debugLogger.debug('[IdeClient] Trying stdio connection');
         const connected = await this.establishStdioConnection(
           this.connectionConfig.stdio,
         );
         if (connected) {
-          debugLogger.debug('[IdeClient] Stdio connection successful');
           return;
         }
-        debugLogger.debug('[IdeClient] Stdio connection failed');
       }
-    } else {
-      debugLogger.debug('[IdeClient] No connection config found');
     }
 
     const portFromEnv = this.getPortFromEnv();
@@ -617,45 +575,24 @@ export class IdeClient {
     | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
     | undefined
   > {
-    debugLogger.debug('[getConnectionConfigFromFile] Starting...');
     const portFromEnv = this.getPortFromEnv();
-    debugLogger.debug(
-      '[getConnectionConfigFromFile] portFromEnv:',
-      portFromEnv || 'null',
-    );
 
     if (portFromEnv) {
       try {
         const ideDir = Storage.getGlobalIdeDir();
         const lockFile = path.join(ideDir, `${portFromEnv}.lock`);
-        debugLogger.debug(
-          '[getConnectionConfigFromFile] Trying to read lock file:',
-          lockFile,
-        );
         const lockFileContents = await fs.promises.readFile(lockFile, 'utf8');
-        debugLogger.debug(
-          '[getConnectionConfigFromFile] Lock file read successfully',
-        );
         return JSON.parse(lockFileContents);
-      } catch (e) {
-        debugLogger.debug(
-          '[getConnectionConfigFromFile] Failed to read lock file:',
-          (e as Error).message,
-        );
+      } catch (_e) {
         // Fall through to legacy discovery.
       }
     }
 
     // Legacy connection files were written in the global temp directory.
-    debugLogger.debug(
-      '[getConnectionConfigFromFile] Trying legacy connection config...',
-    );
     const legacyConfig = await this.getLegacyConnectionConfig(portFromEnv);
     if (legacyConfig) {
-      debugLogger.debug('[getConnectionConfigFromFile] Legacy config found');
       return legacyConfig;
     }
-    debugLogger.debug('[getConnectionConfigFromFile] No legacy config found');
 
     // Scan lock directory as a last resort when neither env var nor legacy
     // file is available (e.g. code-server where the env var is not injected).
@@ -663,40 +600,18 @@ export class IdeClient {
     // first one whose workspace matches the current working directory.
     if (!portFromEnv) {
       const ideDir = Storage.getGlobalIdeDir();
-      debugLogger.debug(
-        '[getConnectionConfigFromFile] Scanning ideDir:',
-        ideDir,
-      );
       const configs = await this.getAllConnectionConfigs(ideDir);
       if (configs.length > 0) {
-        debugLogger.debug(
-          `[getConnectionConfigFromFile] Discovered ${configs.length} IDE lock file(s) via directory scan`,
-        );
         const cwd = process.cwd();
         const match = configs.find(
           (c) =>
             c.workspacePath !== undefined &&
             IdeClient.validateWorkspacePath(c.workspacePath, cwd).isValid,
         );
-        if (match) {
-          debugLogger.debug(
-            '[getConnectionConfigFromFile] Found matching config via directory scan',
-          );
-        } else {
-          debugLogger.debug(
-            '[getConnectionConfigFromFile] No matching config found via directory scan',
-          );
-        }
         return match;
       }
-      debugLogger.debug(
-        '[getConnectionConfigFromFile] No configs found via directory scan',
-      );
     }
 
-    debugLogger.debug(
-      '[getConnectionConfigFromFile] Returning undefined - no config found',
-    );
     return undefined;
   }
 
@@ -892,69 +807,28 @@ export class IdeClient {
   }
 
   private async establishHttpConnection(port: string): Promise<boolean> {
-    debugLogger.debug(
-      '[establishHttpConnection] Starting connection to port:',
-      port,
-    );
-    debugLogger.debug(
-      '[establishHttpConnection] Checking container environment...',
-    );
-
-    const isInContainer =
-      fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
-    debugLogger.debug(
-      '[establishHttpConnection] isInContainer:',
-      isInContainer,
-    );
-
     // Always try localhost first. This covers the most common scenarios:
     // non-container environments, and code-server where the extension runs
     // inside the same container as the CLI.
-    debugLogger.debug(
-      '[establishHttpConnection] Trying localhost (127.0.0.1)...',
-    );
     const connected = await this.tryHttpConnect(port, LOCAL_HOST);
     if (connected) {
-      debugLogger.debug(
-        '[establishHttpConnection] Connected to localhost successfully',
-      );
       return true;
     }
-    debugLogger.debug(
-      '[establishHttpConnection] Failed to connect to localhost',
-    );
 
     // If localhost failed and we are inside a container, the IDE server may
     // be running on the host machine (e.g. VS Code Dev Containers). Try
     // host.docker.internal as a fallback when it is DNS-resolvable.
-    debugLogger.debug(
-      '[establishHttpConnection] Calling getIdeServerHost()...',
-    );
     const ideHost = await getIdeServerHost();
-    debugLogger.debug(
-      '[establishHttpConnection] getIdeServerHost returned:',
-      ideHost,
-    );
-
     if (ideHost === CONTAINER_HOST) {
-      debugLogger.debug(
-        `[establishHttpConnection] Connection to ${LOCAL_HOST}:${port} failed, retrying with ${CONTAINER_HOST}`,
-      );
       return this.tryHttpConnect(port, CONTAINER_HOST);
     }
 
-    debugLogger.debug(
-      '[establishHttpConnection] ideHost is not CONTAINER_HOST, giving up',
-    );
     return false;
   }
 
   private async tryHttpConnect(port: string, host: string): Promise<boolean> {
     let transport: StreamableHTTPClientTransport | undefined;
     try {
-      debugLogger.debug(
-        `Attempting to connect to IDE via HTTP at ${host}:${port}`,
-      );
       this.client = new Client({
         name: 'streamable-http-client',
         // TODO(#3487): use the CLI version here.
@@ -980,8 +854,7 @@ export class IdeClient {
       await this.discoverTools();
       this.setState(IDEConnectionStatus.Connected);
       return true;
-    } catch (error) {
-      debugLogger.debug(`HTTP connection to ${host}:${port} failed:`, error);
+    } catch (_error) {
       if (transport) {
         try {
           await transport.close();
@@ -999,7 +872,6 @@ export class IdeClient {
   }: StdioConfig): Promise<boolean> {
     let transport: StdioClientTransport | undefined;
     try {
-      debugLogger.debug('Attempting to connect to IDE via stdio');
       this.client = new Client({
         name: 'stdio-client',
         // TODO(#3487): use the CLI version here.
@@ -1058,9 +930,6 @@ async function isHostResolvable(hostname: string): Promise<boolean> {
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      debugLogger.debug(
-        `DNS lookup timed out for ${hostname} after ${DNS_LOOKUP_TIMEOUT_MS}ms`,
-      );
       resolve(false);
     }, DNS_LOOKUP_TIMEOUT_MS);
     timeout.unref?.();
@@ -1069,9 +938,6 @@ async function isHostResolvable(hostname: string): Promise<boolean> {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (err) {
-        debugLogger.debug(`DNS lookup failed for ${hostname}: ${err.message}`);
-      }
       resolve(!err);
     });
   });
@@ -1096,13 +962,9 @@ async function resolveIdeServerHost(): Promise<string> {
 
   const reachable = await isHostResolvable(CONTAINER_HOST);
   if (reachable) {
-    debugLogger.debug('Container detected, host.docker.internal is reachable');
     return CONTAINER_HOST;
   }
 
-  debugLogger.debug(
-    'Container detected, but host.docker.internal is NOT reachable, falling back to 127.0.0.1',
-  );
   return LOCAL_HOST;
 }
 
