@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
@@ -37,7 +37,11 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
   const [selectedAction, setSelectedAction] =
     useState<ServerAction>('view-tools');
 
-  const statusColor = server ? getStatusColor(server.status) : 'gray';
+  const statusColor = server
+    ? server.isDisabled
+      ? 'yellow'
+      : getStatusColor(server.status)
+    : 'gray';
 
   // 根据服务器状态动态生成可用操作
   const actions = useMemo(() => {
@@ -76,9 +80,8 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       value: 'toggle-disable',
     });
 
-    // 如果服务器配置了 OAuth，显示认证选项
-    if (server && !server.isDisabled) {
-      // TODO: 检查服务器是否有 OAuth 配置
+    // 只在服务器配置了 OAuth 时显示认证选项
+    if (!server.isDisabled && server.config.oauth?.enabled) {
       result.push({
         key: 'authenticate',
         label: t('Authenticate'),
@@ -88,6 +91,10 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
 
     return result;
   }, [server]);
+
+  useEffect(() => {
+    setSelectedAction(server?.isDisabled ? 'toggle-disable' : 'view-tools');
+  }, [server?.isDisabled]);
 
   useKeypress(
     (key) => {
@@ -141,10 +148,8 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
                     : theme.status.error
               }
             >
-              {getStatusIcon(server.status)} {t(server.status)}
-              {server.isDisabled && (
-                <Text color={theme.status.warning}> {t('(disabled)')}</Text>
-              )}
+              {getStatusIcon(server.status)}{' '}
+              {server.isDisabled ? t('disabled') : t(server.status)}
             </Text>
           </Box>
         </Box>
@@ -154,7 +159,7 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
             <Text color={theme.text.primary}>{t('Source:')}</Text>
           </Box>
           <Box>
-            <Text color={theme.text.secondary}>
+            <Text color={theme.text.primary}>
               {server.scope === 'user'
                 ? t('User Settings')
                 : server.scope === 'workspace'
@@ -184,37 +189,29 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
           </Box>
         )}
 
-        <Box>
-          <Box width={LABEL_WIDTH}>
-            <Text color={theme.text.primary}>{t('Capabilities:')}</Text>
-          </Box>
+        {!server.isDisabled && (
           <Box>
-            <Text>
-              {server.toolCount > 0 ? t('tools') : ''}
-              {server.toolCount > 0 && server.promptCount > 0 ? ', ' : ''}
-              {server.promptCount > 0 ? t('prompts') : ''}
-            </Text>
+            <Box width={LABEL_WIDTH}>
+              <Text color={theme.text.primary}>{t('Tools:')}</Text>
+            </Box>
+            <Box>
+              <Text>
+                {server.toolCount}{' '}
+                {server.toolCount === 1 ? t('tool') : t('tools')}
+                {!!server.invalidToolCount && server.invalidToolCount > 0 && (
+                  <Text color={theme.status.warning}>
+                    {' '}
+                    ({server.invalidToolCount}{' '}
+                    {server.invalidToolCount === 1
+                      ? t('invalid')
+                      : t('invalid')}
+                    )
+                  </Text>
+                )}
+              </Text>
+            </Box>
           </Box>
-        </Box>
-
-        <Box>
-          <Box width={LABEL_WIDTH}>
-            <Text color={theme.text.primary}>{t('Tools:')}</Text>
-          </Box>
-          <Box>
-            <Text>
-              {server.toolCount}{' '}
-              {server.toolCount === 1 ? t('tool') : t('tools')}
-              {!!server.invalidToolCount && server.invalidToolCount > 0 && (
-                <Text color={theme.status.warning}>
-                  {' '}
-                  ({server.invalidToolCount}{' '}
-                  {server.invalidToolCount === 1 ? t('invalid') : t('invalid')})
-                </Text>
-              )}
-            </Text>
-          </Box>
-        </Box>
+        )}
 
         {server.errorMessage && (
           <Box>
@@ -234,7 +231,10 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       <Box>
         <RadioButtonSelect<ServerAction>
           items={actions}
-          onHighlight={(value: ServerAction) => setSelectedAction(value)}
+          showNumbers={false}
+          onHighlight={(value: ServerAction) => {
+            setSelectedAction(value);
+          }}
           onSelect={(value: ServerAction) => {
             switch (value) {
               case 'view-tools':

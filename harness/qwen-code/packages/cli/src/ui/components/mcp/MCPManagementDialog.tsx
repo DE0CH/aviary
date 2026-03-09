@@ -529,8 +529,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
           <AuthenticateStep
             server={selectedServer}
             onSuccess={() => {
-              // TODO: 认证成功后重新加载服务器列表
-              handleNavigateBack();
+              void reloadServers();
             }}
             onBack={handleNavigateBack}
           />
@@ -558,6 +557,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
     handleSelectTool,
     handleSelectDisableScope,
     getServerTools,
+    reloadServers,
   ]);
 
   // Render step footer

@@ -90,11 +90,22 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
 
   return (
     <Box flexDirection="column">
+      {/* 服务器统计 */}
+      <Box marginBottom={1}>
+        <Text color={theme.text.secondary}>
+          {servers.length} {servers.length === 1 ? t('server') : t('servers')}
+        </Text>
+      </Box>
+
       {/* 分组服务器列表 */}
       {groupedServers.map((group, groupIndex) => (
-        <Box key={group.source} flexDirection="column" marginBottom={1}>
+        <Box
+          key={group.source}
+          flexDirection="column"
+          marginBottom={groupIndex === groupedServers.length - 1 ? 0 : 1}
+        >
           <Text bold color={theme.text.primary}>
-            {group.displayName}
+            {`  ${group.displayName}`}
             {group.servers[0]?.configPath && (
               <Text color={theme.text.secondary}>
                 {' '}
@@ -107,7 +118,9 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
               const isSelected =
                 groupIndex === currentPosition.groupIndex &&
                 itemIndex === currentPosition.itemIndex;
-              const statusColor = getStatusColor(server.status);
+              const statusColor = server.isDisabled
+                ? 'yellow'
+                : getStatusColor(server.status);
 
               return (
                 <Box key={server.name}>
@@ -142,13 +155,9 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
                           : theme.status.error
                     }
                   >
-                    {getStatusIcon(server.status)} {t(server.status)}
+                    {getStatusIcon(server.status)}{' '}
+                    {server.isDisabled ? t('disabled') : t(server.status)}
                   </Text>
-                  {/* 显示 Scope 和禁用状态 */}
-                  <Text color={theme.text.secondary}> [{server.scope}]</Text>
-                  {server.isDisabled && (
-                    <Text color={theme.status.warning}> {t('(disabled)')}</Text>
-                  )}
                   {/* 显示无效工具警告 */}
                   {!!server.invalidToolCount && server.invalidToolCount > 0 && (
                     <Text color={theme.status.warning}>
@@ -166,7 +175,7 @@ export const ServerListStep: React.FC<ServerListStepProps> = ({
       ))}
 
       {/* 提示信息 */}
-      {servers.some((s) => s.status === 'disconnected') && (
+      {servers.some((s) => s.status === 'disconnected' && !s.isDisabled) && (
         <Box>
           <Text color={theme.status.warning}>
             ※ {t('Run qwen --debug to see error logs')}

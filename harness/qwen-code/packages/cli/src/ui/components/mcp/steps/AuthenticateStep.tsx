@@ -4,84 +4,120 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../../semantic-colors.js';
 import { useKeypress } from '../../../hooks/useKeypress.js';
-import { RadioButtonSelect } from '../../shared/RadioButtonSelect.js';
 import { t } from '../../../../i18n/index.js';
 import type { AuthenticateStepProps } from '../types.js';
-import type { MCPServerConfig } from '@qwen-code/qwen-code-core';
+import { useConfig } from '../../../contexts/ConfigContext.js';
+import {
+  MCPOAuthProvider,
+  MCPOAuthTokenStorage,
+  getErrorMessage,
+} from '@qwen-code/qwen-code-core';
+import { appEvents, AppEvent } from '../../../../utils/events.js';
 
-// TODO: 稍后从 utils.ts 导入此函数
-const getOAuthConfigFromServerConfig = (_config: MCPServerConfig): unknown =>
-  null;
-
-type AuthAction = 'authenticate' | 'back';
+type AuthState = 'idle' | 'authenticating' | 'success' | 'error';
 
 export const AuthenticateStep: React.FC<AuthenticateStepProps> = ({
   server,
+  onSuccess,
   onBack,
 }) => {
-  const [selectedAction, setSelectedAction] = useState<AuthAction>('back');
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const config = useConfig();
+  const [authState, setAuthState] = useState<AuthState>('idle');
+  const [messages, setMessages] = useState<string[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isRunning = useRef(false);
 
-  const actions = [
-    {
-      key: 'authenticate',
-      label: t('Authenticate'),
-      value: 'authenticate' as const,
-    },
-    {
-      key: 'back',
-      label: t('Back'),
-      value: 'back' as const,
-    },
-  ];
+  const runAuthentication = useCallback(async () => {
+    if (!server || !config || isRunning.current) return;
+    isRunning.current = true;
+
+    setAuthState('authenticating');
+    setMessages([]);
+    setErrorMessage(null);
+
+    // Listen for OAuth display messages (same as mcpCommand.ts)
+    const displayListener = (message: string) => {
+      setMessages((prev) => [...prev, message]);
+    };
+    appEvents.on(AppEvent.OauthDisplayMessage, displayListener);
+
+    try {
+      setMessages([
+        t("Starting OAuth authentication for MCP server '{{name}}'...", {
+          name: server.name,
+        }),
+      ]);
+
+      let oauthConfig = server.config.oauth;
+      if (!oauthConfig) {
+        oauthConfig = { enabled: false };
+      }
+
+      const mcpServerUrl = server.config.httpUrl || server.config.url;
+      const authProvider = new MCPOAuthProvider(new MCPOAuthTokenStorage());
+      await authProvider.authenticate(
+        server.name,
+        oauthConfig,
+        mcpServerUrl,
+        appEvents,
+      );
+
+      setMessages((prev) => [
+        ...prev,
+        t("Successfully authenticated and refreshed tools for '{{name}}'.", {
+          name: server.name,
+        }),
+      ]);
+
+      // Trigger tool re-discovery to pick up authenticated server
+      const toolRegistry = config.getToolRegistry();
+      if (toolRegistry) {
+        setMessages((prev) => [
+          ...prev,
+          t("Re-discovering tools from '{{name}}'...", {
+            name: server.name,
+          }),
+        ]);
+        await toolRegistry.discoverToolsForServer(server.name);
+      }
+
+      // Update the client with the new tools
+      const geminiClient = config.getGeminiClient();
+      if (geminiClient) {
+        await geminiClient.setTools();
+      }
+
+      setAuthState('success');
+      onSuccess?.();
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+      setAuthState('error');
+    } finally {
+      isRunning.current = false;
+      appEvents.removeListener(AppEvent.OauthDisplayMessage, displayListener);
+    }
+  }, [server, config, onSuccess]);
 
   useKeypress(
     (key) => {
       if (key.name === 'escape') {
-        onBack();
-      } else if (key.name === 'return' && !isAuthenticating) {
-        switch (selectedAction) {
-          case 'authenticate':
-            handleAuthenticate();
-            break;
-          case 'back':
-            onBack();
-            break;
-          default:
-            break;
+        if (authState !== 'authenticating') {
+          onBack();
+        }
+      } else if (key.name === 'return') {
+        if (authState === 'idle') {
+          void runAuthentication();
+        } else if (authState === 'success' || authState === 'error') {
+          onBack();
         }
       }
     },
     { isActive: true },
   );
-
-  const handleAuthenticate = async () => {
-    if (!server) return;
-
-    setIsAuthenticating(true);
-    setAuthError(null);
-
-    try {
-      // TODO: 实现 OAuth 认证逻辑
-      // 这里需要调用 MCPOAuthProvider 进行认证
-      // 认证成功后调用 onSuccess()
-      // 认证失败时设置 authError
-
-      // 临时实现：显示提示信息
-      setAuthError(t('OAuth authentication is not yet implemented'));
-    } catch (error) {
-      setAuthError(
-        error instanceof Error ? error.message : t('Authentication failed'),
-      );
-    } finally {
-      setIsAuthenticating(false);
-    }
-  };
 
   if (!server) {
     return (
@@ -91,72 +127,51 @@ export const AuthenticateStep: React.FC<AuthenticateStepProps> = ({
     );
   }
 
-  const oauthConfig = getOAuthConfigFromServerConfig(server.config);
-  const hasOAuth = !!oauthConfig;
-
   return (
     <Box flexDirection="column" gap={1}>
-      {/* 认证说明 */}
-      <Box flexDirection="column">
-        <Text color={theme.text.primary} bold>
-          {t('OAuth Authentication')}
+      {/* Server info */}
+      <Box>
+        <Text color={theme.text.secondary}>
+          {t('Server:')} {server.name}
         </Text>
-
-        <Box marginTop={1}>
-          <Text color={theme.text.secondary}>
-            {t('Server:')} {server.name}
-          </Text>
-        </Box>
-
-        {!hasOAuth && (
-          <Box marginTop={1}>
-            <Text color={theme.status.warning}>
-              {t('This server does not have OAuth configuration.')}
-            </Text>
-          </Box>
-        )}
-
-        {authError && (
-          <Box marginTop={1}>
-            <Text color={theme.status.error}>{authError}</Text>
-          </Box>
-        )}
       </Box>
 
-      {/* 操作列表 */}
-      {!hasOAuth ? (
-        <Box>
-          <RadioButtonSelect<AuthAction>
-            items={actions.filter((a) => a.key === 'back')}
-            onHighlight={(value: AuthAction) => setSelectedAction(value)}
-            onSelect={(value: AuthAction) => {
-              if (value === 'back') {
-                onBack();
-              }
-            }}
-          />
-        </Box>
-      ) : (
-        <Box>
-          <RadioButtonSelect<AuthAction>
-            items={actions}
-            onHighlight={(value: AuthAction) => setSelectedAction(value)}
-            onSelect={(value: AuthAction) => {
-              if (value === 'back') {
-                onBack();
-              }
-            }}
-          />
+      {/* Progress messages */}
+      {messages.length > 0 && (
+        <Box flexDirection="column">
+          {messages.map((msg, i) => (
+            <Text key={i} color={theme.text.secondary}>
+              {msg}
+            </Text>
+          ))}
         </Box>
       )}
 
-      {isAuthenticating && (
+      {/* Error message */}
+      {authState === 'error' && errorMessage && (
         <Box>
-          <Text color={theme.text.secondary}>
-            {t('Authenticating... Please wait.')}
-          </Text>
+          <Text color={theme.status.error}>{errorMessage}</Text>
         </Box>
       )}
+
+      {/* Action hints */}
+      <Box>
+        {authState === 'idle' && (
+          <Text color={theme.text.secondary}>
+            {t('Press Enter to start authentication, Esc to go back')}
+          </Text>
+        )}
+        {authState === 'authenticating' && (
+          <Text color={theme.text.secondary}>
+            {t('Authenticating... Please complete the login in your browser.')}
+          </Text>
+        )}
+        {(authState === 'success' || authState === 'error') && (
+          <Text color={theme.text.secondary}>
+            {t('Press Enter or Esc to go back')}
+          </Text>
+        )}
+      </Box>
     </Box>
   );
 };
