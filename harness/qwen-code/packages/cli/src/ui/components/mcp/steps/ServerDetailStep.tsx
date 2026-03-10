@@ -136,9 +136,9 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
           </Box>
           <Box>
             <Text color={theme.text.primary}>
-              {server.scope === 'user'
+              {server.source === 'user'
                 ? t('User Settings')
-                : server.scope === 'workspace'
+                : server.source === 'project'
                   ? t('Workspace Settings')
                   : t('Extension')}
             </Text>
