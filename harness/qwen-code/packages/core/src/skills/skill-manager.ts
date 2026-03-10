@@ -21,17 +21,11 @@ import type { Config } from '../config/config.js';
 import { validateConfig } from './skill-load.js';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { normalizeContent } from '../utils/textUtils.js';
+import { SKILL_PROVIDER_CONFIG_DIRS } from '../config/storage.js';
 
 const debugLogger = createDebugLogger('SKILL_MANAGER');
 
 const QWEN_CONFIG_DIR = '.qwen';
-const PROVIDER_CONFIG_DIRS = [
-  '.qwen',
-  '.agent',
-  '.claude',
-  '.cursor',
-  '.codex',
-];
 const SKILLS_CONFIG_DIR = 'skills';
 const SKILL_MANIFEST_FILE = 'SKILL.md';
 
@@ -424,10 +418,10 @@ export class SkillManager {
   getSkillsBaseDirs(level: SkillLevel): string[] {
     const baseDirs =
       level === 'project'
-        ? PROVIDER_CONFIG_DIRS.map((v) =>
+        ? SKILL_PROVIDER_CONFIG_DIRS.map((v) =>
             path.join(this.config.getProjectRoot(), v, SKILLS_CONFIG_DIR),
           )
-        : PROVIDER_CONFIG_DIRS.map((v) =>
+        : SKILL_PROVIDER_CONFIG_DIRS.map((v) =>
             path.join(os.homedir(), v, SKILLS_CONFIG_DIR),
           );
     return baseDirs;
