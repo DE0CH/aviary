@@ -402,7 +402,8 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Select first option in Q1
       stdin.write('\r');
-      await wait(200); // Wait for auto-advance timeout (150ms)
+      // Wait for auto-advance (150ms timeout) with extra buffer for Windows CI
+      await wait(250);
 
       // Should now show Q2
       expect(lastFrame()).toContain('Second question?');
@@ -495,11 +496,13 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      await wait(200);
+      await wait(200); // Wait for auto-advance (150ms timeout)
 
       // Answer Q2
       stdin.write('\r'); // Select Red
-      await wait(200);
+      // Wait longer for auto-advance to Submit tab to complete
+      // Windows CI can have timing issues with setTimeout precision
+      await wait(300);
 
       // Now on Submit tab, press Enter to submit
       stdin.write('\r');
@@ -649,7 +652,8 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      await wait(200);
+      // Wait for auto-advance (150ms timeout) with extra buffer for Windows CI
+      await wait(250);
 
       // Q2 is now active; check that Q1 shows ✓
       expect(lastFrame()).toContain('Q1');
