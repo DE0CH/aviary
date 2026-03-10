@@ -75,8 +75,6 @@ type ParsedConnectionLockFile = {
   parsed: IdeConnectionConfig;
 };
 
-const STALE_LOCK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
 function getRealPath(path: string): string {
   try {
     return fs.realpathSync(path);
@@ -590,11 +588,10 @@ export class IdeClient {
     IdeConnectionConfig | undefined
   > {
     const portFromEnv = this.getPortFromEnv();
-    const ideDir = Storage.getGlobalIdeDir();
-    const configs = await this.getAllConnectionConfigs(ideDir);
 
     if (portFromEnv) {
       try {
+        const ideDir = Storage.getGlobalIdeDir();
         const lockFile = path.join(ideDir, `${portFromEnv}.lock`);
         const lockFileContents = await fs.promises.readFile(lockFile, 'utf8');
         return JSON.parse(lockFileContents);
@@ -609,6 +606,8 @@ export class IdeClient {
       return legacyConfig;
     }
 
+    const ideDir = Storage.getGlobalIdeDir();
+    const configs = await this.getAllConnectionConfigs(ideDir);
     const cwd = process.cwd();
     return configs.find(
       (config) =>
@@ -719,7 +718,6 @@ export class IdeClient {
   private async cleanupStaleLockFile({
     file,
     fullPath,
-    mtimeMs,
     parsed,
   }: ParsedConnectionLockFile): Promise<boolean> {
     try {
@@ -743,14 +741,6 @@ export class IdeClient {
 
         debugLogger.debug(
           `[cleanupStaleLockFiles] Removing lock file "${file}" - workspace doesn't exist`,
-        );
-        await fs.promises.unlink(fullPath);
-        return true;
-      }
-
-      if (Date.now() - mtimeMs > STALE_LOCK_MAX_AGE_MS) {
-        debugLogger.debug(
-          `[cleanupStaleLockFiles] Removing lock file "${file}" - older than 7 days`,
         );
         await fs.promises.unlink(fullPath);
         return true;

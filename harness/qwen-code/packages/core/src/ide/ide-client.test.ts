@@ -431,6 +431,24 @@ describe('IdeClient', () => {
       delete process.env['QWEN_CODE_IDE_SERVER_PORT'];
     });
 
+    it('should not scan the lock directory when the env port lock file exists', async () => {
+      process.env['QWEN_CODE_IDE_SERVER_PORT'] = '1234';
+      const config = { port: '1234', workspacePath: '/test/workspace' };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
+
+      const ideClient = await IdeClient.getInstance();
+      vi.mocked(fs.promises.readdir).mockClear();
+      const result = await (
+        ideClient as unknown as {
+          getConnectionConfigFromFile: () => Promise<unknown>;
+        }
+      ).getConnectionConfigFromFile();
+
+      expect(result).toEqual(config);
+      expect(fs.promises.readdir).not.toHaveBeenCalled();
+      delete process.env['QWEN_CODE_IDE_SERVER_PORT'];
+    });
+
     it('should return undefined if no config files are found', async () => {
       vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('not found'));
 
@@ -556,7 +574,7 @@ describe('IdeClient', () => {
       expect(fs.promises.unlink).not.toHaveBeenCalled();
     });
 
-    it('should remove stale incomplete lock files while scanning the IDE lock directory', async () => {
+    it('should keep incomplete old lock files when there is no stronger stale signal', async () => {
       const latestConfig = {
         port: '2000',
         workspacePath: '/test/workspace',
@@ -605,9 +623,7 @@ describe('IdeClient', () => {
         }
       ).getConnectionConfigFromFile();
 
-      expect(fs.promises.unlink).toHaveBeenCalledWith(
-        path.join('/home/test', '.qwen', 'ide', '1000.lock'),
-      );
+      expect(fs.promises.unlink).not.toHaveBeenCalled();
       expect(result).toEqual(latestConfig);
     });
 
