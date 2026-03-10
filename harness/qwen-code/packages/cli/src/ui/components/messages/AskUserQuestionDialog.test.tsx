@@ -402,7 +402,7 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Select first option in Q1
       stdin.write('\r');
-      await wait(200); // Wait for auto-advance timeout (150ms)
+      await wait(300); // Wait for auto-advance timeout (150ms) + buffer for CI
 
       // Should now show Q2
       expect(lastFrame()).toContain('Second question?');
@@ -495,11 +495,11 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      await wait(200);
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Answer Q2
       stdin.write('\r'); // Select Red
-      await wait(200);
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Now on Submit tab, press Enter to submit
       stdin.write('\r');
@@ -649,7 +649,7 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      await wait(200);
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Q2 is now active; check that Q1 shows ✓
       expect(lastFrame()).toContain('Q1');
@@ -776,23 +776,23 @@ describe('<AskUserQuestionDialog />', () => {
       // Navigate to custom input (index 3)
       for (let i = 0; i < 3; i++) {
         stdin.write('\u001B[B');
-        await wait();
+        await wait(100); // Increased wait for reliable navigation
       }
 
       // Type something - should auto-check
       stdin.write('Custom');
-      await wait();
+      await wait(100); // Wait for state update
 
       // Should already be checked (auto-checked on type)
       expect(lastFrame()).toContain('[✓]');
 
       // Navigate away
       stdin.write('\u001B[A'); // Up
-      await wait();
+      await wait(100);
 
       // Navigate back to custom input
       stdin.write('\u001B[B'); // Down
-      await wait();
+      await wait(100);
 
       // Should still be checked
       const output = lastFrame()!;
