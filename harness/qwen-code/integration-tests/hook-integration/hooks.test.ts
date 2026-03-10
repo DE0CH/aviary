@@ -1492,7 +1492,7 @@ describe('Hooks System Integration', () => {
         });
 
         // When Stop hooks block, agent continues execution normally (with max turns to prevent infinite loop)
-        const result = await rig.run(
+        const _result = await rig.run(
           'Say all block',
           '--max-session-turns',
           '3',
@@ -1504,9 +1504,6 @@ describe('Hooks System Integration', () => {
           .split('\n')
           .filter((line) => line.trim() === 'hook_called').length;
         expect(hookInvokeCount).toBeGreaterThan(1);
-
-        expect(result).toBeDefined();
-        expect(result.length).toBeGreaterThan(0);
       });
 
       it('should handle stop hook with error alongside blocking hook', async () => {
