@@ -402,8 +402,7 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Select first option in Q1
       stdin.write('\r');
-      // Wait for auto-advance (150ms timeout) with extra buffer for Windows CI
-      await wait(250);
+      await wait(300); // Wait for auto-advance timeout (150ms) + buffer for CI
 
       // Should now show Q2
       expect(lastFrame()).toContain('Second question?');
@@ -496,13 +495,11 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      await wait(200); // Wait for auto-advance (150ms timeout)
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Answer Q2
       stdin.write('\r'); // Select Red
-      // Wait longer for auto-advance to Submit tab to complete
-      // Windows CI can have timing issues with setTimeout precision
-      await wait(300);
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Now on Submit tab, press Enter to submit
       stdin.write('\r');
@@ -652,12 +649,234 @@ describe('<AskUserQuestionDialog />', () => {
 
       // Answer Q1
       stdin.write('\r'); // Select Red
-      // Wait for auto-advance (150ms timeout) with extra buffer for Windows CI
-      await wait(250);
+      await wait(300); // Wait for auto-advance (150ms) + buffer for CI
 
       // Q2 is now active; check that Q1 shows ✓
       expect(lastFrame()).toContain('Q1');
       expect(lastFrame()).toContain('✓');
+      unmount();
+    });
+  });
+
+  describe('custom input preserves state', () => {
+    it('preserves typed text when navigating away and back', async () => {
+      const onConfirm = vi.fn();
+      const details = createConfirmationDetails();
+
+      const { stdin, lastFrame, unmount } = renderWithProviders(
+        <AskUserQuestionDialog
+          confirmationDetails={details}
+          onConfirm={onConfirm}
+        />,
+      );
+      await wait();
+
+      // Navigate to custom input (3 options, index 3)
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B'); // Down
+        await wait();
+      }
+
+      // Type something
+      stdin.write('Purple');
+      await wait();
+
+      expect(lastFrame()).toContain('Purple');
+
+      // Navigate away (up to first option)
+      stdin.write('\u001B[A'); // Up
+      await wait();
+      stdin.write('\u001B[A'); // Up
+      await wait();
+      stdin.write('\u001B[A'); // Up
+      await wait();
+
+      // Navigate back to custom input
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B'); // Down
+        await wait();
+      }
+
+      // Text should still be there
+      expect(lastFrame()).toContain('Purple');
+      unmount();
+    });
+
+    it('does not auto-check custom input in multi-select when navigating back', async () => {
+      const onConfirm = vi.fn();
+      const details = createConfirmationDetails({
+        questions: [createSingleQuestion({ multiSelect: true })],
+      });
+
+      const { stdin, lastFrame, unmount } = renderWithProviders(
+        <AskUserQuestionDialog
+          confirmationDetails={details}
+          onConfirm={onConfirm}
+        />,
+      );
+      await wait();
+
+      // Navigate to custom input (index 3)
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B');
+        await wait();
+      }
+
+      // Type something - auto-checks
+      stdin.write('Custom');
+      await wait();
+
+      expect(lastFrame()).toContain('[✓]');
+
+      // Enter to toggle it off (since auto-check already checked it)
+      stdin.write('\r');
+      await wait();
+
+      // Should be unchecked now - verify on the custom input line specifically
+      const afterToggle = lastFrame()!;
+      const toggledLine = afterToggle
+        .split('\n')
+        .find((l) => l.includes('Custom'));
+      expect(toggledLine).toBeDefined();
+      expect(toggledLine).toContain('[ ]');
+      expect(toggledLine).not.toContain('[✓]');
+
+      // Navigate away
+      stdin.write('\u001B[A'); // Up
+      await wait();
+
+      // Navigate back to custom input
+      stdin.write('\u001B[B'); // Down
+      await wait();
+
+      // Should still be unchecked (not auto-checked on remount)
+      const output = lastFrame()!;
+      const lines = output.split('\n');
+      const customLine = lines.find((l) => l.includes('Custom'));
+      expect(customLine).toBeDefined();
+      expect(customLine).toContain('[ ]');
+      expect(customLine).not.toContain('[✓]');
+      unmount();
+    });
+
+    it('keeps custom input checked when navigating back if user checked it', async () => {
+      const onConfirm = vi.fn();
+      const details = createConfirmationDetails({
+        questions: [createSingleQuestion({ multiSelect: true })],
+      });
+
+      const { stdin, lastFrame, unmount } = renderWithProviders(
+        <AskUserQuestionDialog
+          confirmationDetails={details}
+          onConfirm={onConfirm}
+        />,
+      );
+      await wait();
+
+      // Navigate to custom input (index 3)
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B');
+        await wait(100); // Increased wait for reliable navigation
+      }
+
+      // Type something - should auto-check
+      stdin.write('Custom');
+      await wait(100); // Wait for state update
+
+      // Should already be checked (auto-checked on type)
+      expect(lastFrame()).toContain('[✓]');
+
+      // Navigate away
+      stdin.write('\u001B[A'); // Up
+      await wait(100);
+
+      // Navigate back to custom input
+      stdin.write('\u001B[B'); // Down
+      await wait(100);
+
+      // Should still be checked
+      const output = lastFrame()!;
+      const lines = output.split('\n');
+      const customLine = lines.find((l) => l.includes('Custom'));
+      expect(customLine).toBeDefined();
+      expect(customLine).toContain('[✓]');
+      unmount();
+    });
+
+    it('auto-checks custom input in multi-select when user types text', async () => {
+      const onConfirm = vi.fn();
+      const details = createConfirmationDetails({
+        questions: [createSingleQuestion({ multiSelect: true })],
+      });
+
+      const { stdin, lastFrame, unmount } = renderWithProviders(
+        <AskUserQuestionDialog
+          confirmationDetails={details}
+          onConfirm={onConfirm}
+        />,
+      );
+      await wait();
+
+      // Navigate to custom input (index 3)
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B');
+        await wait();
+      }
+
+      // Type something - should auto-check
+      stdin.write('Hello');
+      await wait();
+
+      const output = lastFrame()!;
+      const lines = output.split('\n');
+      const customLine = lines.find((l) => l.includes('Hello'));
+      expect(customLine).toBeDefined();
+      expect(customLine).toContain('[✓]');
+      unmount();
+    });
+
+    it('auto-unchecks custom input in multi-select when text is cleared', async () => {
+      const onConfirm = vi.fn();
+      const details = createConfirmationDetails({
+        questions: [createSingleQuestion({ multiSelect: true })],
+      });
+
+      const { stdin, lastFrame, unmount } = renderWithProviders(
+        <AskUserQuestionDialog
+          confirmationDetails={details}
+          onConfirm={onConfirm}
+        />,
+      );
+      await wait();
+
+      // Navigate to custom input (index 3)
+      for (let i = 0; i < 3; i++) {
+        stdin.write('\u001B[B');
+        await wait();
+      }
+
+      // Type something - should auto-check
+      stdin.write('Hi');
+      await wait();
+
+      // Verify auto-check on the custom input line
+      const afterType = lastFrame()!;
+      const typedLine = afterType.split('\n').find((l) => l.includes('Hi'));
+      expect(typedLine).toBeDefined();
+      expect(typedLine).toContain('[✓]');
+
+      // Delete all text (backspace twice)
+      stdin.write('\x7f'); // backspace
+      await wait();
+      stdin.write('\x7f'); // backspace
+      await wait();
+
+      // Should be unchecked now - check the custom input line (option 4)
+      const afterClear = lastFrame()!;
+      const clearedLine = afterClear.split('\n').find((l) => l.includes('4.'));
+      expect(clearedLine).toBeDefined();
+      expect(clearedLine).toContain('[ ]');
+      expect(clearedLine).not.toContain('[✓]');
       unmount();
     });
   });
