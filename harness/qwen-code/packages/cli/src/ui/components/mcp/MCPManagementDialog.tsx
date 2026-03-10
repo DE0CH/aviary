@@ -95,16 +95,10 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
       let source: 'user' | 'project' | 'extension' = 'user';
       if (serverConfig.extensionName) {
         source = 'extension';
-      }
-
-      // Determine the scope of the configuration
-      let scope: 'user' | 'workspace' | 'extension' = 'user';
-      if (serverConfig.extensionName) {
-        scope = 'extension';
       } else if (workspaceSettings.mcpServers?.[name]) {
-        scope = 'workspace';
+        source = 'project';
       } else if (userSettings.mcpServers?.[name]) {
-        scope = 'user';
+        source = 'user';
       }
 
       // Use config.isMcpServerDisabled() to check if server is disabled
@@ -119,7 +113,6 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
         name,
         status,
         source,
-        scope,
         config: serverConfig,
         toolCount: serverTools.length,
         invalidToolCount,
@@ -343,7 +336,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
 
         // Determine the scope based on server configuration location
         let targetScope: 'user' | 'workspace' = 'user';
-        if (server.scope === 'extension') {
+        if (server.source === 'extension') {
           // Extension servers should not be disabled through user/workspace settings
           // Show error message and return
           debugLogger.warn(
@@ -351,7 +344,7 @@ export const MCPManagementDialog: React.FC<MCPManagementDialogProps> = ({
           );
           setIsLoading(false);
           return;
-        } else if (server.scope === 'workspace') {
+        } else if (server.source === 'project') {
           targetScope = 'workspace';
         }
 
