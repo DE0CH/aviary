@@ -47,6 +47,12 @@ export class WebViewProvider {
   private cachedAvailableModels: ModelInfo[] | null = null;
   /** Reference to a WebviewView webview (sidebar/panel/secondary) when attached via attachToView */
   private attachedWebview: vscode.Webview | null = null;
+  /**
+   * Whether this provider is hosted inside a WebviewView (sidebar / secondary bar).
+   * When true, "New Session" resets the conversation in-place instead of opening
+   * a new editor tab.
+   */
+  private isViewHost = false;
   /** Guards against concurrent auth-restore / connection init */
   private initializationPromise: Promise<void> | null = null;
 
@@ -473,6 +479,8 @@ export class WebViewProvider {
 
     // Store reference so sendMessageToWebView can reach it
     this.attachedWebview = webview;
+    // Mark this provider as a view host (sidebar / secondary bar)
+    this.isViewHost = true;
 
     // Generate HTML content
     webview.html = WebViewContent.generate(webview, this.extensionUri);
@@ -485,6 +493,9 @@ export class WebViewProvider {
         }
         if (message.type === 'webviewReady') {
           this.handleWebviewReady();
+          return;
+        }
+        if (this.handleNewChatByContext(message)) {
           return;
         }
         await this.messageHandler.route(message);
@@ -646,6 +657,9 @@ export class WebViewProvider {
           if (panelRef) {
             panelRef.title = title || 'Qwen Code';
           }
+          return;
+        }
+        if (this.handleNewChatByContext(message)) {
           return;
         }
         await this.messageHandler.route(message);
@@ -1180,6 +1194,27 @@ export class WebViewProvider {
   }
 
   /**
+   * Context-aware handler for the "New Chat" action (openNewChatTab message).
+   *
+   * - View host (sidebar / secondary bar): resets the conversation in-place by
+   *   routing to the newQwenSession handler (includes auth checks and UI clearing).
+   * - Editor tab: returns false so the message falls through to
+   *   SessionMessageHandler which opens a brand-new editor tab.
+   *
+   * @returns true if the message was handled, false otherwise.
+   */
+  private handleNewChatByContext(message: {
+    type: string;
+    data?: unknown;
+  }): boolean {
+    if (message.type !== 'openNewChatTab' || !this.isViewHost) {
+      return false;
+    }
+    void this.messageHandler.route({ type: 'newQwenSession', data: {} });
+    return true;
+  }
+
+  /**
    * Send message to WebView
    */
   private sendMessageToWebView(message: unknown): void {
@@ -1362,6 +1397,9 @@ export class WebViewProvider {
               answers,
             });
           }
+          return;
+        }
+        if (this.handleNewChatByContext(message)) {
           return;
         }
         await this.messageHandler.route(message);
