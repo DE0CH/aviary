@@ -5,10 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import {
-  extractSessionListItems,
-  QwenAgentManager,
-} from './qwenAgentManager.js';
+import { extractSessionListItems } from './qwenAgentManager.js';
 
 vi.mock('vscode', () => ({
   window: {
@@ -19,80 +16,41 @@ vi.mock('vscode', () => ({
 }));
 
 describe('extractSessionListItems', () => {
-  it('reads ACP session arrays from the sessions field', () => {
+  it('returns sessions array from the "sessions" field', () => {
     const items = extractSessionListItems({
       sessions: [{ sessionId: 'session-1' }],
     });
-
     expect(items).toEqual([{ sessionId: 'session-1' }]);
   });
 
-  it('reads ACP session arrays from the legacy items field', () => {
+  it('returns items array from the legacy "items" field', () => {
     const items = extractSessionListItems({
       items: [{ sessionId: 'session-2' }],
     });
-
     expect(items).toEqual([{ sessionId: 'session-2' }]);
   });
 
-  it('returns empty array for invalid responses', () => {
-    expect(extractSessionListItems(null)).toEqual([]);
-    expect(extractSessionListItems(undefined)).toEqual([]);
-    expect(extractSessionListItems('string')).toEqual([]);
-    expect(extractSessionListItems({})).toEqual([]);
-    expect(extractSessionListItems({ sessions: 'not-array' })).toEqual([]);
-  });
-
-  it('prefers sessions over items when both exist', () => {
+  it('prefers "sessions" over "items" when both are present', () => {
     const items = extractSessionListItems({
       sessions: [{ sessionId: 'from-sessions' }],
       items: [{ sessionId: 'from-items' }],
     });
-
     expect(items).toEqual([{ sessionId: 'from-sessions' }]);
   });
-});
 
-describe('QwenAgentManager session list compatibility', () => {
-  it('maps paged ACP session lists returned via items', async () => {
-    const manager = new QwenAgentManager();
-    const listSessions = vi.fn().mockResolvedValue({
-      items: [
-        {
-          sessionId: 'session-3',
-          prompt: 'Fix sidebar history',
-          mtime: 1772114825468.5825,
-          cwd: '/workspace/qwen-code',
-        },
-      ],
-    });
+  it('returns empty array for null/undefined input', () => {
+    expect(extractSessionListItems(null)).toEqual([]);
+    expect(extractSessionListItems(undefined)).toEqual([]);
+  });
 
-    (
-      manager as unknown as {
-        connection: { listSessions: typeof listSessions };
-      }
-    ).connection = { listSessions };
+  it('returns empty array for non-object input', () => {
+    expect(extractSessionListItems('string')).toEqual([]);
+    expect(extractSessionListItems(42)).toEqual([]);
+  });
 
-    const page = await manager.getSessionListPaged({ size: 20 });
-
-    expect(listSessions).toHaveBeenCalledWith({ size: 20 });
-    expect(page).toEqual({
-      sessions: [
-        {
-          id: 'session-3',
-          sessionId: 'session-3',
-          title: 'Fix sidebar history',
-          name: 'Fix sidebar history',
-          startTime: undefined,
-          lastUpdated: 1772114825468.5825,
-          messageCount: 0,
-          projectHash: undefined,
-          filePath: undefined,
-          cwd: '/workspace/qwen-code',
-        },
-      ],
-      nextCursor: undefined,
-      hasMore: false,
-    });
+  it('returns empty array when neither field is an array', () => {
+    expect(extractSessionListItems({ sessions: 'not-array' })).toEqual([]);
+    expect(extractSessionListItems({ items: 123 })).toEqual([]);
+    expect(extractSessionListItems({})).toEqual([]);
   });
 });

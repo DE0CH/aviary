@@ -5,62 +5,120 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as vscode from 'vscode';
-import { openNewChatTabCommand, registerNewCommands } from './index.js';
+import {
+  focusChatCommand,
+  openNewChatTabCommand,
+  registerNewCommands,
+} from './index.js';
+
+const {
+  registerCommand,
+  executeCommand,
+  showWarningMessage,
+  showInformationMessage,
+} = vi.hoisted(() => ({
+  registerCommand: vi.fn(
+    (_id: string, handler: (...args: unknown[]) => unknown) => ({
+      dispose: vi.fn(),
+      handler,
+    }),
+  ),
+  executeCommand: vi.fn(),
+  showWarningMessage: vi.fn(),
+  showInformationMessage: vi.fn(),
+}));
 
 vi.mock('vscode', () => ({
   commands: {
-    registerCommand: vi.fn(
-      (_command: string, _handler: (...args: unknown[]) => unknown) => ({
-        dispose: vi.fn(),
-      }),
-    ),
+    registerCommand,
+    executeCommand,
+  },
+  window: {
+    showWarningMessage,
+    showInformationMessage,
   },
   workspace: {
     workspaceFolders: [],
-  },
-  window: {
-    showErrorMessage: vi.fn(),
-    showInformationMessage: vi.fn(),
-    showWarningMessage: vi.fn(),
   },
   Uri: {
     joinPath: vi.fn(),
   },
 }));
 
+function getRegisteredHandler(commandId: string) {
+  const call = registerCommand.mock.calls.find(([id]) => id === commandId);
+  if (!call) {
+    throw new Error(`Command ${commandId} was not registered`);
+  }
+  return call[1] as (...args: unknown[]) => Promise<void>;
+}
+
 describe('registerNewCommands', () => {
+  const context = { subscriptions: [] as Array<{ dispose: () => void }> };
+  const diffManager = { showDiff: vi.fn() };
+  const log = vi.fn();
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    context.subscriptions = [];
+    registerCommand.mockClear();
+    executeCommand.mockClear();
+    showWarningMessage.mockClear();
+    showInformationMessage.mockClear();
   });
 
-  it('creates a fresh session when opening a new chat tab', async () => {
-    const fakeProvider = {
+  it('openNewChatTab opens a new provider without creating a second session explicitly', async () => {
+    const provider = {
       show: vi.fn().mockResolvedValue(undefined),
       createNewSession: vi.fn().mockResolvedValue(undefined),
-      forceReLogin: vi.fn().mockResolvedValue(undefined),
     };
 
     registerNewCommands(
-      { subscriptions: [] } as unknown as vscode.ExtensionContext,
-      vi.fn(),
-      {} as never,
+      context as never,
+      log,
+      diffManager as never,
       () => [],
-      () => fakeProvider as never,
+      () => provider as never,
     );
 
-    const commandCall = vi
-      .mocked(vscode.commands.registerCommand)
-      .mock.calls.find(([command]) => command === openNewChatTabCommand);
+    await getRegisteredHandler(openNewChatTabCommand)();
 
-    expect(commandCall).toBeDefined();
+    expect(provider.show).toHaveBeenCalledTimes(1);
+    expect(provider.createNewSession).not.toHaveBeenCalled();
+  });
 
-    const handler = commandCall?.[1] as (() => Promise<void>) | undefined;
-    expect(handler).toBeDefined();
+  it('focusChat focuses the secondary sidebar when it is supported', async () => {
+    registerNewCommands(
+      context as never,
+      log,
+      diffManager as never,
+      () => [],
+      vi.fn() as never,
+      undefined,
+      true,
+    );
 
-    await handler?.();
+    await getRegisteredHandler(focusChatCommand)();
 
-    expect(fakeProvider.show).toHaveBeenCalledTimes(1);
-    expect(fakeProvider.createNewSession).toHaveBeenCalledTimes(1);
+    expect(executeCommand).toHaveBeenCalledWith(
+      'qwen-code.chatView.secondary.focus',
+    );
+  });
+
+  it('focusChat falls back to the primary sidebar when secondary sidebar is unavailable', async () => {
+    registerNewCommands(
+      context as never,
+      log,
+      diffManager as never,
+      () => [],
+      vi.fn() as never,
+      undefined,
+      false,
+    );
+
+    await getRegisteredHandler(focusChatCommand)();
+
+    expect(executeCommand).toHaveBeenCalledWith(
+      'qwen-code.chatView.sidebar.focus',
+    );
   });
 });

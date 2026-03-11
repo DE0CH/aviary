@@ -15,12 +15,8 @@ import {
   type IdeInfo,
 } from '@qwen-code/qwen-code-core/src/ide/detect-ide.js';
 import { WebViewProvider } from './webview/providers/WebViewProvider.js';
-import { ChatWebviewViewProvider } from './webview/providers/ChatWebviewViewProvider.js';
-import {
-  CHAT_VIEW_ID_PANEL,
-  CHAT_VIEW_ID_SECONDARY,
-  CHAT_VIEW_ID_SIDEBAR,
-} from './constants/viewIds.js';
+import { ChatProviderRegistry } from './webview/providers/ChatProviderRegistry.js';
+import { registerChatViewProviders } from './webview/providers/chatViewRegistration.js';
 import { registerNewCommands } from './commands/index.js';
 import { ReadonlyFileSystemProvider } from './services/readonlyFileSystemProvider.js';
 import { isWindows } from './utils/platform.js';
@@ -41,7 +37,7 @@ const HIDE_INSTALLATION_GREETING_IDES: ReadonlySet<IdeInfo['name']> = new Set([
 
 let ideServer: IDEServer;
 let logger: vscode.OutputChannel;
-let webViewProviders: WebViewProvider[] = []; // Track multiple chat tabs
+let chatProviderRegistry: ChatProviderRegistry<WebViewProvider> | null = null;
 
 let log: (message: string) => void = () => {};
 
@@ -131,17 +127,25 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   log('Readonly file system provider registered');
 
+  chatProviderRegistry = new ChatProviderRegistry(
+    () => new WebViewProvider(context, context.extensionUri),
+  );
+
   const diffContentProvider = new DiffContentProvider();
   const diffManager = new DiffManager(
     log,
     diffContentProvider,
-    // Delay when any chat tab has a pending permission drawer
-    () => webViewProviders.some((p) => p.hasPendingPermission()),
-    // Suppress diffs when active mode is auto or yolo in any chat tab
+    // Delay when any chat surface has a pending permission drawer
+    () =>
+      chatProviderRegistry
+        ?.getPermissionAwareProviders()
+        .some((p) => p.hasPendingPermission()) ?? false,
+    // Suppress diffs when active mode is auto or yolo in any chat surface
     () => {
-      const providers = webViewProviders.filter(
-        (p) => typeof p.shouldSuppressDiff === 'function',
-      );
+      const providers =
+        chatProviderRegistry
+          ?.getPermissionAwareProviders()
+          .filter((p) => typeof p.shouldSuppressDiff === 'function') ?? [];
       if (providers.length === 0) {
         return false;
       }
@@ -150,30 +154,16 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Helper function to create a new WebView provider instance
-  const createWebViewProvider = (): WebViewProvider => {
-    const provider = new WebViewProvider(context, context.extensionUri);
-    webViewProviders.push(provider);
-    return provider;
-  };
+  const createWebViewProvider = (): WebViewProvider =>
+    chatProviderRegistry!.createEditorProvider();
 
-  // Register WebviewView hosts for all positions (sidebar, panel, secondary).
-  // Providers are lazily instantiated — the factory is only called when VS Code
-  // actually opens the view, keeping startup lightweight.
-  const chatViewIds = [
-    CHAT_VIEW_ID_SIDEBAR,
-    CHAT_VIEW_ID_PANEL,
-    CHAT_VIEW_ID_SECONDARY,
-  ] as const;
+  const createViewProvider = (): WebViewProvider =>
+    chatProviderRegistry!.createViewProvider();
 
-  for (const viewId of chatViewIds) {
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider(
-        viewId,
-        new ChatWebviewViewProvider(createWebViewProvider),
-        { webviewOptions: { retainContextWhenHidden: true } },
-      ),
-    );
-  }
+  const supportsSecondarySidebar = registerChatViewProviders({
+    context,
+    createViewProvider,
+  });
 
   // Register WebView panel serializer for persistence across reloads
   context.subscriptions.push(
@@ -217,9 +207,10 @@ export async function activate(context: vscode.ExtensionContext) {
     context,
     log,
     diffManager,
-    () => webViewProviders,
+    () => chatProviderRegistry?.getEditorProviders() ?? [],
     createWebViewProvider,
     logger,
+    supportsSecondarySidebar,
   );
 
   context.subscriptions.push(
@@ -237,9 +228,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.acceptDiff(docUri);
       }
-      // If WebView is requesting permission, actively select an allow option (prefer once)
+      // If any chat surface is requesting permission, actively select allow (prefer once)
       try {
-        for (const provider of webViewProviders) {
+        for (const provider of chatProviderRegistry?.getPermissionAwareProviders() ??
+          []) {
           if (provider?.hasPendingPermission()) {
             provider.respondToPendingPermission('allow');
           }
@@ -254,9 +246,10 @@ export async function activate(context: vscode.ExtensionContext) {
       if (docUri && docUri.scheme === DIFF_SCHEME) {
         diffManager.cancelDiff(docUri);
       }
-      // If WebView is requesting permission, actively select reject/cancel
+      // If any chat surface is requesting permission, actively select reject/cancel
       try {
-        for (const provider of webViewProviders) {
+        for (const provider of chatProviderRegistry?.getPermissionAwareProviders() ??
+          []) {
           if (provider?.hasPendingPermission()) {
             provider.respondToPendingPermission('cancel');
           }
@@ -390,11 +383,8 @@ export async function deactivate(): Promise<void> {
     if (ideServer) {
       await ideServer.stop();
     }
-    // Dispose all WebView providers
-    webViewProviders.forEach((provider) => {
-      provider.dispose();
-    });
-    webViewProviders = [];
+    chatProviderRegistry?.disposeAll();
+    chatProviderRegistry = null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`Failed to stop IDE server during deactivation: ${message}`);

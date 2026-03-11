@@ -30,7 +30,6 @@
   "activationEvents": [
     "onStartupFinished",
     "onView:qwen-code.chatView.sidebar",
-    "onView:qwen-code.chatView.panel",
     "onView:qwen-code.chatView.secondary",
     "onCommand:qwen-code.openChat",
     "onCommand:qwen-code.focusChat",
@@ -49,21 +48,16 @@
         {
           "id": "qwen-code-sidebar",
           "title": "Qwen Code",
-          "icon": "assets/sidebar-icon.svg"
-        }
-      ],
-      "panel": [
-        {
-          "id": "qwen-code-panel",
-          "title": "Qwen Code",
-          "icon": "assets/icon.png"
+          "icon": "assets/sidebar-icon.svg",
+          "when": "qwen-code:doesNotSupportSecondarySidebar"
         }
       ],
       "secondarySidebar": [
         {
           "id": "qwen-code-secondary",
           "title": "Qwen Code",
-          "icon": "assets/icon.png"
+          "icon": "assets/sidebar-icon.svg",
+          "when": "!qwen-code:doesNotSupportSecondarySidebar"
         }
       ]
     },
@@ -72,21 +66,18 @@
         {
           "type": "webview",
           "id": "qwen-code.chatView.sidebar",
-          "name": "Qwen Code"
-        }
-      ],
-      "qwen-code-panel": [
-        {
-          "id": "qwen-code.chatView.panel",
           "name": "Qwen Code",
-          "icon": "assets/icon.png"
+          "icon": "assets/sidebar-icon.svg",
+          "when": "qwen-code:doesNotSupportSecondarySidebar"
         }
       ],
       "qwen-code-secondary": [
         {
+          "type": "webview",
           "id": "qwen-code.chatView.secondary",
           "name": "Qwen Code",
-          "icon": "assets/icon.png"
+          "icon": "assets/sidebar-icon.svg",
+          "when": "!qwen-code:doesNotSupportSecondarySidebar"
         }
       ]
     },
@@ -125,7 +116,7 @@
       },
       {
         "command": "qwen-code.focusChat",
-        "title": "Qwen Code: Focus Chat Input"
+        "title": "Qwen Code: Focus Chat View"
       },
       {
         "command": "qwen-code.newConversation",

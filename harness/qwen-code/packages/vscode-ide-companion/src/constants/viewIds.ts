@@ -5,11 +5,13 @@
  */
 
 /**
- * WebviewView IDs for the three host positions where the chat UI can appear.
+ * WebviewView IDs for the chat UI host positions.
  * These IDs must match the `views` contributions declared in package.json.
  *
- * Note: We use kebab-case prefix 'qwen-code.' for consistency with command IDs.
+ * Only one of sidebar / secondary is visible at runtime — controlled by the
+ * `qwen-code:doesNotSupportSecondarySidebar` context key in package.json.
+ * The secondary sidebar is preferred; the primary sidebar is a fallback for
+ * VS Code versions that lack secondary sidebar support.
  */
 export const CHAT_VIEW_ID_SIDEBAR = 'qwen-code.chatView.sidebar';
-export const CHAT_VIEW_ID_PANEL = 'qwen-code.chatView.panel';
 export const CHAT_VIEW_ID_SECONDARY = 'qwen-code.chatView.secondary';
