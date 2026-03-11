@@ -548,6 +548,35 @@ describe('WriteFileTool', () => {
       );
     });
 
+    it('should treat metadata ENOENT as new file when readTextFile returned empty content', async () => {
+      const filePath = path.join(rootDir, 'execute_acp_like_missing_file.txt');
+      const proposedContent = 'content from acp-like flow';
+      const writeSpy = vi.spyOn(fsService, 'writeTextFile');
+
+      // Simulate ACP behavior where missing files can be returned as empty content.
+      vi.spyOn(fsService, 'readTextFile').mockResolvedValueOnce('');
+      vi.spyOn(fsService, 'readTextFileWithInfo').mockImplementationOnce(() => {
+        const error = new Error('File not found') as NodeJS.ErrnoException;
+        error.code = 'ENOENT';
+        return Promise.reject(error);
+      });
+
+      const params = { file_path: filePath, content: proposedContent };
+      const invocation = tool.build(params);
+      const result = await invocation.execute(abortSignal);
+
+      expect(result.error).toBeUndefined();
+      expect(result.llmContent).toMatch(
+        /Successfully created and wrote to new file/,
+      );
+      expect(writeSpy).toHaveBeenCalledWith(filePath, proposedContent, {
+        bom: false,
+        encoding: undefined,
+      });
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(fs.readFileSync(filePath, 'utf8')).toBe(proposedContent);
+    });
+
     it('should create directory if it does not exist', async () => {
       const dirPath = path.join(rootDir, 'new_dir_for_write');
       const filePath = path.join(dirPath, 'file_in_new_dir.txt');

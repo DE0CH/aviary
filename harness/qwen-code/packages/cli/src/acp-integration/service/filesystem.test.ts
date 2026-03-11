@@ -179,4 +179,83 @@ describe('AcpFileSystemService', () => {
       expect(client.readTextFile).not.toHaveBeenCalled();
     });
   });
+
+  describe('readTextFileWithInfo', () => {
+    it('reads through ACP and strips UTF-8 BOM', async () => {
+      const client = {
+        readTextFile: vi.fn().mockResolvedValue({ content: '\ufeffhello' }),
+      } as unknown as AgentSideConnection;
+
+      const svc = new AcpFileSystemService(
+        client,
+        'session-info-1',
+        { readTextFile: true, writeTextFile: true },
+        createFallback(),
+      );
+
+      const result = await svc.readTextFileWithInfo('/some/file.txt');
+      expect(result).toEqual({
+        content: 'hello',
+        encoding: 'utf-8',
+        bom: true,
+      });
+      expect(client.readTextFile).toHaveBeenCalledWith({
+        path: '/some/file.txt',
+        sessionId: 'session-info-1',
+      });
+    });
+
+    it('converts RESOURCE_NOT_FOUND error to ENOENT', async () => {
+      const resourceNotFoundError = {
+        code: RESOURCE_NOT_FOUND_CODE,
+        message: 'File not found',
+      };
+      const client = {
+        readTextFile: vi.fn().mockRejectedValue(resourceNotFoundError),
+      } as unknown as AgentSideConnection;
+
+      const svc = new AcpFileSystemService(
+        client,
+        'session-info-2',
+        { readTextFile: true, writeTextFile: true },
+        createFallback(),
+      );
+
+      await expect(
+        svc.readTextFileWithInfo('/some/missing.txt'),
+      ).rejects.toMatchObject({
+        code: 'ENOENT',
+        errno: -2,
+        path: '/some/missing.txt',
+      });
+    });
+
+    it('uses fallback when readTextFile capability is disabled', async () => {
+      const client = {
+        readTextFile: vi.fn(),
+      } as unknown as AgentSideConnection;
+      const fallback = createFallback();
+      (
+        fallback.readTextFileWithInfo as ReturnType<typeof vi.fn>
+      ).mockResolvedValue({ content: 'fallback', encoding: 'gbk', bom: false });
+
+      const svc = new AcpFileSystemService(
+        client,
+        'session-info-3',
+        { readTextFile: false, writeTextFile: true },
+        fallback,
+      );
+
+      const result = await svc.readTextFileWithInfo('/some/file.txt');
+      expect(result).toEqual({
+        content: 'fallback',
+        encoding: 'gbk',
+        bom: false,
+      });
+      expect(fallback.readTextFileWithInfo).toHaveBeenCalledWith(
+        '/some/file.txt',
+      );
+      expect(client.readTextFile).not.toHaveBeenCalled();
+    });
+  });
 });

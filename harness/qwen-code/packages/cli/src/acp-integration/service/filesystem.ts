@@ -16,6 +16,26 @@ import type {
 
 const RESOURCE_NOT_FOUND_CODE = -32002;
 
+function getErrorCode(error: unknown): unknown {
+  if (error instanceof RequestError) {
+    return error.code;
+  }
+
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return (error as { code?: unknown }).code;
+  }
+
+  return undefined;
+}
+
+function createEnoentError(filePath: string): NodeJS.ErrnoException {
+  const err = new Error(`File not found: ${filePath}`) as NodeJS.ErrnoException;
+  err.code = 'ENOENT';
+  err.errno = -2;
+  err.path = filePath;
+  return err;
+}
+
 export class AcpFileSystemService implements FileSystemService {
   constructor(
     private readonly connection: AgentSideConnection,
@@ -36,21 +56,10 @@ export class AcpFileSystemService implements FileSystemService {
         sessionId: this.sessionId,
       });
     } catch (error) {
-      const errorCode =
-        error instanceof RequestError
-          ? error.code
-          : typeof error === 'object' && error !== null && 'code' in error
-            ? (error as { code?: unknown }).code
-            : undefined;
+      const errorCode = getErrorCode(error);
 
       if (errorCode === RESOURCE_NOT_FOUND_CODE) {
-        const err = new Error(
-          `File not found: ${filePath}`,
-        ) as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        err.errno = -2;
-        err.path = filePath;
-        throw err;
+        throw createEnoentError(filePath);
       }
 
       throw error;
@@ -60,9 +69,33 @@ export class AcpFileSystemService implements FileSystemService {
   }
 
   async readTextFileWithInfo(filePath: string): Promise<FileReadResult> {
-    // ACP protocol does not expose encoding metadata; delegate to the local
-    // fallback which performs a single-pass read with encoding detection.
-    return this.fallback.readTextFileWithInfo(filePath);
+    if (!this.capabilities.readTextFile) {
+      return this.fallback.readTextFileWithInfo(filePath);
+    }
+
+    let response: { content: string };
+    try {
+      response = await this.connection.readTextFile({
+        path: filePath,
+        sessionId: this.sessionId,
+      });
+    } catch (error) {
+      const errorCode = getErrorCode(error);
+      if (errorCode === RESOURCE_NOT_FOUND_CODE) {
+        throw createEnoentError(filePath);
+      }
+      throw error;
+    }
+
+    const hasUtf8Bom =
+      response.content.length > 0 && response.content.codePointAt(0) === 0xfeff;
+
+    return {
+      content: hasUtf8Bom ? response.content.slice(1) : response.content,
+      // ACP protocol currently returns text only and does not expose source encoding.
+      encoding: 'utf-8',
+      bom: hasUtf8Bom,
+    };
   }
 
   async writeTextFile(

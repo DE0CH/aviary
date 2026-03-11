@@ -8,6 +8,18 @@ export function getErrorMessage(
   error: unknown,
   fallback = 'Unknown error',
 ): string {
+  const combineMessageAndDetails = (
+    message: string | null,
+    detailsMessage: string | null,
+  ): string | null => {
+    if (message && detailsMessage) {
+      return message === detailsMessage
+        ? message
+        : `${message}: ${detailsMessage}`;
+    }
+    return message ?? detailsMessage;
+  };
+
   const extractDetailsMessage = (value: unknown): string | null => {
     if (typeof value === 'string' && value) {
       return value;
@@ -47,23 +59,32 @@ export function getErrorMessage(
   }
   if (typeof error === 'object' && error !== null) {
     const record = error as Record<string, unknown>;
-    if (typeof record['message'] === 'string' && record['message']) {
-      return record['message'];
-    }
+    const topLevelMessage =
+      typeof record['message'] === 'string' && record['message']
+        ? record['message']
+        : null;
     const topLevelDetailsMessage = extractDetailsMessage(record['data']);
-    if (topLevelDetailsMessage) {
-      return topLevelDetailsMessage;
+    const combinedTopLevelMessage = combineMessageAndDetails(
+      topLevelMessage,
+      topLevelDetailsMessage,
+    );
+    if (combinedTopLevelMessage) {
+      return combinedTopLevelMessage;
     }
     const nested = record['error'];
     if (typeof nested === 'object' && nested !== null) {
       const nestedRecord = nested as Record<string, unknown>;
-      const nestedMessage = nestedRecord['message'];
-      if (typeof nestedMessage === 'string' && nestedMessage) {
-        return nestedMessage;
-      }
+      const nestedMessage =
+        typeof nestedRecord['message'] === 'string' && nestedRecord['message']
+          ? nestedRecord['message']
+          : null;
       const nestedDetailsMessage = extractDetailsMessage(nestedRecord['data']);
-      if (nestedDetailsMessage) {
-        return nestedDetailsMessage;
+      const combinedNestedMessage = combineMessageAndDetails(
+        nestedMessage,
+        nestedDetailsMessage,
+      );
+      if (combinedNestedMessage) {
+        return combinedNestedMessage;
       }
     }
     try {
