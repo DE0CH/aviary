@@ -37,6 +37,13 @@ export type OAuthDisplayPayload = string | OAuthDisplayMessage;
 
 const debugLogger = createDebugLogger('MCP_OAUTH');
 
+// Module-level reference to the active OAuth callback server.
+// This ensures that if a new authentication is started before the previous one
+// finishes (e.g. user navigated back and re-entered), the old server is closed
+// first to avoid EADDRINUSE errors.
+let activeCallbackServer: http.Server | null = null;
+let activeCallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+
 /**
  * OAuth configuration for an MCP server.
  */
@@ -208,6 +215,20 @@ export class MCPOAuthProvider {
   private async startCallbackServer(
     expectedState: string,
   ): Promise<OAuthAuthorizationResponse> {
+    // Close any previously active callback server to avoid EADDRINUSE
+    if (activeCallbackServer) {
+      try {
+        activeCallbackServer.close();
+      } catch {
+        // Ignore errors when closing stale server
+      }
+      activeCallbackServer = null;
+    }
+    if (activeCallbackTimeout) {
+      clearTimeout(activeCallbackTimeout);
+      activeCallbackTimeout = null;
+    }
+
     return new Promise((resolve, reject) => {
       const server = http.createServer(
         async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -239,6 +260,7 @@ export class MCPOAuthProvider {
                 </body>
               </html>
             `);
+              activeCallbackServer = null;
               server.close();
               reject(new Error(`OAuth error: ${error}`));
               return;
@@ -253,6 +275,7 @@ export class MCPOAuthProvider {
             if (state !== expectedState) {
               res.writeHead(400);
               res.end('Invalid state parameter');
+              activeCallbackServer = null;
               server.close();
               reject(new Error('State mismatch - possible CSRF attack'));
               return;
@@ -270,9 +293,11 @@ export class MCPOAuthProvider {
             </html>
           `);
 
+            activeCallbackServer = null;
             server.close();
             resolve({ code, state });
           } catch (error) {
+            activeCallbackServer = null;
             server.close();
             reject(error);
           }
@@ -286,9 +311,14 @@ export class MCPOAuthProvider {
         );
       });
 
+      // Track the active server so it can be cleaned up if a new auth starts
+      activeCallbackServer = server;
+
       // Timeout after 5 minutes
-      setTimeout(
+      activeCallbackTimeout = setTimeout(
         () => {
+          activeCallbackServer = null;
+          activeCallbackTimeout = null;
           server.close();
           reject(new Error('OAuth callback timeout'));
         },
