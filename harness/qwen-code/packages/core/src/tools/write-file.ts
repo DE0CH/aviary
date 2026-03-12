@@ -135,7 +135,8 @@ class WriteFileToolInvocation extends BaseToolInvocation<
   override async shouldConfirmExecute(
     _abortSignal: AbortSignal,
   ): Promise<ToolCallConfirmationDetails | false> {
-    if (this.config.getApprovalMode() === ApprovalMode.AUTO_EDIT) {
+    const mode = this.config.getApprovalMode();
+    if (mode === ApprovalMode.AUTO_EDIT || mode === ApprovalMode.YOLO) {
       return false;
     }
 
@@ -229,10 +230,7 @@ class WriteFileToolInvocation extends BaseToolInvocation<
     } = correctedContentResult;
     // fileExists is true if the file existed (and was readable or unreadable but caught by readError).
     // fileExists is false if the file did not exist (ENOENT).
-    const isNewFile =
-      !fileExists ||
-      (correctedContentResult.error !== undefined &&
-        !correctedContentResult.fileExists);
+    let isNewFile = !fileExists;
 
     try {
       const dirName = path.dirname(file_path);
@@ -245,15 +243,28 @@ class WriteFileToolInvocation extends BaseToolInvocation<
       let useBOM = false;
       let detectedEncoding: string | undefined;
       if (!isNewFile) {
-        // Use readTextFileWithInfo for a single I/O pass that returns encoding
-        // and BOM metadata together, avoiding separate detectFileBOM / detectFileEncoding calls.
-        const fileInfo = await this.config
-          .getFileSystemService()
-          .readTextFileWithInfo(file_path);
-        useBOM = fileInfo.bom;
-        detectedEncoding = fileInfo.encoding;
-      } else {
+        try {
+          // Use readTextFileWithInfo for a single I/O pass that returns encoding
+          // and BOM metadata together, avoiding separate detectFileBOM / detectFileEncoding calls.
+          const fileInfo = await this.config
+            .getFileSystemService()
+            .readTextFileWithInfo(file_path);
+          useBOM = fileInfo.bom;
+          detectedEncoding = fileInfo.encoding;
+        } catch (error) {
+          if (!isNodeError(error) || error.code !== 'ENOENT') {
+            throw error;
+          }
+          // ACP backends may report missing files as empty content in readTextFile(),
+          // then surface ENOENT only when metadata is requested.
+          // Treat this as a new-file write path instead of failing.
+          isNewFile = true;
+        }
+      }
+
+      if (isNewFile) {
         useBOM = this.config.getDefaultFileEncoding() === FileEncoding.UTF8_BOM;
+        detectedEncoding = undefined;
       }
 
       await this.config
