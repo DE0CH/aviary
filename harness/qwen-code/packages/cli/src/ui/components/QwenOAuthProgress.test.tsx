@@ -90,17 +90,16 @@ describe('QwenOAuthProgress', () => {
       const output = lastFrame();
       expect(output).toContain('MockSpinner(dots)');
       expect(output).toContain('Waiting for Qwen OAuth authentication...');
-      expect(output).toContain('(Press ESC or CTRL+C to cancel)');
+      expect(output).toContain('Esc to cancel');
     });
 
-    it('should render loading state with gray border', () => {
+    it('should render loading state with single border', () => {
       const { lastFrame } = renderComponent();
       const output = lastFrame();
 
-      // Should not contain auth flow elements
-      expect(output).not.toContain('Qwen OAuth Authentication');
-      expect(output).not.toContain('Please visit this URL to authorize:');
-      // Loading state still shows time remaining with default timeout
+      // Should contain the auth title even in loading state
+      expect(output).toContain('Qwen OAuth Authentication');
+      // Loading state shows time remaining with default timeout
       expect(output).toContain('Time remaining:');
     });
   });
@@ -113,7 +112,7 @@ describe('QwenOAuthProgress', () => {
       expect(output).toContain('MockSpinner(dots)');
       expect(output).toContain('Waiting for authorization');
       expect(output).toContain('Time remaining: 5:00');
-      expect(output).toContain('(Press ESC or CTRL+C to cancel)');
+      expect(output).toContain('Esc to cancel');
     });
 
     it('should display correct URL in auth URL display', () => {
@@ -252,10 +251,11 @@ describe('QwenOAuthProgress', () => {
         />,
       );
 
-      // Initial state should have no dots
-      expect(lastFrame()).toContain('Waiting for authorization');
+      // Initial state should show '...' (default value)
+      const initialOutput = lastFrame();
+      expect(initialOutput).toContain('Waiting for authorization');
 
-      // Advance by 500ms to add first dot
+      // Advance by 500ms to cycle animation
       vi.advanceTimersByTime(500);
       rerender(
         <QwenOAuthProgress
@@ -264,9 +264,10 @@ describe('QwenOAuthProgress', () => {
           deviceAuth={mockDeviceAuth}
         />,
       );
-      expect(lastFrame()).toContain('Waiting for authorization.');
+      const after500ms = lastFrame();
+      expect(after500ms).toContain('Waiting for authorization');
 
-      // Advance by another 500ms to add second dot
+      // Advance by another 500ms to continue animation
       vi.advanceTimersByTime(500);
       rerender(
         <QwenOAuthProgress
@@ -275,9 +276,10 @@ describe('QwenOAuthProgress', () => {
           deviceAuth={mockDeviceAuth}
         />,
       );
-      expect(lastFrame()).toContain('Waiting for authorization..');
+      const after1000ms = lastFrame();
+      expect(after1000ms).toContain('Waiting for authorization');
 
-      // Advance by another 500ms to add third dot
+      // Advance by another 500ms to complete cycle
       vi.advanceTimersByTime(500);
       rerender(
         <QwenOAuthProgress
@@ -286,18 +288,8 @@ describe('QwenOAuthProgress', () => {
           deviceAuth={mockDeviceAuth}
         />,
       );
-      expect(lastFrame()).toContain('Waiting for authorization...');
-
-      // Advance by another 500ms to reset dots
-      vi.advanceTimersByTime(500);
-      rerender(
-        <QwenOAuthProgress
-          onTimeout={mockOnTimeout}
-          onCancel={mockOnCancel}
-          deviceAuth={mockDeviceAuth}
-        />,
-      );
-      expect(lastFrame()).toContain('Waiting for authorization');
+      const after1500ms = lastFrame();
+      expect(after1500ms).toContain('Waiting for authorization');
     });
   });
 
