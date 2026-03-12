@@ -24,7 +24,8 @@ type ServerAction =
   | 'view-tools'
   | 'reconnect'
   | 'toggle-disable'
-  | 'authenticate';
+  | 'authenticate'
+  | 'clear-auth';
 
 export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
   server,
@@ -32,6 +33,7 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
   onReconnect,
   onDisable,
   onAuthenticate,
+  onClearAuth,
   onBack,
 }) => {
   const statusColor = server
@@ -83,6 +85,15 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
         key: 'authenticate',
         label: t('Authenticate'),
         value: 'authenticate',
+      });
+    }
+
+    // 只在存储有 OAuth 认证信息时显示“清空认证”选项
+    if (!server.isDisabled && server.hasOAuthTokens) {
+      result.push({
+        key: 'clear-auth',
+        label: t('Clear Authentication'),
+        value: 'clear-auth',
       });
     }
 
@@ -221,6 +232,9 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
                 break;
               case 'authenticate':
                 onAuthenticate?.();
+                break;
+              case 'clear-auth':
+                onClearAuth?.();
                 break;
               default:
                 break;
