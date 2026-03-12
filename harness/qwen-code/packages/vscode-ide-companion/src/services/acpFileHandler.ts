@@ -12,6 +12,7 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { getErrorMessage } from '../utils/errorMessage.js';
 
 /**
  * ACP File Operation Handler Class
@@ -64,7 +65,7 @@ export class AcpFileHandler {
       console.log(`[ACP] Returning full file content`);
       return result;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[ACP] Failed to read file ${params.path}:`, errorMsg);
 
       const nodeError = error as NodeJS.ErrnoException;
@@ -108,7 +109,7 @@ export class AcpFileHandler {
       console.log(`[ACP] Successfully wrote file: ${params.path}`);
       return null;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       console.error(`[ACP] Failed to write file ${params.path}:`, errorMsg);
 
       throw new Error(`Failed to write file '${params.path}': ${errorMsg}`);
