@@ -17,11 +17,6 @@ vi.mock('../hooks/useKeypress.js', () => ({
   useKeypress: vi.fn(),
 }));
 
-// Mock ink-spinner
-vi.mock('ink-spinner', () => ({
-  default: ({ type }: { type: string }) => `MockSpinner(${type})`,
-}));
-
 // Mock ink-link
 vi.mock('ink-link', () => ({
   default: ({ children }: { children: React.ReactNode; url: string }) =>
@@ -88,7 +83,6 @@ describe('QwenOAuthProgress', () => {
       const { lastFrame } = renderComponent();
 
       const output = lastFrame();
-      expect(output).toContain('MockSpinner(dots)');
       expect(output).toContain('Waiting for Qwen OAuth authentication...');
       expect(output).toContain('Esc to cancel');
     });
@@ -109,7 +103,6 @@ describe('QwenOAuthProgress', () => {
       const { lastFrame } = renderComponent({ deviceAuth: mockDeviceAuth });
 
       const output = lastFrame();
-      expect(output).toContain('MockSpinner(dots)');
       expect(output).toContain('Waiting for authorization');
       expect(output).toContain('Time remaining: 5:00');
       expect(output).toContain('Esc to cancel');

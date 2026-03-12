@@ -7,7 +7,6 @@
 import type React from 'react';
 import { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import Link from 'ink-link';
 import { theme } from '../semantic-colors.js';
 import type { DeviceAuthorizationData } from '@qwen-code/qwen-code-core';
@@ -159,10 +158,9 @@ export function QwenOAuthProgress({
       >
         <Text bold>{t('Qwen OAuth Authentication')}</Text>
 
-        <Box marginTop={1}>
+        <Box marginTop={1} flexDirection="column">
+          <Text>{t('Waiting for Qwen OAuth authentication...')}</Text>
           <Text>
-            <Spinner type="dots" />{' '}
-            {t('Waiting for Qwen OAuth authentication...')}{' '}
             {t('Time remaining:')} {formatTime(timeRemaining)}
           </Text>
         </Box>
@@ -189,17 +187,17 @@ export function QwenOAuthProgress({
       </Box>
 
       <Link url={deviceAuth.verification_uri_complete || ''} fallback={false}>
-        <Text color={theme.status.success} bold>
+        <Text color={theme.text.link} bold>
           {deviceAuth.verification_uri_complete}
         </Text>
       </Link>
 
-      <Box marginTop={1} justifyContent="space-between">
+      <Box marginTop={1} flexDirection="column">
         <Text>
-          <Spinner type="dots" /> {t('Waiting for authorization')}
+          {t('Waiting for authorization')}
           {dots}
         </Text>
-        <Text color={theme.text.secondary}>
+        <Text>
           {t('Time remaining:')} {formatTime(timeRemaining)}
         </Text>
       </Box>
