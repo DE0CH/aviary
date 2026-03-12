@@ -802,6 +802,7 @@ export default {
   Enable: '启用',
   Disable: '禁用',
   Authenticate: '认证',
+  'Re-authenticate': '重新认证',
   'Clear Authentication': '清空认证',
   disabled: '已禁用',
   'Server:': '服务器：',

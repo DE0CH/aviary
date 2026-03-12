@@ -931,6 +931,7 @@ export default {
   Disable: 'Desativar',
   Enable: 'Ativar',
   Authenticate: 'Autenticar',
+  'Re-authenticate': 'Reautenticar',
   'Clear Authentication': 'Limpar autenticação',
   disabled: 'desativado',
   'Server:': 'Servidor:',

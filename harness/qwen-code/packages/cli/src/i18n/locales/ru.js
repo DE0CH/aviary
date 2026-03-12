@@ -909,6 +909,7 @@ export default {
   Disable: 'Отключить',
   Enable: 'Включить',
   Authenticate: 'Аутентификация',
+  'Re-authenticate': 'Повторная аутентификация',
   'Clear Authentication': 'Очистить аутентификацию',
   disabled: 'отключен',
   'Server:': 'Сервер:',

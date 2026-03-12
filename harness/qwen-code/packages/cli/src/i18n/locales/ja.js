@@ -664,6 +664,7 @@ export default {
   Disable: '無効化',
   Enable: '有効化',
   Authenticate: '認証',
+  'Re-authenticate': '再認証',
   'Clear Authentication': '認証をクリア',
   disabled: '無効',
   'Server:': 'サーバー:',

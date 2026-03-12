@@ -79,11 +79,11 @@ export const ServerDetailStep: React.FC<ServerDetailStepProps> = ({
       value: 'toggle-disable',
     });
 
-    // 待补充准确的认证判断方案，暂时全部开放
+    // 已认证的服务器显示"重新认证"，未认证的显示"认证"
     if (!server.isDisabled) {
       result.push({
         key: 'authenticate',
-        label: t('Authenticate'),
+        label: server.hasOAuthTokens ? t('Re-authenticate') : t('Authenticate'),
         value: 'authenticate',
       });
     }

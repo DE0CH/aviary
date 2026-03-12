@@ -852,6 +852,7 @@ export default {
   Enable: 'Enable',
   Disable: 'Disable',
   Authenticate: 'Authenticate',
+  'Re-authenticate': 'Re-authenticate',
   'Clear Authentication': 'Clear Authentication',
   'Server:': 'Server:',
   'Command:': 'Command:',
