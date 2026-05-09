@@ -384,6 +384,9 @@ export class AgentCore {
     const toolsList: FunctionDeclaration[] = [];
 
     const excludedFromSubagents = EXCLUDED_TOOLS_FOR_SUBAGENTS;
+    // When a subagent has an explicit tools list (not wildcard), only the
+    // recursive-spawn guard (AgentTool) is enforced.
+    const recursionGuardOnly = new Set<string>([ToolNames.AGENT]);
 
     if (this.toolConfig) {
       const asStrings = this.toolConfig.tools.filter(
@@ -404,13 +407,22 @@ export class AgentCore {
             .filter((t) => !(t.name && excludedFromSubagents.has(t.name))),
         );
       } else {
+        // Explicit tool list: apply the full subagent exclusion set (not just
+        // the recursion guard). This prevents control-plane tools
+        // (CRON_CREATE, TASK_STOP, SEND_MESSAGE, etc.) from leaking into
+        // explicitly-configured subagents that happen to list them.
         toolsList.push(
           ...toolRegistry.getFunctionDeclarationsFiltered(
             asStrings.filter((name) => !excludedFromSubagents.has(name)),
           ),
         );
       }
-      toolsList.push(...onlyInlineDecls);
+      // Also filter inline FunctionDeclaration[] passed directly in toolConfig.
+      toolsList.push(
+        ...onlyInlineDecls.filter(
+          (d) => !(d.name && recursionGuardOnly.has(d.name)),
+        ),
+      );
     } else {
       // Inherit all available tools by default when not specified.
       toolsList.push(
