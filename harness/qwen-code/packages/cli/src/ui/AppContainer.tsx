@@ -702,6 +702,13 @@ export const AppContainer = (props: AppContainerProps) => {
     addItem: historyManager.addItem,
   });
 
+  const [isHelpDialogOpen, setHelpDialogOpen] = useState(false);
+  const [activeHelpTab, setHelpTab] = useState<
+    'general' | 'commands' | 'custom-commands'
+  >('general');
+  const openHelpDialog = useCallback(() => setHelpDialogOpen(true), []);
+  const closeHelpDialog = useCallback(() => setHelpDialogOpen(false), []);
+
   const { toggleVimEnabled } = useVimMode();
 
   const {
@@ -762,6 +769,7 @@ export const AppContainer = (props: AppContainerProps) => {
       handleResume,
       handleBranch,
       openDeleteDialog,
+      openHelpDialog,
     }),
     [
       openAuthDialog,
@@ -787,12 +795,14 @@ export const AppContainer = (props: AppContainerProps) => {
       handleResume,
       handleBranch,
       openDeleteDialog,
+      openHelpDialog,
     ],
   );
 
   const {
     handleSlashCommand,
     slashCommands,
+    recentSlashCommands,
     pendingHistoryItems: pendingSlashCommandHistoryItems,
     btwItem,
     setBtwItem,
@@ -1676,6 +1686,7 @@ export const AppContainer = (props: AppContainerProps) => {
     isApprovalModeDialogOpen ||
     isResumeDialogOpen ||
     isDeleteDialogOpen ||
+    isHelpDialogOpen ||
     isExtensionsManagerDialogOpen ||
     isRewindSelectorOpen ||
     bgTasksDialogOpen;
@@ -2002,6 +2013,8 @@ export const AppContainer = (props: AppContainerProps) => {
     isFolderTrustDialogOpen,
     showWelcomeBackDialog,
     handleWelcomeBackClose,
+    isHelpDialogOpen,
+    closeHelpDialog,
     isBackgroundTasksDialogOpen: bgTasksDialogOpen,
     closeBackgroundTasksDialog: closeBgTasksDialog,
   });
@@ -2373,7 +2386,10 @@ export const AppContainer = (props: AppContainerProps) => {
       isResumeDialogOpen,
       resumeMatchedSessions,
       isDeleteDialogOpen,
+      isHelpDialogOpen,
+      activeHelpTab,
       slashCommands,
+      recentSlashCommands,
       pendingSlashCommandHistoryItems,
       commandContext,
       shellConfirmationRequest,
@@ -2488,7 +2504,10 @@ export const AppContainer = (props: AppContainerProps) => {
       isResumeDialogOpen,
       resumeMatchedSessions,
       isDeleteDialogOpen,
+      isHelpDialogOpen,
+      activeHelpTab,
       slashCommands,
+      recentSlashCommands,
       pendingSlashCommandHistoryItems,
       commandContext,
       shellConfirmationRequest,
@@ -2645,6 +2664,10 @@ export const AppContainer = (props: AppContainerProps) => {
       openDeleteDialog,
       closeDeleteDialog,
       handleDelete,
+      // Help dialog
+      openHelpDialog,
+      closeHelpDialog,
+      setHelpTab,
       // Feedback dialog
       openFeedbackDialog,
       closeFeedbackDialog,
@@ -2712,6 +2735,10 @@ export const AppContainer = (props: AppContainerProps) => {
       openDeleteDialog,
       closeDeleteDialog,
       handleDelete,
+      // Help dialog
+      openHelpDialog,
+      closeHelpDialog,
+      setHelpTab,
       // Feedback dialog
       openFeedbackDialog,
       closeFeedbackDialog,

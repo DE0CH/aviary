@@ -19,6 +19,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { LoadedSettings } from '../../config/settings.js';
 import * as nonInteractiveCliCommands from '../../nonInteractiveCliCommands.js';
+import { CommandKind } from '../../ui/commands/types.js';
 
 vi.mock('../../nonInteractiveCliCommands.js', () => ({
   ALLOWED_BUILTIN_COMMANDS_NON_INTERACTIVE: [
@@ -284,6 +285,23 @@ describe('Session', () => {
           description: 'Initialize project context',
           kind: 'built-in',
           argumentHint: '[path]',
+          source: 'builtin-command',
+          sourceLabel: 'Built-in',
+          supportedModes: ['interactive', 'non_interactive', 'acp'],
+          modelInvocable: false,
+          subCommands: [
+            {
+              name: 'visible',
+              description: 'Visible subcommand',
+              kind: CommandKind.BUILT_IN,
+            },
+            {
+              name: 'hidden',
+              description: 'Hidden subcommand',
+              kind: CommandKind.BUILT_IN,
+              hidden: true,
+            },
+          ],
         },
       ]);
 
@@ -303,6 +321,14 @@ describe('Session', () => {
               name: 'init',
               description: 'Initialize project context',
               input: { hint: '[path]' },
+              _meta: {
+                argumentHint: '[path]',
+                source: 'builtin-command',
+                sourceLabel: 'Built-in',
+                supportedModes: ['interactive', 'non_interactive', 'acp'],
+                subcommands: ['visible'],
+                modelInvocable: false,
+              },
             },
           ],
         },
@@ -332,6 +358,14 @@ describe('Session', () => {
               name: 'export',
               description: 'Export conversation history',
               input: { hint: '' },
+              _meta: {
+                argumentHint: undefined,
+                source: undefined,
+                sourceLabel: undefined,
+                supportedModes: ['interactive'],
+                subcommands: ['md'],
+                modelInvocable: false,
+              },
             },
           ],
         },
@@ -367,6 +401,14 @@ describe('Session', () => {
               name: 'init',
               description: 'Initialize project context',
               input: null,
+              _meta: {
+                argumentHint: undefined,
+                source: undefined,
+                sourceLabel: undefined,
+                supportedModes: ['interactive'],
+                subcommands: [],
+                modelInvocable: false,
+              },
             },
           ],
           _meta: {
