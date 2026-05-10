@@ -72,6 +72,7 @@ import {
   isTelemetrySdkInitialized,
   initializeTelemetry,
   shutdownTelemetry,
+  refreshSessionContext,
   logStartSession,
   logRipgrepFallback,
   RipgrepFallbackEvent,
@@ -1465,6 +1466,7 @@ export class Config {
     // constructed via Object.create — those should clear their own
     // cache, not the parent's.
     this.getFileReadCache().clear();
+    refreshSessionContext(this.sessionId);
     // The commit-attribution singleton accumulates per-file AI edits
     // and a session-scoped prompt counter — both stop being meaningful
     // when the session resets. Without this, pending attributions
