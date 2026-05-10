@@ -747,6 +747,7 @@ export async function main() {
       await runNonInteractiveStreamJson(
         nonInteractiveConfig,
         trimmedInput.length > 0 ? trimmedInput : '',
+        settings,
       );
       await runExitCleanup();
       // Honor any exitCode set by the run (e.g. --json-schema plain-text
