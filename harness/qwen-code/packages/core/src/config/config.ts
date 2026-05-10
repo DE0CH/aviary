@@ -117,6 +117,10 @@ import { DEFAULT_QWEN_EMBEDDING_MODEL } from './models.js';
 import { Storage } from './storage.js';
 import { ChatRecordingService } from '../services/chatRecordingService.js';
 import {
+  clearRuntimeStatus,
+  writeRuntimeStatus,
+} from '../utils/runtimeStatus.js';
+import {
   SessionService,
   type ResumedSessionData,
 } from '../services/sessionService.js';
@@ -734,6 +738,7 @@ export class Config {
   private readonly overrideExtensions?: string[];
 
   private readonly cliVersion?: string;
+  private runtimeStatusEnabled = false;
   private readonly experimentalZedIntegration: boolean = false;
   private readonly cronEnabled: boolean = false;
   private readonly emitToolUseSummaries: boolean = true;
@@ -1442,6 +1447,7 @@ export class Config {
       // Best-effort — don't block session switch
     }
 
+    const previousSessionId = this.sessionId;
     this.sessionId = sessionId ?? randomUUID();
     this.sessionData = sessionData;
     setDebugLogSession(this);
@@ -1468,7 +1474,57 @@ export class Config {
     if (this.initialized) {
       logStartSession(this, new StartSessionEvent(this));
     }
+
+    // Refresh the runtime.json sidecar so external observers (terminal
+    // multiplexers, IDE integrations, status daemons) see the new
+    // session id rather than a stale claim against a still-live PID.
+    // /clear, /reset, /new, and /resume all flow through this method,
+    // so handling the swap centrally covers every same-PID session
+    // transition. Best-effort: must never block /clear or /resume.
+    //
+    // Only refresh when THIS process established its own sidecar at
+    // startup (interactive UI). A non-interactive `/clear` (e.g.
+    // qwen --prompt-interactive) must not delete a sibling shell's
+    // sidecar that happens to share the outgoing session id —
+    // mirrors kimi-cli PR #2082's "write only when a session is
+    // established for this process" rule.
+    if (
+      this.runtimeStatusEnabled &&
+      previousSessionId !== this.sessionId
+    ) {
+      const oldPath = this.storage.getRuntimeStatusPath(previousSessionId);
+      const newPath = this.storage.getRuntimeStatusPath(this.sessionId);
+      const cliVersion = this.cliVersion ?? null;
+      const workDir = this.targetDir;
+      const newSessionId = this.sessionId;
+      void (async () => {
+        try {
+          await clearRuntimeStatus(oldPath);
+          await writeRuntimeStatus(newPath, {
+            sessionId: newSessionId,
+            workDir,
+            qwenVersion: cliVersion,
+          });
+        } catch {
+          // ignored: best-effort cleanup
+        }
+      })();
+    }
+
     return this.sessionId;
+  }
+
+  /**
+   * Marks this Config as the owner of a runtime.json sidecar for the
+   * current PID. Call once after the initial sidecar write succeeds
+   * (typically from the interactive UI bootstrap). When set, subsequent
+   * startNewSession() calls will refresh the sidecar on session swap;
+   * when unset, startNewSession() leaves sibling sidecars alone so a
+   * short-lived non-interactive process can't trample a concurrent
+   * shell's sidecar that happens to share the outgoing session id.
+   */
+  markRuntimeStatusEnabled(): void {
+    this.runtimeStatusEnabled = true;
   }
 
   /**
