@@ -100,6 +100,10 @@ export type {
   ExitPlanModeTool,
   ExitPlanModeParams,
 } from './tools/exitPlanMode.js';
+export type {
+  SyntheticOutputTool,
+  StructuredOutputParams,
+} from './tools/syntheticOutput.js';
 export type { GlobTool, GlobToolParams, GlobPath } from './tools/glob.js';
 export type { GrepTool, GrepToolParams } from './tools/grep.js';
 export type { LSTool, LSToolParams, FileEntry } from './tools/ls.js';
@@ -121,6 +125,7 @@ export type { WriteFileTool, WriteFileToolParams } from './tools/write-file.js';
 export type { CronCreateTool, CronCreateParams } from './tools/cron-create.js';
 export type { CronListTool, CronListParams } from './tools/cron-list.js';
 export type { CronDeleteTool, CronDeleteParams } from './tools/cron-delete.js';
+export type { ToolSearchTool, ToolSearchParams } from './tools/tool-search.js';
 
 // ============================================================================
 // Services
