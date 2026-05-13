@@ -371,3 +371,14 @@ export {
   type PostToolUseFailureHookResult,
   generateToolUseId,
 } from './core/toolHookTriggers.js';
+
+// ============================================================================
+// Startup profiler — cross-package event sink (first-screen perf observability)
+// ============================================================================
+
+export {
+  setStartupEventSink,
+  recordStartupEvent,
+  type StartupEventSink,
+  type StartupEventAttrs,
+} from './utils/startupEventSink.js';
