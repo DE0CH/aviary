@@ -306,6 +306,7 @@ export * from './utils/ripgrepUtils.js';
 export {
   detectRuntime,
   getOrCreateSharedDispatcher,
+  redactProxyCredentials,
 } from './utils/runtimeFetchOptions.js';
 export * from './utils/runtimeStatus.js';
 export * from './utils/schemaValidator.js';
