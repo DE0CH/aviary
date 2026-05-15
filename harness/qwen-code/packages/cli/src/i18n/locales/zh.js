@@ -508,8 +508,8 @@ export default {
     '扩展 "{{name}}" 已是最新版本。',
   'Updates all extensions or a named extension to the latest version.':
     '将所有扩展或指定扩展更新到最新版本。',
-  'The name of the extension to update.': '要更新的扩展名称。',
   'Update all extensions.': '更新所有扩展。',
+  'The name of the extension to update.': '要更新的扩展名称。',
   'Either an extension name or --all must be provided':
     '必须提供扩展名称或 --all',
   'Lists installed extensions.': '列出已安装的扩展。',
@@ -610,6 +610,7 @@ export default {
     '按 Escape、Ctrl+C 或 Ctrl+D 取消',
   'Press Space, Enter, or Escape to dismiss': '按 Space、Enter 或 Escape 关闭',
   'No hook selected': '未选择 Hook',
+  'Session (temporary)': '会话（临时）',
   // Hooks - List Step
   'No hook events found.': '未找到 Hook 事件。',
   '{{count}} hook configured': '{{count}} 个 Hook 已配置',
@@ -655,7 +656,6 @@ export default {
   'User Settings': '用户设置',
   'System Settings': '系统设置',
   Extensions: '扩展',
-  'Session (temporary)': '会话（临时）',
   // Hooks - Event Descriptions (short)
   'Before tool execution': '工具执行前',
   'After tool execution': '工具执行后',
@@ -670,6 +670,8 @@ export default {
   'Before conversation compaction': '对话压缩前',
   'When a session is ending': '会话结束时',
   'When a permission dialog is displayed': '显示权限对话框时',
+  'When a new todo item is created': '创建新待办事项时',
+  'When a todo item is marked as completed': '待办事项标记为完成时',
   // Hooks - Event Descriptions (detailed)
   'Input to command is JSON of tool call arguments.':
     '命令输入为工具调用参数的 JSON。',
@@ -693,6 +695,10 @@ export default {
     '命令输入为包含压缩详情的 JSON。',
   'Input to command is JSON with tool_name, tool_input, and tool_use_id. Output JSON with hookSpecificOutput containing decision to allow or deny.':
     '命令输入为包含 tool_name、tool_input 和 tool_use_id 的 JSON。输出包含 hookSpecificOutput 的 JSON，其中包含允许或拒绝的决定。',
+  'Input to command is JSON with todo_id, todo_content, todo_status, all_todos, and phase. In validation, output JSON with decision (allow/block/deny) and reason. In postWrite, block/deny is ignored.':
+    '命令输入为包含 todo_id、todo_content、todo_status、all_todos 和 phase 的 JSON。在 validation 中，输出包含 decision（allow/block/deny）和 reason 的 JSON。在 postWrite 中，block/deny 会被忽略。',
+  'Input to command is JSON with todo_id, todo_content, previous_status, all_todos, and phase. In validation, output JSON with decision (allow/block/deny) and reason. In postWrite, block/deny is ignored.':
+    '命令输入为包含 todo_id、todo_content、previous_status、all_todos 和 phase 的 JSON。在 validation 中，输出包含 decision（allow/block/deny）和 reason 的 JSON。在 postWrite 中，block/deny 会被忽略。',
   // Hooks - Exit Code Descriptions
   'stdout/stderr not shown': 'stdout/stderr 不显示',
   'show stderr to model and continue conversation':
@@ -717,6 +723,12 @@ export default {
   'show stderr to user only but continue with compaction':
     '仅向用户显示 stderr 但继续压缩',
   'use hook decision if provided': '如果提供则使用 Hook 决定',
+  'allow todo creation': '允许创建待办事项',
+  'block todo creation and show reason to model':
+    '阻止创建待办事项并向模型显示原因',
+  'allow todo completion': '允许完成待办事项',
+  'block todo completion and show reason to model':
+    '阻止完成待办事项并向模型显示原因',
   // Hooks - Messages
   'Config not loaded.': '配置未加载。',
   'Hooks are not enabled. Enable hooks in settings to use this feature.':
@@ -1290,6 +1302,8 @@ export default {
     '上下文空间不足，用 /compress 释放空间。',
   'Long conversation? /compress summarizes history to free context.':
     '对话太长？用 /compress 总结历史，释放上下文。',
+  'Show context window usage breakdown. Use "/context detail" for per-item breakdown.':
+    '显示上下文窗口使用情况明细。使用 "/context detail" 查看逐项明细。',
 
   // ============================================================================
   // Exit Screen / Stats
@@ -1456,7 +1470,7 @@ export default {
   // ============================================================================
   'API key cannot be empty.': 'API Key 不能为空。',
   'Invalid API key. Coding Plan API keys start with "sk-sp-". Please check.':
-    '无效的 API Key，Coding Plan API Key 均以 "sk-sp-" 开头，请检查',
+    '无效的 API Key。Coding Plan API Key 以 "sk-sp-" 开头，请检查。',
   'You can get your Coding Plan API key here':
     '您可以在这里获取 Coding Plan API Key',
   'You can get your Token Plan API key here':
@@ -1522,8 +1536,6 @@ export default {
     '暂无 API 响应。发送消息以查看实际使用情况。',
   'Run /context detail for per-item breakdown.':
     '运行 /context detail 查看详细分解。',
-  'Show context window usage breakdown. Use "/context detail" for per-item breakdown.':
-    '显示上下文窗口使用情况分解。输入 "/context detail" 查看详细分解。',
   'body loaded': '内容已加载',
   memory: '记忆',
   '{{region}} configuration updated successfully.': '{{region}} 配置更新成功。',

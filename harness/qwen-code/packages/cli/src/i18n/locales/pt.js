@@ -632,6 +632,9 @@ export default {
   'When a session is ending': 'Quando uma sessão está terminando',
   'When a permission dialog is displayed':
     'Quando um diálogo de permissão é exibido',
+  'When a new todo item is created': 'Quando um novo item todo é criado',
+  'When a todo item is marked as completed':
+    'Quando um item todo é marcado como concluído',
   // Hooks - Event Descriptions (detailed)
   'Input to command is JSON of tool call arguments.':
     'A entrada para o comando é JSON dos argumentos da chamada da ferramenta.',
@@ -655,6 +658,10 @@ export default {
     'A entrada para o comando é JSON com detalhes da compactação.',
   'Input to command is JSON with tool_name, tool_input, and tool_use_id. Output JSON with hookSpecificOutput containing decision to allow or deny.':
     'A entrada para o comando é JSON com tool_name, tool_input e tool_use_id. Saída é JSON com hookSpecificOutput contendo decisão de permitir ou negar.',
+  'Input to command is JSON with todo_id, todo_content, todo_status, all_todos, and phase. In validation, output JSON with decision (allow/block/deny) and reason. In postWrite, block/deny is ignored.':
+    'A entrada para o comando é JSON com todo_id, todo_content, todo_status, all_todos e phase. Em validation, saída é JSON com decision (allow/block/deny) e reason. Em postWrite, block/deny é ignorado.',
+  'Input to command is JSON with todo_id, todo_content, previous_status, all_todos, and phase. In validation, output JSON with decision (allow/block/deny) and reason. In postWrite, block/deny is ignored.':
+    'A entrada para o comando é JSON com todo_id, todo_content, previous_status, all_todos e phase. Em validation, saída é JSON com decision (allow/block/deny) e reason. Em postWrite, block/deny é ignorado.',
   // Hooks - Exit Code Descriptions
   'stdout/stderr not shown': 'stdout/stderr não exibido',
   'show stderr to model and continue conversation':
@@ -680,6 +687,12 @@ export default {
   'show stderr to user only but continue with compaction':
     'mostrar stderr apenas ao usuário mas continuar com compactação',
   'use hook decision if provided': 'usar decisão do hook se fornecida',
+  'allow todo creation': 'permitir criação de todo',
+  'block todo creation and show reason to model':
+    'bloquear criação de todo e mostrar motivo ao modelo',
+  'allow todo completion': 'permitir conclusão de todo',
+  'block todo completion and show reason to model':
+    'bloquear conclusão de todo e mostrar motivo ao modelo',
   // Hooks - Messages
   'Config not loaded.': 'Configuração não carregada.',
   'Hooks are not enabled. Enable hooks in settings to use this feature.':
