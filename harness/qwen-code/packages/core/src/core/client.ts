@@ -30,6 +30,10 @@ import {
 } from '../services/microcompaction/microcompact.js';
 import { slimCompactionInput } from '../services/compactionInputSlimming.js';
 import {
+  GOAL_PAUSE_REASON_SESSION_TOKEN_LIMIT,
+  GOAL_PAUSE_REASON_STOP_HOOK_CAP,
+  GOAL_PAUSE_REASON_USER_INTERRUPT,
+  goalPauseReasonForFailure,
   goalRequiresExactPermit,
   PAUSED_GOAL_SYSTEM_REMINDER,
   type GoalSnapshotV2,
@@ -241,6 +245,16 @@ export interface SendMessageOptions {
   goalSignal?: AbortSignal;
   /** Whether this permit belongs to runtime work or a real-user turn. */
   goalOrigin?: 'runtime' | 'user';
+  /**
+   * Host-specific reason when this send has to pause an interrupted Goal.
+   * `interruption.failure` carries the error that ended the turn when there
+   * was one, so a host can tell a run that died apart from one that stopped.
+   * `interruption.cause` names a non-error stop with host-specific wording.
+   */
+  getInterruptedGoalPauseReason?: (interruption?: {
+    failure?: string;
+    cause?: 'stop-hook-cap';
+  }) => string;
   /** Peeks a queued real-user key immediately before a Goal true Stop. */
   getQueuedGoalTurnKey?: () => string | undefined;
 }
@@ -907,6 +921,7 @@ export class LlmClient {
           action: 'pause',
           expectedGoalId: result.goal.goalId,
           expectedRevision: result.goal.revision,
+          reason: GOAL_PAUSE_REASON_USER_INTERRUPT,
         });
       } catch (error) {
         debugLogger.warn(
@@ -2958,7 +2973,11 @@ export class LlmClient {
       }
       return goalRuntime;
     };
-    const releaseGoalPermitOnInterruptedExit = async () => {
+    const releaseGoalPermitOnInterruptedExit = async (
+      pauseReason?: string,
+      failure?: string,
+      cause?: 'stop-hook-cap',
+    ) => {
       if (
         goalPermitReleased ||
         !goalPermit ||
@@ -2980,10 +2999,27 @@ export class LlmClient {
 
         if (runtime.getSnapshot().goal?.status === 'active') {
           try {
+            // This is the pause that wins the race on the interactive Esc
+            // path: it runs before every host's own reasoned pause, and a
+            // second pause on a non-active Goal throws, so the reason has to
+            // ride here or it never reaches the record. The site also runs
+            // for a turn that merely failed to complete (`!normalCompletion`),
+            // which is not a user interrupt and must not read as one.
             await runtime.dispatch({
               action: 'pause',
               expectedGoalId: goalPermit.goalId,
               expectedRevision: goalPermit.revision,
+              reason:
+                pauseReason ??
+                options?.getInterruptedGoalPauseReason?.({
+                  failure,
+                  ...(cause ? { cause } : {}),
+                }) ??
+                (cause === 'stop-hook-cap'
+                  ? GOAL_PAUSE_REASON_STOP_HOOK_CAP
+                  : callerSignal.aborted
+                    ? GOAL_PAUSE_REASON_USER_INTERRUPT
+                    : goalPauseReasonForFailure('the turn was interrupted')),
             });
           } catch (error) {
             debugLogger.warn('Failed to pause interrupted Goal turn', error);
@@ -3004,8 +3040,12 @@ export class LlmClient {
         debugLogger.warn('Failed to release interrupted Goal turn', error);
       }
     };
-    const finalizeInterruptedGoalTurn = async () => {
-      await releaseGoalPermitOnInterruptedExit();
+    const finalizeInterruptedGoalTurn = async (
+      pauseReason?: string,
+      failure?: string,
+      cause?: 'stop-hook-cap',
+    ) => {
+      await releaseGoalPermitOnInterruptedExit(pauseReason, failure, cause);
       closeGoalStateEvents();
       return takePendingGoalEvents();
     };
@@ -3291,7 +3331,10 @@ export class LlmClient {
         signal.aborted ? undefined : getErrorType(error),
       );
       this.config.takePendingGoalProposal?.(prompt_id);
-      for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+      for (const goalEvent of await finalizeInterruptedGoalTurn(
+        undefined,
+        getErrorMessage(error),
+      )) {
         yield goalEvent;
       }
       // A hook failure (including an abort during the hook await) exits
@@ -3370,7 +3413,10 @@ export class LlmClient {
         signal.aborted ? undefined : getErrorType(error),
       );
       this.config.takePendingGoalProposal?.(prompt_id);
-      for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+      for (const goalEvent of await finalizeInterruptedGoalTurn(
+        undefined,
+        getErrorMessage(error),
+      )) {
         yield goalEvent;
       }
       // A Goal admission failure rethrows before the settlement
@@ -3461,6 +3507,7 @@ export class LlmClient {
     // early-return) leaves this `false`, and the `finally` block aborts the
     // prefetch as a safety net.
     let normalCompletion = false;
+    let sessionTokenLimitExceeded = false;
     let hasToolCalls = false;
     // Declared outside the try so the finally block can close it out on
     // uncaught-exception exits too; created (when the hook is registered)
@@ -3664,6 +3711,7 @@ export class LlmClient {
         const lastPromptTokenCount =
           this.getChat().getLastPromptTokenCount(requestRouteKey);
         if (lastPromptTokenCount > sessionTokenLimit) {
+          sessionTokenLimitExceeded = true;
           this.cancelPendingMemoryPrefetch('no_safe_delivery_point');
           yield {
             type: LlmEventType.SessionTokenLimitExceeded,
@@ -3907,7 +3955,10 @@ export class LlmClient {
               part as Part,
             ])
           ) {
-            for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+            for (const goalEvent of await finalizeInterruptedGoalTurn(
+              undefined,
+              'loop detected',
+            )) {
               yield goalEvent;
             }
             const loopType = this.loopDetector.getLastLoopType();
@@ -4099,7 +4150,10 @@ export class LlmClient {
             // the non-interactive runner) build their own list from the yielded
             // ToolCallRequest events and stop on LoopDetected.
             turn.pendingToolCalls.length = 0;
-            for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+            for (const goalEvent of await finalizeInterruptedGoalTurn(
+              undefined,
+              'loop detected',
+            )) {
               yield goalEvent;
             }
             const loopType = this.loopDetector.getLastLoopType();
@@ -4132,7 +4186,10 @@ export class LlmClient {
             !skipLoopDetection &&
             this.loopDetector.addAndCheckHeuristicLoops(event);
           if (heuristicLoop) {
-            for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+            for (const goalEvent of await finalizeInterruptedGoalTurn(
+              undefined,
+              'loop detected',
+            )) {
               yield goalEvent;
             }
             const loopType = this.loopDetector.getLastLoopType();
@@ -4200,7 +4257,12 @@ export class LlmClient {
             (event.type === LlmEventType.UserCancelled && signal.aborted) ||
             event.type === LlmEventType.Error
           ) {
-            for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+            for (const goalEvent of await finalizeInterruptedGoalTurn(
+              undefined,
+              event.type === LlmEventType.Error
+                ? event.value.error?.message
+                : undefined,
+            )) {
               yield goalEvent;
             }
           }
@@ -4388,7 +4450,11 @@ export class LlmClient {
               value: warning,
             };
             debugLogger.warn(warning);
-            for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+            for (const goalEvent of await finalizeInterruptedGoalTurn(
+              undefined,
+              undefined,
+              'stop-hook-cap',
+            )) {
               yield goalEvent;
             }
             endCurrentInteraction('ok');
@@ -4839,7 +4905,10 @@ export class LlmClient {
       normalCompletion = true;
       return turn;
     } catch (error) {
-      for (const goalEvent of await finalizeInterruptedGoalTurn()) {
+      for (const goalEvent of await finalizeInterruptedGoalTurn(
+        undefined,
+        getErrorMessage(error),
+      )) {
         yield goalEvent;
       }
       if (
@@ -4867,7 +4936,11 @@ export class LlmClient {
         this.config.endAutomaticActiveTodoWorkChain(prompt_id);
       }
       if (!goalPermitReleased && (callerSignal.aborted || !normalCompletion)) {
-        await releaseGoalPermitOnInterruptedExit();
+        await releaseGoalPermitOnInterruptedExit(
+          sessionTokenLimitExceeded
+            ? GOAL_PAUSE_REASON_SESSION_TOKEN_LIMIT
+            : undefined,
+        );
       }
       closeGoalStateEvents();
       if (pushInitiated) {
