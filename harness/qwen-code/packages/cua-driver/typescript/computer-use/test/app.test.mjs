@@ -195,18 +195,102 @@ test("missing capability metadata does not make the facade choose another input 
   assert.equal(calls.filter((call) => call.method === "windowPressKey").length, 1);
 });
 
-test("incomplete AX retains static content but does not retain action bindings", async () => {
-  const { computer, calls } = fixture({ observe: (_input, state) => ({
+test("incomplete AX retains only current issued action bindings and preserves its warning", async () => {
+  const { computer, calls } = fixture({ observe: (_input, state, count) => ({
     ...state,
-    observation_revision: { ...state.observation_revision, capture_complete: false },
+    tree_markdown: '[0] StaticText "Hint"\n[1] Button "Save"\n[2] Button "Cancel"',
+    elements: [
+      { element_id: 1, element_index: 0, element_token: `s${count}:0` },
+      { element_id: 2, element_index: 1, element_token: `s${count}:1` },
+      { element_id: 0 },
+    ],
+    observation_revision: {
+      ...state.observation_revision,
+      capture_complete: false,
+      capture_read_complete: false,
+      stable_element_ids: false,
+      resync_reason: "capture_incomplete",
+    },
   }) });
   const app = await computer.getApp("Fixture");
   const state = await app.getState();
   assert.match(state.text, /incomplete/);
   assert.match(state.text, /StaticText/);
-  assert.doesNotMatch(state.text, /element_token=/);
-  await assert.rejects(app.click(37), { code: "app_element_unavailable" });
+  assert.match(state.text, /current snapshot IDs/);
+  assert.doesNotMatch(state.text, /element_token=|tokens|element actions are unavailable/);
+  assert.equal(calls.filter((call) => call.method === "getWindowState").length, 2);
+  await app.click(1);
+  assert.equal(calls.at(-1).input.elementToken, "s2:0");
+  await app.click(2);
+  assert.equal(calls.at(-1).input.elementToken, "s2:1");
+  await assert.rejects(app.click(0), { code: "app_element_unavailable" });
+  assert.equal(calls.filter((call) => call.method === "windowClick").length, 2);
+});
+
+test("old incomplete revision responses cannot bind display IDs through action indices", async () => {
+  const { computer, calls } = fixture({ observe: (_input, state, count) => ({
+    ...state,
+    tree_markdown: '[0] StaticText "Hint"\n[1] Button "Save"\n[2] Button "Cancel"',
+    elements: [
+      { element_index: 0, label: "Save", element_token: `s${count}:0` },
+      { element_index: 1, label: "Cancel", element_token: `s${count}:1` },
+    ],
+    observation_revision: {
+      ...state.observation_revision,
+      capture_complete: false,
+      stable_element_ids: false,
+      resync_reason: "capture_incomplete",
+    },
+  }) });
+  const app = await computer.getApp("Fixture");
+  const state = await app.getState();
+  assert.match(state.text, /\[1\] Button "Save"/);
+  for (const id of [0, 1, 2]) {
+    await assert.rejects(app.click(id), { code: "app_element_unavailable" });
+  }
   assert.equal(calls.filter((call) => call.method === "windowClick").length, 0);
+  const legacy = await computer.observeWindow({ pid: 42, windowId: 7 });
+  await computer.click({ pid: 42, windowId: 7, elementToken: legacy.elements[0].element_token });
+  assert.equal(calls.at(-1).input.elementToken, "s4:0");
+});
+
+test("bounded app observations cap whole rows, reuse current IDs, and allow a larger full rendering", async () => {
+  const tree = compactState + "\n" + Array.from({ length: 800 }, (_, i) => `[${i + 100}] StaticText "Long fixture row ${i}"`).join("\n");
+  for (const maxTextChars of [undefined, 512]) {
+    const { computer, calls } = fixture({ observe: (input, state, count) => ({
+      ...state,
+      tree_markdown: count === 1 || input.observationRevision.forceFull ? tree : "No accessibility changes.",
+      observation_revision: {
+        ...state.observation_revision,
+        mode: count === 1 || input.observationRevision.forceFull ? "full" : "no_change",
+        capture_complete: false,
+        capture_read_complete: true,
+        capture_truncated: true,
+        capture_incomplete_details: ["walk: max_elements truncated"],
+      },
+    }) });
+    const app = await computer.getApp("Fixture");
+    const full = await app.getState({ maxTextChars });
+    assert.equal(full.mode, "full");
+    assert.ok(full.text.length <= (maxTextChars ?? 12_000));
+    assert.match(full.text, /^Accessibility capture is incomplete \(traversal limit\)/);
+    assert.match(full.text, /Text truncated; call app.getState/);
+    assert.doesNotMatch(full.text, /\.elements|element_token=|element actions are unavailable/);
+    assert.ok(tree.split("\n").includes(full.text.split("\n").at(-1)));
+    assert.match(full.text, /\[37\] TextField/);
+    const unchanged = await app.getState({ maxTextChars });
+    assert.equal(unchanged.mode, "no_change");
+    assert.match(unchanged.text, /No accessibility changes\.$/);
+    const observations = calls.filter((call) => call.method === "getWindowState");
+    assert.equal(observations.length, 2);
+    assert.equal(observations[1].input.observationRevision.baseRevisionId, "r1");
+    await app.click(37);
+    assert.equal(calls.at(-1).input.elementToken, "rv1:window_7:25");
+    const expanded = await app.getState({ disableDiff: true, maxTextChars: 100_000 });
+    assert.equal(expanded.mode, "full");
+    assert.ok(expanded.text.endsWith(tree));
+    assert.doesNotMatch(expanded.text, /Text truncated/);
+  }
 });
 
 test("the app advances native revision cursors and refreshes mappings even on no-change", async () => {
@@ -356,6 +440,54 @@ test("getState keeps a selected untitled app window", async () => {
   const { computer } = fixture({ windows: [{ ...document, title: "" }] });
   const app = await computer.getApp("Fixture");
   assert.equal((await app.getState()).text, compactState);
+});
+
+test("an exact-target refusal remains readable for an app semantic action", async () => {
+  const code = "off_space_or_ax_unresolved";
+  const { computer, calls } = fixture({ action: () => result({
+    code, effect: "refused", reason: "private native target details",
+    escalation: { recommended: "foreground" },
+  }, { isError: true }) });
+  const app = await computer.getApp("Fixture");
+  await app.getState();
+  await assert.rejects(app.setValue(37, "ready"), (error) => {
+    assert.match(error.message, new RegExp(`Native input refused \\(${code}\\)`));
+    assert.match(error.message, /may already have affected the app/);
+    assert.match(error.message, /Call app.getState\(\)/);
+    assert.doesNotMatch(error.message, /private native|foreground/);
+    assert.equal(error.details.operation.dispatched, true);
+    assert.equal(error.details.operation.committed, false);
+    return error.code === code;
+  });
+  assert.equal(calls.filter((call) => call.method === "setValue").length, 1);
+});
+
+for (const effect of [undefined, "partial", "unverifiable", "suspected_noop"]) {
+  test(`a known code with effect ${effect} does not claim refusal`, async () => {
+    const { computer, calls } = fixture({ action: () => result({
+      code: "off_space_or_ax_unresolved", effect,
+    }, { isError: true }) });
+    const app = await computer.getApp("Fixture");
+    await app.getState();
+    await assert.rejects(app.setValue(37, "ready"), (error) => {
+      assert.doesNotMatch(error.message, /Native input refused/);
+      assert.match(error.message, /may already have affected the app/);
+      return true;
+    });
+    assert.equal(calls.filter((call) => call.method === "setValue").length, 1);
+  });
+}
+
+test("unknown refusal details are not interpolated into the public error", async () => {
+  const { computer } = fixture({ action: () => result({
+    code: "unknown_private_code", effect: "refused", reason: "private native target details",
+  }, { isError: true }) });
+  const app = await computer.getApp("Fixture");
+  await app.getState();
+  await assert.rejects(app.pressKey("Return"), (error) => {
+    assert.doesNotMatch(error.message, /unknown_private_code|private native|Native input refused/);
+    return error.code === "unknown_private_code";
+  });
 });
 
 for (const effect of ["partial", "unverifiable", "suspected_noop"]) {

@@ -18,6 +18,7 @@ type App = {
   getState: (options?: {
     disableDiff?: boolean;
     includeScreenshot?: boolean;
+    maxTextChars?: number;
   }) => Promise<State>;
   click: (
     point: Point,
@@ -74,7 +75,8 @@ type State = {
 
 ### 1. Initialize
 
-On macOS, bind the app named by the task, then read its state.
+If initialization already bound the task's app and returned its state, reuse
+that `app` and observation. Otherwise, bind the app named by the task, then read its state.
 `getApp()` binds identity; `getState()` can open a discovered stopped app. Combine these
 steps in one Node REPL call:
 
@@ -99,6 +101,13 @@ need a full replacement, use `disableDiff: true` only when the previous state
 is unavailable or no longer useful. Do not disregard the text and then assume
 that a subsequent diff will reproduce the information you skipped.
 
+Returned text defaults to at most 12,000 characters. Set `maxTextChars` (minimum 512) to adjust the limit. A truncation notice means some captured rows were
+omitted; request `app.getState({ disableDiff: true, maxTextChars: 24000 })` when
+you need more full text. An omitted row does not prove an element is absent.
+Traversal-limited captures cover only the captured nodes: identical captures
+can return no-change, while changes return full captured state. Use current
+captured IDs; after a read failure, use only IDs from the latest observation.
+
 ### 2. Actions using app
 
 After performing one or more UI actions, call `app.getState()` before deciding
@@ -115,15 +124,22 @@ nodeRepl.write((await app.getState()).text);
 
 Use the actual ID from your observation; `37` is only an example.
 
+An observation is a decision boundary. When the current state already identifies
+the controls and the next actions are known, combine those actions and saving
+in the same call. Read state after the batch. End the batch at a new dialog,
+menu, changed target or uncertain result; use that state before choosing the
+next action. Do not split a known sequence merely to put each action in its own
+call.
+
 - Prefer element IDs to coordinates. `setValue(id, value)` changes a writable control, and `performSecondaryAction(id, action)` invokes a secondary action listed for that element. Use an observed action name rather than guessing.
 - When an action opens or closes a dialog, sheet or menu, end the batch and call `app.getState()` to read the new window and IDs before continuing.
 - `No open application window.` means the app is still running without a document window. If closing it completed the task, finish instead of retrying actions; otherwise open the intended file or window first.
 - An action error can occur after the UI already changed. Read state before deciding whether to retry. Partial, unconfirmed or cancelled actions must not be blindly repeated.
 - Coordinate actions use pixels in this app's current screenshot, with `(0, 0)` at its top-left. Every App observation refreshes that frame internally. Request `includeScreenshot: true` when you need to inspect the image, especially after a window change. Do not infer coordinates from another window or desktop screenshot.
 - `pressKey` sends one key, optionally with modifiers. `hotkey` sends a combination such as `['super', 's']`. Use the platform's appropriate shortcut.
-- App input activates the exact target internally for one dispatch and restores the previous foreground app. There is no delivery-mode choice and no automatic replay after an uncertain result.
+- App input activates the exact target internally for one dispatch and restores the previously active app. There is no delivery-mode choice and no automatic replay after an uncertain result.
 - Literal `\n` or `\r` in `typeText` sends Return. In a composer or form this may submit rather than insert a newline.
-- If AX is incomplete or does not explain the interface, request a screenshot and inspect it. Incomplete observations do not authorize element actions.
+- If AX is incomplete or does not explain the interface, request a screenshot and inspect it. Only currently captured actionable IDs can be used for element actions.
 
 ## Paste and select text
 
@@ -167,6 +183,9 @@ nodeRepl.write((await app.getState()).text);
 Every App observation captures the current screenshot internally, independent
 of whether AX returns full state, a diff or no-change. The default return omits
 the image. `includeScreenshot: true` exposes it when visual inspection is needed.
+Prefer the text-only default when it identifies the controls and confirms the
+requested change. Request an image to resolve missing or ambiguous information,
+choose coordinates or verify an appearance that AX does not describe.
 
 ```js
 var state = await app.getState({ includeScreenshot: true });
@@ -176,7 +195,10 @@ for (const image of state.screenshot?.images ?? []) {
 }
 ```
 
-When all Computer Use work is complete:
+Include connection cleanup at the end of the call that emits the final
+verification. Inspect that result before reporting success; reconnect and
+continue if it reveals unfinished work. A separate cleanup-only model turn is
+unnecessary:
 
 ```js
 await computer.close();

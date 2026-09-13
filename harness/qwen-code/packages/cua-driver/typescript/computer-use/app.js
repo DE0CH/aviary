@@ -154,19 +154,15 @@ export class ComputerUseApp {
     this.#observation = state;
     this.#generation = this.#computer.connectionGeneration;
     this.#elements = new Map(state.elements.flatMap((element) => {
-      const id = element.element_id ?? element.element_index;
+      const id = element.element_id ?? (state.diagnostics.revisionSupported ? undefined : element.element_index);
       return Number.isSafeInteger(id) && typeof element.element_token === "string"
         ? [[id, element]] : [];
     }));
-    const text = state.diagnostics.captureComplete === false
-      ? "Accessibility capture is incomplete. Observe again after the UI settles; element actions are unavailable.\n\n" +
-        state.text.slice(state.text.indexOf("\n\n") + 2)
-      : state.text;
     return {
       app: this.name,
       window: target.window.title ?? "",
       mode: state.mode,
-      text,
+      text: state.text,
       ...(exposeScreenshot && state.screenshot ? { screenshot: state.screenshot } : {}),
     };
   }
@@ -211,8 +207,12 @@ export class ComputerUseApp {
           (operation === undefined && error.details === undefined))) {
       return error;
     }
+    const refusalReason = !observing && error?.details?.effect === "refused"
+      && error?.code === "off_space_or_ax_unresolved"
+      ? "the target window could not be verified on the current desktop" : undefined;
     return new ComputerUseError(
       observing ? "The app state could not be read. Check that its window is available, then call app.getState() again." :
+        (refusalReason ? `Native input refused (${error.code}): ${refusalReason}. ` : "") +
         "The app action could not be completed or confirmed. It may already have affected the app. " +
         "Call app.getState() before deciding whether to retry.",
       { code: error?.code, details: { operation: error?.details?.operation } },
