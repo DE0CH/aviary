@@ -5,7 +5,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=f7f286fa3bc3cacc3c1a43c478a1a0edffde6e12
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=d00596f42c9352175449f5165b0c38aed4061408
   - secrets/web-env.sops.yaml
   - secrets/egress-env.sops.yaml
   - secrets/tools-env.sops.yaml
@@ -18,7 +18,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: f7f286fa3bc3
+    newTag: d00596f42c93
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
