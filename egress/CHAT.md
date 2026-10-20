@@ -76,7 +76,10 @@ gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it
   between them so the autoscaler can empty and release hosts. See docs/SANDBOX-VM.md.
 - **`kubernetes`** (`sandbox-k8s.ts`): a gVisor pod per sandbox in `sandbox.namespace`, agent at `http://<pod IP>:7070`,
   the env (proxy, mirrors, `JARVIS_EXEC_TOKEN`) in the pod spec, the proxy `sandbox.egressProxyUrl` (default
-  `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op.
+  `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op. `create` retries for up
+  to a minute while a namespace ResourceQuota still counts a pod the pool just released (it terminates for a few
+  seconds). The YYC instance runs these pods in its own cluster (DE0CH/YYC `yyc-ai/deploy/sandbox.yaml`: RuntimeClass on
+  labelled nodes, a PriorityClass below its jobs that never preempts, quota, the web service account's Role, policies).
 - **`e2b`** (`sandbox-e2b.ts`, REST with fetch, `X-API-Key: $E2B_API_KEY`, base `https://api.e2b.app`):
   - **Template:** the chat workflow builds `chat/sandbox/Dockerfile` as E2B template `jarvis3-sandbox`, tagged with
     the commit's 12 characters, 1 vCPU / 1024 MB, start command `JARVIS_INIT=1 node /opt/agent/agent.mjs`, ready
@@ -279,7 +282,10 @@ claw (fork patch) runs `$CLAW_BASH_COMMAND` with the bash tool input JSON on std
 stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_TOKEN`, `JARVIS_SYNC_STATE`
 (a JSON file outside the workdir with the last-synced manifest and the `/changes` cursor) from the turn runner. Each
 call: push files that changed in the workdir since the manifest (`PUT /files`), `POST /exec`, then pull
-`/changes` into the workdir and update the manifest. It also needs `JARVIS_SANDBOX_ID`: a different id than the one in
+`/changes` into the workdir and update the manifest. A turn without a sandbox gets no `JARVIS_SANDBOX_URL`; the
+helper then fails with a plain sentence (`The sandbox is not available for this message (<reason>). Try again in a
+minute.`, the reason from `JARVIS_SANDBOX_UNAVAILABLE`: the pool-full text or "it could not be started"), never an
+internal name, since the model passes it on to staff. It also needs `JARVIS_SANDBOX_ID`: a different id than the one in
 the state file (a new sandbox) resets the manifest and cursor, so the whole workdir is pushed again. A full `/changes`
 answer (`X-Full: 1`) is the complete list: files the manifest has and the answer lacks (and didn't skip) are deleted
 locally. Background commands answer `Started in the background … output goes to .jobs/<id>.log`; `.jobs/` is pulled
