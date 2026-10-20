@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 import { blobKey, type WebDeps } from "./ctx.ts";
@@ -20,7 +20,7 @@ export interface FileRow {
 }
 
 export const dirs = (deps: WebDeps, conv: string) => {
-  const base = join(deps.workRoot, conv);
+  const base = resolve(deps.workRoot, conv); // absolute: claw and jarvis-bash get these paths and run in the workdir
   return {
     base,
     work: join(base, "work"),

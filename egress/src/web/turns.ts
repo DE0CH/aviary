@@ -3,7 +3,7 @@
 // file are restored before and stored after, and bash goes to the conversation's sandbox through jarvis-bash.
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { channel } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
@@ -14,6 +14,8 @@ import type { LiveSandbox, SandboxManager } from "./sandbox.ts";
 
 const TEXT_BATCH_MS = 250;
 const MAX_TOOL_OUTPUT = 20_000;
+/** claw and jarvis-bash run in the workdir: relative paths become absolute (bare command names stay PATH lookups). */
+const abs = (p: string) => (p.includes("/") ? resolve(p) : p);
 export const RESET_NOTE =
   "[System note: the sandbox was reset: files in the workspace are restored; installed packages and background processes from before are gone.]";
 
@@ -150,7 +152,7 @@ export class TurnRunner {
       const settings: Record<string, unknown> = { permissions: { defaultMode: "danger-full-access" } };
       if (toolNames.length) {
         settings.mcpServers = {
-          tools: { command: deps.mcpBridgePath, args: [], env: { JARVIS_TOOLS_URL: deps.toolsUrl, JARVIS_TURN_TOKEN: token } },
+          tools: { command: abs(deps.mcpBridgePath), args: [], env: { JARVIS_TOOLS_URL: deps.toolsUrl, JARVIS_TURN_TOKEN: token } },
         };
       }
       await writeFile(join(d.clawConfig, "settings.json"), JSON.stringify(settings, null, 2));
@@ -165,8 +167,8 @@ export class TurnRunner {
         HOME: d.base,
         LANG: "C.UTF-8",
         CLAW_EVENT_STREAM: "1",
-        CLAW_SYSTEM_PROMPT_FILE: deps.config.systemPromptFile,
-        CLAW_BASH_COMMAND: deps.bashPath,
+        CLAW_SYSTEM_PROMPT_FILE: abs(deps.config.systemPromptFile),
+        CLAW_BASH_COMMAND: abs(deps.bashPath),
         CLAW_CONFIG_DIR: d.clawConfig,
         CLAW_CONFIG_HOME: d.clawConfig,
         CLAW_SESSIONS_DIR: d.sessions,
@@ -180,7 +182,7 @@ export class TurnRunner {
       if (sandbox) Object.assign(env, { JARVIS_SANDBOX_URL: sandbox.url, JARVIS_SANDBOX_TOKEN: sandbox.execToken, JARVIS_SANDBOX_ID: sandbox.id });
       if (r.cancelled) throw new CancelledError();
 
-      const child = spawn(deps.clawPath, args, { cwd: d.work, env, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(abs(deps.clawPath), args, { cwd: d.work, env, stdio: ["pipe", "pipe", "pipe"] });
       r.child = child;
       let stderrTail = "";
       child.stderr!.on("data", (c: Buffer) => (stderrTail = (stderrTail + c.toString("utf8")).slice(-4000)));
