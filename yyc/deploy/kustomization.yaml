@@ -1,0 +1,33 @@
+# YYC AI (ai.yyc.deyaochen.com): an instance of the Jarvis 3 chat runtime (DE0CH/jarvis3, docs/CHAT.md). See
+# ../README.md. The cluster's Flux applies this folder (Kustomization `yyc-ai`, path ./yyc-ai/deploy, SOPS
+# decryption with the cluster's age key).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # the base, pinned to a jarvis3 commit (bump with the image tags below)
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=5743d82e669a9a3cd0d53311cff299779557570c
+  - priorityclasses.yaml
+  - secrets/web-env.sops.yaml
+  - secrets/egress-env.sops.yaml
+  - secrets/tools-env.sops.yaml
+  - secrets/tunnel.sops.yaml
+  - secrets/ghcr-pull.sops.yaml
+# the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
+images:
+  - name: jarvis3-chat
+    newName: ghcr.io/de0ch/jarvis3-chat
+    newTag: 7daf6a74ad79
+configMapGenerator:
+  - name: jarvis-config
+    namespace: jarvis
+    files: [config.json, system-prompt.md]
+  - name: jarvis-brand
+    namespace: jarvis
+    files: [logo.svg, logo.png]
+# GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
+patches:
+  - target: {kind: Deployment}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value: [{name: ghcr-pull}]
