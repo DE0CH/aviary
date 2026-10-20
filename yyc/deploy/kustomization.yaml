@@ -25,6 +25,10 @@ configMapGenerator:
     files: [logo.svg, logo.png]
 # GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
 patches:
+  # 2-replica Deployments roll one pod at a time (the other keeps serving, no extra memory; Deyao, 2026-10-20)
+  - target: {kind: Deployment, name: "web|egress|tools|cloudflared"}
+    patch: |-
+      - {op: replace, path: /spec/strategy/rollingUpdate, value: {maxSurge: 0, maxUnavailable: 1}}
   - target: {kind: Deployment}
     patch: |-
       - op: add
