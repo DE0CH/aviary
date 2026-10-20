@@ -1,0 +1,22 @@
+{
+  "name": "@jarvis3/chat-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Staff web chat UI of the chat runtime (served by the web role at /)",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "mock": "node dev/mock-server.mjs",
+    "screens": "node dev/screens.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "marked": "^16.1.2",
+    "preact": "^10.27.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  }
+}
