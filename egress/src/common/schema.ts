@@ -51,4 +51,6 @@ create table confirmations (id uuid primary key, conversation_id uuid not null, 
   created_at timestamptz not null default now(), decided_at timestamptz, decided_by text);
 create table kv (key text primary key, value jsonb not null);
 `,
+  // sandbox providers (docs/CHAT.md, "Sandbox providers"): how to reach a sandbox's agent, {url, headers}
+  `alter table sandboxes add column agent jsonb;`,
 ];

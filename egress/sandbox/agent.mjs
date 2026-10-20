@@ -3,18 +3,27 @@
 // It writes the files the server pushes, runs commands in /work, and reports which files changed since a cursor so
 // the server can copy them back into the conversation's workdir. Plain Node, no dependencies.
 //
-// Env: JARVIS_EXEC_TOKEN (required; removed from the environment commands see), JARVIS_WORK_DIR (default /work),
-// PORT (default 7070). The pod runs it as uid 1000 under tini (which reaps orphaned processes).
+// Env: JARVIS_EXEC_TOKEN (removed from the environment commands see), JARVIS_WORK_DIR (default /work), PORT (default
+// 7070). The pod runs it as uid 1000 under tini (which reaps orphaned processes).
+//
+// JARVIS_INIT=1 instead of a token (a hosted provider's template, docs/CHAT.md "Sandbox providers"): the agent starts
+// when the template is built, before any sandbox exists, so it waits for one `POST /init` {token, env, wire?} from the
+// server: the exec token, the env every command gets (proxy, mirrors) and, with `wire` {url, headers}, the local proxy
+// on 127.0.0.1:3128 that carries each TCP connection to egress over a WebSocket. Until then /healthz answers 503;
+// /livez always answers 200 (the template's ready check).
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, chmodSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { createWriteStream } from "node:fs";
 import { dirname, join, normalize, sep } from "node:path";
 import { END, entryHeader, entryPadding, unpack } from "./tar.mjs";
 
-const TOKEN = process.env.JARVIS_EXEC_TOKEN || "";
+let TOKEN = process.env.JARVIS_EXEC_TOKEN || "";
 delete process.env.JARVIS_EXEC_TOKEN;
+const AWAIT_INIT = !TOKEN && process.env.JARVIS_INIT === "1";
+delete process.env.JARVIS_INIT;
 const WORK = realpathSync(process.env.JARVIS_WORK_DIR || "/work");
 const PORT = Number(process.env.PORT || 7070);
 const BOOT_ID = randomBytes(8).toString("hex");
@@ -24,8 +33,8 @@ const EXCLUDED_DIRS = new Set(["node_modules", ".venv", "venv", "__pycache__", "
 const HEADER_MAX = 8 * 1024;
 export const META_ENTRY = ".jarvis-meta/changes.json";
 
-if (!TOKEN) {
-  console.error("JARVIS_EXEC_TOKEN is not set");
+if (!TOKEN && !AWAIT_INIT) {
+  console.error("JARVIS_EXEC_TOKEN is not set (or JARVIS_INIT=1 to wait for POST /init)");
   process.exit(2);
 }
 
@@ -205,12 +214,76 @@ function runBackground(command) {
   return { background_id: id, pid: child.pid, log: `.jobs/${id}.log` };
 }
 
+// ---- the wire: local proxy -> egress over WebSocket ------------------------------------------------------------
+
+const WIRE_PORT = Number(process.env.JARVIS_WIRE_PORT || 3128);
+const WIRE_HIGH_WATER = 4 * 1024 * 1024;
+
+/** Every TCP connection to 127.0.0.1:3128 becomes one WebSocket to egress's /wire, bytes relayed both ways. */
+function startWire(url, headers) {
+  const srv = createTcpServer((sock) => {
+    sock.pause();
+    sock.on("error", () => {});
+    let ws;
+    try {
+      ws = new WebSocket(url, { headers });
+    } catch (e) {
+      console.error(JSON.stringify({ at: "wire", error: String(e?.message || e) }));
+      return sock.destroy();
+    }
+    ws.binaryType = "arraybuffer";
+    const pending = [];
+    ws.onopen = () => {
+      for (const c of pending.splice(0)) ws.send(c);
+      sock.resume();
+    };
+    sock.on("data", (c) => {
+      if (ws.readyState !== WebSocket.OPEN) return void pending.push(c);
+      ws.send(c);
+      if (ws.bufferedAmount > WIRE_HIGH_WATER) {
+        sock.pause();
+        const t = setInterval(() => {
+          if (ws.readyState !== WebSocket.OPEN || ws.bufferedAmount < WIRE_HIGH_WATER / 4) {
+            clearInterval(t);
+            sock.resume();
+          }
+        }, 10);
+      }
+    });
+    ws.onmessage = (e) => sock.write(Buffer.from(e.data));
+    ws.onclose = () => sock.destroy();
+    ws.onerror = () => sock.destroy();
+    sock.on("end", () => ws.readyState <= WebSocket.OPEN && ws.close());
+    sock.on("close", () => ws.readyState <= WebSocket.OPEN && ws.close());
+  });
+  srv.on("error", (e) => console.error(JSON.stringify({ at: "wire listen", error: String(e?.message || e) })));
+  srv.listen(WIRE_PORT, "127.0.0.1");
+}
+
+/** POST /init: once, before anything else (JARVIS_INIT=1). */
+async function init(req, res) {
+  if (!AWAIT_INIT || TOKEN) return json(res, 409, { error: "already initialised" });
+  const b = await readJson(req);
+  if (typeof b.token !== "string" || b.token.length < 16) return json(res, 400, { error: "token is required" });
+  const env = b.env && typeof b.env === "object" ? b.env : {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === "string") process.env[k] = v;
+  if (b.wire) {
+    if (typeof b.wire.url !== "string" || !/^wss?:\/\//.test(b.wire.url)) return json(res, 400, { error: "wire.url must be a ws(s) URL" });
+    startWire(b.wire.url, b.wire.headers && typeof b.wire.headers === "object" ? b.wire.headers : {});
+  }
+  TOKEN = b.token;
+  json(res, 200, { ok: true, boot_id: BOOT_ID });
+}
+
 // ---- HTTP ----------------------------------------------------------------------------------------------------
 
+/** The exec token: `X-Jarvis-Exec-Token` (survives a provider's port proxy) or `Authorization: Bearer`. */
 function authorized(req) {
+  if (!TOKEN) return false;
   const m = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || "");
-  if (!m) return false;
-  const a = createHash("sha256").update(m[1]).digest();
+  const given = String(req.headers["x-jarvis-exec-token"] || "") || (m ? m[1] : "");
+  if (!given) return false;
+  const a = createHash("sha256").update(given).digest();
   const b = createHash("sha256").update(TOKEN).digest();
   return timingSafeEqual(a, b);
 }
@@ -328,7 +401,9 @@ async function changes(req, res, since) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", "http://agent");
-    if (url.pathname === "/healthz") return json(res, 200, { ok: true, boot_id: BOOT_ID });
+    if (url.pathname === "/livez") return json(res, 200, { ok: true });
+    if (url.pathname === "/healthz") return TOKEN ? json(res, 200, { ok: true, boot_id: BOOT_ID }) : json(res, 503, { ok: false, waiting: "init" });
+    if (req.method === "POST" && url.pathname === "/init") return await init(req, res);
     if (!authorized(req)) return json(res, 401, { error: "unauthorized" });
     if (req.method === "PUT" && url.pathname === "/files") return await putFiles(req, res);
     if (req.method === "GET" && url.pathname === "/changes") return await changes(req, res, url.searchParams.get("since"));

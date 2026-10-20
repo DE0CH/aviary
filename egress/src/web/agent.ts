@@ -27,12 +27,16 @@ const META = ".jarvis-meta/changes.json";
 export class AgentClient {
   readonly url: string;
   readonly #token: string;
-  constructor(url: string, token: string) {
+  readonly #headers: Record<string, string>;
+  /** `headers`: the provider's own (E2B's traffic access token), sent on every call. */
+  constructor(url: string, token: string, headers: Record<string, string> = {}) {
     this.url = url.replace(/\/$/, "");
     this.#token = token;
+    this.#headers = headers;
   }
   #h(extra: Record<string, string> = {}): Record<string, string> {
-    return { authorization: `Bearer ${this.#token}`, ...extra };
+    // its own header: a provider's port proxy may strip or reuse Authorization
+    return { ...this.#headers, "x-jarvis-exec-token": this.#token, ...extra };
   }
   async #check(r: Response, what: string): Promise<Response> {
     if (!r.ok) throw new Error(`sandbox ${what}: HTTP ${r.status} ${(await r.text()).slice(0, 300)}`);

@@ -73,11 +73,11 @@ export async function pullChanges(workdir: string, agent: AgentClient, state: Sy
 
 export async function runBash(
   input: BashInput,
-  env: { workdir: string; sandboxUrl: string; sandboxToken: string; sandboxId: string; statePath: string },
+  env: { workdir: string; sandboxUrl: string; sandboxToken: string; sandboxId: string; statePath: string; sandboxHeaders?: Record<string, string> },
 ): Promise<BashOutput> {
   const command = String(input.command ?? "").trim();
   if (!command) return { stdout: "", stderr: "No command given.", exit_code: 2, interrupted: false };
-  const agent = new AgentClient(env.sandboxUrl, env.sandboxToken);
+  const agent = new AgentClient(env.sandboxUrl, env.sandboxToken, env.sandboxHeaders);
   let state = await readJson<SyncState>(env.statePath, { sandboxId: "", cursor: "", manifest: {} });
   if (state.sandboxId !== env.sandboxId) state = { sandboxId: env.sandboxId, cursor: "", manifest: {} };
   await pushChanges(env.workdir, agent, state);

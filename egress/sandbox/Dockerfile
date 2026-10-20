@@ -20,28 +20,30 @@ RUN python3 -m venv /opt/py \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
 
-# uid 1000 is the image's `node` user; the sandbox's home is /home/user, the workspace /work
-RUN mkdir -p /home/user /work /opt/agent \
- && chown 1000:1000 /home/user /work \
- && usermod -d /home/user node
+# uid 1000 is the image's `node` user; the sandbox's home is /home/sandbox (not /home/user: E2B's template builder
+# makes that for its own user, mode 700), the workspace /work
+RUN mkdir -p /home/sandbox /work /opt/agent \
+ && chown 1000:1000 /home/sandbox /work \
+ && usermod -d /home/sandbox node
 COPY agent.mjs tar.mjs /opt/agent/
 
-ENV HOME=/home/user \
+ENV HOME=/home/sandbox \
     JARVIS_WORK_DIR=/work \
     PORT=7070 \
-    NPM_CONFIG_PREFIX=/home/user/.npm-global \
+    NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
-    MPLCONFIGDIR=/home/user/.config/matplotlib \
+    MPLCONFIGDIR=/home/sandbox/.config/matplotlib \
     LANG=C.UTF-8
-ENV PATH=/home/user/.npm-global/bin:/home/user/.local/bin:$PATH
+ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:$PATH
 # Commands run as `bash -lc`, and a login shell's /etc/profile resets PATH: put the venv and the user's bins back.
 USER root
-RUN printf 'export VIRTUAL_ENV=/opt/py\nexport PATH=/home/user/.npm-global/bin:/home/user/.local/bin:/opt/py/bin:$PATH\n' > /etc/profile.d/00-sandbox-path.sh
+RUN printf 'export VIRTUAL_ENV=/opt/py\nexport PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/opt/py/bin:$PATH\n' > /etc/profile.d/00-sandbox-path.sh
 
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       org.opencontainers.image.description="Jarvis 3 chat sandbox"
-USER 1000:1000
+# by name: E2B's template builder takes only a user name (node = uid/gid 1000)
+USER node
 WORKDIR /work
 EXPOSE 7070
 ENTRYPOINT ["/usr/bin/tini", "--"]

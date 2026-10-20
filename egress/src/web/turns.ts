@@ -16,6 +16,8 @@ const TEXT_BATCH_MS = 250;
 const MAX_TOOL_OUTPUT = 20_000;
 /** claw and jarvis-bash run in the workdir: relative paths become absolute (bare command names stay PATH lookups). */
 const abs = (p: string) => (p.includes("/") ? resolve(p) : p);
+/** How often a running turn marks its sandbox active. */
+const KEEPALIVE_MS = 60_000;
 export const RESET_NOTE =
   "[System note: the sandbox was reset: files in the workspace are restored; installed packages and background processes from before are gone.]";
 
@@ -179,7 +181,10 @@ export class TurnRunner {
         ...(deps.clawEnv ?? {}),
       };
       if (sess[0]) env.CLAW_RESUME_SESSION = resumePath;
-      if (sandbox) Object.assign(env, { JARVIS_SANDBOX_URL: sandbox.url, JARVIS_SANDBOX_TOKEN: sandbox.execToken, JARVIS_SANDBOX_ID: sandbox.id });
+      if (sandbox) {
+        Object.assign(env, { JARVIS_SANDBOX_URL: sandbox.url, JARVIS_SANDBOX_TOKEN: sandbox.execToken, JARVIS_SANDBOX_ID: sandbox.id });
+        if (Object.keys(sandbox.headers).length) env.JARVIS_SANDBOX_HEADERS = JSON.stringify(sandbox.headers);
+      }
       if (r.cancelled) throw new CancelledError();
 
       const child = spawn(abs(deps.clawPath), args, { cwd: d.work, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -188,7 +193,11 @@ export class TurnRunner {
       child.stderr!.on("data", (c: Buffer) => (stderrTail = (stderrTail + c.toString("utf8")).slice(-4000)));
       child.stdin!.on("error", () => {});
       const exited = new Promise<number | null>((res) => child.on("close", (code) => res(code)));
+      // the agent's bash calls go straight to the sandbox: keep it (and a provider's own timeout) alive meanwhile
+      const keep = setInterval(() => void this.#sandboxes.touch(conv).catch((e) => logError("sandbox touch", e, { turn: turnId })), KEEPALIVE_MS);
+      void exited.finally(() => clearInterval(keep));
       const spawnError = new Promise<Error>((res) => child.on("error", res));
+      void spawnError.then(() => clearInterval(keep));
 
       // events, with text and thinking deltas batched
       let pending: { type: string; text: string } | null = null;

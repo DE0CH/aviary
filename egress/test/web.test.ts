@@ -17,6 +17,7 @@ import { startWeb, type WebServer } from "../src/web/main.ts";
 import { RESET_NOTE } from "../src/web/turns.ts";
 import { AUD, fakeAccess, TEAM } from "./fakes/access.ts";
 import { FakeK8s } from "./fakes/k8s.ts";
+import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
 import { fakeS3 } from "./fakes/s3.ts";
 import { freshDb } from "./pg.ts";
 
@@ -83,7 +84,7 @@ before(async () => {
     dbUrl: pg.url,
     listener: new Listener(pg.url),
     blobs: new S3BlobStore({ ...config.s3, accessKeyId: "k", secretAccessKey: "s" }),
-    k8s,
+    sandboxProvider: undefined as any,
     verifier: new AccessVerifier({ teamDomain: TEAM, audience: AUD, jwks: access.jwks }),
     replica: "web_1",
     namespace: "jarvis",
@@ -96,8 +97,8 @@ before(async () => {
     uiDir: join(work, "ui"),
     brandDir: join(work, "brand"),
     drainSeconds: 5,
-    agentUrlFor: k8s.agentUrlFor,
   };
+  deps.sandboxProvider = new KubernetesProvider({ k8s, config, egressNamespace: "jarvis", agentUrlFor: k8s.agentUrlFor });
   web = await startWeb(deps, 0, { janitorMs: 3_600_000 });
   base = `http://127.0.0.1:${web.port}`;
 });

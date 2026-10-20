@@ -1,10 +1,10 @@
-// What every part of the web role works with. main.ts builds the real one; tests pass fakes (S3, Kubernetes,
+// What every part of the web role works with. main.ts builds the real one; tests pass fakes (S3, Kubernetes or E2B,
 // claw, sandbox agents) through the same shape.
 import type { AccessVerifier } from "../common/access.ts";
 import type { ChatConfig } from "../common/config.ts";
 import type { Db, Listener } from "../common/db.ts";
 import type { BlobStore } from "../common/s3.ts";
-import type { K8sApi, Pod } from "./k8s.ts";
+import type { SandboxProvider } from "./provider.ts";
 
 export interface WebDeps {
   config: ChatConfig;
@@ -12,7 +12,8 @@ export interface WebDeps {
   dbUrl: string;
   listener: Listener;
   blobs: BlobStore;
-  k8s: K8sApi;
+  /** Where sandboxes come from (config sandbox.provider). */
+  sandboxProvider: SandboxProvider;
   verifier: AccessVerifier;
   /** This replica's name (pod name), [a-z0-9_] only: it names its cancel channel and heartbeat. */
   replica: string;
@@ -30,8 +31,6 @@ export interface WebDeps {
   uiDir: string;
   brandDir: string;
   drainSeconds: number;
-  /** Sandbox agent URL of a pod; default http://<podIP>:7070. */
-  agentUrlFor?: (pod: Pod) => string;
   /** Extra env for claw (tests). */
   clawEnv?: Record<string, string>;
 }

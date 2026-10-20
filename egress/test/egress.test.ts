@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 import { randomUUID } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { sha256hex } from "../src/common/tokens.ts";
 import { Identities } from "../src/egress/identity.ts";
 import { AddressGuard, hostAllowed } from "../src/egress/netguard.ts";
@@ -57,6 +58,17 @@ before(async () => {
       if (p.startsWith("/simple/foo/")) {
         res.writeHead(200, { "content-type": "text/html" });
         return res.end(`<a href="http://127.0.0.1:${upPort}/files/packages/foo-1.0-py3-none-any.whl#sha256=ab">foo</a>`);
+      }
+      if (p.endsWith(".metadata")) {
+        // like files.pythonhosted.org: gzipped when the client allows it
+        const plain = Buffer.from("Metadata-Version: 2.1\nName: foo\n".repeat(50));
+        if (String(req.headers["accept-encoding"] || "").includes("gzip")) {
+          const gz = gzipSync(plain);
+          res.writeHead(200, { "content-type": "application/octet-stream", "content-encoding": "gzip", "content-length": String(gz.length) });
+          return res.end(gz);
+        }
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(plain.length) });
+        return res.end(plain);
       }
       if (p.startsWith("/files/") || p.startsWith("/npm/left-pad/-/")) {
         res.writeHead(200, { "content-type": "application/octet-stream" });
@@ -250,6 +262,13 @@ test("pypi mirror: index links rewritten, files cached, works through the proxy 
   assert.ok((await rows()).some((x) => x.kind === "mirror" && x.decision === "allow:cache"));
 });
 
+test("pypi mirror: a file upstream gzips (PEP 658 .metadata) arrives whole on the first, uncached request", async () => {
+  const want = "Metadata-Version: 2.1\nName: foo\n".repeat(50);
+  const r = await http("/mirror/pypi/files/packages/foo-1.0-py3-none-any.whl.metadata", { headers: { authorization: basic(sbToken) } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body, want);
+});
+
 test("npm mirror: tarball URLs point back at the mirror", async () => {
   const m = await http("/mirror/npm/left-pad", { headers: { authorization: basic(sbToken), host: "egress.test:3128" } });
   assert.equal(m.status, 200);
@@ -278,6 +297,97 @@ test("model route: turn token in, real key injected, caller auth dropped, cost l
   assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042]);
   assert.ok(models.every((x) => x.turn_id === turnId && x.conversation_id === conv));
   assert.equal((await http("/x/nope/v1")).status, 404);
+});
+
+test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket per connection", async () => {
+  // the real sandbox agent in JARVIS_INIT mode, as E2B's template starts it, then configured by POST /init
+  const { spawn } = await import("node:child_process");
+  const freePort = async () => {
+    const s = createServer();
+    await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+    const p = (s.address() as AddressInfo).port;
+    await new Promise((r) => s.close(r));
+    return p;
+  };
+  const agentPort = await freePort();
+  const wirePort = await freePort();
+  const work = mkdtempSync(join(tmpdir(), "wire-work-"));
+  const agent = spawn(process.execPath, [join(import.meta.dirname, "../sandbox/agent.mjs")], {
+    env: { PATH: process.env.PATH!, JARVIS_INIT: "1", JARVIS_WORK_DIR: work, PORT: String(agentPort), JARVIS_WIRE_PORT: String(wirePort) },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  try {
+    await new Promise<void>((resolve) => agent.stdout!.once("data", () => resolve()));
+    const a = `http://127.0.0.1:${agentPort}`;
+    assert.equal((await fetch(`${a}/livez`)).status, 200);
+    assert.equal((await fetch(`${a}/healthz`)).status, 503, "not ready before /init");
+    assert.equal((await fetch(`${a}/exec`, { method: "POST", body: "{}" })).status, 401);
+    // a wrong token is refused at the upgrade
+    const bad = await new Promise<number>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/wire`, { headers: { authorization: "Bearer nope" } } as any);
+      ws.onerror = () => resolve(401);
+      ws.onopen = () => resolve(101);
+    });
+    assert.equal(bad, 401);
+    const init = await fetch(`${a}/init`, {
+      method: "POST",
+      body: JSON.stringify({ token: "exec-token-wire-0001", env: { MARK: "set-by-init" }, wire: { url: `ws://127.0.0.1:${port}/wire`, headers: { authorization: `Bearer ${sbToken}` } } }),
+    });
+    assert.equal(init.status, 200);
+    assert.equal((await fetch(`${a}/init`, { method: "POST", body: JSON.stringify({ token: "x".repeat(20) }) })).status, 409, "only once");
+    assert.equal((await fetch(`${a}/healthz`)).status, 200);
+    const ex = await fetch(`${a}/exec`, { method: "POST", headers: { "x-jarvis-exec-token": "exec-token-wire-0001" }, body: JSON.stringify({ command: "echo $MARK" }) });
+    assert.equal(((await ex.json()) as { stdout: string }).stdout.trim(), "set-by-init");
+
+    // the mirror in proxy form (what pip sends with HTTP_PROXY=http://sbx:<token>@127.0.0.1:3128)
+    const mirror = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const r = request({ host: "127.0.0.1", port: wirePort, path: "http://127.0.0.1:3128/mirror/pypi/simple/foo/", headers: { "proxy-authorization": basic(sbToken) } }, (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      r.on("error", reject);
+      r.end();
+    });
+    assert.equal(mirror.status, 200);
+    assert.match(mirror.body, /\/mirror\/pypi\/files\//);
+    // CONNECT through the wire to an allowed host, TLS inside
+    const s = netConnect(wirePort, "127.0.0.1");
+    s.write(`CONNECT allowed.test:${tlsPort} HTTP/1.1\r\nHost: allowed.test\r\nProxy-Authorization: ${basic(sbToken)}\r\n\r\n`);
+    const head = await new Promise<string>((resolve) => {
+      let b = "";
+      const on = (d: Buffer) => {
+        b += d.toString("latin1");
+        if (b.includes("\r\n\r\n")) {
+          s.off("data", on);
+          resolve(b);
+        }
+      };
+      s.on("data", on);
+    });
+    assert.match(head, /^HTTP\/1\.1 200/);
+    const reply = await new Promise<string>((resolve, reject) => {
+      const c = tlsConnect({ socket: s, servername: "allowed.test", rejectUnauthorized: false }, () => c.write("wire"));
+      c.on("data", (d) => {
+        resolve(d.toString());
+        c.end();
+      });
+      c.on("error", reject);
+    });
+    assert.equal(reply, "echo:wire");
+    // and the allowlist still applies inside the wire
+    const s2 = netConnect(wirePort, "127.0.0.1");
+    s2.write(`CONNECT other.test:443 HTTP/1.1\r\nHost: other.test\r\nProxy-Authorization: ${basic(sbToken)}\r\n\r\n`);
+    const denied = await new Promise<string>((resolve) => {
+      let b = "";
+      s2.on("data", (d) => (b += d));
+      s2.on("close", () => resolve(b));
+    });
+    assert.match(denied, /^HTTP\/1\.1 403/);
+  } finally {
+    agent.kill("SIGKILL");
+    rmSync(work, { recursive: true, force: true });
+  }
 });
 
 test("a released sandbox's token stops working", async () => {

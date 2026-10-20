@@ -7,6 +7,7 @@ import { connect as netConnect, type Socket } from "node:net";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
+import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
 import type { Db } from "../common/db.ts";
 import { expandEnv, type EgressRoute } from "../common/config.ts";
 import { logError } from "../common/log.ts";
@@ -60,7 +61,9 @@ export class Egress {
     this.#guard = o.guard ?? new AddressGuard();
     this.#ports = new Set(o.allowedPorts ?? [80, 443]);
     this.#up = o.upstreams ?? { pypi: "https://pypi.org", pypiFiles: "https://files.pythonhosted.org", npm: "https://registry.npmjs.org" };
-    this.#self = new Set(o.selfHosts.map(normHost));
+    // 127.0.0.1/localhost too: a hosted sandbox's proxy is its local end of the wire (sandbox/agent.mjs), so pip and
+    // npm name that in their mirror requests (a forwarded request to a loopback address is refused anyway)
+    this.#self = new Set([...o.selfHosts, "127.0.0.1", "localhost"].map(normHost));
     this.#apt = new Set((o.aptHosts ?? ["deb.debian.org", "security.debian.org"]).map(normHost));
     this.log = new EgressLog(o.db);
     this.cache = new DiskCache(o.cacheDir, o.cacheBytes);
@@ -77,12 +80,50 @@ export class Egress {
       this.#sockets.add(s);
       s.on("close", () => this.#sockets.delete(s));
     });
+    this.server.on("upgrade", (req: IncomingMessage, sock: Duplex, head: Buffer) => {
+      this.#onUpgrade(req, sock, head).catch((e) => {
+        logError("egress wire", e);
+        sock.destroy();
+      });
+    });
     this.server.on("connect", (req: IncomingMessage, sock: Duplex, head: Buffer) => {
       this.counters.requests++;
       this.#onConnect(req, sock, head).catch((e) => {
         logError("egress connect", e);
         sock.destroy();
       });
+    });
+  }
+
+  // ---- the wire: the proxy over a WebSocket ---------------------------------------------------------------
+
+  readonly #wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 4 * 1024 * 1024 });
+
+  /**
+   * `GET /wire` (WebSocket, `Authorization: Bearer <egress token>`): a sandbox that can't reach port 3128 (a hosted
+   * provider's, which reaches egress only through the Cloudflare tunnel's HTTPS edge) opens one WebSocket per TCP
+   * connection of its local proxy (sandbox/agent.mjs). The WebSocket's binary messages are that connection's bytes,
+   * fed into this same proxy server as a new connection, so CONNECT, plain HTTP, the mirror and every check and log
+   * line work exactly as on 3128 (each request still needs its Proxy-Authorization). Pings every 30 s keep idle
+   * tunnels open through the edge.
+   */
+  async #onUpgrade(req: IncomingMessage, sock: Duplex, head: Buffer): Promise<void> {
+    sock.on("error", () => {});
+    const refuse = (status: number, msg: string): void => void sock.end(`HTTP/1.1 ${status} ${status === 401 ? "Unauthorized" : "Refused"}\r\ncontent-type: text/plain\r\nconnection: close\r\ncontent-length: ${Buffer.byteLength(msg)}\r\n\r\n${msg}`);
+    const path = (req.url || "").split("?")[0];
+    if (path !== "/wire") return refuse(404, "egress: not found\n");
+    if (this.draining) return refuse(503, "egress: restarting, try again\n");
+    const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization"));
+    if (!sb) {
+      this.#deny({ kind: "connect", method: "WIRE", host: "-", decision: "deny:auth" }, "deny:auth", 401);
+      return refuse(401, "egress: unknown or expired sandbox token\n");
+    }
+    this.#wss.handleUpgrade(req, sock, head, (ws: WebSocket) => {
+      const stream = createWebSocketStream(ws);
+      stream.on("error", () => stream.destroy());
+      const ping = setInterval(() => ws.readyState === ws.OPEN && ws.ping(), 30_000);
+      ws.on("close", () => clearInterval(ping));
+      this.server.emit("connection", stream);
     });
   }
 
@@ -309,7 +350,9 @@ export class Egress {
       this.log.add({ ...row, decision: "allow:cache", status: hit.meta.status, bytes_down: hit.size, ms: Date.now() - t0 });
       return;
     }
-    const ures = await fetch(upstream, { headers: accept ? { accept } : {}, redirect: "follow" }).catch(() => null);
+    // identity: fetch would decompress a gzip body (files.pythonhosted.org gzips .metadata) while the upstream
+    // content-length counts the compressed bytes, and pip would get a truncated file
+    const ures = await fetch(upstream, { headers: { "accept-encoding": "identity", ...(accept ? { accept } : {}) }, redirect: "follow" }).catch(() => null);
     if (!ures) {
       text(res, 502, `egress: mirror upstream ${row.host} unreachable\n`);
       return this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
@@ -322,7 +365,7 @@ export class Egress {
       res.end(req.method === "HEAD" ? undefined : body);
       return this.log.add({ ...row, status: ures.status, bytes_down: body.length, ms: Date.now() - t0 });
     }
-    const len = ures.headers.get("content-length");
+    const len = ures.headers.get("content-encoding") ? null : ures.headers.get("content-length");
     res.writeHead(ures.status, { "content-type": contentType, ...(len ? { "content-length": len } : {}) });
     if (!ures.body || req.method === "HEAD") {
       res.end();

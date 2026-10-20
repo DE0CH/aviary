@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccessVerifier } from "../common/access.ts";
-import { loadConfig, requireEnv } from "../common/config.ts";
+import { expandEnv, loadConfig, requireEnv, type ChatConfig } from "../common/config.ts";
 import { connect, Listener, migrate } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import { S3BlobStore } from "../common/s3.ts";
@@ -13,6 +13,9 @@ import { WebApp } from "./app.ts";
 import { replicaName, type WebDeps } from "./ctx.ts";
 import { startHeartbeat, startJanitor } from "./janitor.ts";
 import { K8sClient } from "./k8s.ts";
+import type { SandboxProvider } from "./provider.ts";
+import { E2bProvider } from "./sandbox-e2b.ts";
+import { KubernetesProvider } from "./sandbox-k8s.ts";
 import { SandboxManager } from "./sandbox.ts";
 import { TurnRunner } from "./turns.ts";
 
@@ -48,6 +51,18 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
   };
 }
 
+function sandboxProvider(config: ChatConfig, namespace: string): SandboxProvider {
+  if (config.sandbox.provider === "e2b") {
+    const e = config.sandbox.e2b!;
+    const apiKey = requireEnv(e.apiKeyEnv);
+    // ${VAR}s in the wire headers come from this pod's env; checked now so a missing one stops the rollout
+    const egressHeaders = Object.fromEntries(Object.entries(e.egressHeaders).map(([k, v]) => [k, expandEnv(v)]));
+    // CPU and memory are the template's (set where the chat workflow builds it), not per sandbox
+    return new E2bProvider({ ...e, apiKey, egressHeaders });
+  }
+  return new KubernetesProvider({ k8s: K8sClient.inCluster(), config, egressNamespace: namespace });
+}
+
 export async function main(): Promise<void> {
   const config = loadConfig();
   const namespace = process.env.JARVIS_NAMESPACE || "jarvis";
@@ -65,7 +80,7 @@ export async function main(): Promise<void> {
       accessKeyId: requireEnv("S3_ACCESS_KEY_ID"),
       secretAccessKey: requireEnv("S3_SECRET_ACCESS_KEY"),
     }),
-    k8s: K8sClient.inCluster(),
+    sandboxProvider: sandboxProvider(config, namespace),
     verifier: new AccessVerifier(config.access),
     replica: replicaName(process.env.HOSTNAME || "web"),
     namespace,

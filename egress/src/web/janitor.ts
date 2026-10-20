@@ -1,5 +1,5 @@
-// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes, delete
-// pods nobody owns, end turns whose replica died, expire unanswered confirmations. Every replica also writes its own
+// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes, remove
+// sandboxes nobody owns, end turns whose replica died, expire unanswered confirmations. Every replica also writes its own
 // heartbeat, which is how a dead replica's turns are recognised.
 import { channel, lead } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
@@ -67,25 +67,25 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
     "select * from sandboxes where (status = 'starting' and created_at < now() - interval '5 minutes') or (status = 'releasing' and last_active_at < now() - interval '30 minutes')",
   );
   for (const s of stuck) {
-    await deps.k8s.deletePod(cfg.namespace, s.pod).catch(() => {});
+    await deps.sandboxProvider.destroy(s.pod).catch(() => {});
     await db.query("update sandboxes set status = 'gone', released_at = now(), release_reason = 'stuck' where id = $1 and status <> 'gone'", [s.id]);
   }
 
-  // pods without a live row, and live rows without a pod
-  const pods = await deps.k8s.listPods(cfg.namespace, "app=jarvis-sandbox");
+  // sandboxes at the provider without a live row, and live rows whose sandbox is gone
+  const pods = await deps.sandboxProvider.list();
   const { rows: live } = await db.query<{ id: string; pod: string; status: string; created_at: Date }>("select id, pod, status, created_at from sandboxes where status <> 'gone'");
   const livePods = new Set(live.map((r) => r.pod));
   for (const p of pods) {
-    const age = p.metadata.creationTimestamp ? Date.now() - Date.parse(p.metadata.creationTimestamp) : Infinity;
-    if (!livePods.has(p.metadata.name) && age > 60_000) {
-      log("janitor: orphan pod", { pod: p.metadata.name });
-      await deps.k8s.deletePod(cfg.namespace, p.metadata.name).catch((e) => logError("janitor orphan", e));
+    const age = Number.isNaN(p.createdAt) ? Infinity : Date.now() - p.createdAt;
+    if (!livePods.has(p.name) && age > 60_000) {
+      log("janitor: orphan sandbox", { pod: p.name });
+      await deps.sandboxProvider.destroy(p.name).catch((e) => logError("janitor orphan", e));
     }
   }
-  const podNames = new Set(pods.map((p) => p.metadata.name));
+  const podNames = new Set(pods.map((p) => p.name));
   for (const r of live) {
     if (r.status === "ready" && !podNames.has(r.pod)) {
-      await db.query("update sandboxes set status = 'gone', released_at = now(), release_reason = 'pod vanished' where id = $1 and status = 'ready'", [r.id]);
+      await db.query("update sandboxes set status = 'gone', released_at = now(), release_reason = 'sandbox vanished' where id = $1 and status = 'ready'", [r.id]);
     }
   }
 }

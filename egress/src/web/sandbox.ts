@@ -1,6 +1,7 @@
-// Sandboxes, design "B" (docs/CHAT.md, "Sandbox lifecycle"): one gVisor pod per active conversation, made when the
+// Sandboxes, design "B" (docs/CHAT.md, "Sandbox lifecycle"): one sandbox per active conversation, made when the
 // staff member starts typing or a turn needs it, kept while active, released when idle or at its hard maximum
-// lifetime (after a final save of what it changed). Postgres `sandboxes` is the record; the pods are disposable.
+// lifetime (after a final save of what it changed). Postgres `sandboxes` is the record; the sandboxes themselves come
+// from the configured provider (provider.ts) and are disposable.
 import { randomUUID } from "node:crypto";
 import { tx } from "../common/db.ts";
 import { logError, log } from "../common/log.ts";
@@ -8,23 +9,28 @@ import { newToken, sha256hex } from "../common/tokens.ts";
 import { AgentClient } from "./agent.ts";
 import type { WebDeps } from "./ctx.ts";
 import { storeEntries } from "./files.ts";
-import type { Pod } from "./k8s.ts";
+import type { AgentEndpoint, SandboxProvider } from "./provider.ts";
 
 export interface SandboxRow {
   id: string;
   conversation_id: string;
+  /** The provider's name for the sandbox: the pod name, or E2B's sandbox id once it exists. */
   pod: string;
   exec_token: string;
   status: "starting" | "ready" | "releasing" | "gone";
   created_at: Date;
   last_active_at: Date;
   expires_at: Date;
+  /** How to reach its agent, set when it became ready. */
+  agent: AgentEndpoint | null;
 }
 
 export interface LiveSandbox {
   id: string;
   pod: string;
   url: string;
+  /** Provider headers for every agent call (jarvis-bash gets them as JARVIS_SANDBOX_HEADERS). */
+  headers: Record<string, string>;
   execToken: string;
 }
 
@@ -33,37 +39,48 @@ export class PoolFullError extends Error {}
 const CAPACITY_LOCK = 4_242_002;
 const POOL_WAIT_MS = 60_000;
 const START_TIMEOUT_MS = 180_000;
+/** A provider's own timeout runs this long past the moment the janitor would release the sandbox. */
+const PROVIDER_GRACE_MS = 5 * 60_000;
+const KEEPALIVE_EVERY_MS = 30_000;
 
 export class SandboxManager {
   readonly #deps: WebDeps;
-  readonly #urls = new Map<string, string>();
   readonly #inflight = new Map<string, Promise<LiveSandbox>>();
+  readonly #kept = new Map<string, number>();
   constructor(deps: WebDeps) {
     this.#deps = deps;
   }
 
-  get #ns(): string {
-    return this.#deps.config.sandbox.namespace;
+  get provider(): SandboxProvider {
+    return this.#deps.sandboxProvider;
   }
 
-  #agentUrl(pod: Pod): string {
-    if (this.#deps.agentUrlFor) return this.#deps.agentUrlFor(pod);
-    const ip = pod.status?.podIP || "";
-    return `http://${ip.includes(":") ? `[${ip}]` : ip}:7070`;
+  #live(row: SandboxRow): LiveSandbox | null {
+    if (!row.agent?.url) return null;
+    return { id: row.id, pod: row.pod, url: row.agent.url, headers: row.agent.headers ?? {}, execToken: row.exec_token };
   }
 
-  async #urlOf(row: SandboxRow): Promise<string | null> {
-    const cached = this.#urls.get(row.pod);
-    if (cached) return cached;
-    const pod = await this.#deps.k8s.getPod(this.#ns, row.pod);
-    if (!pod?.status?.podIP || pod.metadata.deletionTimestamp) return null;
-    const url = this.#agentUrl(pod);
-    this.#urls.set(row.pod, url);
-    return url;
+  /** How long the provider should keep a sandbox that was active just now: past the idle release, never past its end. */
+  #keepUntil(row: SandboxRow): Date {
+    const idle = Date.now() + this.#deps.config.sandbox.idleMinutes * 60_000 + PROVIDER_GRACE_MS;
+    return new Date(Math.min(idle, new Date(row.expires_at).getTime() + PROVIDER_GRACE_MS));
   }
 
+  async #keepAlive(row: SandboxRow, force = false): Promise<void> {
+    const last = this.#kept.get(row.id) ?? 0;
+    if (!force && Date.now() - last < KEEPALIVE_EVERY_MS) return;
+    this.#kept.set(row.id, Date.now());
+    if (this.#kept.size > 1000) this.#kept.clear();
+    await this.provider.keepAlive(row, this.#keepUntil(row)).catch((e) => logError("sandbox keep-alive", e, { sandbox: row.id }));
+  }
+
+  /** The staff member or the agent is active in the conversation: the sandbox stays (warm, each turn, during turns). */
   async touch(conversationId: string): Promise<void> {
-    await this.#deps.db.query("update sandboxes set last_active_at = now() where conversation_id = $1 and status in ('starting','ready')", [conversationId]);
+    const { rows } = await this.#deps.db.query<SandboxRow>(
+      "update sandboxes set last_active_at = now() where conversation_id = $1 and status in ('starting','ready') returning *",
+      [conversationId],
+    );
+    for (const r of rows) if (r.status === "ready") await this.#keepAlive(r);
   }
 
   /** The conversation's live sandbox, made if there is none. Concurrent callers in this process share one attempt. */
@@ -83,12 +100,12 @@ export class SandboxManager {
       const { rows } = await this.#deps.db.query<SandboxRow>("select * from sandboxes where conversation_id = $1 and status <> 'gone'", [conv]);
       const row = rows[0];
       if (row?.status === "ready") {
-        const url = await this.#urlOf(row).catch(() => null);
-        if (url) {
-          const ok = await new AgentClient(url, row.exec_token).health().then((h) => h.ok, () => false);
+        const live = this.#live(row);
+        if (live) {
+          const ok = await new AgentClient(live.url, live.execToken, live.headers).health().then((h) => h.ok, () => false);
           if (ok) {
             await this.touch(conv);
-            return { id: row.id, pod: row.pod, url, execToken: row.exec_token };
+            return live;
           }
         }
         await this.release(row, "unhealthy");
@@ -164,29 +181,20 @@ export class SandboxManager {
     const egressToken = this.#egressTokens.get(row.id)!;
     this.#egressTokens.delete(row.id);
     try {
-      await this.#deps.k8s.createPod(this.#ns, this.podManifest(row, egressToken));
-      const deadline = Date.now() + START_TIMEOUT_MS;
-      let url = "";
-      while (Date.now() < deadline) {
-        const pod = await this.#deps.k8s.getPod(this.#ns, row.pod);
-        if (!pod) throw new Error("the sandbox pod disappeared while starting");
-        const phase = pod.status?.phase;
-        if (phase === "Failed" || phase === "Succeeded") throw new Error(`the sandbox pod ended (${pod.status?.reason || phase})`);
-        const waiting = pod.status?.containerStatuses?.[0]?.state?.waiting?.reason;
-        if (waiting && /ErrImagePull|ImagePullBackOff|CreateContainerConfigError|InvalidImageName/.test(waiting)) throw new Error(`the sandbox pod can't start: ${waiting}`);
-        if (phase === "Running" && pod.status?.podIP) {
-          url = this.#agentUrl(pod);
-          const ok = await new AgentClient(url, row.exec_token).health(2000).then((h) => h.ok, () => false);
-          if (ok) break;
-        }
-        await sleep(500);
-        url = "";
+      const { name } = await this.provider.create(row, egressToken);
+      if (name !== row.pod) {
+        await this.#deps.db.query("update sandboxes set pod = $2 where id = $1", [row.id, name]);
+        row.pod = name;
       }
-      if (!url) throw new Error("the sandbox did not become ready in time");
-      this.#urls.set(row.pod, url);
-      await this.#deps.db.query("update sandboxes set status = 'ready', last_active_at = now() where id = $1", [row.id]);
-      log("sandbox ready", { sandbox: row.id, conversation: row.conversation_id, pod: row.pod });
-      return { id: row.id, pod: row.pod, url, execToken: row.exec_token };
+      const agent = await this.provider.waitReady(row, Date.now() + START_TIMEOUT_MS);
+      const { rows } = await this.#deps.db.query<SandboxRow>(
+        "update sandboxes set status = 'ready', last_active_at = now(), agent = $2 where id = $1 and status = 'starting' returning *",
+        [row.id, JSON.stringify(agent)],
+      );
+      if (!rows[0]) throw new Error("the sandbox was released while it started");
+      await this.#keepAlive(rows[0], true);
+      log("sandbox ready", { sandbox: row.id, conversation: row.conversation_id, pod: row.pod, provider: this.provider.kind });
+      return this.#live(rows[0])!;
     } catch (e) {
       await this.#forget(row, `start failed: ${(e as Error).message}`);
       throw e;
@@ -194,12 +202,12 @@ export class SandboxManager {
   }
 
   async #forget(row: SandboxRow, reason: string): Promise<void> {
-    this.#urls.delete(row.pod);
-    await this.#deps.k8s.deletePod(this.#ns, row.pod).catch((e) => logError("sandbox delete", e, { pod: row.pod }));
+    this.#kept.delete(row.id);
+    await this.provider.destroy(row.pod).catch((e) => logError("sandbox delete", e, { pod: row.pod }));
     await this.#deps.db.query("update sandboxes set status = 'gone', released_at = now(), release_reason = $2 where id = $1 and status <> 'gone'", [row.id, reason]);
   }
 
-  /** Final save of what the sandbox changed (files only), then delete its pod. Safe to call twice. */
+  /** Final save of what the sandbox changed (files only), then remove it. Safe to call twice. */
   async release(row: SandboxRow, reason: string): Promise<void> {
     const { rows } = await this.#deps.db.query<SandboxRow>(
       "update sandboxes set status = 'releasing' where id = $1 and status in ('ready','starting') returning *",
@@ -207,14 +215,12 @@ export class SandboxManager {
     );
     const r = rows[0];
     if (!r) return;
-    {
+    const live = this.#live(r);
+    if (live) {
       try {
-        const url = await this.#urlOf(r);
-        if (url) {
-          const { entries } = await new AgentClient(url, r.exec_token).changes("");
-          const n = await storeEntries(this.#deps, r.conversation_id, entries);
-          if (n) log("sandbox final save", { sandbox: r.id, files: n });
-        }
+        const { entries } = await new AgentClient(live.url, live.execToken, live.headers).changes("");
+        const n = await storeEntries(this.#deps, r.conversation_id, entries);
+        if (n) log("sandbox final save", { sandbox: r.id, files: n });
       } catch (e) {
         logError("sandbox final save", e, { sandbox: r.id });
       }
@@ -226,60 +232,6 @@ export class SandboxManager {
   async releaseConversation(conv: string, reason: string): Promise<void> {
     const { rows } = await this.#deps.db.query<SandboxRow>("select * from sandboxes where conversation_id = $1 and status <> 'gone'", [conv]);
     for (const r of rows) await this.release(r, reason);
-  }
-
-  podManifest(row: SandboxRow, egressToken: string): object {
-    const cfg = this.#deps.config.sandbox;
-    const egressHost = `egress.${this.#deps.namespace}.svc.cluster.local`;
-    const proxy = `http://sbx:${egressToken}@${egressHost}:3128`;
-    const env: Record<string, string> = {
-      HTTP_PROXY: proxy,
-      HTTPS_PROXY: proxy,
-      http_proxy: proxy,
-      https_proxy: proxy,
-      NO_PROXY: "",
-      no_proxy: "",
-      PIP_INDEX_URL: `${proxy}/mirror/pypi/simple`,
-      PIP_TRUSTED_HOST: egressHost,
-      npm_config_registry: `${proxy}/mirror/npm/`,
-      JARVIS_EXEC_TOKEN: row.exec_token,
-      HOME: "/home/user",
-    };
-    return {
-      apiVersion: "v1",
-      kind: "Pod",
-      metadata: {
-        name: row.pod,
-        namespace: cfg.namespace,
-        labels: { app: "jarvis-sandbox", "jarvis.conversation": row.conversation_id, "jarvis.sandbox": row.id },
-      },
-      spec: {
-        runtimeClassName: cfg.runtimeClass || undefined,
-        restartPolicy: "Never",
-        automountServiceAccountToken: false,
-        enableServiceLinks: false,
-        terminationGracePeriodSeconds: 5,
-        securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: { type: "RuntimeDefault" } },
-        containers: [
-          {
-            name: "sandbox",
-            image: cfg.image,
-            imagePullPolicy: "IfNotPresent",
-            ports: [{ containerPort: 7070, name: "agent" }],
-            env: Object.entries(env).map(([name, value]) => ({ name, value })),
-            securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] }, runAsNonRoot: true, runAsUser: 1000 },
-            // request = limit: a sandbox holds exactly what it may use, so the namespace quota caps concurrency
-            // and a runaway sandbox can only hurt itself (Deyao, 2026-10-20)
-            resources: {
-              requests: { cpu: cfg.cpu, memory: cfg.memory, "ephemeral-storage": "5Gi" },
-              limits: { cpu: cfg.cpu, memory: cfg.memory, "ephemeral-storage": "5Gi" },
-            },
-          },
-        ],
-        ...(cfg.priorityClass ? { priorityClassName: cfg.priorityClass } : {}),
-        ...(cfg.imagePullSecret ? { imagePullSecrets: [{ name: cfg.imagePullSecret }] } : {}),
-      },
-    };
   }
 }
 

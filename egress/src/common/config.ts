@@ -22,6 +22,24 @@ export interface UpstreamMcp {
   headers: Record<string, string>;
 }
 
+/** sandbox.e2b: E2B's hosted sandboxes, built from chat/sandbox by the chat workflow. */
+export interface E2bConfig {
+  /** The template the sandboxes start from: its id or name, pinned per release (`<name>:<tag>` or a build's id). */
+  template: string;
+  /** The egress wire every sandbox's local proxy connects to: wss://<public egress host>/wire. */
+  egressUrl: string;
+  /** Extra headers on the wire's WebSocket (e.g. an Access service token), values may name ${VAR}s of the web env. */
+  egressHeaders: Record<string, string>;
+  /** Env var holding the API key (default E2B_API_KEY). */
+  apiKeyEnv: string;
+  /** Default https://api.e2b.app. */
+  apiUrl: string;
+  /** Sandbox hosts are <port>-<sandbox id>.<domain>; default e2b.app. */
+  domain: string;
+  /** Tags this instance's sandboxes (metadata `jarvis`), so the janitor never touches another instance's. */
+  instance: string;
+}
+
 export interface ChatConfig {
   product: { name: string; locale: string; logo?: string };
   publicUrl: string;
@@ -33,7 +51,12 @@ export interface ChatConfig {
   titleModel: string;
   systemPromptFile: string;
   sandbox: {
+    /** Where sandboxes run (docs/CHAT.md, "Sandbox providers"). */
+    provider: "kubernetes" | "e2b";
+    /** kubernetes: the sandbox image. */
     image: string;
+    /** kubernetes: the proxy sandboxes use (default http://egress.<web namespace>.svc.cluster.local:3128); e2b uses e2b.egressUrl. */
+    egressProxyUrl?: string;
     namespace: string;
     runtimeClass: string;
     idleMinutes: number;
@@ -45,6 +68,7 @@ export interface ChatConfig {
     priorityClass?: string;
     /** A docker-registry Secret in the sandbox namespace, when the sandbox image is private. */
     imagePullSecret?: string;
+    e2b?: E2bConfig;
   };
   egress: { defaultAllowedHosts: string[]; routes: EgressRoute[]; cacheGiB: number };
   tools: {
@@ -58,7 +82,7 @@ export interface ChatConfig {
 }
 
 const DEFAULTS = {
-  sandbox: { namespace: "jarvis-sandbox", runtimeClass: "gvisor", idleMinutes: 30, maxLifetimeHours: 8, maxActive: 6, cpu: "1", memory: "1Gi" },
+  sandbox: { provider: "kubernetes" as const, image: "", namespace: "jarvis-sandbox", runtimeClass: "gvisor", idleMinutes: 30, maxLifetimeHours: 8, maxActive: 6, cpu: "1", memory: "1Gi" },
   egress: { defaultAllowedHosts: [] as string[], routes: [] as EgressRoute[], cacheGiB: 5 },
   tools: { upstreams: [] as UpstreamMcp[], confirm: [] as string[] },
 };
@@ -75,7 +99,25 @@ export function parseConfig(raw: unknown): ChatConfig {
   need("access.audience", c.access?.audience, "string");
   need("defaultModel", c.defaultModel, "string");
   need("systemPromptFile", c.systemPromptFile, "string");
-  need("sandbox.image", c.sandbox?.image, "string");
+  const provider = c.sandbox?.provider ?? "kubernetes";
+  if (provider !== "kubernetes" && provider !== "e2b") throw new Error('config: sandbox.provider must be "kubernetes" or "e2b"');
+  if (provider === "kubernetes") need("sandbox.image", c.sandbox?.image, "string");
+  let e2b: E2bConfig | undefined;
+  if (provider === "e2b") {
+    const e = c.sandbox?.e2b ?? {};
+    need("sandbox.e2b.template", e.template, "string");
+    need("sandbox.e2b.egressUrl", e.egressUrl, "string");
+    if (!/^wss?:\/\/[^/]+\/wire$/.test(e.egressUrl)) throw new Error("config: sandbox.e2b.egressUrl must be wss://<host>/wire");
+    e2b = {
+      template: e.template,
+      egressUrl: e.egressUrl,
+      egressHeaders: e.egressHeaders ?? {},
+      apiKeyEnv: e.apiKeyEnv ?? "E2B_API_KEY",
+      apiUrl: String(e.apiUrl ?? "https://api.e2b.app").replace(/\/$/, ""),
+      domain: e.domain ?? "e2b.app",
+      instance: e.instance ?? new URL(String(c.publicUrl)).hostname,
+    };
+  }
   if (!Array.isArray(c.users) || !c.users.length) throw new Error("config: users must list at least one email");
   if (!Array.isArray(c.models) || !c.models.length) throw new Error("config: models must not be empty");
   if (!c.models.some((m: ModelEntry) => m.id === c.defaultModel)) throw new Error("config: defaultModel must be one of models");
@@ -90,7 +132,7 @@ export function parseConfig(raw: unknown): ChatConfig {
     defaultModel: c.defaultModel,
     titleModel: c.titleModel ?? c.defaultModel,
     systemPromptFile: c.systemPromptFile,
-    sandbox: { ...DEFAULTS.sandbox, ...c.sandbox },
+    sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b },
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },
     s3: { prefix: "", ...c.s3 },

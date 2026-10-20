@@ -1,7 +1,8 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 // claw's bash tool (CLAW_BASH_COMMAND): reads the tool input JSON on stdin, runs it in the conversation's sandbox
 // and prints {stdout, stderr, exit_code, interrupted, background_task_id?} as JSON (src/web/bash.ts).
-// The turn runner sets JARVIS_SANDBOX_URL, JARVIS_SANDBOX_TOKEN, JARVIS_SANDBOX_ID and JARVIS_SYNC_STATE; the
+// The turn runner sets JARVIS_SANDBOX_URL, JARVIS_SANDBOX_TOKEN, JARVIS_SANDBOX_ID, JARVIS_SYNC_STATE and, for a
+// provider that needs them (E2B), JARVIS_SANDBOX_HEADERS (a JSON object of headers for every agent call); the
 // workdir is the current directory.
 import { runBash } from "../web/bash.ts";
 
@@ -29,6 +30,7 @@ try {
     sandboxToken: need("JARVIS_SANDBOX_TOKEN"),
     sandboxId: need("JARVIS_SANDBOX_ID"),
     statePath: need("JARVIS_SYNC_STATE"),
+    sandboxHeaders: JSON.parse(process.env.JARVIS_SANDBOX_HEADERS || "{}"),
   });
   process.stdout.write(JSON.stringify(out) + "\n");
 } catch (e) {
