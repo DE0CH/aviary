@@ -1,0 +1,45 @@
+# The sandbox image (docs/CHAT.md, "Sandbox lifecycle"): where a conversation's bash commands run, as uid 1000 in
+# /work, inside a gVisor pod whose only way out is the egress proxy. It holds no secrets. Build context: chat/sandbox/.
+FROM node:22-trixie-slim
+
+# tools for news and PR work: documents, PDFs, spreadsheets, charts, CJK fonts for rendering Chinese text
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates tini bash curl wget git jq unzip zip xz-utils file less procps \
+      python3 python3-venv python3-pip \
+      poppler-utils pandoc fonts-noto-cjk fonts-noto-core fontconfig \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
+
+# A virtualenv owned by the sandbox user, first on PATH: `pip install x` works without root or
+# --break-system-packages, and installs carry over while the sandbox lives.
+ENV VIRTUAL_ENV=/opt/py PATH=/opt/py/bin:$PATH
+RUN python3 -m venv /opt/py \
+ && /opt/py/bin/pip install --no-cache-dir \
+      pandas openpyxl xlsxwriter python-docx python-pptx matplotlib pypdf pdfplumber \
+      beautifulsoup4 lxml requests httpx Pillow markdown tabulate python-dateutil chardet opencc-python-reimplemented \
+ && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
+ && chown -R 1000:1000 /opt/py
+
+# uid 1000 is the image's `node` user; the sandbox's home is /home/user, the workspace /work
+RUN mkdir -p /home/user /work /opt/agent \
+ && chown 1000:1000 /home/user /work \
+ && usermod -d /home/user node
+COPY agent.mjs tar.mjs /opt/agent/
+
+ENV HOME=/home/user \
+    JARVIS_WORK_DIR=/work \
+    PORT=7070 \
+    NPM_CONFIG_PREFIX=/home/user/.npm-global \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    MPLCONFIGDIR=/home/user/.config/matplotlib \
+    LANG=C.UTF-8
+ENV PATH=/home/user/.npm-global/bin:/home/user/.local/bin:$PATH
+
+LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
+      org.opencontainers.image.description="Jarvis 3 chat sandbox"
+USER 1000:1000
+WORKDIR /work
+EXPOSE 7070
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "/opt/agent/agent.mjs"]
