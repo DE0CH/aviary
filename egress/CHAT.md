@@ -72,6 +72,8 @@ The sandbox manager (`chat/src/web/sandbox.ts`) owns the lifecycle above and the
 the agent (`waitReady` → `{url, headers}`, stored in `sandboxes.agent`), keeps alive, destroys and lists. jarvis-bash
 gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it works the same with either.
 
+- **`vm`** (designed and prototyped, not implemented): gVisor sandboxes on our own EC2 hosts, live-migrated
+  between them so the autoscaler can empty and release hosts. See docs/SANDBOX-VM.md.
 - **`kubernetes`** (`sandbox-k8s.ts`): a gVisor pod per sandbox in `sandbox.namespace`, agent at `http://<pod IP>:7070`,
   the env (proxy, mirrors, `JARVIS_EXEC_TOKEN`) in the pod spec, the proxy `sandbox.egressProxyUrl` (default
   `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op.
