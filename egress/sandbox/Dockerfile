@@ -35,6 +35,9 @@ ENV HOME=/home/user \
     MPLCONFIGDIR=/home/user/.config/matplotlib \
     LANG=C.UTF-8
 ENV PATH=/home/user/.npm-global/bin:/home/user/.local/bin:$PATH
+# Commands run as `bash -lc`, and a login shell's /etc/profile resets PATH: put the venv and the user's bins back.
+USER root
+RUN printf 'export VIRTUAL_ENV=/opt/py\nexport PATH=/home/user/.npm-global/bin:/home/user/.local/bin:/opt/py/bin:$PATH\n' > /etc/profile.d/00-sandbox-path.sh
 
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       org.opencontainers.image.description="Jarvis 3 chat sandbox"
