@@ -255,8 +255,8 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
    the UI retries 503), and waits for its running turns up to `terminationGracePeriodSeconds - 30` (manifests: 1800 s).
 7. **Reset notice:** kv `turn_sandbox:<conv>` holds the sandbox id the conversation's last turn used; a turn on a
-   different sandbox gets the reset line prepended to its prompt and a `sandbox {state: "reset"}` event.
-8. A turn whose sandbox can't be had (pool full past 60 s, start failure) still runs; its `sandbox {state:
+   different sandbox gets the reset line prepended to its prompt and a `sandbox {status: "reset"}` event.
+8. A turn whose sandbox can't be had (pool full past 60 s, start failure) still runs; its `sandbox {status:
    "unavailable", message}` event says why and `jarvis-bash` then fails with that reason. claw's session file is saved
    only after a `done` turn (a cancelled or failed turn may leave a tool call without its result, which the model API
    refuses on replay); the turn's files are stored whatever its outcome.
@@ -267,13 +267,14 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 
 ### Events (what the UI renders; `GET …/stream` and `turns[].events`)
 
-Each is `{id, turnId, seq, type, data, at}`. Types: `turn_start {model}`; `sandbox {state: starting|ready|reset|
-unavailable, message?}`; claw's own `message_start`, `text_delta {text}`, `thinking_delta {text}`, `tool_use {id, name,
-input}`, `tool_result {id, name, output, is_error, truncated?}` (output capped at 20 000 characters), `message_stop`,
-`error {message}`; `usage {usage, iterations}`; `files {changed: [path]}`; `confirmation_request {id, kind, summary,
-detail}` (from tools); `confirmation_decided {id, status}`; `title {title}`; `turn_end {status: done|error|cancelled,
-error, costUsd}`. claw's `session` and `result` lines are not stored (`result` becomes `usage`). MCP tool names arrive as
-`mcp__tools__<name>`. The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug` event (tests only).
+Each is `{id, turnId, seq, type, data, createdAt}`; the list of types is in "Public API" below. What `web` itself adds:
+`turn_started {turnId, model}`; `sandbox {status: starting|ready|reset|unavailable, message?}`; `files {changed:
+[path]}` (what the turn stored); `title {title}`; `confirmation_resolved {id, status}` on approve/deny (and, as a
+backstop for a tools pod that died, on expiry after 20 minutes; `tools` posts the expiry itself at 15);
+`turn_finished {turnId, status: done|error|cancelled, error, costUsd}`. claw's `result` is stored as it comes
+(`usage`, `estimated_cost`, `message`, …); its `session` line is not stored (a server path). `tool_result.output` is
+capped at 20 000 characters (`truncated: true`). The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug`
+event (tests only).
 
 ### `web` deployment needs
 
@@ -309,7 +310,7 @@ error, costUsd}`. claw's `session` and `result` lines are not stored (`result` b
   `tool_result{id,name,output,is_error}`, `message_stop`, `result{usage, estimated_cost, …}`, `error{message}`) and
   the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`, `confirmation_request{id, kind,
   summary, detail}` (kind `network_access` has `detail: {host, reason}`), `confirmation_resolved{id, status}`,
-  `sandbox{status: starting|ready|reset}`, `title{title}`. MCP tools are named `mcp__tools__<tool>`.
+  `sandbox{status: starting|ready|reset|unavailable}`, `title{title}`, `files{changed}`. MCP tools are named `mcp__tools__<tool>`.
 - `POST /api/turns/:id/cancel` → 204
 - `POST /api/confirmations/:id` `{approve: bool}` → 204
 - `POST /api/conversations/:id/files?name=<file name>` (raw body, `content-type` = the file's, ≤ 100 MB) → 201
