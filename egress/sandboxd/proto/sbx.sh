@@ -4,25 +4,38 @@
 #   sbx.sh net NAME IP EGRESS_IP CTRL_IP   netns + veth, sandbox address IP/32, nftables: out only to EGRESS:3128,
 #                                          in only from CTRL to :7070
 #   sbx.sh bundle NAME IP EGRESS_IP TOKEN  OCI bundle from the host's current image (uid 1000, no capabilities)
+#   sbx.sh bundle-dind NAME IP EGRESS_IP [TOKEN]  a Docker-in-gVisor sandbox instead (docker:29-dind, dockerd)
 #   sbx.sh run NAME                        start it (detached)
 #   sbx.sh checkpoint NAME DIR [flags]     stop-and-save into DIR (pages uncompressed, for lazy restore)
 #   sbx.sh restore NAME DIR [flags]        start it from DIR (on the target host, after `net` and `bundle`)
+#   sbx.sh receive DIR PORT                accept one pre-copy migration on PORT into the image DIR (target host);
+#                                          prints the stream's statistics as JSON
+#   sbx.sh receive-restore NAME PORT       restore NAME from a pre-copy stream on PORT (runsc restore --migrate-listen)
+#   sbx.sh send NAME DST:PORT [DOWNTIME] [MAX_ROUNDS]  live-migrate NAME to a `receive` (pre-copy: memory is copied
+#                                          while it runs; it stops only for the last dirty pages + kernel state)
 #   sbx.sh rm NAME                         delete the container and its network
 set -euo pipefail
 ROOT=/run/sbx/runsc
 # Flags must be identical on both sides of a migration. systrap: no KVM. --network=sandbox: gVisor's own TCP/IP
 # stack (netstack) owns the sandbox's connections, so they are part of the checkpoint and move with it.
-# --allow-connected-on-save: keeps established TCP connections across a save. Without it they still survive the
-# sandbox's FIRST migration but are aborted on every later one: the restored netstack loses its
-# allowLiveTCPMigration setting (a `state:"nosave"` field nothing sets again after a restore; gVisor 20261012.0).
+# runsc is DE0CH/gvisor (host-setup.sh): upstream gVisor plus pre-copy live migration (`send`/`receive`) and the
+# fix that keeps established TCP connections across repeated migrations (upstream needed
+# --allow-connected-on-save; without it they survived only the first migration).
 RUNSC=(runsc --root "$ROOT" --platform=systrap --network=sandbox --overlay2=root:self,size=5g
-       --host-uds=none --host-fifo=none --allow-connected-on-save)
+       --host-uds=none --host-fifo=none)
 # SBX_DEBUG=1: gVisor debug logs with the sentry's own phase timelines under /var/log/sbx/debug/
 # SBX_EXTRA: more runsc flags for this sandbox (e.g. Docker inside needs --net-raw --allow-packet-socket-write)
 RUNSC+=(${SBX_EXTRA:-})
 [ -n "${SBX_DEBUG:-}" ] && RUNSC+=(--debug --debug-log=/var/log/sbx/debug/)
-cmd=$1; name=$2; ns=sbx-$name; veth=v${name:0:12}
+cmd=$1; name=${2:-}; ns=sbx-$name; veth=v${name:0:12}
+# per-sandbox runsc flags (written by `bundle-dind`), so every command on every host uses the same flags
+flags=/var/lib/sbx/bundles/$name/runsc-flags
+[ -n "$name" ] && [ -f "$flags" ] && RUNSC+=($(cat "$flags"))
 GW_MAC=ee:ee:ee:ee:ee:ee   # host side of every sandbox veth, the same on every host, so a moved sandbox's ARP entry stays valid
+# The CPU features every sandbox sees: the features all hosts of the pool have (bringup.sh writes them), so that a
+# sandbox can move between hosts with different CPUs (e.g. Intel on AWS, AMD on Hetzner). gVisor masks CPUID for the
+# application where the host supports CPUID faulting (Intel), and refuses to restore onto a host missing a feature.
+cpu_features() { cat /var/lib/sbx/cpu-features 2>/dev/null || true; }
 mac_of() { printf '02:5b:%02x:%02x:%02x:%02x' ${1//./ }; }   # sandbox side: derived from its IP, same on every host
 
 case $cmd in
@@ -30,8 +43,9 @@ net)
   ip=$3 egress=$4 ctrl=$5
   ip netns add "$ns"
   ip link add "$veth" type veth peer name eth0 netns "$ns"
-  ip link set "$veth" address $GW_MAC up
-  ip -n "$ns" link set eth0 address "$(mac_of "$ip")" up
+  # MTU of the WireGuard overlay (1420) on every host, so a sandbox's packets fit the overlay wherever it runs
+  ip link set "$veth" mtu "${SBX_MTU:-1420}" address $GW_MAC up
+  ip -n "$ns" link set eth0 mtu "${SBX_MTU:-1420}" address "$(mac_of "$ip")" up
   ip -n "$ns" link set lo up
   ip -n "$ns" addr add "$ip/32" dev eth0
   ip -n "$ns" route add 169.254.1.1 dev eth0 scope link
@@ -68,8 +82,9 @@ bundle)
   img=/var/lib/sbx/images/current; b=/var/lib/sbx/bundles/$name; mkdir -p "$b"
   proxy="http://sbx:$token@$egress:3128"
   jq -n --arg root "$(readlink -f $img)/rootfs" --arg ns "/var/run/netns/$ns" --arg name "$name" --arg proxy "$proxy" \
-        --arg token "$token" --argjson env "$(jq '.config.Env' $img/config.json)" '{
+        --arg token "$token" --argjson env "$(jq '.config.Env' $img/config.json)" --arg cpu "$(cpu_features)" '{
     ociVersion: "1.0.0",
+    annotations: (if $cpu == "" then {} else {"dev.gvisor.internal.cpufeatures": $cpu} end),
     process: { user: {uid: 1000, gid: 1000}, cwd: "/work", noNewPrivileges: true,
       args: ["/usr/bin/tini", "--", "node", "/opt/agent/agent.mjs"],
       env: ($env + ["JARVIS_EXEC_TOKEN=\($token)", "HTTP_PROXY=\($proxy)", "HTTPS_PROXY=\($proxy)",
@@ -93,9 +108,49 @@ bundle)
     }
   }' > "$b/config.json"
   ;;
+bundle-dind)
+  # A Docker-in-gVisor sandbox (gvisor.dev/docs/tutorials/docker-in-gvisor): docker:29-dind, dockerd as the main
+  # process with iptables off and no bridge (inner containers use --network=host), /var/lib/docker on a tmpfs in
+  # the sandbox's memory (so pulled images migrate with it), the sandbox's own capabilities (gVisor's, not the
+  # host's), pulls through the egress proxy. Needs runsc --net-raw --allow-packet-socket-write.
+  ip=$3 egress=$4
+  img=docker:29-dind; dir=/var/lib/sbx/images/dind
+  if [ ! -f $dir/.done ]; then mkdir -p $dir/rootfs; crane export $img - | tar -x -C $dir/rootfs; crane config $img > $dir/config.json; touch $dir/.done; fi
+  b=/var/lib/sbx/bundles/$name; mkdir -p "$b"; echo "--net-raw --allow-packet-socket-write" > "$b/runsc-flags"
+  proxy=http://sbx:test@$egress:3128
+  all='["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FOWNER","CAP_FSETID","CAP_KILL","CAP_SETGID","CAP_SETUID","CAP_SETPCAP","CAP_NET_BIND_SERVICE","CAP_NET_RAW","CAP_NET_ADMIN","CAP_SYS_CHROOT","CAP_MKNOD","CAP_AUDIT_WRITE","CAP_SETFCAP","CAP_SYS_ADMIN","CAP_SYS_PTRACE","CAP_SYS_RESOURCE","CAP_IPC_LOCK","CAP_SYS_NICE"]'
+  jq -n --arg root $dir/rootfs --arg ns /var/run/netns/$ns --arg proxy $proxy --argjson caps "$all" --arg name "$name" --arg cpu "$(cpu_features)" '{
+    ociVersion: "1.0.0",
+    annotations: (if $cpu == "" then {} else {"dev.gvisor.internal.cpufeatures": $cpu} end),
+    process: { user: {uid: 0, gid: 0}, cwd: "/",
+      args: ["sh", "-c", "mkdir -p /etc/docker && echo {\\\"iptables\\\":false,\\\"ip6tables\\\":false,\\\"bridge\\\":\\\"none\\\"} > /etc/docker/daemon.json && exec dockerd >/var/log/dockerd.log 2>&1"],
+      env: ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HTTP_PROXY=\($proxy)", "HTTPS_PROXY=\($proxy)", "NO_PROXY="],
+      capabilities: {bounding: $caps, effective: $caps, permitted: $caps, inheritable: [], ambient: []} },
+    root: {path: $root, readonly: false}, hostname: "dind",
+    mounts: [
+      {destination: "/proc", type: "proc", source: "proc"},
+      {destination: "/dev", type: "tmpfs", source: "tmpfs", options: ["nosuid","strictatime","mode=755","size=65536k"]},
+      {destination: "/sys", type: "sysfs", source: "sysfs", options: ["nosuid","noexec","nodev"]},
+      {destination: "/sys/fs/cgroup", type: "cgroup", source: "cgroup", options: ["nosuid","noexec","nodev"]},
+      {destination: "/tmp", type: "tmpfs", source: "tmpfs"},
+      {destination: "/var/lib/docker", type: "tmpfs", source: "tmpfs"}
+    ],
+    linux: { namespaces: [{type: "pid"}, {type: "ipc"}, {type: "uts"}, {type: "mount"}, {type: "network", path: $ns}],
+      cgroupsPath: "/sbx/\($name)", resources: {memory: {limit: 3221225472}, pids: {limit: 4096}} }
+  }' > "$b/config.json"
+  ;;
 run)        mkdir -p /var/log/sbx; "${RUNSC[@]}" run --bundle "/var/lib/sbx/bundles/$name" --detach "$name" </dev/null &>>"/var/log/sbx/$name.log" ;;
 checkpoint) dir=$3; shift 3; rm -rf "$dir"; mkdir -p "$dir"; "${RUNSC[@]}" checkpoint --image-path "$dir" "$@" "$name" ;;
 restore)    dir=$3; shift 3; mkdir -p /var/log/sbx; "${RUNSC[@]}" restore --bundle "/var/lib/sbx/bundles/$name" --image-path "$dir" --detach "$@" "$name" </dev/null &>>"/var/log/sbx/$name.log" ;;
+receive)    dir=$2 port=$3; rm -rf "$dir"; mkdir -p /var/log/sbx; "${RUNSC[@]}" migrate-receive --listen "0.0.0.0:$port" --image-path "$dir" --accept-timeout 120s ;;
+receive-restore)  # restore NAME from a pre-copy stream accepted on PORT (after `net` and `bundle`): the sandbox is
+            # created while the stream arrives; restore starts when it ends. Prints the stream's statistics as JSON,
+            # including restore_ms (stream end -> restored). The sandbox inherits stdout, so it goes to a file.
+            port=$3; dir=/run/sbx/ckpt/in-$name; rm -rf "$dir"; mkdir -p /var/log/sbx; out=/var/log/sbx/$name.restore.out
+            "${RUNSC[@]}" restore --migrate-listen "0.0.0.0:$port" --image-path "$dir" --background \
+              --bundle "/var/lib/sbx/bundles/$name" --detach "$name" </dev/null >"$out" 2>>"/var/log/sbx/$name.log"
+            grep -m1 '^{"from"' "$out" ;;
+send)       dst=$3; "${RUNSC[@]}" checkpoint --migrate-to "$dst" --migrate-downtime "${4:-100ms}" --migrate-max-rounds "${5:-20}" "$name" ;;
 exec)       shift 2; "${RUNSC[@]}" exec --user 1000:1000 --cwd /work "$name" "$@" ;;
 exec-root)  shift 2; "${RUNSC[@]}" exec "$name" "$@" ;;
 rm)

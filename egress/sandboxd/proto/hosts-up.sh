@@ -21,9 +21,11 @@ sg=$("$aws" ec2 describe-security-groups --filters Name=group-name,Values=yyc-sb
 if [ "$sg" = None ]; then
   sg=$("$aws" ec2 create-security-group --group-name yyc-sbx-proto --description "yyc sandbox prototype" --vpc-id "$vpc" \
     --tag-specifications 'ResourceType=security-group,Tags=[{Key=app,Value=yyc-ai-sandbox}]' --query GroupId --output text)
-  # members talk to each other freely (migration stream, routed sandbox traffic); SSH from anywhere (key only)
+  # members talk to each other freely (migration stream, routed sandbox traffic); SSH from anywhere (key only);
+  # WireGuard from anywhere (authenticated by key; the overlay to hosts outside AWS, overlay-up.sh)
   "$aws" ec2 authorize-security-group-ingress --group-id "$sg" --ip-permissions \
-    "IpProtocol=-1,UserIdGroupPairs=[{GroupId=$sg}]" "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" >/dev/null
+    "IpProtocol=-1,UserIdGroupPairs=[{GroupId=$sg}]" "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=0.0.0.0/0}]" \
+    "IpProtocol=udp,FromPort=51820,ToPort=51820,IpRanges=[{CidrIp=0.0.0.0/0}]" >/dev/null
 fi
 # one subnet (one AZ) for all three, so a /32 route to "the host the sandbox is on" is one hop
 subnet=$("$aws" ec2 describe-subnets --filters Name=vpc-id,Values="$vpc" Name=default-for-az,Values=true \
