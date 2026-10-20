@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+// claw's MCP server "tools" (a stdio server in its config) → the tools role over HTTP (docs/CHAT.md).
+// stdio side: JSON-RPC framed with Content-Length headers (claw's MCP client) or one JSON message per line; answers go
+// back in the framing the first message used. HTTP side: POST $JARVIS_TOOLS_URL, Authorization: Bearer
+// $JARVIS_TURN_TOKEN, JSON or text/event-stream answers. Requests run concurrently; answers keep their ids.
+const URL_ = process.env.JARVIS_TOOLS_URL;
+const TOKEN = process.env.JARVIS_TURN_TOKEN;
+if (!URL_ || !TOKEN) {
+  process.stderr.write("jarvis-mcp-bridge: JARVIS_TOOLS_URL and JARVIS_TURN_TOKEN must be set\n");
+  process.exit(2);
+}
+
+let framing = null; // "headers" | "lines"
+let buf = Buffer.alloc(0);
+let pending = 0;
+let ended = false;
+
+function write(msg) {
+  const body = Buffer.from(JSON.stringify(msg), "utf8");
+  if (framing === "lines") process.stdout.write(Buffer.concat([body, Buffer.from("\n")]));
+  else process.stdout.write(Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`), body]));
+}
+
+function pickAnswers(body, contentType) {
+  if (!body.trim()) return [];
+  if (contentType.includes("text/event-stream")) {
+    const out = [];
+    for (const block of body.split(/\r?\n\r?\n/)) {
+      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).replace(/^ /, "")).join("\n");
+      if (!data) continue;
+      try {
+        const m = JSON.parse(data);
+        out.push(...(Array.isArray(m) ? m : [m]));
+      } catch {}
+    }
+    return out;
+  }
+  const m = JSON.parse(body);
+  return Array.isArray(m) ? m : [m];
+}
+
+async function forward(msg) {
+  const isRequest = msg && typeof msg === "object" && "id" in msg && msg.id !== null && typeof msg.method === "string";
+  pending++;
+  try {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const r = await fetch(URL_, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18" },
+          body: JSON.stringify(msg),
+        });
+        const text = await r.text();
+        if (r.status === 503 && attempt < 3) {
+          await new Promise((ok) => setTimeout(ok, 500 * (attempt + 1)));
+          continue;
+        }
+        if (!r.ok && r.status !== 202) throw new Error(`tools server answered HTTP ${r.status}: ${text.slice(0, 200)}`);
+        for (const a of pickAnswers(text, r.headers.get("content-type") || "")) write(a);
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 3) await new Promise((ok) => setTimeout(ok, 500 * (attempt + 1)));
+      }
+    }
+    if (isRequest) write({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `jarvis-mcp-bridge: ${lastErr?.message ?? "failed"}` } });
+  } finally {
+    pending--;
+    if (ended && pending === 0) process.exit(0);
+  }
+}
+
+function handle(raw) {
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
+    return;
+  }
+  void forward(msg);
+}
+
+function pump() {
+  for (;;) {
+    if (!framing) {
+      const s = buf.toString("utf8", 0, Math.min(buf.length, 32)).trimStart();
+      if (!s) return;
+      framing = /^content-length/i.test(s) ? "headers" : s.startsWith("{") || s.startsWith("[") ? "lines" : null;
+      if (!framing) {
+        if (buf.length < 16) return;
+        framing = "lines";
+      }
+    }
+    if (framing === "lines") {
+      const i = buf.indexOf(10);
+      if (i < 0) return;
+      const line = buf.subarray(0, i).toString("utf8").trim();
+      buf = buf.subarray(i + 1);
+      if (line) handle(line);
+      continue;
+    }
+    const end = buf.indexOf("\r\n\r\n");
+    if (end < 0) return;
+    const head = buf.subarray(0, end).toString("utf8");
+    const m = /content-length:\s*(\d+)/i.exec(head);
+    if (!m) {
+      buf = buf.subarray(end + 4);
+      continue;
+    }
+    const len = Number(m[1]);
+    if (buf.length < end + 4 + len) return;
+    const body = buf.subarray(end + 4, end + 4 + len).toString("utf8");
+    buf = buf.subarray(end + 4 + len);
+    handle(body);
+  }
+}
+
+process.stdin.on("data", (c) => {
+  buf = Buffer.concat([buf, c]);
+  pump();
+});
+process.stdin.on("end", () => {
+  ended = true;
+  if (pending === 0) process.exit(0);
+});
