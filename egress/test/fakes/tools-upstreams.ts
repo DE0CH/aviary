@@ -1,0 +1,130 @@
+// Fakes for the tools role's tests: Exa, TikHub, the Wisers relay, an upstream MCP server and web's /internal/events,
+// all on one local HTTP server (routes by path prefix). Each records what it was asked.
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+
+export interface Seen {
+  path: string;
+  method: string;
+  headers: IncomingMessage["headers"];
+  body: any;
+}
+
+export interface Fakes {
+  url: string;
+  seen: Seen[];
+  events: any[];
+  onEvent: (e: any) => void;
+  exaHasText: boolean;
+  relayRunsFor: number; // how many job polls the relay answers "running" before "ok"
+  close(): Promise<void>;
+}
+
+const body = (req: IncomingMessage) =>
+  new Promise<string>((ok) => {
+    const c: Buffer[] = [];
+    req.on("data", (x: Buffer) => c.push(x));
+    req.on("end", () => ok(Buffer.concat(c).toString("utf8")));
+  });
+
+export async function startFakes(): Promise<Fakes> {
+  const f: Fakes = { url: "", seen: [], events: [], onEvent: () => {}, exaHasText: true, relayRunsFor: 1, close: async () => {} };
+  let polls = 0;
+  const server: Server = createServer(async (req, res) => {
+    const raw = await body(req);
+    let parsed: any = raw;
+    try {
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {}
+    const u = new URL(req.url || "/", "http://x");
+    f.seen.push({ path: u.pathname + u.search, method: req.method || "", headers: req.headers, body: parsed });
+    const json = (status: number, o: unknown, h: Record<string, string> = {}) => {
+      res.writeHead(status, { "content-type": "application/json", ...h });
+      res.end(JSON.stringify(o));
+    };
+    // ---- Exa
+    if (u.pathname === "/exa/search") {
+      if (req.headers["x-api-key"] !== "exa-key") return json(401, { error: "bad key" });
+      return json(200, {
+        results: [
+          { title: "施政報告 2026", url: "https://www.info.gov.hk/a", publishedDate: "2026-10-15T00:00:00Z", highlights: ["房屋供應"] },
+          { title: "Policy address", url: "https://news.example.com/b", highlights: ["housing"] },
+        ],
+        costDollars: { total: 0.007 },
+      });
+    }
+    if (u.pathname === "/exa/contents") {
+      if (!f.exaHasText) return json(200, { results: [], statuses: [{ id: parsed.urls[0], status: "error", error: { httpStatusCode: 403 } }], costDollars: { total: 0.001 } });
+      return json(200, { results: [{ title: "Page", url: parsed.urls[0], text: "全文內容 ".repeat(10) }], costDollars: { total: 0.001 } });
+    }
+    // ---- TikHub
+    if (u.pathname.startsWith("/tikhub/api/v1/")) {
+      if (req.headers.authorization !== "Bearer tik-key") return json(401, { code: 401 });
+      if (u.pathname.includes("threads/web/search_recent")) return json(400, { code: 400, message: "upstream failed" });
+      if (u.pathname.includes("threads/web/search_posts"))
+        return json(200, { code: 200, data: { posts: [{ code: "ABC", taken_at: 1792000000, user: { username: "hkuser" }, caption: { text: "Threads 帖子" }, like_count: 12 }] } });
+      if (u.pathname.includes("weibo/app/fetch_search_all"))
+        return json(200, { code: 200, data: { cards: [{ mblog: { mid: "M1", created_at: "Wed Oct 15 10:00:00 +0800 2026", text: "<b>微博</b> 內容", user: { screen_name: "博主" }, attitudes_count: "1.2万" } }] } });
+      return json(200, { code: 200, data: {} });
+    }
+    // ---- Wisers relay
+    if (u.pathname === "/wisers/search" || u.pathname.startsWith("/wisers/job/")) {
+      if (req.headers["cf-access-client-id"] !== "cid" || req.headers["cf-access-client-secret"] !== "csecret") return json(403, { error: "Access" });
+      const running = { job: { id: "J1", state: "running" }, result: null, failure: null };
+      if (u.pathname === "/wisers/search") {
+        polls = 0;
+        if (u.searchParams.get("q") === "fail") return json(200, { job: { id: "J2", state: "err" }, result: null, failure: { message: "Wisers 沒有回應", outcome: "timeout", charged: "maybe" } });
+        return json(200, f.relayRunsFor > 0 ? running : done());
+      }
+      polls++;
+      return json(200, polls >= f.relayRunsFor ? done() : running);
+    }
+    // ---- upstream MCP (answers as SSE to exercise the parser)
+    if (u.pathname === "/mcp-up") {
+      const m = parsed;
+      if (!m?.id && m?.method?.startsWith("notifications/")) {
+        res.writeHead(202);
+        return res.end();
+      }
+      const answer = (result: unknown) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result })}\n\n`);
+      };
+      if (m.method === "tools/list")
+        return answer({
+          tools: [
+            { name: "posts_search", description: "Search the stream", inputSchema: { type: "object", properties: { query: { type: "string" } } }, annotations: { readOnlyHint: true } },
+            { name: "Send-Mail", description: "Send", inputSchema: { type: "object", properties: { to: { type: "string" } } } },
+          ],
+        });
+      if (m.method === "tools/call") return answer({ content: [{ type: "text", text: `called ${m.params.name} for ${req.headers["x-yyc-user"]}` }] });
+      return answer({});
+    }
+    // ---- web /internal/events
+    if (u.pathname === "/web/internal/events") {
+      f.events.push(parsed);
+      res.writeHead(204);
+      res.end();
+      setImmediate(() => f.onEvent(parsed));
+      return;
+    }
+    json(404, { error: "no fake for " + u.pathname });
+  });
+  function done() {
+    return {
+      job: { id: "J1", state: "ok", cached: false },
+      result: {
+        data: { items: [{ headline: "<b>明報</b> 報道", source: "明報", publishDate: "2026-10-16 08:00", author: "記者", typeId: "print" }, { headline: "網站", source: "HK01", publishDate: "2026-10-16 09:00" }], total: "45" },
+        view: [{ link: "", excerpt: [["今日 ", false], ["施政", true]] }, { link: "https://hk01.com/x", excerpt: [] }],
+        page: 1,
+        pageSize: 20,
+        cached: false,
+      },
+      failure: null,
+    };
+  }
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  f.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  f.close = () => new Promise((r) => server.close(() => r()));
+  return f;
+}

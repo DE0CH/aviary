@@ -108,7 +108,11 @@ export const webFetch: ToolDef = {
       }
     }
     try {
-      const page = await safeGet(u.toString(), { maxBytes: 8_000_000, ...(ctx.deps.resolve ? { resolve: ctx.deps.resolve } : {}) });
+      const page = await safeGet(u.toString(), {
+        maxBytes: 8_000_000,
+        ...(ctx.deps.resolve ? { resolve: ctx.deps.resolve } : {}),
+        ...(ctx.deps.fetchPorts ? { ports: ctx.deps.fetchPorts } : {}),
+      });
       const ct = page.contentType.toLowerCase();
       const body = page.body.toString("utf8");
       if (page.status >= 400) return text(`The page answered HTTP ${page.status}.${body ? `\n\n${cut(htmlToText(body).text).slice(0, 2000)}` : ""}`, true);

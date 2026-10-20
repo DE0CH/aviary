@@ -48,6 +48,8 @@ export interface Deps {
   confirmTimeoutMs: number;
   /** Address check for web_fetch's direct path (tests reach local fakes through it). */
   resolve?: (host: string) => Promise<{ address: string; family: number }>;
+  /** Ports web_fetch may reach (default 80, 443, 8080, 8443). */
+  fetchPorts?: string[] | "any";
 }
 
 export interface ToolCtx {

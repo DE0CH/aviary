@@ -66,7 +66,14 @@ export interface FetchedPage {
  */
 export async function safeGet(
   url: string,
-  o: { maxBytes?: number; timeoutMs?: number; resolve?: (host: string) => Promise<{ address: string; family: number }>; headers?: Record<string, string> } = {},
+  o: {
+    maxBytes?: number;
+    timeoutMs?: number;
+    resolve?: (host: string) => Promise<{ address: string; family: number }>;
+    headers?: Record<string, string>;
+    /** Ports a URL may name (default 80, 443, 8080, 8443; tests reach a local fake on its own port). */
+    ports?: string[] | "any";
+  } = {},
 ): Promise<FetchedPage> {
   const maxBytes = o.maxBytes ?? 5_000_000;
   const deadline = Date.now() + (o.timeoutMs ?? 30_000);
@@ -74,7 +81,8 @@ export async function safeGet(
   let u = new URL(url);
   for (let hop = 0; hop <= 5; hop++) {
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new BlockedAddress(`only http and https URLs (${u.protocol})`);
-    if (u.port && !["80", "443", "8080", "8443"].includes(u.port)) throw new BlockedAddress(`port ${u.port} is not allowed`);
+    const ports = o.ports ?? ["80", "443", "8080", "8443"];
+    if (u.port && ports !== "any" && !ports.includes(u.port)) throw new BlockedAddress(`port ${u.port} is not allowed`);
     const { address, family } = await resolve(u.hostname);
     const res = await new Promise<IncomingMessage>((ok, fail) => {
       const req = (u.protocol === "https:" ? httpsRequest : httpRequest)(
@@ -87,7 +95,11 @@ export async function safeGet(
             "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
             ...o.headers,
           },
-          lookup: (_h, _opts, cb) => (cb as (e: null, a: string, f: number) => void)(null, address, family),
+          // the checked address only (Node may ask for all addresses: autoSelectFamily)
+          lookup: (_h, opts, cb) =>
+            (opts as { all?: boolean }).all
+              ? (cb as (e: null, a: { address: string; family: number }[]) => void)(null, [{ address, family }])
+              : (cb as (e: null, a: string, f: number) => void)(null, address, family),
           servername: isIP(u.hostname) ? undefined : u.hostname,
           timeout: Math.max(1000, deadline - Date.now()),
         },
