@@ -333,6 +333,29 @@ own conversations (others' ids answer 404); admins (`config.admins`) can read th
 chats. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
 with an `Origin` other than `publicUrl` are refused.
 
+## Deploying an instance
+
+The base is `deploy/chat/` (Kustomize): namespace `jarvis` (Pod Security restricted) with `web`, `egress`, `tools`
+(2 replicas each, rolling with `maxUnavailable: 0`, PDBs, drained on SIGTERM: grace 1800 / 150 / 1020 s), the tunnel
+connector `cloudflared`, NetworkPolicies (ingress: web ← cloudflared + tools, tools ← web, egress:3128 ← web; egress:
+DNS, the namespace's pods, public internet only) and a LimitRange. Sandbox pods run in a **separate cluster**
+(namespace `jarvis-sandbox` there, with its RuntimeClass, quota and RBAC); `web` gets its API server, CA and token from
+Secret `sandbox-cluster` (keys `server`, `ca.crt`, `token`, mounted at `$JARVIS_SANDBOX_CLUSTER_DIR`), and that link
+also carries the sandboxes' path to `egress:3128`. The image is the placeholder `jarvis3-chat`.
+
+An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
+- uses `github.com/DE0CH/jarvis3//deploy/chat?ref=<commit>` as its base and maps `jarvis3-chat` to
+  `ghcr.io/de0ch/jarvis3-chat:<sha12>` with `images:` (the sandbox image tag goes in `config.json`);
+- generates ConfigMaps `jarvis-config` (`config.json`, `system-prompt.md`) and `jarvis-brand` (`logo.svg`/`logo.png`);
+- supplies SOPS-encrypted Secrets `web-env` (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`), `egress-env`
+  (`DATABASE_URL`, `OPENROUTER_API_KEY`), `tools-env` (`DATABASE_URL` + the tool keys its config names), `tunnel`
+  (`token`) and `sandbox-cluster`, plus a `ghcr-pull` docker-registry Secret patched onto the Deployments while the
+  GHCR packages are private;
+- defines the PriorityClass `serving` the base's pods use (or patches `priorityClassName`).
+
+A new version = bump the base `ref` and the image tags (chat image in `images:`, sandbox image in `config.json`) to a
+commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a time.
+
 ## Config (`/etc/jarvis/config.json`, from the instance)
 
 ```json
