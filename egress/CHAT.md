@@ -15,8 +15,9 @@ Staff never see the name "Jarvis 3": the product name, logo and wording come fro
 | `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, per-conversation host allowlist, credential injection, logs every call, package cache | 2, rolling |
 | `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools, confirmations | 2, rolling |
 
-Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`), started as gVisor pods
-(`runtimeClassName: gvisor`) in namespace `<ns>-sandbox`.
+Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`): built as an E2B template for hosted
+sandboxes (`sandbox.provider: "e2b"`, the YYC instance), or started as gVisor pods (`runtimeClassName: gvisor`) in
+namespace `jarvis-sandbox` (`"kubernetes"`: tests, local runs, a self-hosted cluster). See "Sandbox providers".
 
 ```
 browser ──Access──▶ web ──spawn per turn──▶ claw (cwd = conversation workdir, file tools confined there)
@@ -33,10 +34,13 @@ State: Postgres (conversations, messages, events, claw session files, file metad
 
 - **Sandbox scope = one per conversation.** The workdir belongs to a conversation, so the sandbox mirrors exactly it;
   a prompt injection in one chat can't reach another chat's files; "the sandbox was reset" means one thing.
-- **Sandbox provider = gVisor pods in the instance's own cluster** (Apache-2.0). No new account or spend, egress is
-  forced through the proxy by NetworkPolicy, staff files stay on the organisation's infrastructure. gVisor's
-  `systrap` platform needs no KVM, so it runs on Hetzner Cloud VMs. E2B (SaaS) would need a new account and would put
-  staff files in a vendor's cloud.
+- **Sandbox provider = a hosted sandbox service, E2B (Deyao, 2026-10-20):** fast startup (a sandbox resumes from
+  the template's memory snapshot, agent already running) and no nodes to manage; "we can pay a slight premium". E2B
+  passed the hard requirement: a sandbox's outbound traffic can be limited to one host (`network.allowOut` with
+  `denyOut: ["0.0.0.0/0"]`), our egress proxy, so every byte still goes through `egress` with the sandbox's token.
+  Its SDK, CLI and infrastructure are Apache-2.0. The gVisor-pod provider stays for tests, local runs and any
+  instance that wants its own cluster. Staff files sit in E2B's sandbox only while it lives; the record stays in
+  Postgres and the instance's bucket.
 - **claw runs on the server, never inside a sandbox.** It holds no secrets: its model calls go to `egress`
   with a per-turn token, and its tools are MCP calls to `tools` with the same token.
 
@@ -60,6 +64,47 @@ State: Postgres (conversations, messages, events, claw session files, file metad
   at most `sandbox.maxActive` (default 6) live sandboxes per instance; over the limit the least recently active idle
   one is released first; if none is idle, the warm/turn waits up to 60 s, then the bash tool reports
   "the sandbox pool is full, try again in a minute".
+
+## Sandbox providers (`sandbox.provider`)
+
+The sandbox manager (`chat/src/web/sandbox.ts`) owns the lifecycle above and the `sandboxes` rows; a provider
+(`chat/src/web/provider.ts`) only creates (`create` → its name for the sandbox, stored in `sandboxes.pod`), waits for
+the agent (`waitReady` → `{url, headers}`, stored in `sandboxes.agent`), keeps alive, destroys and lists. jarvis-bash
+gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it works the same with either.
+
+- **`kubernetes`** (`sandbox-k8s.ts`): a gVisor pod per sandbox in `sandbox.namespace`, agent at `http://<pod IP>:7070`,
+  the env (proxy, mirrors, `JARVIS_EXEC_TOKEN`) in the pod spec, the proxy `sandbox.egressProxyUrl` (default
+  `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op.
+- **`e2b`** (`sandbox-e2b.ts`, REST with fetch, `X-API-Key: $E2B_API_KEY`, base `https://api.e2b.app`):
+  - **Template:** the chat workflow builds `chat/sandbox/Dockerfile` as E2B template `jarvis3-sandbox`, tagged with
+    the commit's 12 characters, 1 vCPU / 1024 MB, start command `JARVIS_INIT=1 node /opt/agent/agent.mjs`, ready
+    when `/livez` answers. The instance pins it: `sandbox.e2b.template` = `jarvis3-sandbox:<tag>`. The start command
+    runs at build time and is snapshotted, so per-sandbox env can't reach it: the agent waits for `POST /init`.
+  - **Create:** `POST /v2/sandboxes` `{templateID, timeout: 900, autoPause: false, metadata: {jarvis: <instance>,
+    sandbox, conversation}, network: {allowPublicTraffic: false, allowOut: [<egress host>], denyOut: ["0.0.0.0/0"]}}`.
+    No env vars, nothing secret. `sandboxes.pod` = E2B's `sandboxID`.
+  - **Ready:** `POST https://7070-<id>.e2b.app/init` `{token: <exec token>, env: {proxy and mirror settings, all
+    http://sbx:<egress token>@127.0.0.1:3128}, wire: {url: sandbox.e2b.egressUrl, headers: {Authorization: Bearer
+    <egress token>, …sandbox.e2b.egressHeaders}}}`, then `/healthz`. Every call to the agent port carries
+    `e2b-traffic-access-token` (from the create answer; without it E2B's edge answers 403) and the exec token in
+    `X-Jarvis-Exec-Token` (a port proxy may strip `Authorization`).
+  - **Egress:** the agent's local proxy `127.0.0.1:3128` turns each TCP connection into one WebSocket to egress's
+    `/wire` (`wss://<egress host>/wire`, through the Cloudflare tunnel); egress feeds it into its own proxy server, so
+    CONNECT, plain HTTP, the mirror, the allowlist, the address checks and the log are the same as on 3128. E2B checks
+    the allow-list by TLS SNI (443) and Host (80), and lets its DNS server (8.8.8.8) through.
+  - **Lifetime:** E2B kills a sandbox at its timeout. On every warm, every turn and every minute of a running turn
+    (at most every 30 s per sandbox) the manager sets it (`POST /sandboxes/{id}/timeout`) to the idle release + 5
+    minutes, capped at the hard maximum + 5 minutes, so the janitor's release (with the final save) always comes
+    first, and a sandbox whose web replicas died still ends. Release = `DELETE /sandboxes/{id}`.
+  - **Janitor:** `GET /v2/sandboxes?metadata=jarvis=<instance>`; a sandbox older than a minute with no live row is
+    killed. Other instances' sandboxes (another `jarvis` tag) are never touched.
+  - **Plan limits:** E2B Hobby ends any sandbox after 1 hour of continuous running; `sandbox.maxLifetimeHours` above 1
+    needs Pro (24 hours).
+  - **Measured** (2026-10-20, us-west-1, `chat/scripts/e2b-live.ts`, which re-runs the whole check: create, `/init`,
+    jarvis-bash, `pip install` through the mirror, allowed and refused hosts, direct internet blocked by name and by
+    IP, kill): create 1.1 s, `/init` + health 0.6 s; a pip install of a small package 6.4 s. Cloudflare refuses a
+    request whose Host differs from the egress host's SNI (403), so the SNI allow-list can't be used to reach other
+    sites behind Cloudflare.
 
 ## Interfaces
 
@@ -125,6 +170,9 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    `allowed_hosts`. Ports: 80, 443 only. Everything else → 403 with a plain-text body naming the host and saying the
    agent can ask the user to allow it (`request_network_access` tool). Every request → `egress_log`.
    Private, loopback, link-local and cluster addresses are refused after DNS resolution (no SSRF into the cluster).
+   **The wire:** `GET /wire` with a WebSocket upgrade and `Authorization: Bearer <egress token>` (401 otherwise):
+   the WebSocket's binary messages are one proxy connection, handed to this same server, so everything above
+   applies unchanged. Pings every 30 s. This is how hosted sandboxes (E2B) reach egress through the tunnel.
 2. **Package mirror** (cache on the pod's volume, LRU at `egress.cacheGiB`, default 5):
    `GET /mirror/pypi/simple/...` (from pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
    `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten), apt via the forward proxy: plain-HTTP GETs to
@@ -132,7 +180,8 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    Auth: same Basic token (pip/npm accept `http://sbx:<token>@host/...`), in `Authorization` or
    `Proxy-Authorization`. A mirror or route request may also arrive in proxy form (`GET http://egress…/mirror/…`, what
    pip/npm send with `HTTP_PROXY` set and an empty `NO_PROXY`): egress answers it itself when the host is one of its
-   own names (`EGRESS_SELF_HOSTS`, default `egress`, `egress.<POD_NAMESPACE>`, `….svc`, `….svc.cluster.local`).
+   own names (`EGRESS_SELF_HOSTS`, default `egress`, `egress.<POD_NAMESPACE>`, `….svc`, `….svc.cluster.local`; plus
+   always `127.0.0.1` and `localhost`, a hosted sandbox's end of the wire).
    npm tarball URLs are rewritten to `http://<the request's Host>/mirror/npm/…`, pypi file links to the root-relative
    `/mirror/pypi/files/…`.
 3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
@@ -185,10 +234,15 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 
 ### `sandbox-agent` (port 7070, in the sandbox pod, `Authorization: Bearer <exec token>`)
 
-The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/user`).
+The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/sandbox`).
 
-- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed: the kubelet's readiness probe). A new `boot_id` means
-  the agent restarted and every earlier cursor is void.
+- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed: the kubelet's readiness probe); 503 while it waits for
+  `/init`. A new `boot_id` means the agent restarted and every earlier cursor is void. `GET /livez` → 200 always.
+- Auth: the exec token in `X-Jarvis-Exec-Token` (what the web role sends) or `Authorization: Bearer`.
+- `POST /init` (only with `JARVIS_INIT=1` and no `JARVIS_EXEC_TOKEN`, once, no token): `{token, env, wire?: {url,
+  headers}}` sets the exec token, adds `env` to every command's environment and, with `wire`, starts the local proxy
+  on `127.0.0.1:3128` (`JARVIS_WIRE_PORT`) that carries each connection to egress's `/wire` over a WebSocket. A
+  second call answers 409.
 - `PUT /files` — body: a tar stream (uncompressed) of files to write under `/work`; header `X-Delete: <JSON array of
   relative paths>` for deletions. Returns `{ok, written, deleted}`.
 - `POST /exec` — `{command, timeout_ms (default 120000, max 600000), background: bool}` → runs `bash -lc` in `/work`.
@@ -283,8 +337,10 @@ event (tests only).
   `JARVIS_EGRESS_URL`, `JARVIS_TOOLS_URL`, `JARVIS_WORK_ROOT` (default `/var/lib/jarvis/work`, an emptyDir),
   `JARVIS_DRAIN_SECONDS` (default 1770), `JARVIS_UI_DIR`, `JARVIS_BRAND_DIR` (default `/etc/jarvis/brand`, served at
   `/brand/*`), `CLAW_PATH`. Config at `/etc/jarvis/config.json`, the system prompt file it names.
-- RBAC: a ServiceAccount (token mounted) bound to a Role in the sandbox namespace with `pods`: create, get, list,
-  watch, delete and `pods/status`: get. Nothing else.
+- RBAC (provider `kubernetes` only): a ServiceAccount (token mounted) bound to a Role in the sandbox namespace with
+  `pods`: create, get, list, watch, delete and `pods/status`: get. Nothing else.
+- Provider `e2b`: `E2B_API_KEY` (from `web-env`) and any variable `sandbox.e2b.egressHeaders` names; outbound HTTPS to
+  `api.e2b.app` and `*.e2b.app`.
 - Pod: `terminationGracePeriodSeconds: 1800`, readiness `GET /healthz`, a writable emptyDir at the work root; the image
   runs as uid 1000. NetworkPolicy: ingress from cloudflared and the `tools` pods (`/internal/events`); egress to
   Postgres, the bucket, the Kubernetes API, `egress` and `tools` Services and sandbox pods on 7070.
@@ -337,11 +393,14 @@ with an `Origin` other than `publicUrl` are refused.
 
 The base is `deploy/chat/` (Kustomize): namespace `jarvis` (Pod Security restricted) with `web`, `egress`, `tools`
 (2 replicas each, rolling with `maxUnavailable: 0`, PDBs, drained on SIGTERM: grace 1800 / 150 / 1020 s), the tunnel
-connector `cloudflared`, NetworkPolicies (ingress: web ← cloudflared + tools, tools ← web, egress:3128 ← web; egress:
-DNS, the namespace's pods, public internet only) and a LimitRange. Sandbox pods run in a **separate cluster**
-(namespace `jarvis-sandbox` there, with its RuntimeClass, quota and RBAC); `web` gets its API server, CA and token from
-Secret `sandbox-cluster` (keys `server`, `ca.crt`, `token`, mounted at `$JARVIS_SANDBOX_CLUSTER_DIR`), and that link
-also carries the sandboxes' path to `egress:3128`. The image is the placeholder `jarvis3-chat`.
+connector `cloudflared`, NetworkPolicies (ingress: web ← cloudflared + tools, tools ← web, egress:3128 ← web +
+cloudflared (the wire); egress: DNS, the namespace's pods, public internet only) and a LimitRange. With provider
+`e2b`, sandboxes reach egress at a public hostname of the instance's tunnel routed to `http://egress.jarvis.svc:3128`
+(`/wire` only is used; each request inside still needs a live sandbox's token), and `web` needs `E2B_API_KEY` in
+`web-env`. With provider `kubernetes`, sandbox pods run in a **separate cluster** (namespace `jarvis-sandbox` there,
+with its RuntimeClass, quota and RBAC); `web` gets its API server, CA and token from Secret `sandbox-cluster` (keys
+`server`, `ca.crt`, `token`, mounted at `$JARVIS_SANDBOX_CLUSTER_DIR`), and that link also carries the sandboxes' path
+to `egress:3128`. The image is the placeholder `jarvis3-chat`.
 
 An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
 - uses `github.com/DE0CH/jarvis3//deploy/chat?ref=<commit>` as its base and maps `jarvis3-chat` to
@@ -353,8 +412,9 @@ An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
   GHCR packages are private;
 - defines the PriorityClass `serving` the base's pods use (or patches `priorityClassName`).
 
-A new version = bump the base `ref` and the image tags (chat image in `images:`, sandbox image in `config.json`) to a
-commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a time.
+A new version = bump the base `ref` and the image tags (chat image in `images:`, the sandbox's in `config.json`:
+`sandbox.e2b.template` = `jarvis3-sandbox:<sha12>`, or `sandbox.image`) to a commit whose `chat` workflow pushed
+images and built the template, and push; Flux rolls the Deployments one pod at a time.
 
 ## Config (`/etc/jarvis/config.json`, from the instance)
 
@@ -367,8 +427,11 @@ commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments
   "models": [{"id": "anthropic/claude-opus-5.5", "label": "Opus"}, {"id": "anthropic/claude-sonnet-5.5", "label": "Sonnet"}],
   "defaultModel": "anthropic/claude-opus-5.5", "titleModel": "anthropic/claude-haiku-5.5",
   "systemPromptFile": "/etc/jarvis/system-prompt.md",
-  "sandbox": {"image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>", "namespace": "jarvis-sandbox", "runtimeClass": "gvisor",
-              "idleMinutes": 30, "maxLifetimeHours": 8, "maxActive": 6, "cpu": "1", "memory": "1Gi"},
+  "sandbox": {"provider": "e2b", "idleMinutes": 30, "maxLifetimeHours": 8, "maxActive": 6,
+              "e2b": {"template": "jarvis3-sandbox:<tag>", "egressUrl": "wss://egress.ai.yyc.deyaochen.com/wire",
+                      "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": "ai.yyc.deyaochen.com"}},
+  // provider "kubernetes" instead: {"provider": "kubernetes", "image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>",
+  //   "namespace": "jarvis-sandbox", "runtimeClass": "gvisor", "cpu": "1", "memory": "1Gi", "egressProxyUrl"?: …}
   "egress": {"defaultAllowedHosts": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org",
              "security.debian.org", "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"],
              "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
