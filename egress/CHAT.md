@@ -1,0 +1,260 @@
+# Jarvis 3 chat runtime
+
+Status: being built 2026-10-20 for the YYC instance (YYC AI, `ai.yyc.deyaochen.com`). Agreed design: Deyao,
+2026-10-20. This is a second runtime next to the task runtime in `server/` (OpenCode in Fly machines): a staff web
+chat whose agent loop runs **on the server**, with bash sent to a per-conversation sandbox. The code is in `chat/`,
+its Kustomize base in `deploy/chat/`. An instance pins a tag of this repo and supplies its config and secrets.
+
+Staff never see the name "Jarvis 3": the product name, logo and wording come from the instance config.
+
+## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by `JARVIS_ROLE`)
+
+| Role | What | Replicas |
+|---|---|---|
+| `web` | Web UI, API, SSE streams, turn runner (spawns `claw`), sandbox manager, files, janitor | 2, rolling, drained |
+| `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, per-conversation host allowlist, credential injection, logs every call, package cache | 2, rolling |
+| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools, confirmations | 2, rolling |
+
+Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`), started as gVisor pods
+(`runtimeClassName: gvisor`) in namespace `<ns>-sandbox`.
+
+```
+browser ──Access──▶ web ──spawn per turn──▶ claw (cwd = conversation workdir, file tools confined there)
+   ▲  SSE (events from Postgres)            │ model calls ─▶ egress /x/model ─▶ OpenRouter (real key injected)
+   │                                        │ MCP (stdio bridge) ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
+   │                                        │ bash ─▶ jarvis-bash ─sync files + exec─▶ sandbox pod (gVisor)
+   └── confirmations (outward actions) ◀────┘                                    │ all egress
+                                                                                 ▼
+                                                                      egress (token → conversation → allowlist)
+State: Postgres (conversations, messages, events, claw session files, file metadata, sandboxes, logs); file bytes in S3.
+```
+
+### Why these choices (2026-10-20)
+
+- **Sandbox scope = one per conversation.** The workdir belongs to a conversation, so the sandbox mirrors exactly it;
+  a prompt injection in one chat can't reach another chat's files; "the sandbox was reset" means one thing.
+- **Sandbox provider = gVisor pods in the instance's own cluster** (Apache-2.0). No new account or spend, egress is
+  forced through the proxy by NetworkPolicy, staff files stay on the organisation's infrastructure. gVisor's
+  `systrap` platform needs no KVM, so it runs on Hetzner Cloud VMs. E2B (SaaS) would need a new account and would put
+  staff files in a vendor's cloud.
+- **claw runs on the server, never inside a sandbox.** It holds no secrets: its model calls go to `egress`
+  with a per-turn token, and its tools are MCP calls to `tools` with the same token.
+
+## Sandbox lifecycle (design "B")
+
+- **Warm on typing:** the UI calls `POST /api/conversations/:id/warm` (debounced, at most every 30 s) when the staff
+  member types; `web` makes sure the conversation has a live sandbox (creates the pod if none). A new conversation
+  warms on its first keystroke too (the UI creates the conversation row first).
+- **Kept while active:** installs, caches and background processes carry over between turns.
+- **Released** after `sandbox.idleMinutes` (default 30) with no turn and no warm call, and always at
+  `sandbox.maxLifetimeHours` (default 8). Before deleting the pod the janitor pulls the sandbox's changed files and
+  saves them (files are also synced after every bash command, so this only catches what background processes wrote).
+- **Reset notice:** when a turn starts on a fresh sandbox and the conversation had an earlier one, the turn's prompt
+  gets a line: `[System note: the sandbox was reset: files in the workspace are restored; installed packages and
+  background processes from before are gone.]`
+- **No secrets in a sandbox.** Its env has only `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/`https_proxy`
+  `=http://sbx:<egress token>@egress.<ns>.svc.cluster.local:3128`, `NO_PROXY=` (empty), the pip/npm mirror settings
+  and its exec token. NetworkPolicy: egress only to the `egress` pods (3128) and cluster DNS; ingress only from `web`
+  pods on 7070.
+- Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"), ephemeral storage 5Gi;
+  at most `sandbox.maxActive` (default 6) live sandboxes per instance; over the limit the least recently active idle
+  one is released first; if none is idle, the warm/turn waits up to 60 s, then the bash tool reports
+  "the sandbox pool is full, try again in a minute".
+
+## Interfaces
+
+### Postgres schema (owned by `web`, migrations in `chat/src/common/schema.ts`, applied under an advisory lock)
+
+```sql
+create table users (email text primary key, name text, is_admin boolean not null default false,
+  created_at timestamptz not null default now(), last_seen_at timestamptz);
+create table conversations (id uuid primary key, owner text not null references users(email),
+  title text not null default '', model text not null, created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(), deleted_at timestamptz);
+create table messages (id bigserial primary key, conversation_id uuid not null references conversations(id),
+  role text not null check (role in ('user','assistant')), content text not null,
+  turn_id uuid, attachments jsonb not null default '[]', created_at timestamptz not null default now());
+create table turns (id uuid primary key, conversation_id uuid not null references conversations(id),
+  status text not null check (status in ('queued','running','waiting','done','error','cancelled')),
+  token_hash text not null unique,            -- sha256 hex of the per-turn token (egress /x/model + tools MCP)
+  replica text, model text not null, started_at timestamptz not null default now(), finished_at timestamptz,
+  error text, usage jsonb, cost_usd numeric);
+create table events (id bigserial primary key, conversation_id uuid not null, turn_id uuid not null,
+  seq int not null, type text not null, data jsonb not null, created_at timestamptz not null default now(),
+  unique (turn_id, seq));
+create table claw_sessions (conversation_id uuid primary key, content text not null, updated_at timestamptz not null default now());
+create table files (conversation_id uuid not null, path text not null, sha256 text not null, size bigint not null,
+  source text not null check (source in ('upload','agent')), updated_at timestamptz not null default now(),
+  deleted boolean not null default false, primary key (conversation_id, path));
+create table sandboxes (id uuid primary key, conversation_id uuid not null, pod text not null unique,
+  egress_token_hash text not null unique, exec_token text not null,   -- exec token: web<->agent only, never in Postgres logs
+  status text not null check (status in ('starting','ready','releasing','gone')),
+  created_at timestamptz not null default now(), last_active_at timestamptz not null default now(),
+  expires_at timestamptz not null, released_at timestamptz, release_reason text);
+create table allowed_hosts (conversation_id uuid not null, host text not null, added_by text not null,
+  created_at timestamptz not null default now(), primary key (conversation_id, host));
+create table egress_log (id bigserial primary key, at timestamptz not null default now(), conversation_id uuid,
+  sandbox_id uuid, turn_id uuid, kind text not null,   -- 'connect' | 'http' | 'mirror' | 'model' | 'inject'
+  method text, host text not null, port int, path text, status int, decision text not null,  -- 'allow' | 'deny:<why>'
+  bytes_up bigint, bytes_down bigint, ms int, cost_usd numeric);
+create table tool_calls (id bigserial primary key, at timestamptz not null default now(), turn_id uuid,
+  conversation_id uuid, user_email text, tool text not null, args jsonb, ok boolean, ms int, error text, cost_usd numeric);
+create table confirmations (id uuid primary key, conversation_id uuid not null, turn_id uuid not null,
+  kind text not null, summary text not null, detail jsonb not null default '{}',
+  status text not null check (status in ('pending','approved','denied','expired')),
+  created_at timestamptz not null default now(), decided_at timestamptz, decided_by text);
+create table kv (key text primary key, value jsonb not null);
+```
+
+Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after inserting events, and
+`pg_notify('confirm_<confirmation uuid without dashes>', status)` when a confirmation is decided.
+
+### Tokens
+
+- **Turn token** (32 random bytes, base64url), made by `web` per turn, stored as `turns.token_hash`, valid while the
+  turn is `running`/`waiting`. claw gets it as `ANTHROPIC_AUTH_TOKEN` (egress `/x/model`) and the MCP bridge sends it
+  as `Authorization: Bearer` to `tools`.
+- **Egress token**, per sandbox, stored as `sandboxes.egress_token_hash`; valid while the sandbox is not `gone`.
+- **Exec token**, per sandbox: `web` → `sandbox-agent` only (`Authorization: Bearer`).
+
+### `egress` (port 3128, plus 9090 for /healthz and /metrics)
+
+1. **Forward proxy for sandboxes.** `CONNECT host:port` and absolute-URI HTTP requests with
+   `Proxy-Authorization: Basic base64("sbx:<egress token>")`. Unknown/expired token → 407. Allowed when the host
+   matches `egress.defaultAllowedHosts` (config; suffix match on entries starting with `.`) or the conversation's
+   `allowed_hosts`. Ports: 80, 443 only. Everything else → 403 with a plain-text body naming the host and saying the
+   agent can ask the user to allow it (`request_network_access` tool). Every request → `egress_log`.
+   Private, loopback, link-local and cluster addresses are refused after DNS resolution (no SSRF into the cluster).
+2. **Package mirror** (cache on the pod's volume, LRU at `egress.cacheGiB`, default 5):
+   `GET /mirror/pypi/simple/...` (from pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
+   `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten), apt via the forward proxy: plain-HTTP GETs to
+   `deb.debian.org`/`security.debian.org` are cached too. Immutable artefacts cached; index pages for 5 minutes.
+   Auth: same Basic token (pip/npm accept `http://sbx:<token>@host/...`).
+3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
+   (`{name, upstream, inject: {header: value-from-env-var}, auth: "turn"|"sandbox", allowPaths?}`). The YYC instance
+   has one: `model` → `https://openrouter.ai/api`, auth `turn` (`Authorization: Bearer <turn token>` or
+   `x-api-key`), injects `Authorization: Bearer $OPENROUTER_API_KEY`, streams responses through, logs `cost_usd` from
+   the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
+
+### `tools` (port 8080, `POST /mcp`, MCP Streamable HTTP, stateless, JSON responses)
+
+- Auth: `Authorization: Bearer <turn token>` → turn → conversation → owner email. Invalid → 401.
+- Every call → `tool_calls`.
+- Tools (names lowercase, `snake_case`; annotations set `readOnlyHint` correctly):
+  `web_search`, `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus every tool of each configured
+  upstream MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
+  `X-YYC-User: <owner email>`), and `request_network_access(host, reason)`.
+- **Outward actions need the staff member's confirmation:** a tool marked `confirm` in config (and
+  `request_network_access` always) inserts a `confirmations` row, emits an event through `web`
+  (`POST http://web.<ns>.svc:8080/internal/events` with the turn token: `{type:"confirmation_request", id, kind,
+  summary, detail}`), then waits (LISTEN `confirm_<id>`, up to 15 minutes) for approve/deny. Denied/expired → the
+  tool returns an error text "The user declined." / "No answer from the user."
+
+### `web` internal endpoints (cluster-only; NetworkPolicy admits `tools` pods)
+
+- `POST /internal/events` — `Authorization: Bearer <turn token>`, body = one event object; appended to the turn's
+  events (same as claw's own events).
+
+### `sandbox-agent` (port 7070, in the sandbox pod, `Authorization: Bearer <exec token>`)
+
+The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/user`).
+
+- `GET /healthz` → 200 `{ok:true, boot_id}`.
+- `PUT /files` — body: a tar stream (uncompressed) of files to write under `/work`; header `X-Delete: <JSON array of
+  relative paths>` for deletions. Returns `{ok, written, deleted}`.
+- `POST /exec` — `{command, timeout_ms (default 120000, max 600000), background: bool}` → runs `bash -lc` in `/work`.
+  Foreground: `{stdout, stderr, exit_code, interrupted, ms}` (each stream capped at 1 MB, tail kept, `truncated`
+  flag). Background: `{background_id, pid}` with output going to `/work/.jobs/<id>.log`.
+- `GET /changes?since=<cursor>` → tar stream of regular files under `/work` modified since the cursor (excluding
+  `egress.syncExclude`-style patterns: `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `.cache/`, `.git/objects/`,
+  files > 50 MB), header `X-Cursor: <new cursor>`, `X-Deleted: <JSON array>` (paths gone since the cursor).
+  `since` empty = everything.
+- Running processes survive between calls (the agent is the pod's PID 1 child; it reaps).
+
+### `jarvis-bash` (claw's bash, `CLAW_BASH_COMMAND`)
+
+claw (fork patch) runs `$CLAW_BASH_COMMAND` with the bash tool input JSON on stdin
+(`{command, timeout, description, run_in_background}`) and cwd = workdir, and expects JSON on stdout:
+`{stdout, stderr, exit_code, interrupted, background_task_id?}` (non-zero exit of the helper = tool error with its
+stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_TOKEN`, `JARVIS_SYNC_STATE`
+(a JSON file outside the workdir with the last-synced manifest and the `/changes` cursor) from the turn runner. Each
+call: push files that changed in the workdir since the manifest (`PUT /files`), `POST /exec`, then pull
+`/changes` into the workdir and update the manifest.
+
+### claw fork patches (DE0CH/claw-code, all no-ops unless their env var is set)
+
+| Env | Effect |
+|---|---|
+| `CLAW_SYSTEM_PROMPT_FILE` | the system prompt = that file's text plus an `# Environment` section (real date, cwd); no coding sections, no git context, no instruction-file discovery, no runtime-config dump |
+| `CLAW_BASH_COMMAND` | the `bash` tool runs that executable as above instead of a local shell |
+| `CLAW_CONFIG_DIR` | the only config dir read (settings, `mcpServers`); nothing is read from the workdir |
+| `CLAW_SESSIONS_DIR` | where managed sessions live (instead of `<cwd>/.claw/sessions/…`), no workspace-root check |
+| `CLAW_PROMPT_CACHE=1` | `cache_control: ephemeral` on the system prompt, the tool list and the last user message (Anthropic format) |
+
+### Turn runner (in `web`)
+
+1. `POST /api/conversations/:id/messages` → insert the user message and a `turns` row (`queued`), answer 202 with ids.
+   One running turn per conversation (409 otherwise).
+2. The receiving replica runs it: reconcile the local workdir `/var/lib/jarvis/work/<conv>` with `files` (download
+   from S3 what differs), write `claw_sessions.content` to `<sessions dir>/<conv>.jsonl`, ensure the sandbox, then
+   spawn `claw --model <model> --permission-mode danger-full-access --allowedTools <list> --output-format json
+   prompt <text>` with `CLAW_EVENT_STREAM=1`, `CLAW_RESUME_SESSION=<path>` (when a session exists), and the env above.
+   The MCP config (in `CLAW_CONFIG_DIR/settings.json`) lists one stdio server `tools` = `jarvis-mcp-bridge` (stdio ↔
+   HTTP, token from env).
+3. Each NDJSON event → `events` (+ `pg_notify`). Text deltas are batched (≤ 250 ms) into one `text_delta` event.
+4. End: save the session file to `claw_sessions`, upload changed workdir files to S3 (`files/<conv>/<sha256>`) and
+   upsert `files` (source `agent`), insert the assistant message (final text), set the turn `done` with usage and
+   cost. Title: after the first turn, a short title from the model (Haiku-class, via egress) if the user did not set one.
+5. Cancel: `POST /api/turns/:id/cancel` → SIGTERM to claw (then SIGKILL after 5 s) on whichever replica runs it
+   (each replica LISTENs on `cancel_<replica>`).
+6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
+   the UI retries 503), and waits for its running turns up to `terminationGracePeriodSeconds - 30` (manifests: 1800 s).
+
+### Public API (`web`, all behind Access; JSON)
+
+- `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [...], defaultModel}`
+- `GET /api/conversations` → newest first `[{id, title, updatedAt, running}]`
+- `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title}`; `DELETE` (soft)
+- `GET /api/conversations/:id` → `{id, title, model, messages: [...], turns: [{id, status, events: [...]}]}`
+- `POST /api/conversations/:id/warm` → 204
+- `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → `{turnId}`
+- `GET /api/conversations/:id/stream?after=<event id>` → SSE of events (`id:` = event id), heartbeats every 15 s
+- `POST /api/turns/:id/cancel`
+- `POST /api/confirmations/:id` `{approve: bool}`
+- `POST /api/conversations/:id/files?name=<file name>` (raw body, ≤ 100 MB) → `{path}` (under `uploads/`)
+- `GET /api/conversations/:id/files` → list; `GET /api/conversations/:id/files/<path>` → download
+- Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`
+- `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
+
+Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
+(the instance's allowlist, the same list as the Access policy) → a `users` row is upserted. A user sees only their
+own conversations; admins (`config.admins`) can read the usage/egress views, not others' chats.
+
+## Config (`/etc/jarvis/config.json`, from the instance)
+
+```json
+{
+  "product": {"name": "YYC AI", "locale": "zh-HK", "logo": "/brand/logo.svg"},
+  "publicUrl": "https://ai.yyc.deyaochen.com",
+  "access": {"teamDomain": "de0ch.cloudflareaccess.com", "audience": "<aud tag>"},
+  "users": ["chendeyao000@gmail.com"], "admins": ["chendeyao000@gmail.com"],
+  "models": [{"id": "anthropic/claude-opus-5.5", "label": "Opus"}, {"id": "anthropic/claude-sonnet-5.5", "label": "Sonnet"}],
+  "defaultModel": "anthropic/claude-opus-5.5", "titleModel": "anthropic/claude-haiku-5.5",
+  "systemPromptFile": "/etc/jarvis/system-prompt.md",
+  "sandbox": {"image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>", "namespace": "jarvis-sandbox", "runtimeClass": "gvisor",
+              "idleMinutes": 30, "maxLifetimeHours": 8, "maxActive": 6, "cpu": "1", "memory": "1Gi"},
+  "egress": {"defaultAllowedHosts": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org",
+             "security.debian.org", "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"],
+             "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
+                         "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}}], "cacheGiB": 5},
+  "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API"},
+            "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "...", "accessClientSecretEnv": "..."},
+            "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
+                           "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"}}],
+            "confirm": []},
+  "s3": {"endpoint": "...", "region": "...", "bucket": "...", "prefix": "jarvis/"}
+}
+```
+
+Secrets come from the environment (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `OPENROUTER_API_KEY`
+(egress only), tool keys (tools only)). Each role gets only the Secret it needs.
