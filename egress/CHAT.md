@@ -161,7 +161,22 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
   `request_network_access` always) inserts a `confirmations` row, emits an event through `web`
   (`POST http://web.<ns>.svc:8080/internal/events` with the turn token: `{type:"confirmation_request", id, kind,
   summary, detail}`), then waits (LISTEN `confirm_<id>`, up to 15 minutes) for approve/deny. Denied/expired → the
-  tool returns an error text "The user declined." / "No answer from the user."
+  tool returns an error text "The user declined." / "No answer from the user." On expiry `tools` itself sets the row
+  `expired` and posts `{type:"confirmation_resolved", id, status:"expired"}`; on approve/deny `web` posts it.
+  `kind` is `network_access` (detail `{host, reason}`) or `tool` (detail `{tool, arguments}`).
+- A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
+  `news_search` `tools.wisers`, `social_search` `tools.tikhub`; `web_fetch` without Exa reads pages directly).
+  `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
+  ports other than 80/443/8080/8443. `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
+  `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
+  every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the turn's owner on calls).
+- Env: `PORT` (8080), `JARVIS_WEB_URL` (default `http://web.$POD_NAMESPACE.svc.cluster.local:8080`),
+  `JARVIS_CONFIRM_TIMEOUT_MS` (15 min), `JARVIS_DRAIN_MS` (16 min: a held confirmation finishes before the pod
+  stops; `terminationGracePeriodSeconds` ≥ 1020), plus `DATABASE_URL` and the key env vars the config names.
+- **`jarvis-mcp-bridge`** (claw's stdio MCP server `tools`, in the image at `src/bin/`): reads JSON-RPC framed
+  with `Content-Length` headers (claw's MCP client) or one message per line, answers in the same framing, POSTs each
+  message to `$JARVIS_TOOLS_URL` (`http://tools.<ns>.svc.cluster.local:8080/mcp`) with
+  `Authorization: Bearer $JARVIS_TURN_TOKEN`; retries a 503 (a draining replica) up to 3 times.
 
 ### `web` internal endpoints (cluster-only; NetworkPolicy admits `tools` pods)
 
@@ -273,8 +288,8 @@ own conversations; admins (`config.admins`) can read the usage/egress views, not
              "security.debian.org", "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"],
              "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
                          "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}}], "cacheGiB": 5},
-  "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API"},
-            "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "...", "accessClientSecretEnv": "..."},
+  "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
+            "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "WISERS_ACCESS_CLIENT_ID", "accessClientSecretEnv": "WISERS_ACCESS_CLIENT_SECRET"},
             "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"}}],
             "confirm": []},
