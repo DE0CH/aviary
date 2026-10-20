@@ -48,8 +48,17 @@ export class KubernetesProvider implements SandboxProvider {
   }
 
   async create(row: SandboxRow, egressToken: string): Promise<{ name: string }> {
-    await this.#k8s.createPod(this.#ns, this.podManifest(row, egressToken));
-    return { name: row.pod };
+    // a namespace ResourceQuota still counts a pod the pool just released while it terminates: retry for a minute
+    const until = Date.now() + QUOTA_WAIT_MS;
+    for (;;) {
+      try {
+        await this.#k8s.createPod(this.#ns, this.podManifest(row, egressToken));
+        return { name: row.pod };
+      } catch (e) {
+        if (!/exceeded quota/.test((e as Error).message) || Date.now() > until) throw e;
+        await sleep(1000);
+      }
+    }
   }
 
   async waitReady(row: SandboxRow, deadline: number): Promise<AgentEndpoint> {
@@ -128,3 +137,4 @@ export class KubernetesProvider implements SandboxProvider {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const QUOTA_WAIT_MS = 60_000;

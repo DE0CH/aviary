@@ -12,13 +12,14 @@ let input;
 try {
   input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 } catch {
-  process.stderr.write("jarvis-bash: the input is not JSON\n");
+  process.stderr.write("bash: the input is not JSON\n");
   process.exit(2);
 }
 const need = (k) => {
   const v = process.env[k];
   if (!v) {
-    process.stderr.write(`jarvis-bash: ${k} is not set (no sandbox for this turn)\n`);
+    // no sandbox for this turn: say why in plain words (the model passes this on; no internal names)
+    process.stderr.write(`The sandbox is not available for this message (${process.env.JARVIS_SANDBOX_UNAVAILABLE || "it could not be started"}). Try again in a minute.\n`);
     process.exit(2);
   }
   return v;

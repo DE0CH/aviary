@@ -10,7 +10,7 @@ import { log, logError } from "../common/log.ts";
 import type { WebDeps } from "./ctx.ts";
 import { appendEvent } from "./events.ts";
 import { dirs, restoreWorkdir, storeWorkdir } from "./files.ts";
-import type { LiveSandbox, SandboxManager } from "./sandbox.ts";
+import { PoolFullError, type LiveSandbox, type SandboxManager } from "./sandbox.ts";
 
 const TEXT_BATCH_MS = 250;
 const MAX_TOOL_OUTPUT = 20_000;
@@ -126,6 +126,7 @@ export class TurnRunner {
 
       // sandbox (warm already, usually); a turn without one still runs, its bash calls then fail with a reason
       let sandbox: LiveSandbox | null = null;
+      let sandboxUnavailable = "";
       try {
         const { rows: live } = await db.query("select 1 from sandboxes where conversation_id = $1 and status = 'ready'", [conv]);
         if (!live.length) await emit("sandbox", { status: "starting" });
@@ -133,6 +134,8 @@ export class TurnRunner {
         if (!live.length) await emit("sandbox", { status: "ready" });
       } catch (e) {
         await emit("sandbox", { status: "unavailable", message: (e as Error).message });
+        // what the bash tool tells the model (and so the staff member): plain words, no internals
+        sandboxUnavailable = e instanceof PoolFullError ? e.message : "it could not be started";
       }
       let prompt = msg.content;
       const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
@@ -181,6 +184,7 @@ export class TurnRunner {
         ...(deps.clawEnv ?? {}),
       };
       if (sess[0]) env.CLAW_RESUME_SESSION = resumePath;
+      if (!sandbox) env.JARVIS_SANDBOX_UNAVAILABLE = sandboxUnavailable || "it could not be started";
       if (sandbox) {
         Object.assign(env, { JARVIS_SANDBOX_URL: sandbox.url, JARVIS_SANDBOX_TOKEN: sandbox.execToken, JARVIS_SANDBOX_ID: sandbox.id });
         if (Object.keys(sandbox.headers).length) env.JARVIS_SANDBOX_HEADERS = JSON.stringify(sandbox.headers);
