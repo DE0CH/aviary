@@ -290,22 +290,40 @@ error, costUsd}`. claw's `session` and `result` lines are not stored (`result` b
 
 ### Public API (`web`, all behind Access; JSON)
 
-- `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [...], defaultModel}`
-- `GET /api/conversations` → newest first `[{id, title, model, updatedAt, running}]`
-- `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title}`; `DELETE` (soft)
-- `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments, createdAt}],
-  turns: [{id, status, model, startedAt, finishedAt, error, costUsd, events: [...]}], pendingConfirmations: [{id, turnId,
-  kind, summary, detail, status}], lastEventId}` (stream from `lastEventId` to continue)
+- `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [{id, label}], defaultModel}`
+- `GET /api/conversations` → newest first `[{id, title, model, updatedAt, running}]`; conversations without any
+  message are left out (the UI creates a conversation on the first keystroke of a new chat, to warm its sandbox)
+- `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title?, model?}` → 204 (the
+  model applies from the next turn); `DELETE` (soft) → 204
+- `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments: [path],
+  createdAt}], turns: [{id, status, model, startedAt, finishedAt, error, costUsd, events: [event]}],
+  pendingConfirmations: [{id, turnId, kind, summary, detail, status}], lastEventId}` (oldest first; stream from
+  `lastEventId` to continue)
 - `POST /api/conversations/:id/warm` → 204
 - `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → 202 `{turnId}`; 409 while a turn is going;
   503 while this replica drains (retry)
-- `GET /api/conversations/:id/stream?after=<event id>` → SSE of events (`id:` = event id), heartbeats every 15 s
-- `POST /api/turns/:id/cancel`
-- `POST /api/confirmations/:id` `{approve: bool}`
-- `POST /api/conversations/:id/files?name=<file name>` (raw body, ≤ 100 MB) → 201 `{path, size}` (under `uploads/`,
-  ` (2)` added before the extension when the name is taken)
-- `GET /api/conversations/:id/files` → list; `GET /api/conversations/:id/files/<path>` → download
+- `GET /api/conversations/:id/stream?after=<event id>` → SSE of events with an id greater than `after` (or the
+  `Last-Event-ID` header, whichever is greater), then live ones; `id:` = event id, `data:` = one event as JSON
+  `{id, turnId, seq, type, data, createdAt}`; heartbeats (`: hb`) every 15 s
+- Event types: claw's (`session`, `message_start`, `text_delta{text}`, `thinking_delta`, `tool_use{id,name,input}`,
+  `tool_result{id,name,output,is_error}`, `message_stop`, `result{usage, estimated_cost, …}`, `error{message}`) and
+  the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`, `confirmation_request{id, kind,
+  summary, detail}` (kind `network_access` has `detail: {host, reason}`), `confirmation_resolved{id, status}`,
+  `sandbox{status: starting|ready|reset}`, `title{title}`. MCP tools are named `mcp__tools__<tool>`.
+- `POST /api/turns/:id/cancel` → 204
+- `POST /api/confirmations/:id` `{approve: bool}` → 204
+- `POST /api/conversations/:id/files?name=<file name>` (raw body, `content-type` = the file's, ≤ 100 MB) → 201
+  `{path, size}` (under `uploads/`, ` (2)` added before the extension when the name is taken)
+- `GET /api/conversations/:id/files` → `[{path, size, source: "upload"|"agent", updatedAt}]`;
+  `GET /api/conversations/:id/files/<path>` (each segment URL-encoded) → the bytes, `content-disposition` with the
+  file name
+- Errors: JSON `{error: "<message>"}` with the status; 401 = no valid Access token, 403 = signed in but not on
+  `config.users` (the UI shows "not on the list"); 503 while draining (the UI retries)
 - Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`
+- Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
+  (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
+  instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
+  replaced by the product name.
 - `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
