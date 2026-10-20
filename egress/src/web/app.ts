@@ -3,7 +3,7 @@
 // conversation, and the static UI with its SPA fallback.
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { accessToken } from "../common/access.ts";
@@ -155,7 +155,9 @@ export class WebApp {
     const { rows } = await c.deps.db.query(
       `select c.id, c.title, c.model, c.updated_at as "updatedAt",
               exists (select 1 from turns t where t.conversation_id = c.id and t.status in ('queued','running','waiting')) as running
-         from conversations c where c.owner = $1 and c.deleted_at is null order by c.updated_at desc limit 500`,
+         from conversations c where c.owner = $1 and c.deleted_at is null
+          and exists (select 1 from messages m where m.conversation_id = c.id)
+        order by c.updated_at desc limit 500`,
       [c.caller.email],
     );
     sendJson(res, 200, rows);
@@ -200,9 +202,15 @@ export class WebApp {
   async #rename(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
     const conv = await this.#own(c, p.id);
     const body = await readJson(req);
-    const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
-    await c.deps.db.query("update conversations set title = $2 where id = $1", [conv.id, title]);
-    sendJson(res, 200, { id: conv.id, title });
+    if (body.title === undefined && body.model === undefined) throw bad("title or model is required");
+    if (body.model !== undefined && !c.deps.config.models.some((m) => m.id === body.model)) throw bad("unknown model");
+    const title = body.title === undefined ? null : String(body.title).replace(/\s+/g, " ").trim().slice(0, 120);
+    await c.deps.db.query("update conversations set title = coalesce($2, title), model = coalesce($3, model) where id = $1", [
+      conv.id,
+      title,
+      body.model ?? null,
+    ]);
+    res.writeHead(204).end();
   }
 
   async #delete(res: ServerResponse, p: Record<string, string>, c: Ctx) {
@@ -259,7 +267,7 @@ export class WebApp {
   async #stream(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
     const conv = await this.#own(c, p.id);
     const q = new URL(req.url || "/", "http://x").searchParams;
-    let last = Number(req.headers["last-event-id"] || q.get("after") || 0) || 0;
+    let last = Math.max(Number(req.headers["last-event-id"]) || 0, Number(q.get("after")) || 0);
     res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
     res.write("retry: 2000\n\n");
     this.#streams.add(res);
@@ -290,7 +298,7 @@ export class WebApp {
       }
     };
     const unlisten = await c.deps.listener.listen(channel("conv", conv.id), () => void pump());
-    const beat = setInterval(() => res.write(": keepalive\n\n"), 15_000);
+    const beat = setInterval(() => res.write(": hb\n\n"), 15_000);
     const done = new Promise<void>((resolve) => {
       res.on("close", () => {
         closed = true;
@@ -310,7 +318,7 @@ export class WebApp {
         "update turns set status = 'cancelled', finished_at = now() where id = $1 and status = 'queued' and replica is null returning conversation_id",
         [turnId],
       );
-      if (rows[0]) await appendEvent(c.deps.db, rows[0].conversation_id, turnId, "turn_end", { status: "cancelled", error: null, costUsd: null });
+      if (rows[0]) await appendEvent(c.deps.db, rows[0].conversation_id, turnId, "turn_finished", { turnId, status: "cancelled", error: null, costUsd: null });
       this.runner.cancel(turnId);
     } else if (replica === c.deps.replica) {
       this.runner.cancel(turnId);
@@ -328,7 +336,7 @@ export class WebApp {
     const t = rows[0];
     if (!t) throw notFound();
     if (["queued", "running", "waiting"].includes(t.status)) await this.#cancelTurn(c, t.id, t.replica);
-    sendJson(res, 202, { ok: true });
+    res.writeHead(204).end();
   }
 
   async #confirm(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
@@ -354,8 +362,8 @@ export class WebApp {
     }
     await db.query("select pg_notify($1, $2)", [channel("confirm", id), status]);
     await db.query("update turns set status = 'running' where id = $1 and status = 'waiting'", [row.turn_id]);
-    await appendEvent(db, row.conversation_id, row.turn_id, "confirmation_decided", { id, status });
-    sendJson(res, 200, { id, status });
+    await appendEvent(db, row.conversation_id, row.turn_id, "confirmation_resolved", { id, status });
+    res.writeHead(204).end();
   }
 
   async #upload(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
@@ -440,6 +448,20 @@ export class WebApp {
     sendJson(res, 201, { id: Number(id) });
   }
 
+  /** The UI's web manifest with the instance's product name (the static build says "AI"). */
+  async #manifest(res: ServerResponse): Promise<void> {
+    const name = this.deps.config.product.name;
+    let m: Record<string, unknown> = {};
+    try {
+      m = JSON.parse(await readFile(join(this.deps.uiDir, "manifest.webmanifest"), "utf8"));
+    } catch {
+      m = { start_url: "/", display: "standalone" };
+    }
+    const data = Buffer.from(JSON.stringify({ ...m, name, short_name: name }));
+    res.writeHead(200, { "content-type": "application/manifest+json", "content-length": data.length, "cache-control": "no-cache" });
+    res.end(data);
+  }
+
   async #static(path: string, res: ServerResponse): Promise<void> {
     const serve = async (root: string, rel: string, cache: string): Promise<boolean> => {
       const p = normalize(join(root, rel));
@@ -460,6 +482,7 @@ export class WebApp {
       if (await serve(this.deps.brandDir, rel.slice("/brand/".length), "public, max-age=3600")) return;
       throw notFound();
     }
+    if (rel === "/manifest.webmanifest") return await this.#manifest(res);
     if (rel !== "/" && (await serve(this.deps.uiDir, rel.slice(1), rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache"))) return;
     if (rel.startsWith("/assets/") || extname(rel)) throw notFound();
     if (await serve(this.deps.uiDir, "index.html", "no-cache")) return;

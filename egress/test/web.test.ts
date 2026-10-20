@@ -70,7 +70,7 @@ before(async () => {
     access: { teamDomain: TEAM, audience: AUD },
     users: [A, B],
     admins: [A],
-    models: [{ id: "anthropic/claude-opus-5.5", label: "Opus" }],
+    models: [{ id: "anthropic/claude-opus-5.5", label: "Opus" }, { id: "anthropic/claude-sonnet-5.5", label: "Sonnet" }],
     defaultModel: "anthropic/claude-opus-5.5",
     titleModel: "anthropic/claude-haiku-5.5",
     systemPromptFile: promptFile,
@@ -169,7 +169,7 @@ async function streamUntil(email: string, conv: string, until: (e: any) => boole
   throw new Error(`stream ended without the awaited event; got ${events.map((e) => e.type).join(",")}`);
 }
 
-const turnEnd = (turnId: string) => (e: any) => e.type === "turn_end" && e.turnId === turnId;
+const turnEnd = (turnId: string) => (e: any) => e.type === "turn_finished" && e.turnId === turnId;
 
 async function newConversation(email = A): Promise<string> {
   const r = await call(email, "POST", "/api/conversations", {});
@@ -232,7 +232,9 @@ test("a full turn: upload, warm, bash in the sandbox, streaming, files back, tit
 
   const { turnId, events } = await runTurn(conv, "please BASH:cat 'uploads/報告 data.csv' | wc -l > lines.txt; echo made", ["uploads/報告 data.csv"]);
   const types = events.map((e) => e.type);
-  assert.deepEqual(types.filter((t) => ["turn_start", "tool_use", "tool_result", "turn_end"].includes(t)), ["turn_start", "tool_use", "tool_result", "turn_end"]);
+  assert.deepEqual(types.filter((t) => ["turn_started", "tool_use", "tool_result", "result", "turn_finished"].includes(t)), ["turn_started", "tool_use", "tool_result", "result", "turn_finished"]);
+  assert.equal(events.find((e) => e.type === "result").data.estimated_cost, 0.001);
+  assert.ok(events[0].createdAt);
   const result = events.find((e) => e.type === "tool_result");
   assert.equal(result.data.is_error, false, JSON.stringify(result.data));
   assert.equal(JSON.parse(result.data.output).stdout.trim(), "made");
@@ -294,9 +296,17 @@ test("conversations are private to their owner", async () => {
   assert.equal((await call(B, "GET", `/api/conversations/${conv}/files`)).status, 404);
   assert.equal((await call(B, "PATCH", `/api/conversations/${conv}`, { title: "x" })).status, 404);
   assert.equal((await call(B, "DELETE", `/api/conversations/${conv}`)).status, 404);
+  // a conversation with no message yet (made on the first keystroke, to warm it) is not listed
+  assert.ok(!(await call(A, "GET", "/api/conversations")).json.some((c: any) => c.id === conv));
+  await pg.db.query("insert into messages (conversation_id, role, content) values ($1, 'user', 'hi')", [conv]);
   assert.ok(!(await call(B, "GET", "/api/conversations")).json.some((c: any) => c.id === conv));
   assert.ok((await call(A, "GET", "/api/conversations")).json.some((c: any) => c.id === conv));
-  assert.equal((await call(A, "PATCH", `/api/conversations/${conv}`, { title: "  Mine  " })).json.title, "Mine");
+  assert.equal((await call(A, "PATCH", `/api/conversations/${conv}`, { title: "  Mine  " })).status, 204);
+  assert.equal((await call(A, "GET", `/api/conversations/${conv}`)).json.title, "Mine");
+  assert.equal((await call(A, "PATCH", `/api/conversations/${conv}`, { model: "nope" })).status, 400);
+  assert.equal((await call(A, "PATCH", `/api/conversations/${conv}`, { model: "anthropic/claude-sonnet-5.5" })).status, 204);
+  const patched = (await call(A, "GET", `/api/conversations/${conv}`)).json;
+  assert.deepEqual([patched.title, patched.model], ["Mine", "anthropic/claude-sonnet-5.5"]);
   assert.equal((await call(A, "DELETE", `/api/conversations/${conv}`)).status, 204);
   assert.equal((await call(A, "GET", `/api/conversations/${conv}`)).status, 404);
 });
@@ -308,7 +318,7 @@ test("cancel, one turn at a time, and a failing turn", async () => {
   await streamUntil(A, conv, (e) => e.type === "debug");
   assert.equal((await call(A, "POST", `/api/conversations/${conv}/messages`, { text: "too soon" })).status, 409);
   assert.equal((await call(B, "POST", `/api/turns/${r.json.turnId}/cancel`)).status, 404);
-  assert.equal((await call(A, "POST", `/api/turns/${r.json.turnId}/cancel`)).status, 202);
+  assert.equal((await call(A, "POST", `/api/turns/${r.json.turnId}/cancel`)).status, 204);
   const events = await streamUntil(A, conv, turnEnd(r.json.turnId));
   assert.equal(events.at(-1).data.status, "cancelled");
 
@@ -339,10 +349,11 @@ test("confirmations: the tools role asks through /internal/events, only the owne
   const heard: string[] = [];
   const unlisten = await deps.listener.listen(`confirm_${id.replace(/-/g, "")}`, (p) => p && heard.push(p));
   assert.equal((await call(B, "POST", `/api/confirmations/${id}`, { approve: true })).status, 404);
-  const ok = await call(A, "POST", `/api/confirmations/${id}`, { approve: true });
-  assert.equal(ok.json.status, "approved");
+  assert.equal((await call(A, "POST", `/api/confirmations/${id}`, { approve: true })).status, 204);
+  assert.equal((await pg.db.query("select status from confirmations where id = $1", [id])).rows[0].status, "approved");
   assert.equal((await call(A, "POST", `/api/confirmations/${id}`, { approve: false })).status, 409);
-  await streamUntil(A, conv, (e) => e.type === "confirmation_decided");
+  const resolved = await streamUntil(A, conv, (e) => e.type === "confirmation_resolved");
+  assert.deepEqual(resolved.at(-1).data, { id, status: "approved" });
   for (let i = 0; i < 50 && !heard.length; i++) await new Promise((res) => setTimeout(res, 20));
   assert.deepEqual(heard, ["approved"]);
   await unlisten();
@@ -369,7 +380,7 @@ test("sandbox release: idle release saves background output, the next turn is to
   const next = await runTurn(conv, "BASH:cat bg.txt");
   const dbg = next.events.find((e) => e.type === "debug").data;
   assert.ok(dbg.prompt.startsWith(RESET_NOTE));
-  assert.ok(next.events.some((e) => e.type === "sandbox" && e.data.state === "reset"));
+  assert.ok(next.events.some((e) => e.type === "sandbox" && e.data.status === "reset"));
   assert.equal(JSON.parse(next.events.find((e) => e.type === "tool_result").data.output).stdout.trim(), "late", "files are restored into the new sandbox");
 
   // pool of 2: two other conversations warm; the least recently used idle sandbox makes room
@@ -407,4 +418,41 @@ test("drain: not ready, no new turns, running turns finish or are cancelled", as
   const t = (await pg.db.query("select status from turns where id = $1", [r.json.turnId])).rows[0];
   assert.equal(t.status, "cancelled");
   web.app.runner.draining = false;
+});
+
+test("the web manifest carries the product name; static files and the SPA fallback", async () => {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(deps.uiDir, { recursive: true });
+  writeFileSync(join(deps.uiDir, "manifest.webmanifest"), JSON.stringify({ name: "AI", short_name: "AI", start_url: "/", icons: [] }));
+  writeFileSync(join(deps.uiDir, "index.html"), "<!doctype html><title>app</title>");
+  const m = await call(A, "GET", "/manifest.webmanifest");
+  assert.equal(m.status, 200);
+  assert.deepEqual([m.json.name, m.json.short_name, m.json.start_url], ["YYC AI", "YYC AI", "/"]);
+  assert.match((await call(A, "GET", "/c/123")).text, /<title>app<\/title>/);
+  assert.equal((await call(A, "GET", "/assets/missing.js")).status, 404);
+  assert.equal((await call(STRANGER, "GET", "/manifest.webmanifest")).status, 403);
+});
+
+test("the stream resumes from the greater of ?after and Last-Event-ID", async () => {
+  const conv = await newConversation();
+  const { events } = await runTurn(conv, "hello");
+  const ids = events.map((e) => e.id);
+  const mid = ids[Math.floor(ids.length / 2)]!;
+  const read = async (after: number, lastEventId: number) => {
+    const ctl = new AbortController();
+    const r = await fetch(`${base}/api/conversations/${conv}/stream?after=${after}`, {
+      headers: { "cf-access-jwt-assertion": await access.token(A), "last-event-id": String(lastEventId) },
+      signal: ctl.signal,
+    });
+    let buf = "";
+    for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += Buffer.from(chunk).toString("utf8");
+      if (buf.includes(`id: ${ids.at(-1)}\n`)) break;
+    }
+    ctl.abort();
+    return [...buf.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
+  };
+  assert.equal((await read(mid, 0))[0], ids[ids.indexOf(mid) + 1]);
+  assert.equal((await read(0, mid))[0], ids[ids.indexOf(mid) + 1]);
+  assert.equal((await read(ids[0]!, mid))[0], ids[ids.indexOf(mid) + 1]);
 });

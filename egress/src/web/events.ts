@@ -33,5 +33,5 @@ export async function appendEvent(db: Db, conversationId: string, turnId: string
 }
 
 export function publicEvent(r: EventRow): Record<string, unknown> {
-  return { id: Number(r.id), turnId: r.turn_id, seq: r.seq, type: r.type, data: r.data, at: r.created_at };
+  return { id: Number(r.id), turnId: r.turn_id, seq: r.seq, type: r.type, data: r.data, createdAt: r.created_at };
 }

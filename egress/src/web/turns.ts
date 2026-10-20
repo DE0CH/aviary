@@ -109,7 +109,7 @@ export class TurnRunner {
     let sessionPath = "";
     let clawCost: number | null = null;
     try {
-      await emit("turn_start", { model: turn.model });
+      await emit("turn_started", { turnId, model: turn.model });
       const { rows: msgs } = await db.query<{ content: string; attachments: string[] }>(
         "select content, attachments from messages where turn_id = $1 and role = 'user' order by id limit 1",
         [turnId],
@@ -124,11 +124,11 @@ export class TurnRunner {
       let sandbox: LiveSandbox | null = null;
       try {
         const { rows: live } = await db.query("select 1 from sandboxes where conversation_id = $1 and status = 'ready'", [conv]);
-        if (!live.length) await emit("sandbox", { state: "starting" });
+        if (!live.length) await emit("sandbox", { status: "starting" });
         sandbox = await this.#sandboxes.ensure(conv);
-        if (!live.length) await emit("sandbox", { state: "ready" });
+        if (!live.length) await emit("sandbox", { status: "ready" });
       } catch (e) {
-        await emit("sandbox", { state: "unavailable", message: (e as Error).message });
+        await emit("sandbox", { status: "unavailable", message: (e as Error).message });
       }
       let prompt = msg.content;
       const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
@@ -137,7 +137,7 @@ export class TurnRunner {
         const { rows: seen } = await db.query<{ value: string }>("select value from kv where key = $1", [`turn_sandbox:${conv}`]);
         if (seen[0] && seen[0].value !== sandbox.id) {
           prompt = `${RESET_NOTE}\n\n${prompt}`;
-          await emit("sandbox", { state: "reset" });
+          await emit("sandbox", { status: "reset" });
         }
         await db.query(
           "insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value",
@@ -245,8 +245,7 @@ export class TurnRunner {
             finalText = typeof data.message === "string" ? data.message : "";
             usage = data.usage ?? null;
             clawCost = typeof data.estimated_cost === "number" ? data.estimated_cost : null;
-            queue(() => emit("usage", { usage, iterations: data.iterations ?? null }));
-            return;
+            break;
           case "error":
             errorMessage = String(data.message ?? "error");
             break;
@@ -311,7 +310,7 @@ export class TurnRunner {
       [turnId, status, error, usage == null ? null : JSON.stringify(usage), costUsd],
     );
     await db.query("update conversations set updated_at = now() where id = $1", [conv]);
-    await emit("turn_end", { status, error, costUsd });
+    await emit("turn_finished", { turnId, status, error, costUsd });
     await this.#sandboxes.touch(conv);
     log("turn", { turn: turnId, conversation: conv, status, ms: Date.now() - startedAt.getTime() });
   }

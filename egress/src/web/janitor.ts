@@ -10,7 +10,8 @@ import type { SandboxManager, SandboxRow } from "./sandbox.ts";
 const JANITOR_LOCK = 4_242_003;
 const HEARTBEAT_MS = 10_000;
 const DEAD_AFTER_S = 60;
-const CONFIRM_TTL_MIN = 15;
+// tools expires its own confirmations at 15 minutes; this is the backstop for a tools pod that died meanwhile
+const CONFIRM_TTL_MIN = 20;
 
 export function startHeartbeat(deps: WebDeps): () => void {
   const beat = () =>
@@ -39,7 +40,7 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
       returning t.id, t.conversation_id`,
     [DEAD_AFTER_S],
   );
-  for (const t of dead) await appendEvent(db, t.conversation_id, t.id, "turn_end", { status: "error", error: "interrupted: the server restarted", costUsd: null });
+  for (const t of dead) await appendEvent(db, t.conversation_id, t.id, "turn_finished", { turnId: t.id, status: "error", error: "interrupted: the server restarted", costUsd: null });
 
   // confirmations nobody answered
   const { rows: expired } = await db.query<{ id: string; conversation_id: string; turn_id: string }>(
@@ -49,7 +50,7 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
   );
   for (const c of expired) {
     await db.query("select pg_notify($1, 'expired')", [channel("confirm", c.id)]);
-    await appendEvent(db, c.conversation_id, c.turn_id, "confirmation_decided", { id: c.id, status: "expired" });
+    await appendEvent(db, c.conversation_id, c.turn_id, "confirmation_resolved", { id: c.id, status: "expired" });
   }
 
   // idle and expired sandboxes (never while their conversation has a turn going)
