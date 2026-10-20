@@ -25,6 +25,20 @@ configMapGenerator:
     files: [logo.svg, logo.png]
 # GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
 patches:
+  # memory request = limit at about 2-4x the measured peak (2026-10-20, memory.peak since start: web 66 Mi, tools 60,
+  # egress 45, cloudflared 19; web gets more room for real chats). The apps nodes are cx23s (2.7 GiB allocatable).
+  - target: {kind: Deployment, name: web}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 256Mi}
+      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 256Mi}
+  - target: {kind: Deployment, name: "tools|egress"}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
+      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 128Mi}
+  - target: {kind: Deployment, name: cloudflared}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 64Mi}
+      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 64Mi}
   # 2-replica Deployments roll one pod at a time (the other keeps serving, no extra memory; Deyao, 2026-10-20)
   - target: {kind: Deployment, name: "web|egress|tools|cloudflared"}
     patch: |-
