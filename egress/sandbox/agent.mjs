@@ -347,5 +347,7 @@ const server = createServer(async (req, res) => {
 });
 server.requestTimeout = 0; // /exec may run for up to 10 minutes
 server.headersTimeout = 60_000;
+// longer than any client's idle keep-alive, so a reused connection is never closed under a request in flight
+server.keepAliveTimeout = 120_000;
 server.listen(PORT, "::", () => console.log(JSON.stringify({ at: "sandbox agent listening", port: PORT, work: WORK, boot_id: BOOT_ID })));
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
