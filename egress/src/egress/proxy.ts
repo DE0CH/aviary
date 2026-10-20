@@ -1,0 +1,544 @@
+// The egress server (docs/CHAT.md, "egress"): the forward proxy every sandbox must use (CONNECT and absolute-URI
+// HTTP, token identity, per-conversation allowlist, public addresses only), the package mirror and the
+// credential-injecting routes. Every request ends up in egress_log.
+import { createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { connect as netConnect, type Socket } from "node:net";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import type { Duplex } from "node:stream";
+import type { Db } from "../common/db.ts";
+import { expandEnv, type EgressRoute } from "../common/config.ts";
+import { logError } from "../common/log.ts";
+import { DiskCache } from "./cache.ts";
+import { EgressLog, type EgressRow } from "./egresslog.ts";
+import { Identities, tokenFrom, type SandboxId } from "./identity.ts";
+import { AddressGuard, GuardError, hostAllowed, normHost } from "./netguard.ts";
+
+export interface EgressOptions {
+  db: Db;
+  defaultAllowedHosts: string[];
+  routes: EgressRoute[];
+  cacheDir: string;
+  cacheBytes: number;
+  /** Names this proxy answers to itself (an absolute-URI request to one of them is a mirror or route request). */
+  selfHosts: string[];
+  guard?: AddressGuard;
+  allowedPorts?: number[];
+  resolver?: (host: string) => Promise<string[]>;
+  upstreams?: { pypi: string; pypiFiles: string; npm: string };
+  /** Hosts whose plain-HTTP GETs are cached (apt). */
+  aptHosts?: string[];
+  env?: Record<string, string | undefined>;
+  identities?: Identities;
+}
+
+const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]);
+const CALLER_AUTH = new Set(["authorization", "x-api-key", "cookie", "host"]);
+const INDEX_MAX_AGE = 5 * 60_000;
+
+export const DENY_HELP =
+  "If the user's task needs this site, call the request_network_access tool with the host and the reason: the user is asked to allow it for this conversation.";
+
+export class Egress {
+  readonly server: Server;
+  readonly log: EgressLog;
+  readonly cache: DiskCache;
+  readonly ids: Identities;
+  readonly #o: EgressOptions;
+  readonly #guard: AddressGuard;
+  readonly #ports: Set<number>;
+  readonly #up: { pypi: string; pypiFiles: string; npm: string };
+  readonly #self: Set<string>;
+  readonly #apt: Set<string>;
+  readonly #sockets = new Set<Duplex>();
+  readonly counters = { requests: 0, denied: 0, tunnels: 0, bytesUp: 0, bytesDown: 0 };
+  draining = false;
+
+  constructor(o: EgressOptions) {
+    this.#o = o;
+    this.#guard = o.guard ?? new AddressGuard();
+    this.#ports = new Set(o.allowedPorts ?? [80, 443]);
+    this.#up = o.upstreams ?? { pypi: "https://pypi.org", pypiFiles: "https://files.pythonhosted.org", npm: "https://registry.npmjs.org" };
+    this.#self = new Set(o.selfHosts.map(normHost));
+    this.#apt = new Set((o.aptHosts ?? ["deb.debian.org", "security.debian.org"]).map(normHost));
+    this.log = new EgressLog(o.db);
+    this.cache = new DiskCache(o.cacheDir, o.cacheBytes);
+    this.ids = o.identities ?? new Identities(o.db);
+    this.server = createServer((req, res) => {
+      this.counters.requests++;
+      this.#onRequest(req, res).catch((e) => {
+        logError("egress request", e, { url: safeUrl(req.url) });
+        if (!res.headersSent) text(res, 502, "egress: upstream error\n");
+        else res.destroy();
+      });
+    });
+    this.server.on("connection", (s: Socket) => {
+      this.#sockets.add(s);
+      s.on("close", () => this.#sockets.delete(s));
+    });
+    this.server.on("connect", (req: IncomingMessage, sock: Duplex, head: Buffer) => {
+      this.counters.requests++;
+      this.#onConnect(req, sock, head).catch((e) => {
+        logError("egress connect", e);
+        sock.destroy();
+      });
+    });
+  }
+
+  get openSockets(): number {
+    return this.#sockets.size;
+  }
+
+  // ---- routing ---------------------------------------------------------------------------------------------
+
+  async #onRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const raw = req.url || "/";
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      if (this.#self.has(normHost(u.hostname))) return this.#local(req, res, u.pathname + u.search);
+      return this.#forward(req, res, u);
+    }
+    return this.#local(req, res, raw);
+  }
+
+  async #local(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    if (path.startsWith("/mirror/")) return this.#mirror(req, res, path);
+    if (path.startsWith("/x/")) return this.#route(req, res, path);
+    text(res, 404, "egress: not found\n");
+  }
+
+  // ---- forward proxy -------------------------------------------------------------------------------------
+
+  /** Identity + allowlist + port + address checks; null after it has answered the caller with the refusal. */
+  async #admit(
+    req: IncomingMessage,
+    host: string,
+    port: number,
+    deny: (status: number, msg: string, extra?: Record<string, string>) => void,
+    row: EgressRow,
+  ): Promise<{ sb: SandboxId; addrs: string[] } | null> {
+    const sb = await this.ids.sandbox(tokenFrom(req.headers, "proxy-authorization"));
+    if (!sb) {
+      deny(407, "egress: proxy authentication required\n", { "proxy-authenticate": 'Basic realm="jarvis-egress"' });
+      this.#deny(row, "deny:auth", 407);
+      return null;
+    }
+    row.sandbox_id = sb.sandboxId;
+    row.conversation_id = sb.conversationId;
+    if (!this.#ports.has(port)) {
+      deny(403, `egress: port ${port} is not allowed (only ${[...this.#ports].join(", ")}).\n`);
+      this.#deny(row, "deny:port", 403);
+      return null;
+    }
+    const extra = await this.ids.allowedHosts(sb.conversationId);
+    if (!hostAllowed(host, this.#o.defaultAllowedHosts) && !hostAllowed(host, extra)) {
+      deny(403, `egress: ${normHost(host)} is not on this conversation's list of allowed sites. ${DENY_HELP}\n`);
+      this.#deny(row, "deny:host", 403);
+      return null;
+    }
+    try {
+      return { sb, addrs: await this.#guard.resolve(host, this.#o.resolver) };
+    } catch (e) {
+      const why = e instanceof GuardError ? e.message : `cannot resolve ${normHost(host)}`;
+      deny(403, `egress: ${why}; only public internet addresses can be reached.\n`);
+      this.#deny(row, "deny:address", 403);
+      return null;
+    }
+  }
+
+  #deny(row: EgressRow, decision: string, status: number): void {
+    this.counters.denied++;
+    this.log.add({ ...row, decision, status });
+  }
+
+  async #onConnect(req: IncomingMessage, client: Duplex, head: Buffer): Promise<void> {
+    const t0 = Date.now();
+    this.#sockets.add(client);
+    client.on("close", () => this.#sockets.delete(client));
+    client.on("error", () => {});
+    const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(req.url || "");
+    const host = m ? m[1]! : "";
+    const port = m ? Number(m[2]) : 0;
+    const row: EgressRow = { kind: "connect", method: "CONNECT", host: normHost(host) || "-", port, decision: "allow" };
+    const deny = (status: number, msg: string, extra: Record<string, string> = {}) => {
+      const hdrs = Object.entries({ "content-type": "text/plain; charset=utf-8", "content-length": String(Buffer.byteLength(msg)), connection: "close", ...extra })
+        .map(([k, v]) => `${k}: ${v}\r\n`)
+        .join("");
+      client.end(`HTTP/1.1 ${status} ${status === 407 ? "Proxy Authentication Required" : "Forbidden"}\r\n${hdrs}\r\n${msg}`);
+    };
+    if (!m) return deny(400, "egress: bad CONNECT target\n");
+    if (this.draining) return deny(503, "egress: restarting, try again\n");
+    const ok = await this.#admit(req, host, port, deny, row);
+    if (!ok) return;
+    const upstream = await dial(ok.addrs, port).catch(() => null);
+    if (!upstream) {
+      deny(502, `egress: could not connect to ${normHost(host)}:${port}\n`);
+      this.log.add({ ...row, decision: "allow", status: 502, ms: Date.now() - t0 });
+      return;
+    }
+    this.counters.tunnels++;
+    let up = head.length;
+    let down = 0;
+    client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (head.length) upstream.write(head);
+    client.on("data", (c: Buffer) => {
+      up += c.length;
+      this.counters.bytesUp += c.length;
+    });
+    upstream.on("data", (c: Buffer) => {
+      down += c.length;
+      this.counters.bytesDown += c.length;
+    });
+    client.pipe(upstream);
+    upstream.pipe(client);
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      client.destroy();
+      upstream.destroy();
+      this.log.add({ ...row, status: 200, bytes_up: up, bytes_down: down, ms: Date.now() - t0 });
+    };
+    upstream.on("close", finish);
+    upstream.on("error", finish);
+    client.on("close", finish);
+  }
+
+  async #forward(req: IncomingMessage, res: ServerResponse, u: URL): Promise<void> {
+    const t0 = Date.now();
+    const port = u.port ? Number(u.port) : 80;
+    const row: EgressRow = { kind: "http", method: req.method ?? "GET", host: normHost(u.hostname), port, path: u.pathname + u.search, decision: "allow" };
+    if (u.protocol !== "http:") return text(res, 400, "egress: use CONNECT for https\n");
+    const deny = (status: number, msg: string, extra: Record<string, string> = {}) => text(res, status, msg, extra);
+    const ok = await this.#admit(req, u.hostname, port, deny, row);
+    if (!ok) return;
+    const cacheable = req.method === "GET" && this.#apt.has(normHost(u.hostname));
+    const url = u.toString();
+    if (cacheable) {
+      const immutable = /\.(deb|udeb|dsc|tar\.(gz|xz|bz2))$/.test(u.pathname) || u.pathname.includes("/by-hash/");
+      const hit = this.cache.get(url, immutable ? Infinity : INDEX_MAX_AGE);
+      if (hit) {
+        serveCached(res, hit.meta, hit.path, hit.size);
+        this.log.add({ ...row, decision: "allow:cache", status: hit.meta.status, bytes_down: hit.size, ms: Date.now() - t0 });
+        return;
+      }
+    }
+    const headers = forwardHeaders(req.headers, new Set(["proxy-authorization"]));
+    headers.host = u.host;
+    let up = 0;
+    let down = 0;
+    await new Promise<void>((resolve) => {
+      const out = httpRequest(
+        { host: ok.addrs[0], port, method: req.method, path: u.pathname + u.search, headers, setHost: false },
+        (ures) => {
+          res.writeHead(ures.statusCode ?? 502, stripHop(ures.headers));
+          const w = cacheable && ures.statusCode === 200
+            ? this.cache.writer({ url, status: 200, contentType: String(ures.headers["content-type"] || "application/octet-stream"), storedAt: Date.now() })
+            : null;
+          ures.on("data", (c: Buffer) => {
+            down += c.length;
+            this.counters.bytesDown += c.length;
+            w?.write(c);
+          });
+          ures.on("end", () => void w?.end());
+          ures.on("error", () => w?.abort());
+          ures.pipe(res);
+          res.on("close", () => {
+            if (!ures.complete) w?.abort();
+            this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: up, bytes_down: down, ms: Date.now() - t0 });
+            resolve();
+          });
+        },
+      );
+      out.on("error", () => {
+        if (!res.headersSent) text(res, 502, `egress: could not reach ${u.host}\n`);
+        else res.destroy();
+        this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
+        resolve();
+      });
+      req.on("data", (c: Buffer) => {
+        up += c.length;
+        this.counters.bytesUp += c.length;
+      });
+      req.pipe(out);
+    });
+  }
+
+  // ---- package mirror ------------------------------------------------------------------------------------
+
+  async #mirror(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const t0 = Date.now();
+    const row: EgressRow = { kind: "mirror", method: req.method ?? "GET", host: "mirror", path, decision: "allow" };
+    const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+    if (!sb) {
+      text(res, 401, "egress: authentication required\n", { "www-authenticate": 'Basic realm="jarvis-mirror"' });
+      return this.#deny(row, "deny:auth", 401);
+    }
+    row.sandbox_id = sb.sandboxId;
+    row.conversation_id = sb.conversationId;
+    if (req.method !== "GET" && req.method !== "HEAD") return text(res, 405, "egress: the mirror is read-only\n");
+    const [pathOnly, query = ""] = path.split("?") as [string, string?];
+    const q = query ? `?${query}` : "";
+    const selfBase = `http://${req.headers.host || "egress"}`;
+    let upstream: string;
+    let immutable = false;
+    let rewrite: ((body: string) => string) | null = null;
+    const accept = String(req.headers.accept || "");
+    let m: RegExpExecArray | null;
+    if ((m = /^\/mirror\/pypi\/simple(\/.*)?$/.exec(pathOnly))) {
+      row.host = new URL(this.#up.pypi).hostname;
+      upstream = `${this.#up.pypi}/simple${m[1] ?? "/"}${q}`;
+      rewrite = (b) => b.split(`${this.#up.pypiFiles}/`).join("/mirror/pypi/files/");
+    } else if ((m = /^\/mirror\/pypi\/files\/(.+)$/.exec(pathOnly))) {
+      row.host = new URL(this.#up.pypiFiles).hostname;
+      upstream = `${this.#up.pypiFiles}/${m[1]}${q}`;
+      immutable = true;
+    } else if ((m = /^\/mirror\/npm\/(.+)$/.exec(pathOnly))) {
+      row.host = new URL(this.#up.npm).hostname;
+      upstream = `${this.#up.npm}/${m[1]}${q}`;
+      immutable = m[1]!.includes("/-/");
+      if (!immutable) rewrite = (b) => b.split(`${this.#up.npm}/`).join(`${selfBase}/mirror/npm/`);
+    } else {
+      return text(res, 404, "egress: unknown mirror path (use /mirror/pypi/simple/ or /mirror/npm/)\n");
+    }
+    const key = immutable ? upstream : `${upstream}|${accept}|${selfBase}`;
+    const hit = this.cache.get(key, immutable ? Infinity : INDEX_MAX_AGE);
+    if (hit) {
+      serveCached(res, hit.meta, hit.path, hit.size, req.method === "HEAD");
+      this.log.add({ ...row, decision: "allow:cache", status: hit.meta.status, bytes_down: hit.size, ms: Date.now() - t0 });
+      return;
+    }
+    const ures = await fetch(upstream, { headers: accept ? { accept } : {}, redirect: "follow" }).catch(() => null);
+    if (!ures) {
+      text(res, 502, `egress: mirror upstream ${row.host} unreachable\n`);
+      return this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
+    }
+    const contentType = ures.headers.get("content-type") || "application/octet-stream";
+    if (rewrite) {
+      const body = Buffer.from(ures.ok ? rewrite(await ures.text()) : await ures.text());
+      if (ures.ok) this.cache.putBuffer({ url: key, status: ures.status, contentType, storedAt: Date.now() }, body);
+      res.writeHead(ures.status, { "content-type": contentType, "content-length": String(body.length) });
+      res.end(req.method === "HEAD" ? undefined : body);
+      return this.log.add({ ...row, status: ures.status, bytes_down: body.length, ms: Date.now() - t0 });
+    }
+    const len = ures.headers.get("content-length");
+    res.writeHead(ures.status, { "content-type": contentType, ...(len ? { "content-length": len } : {}) });
+    if (!ures.body || req.method === "HEAD") {
+      res.end();
+      return this.log.add({ ...row, status: ures.status, ms: Date.now() - t0 });
+    }
+    const w = ures.ok ? this.cache.writer({ url: key, status: ures.status, contentType, storedAt: Date.now() }) : null;
+    let down = 0;
+    const body = Readable.fromWeb(ures.body as any);
+    body.on("data", (c: Buffer) => {
+      down += c.length;
+      w?.write(c);
+    });
+    await new Promise<void>((resolve) => {
+      body.on("end", () => void w?.end());
+      body.on("error", () => {
+        w?.abort();
+        res.destroy();
+      });
+      res.on("close", () => {
+        if (!body.readableEnded) w?.abort();
+        resolve();
+      });
+      body.pipe(res);
+    });
+    this.log.add({ ...row, status: ures.status, bytes_down: down, ms: Date.now() - t0 });
+  }
+
+  // ---- credential-injecting routes -----------------------------------------------------------------------
+
+  async #route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const t0 = Date.now();
+    const m = /^\/x\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(path);
+    const route = m ? this.#o.routes.find((r) => r.name === m[1]) : undefined;
+    if (!m || !route) return text(res, 404, "egress: unknown route\n");
+    const rest = m[2] ?? "/";
+    const up = new URL(route.upstream);
+    const row: EgressRow = { kind: route.name === "model" ? "model" : "inject", method: req.method ?? "GET", host: up.hostname, path: rest, decision: "allow" };
+    if (route.auth === "turn") {
+      const token = tokenFrom(req.headers, "authorization") || String(req.headers["x-api-key"] || "");
+      const turn = await this.ids.turn(token);
+      if (!turn) {
+        text(res, 401, '{"type":"error","error":{"type":"authentication_error","message":"egress: no running turn for this token"}}', { "content-type": "application/json" });
+        return this.#deny(row, "deny:auth", 401);
+      }
+      row.turn_id = turn.turnId;
+      row.conversation_id = turn.conversationId;
+    } else {
+      const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+      if (!sb) {
+        text(res, 401, "egress: authentication required\n");
+        return this.#deny(row, "deny:auth", 401);
+      }
+      row.sandbox_id = sb.sandboxId;
+      row.conversation_id = sb.conversationId;
+    }
+    if (route.allowPaths?.length && !route.allowPaths.some((p) => rest.startsWith(p))) {
+      text(res, 403, `egress: path ${rest} is not allowed on route ${route.name}\n`);
+      return this.#deny(row, "deny:path", 403);
+    }
+    let injected: Record<string, string>;
+    try {
+      injected = Object.fromEntries(Object.entries(route.inject).map(([k, v]) => [k.toLowerCase(), expandEnv(v, this.#o.env ?? process.env)]));
+    } catch (e) {
+      logError("egress route inject", e, { route: route.name });
+      text(res, 500, `egress: route ${route.name} is misconfigured\n`);
+      return this.log.add({ ...row, status: 500, decision: "deny:config" });
+    }
+    const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, CALLER_AUTH), ...injected, host: up.host, "accept-encoding": "identity" };
+    const basePath = up.pathname.replace(/\/$/, "");
+    const target = `${basePath}${rest}${m[3] ?? ""}`;
+    const sniff = new CostSniffer();
+    let bytesUp = 0;
+    let bytesDown = 0;
+    await new Promise<void>((resolve) => {
+      const mk = up.protocol === "https:" ? httpsRequest : httpRequest;
+      const out = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path: target, headers }, (ures) => {
+        sniff.contentType = String(ures.headers["content-type"] || "");
+        res.writeHead(ures.statusCode ?? 502, stripHop(ures.headers));
+        res.flushHeaders();
+        ures.on("data", (c: Buffer) => {
+          bytesDown += c.length;
+          sniff.push(c);
+          res.write(c);
+        });
+        ures.on("end", () => res.end());
+        ures.on("error", () => res.destroy());
+        res.on("close", () => {
+          if (!ures.complete) ures.destroy();
+          this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
+          resolve();
+        });
+      });
+      out.on("error", (e) => {
+        logError("egress route upstream", e, { route: route.name });
+        if (!res.headersSent) text(res, 502, `egress: route ${route.name} upstream unreachable\n`);
+        else res.destroy();
+        this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
+        resolve();
+      });
+      req.on("data", (c: Buffer) => (bytesUp += c.length));
+      req.pipe(out);
+    });
+  }
+
+  // ---- lifecycle -----------------------------------------------------------------------------------------
+
+  listen(port: number, host = "::"): Promise<number> {
+    return new Promise((resolve) => this.server.listen(port, host, () => resolve((this.server.address() as { port: number }).port)));
+  }
+
+  /** Stop accepting, let open requests and tunnels finish for up to graceMs, then cut the rest and flush the log. */
+  async drain(graceMs: number): Promise<void> {
+    this.draining = true;
+    await new Promise<void>((resolve) => {
+      this.server.close(() => resolve());
+      this.server.closeIdleConnections();
+      const until = Date.now() + graceMs;
+      const tick = setInterval(() => {
+        this.server.closeIdleConnections();
+        if (this.#sockets.size === 0 || Date.now() >= until) {
+          clearInterval(tick);
+          for (const s of this.#sockets) s.destroy();
+          resolve();
+        }
+      }, 200);
+    });
+    await this.log.flush();
+  }
+}
+
+/** Collects usage.cost from an Anthropic-format response: a JSON body, or the SSE events of a streamed one. */
+export class CostSniffer {
+  contentType = "";
+  #buf = "";
+  #json: Buffer[] = [];
+  #jsonBytes = 0;
+  #cost: number | null = null;
+  push(c: Buffer): void {
+    if (this.contentType.includes("text/event-stream")) {
+      this.#buf += c.toString("utf8");
+      let i: number;
+      while ((i = this.#buf.indexOf("\n")) >= 0) {
+        const line = this.#buf.slice(0, i).trim();
+        this.#buf = this.#buf.slice(i + 1);
+        if (line.startsWith("data:")) this.#take(line.slice(5).trim());
+      }
+    } else if (this.contentType.includes("json") && this.#jsonBytes < 20 * 1024 * 1024) {
+      this.#json.push(c);
+      this.#jsonBytes += c.length;
+    }
+  }
+  #take(s: string): void {
+    if (!s.startsWith("{")) return;
+    try {
+      const o = JSON.parse(s);
+      const cost = o?.usage?.cost ?? o?.message?.usage?.cost;
+      if (typeof cost === "number") this.#cost = cost;
+    } catch {
+      /* not JSON */
+    }
+  }
+  cost(): number | null {
+    if (this.#json.length) {
+      this.#take(Buffer.concat(this.#json).toString("utf8"));
+      this.#json = [];
+    }
+    return this.#cost;
+  }
+}
+
+function text(res: ServerResponse, status: number, body: string, extra: Record<string, string> = {}): void {
+  if (res.headersSent) return void res.destroy();
+  res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "content-length": String(Buffer.byteLength(body)), ...extra });
+  res.end(body);
+}
+
+function stripHop(h: IncomingMessage["headers"]): OutgoingHttpHeaders {
+  const out: OutgoingHttpHeaders = {};
+  for (const [k, v] of Object.entries(h)) if (!HOP.has(k) && v !== undefined) out[k] = v;
+  return out;
+}
+
+function forwardHeaders(h: IncomingMessage["headers"], drop: Set<string>): OutgoingHttpHeaders {
+  const out: OutgoingHttpHeaders = {};
+  const connectionNamed = new Set(String(h.connection || "").toLowerCase().split(",").map((s) => s.trim()));
+  for (const [k, v] of Object.entries(h)) {
+    if (HOP.has(k) || drop.has(k) || connectionNamed.has(k) || v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+function serveCached(res: ServerResponse, meta: { status: number; contentType: string }, path: string, size: number, head = false): void {
+  res.writeHead(meta.status, { "content-type": meta.contentType, "content-length": String(size), "x-egress-cache": "hit" });
+  if (head) return void res.end();
+  createReadStream(path).on("error", () => res.destroy()).pipe(res);
+}
+
+function dial(addrs: string[], port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    const next = () => {
+      const a = addrs[i++];
+      if (a === undefined) return reject(new Error("no address answered"));
+      const s = netConnect({ host: a, port, timeout: 10_000 });
+      s.once("connect", () => {
+        s.setTimeout(0);
+        resolve(s);
+      });
+      s.once("timeout", () => s.destroy(new Error("timeout")));
+      s.once("error", () => next());
+    };
+    next();
+  });
+}
+
+function safeUrl(u: string | undefined): string {
+  return (u || "").replace(/\/\/[^@/]*@/, "//***@").slice(0, 300);
+}
