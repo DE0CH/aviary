@@ -1,0 +1,37 @@
+#!/usr/bin/env -S node --disable-warning=ExperimentalWarning
+// claw's bash tool (CLAW_BASH_COMMAND): reads the tool input JSON on stdin, runs it in the conversation's sandbox
+// and prints {stdout, stderr, exit_code, interrupted, background_task_id?} as JSON (src/web/bash.ts).
+// The turn runner sets JARVIS_SANDBOX_URL, JARVIS_SANDBOX_TOKEN, JARVIS_SANDBOX_ID and JARVIS_SYNC_STATE; the
+// workdir is the current directory.
+import { runBash } from "../web/bash.ts";
+
+const chunks = [];
+for await (const c of process.stdin) chunks.push(c);
+let input;
+try {
+  input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+} catch {
+  process.stderr.write("jarvis-bash: the input is not JSON\n");
+  process.exit(2);
+}
+const need = (k) => {
+  const v = process.env[k];
+  if (!v) {
+    process.stderr.write(`jarvis-bash: ${k} is not set (no sandbox for this turn)\n`);
+    process.exit(2);
+  }
+  return v;
+};
+try {
+  const out = await runBash(input, {
+    workdir: process.cwd(),
+    sandboxUrl: need("JARVIS_SANDBOX_URL"),
+    sandboxToken: need("JARVIS_SANDBOX_TOKEN"),
+    sandboxId: need("JARVIS_SANDBOX_ID"),
+    statePath: need("JARVIS_SYNC_STATE"),
+  });
+  process.stdout.write(JSON.stringify(out) + "\n");
+} catch (e) {
+  process.stderr.write(`The sandbox did not answer (${e instanceof Error ? e.message : e}). It will be restarted for the next message.\n`);
+  process.exit(1);
+}
