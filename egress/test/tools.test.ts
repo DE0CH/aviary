@@ -14,6 +14,7 @@ import { normalHost } from "../src/tools/builtin.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
 import { createToolsServer, toolList } from "../src/tools/server.ts";
+import { toolsLocale } from "../src/tools/strings.ts";
 import type { Deps } from "../src/tools/types.ts";
 import { pickResponse, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
@@ -209,7 +210,20 @@ test("upstream MCP: tools proxied with the staff member's identity; a confirm-li
   assert.equal(textOf(sent), `called Send-Mail for ${owner}`);
   const ev = fakes.events.filter((e) => e.type === "confirmation_request").at(-1);
   assert.match(ev.summary, /x@y\.com/);
+  assert.equal(ev.summary, `yyc_send_mail: {"to":"x@y.com"}`);
   assert.equal(ev.detail.tool, "yyc_send_mail");
+
+  // the card's summary follows the instance locale (product.locale)
+  deps.config.product.locale = "zh-HK";
+  try {
+    await call("yyc_send_mail", { to: "z@y.com" });
+  } finally {
+    deps.config.product.locale = "en";
+  }
+  const zh = fakes.events.filter((e) => e.type === "confirmation_request").at(-1);
+  assert.equal(zh.summary, '執行「yyc_send_mail」：{"to":"z@y.com"}');
+  const row = await t.db.query("select summary from confirmations where id = $1", [zh.id]);
+  assert.equal(row.rows[0].summary, zh.summary);
 
   // denied
   fakes.onEvent = async (e) => {
@@ -238,8 +252,16 @@ test("request_network_access: approve adds the host; no answer expires; defaults
   };
   const ok = await call("request_network_access", { host: "https://data.gov.hk/en/path", reason: "下載數據" });
   assert.match(textOf(ok), /allowed data\.gov\.hk/);
+  assert.equal(fakes.events.filter((e) => e.type === "confirmation_request").at(-1).summary, "Allow the sandbox to reach data.gov.hk?");
+  deps.config.product.locale = "zh-HK";
+  try {
+    assert.match(textOf(await call("request_network_access", { host: "data.example.hk", reason: "x" })), /allowed data\.example\.hk/);
+  } finally {
+    deps.config.product.locale = "en";
+  }
+  assert.equal(fakes.events.filter((e) => e.type === "confirmation_request").at(-1).summary, "允許沙盒連接 data.example.hk？");
   const { rows } = await t.db.query("select host, added_by from allowed_hosts where conversation_id = $1", [conv]);
-  assert.deepEqual(rows, [{ host: "data.gov.hk", added_by: owner }]);
+  assert.deepEqual(rows.filter((r) => r.host === "data.gov.hk"), [{ host: "data.gov.hk", added_by: owner }]);
   assert.match(textOf(await call("request_network_access", { host: "data.gov.hk", reason: "x" })), /already allowed/);
 
   fakes.onEvent = () => {}; // nobody answers: expires after confirmTimeoutMs
@@ -309,4 +331,11 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
   assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [], confirm: [] } } }, []).map((d) => d.name), ["web_fetch", "request_network_access"]);
+});
+
+test("confirmation text locale: zh* → zh-HK, anything else → en", () => {
+  assert.equal(toolsLocale("zh-HK"), "zh-HK");
+  assert.equal(toolsLocale("zh-Hant-HK"), "zh-HK");
+  assert.equal(toolsLocale("en"), "en");
+  assert.equal(toolsLocale(undefined), "en");
 });

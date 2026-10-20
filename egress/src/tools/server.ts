@@ -5,6 +5,7 @@ import { logError } from "../common/log.ts";
 import { bearerOf, turnForToken } from "../common/tokens.ts";
 import { BUILTIN } from "./builtin.ts";
 import { askUser } from "./confirm.ts";
+import { confirmText } from "./strings.ts";
 import { handleMessage, type McpHandlers } from "./mcp.ts";
 import type { Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
 import { text } from "./types.ts";
@@ -37,7 +38,7 @@ function withConfirmation(d: ToolDef): ToolDef {
   return {
     ...d,
     async run(args, ctx) {
-      const a = await askUser(ctx, "tool", `${d.title ?? d.name}: ${summarise(args)}`, { tool: d.name, arguments: args });
+      const a = await askUser(ctx, "tool", confirmText(ctx.deps.config.product.locale).tool(d.title ?? d.name, summarise(args)), { tool: d.name, arguments: args });
       if (a !== "approved") return text(a === "denied" ? "The user declined." : "No answer from the user.", true);
       return d.run(args, ctx);
     },

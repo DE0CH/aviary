@@ -2,6 +2,7 @@
 // news / PR assistant, saying when to use each and what comes back.
 import { askUser } from "./confirm.ts";
 import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
+import { confirmText } from "./strings.ts";
 import { exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch } from "./providers.ts";
 import { int, str, text, ToolInputError, type ToolDef } from "./types.ts";
 
@@ -264,7 +265,7 @@ export const requestNetworkAccess: ToolDef = {
     const covered = (list: string[]) => list.some((d) => d === host || (d.startsWith(".") && (host.endsWith(d) || host === d.slice(1))));
     const { rows } = await ctx.deps.db.query<{ host: string }>("select host from allowed_hosts where conversation_id = $1", [ctx.turn.conversation_id]);
     if (covered(defaults) || covered(rows.map((r) => r.host))) return text(`${host} is already allowed in this conversation.`);
-    const answer = await askUser(ctx, "network_access", `Allow the sandbox to reach ${host}?`, { host, reason });
+    const answer = await askUser(ctx, "network_access", confirmText(ctx.deps.config.product.locale).networkAccess(host), { host, reason });
     if (answer === "approved") {
       await ctx.deps.db.query(
         "insert into allowed_hosts (conversation_id, host, added_by) values ($1, $2, $3) on conflict do nothing",
