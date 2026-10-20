@@ -187,7 +187,10 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
    (`{name, upstream, inject: {header: value-from-env-var}, auth: "turn"|"sandbox", allowPaths?}`). The YYC instance
    has one: `model` → `https://openrouter.ai/api`, auth `turn` (`Authorization: Bearer <turn token>` or
-   `x-api-key`), injects `Authorization: Bearer $OPENROUTER_API_KEY`, streams responses through, logs `cost_usd` from
+   `x-api-key`), injects `Authorization: Bearer $OPENROUTER_API_KEY`, forces zero data retention into every request
+   body (`provider.zdr: true`, `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is
+   not a JSON object is refused with 400, `deny:body`; no config turns this off: `forceZdr` in
+   `chat/src/egress/proxy.ts`), streams responses through, logs `cost_usd` from
    the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
    The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
    uncompressed body (`accept-encoding: identity`) so it can read the cost.
