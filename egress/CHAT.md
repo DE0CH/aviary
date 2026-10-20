@@ -217,7 +217,7 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 - **Outward actions need the staff member's confirmation:** a tool marked `confirm` in config (and
   `request_network_access` always) inserts a `confirmations` row, emits an event through `web`
   (`POST http://web.<ns>.svc:8080/internal/events` with the turn token: `{type:"confirmation_request", id, kind,
-  summary, detail}`), then waits (LISTEN `confirm_<id>`, up to 15 minutes) for approve/deny. Denied/expired → the
+  summary, detail}`; `summary` is in the instance's `product.locale`, zh-HK or English), then waits (LISTEN `confirm_<id>`, up to 15 minutes) for approve/deny. Denied/expired → the
   tool returns an error text "The user declined." / "No answer from the user." On expiry `tools` itself sets the row
   `expired` and posts `{type:"confirmation_resolved", id, status:"expired"}`; on approve/deny `web` posts it.
   `kind` is `network_access` (detail `{host, reason}`) or `tool` (detail `{tool, arguments}`).
