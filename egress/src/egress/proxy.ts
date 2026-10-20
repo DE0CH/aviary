@@ -433,7 +433,24 @@ export class Egress {
       text(res, 500, `egress: route ${route.name} is misconfigured\n`);
       return this.log.add({ ...row, status: 500, decision: "deny:config" });
     }
+    // The model route (OpenRouter) gets zero data retention forced into every request body: no config, caller or
+    // conversation can route a model call to an endpoint that retains or collects prompts.
+    let forcedBody: Buffer | null = null;
+    if (route.name === "model" && req.method !== "GET" && req.method !== "HEAD") {
+      const raw = await readBody(req, MODEL_BODY_MAX);
+      const forced = raw === null ? null : forceZdr(raw);
+      if (forced === null) {
+        text(res, 400, '{"type":"error","error":{"type":"invalid_request_error","message":"egress: a model request body must be a JSON object"}}', { "content-type": "application/json" });
+        return this.#deny(row, "deny:body", 400);
+      }
+      forcedBody = forced;
+    }
     const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, CALLER_AUTH), ...injected, host: up.host, "accept-encoding": "identity" };
+    if (forcedBody) {
+      delete headers["transfer-encoding"];
+      headers["content-length"] = String(forcedBody.length);
+      headers["content-type"] = "application/json";
+    }
     const basePath = up.pathname.replace(/\/$/, "");
     const target = `${basePath}${rest}${m[3] ?? ""}`;
     const sniff = new CostSniffer();
@@ -465,8 +482,13 @@ export class Egress {
         this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
         resolve();
       });
-      req.on("data", (c: Buffer) => (bytesUp += c.length));
-      req.pipe(out);
+      if (forcedBody) {
+        bytesUp = forcedBody.length;
+        out.end(forcedBody);
+      } else {
+        req.on("data", (c: Buffer) => (bytesUp += c.length));
+        req.pipe(out);
+      }
     });
   }
 
@@ -494,6 +516,42 @@ export class Egress {
     });
     await this.log.flush();
   }
+}
+
+const MODEL_BODY_MAX = 64 * 1024 * 1024;
+
+/** OpenRouter provider options every model request carries (docs: guides/features/zdr "Per-Request ZDR Enforcement",
+ * guides/routing/provider-selection): only Zero Data Retention endpoints, none that collect data. Set over whatever the
+ * caller sent, so `zdr: false` or `data_collection: "allow"` in a request can't loosen it. */
+export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" } as const;
+
+/** The request body with FORCED_PROVIDER merged into `provider`; null when the body is not a JSON object. */
+export function forceZdr(raw: Buffer): Buffer | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(raw.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const b = body as Record<string, unknown>;
+  const p = b.provider && typeof b.provider === "object" && !Array.isArray(b.provider) ? (b.provider as Record<string, unknown>) : {};
+  b.provider = { ...p, ...FORCED_PROVIDER };
+  return Buffer.from(JSON.stringify(b));
+}
+
+/** The whole request body, or null when it exceeds max bytes. */
+function readBody(req: IncomingMessage, max: number): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    const parts: Buffer[] = [];
+    let n = 0;
+    req.on("data", (c: Buffer) => {
+      n += c.length;
+      if (n <= max) parts.push(c);
+    });
+    req.on("end", () => resolve(n > max ? null : Buffer.concat(parts)));
+    req.on("error", reject);
+  });
 }
 
 /** Collects usage.cost from an Anthropic-format response: a JSON body, or the SSE events of a streamed one. */

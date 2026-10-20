@@ -12,7 +12,7 @@ import { gzipSync } from "node:zlib";
 import { sha256hex } from "../src/common/tokens.ts";
 import { Identities } from "../src/egress/identity.ts";
 import { AddressGuard, hostAllowed } from "../src/egress/netguard.ts";
-import { CostSniffer, DENY_HELP, Egress } from "../src/egress/proxy.ts";
+import { CostSniffer, DENY_HELP, Egress, FORCED_PROVIDER, forceZdr } from "../src/egress/proxy.ts";
 import { freshDb } from "./pg.ts";
 
 let t: Awaited<ReturnType<typeof freshDb>>;
@@ -297,6 +297,32 @@ test("model route: turn token in, real key injected, caller auth dropped, cost l
   assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042]);
   assert.ok(models.every((x) => x.turn_id === turnId && x.conversation_id === conv));
   assert.equal((await http("/x/nope/v1")).status, 404);
+});
+
+test("model route: zero data retention is forced into every request body, whatever the caller sends", async () => {
+  const send = (body: string) =>
+    http("/x/model/v1/messages", { method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-type": "application/json" }, body });
+  const plain = await send(JSON.stringify({ model: "claude-x" }));
+  assert.equal(plain.status, 200);
+  assert.deepEqual(JSON.parse(plain.body).echo.provider, { zdr: true, data_collection: "deny" });
+  const loose = await send(JSON.stringify({ model: "claude-x", provider: { zdr: false, data_collection: "allow", order: ["a"] } }));
+  assert.deepEqual(JSON.parse(loose.body).echo.provider, { zdr: true, data_collection: "deny", order: ["a"] });
+  const odd = await send(JSON.stringify({ model: "claude-x", provider: "anything" }));
+  assert.deepEqual(JSON.parse(odd.body).echo.provider, { zdr: true, data_collection: "deny" });
+  for (const bad of ["not json", "[1]", "null", ""]) {
+    const r = await send(bad);
+    assert.equal(r.status, 400, `body ${JSON.stringify(bad)} must be refused`);
+  }
+  const refused = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:body");
+  assert.equal(refused.length, 4);
+});
+
+test("forceZdr: provider options merged over the caller's, non-objects refused", () => {
+  assert.equal(forceZdr(Buffer.from("[]")), null);
+  assert.equal(forceZdr(Buffer.from("{")), null);
+  const out = JSON.parse(forceZdr(Buffer.from('{"model":"m","provider":{"zdr":false,"only":["x"]}}'))!.toString());
+  assert.deepEqual(out, { model: "m", provider: { zdr: true, data_collection: "deny", only: ["x"] } });
+  assert.deepEqual(FORCED_PROVIDER, { zdr: true, data_collection: "deny" });
 });
 
 test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket per connection", async () => {
