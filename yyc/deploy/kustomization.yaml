@@ -6,7 +6,6 @@ kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
   - https://github.com/DE0CH/jarvis3//deploy/chat?ref=5743d82e669a9a3cd0d53311cff299779557570c
-  - priorityclasses.yaml
   - secrets/web-env.sops.yaml
   - secrets/egress-env.sops.yaml
   - secrets/tools-env.sops.yaml
