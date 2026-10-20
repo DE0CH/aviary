@@ -41,6 +41,10 @@ export interface ChatConfig {
     maxActive: number;
     cpu: string;
     memory: string;
+    /** PriorityClass of sandbox pods (above the pool's placeholder pods, so a sandbox evicts one at once). */
+    priorityClass?: string;
+    /** A docker-registry Secret in the sandbox namespace, when the sandbox image is private. */
+    imagePullSecret?: string;
   };
   egress: { defaultAllowedHosts: string[]; routes: EgressRoute[]; cacheGiB: number };
   tools: {

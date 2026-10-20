@@ -268,12 +268,16 @@ export class SandboxManager {
             ports: [{ containerPort: 7070, name: "agent" }],
             env: Object.entries(env).map(([name, value]) => ({ name, value })),
             securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] }, runAsNonRoot: true, runAsUser: 1000 },
+            // request = limit: a sandbox holds exactly what it may use, so the namespace quota caps concurrency
+            // and a runaway sandbox can only hurt itself (Deyao, 2026-10-20)
             resources: {
-              requests: { cpu: "100m", memory: "256Mi", "ephemeral-storage": "1Gi" },
+              requests: { cpu: cfg.cpu, memory: cfg.memory, "ephemeral-storage": "5Gi" },
               limits: { cpu: cfg.cpu, memory: cfg.memory, "ephemeral-storage": "5Gi" },
             },
           },
         ],
+        ...(cfg.priorityClass ? { priorityClassName: cfg.priorityClass } : {}),
+        ...(cfg.imagePullSecret ? { imagePullSecrets: [{ name: cfg.imagePullSecret }] } : {}),
       },
     };
   }
