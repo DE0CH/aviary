@@ -143,11 +143,9 @@ function Logo({ me }: { me: Me }) {
   const [broken, setBroken] = useState(false);
   const src = me.product.logoUrl || me.product.logo;
   if (src && !broken) return <img class="logo" src={src} alt="" onError={() => setBroken(true)} />;
-  const initials = me.product.name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 3);
+  // "YYC AI" → "YYC": a short all-capitals first word is the mark; otherwise the words' initials.
+  const words = me.product.name.trim().split(/\s+/);
+  const initials = /^[A-Z0-9]{2,4}$/.test(words[0] ?? "") ? words[0]! : words.map((w) => w[0]).join("").slice(0, 3);
   return (
     <span class="logo logo-mark" aria-hidden="true">
       {initials}
@@ -607,7 +605,7 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
   }, [files, running, v.startedAt, v.finishedAt]);
 
   const last = v.blocks[v.blocks.length - 1];
-  const showWorking = running && (!last || last.kind !== "text" || v.thinking);
+  const showWorking = running && v.status !== "waiting" && (!last || last.kind !== "text" || v.thinking);
   const copy = async () => {
     const txt = replyText(v);
     try {
@@ -761,8 +759,8 @@ function ConfirmCard({ b }: { b: Extract<Block, { kind: "confirm" }> }) {
   const rows: [string, string][] =
     b.confirmKind === "network_access" || d.host
       ? ([
-          ["host", String(d.host ?? "")],
-          ["reason", String(d.reason ?? "")],
+          [s.site, String(d.host ?? "")],
+          [s.reason, String(d.reason ?? "")],
         ].filter(([, v]) => v) as [string, string][])
       : Object.entries(d)
           .filter(([, v]) => v !== null && v !== undefined && v !== "")
