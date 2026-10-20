@@ -220,7 +220,11 @@ claw (fork patch) runs `$CLAW_BASH_COMMAND` with the bash tool input JSON on std
 stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_TOKEN`, `JARVIS_SYNC_STATE`
 (a JSON file outside the workdir with the last-synced manifest and the `/changes` cursor) from the turn runner. Each
 call: push files that changed in the workdir since the manifest (`PUT /files`), `POST /exec`, then pull
-`/changes` into the workdir and update the manifest.
+`/changes` into the workdir and update the manifest. It also needs `JARVIS_SANDBOX_ID`: a different id than the one in
+the state file (a new sandbox) resets the manifest and cursor, so the whole workdir is pushed again. A full `/changes`
+answer (`X-Full: 1`) is the complete list: files the manifest has and the answer lacks (and didn't skip) are deleted
+locally. Background commands answer `Started in the background … output goes to .jobs/<id>.log`; `.jobs/` is pulled
+into the workdir (the agent can read it) but never stored in the bucket. Code: `chat/src/web/bash.ts`.
 
 ### claw fork patches (DE0CH/claw-code, all no-ops unless their env var is set)
 
@@ -250,26 +254,65 @@ call: push files that changed in the workdir since the manifest (`PUT /files`), 
    (each replica LISTENs on `cancel_<replica>`).
 6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
    the UI retries 503), and waits for its running turns up to `terminationGracePeriodSeconds - 30` (manifests: 1800 s).
+7. **Reset notice:** kv `turn_sandbox:<conv>` holds the sandbox id the conversation's last turn used; a turn on a
+   different sandbox gets the reset line prepended to its prompt and a `sandbox {state: "reset"}` event.
+8. A turn whose sandbox can't be had (pool full past 60 s, start failure) still runs; its `sandbox {state:
+   "unavailable", message}` event says why and `jarvis-bash` then fails with that reason. claw's session file is saved
+   only after a `done` turn (a cancelled or failed turn may leave a tool call without its result, which the model API
+   refuses on replay); the turn's files are stored whatever its outcome.
+9. Replicas write a heartbeat (kv `replica:<name>`, every 10 s); the janitor (one replica, advisory lock, every 30 s)
+   ends turns of replicas silent for 60 s and queued turns older than 2 minutes (`error`, "interrupted: the server
+   restarted"), expires confirmations after 15 minutes, releases idle/expired sandboxes, ends stuck starts, deletes
+   sandbox pods without a live row and marks rows whose pod vanished.
+
+### Events (what the UI renders; `GET …/stream` and `turns[].events`)
+
+Each is `{id, turnId, seq, type, data, at}`. Types: `turn_start {model}`; `sandbox {state: starting|ready|reset|
+unavailable, message?}`; claw's own `message_start`, `text_delta {text}`, `thinking_delta {text}`, `tool_use {id, name,
+input}`, `tool_result {id, name, output, is_error, truncated?}` (output capped at 20 000 characters), `message_stop`,
+`error {message}`; `usage {usage, iterations}`; `files {changed: [path]}`; `confirmation_request {id, kind, summary,
+detail}` (from tools); `confirmation_decided {id, status}`; `title {title}`; `turn_end {status: done|error|cancelled,
+error, costUsd}`. claw's `session` and `result` lines are not stored (`result` becomes `usage`). MCP tool names arrive as
+`mcp__tools__<name>`. The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug` event (tests only).
+
+### `web` deployment needs
+
+- Env: `JARVIS_ROLE=web`, `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JARVIS_NAMESPACE` (its own
+  namespace, from the downward API; default `jarvis`), `HOSTNAME` (the pod name: the replica's name), optional
+  `JARVIS_EGRESS_URL`, `JARVIS_TOOLS_URL`, `JARVIS_WORK_ROOT` (default `/var/lib/jarvis/work`, an emptyDir),
+  `JARVIS_DRAIN_SECONDS` (default 1770), `JARVIS_UI_DIR`, `JARVIS_BRAND_DIR` (default `/etc/jarvis/brand`, served at
+  `/brand/*`), `CLAW_PATH`. Config at `/etc/jarvis/config.json`, the system prompt file it names.
+- RBAC: a ServiceAccount (token mounted) bound to a Role in the sandbox namespace with `pods`: create, get, list,
+  watch, delete and `pods/status`: get. Nothing else.
+- Pod: `terminationGracePeriodSeconds: 1800`, readiness `GET /healthz`, a writable emptyDir at the work root; the image
+  runs as uid 1000. NetworkPolicy: ingress from cloudflared and the `tools` pods (`/internal/events`); egress to
+  Postgres, the bucket, the Kubernetes API, `egress` and `tools` Services and sandbox pods on 7070.
 
 ### Public API (`web`, all behind Access; JSON)
 
 - `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [...], defaultModel}`
-- `GET /api/conversations` → newest first `[{id, title, updatedAt, running}]`
+- `GET /api/conversations` → newest first `[{id, title, model, updatedAt, running}]`
 - `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title}`; `DELETE` (soft)
-- `GET /api/conversations/:id` → `{id, title, model, messages: [...], turns: [{id, status, events: [...]}]}`
+- `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments, createdAt}],
+  turns: [{id, status, model, startedAt, finishedAt, error, costUsd, events: [...]}], pendingConfirmations: [{id, turnId,
+  kind, summary, detail, status}], lastEventId}` (stream from `lastEventId` to continue)
 - `POST /api/conversations/:id/warm` → 204
-- `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → `{turnId}`
+- `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → 202 `{turnId}`; 409 while a turn is going;
+  503 while this replica drains (retry)
 - `GET /api/conversations/:id/stream?after=<event id>` → SSE of events (`id:` = event id), heartbeats every 15 s
 - `POST /api/turns/:id/cancel`
 - `POST /api/confirmations/:id` `{approve: bool}`
-- `POST /api/conversations/:id/files?name=<file name>` (raw body, ≤ 100 MB) → `{path}` (under `uploads/`)
+- `POST /api/conversations/:id/files?name=<file name>` (raw body, ≤ 100 MB) → 201 `{path, size}` (under `uploads/`,
+  ` (2)` added before the extension when the name is taken)
 - `GET /api/conversations/:id/files` → list; `GET /api/conversations/:id/files/<path>` → download
 - Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`
 - `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
 (the instance's allowlist, the same list as the Access policy) → a `users` row is upserted. A user sees only their
-own conversations; admins (`config.admins`) can read the usage/egress views, not others' chats.
+own conversations (others' ids answer 404); admins (`config.admins`) can read the usage/egress views, not others'
+chats. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
+with an `Origin` other than `publicUrl` are refused.
 
 ## Config (`/etc/jarvis/config.json`, from the instance)
 
