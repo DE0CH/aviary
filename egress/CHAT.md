@@ -129,12 +129,25 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    `GET /mirror/pypi/simple/...` (from pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
    `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten), apt via the forward proxy: plain-HTTP GETs to
    `deb.debian.org`/`security.debian.org` are cached too. Immutable artefacts cached; index pages for 5 minutes.
-   Auth: same Basic token (pip/npm accept `http://sbx:<token>@host/...`).
+   Auth: same Basic token (pip/npm accept `http://sbx:<token>@host/...`), in `Authorization` or
+   `Proxy-Authorization`. A mirror or route request may also arrive in proxy form (`GET http://egress…/mirror/…`, what
+   pip/npm send with `HTTP_PROXY` set and an empty `NO_PROXY`): egress answers it itself when the host is one of its
+   own names (`EGRESS_SELF_HOSTS`, default `egress`, `egress.<POD_NAMESPACE>`, `….svc`, `….svc.cluster.local`).
+   npm tarball URLs are rewritten to `http://<the request's Host>/mirror/npm/…`, pypi file links to the root-relative
+   `/mirror/pypi/files/…`.
 3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
    (`{name, upstream, inject: {header: value-from-env-var}, auth: "turn"|"sandbox", allowPaths?}`). The YYC instance
    has one: `model` → `https://openrouter.ai/api`, auth `turn` (`Authorization: Bearer <turn token>` or
    `x-api-key`), injects `Authorization: Bearer $OPENROUTER_API_KEY`, streams responses through, logs `cost_usd` from
    the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
+   The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
+   uncompressed body (`accept-encoding: identity`) so it can read the cost.
+4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
+   `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
+   public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
+   (`OPENROUTER_API_KEY`). Identity lookups are cached for 5 s, a conversation's `allowed_hosts` for 2 s.
+   On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the drain time,
+   the log is flushed.
 
 ### `tools` (port 8080, `POST /mcp`, MCP Streamable HTTP, stateless, JSON responses)
 
@@ -159,17 +172,30 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 
 The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/user`).
 
-- `GET /healthz` → 200 `{ok:true, boot_id}`.
+- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed: the kubelet's readiness probe). A new `boot_id` means
+  the agent restarted and every earlier cursor is void.
 - `PUT /files` — body: a tar stream (uncompressed) of files to write under `/work`; header `X-Delete: <JSON array of
   relative paths>` for deletions. Returns `{ok, written, deleted}`.
 - `POST /exec` — `{command, timeout_ms (default 120000, max 600000), background: bool}` → runs `bash -lc` in `/work`.
   Foreground: `{stdout, stderr, exit_code, interrupted, ms}` (each stream capped at 1 MB, tail kept, `truncated`
-  flag). Background: `{background_id, pid}` with output going to `/work/.jobs/<id>.log`.
+  flag). Background: `{background_id, pid, log}` with output going to `log` = `.jobs/<id>.log` (under `/work`, so
+  it syncs back like any file). The command's process group is killed on timeout (`interrupted: true`); a process a
+  foreground command leaves running is not killed, but its output after the command ends is not collected.
 - `GET /changes?since=<cursor>` → tar stream of regular files under `/work` modified since the cursor (excluding
   `egress.syncExclude`-style patterns: `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `.cache/`, `.git/objects/`,
-  files > 50 MB), header `X-Cursor: <new cursor>`, `X-Deleted: <JSON array>` (paths gone since the cursor).
-  `since` empty = everything.
-- Running processes survive between calls (the agent is the pod's PID 1 child; it reaps).
+  files > 50 MB), header `X-Cursor: <new cursor>`, `X-Deleted: <JSON array>` (paths gone since the cursor),
+  `X-Skipped: <JSON array>` (changed files over 50 MB, not sent), `X-Full: 1|0`.
+  `since` empty or unknown (e.g. after an agent restart) = everything, `X-Full: 1`, no deletions (the caller must
+  treat a full answer as the complete list). When the two lists don't fit in 8 KB of headers they move into the
+  tar's first entry `.jarvis-meta/changes.json` = `{deleted, skipped}` and the response has
+  `X-Meta-Entry: .jarvis-meta/changes.json` instead of `X-Deleted`/`X-Skipped`. Files the caller wrote or deleted
+  with `PUT /files` are not reported back. Symlinks are never followed or sent.
+- `PUT /files` refuses (400) absolute paths, `..`, and any path whose real parent directory is outside `/work`
+  (a symlink planted by a command). Tar entries other than regular files are skipped.
+- Running processes survive between calls (tini is PID 1 and reaps; the agent's env loses `JARVIS_EXEC_TOKEN`
+  before any command runs).
+- Tar on both sides: `chat/sandbox/tar.mjs` (`packBuffers`, `entryHeader`/`entryPadding`/`END` to stream,
+  `unpack`; ustar + PAX long names; types in `tar.d.mts`). The `web` image can import it for `jarvis-bash`.
 
 ### `jarvis-bash` (claw's bash, `CLAW_BASH_COMMAND`)
 
