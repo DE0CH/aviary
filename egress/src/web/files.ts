@@ -2,7 +2,7 @@
 // is a cache of them, reconciled before each turn and stored back after it (docs/CHAT.md, "Turn runner").
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -169,6 +169,3 @@ export function contentType(path: string): string {
   return TYPES[path.split(".").pop()?.toLowerCase() || ""] || "application/octet-stream";
 }
 
-export async function readLocal(path: string): Promise<Buffer> {
-  return readFile(path);
-}

@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { tx } from "../common/db.ts";
 import { logError, log } from "../common/log.ts";
 import { newToken, sha256hex } from "../common/tokens.ts";
-import { tarUnpack } from "../common/tar.ts";
 import { AgentClient } from "./agent.ts";
 import type { WebDeps } from "./ctx.ts";
 import { storeEntries } from "./files.ts";
@@ -212,8 +211,8 @@ export class SandboxManager {
       try {
         const url = await this.#urlOf(r);
         if (url) {
-          const { tar } = await new AgentClient(url, r.exec_token).changes("");
-          const n = await storeEntries(this.#deps, r.conversation_id, tarUnpack(tar));
+          const { entries } = await new AgentClient(url, r.exec_token).changes("");
+          const n = await storeEntries(this.#deps, r.conversation_id, entries);
           if (n) log("sandbox final save", { sandbox: r.id, files: n });
         }
       } catch (e) {

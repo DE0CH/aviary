@@ -4,7 +4,7 @@
 // file outside the workdir, so the agent's file tools can't touch it.
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { tarPack, tarUnpack } from "../common/tar.ts";
+import { tarPack } from "../common/tar.ts";
 import { AgentClient, type ExecResult } from "./agent.ts";
 import { manifestOf, readJson, removeFrom, sha256Buf, writeInto, writeJsonAtomic, type Manifest } from "./workspace.ts";
 
@@ -48,15 +48,18 @@ export async function pushChanges(workdir: string, agent: AgentClient, state: Sy
 }
 
 export async function pullChanges(workdir: string, agent: AgentClient, state: SyncState): Promise<number> {
-  const { tar, cursor, deleted } = await agent.changes(state.cursor);
+  const { entries, cursor, deleted, skipped, full } = await agent.changes(state.cursor);
   let n = 0;
-  for (const e of tarUnpack(tar)) {
-    const sha = sha256Buf(e.data);
-    if (state.manifest[e.path]?.sha256 === sha) continue; // an echo of what was pushed
+  const present = new Set<string>();
+  for (const e of entries) {
+    present.add(e.path);
+    if (state.manifest[e.path]?.sha256 === sha256Buf(e.data)) continue; // unchanged, or an echo of what was pushed
     await writeInto(workdir, e.path, e.data);
     n++;
   }
-  for (const rel of deleted) {
+  // a full listing is the whole truth: what the sandbox no longer has (and didn't skip as too large) is gone
+  const gone = full ? Object.keys(state.manifest).filter((rel) => !present.has(rel) && !skipped.includes(rel)) : deleted;
+  for (const rel of gone) {
     if (state.manifest[rel]) {
       await removeFrom(workdir, rel);
       n++;
@@ -89,7 +92,7 @@ export async function runBash(
   }
   if (r.background_id) {
     return {
-      stdout: `Started in the background (id ${r.background_id}, pid ${r.pid ?? "?"}). Its output goes to .jobs/${r.background_id}.log in the workspace.`,
+      stdout: `Started in the background (id ${r.background_id}, pid ${r.pid ?? "?"}). Its output goes to ${r.log || `.jobs/${r.background_id}.log`} in the workspace.`,
       stderr: "",
       exit_code: 0,
       interrupted: false,

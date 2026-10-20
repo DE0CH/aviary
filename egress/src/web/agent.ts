@@ -1,5 +1,6 @@
 // Client of the sandbox agent's HTTP API (docs/CHAT.md, "sandbox-agent"): used by the sandbox manager (health,
 // the final save) and by jarvis-bash (files in, exec, changes out).
+import { tarUnpack, type TarEntry } from "../common/tar.ts";
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -9,7 +10,19 @@ export interface ExecResult {
   truncated?: boolean;
   background_id?: string;
   pid?: number;
+  log?: string;
 }
+
+export interface Changes {
+  entries: TarEntry[];
+  cursor: string;
+  deleted: string[];
+  skipped: string[];
+  /** A full listing (first call, unknown cursor, agent restarted): files absent from it are gone. */
+  full: boolean;
+}
+
+const META = ".jarvis-meta/changes.json";
 
 export class AgentClient {
   readonly url: string;
@@ -49,13 +62,30 @@ export class AgentClient {
     await this.#check(r, "POST /exec");
     return (await r.json()) as ExecResult;
   }
-  async changes(since: string): Promise<{ tar: Buffer; cursor: string; deleted: string[] }> {
+  async changes(since: string): Promise<Changes> {
     const r = await fetch(`${this.url}/changes?since=${encodeURIComponent(since)}`, { headers: this.#h(), signal: AbortSignal.timeout(300_000) });
     await this.#check(r, "GET /changes");
-    let deleted: string[] = [];
-    try {
-      deleted = JSON.parse(r.headers.get("x-deleted") || "[]");
-    } catch {}
-    return { tar: Buffer.from(await r.arrayBuffer()), cursor: r.headers.get("x-cursor") || "", deleted };
+    const list = (h: string | null): string[] => {
+      try {
+        const v = JSON.parse(h || "[]");
+        return Array.isArray(v) ? v.map(String) : [];
+      } catch {
+        return [];
+      }
+    };
+    let deleted = list(r.headers.get("x-deleted"));
+    let skipped = list(r.headers.get("x-skipped"));
+    let entries = tarUnpack(Buffer.from(await r.arrayBuffer()));
+    const metaName = r.headers.get("x-meta-entry") || META;
+    const meta = entries.find((e) => e.path === metaName);
+    if (meta) {
+      try {
+        const m = JSON.parse(Buffer.from(meta.data).toString("utf8"));
+        deleted = Array.isArray(m.deleted) ? m.deleted.map(String) : deleted;
+        skipped = Array.isArray(m.skipped) ? m.skipped.map(String) : skipped;
+      } catch {}
+    }
+    entries = entries.filter((e) => !e.path.startsWith(".jarvis-meta/"));
+    return { entries, cursor: r.headers.get("x-cursor") || "", deleted, skipped, full: r.headers.get("x-full") === "1" || !since };
   }
 }
