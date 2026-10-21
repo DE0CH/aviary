@@ -213,6 +213,13 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   await p.create(c, "tok-c");
   assert.equal(await hostOf(c.id), "hub");
   await ready(c.id);
+  // hosts on different gVisor releases: no move (runsc restore refuses another version's checkpoint)
+  const awsFake = [...sbx.hosts.values()].find((h) => h.info.name === awsName)!;
+  awsFake.info.gvisorRelease = "y";
+  await ctl.pass();
+  assert.equal(await hostOf(b.id), awsName);
+  assert.ok(!sbx.hosts.get(HUB)!.receiving.size, "nothing was sent");
+  awsFake.info.gvisorRelease = "x";
   sbx.refuseSend = true;
   await ctl.pass();
   assert.equal(await hostOf(b.id), awsName);

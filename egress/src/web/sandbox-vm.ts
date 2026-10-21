@@ -506,9 +506,15 @@ export class VmController {
     await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers(aws, byHost) }, 10_000);
   }
 
-  /** May this sandbox move now? Not in its first 30 s; across clouds only when idle. */
+  /**
+   * May this sandbox move now? Not in its first 30 s; across clouds only when idle; never between hosts on different
+   * gVisor releases (runsc restore refuses another version's checkpoint, so a runsc upgrade waits for old hosts to
+   * empty by themselves).
+   */
   async #movable(s: { id: string; conversation_id: string; pod: string; created_at: Date }, from: HostRow, to: HostRow): Promise<boolean> {
     if (Date.now() - new Date(s.created_at).getTime() < 30_000) return false;
+    const rel = (h: HostRow) => this.#lastInfo.get(h.name)?.gvisorRelease ?? h.info?.gvisorRelease;
+    if (rel(from) && rel(to) && rel(from) !== rel(to)) return false;
     if (from.kind !== to.kind) {
       const usage = this.#lastInfo.get(from.name)?.sandboxes.find((x) => x.name === s.pod)?.cpuUsage ?? 1;
       if (usage > this.vm.migration.idleCpu) return false;
