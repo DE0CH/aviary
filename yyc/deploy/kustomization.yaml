@@ -5,7 +5,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=844affc692736e2649b908f8b7166fef93bb1662
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2156d8a326073e9ea8b57ed02188df45efe85c4a
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -14,11 +14,13 @@ resources:
   - sandbox-vm.yaml
   # the admin monitor reads this namespace's Deployments (web → Kubernetes API)
   - monitor.yaml
+  # the JuiceFS volume yyc-ai for the Claude Code UI: the CSI driver (kube-system) and the static PV + PVC jarvis/jfs
+  - juicefs.yaml
 # the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 844affc69273
+    newTag: 2156d8a32607
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
@@ -68,3 +70,16 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: EGRESS_WIRE_ACCESS_SECRET, valueFrom: {secretKeyRef: {name: web-env, key: EGRESS_WIRE_ACCESS_SECRET, optional: true}}}
+  # Claude Code in the sandbox (jarvis3 docs/CLAUDE-CODE.md): the UI pods' token for /internal/cc/*, and the JuiceFS
+  # metadata URL + password that web hands to burst hosts in their user data (they mount /var/lib/sbx/jfs)
+  - target: {kind: Deployment, name: web}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: JARVIS_CC_TOKEN, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_CC_TOKEN, optional: true}}}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: JARVIS_JUICEFS_META_URL, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_JUICEFS_META_URL, optional: true}}}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: JARVIS_JUICEFS_META_PASSWORD, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_JUICEFS_META_PASSWORD, optional: true}}}
