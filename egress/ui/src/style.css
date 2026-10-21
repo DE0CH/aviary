@@ -328,6 +328,8 @@ button { cursor: pointer; }
 .share-link { display: flex; align-items: center; gap: 8px; padding: 6px 0; color: var(--muted); font-size: 14px; }
 .share-link-when { flex: 1; }
 .link-btn.danger-text { color: var(--danger); font-size: 14px; }
+.shared-title { display: none; margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+@media (min-width: 900px) { .shared-title { display: block; } } /* phones: the title is in the top bar */
 .shared-note { display: flex; align-items: center; gap: 6px; margin: 0 0 18px; color: var(--muted); font-size: 14px; }
 .continue-bar { display: flex; flex-direction: column; align-items: center; }
 .continue-bar .primary-btn { max-width: 780px; }

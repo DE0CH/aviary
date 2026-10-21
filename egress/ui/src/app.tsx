@@ -31,7 +31,8 @@ export function App() {
   // a shared conversation (/s/<id>): read-only, with "continue conversation"
   const [shareId, setShareId] = useState<string | null>(shareRoute());
   const [shareTitle, setShareTitle] = useState("");
-  const [sharing, setSharing] = useState(false);
+  // the conversation whose share sheet is open (top bar on phones, the list's ⋯ menu everywhere)
+  const [sharing, setSharing] = useState<string | null>(null);
   // The open chat view; a chat created by its own first keystroke keeps its view (and the text being typed).
   const [viewKey, setViewKey] = useState(0);
   const [drawer, setDrawer] = useState(false);
@@ -109,6 +110,10 @@ export function App() {
         current={current}
         onOpen={open}
         onRenamed={(id, title) => setList((l) => l.map((c) => (c.id === id ? { ...c, title } : c)))}
+        onShare={(id) => {
+          setDrawer(false);
+          setSharing(id);
+        }}
         onDeleted={(id) => {
           setList((l) => l.filter((c) => c.id !== id));
           if (id === current) open(null);
@@ -124,7 +129,7 @@ export function App() {
           </button>
           <h1 class="topbar-title">{currentTitle || t().untitled}</h1>
           {current && !shareId && (
-            <button class="icon-btn" aria-label={t().share} title={t().share} onClick={() => setSharing(true)}>
+            <button class="icon-btn" aria-label={t().share} title={t().share} onClick={() => setSharing(current)}>
               <Icon name="share" />
             </button>
           )}
@@ -158,7 +163,7 @@ export function App() {
           />
         )}
       </main>
-      {sharing && current && <ShareSheet me={me} convId={current} onClose={() => setSharing(false)} />}
+      {sharing && <ShareSheet me={me} convId={sharing} onClose={() => setSharing(null)} />}
     </div>
   );
 }
@@ -199,6 +204,7 @@ function Sidebar(p: {
   onOpen: (id: string | null) => void;
   onRenamed: (id: string, title: string) => void;
   onDeleted: (id: string) => void;
+  onShare: (id: string) => void;
   onClose: () => void;
   onLocale: (l: Locale) => void;
 }) {
@@ -219,7 +225,7 @@ function Sidebar(p: {
       <div class="list" role="list">
         {p.list.length === 0 && <p class="list-empty">{s.noChats}</p>}
         {p.list.map((c) => (
-          <ConversationItem key={c.id} c={c} active={c.id === p.current} onOpen={() => p.onOpen(c.id)} onRenamed={p.onRenamed} onDeleted={p.onDeleted} />
+          <ConversationItem key={c.id} c={c} active={c.id === p.current} onOpen={() => p.onOpen(c.id)} onRenamed={p.onRenamed} onDeleted={p.onDeleted} onShare={() => p.onShare(c.id)} />
         ))}
       </div>
       <div class="sidebar-foot">
@@ -239,7 +245,14 @@ function Sidebar(p: {
   );
 }
 
-function ConversationItem(p: { c: ConversationSummary; active: boolean; onOpen: () => void; onRenamed: (id: string, t: string) => void; onDeleted: (id: string) => void }) {
+function ConversationItem(p: {
+  c: ConversationSummary;
+  active: boolean;
+  onOpen: () => void;
+  onRenamed: (id: string, t: string) => void;
+  onDeleted: (id: string) => void;
+  onShare: () => void;
+}) {
   const s = t();
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -288,6 +301,9 @@ function ConversationItem(p: { c: ConversationSummary; active: boolean; onOpen: 
       </button>
       {menu && (
         <div class="item-menu" role="menu">
+          <button role="menuitem" onClick={() => (setMenu(false), p.onShare())}>
+            {s.share}
+          </button>
           <button role="menuitem" onClick={() => (setTitle(p.c.title), setEditing(true))}>
             {s.rename}
           </button>

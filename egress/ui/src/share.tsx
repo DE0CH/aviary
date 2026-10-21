@@ -137,6 +137,7 @@ export function SharedView({ id, onTitle, onContinued }: { id: string; onTitle: 
     <div class="chat">
       <div class="scroller">
         <div class="thread">
+          <h1 class="shared-title">{conv.title || s.untitled}</h1>
           <p class="shared-note">
             <Icon name="lock" size={14} /> {s.sharedBy(conv.ownerName)}
           </p>

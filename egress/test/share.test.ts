@@ -2,7 +2,7 @@
 // jarvis-bash and sandbox agent, a fake claw, a fake S3 and a fake Kubernetes API.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -371,4 +371,17 @@ test("claw's session for a continued conversation: its own session id, rewritten
   assert.equal(out[0].workspace_root, "/w/NEW/work");
   assert.equal(out[0].fork, undefined);
   assert.match(out[1].message.blocks[0].text, /\/w\/NEW\/work\/a\.txt/);
+});
+
+test("the UI's words (Deyao, 2026-10-21): 分享 / 複製連結 / 繼續對話 and the one line; never fork, copy or 副本", () => {
+  const src = (f: string) => readFileSync(new URL(`../ui/src/${f}`, import.meta.url), "utf8");
+  const i18n = src("i18n.ts");
+  for (const s of ['share: "分享"', 'copyLink: "複製連結"', 'continueConversation: "繼續對話"', "已登入 ${product} 的同事可以查看這段對話（只讀）", 'continueConversation: "Continue conversation"']) {
+    assert.ok(i18n.includes(s), s);
+  }
+  // the continue/shared-page words (copying a link is the one place "copy" belongs: 複製連結 / Copy link)
+  const words = (i18n.match(/^\s+(share|shareLead|sharedLinks|stopSharing|sharedBy|continueConversation|continueFailed|shareGone|nothingToShare):.*$/gm) ?? []).join("\n");
+  assert.equal(words.split("\n").length, 18, words);
+  assert.doesNotMatch(words, /fork|副本|複本|拷貝|cop(y|ied)|複製/i);
+  assert.doesNotMatch(src("share.tsx"), /fork|副本/i);
 });

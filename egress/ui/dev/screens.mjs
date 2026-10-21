@@ -26,6 +26,7 @@ async function shoot(name, size, url, fn, opts = {}) {
   const ctx = await browser.newContext({ viewport: { width: sizes[size].width, height: sizes[size].height }, ...(size === "phone" ? { isMobile: sizes.phone.isMobile, hasTouch: true, deviceScaleFactor: 2 } : {}), colorScheme: opts.dark ? "dark" : "light", locale: "zh-HK" });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => console.error(`[${name}] page error: ${e.message}`));
+  page.setDefaultTimeout(90000);
   await page.goto(url);
   await page.waitForTimeout(500);
   if (fn) await fn(page);
@@ -45,11 +46,17 @@ const SHARED = "/s/MockShareColleague0001";
 async function shareScreens(port, tag, locale = {}) {
   const sv = await server(port, { MOCK_SEED: "1", MOCK_SPEED: "4", ...locale });
   const b = `http://127.0.0.1:${port}`;
+  try {
   for (const size of ["phone", "desktop"]) {
     await shoot(`share-sheet${tag}`, size, b + "/", async (p) => {
       await send(p, tag ? "Summarise today's coverage of financial services" : "總結今日香港傳媒對金融服務業的主要報道");
-      await p.waitForSelector(".file-chip.made", { timeout: 20000 });
-      await p.click(".topbar button[aria-label='" + (tag ? "Share" : "分享") + "']");
+      await p.waitForSelector(".file-chip.made", { timeout: 90000 });
+      // phones: the top bar's share button; wide screens (no top bar): the conversation's ⋯ menu in the list
+      if (size === "phone") await p.click(".topbar button[aria-label='" + (tag ? "Share" : "分享") + "']");
+      else {
+        await p.click(".item.active .item-more");
+        await p.click(".item-menu button:has-text('" + (tag ? "Share" : "分享") + "')");
+      }
       await p.click(".sheet .primary-btn");
       await p.waitForSelector(".share-link");
       await p.waitForTimeout(200);
@@ -73,7 +80,9 @@ async function shareScreens(port, tag, locale = {}) {
       await shoot("share-gone", size, b + "/s/RevokedLinkRevokedLink");
     }
   }
-  sv.kill();
+  } finally {
+    sv.kill();
+  }
 }
 if (only === "share") {
   await shareScreens(5211, "");
