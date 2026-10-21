@@ -3,6 +3,7 @@
 import { loadConfig } from "../common/config.ts";
 import { connect, Listener } from "../common/db.ts";
 import { log } from "../common/log.ts";
+import { startPresence } from "../common/ops.ts";
 import { createToolsServer } from "./server.ts";
 import type { Deps } from "./types.ts";
 import { startRefresh, Upstream } from "./upstream.ts";
@@ -28,14 +29,18 @@ export async function main(): Promise<void> {
   const { server, drain } = createToolsServer(deps, upstreams);
   const port = Number(process.env.PORT || 8080);
   server.listen(port, () => log("tools listening", { port }));
+  let draining = false;
+  const stopPresence = startPresence(db, "tools", process.env.HOSTNAME || "tools", () => ({ draining }));
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
     log("tools draining");
+    draining = true;
     refresh.stop();
     // a confirmation can hold a call for 15 minutes; the pod's grace period bounds this
     await drain(Number(process.env.JARVIS_DRAIN_MS || 16 * 60_000));
+    await stopPresence();
     await listener.close();
     await db.end();
     process.exit(0);

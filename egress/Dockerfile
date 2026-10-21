@@ -36,6 +36,7 @@ LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       jarvis3.chat-commit="${CHAT_COMMIT}" \
       jarvis3.claw="${CLAW_URL}"
 ENV NODE_ENV=production \
+    JARVIS_COMMIT=${CHAT_COMMIT} \
     PORT=8080 \
     JARVIS_CONFIG=/etc/jarvis/config.json \
     JARVIS_UI_DIR=/app/ui-dist \

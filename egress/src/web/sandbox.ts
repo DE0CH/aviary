@@ -4,7 +4,8 @@
 // from the configured provider (provider.ts) and are disposable.
 import { randomUUID } from "node:crypto";
 import { tx } from "../common/db.ts";
-import { logError, log } from "../common/log.ts";
+import { logError, log, redact } from "../common/log.ts";
+import { opsEvent } from "../common/ops.ts";
 import { newToken, sha256hex } from "../common/tokens.ts";
 import { AgentClient } from "./agent.ts";
 import type { WebDeps } from "./ctx.ts";
@@ -94,6 +95,7 @@ export class SandboxManager {
   }
 
   async #ensure(conv: string): Promise<LiveSandbox> {
+    const t0 = Date.now();
     const deadline = Date.now() + START_TIMEOUT_MS;
     const poolDeadline = Date.now() + POOL_WAIT_MS;
     while (Date.now() < deadline) {
@@ -122,13 +124,17 @@ export class SandboxManager {
       }
       const created = await this.#claimSlot(conv);
       if (created === "full") {
-        if (Date.now() > poolDeadline) throw new PoolFullError("the sandbox pool is full, try again in a minute");
+        if (Date.now() > poolDeadline) {
+          void opsEvent(this.#deps.db, "sandbox_start", { ok: false, ms: Date.now() - t0, conversationId: conv, detail: { reason: "pool full", provider: this.provider.kind } });
+          throw new PoolFullError("the sandbox pool is full, try again in a minute");
+        }
         await sleep(2000);
         continue;
       }
       if (created === "raced") continue;
-      return await this.#start(created);
+      return await this.#start(created, t0);
     }
+    void opsEvent(this.#deps.db, "sandbox_start", { ok: false, ms: Date.now() - t0, conversationId: conv, detail: { reason: "did not start in time", provider: this.provider.kind } });
     throw new Error("the sandbox did not start in time");
   }
 
@@ -177,7 +183,8 @@ export class SandboxManager {
 
   readonly #egressTokens = new Map<string, string>();
 
-  async #start(row: SandboxRow): Promise<LiveSandbox> {
+  /** `t0`: when the caller started asking (the monitor's allocation latency includes waiting for the pool). */
+  async #start(row: SandboxRow, t0 = Date.now()): Promise<LiveSandbox> {
     const egressToken = this.#egressTokens.get(row.id)!;
     this.#egressTokens.delete(row.id);
     try {
@@ -194,8 +201,23 @@ export class SandboxManager {
       if (!rows[0]) throw new Error("the sandbox was released while it started");
       await this.#keepAlive(rows[0], true);
       log("sandbox ready", { sandbox: row.id, conversation: row.conversation_id, pod: row.pod, provider: this.provider.kind });
+      void opsEvent(this.#deps.db, "sandbox_start", {
+        ok: true,
+        ms: Date.now() - t0,
+        sandboxId: row.id,
+        conversationId: row.conversation_id,
+        host: (rows[0] as SandboxRow & { host?: string | null }).host ?? null,
+        detail: { provider: this.provider.kind, startMs: Date.now() - new Date(row.created_at).getTime() },
+      });
       return this.#live(rows[0])!;
     } catch (e) {
+      void opsEvent(this.#deps.db, "sandbox_start", {
+        ok: false,
+        ms: Date.now() - t0,
+        sandboxId: row.id,
+        conversationId: row.conversation_id,
+        detail: { reason: e instanceof PoolFullError ? "pool full" : "start failed", error: redact((e as Error).message).slice(0, 300), provider: this.provider.kind },
+      });
       await this.#forget(row, `start failed: ${(e as Error).message}`);
       throw e;
     }

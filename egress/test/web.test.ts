@@ -457,3 +457,67 @@ test("the stream resumes from the greater of ?after and Last-Event-ID", async ()
   assert.equal((await read(0, mid))[0], ids[ids.indexOf(mid) + 1]);
   assert.equal((await read(ids[0]!, mid))[0], ids[ids.indexOf(mid) + 1]);
 });
+
+test("admin monitor: admins only (404 for staff: API, page and bundle), a snapshot of every section", async () => {
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(deps.uiDir, { recursive: true });
+  writeFileSync(join(deps.uiDir, "admin.html"), "<!doctype html><title>Jarvis 3 monitor</title>");
+  writeFileSync(join(deps.uiDir, "admin-abc.js"), "/* admin */");
+  for (const p of ["/api/admin/monitor", "/admin/monitor", "/admin", "/admin-abc.js"]) {
+    const r = await call(B, "GET", p);
+    assert.equal(r.status, 404, p);
+    assert.doesNotMatch(r.text, /Jarvis/);
+    assert.equal((await call(null, "GET", p)).status, 401, p);
+    assert.equal((await call(STRANGER, "GET", p)).status, 403, p);
+  }
+  const page = await call(A, "GET", "/admin/monitor");
+  assert.equal(page.status, 200);
+  assert.match(page.text, /Jarvis 3 monitor/);
+  assert.equal((await call(A, "GET", "/admin-abc.js")).status, 200);
+
+  const conv = await newConversation();
+  await runTurn(conv, "hello");
+  await web.app.sandboxes.ensure(conv);
+  await pg.db.query(
+    "insert into egress_log (conversation_id, kind, host, decision) values ($1, 'connect', 'evil.example', 'deny:not on the allowlist'), ($1, 'mirror', 'mirror', 'allow:cache'), ($1, 'mirror', 'mirror', 'allow')",
+    [conv],
+  );
+  await pg.db.query("insert into tool_calls (conversation_id, user_email, tool, ok, ms) values ($1, $2, 'web_search', true, 100), ($1, $2, 'web_search', false, 300)", [conv, A]);
+  // presence of another role, with an error line
+  await pg.db.query("insert into kv (key, value) values ('presence:egress:egress-1', $1) on conflict (key) do update set value = excluded.value", [
+    JSON.stringify({ role: "egress", replica: "egress-1", commit: "abc", startedAt: new Date().toISOString(), at: new Date().toISOString(), errors: [{ t: new Date().toISOString(), at: "x", error: "boom" }] }),
+  ]);
+  const r = await call(A, "GET", "/api/admin/monitor?tz=Asia/Hong_Kong");
+  assert.equal(r.status, 200, r.text);
+  const d = r.json;
+  assert.deepEqual(d.errors, {});
+  assert.equal(d.tz, "Asia/Hong_Kong");
+  assert.equal(d.provider, "kubernetes");
+  const sbx = d.sandboxes.list.find((s: any) => s.conversationId === conv);
+  assert.ok(sbx, "the live sandbox is listed");
+  assert.equal(sbx.owner, A);
+  assert.equal(sbx.provider?.state, "Running");
+  assert.deepEqual([sbx.provider.host, sbx.provider.cpuUsed, sbx.provider.cpuLimit, sbx.provider.memUsed], ["node-1", 0.25, 1, 100 * 1024 ** 2]);
+  assert.deepEqual(d.hosts.list.map((h: any) => [h.name, h.cpus, h.cpuUsed, h.memTotal, h.reachable]), [["node-1", 4, 1.5, 8 * 1024 ** 3, true]]);
+  assert.ok(d.hosts.list[0].sandboxes >= 1);
+  assert.ok(d.hosts.notes.some((n: string) => /runtime class: .*404/.test(n)));
+  assert.ok(d.sandboxes.starts24h.ok >= 1 && d.sandboxes.starts24h.p50Ms != null);
+  assert.equal(d.sandboxes.pool.max, 2);
+  assert.ok(d.load.perHour.length === 24 && d.load.turnsToday >= 1 && d.load.usersNow >= 1);
+  assert.ok(d.models.byModel.some((m: any) => m.model === "anthropic/claude-opus-5.5" && m.in7d >= 10));
+  const ws = d.tools.byTool.find((t: any) => t.tool === "web_search");
+  assert.deepEqual([ws.service, ws.calls, ws.errors], ["Exa", 2, 1]);
+  assert.equal(d.tools.pendingConfirmations, undefined);
+  assert.deepEqual(d.egress.deniedTop[0], { ...d.egress.deniedTop[0], host: "evil.example", why: "not on the allowlist", n: 1 });
+  assert.equal(d.egress.mirror.rate, 0.5);
+  assert.equal(d.egress.perMinute.length, 60);
+  const roles = Object.fromEntries(d.health.roles.map((x: any) => [x.role, x]));
+  assert.ok(roles.web.replicas.some((x: any) => x.replica === "web_1" && x.up));
+  assert.equal(roles.egress.replicas[0].commit, "abc");
+  assert.ok(d.health.errorLines.some((e: any) => e.error === "boom" && e.role === "egress"));
+  assert.ok(d.health.postgres.ms >= 0 && d.health.postgres.total >= 1);
+  assert.equal(d.health.s3.ok, true);
+  assert.equal(d.health.leaders[0].name, "janitor");
+  // no message contents anywhere in the snapshot
+  assert.doesNotMatch(r.text, /hello/);
+});

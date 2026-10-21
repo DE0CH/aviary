@@ -11,7 +11,7 @@
 //   and keep-alive tick (POST /sandboxes/{id}/timeout), and kills it on release (DELETE).
 // - The janitor's orphan check lists this instance's sandboxes by metadata `jarvis` = config.sandbox.e2b.instance.
 import { AgentClient } from "./agent.ts";
-import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
+import type { AgentEndpoint, ListedSandbox, ProviderStats, SandboxProvider } from "./provider.ts";
 import type { SandboxRow } from "./sandbox.ts";
 import { sandboxEnv } from "./sandbox-k8s.ts";
 
@@ -134,6 +134,18 @@ export class E2bProvider implements SandboxProvider {
       .filter((s) => s.metadata?.jarvis === this.#o.instance && s.state !== "paused")
       .map((s) => ({ name: s.sandboxID, createdAt: s.startedAt ? Date.parse(s.startedAt) : NaN }));
   }
+  /** The admin monitor: E2B reports no per-sandbox use here, only which sandboxes run. */
+  async stats(): Promise<ProviderStats> {
+    const list = await this.list();
+    return {
+      provider: this.kind,
+      hosts: [],
+      sandboxes: list.map((s) => ({ name: s.name, host: "e2b", state: "running", cpuUsed: null, cpuLimit: null, memUsed: null, memLimit: null, restarts: null })),
+      capacity: null,
+      notes: ["e2b: no host or per-sandbox metrics"],
+    };
+  }
+
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

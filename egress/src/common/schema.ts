@@ -71,4 +71,10 @@ create table vm_events (id bigserial primary key, at timestamptz not null defaul
   host text, sandbox_id uuid, data jsonb not null default '{}');
 create index vm_events_at on vm_events (at);
 `,
+  // the admin monitor (docs/CHAT.md, "Admin monitor"): sandbox starts (allocation latency) and failures with their reason
+  `
+create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
+  ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
+create index ops_events_kind_at on ops_events (kind, at);
+`,
 ];

@@ -8,6 +8,7 @@ import { AccessVerifier } from "../common/access.ts";
 import { expandEnv, loadConfig, requireEnv, type ChatConfig } from "../common/config.ts";
 import { connect, Listener, migrate, type Db } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
+import { startPresence } from "../common/ops.ts";
 import { S3BlobStore } from "../common/s3.ts";
 import { WebApp } from "./app.ts";
 import { replicaName, type WebDeps } from "./ctx.ts";
@@ -38,6 +39,7 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
   server.keepAliveTimeout = 65_000;
   await new Promise<void>((r) => server.listen(port, r));
   const stopBeat = startHeartbeat(deps);
+  const stopPresence = startPresence(deps.db, "web", deps.replica, () => ({ turns: runner.active, streams: app.streamCount, draining: runner.draining }));
   const janitor = startJanitor(deps, sandboxes, opts.janitorMs);
   const scaler = deps.sandboxProvider instanceof VmProvider ? startVmScaler(deps.dbUrl, deps.sandboxProvider.controller, opts.scalerMs) : null;
   const addr = server.address();
@@ -48,11 +50,20 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
       await janitor.stop();
       await scaler?.stop();
       stopBeat();
+      await stopPresence();
       app.closeStreams();
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
     },
   };
+}
+
+function inCluster(): K8sClient | undefined {
+  try {
+    return process.env.KUBERNETES_SERVICE_HOST ? K8sClient.inCluster() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sandboxProvider(config: ChatConfig, namespace: string, db: Db): SandboxProvider {
@@ -109,6 +120,7 @@ export async function main(): Promise<void> {
     drainSeconds: Number(process.env.JARVIS_DRAIN_SECONDS || 1770),
   };
   deps.sandboxProvider = sandboxProvider(config, namespace, deps.db);
+  deps.k8s = inCluster();
   const web = await startWeb(deps, Number(process.env.PORT || 8080));
   log("web listening", { port: web.port, replica: deps.replica });
   let stopping = false;

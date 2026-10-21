@@ -13,6 +13,7 @@ import { bearerOf, newToken, sha256hex, turnForToken } from "../common/tokens.ts
 import { blobKey, type WebDeps } from "./ctx.ts";
 import { appendEvent, publicEvent, type EventRow } from "./events.ts";
 import { contentType, liveFiles, saveUpload } from "./files.ts";
+import { Monitor } from "./monitor.ts";
 import { bad, HttpError, notFound, readJson, Router, sendHtml, sendJson, uuidParam } from "./http.ts";
 import type { SandboxManager } from "./sandbox.ts";
 import type { TurnRunner } from "./turns.ts";
@@ -47,11 +48,13 @@ export class WebApp {
   readonly #seen = new Map<string, number>();
   readonly #streams = new Set<ServerResponse>();
   readonly #warming = new Set<string>();
+  readonly #monitor: Monitor;
 
   constructor(deps: WebDeps, sandboxes: SandboxManager, runner: TurnRunner) {
     this.deps = deps;
     this.sandboxes = sandboxes;
     this.runner = runner;
+    this.#monitor = new Monitor({ deps, runner, streamCount: () => this.#streams.size });
     const r = this.#router;
     r.add("GET", "/api/me", (q, s, p, c) => this.#me(s, c));
     r.add("GET", "/api/conversations", (q, s, p, c) => this.#list(s, c));
@@ -69,6 +72,12 @@ export class WebApp {
     r.add("GET", "/api/conversations/:id/files/*", (q, s, p, c) => this.#download(s, p, c));
     r.add("GET", "/api/admin/usage", (q, s, p, c) => this.#usage(q, s, c));
     r.add("GET", "/api/admin/egress", (q, s, p, c) => this.#egress(s, c));
+    r.add("GET", "/api/admin/monitor", (q, s, p, c) => this.#monitorSnapshot(q, s, c));
+  }
+
+  /** Open SSE streams on this replica (the admin monitor). */
+  get streamCount(): number {
+    return this.#streams.size;
   }
 
   /** Ends open SSE streams (clients reconnect to another replica) when this one drains. */
@@ -99,6 +108,8 @@ export class WebApp {
         return await m.h(req, res, m.params, { deps: this.deps, sandboxes: this.sandboxes, runner: this.runner, caller: caller.caller });
       }
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
+      // the admin pages and their bundle exist only for admins (staff get 404, never "Jarvis 3")
+      if (!caller.caller.isAdmin && (path === "/admin" || path.startsWith("/admin/") || /^\/admin-[^/]*$/.test(path))) throw notFound();
       return await this.#static(path, res);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
@@ -425,6 +436,12 @@ export class WebApp {
     sendJson(res, 200, { from, to, users: rows });
   }
 
+  async #monitorSnapshot(req: IncomingMessage, res: ServerResponse, c: Ctx) {
+    if (!c.caller.isAdmin) throw notFound();
+    const tz = new URL(req.url || "/", "http://x").searchParams.get("tz") || "UTC";
+    sendJson(res, 200, await this.#monitor.snapshot(tz));
+  }
+
   async #egress(res: ServerResponse, c: Ctx) {
     if (!c.caller.isAdmin) throw notFound();
     const { rows } = await c.deps.db.query(
@@ -485,6 +502,10 @@ export class WebApp {
     if (rel === "/manifest.webmanifest") return await this.#manifest(res);
     if (rel !== "/" && (await serve(this.deps.uiDir, rel.slice(1), rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache"))) return;
     if (rel.startsWith("/assets/") || extname(rel)) throw notFound();
+    if (rel === "/admin" || rel.startsWith("/admin/")) {
+      if (await serve(this.deps.uiDir, "admin.html", "no-cache")) return;
+      throw notFound();
+    }
     if (await serve(this.deps.uiDir, "index.html", "no-cache")) return;
     sendHtml(res, 200, `<!doctype html><title>${esc(this.deps.config.product.name)}</title><p>The app is not installed on this server.</p>`);
   }

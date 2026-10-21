@@ -8,9 +8,12 @@ export type Tx = pg.PoolClient;
 
 const MIGRATION_LOCK = 4_242_001;
 
+/** Names this process's connections in pg_stat_activity (the admin monitor: connections per role, lock holders). */
+export const appName = (): string => `jarvis-${process.env.JARVIS_ROLE || "chat"}:${process.env.HOSTNAME || "local"}`.slice(0, 63);
+
 export function connect(url = process.env.DATABASE_URL): Db {
   if (!url) throw new Error("DATABASE_URL is not set");
-  const pool = new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX || 10), idleTimeoutMillis: 30_000 });
+  const pool = new pg.Pool({ connectionString: url, application_name: appName(), max: Number(process.env.PG_POOL_MAX || 10), idleTimeoutMillis: 30_000 });
   pool.on("error", (e) => console.error(JSON.stringify({ at: "pg pool", error: e.message })));
   return pool;
 }
@@ -72,7 +75,7 @@ export class Listener {
 
   async #connect(): Promise<void> {
     if (this.#closed) return;
-    const c = new pg.Client({ connectionString: this.url });
+    const c = new pg.Client({ connectionString: this.url, application_name: appName() });
     c.on("notification", (n) => {
       for (const h of this.#handlers.get(n.channel) ?? []) h(n.payload ?? "");
     });
@@ -133,7 +136,7 @@ export function lead(url: string | undefined, key: number, run: () => Promise<vo
     if (stopped) return;
     try {
       if (!client) {
-        const c = new pg.Client({ connectionString: url });
+        const c = new pg.Client({ connectionString: url, application_name: appName() });
         c.on("error", () => {
           if (client === c) client = null;
         });

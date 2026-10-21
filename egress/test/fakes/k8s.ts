@@ -6,7 +6,7 @@ import { createServer as netServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { K8sApi, Pod } from "../../src/web/k8s.ts";
+import { K8sError, type K8sApi, type Pod } from "../../src/web/k8s.ts";
 
 const AGENT = fileURLToPath(new URL("../../sandbox/agent.mjs", import.meta.url));
 
@@ -49,7 +49,8 @@ export class FakeK8s implements K8sApi {
     if (!p) return this.ghosts.get(name) ?? null;
     return {
       metadata: { name, labels: p.manifest.metadata.labels, creationTimestamp: p.created },
-      status: { phase: "Running", podIP: "127.0.0.1" },
+      spec: { ...p.manifest.spec, nodeName: "node-1" },
+      status: { phase: "Running", podIP: "127.0.0.1", containerStatuses: [{ restartCount: 0, state: { running: {} } }] },
     };
   }
   async deletePod(ns: string, name: string): Promise<void> {
@@ -65,6 +66,15 @@ export class FakeK8s implements K8sApi {
     for (const name of this.pods.keys()) out.push((await this.getPod("", name))!);
     for (const g of this.ghosts.values()) out.push(g);
     return out;
+  }
+  /** Read-only API for the admin monitor: one node, metrics-server numbers, no RuntimeClass (404). */
+  async getJson(path: string): Promise<any> {
+    if (/^\/apis\/metrics\.k8s\.io\/v1beta1\/namespaces\/[^/]+\/pods$/.test(path))
+      return { items: [...this.pods.keys()].map((name) => ({ metadata: { name }, containers: [{ name: "sandbox", usage: { cpu: "250000000n", memory: "100Mi" } }] })) };
+    if (path === "/api/v1/nodes")
+      return { items: [{ metadata: { name: "node-1", creationTimestamp: "2026-10-01T00:00:00Z" }, status: { allocatable: { cpu: "4", memory: "8Gi" }, conditions: [{ type: "Ready", status: "True" }], nodeInfo: { kubeletVersion: "v1.33.1+k3s1" } } }, { metadata: { name: "other" }, status: {} }] };
+    if (path === "/apis/metrics.k8s.io/v1beta1/nodes") return { items: [{ metadata: { name: "node-1" }, usage: { cpu: "1500m", memory: "2Gi" } }] };
+    throw new K8sError(404, `k8s GET ${path}: 404`);
   }
   agentUrlFor = (pod: Pod): string => `http://127.0.0.1:${this.pods.get(pod.metadata.name)?.port ?? 1}`;
   workOf(name: string): string {
