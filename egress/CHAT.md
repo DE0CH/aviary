@@ -107,7 +107,8 @@ No message contents: owners, ids, hosts, counts, costs and timings only.
 - **No secrets in a sandbox.** Its env has only the proxy settings `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/
   `https_proxy` `=http://sbx:<egress token>@<egress>:3128` (`NO_PROXY` empty), the pip/npm mirror settings, its exec
   token (removed before any process starts) and Claude Code's settings (the egress token again as
-  `ANTHROPIC_AUTH_TOKEN`, the model ids, the managed CLAUDE.md and MCP config). The model key stays in egress.
+  `ANTHROPIC_AUTH_TOKEN`, the model ids, the managed CLAUDE.md and MCP config, and
+  `CLAUDE_CODE_ATTACHMENTS_BY_PATH=1`, which turns on Claude Code's SendUserFile: docs/CLAUDE-CODE.md "Sent files"). The model key stays in egress.
 - Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"); on `vm` a 5 GiB scratch for
   everything outside `/workspace` and a 1 GiB / 1,000-file quota on `/workspace` (docs/CLAUDE-CODE.md).
 - **Installing software:** `pip install` (venv `/opt/py`, first on PATH, through the egress PyPI mirror), `npm install
