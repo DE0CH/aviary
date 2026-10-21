@@ -62,10 +62,10 @@ State: Postgres (conversations, messages, events, claw session files, file metad
   it before the command runs. A turn that never runs bash never gets a sandbox; typing makes none either. There is at
   most one live sandbox per conversation (unique index `sandboxes_one_live`).
 - **Typing only readies a host:** the UI calls `POST /api/typing` (debounced, at most every 30 s, with the open
-  conversation's id if any). If that conversation has a live sandbox it is kept active; otherwise it is a signal
-  (kv `sandbox_demand:<email>`, counted for 2 minutes) on which the vm scaler starts an AWS host at once when no host
-  has a free slot (docs/SANDBOX-VM.md). No conversation row is made for typing.
-- **Kept while active:** installs, caches and background processes carry over between turns (and across a live
+  conversation's id if any). In a conversation without a live sandbox (or a new chat) it is a signal (kv
+  `sandbox_demand:<email>`, counted for 2 minutes) on which the vm scaler starts an AWS host at once when no host has a
+  free slot (docs/SANDBOX-VM.md). It never touches a sandbox, and no conversation row is made for typing.
+- **Kept while used:** installs, caches and background processes carry over between turns (and across a live
   migration on provider `vm`).
 - **Installing software:** `pip install` (venv `/opt/py`, first on PATH, through the egress PyPI mirror), `npm install
   -g` (prefix `~/.npm-global`, npm mirror), installers into `~/.local/bin` / `~/.cargo/bin` (on PATH, e.g. uv's or
@@ -73,8 +73,11 @@ State: Postgres (conversations, messages, events, claw session files, file metad
   that goes through sudo and fetches the package lists on the first install) only on provider `vm`, where uid 1000
   has passwordless sudo and root exists only inside gVisor (docs/SANDBOX-VM.md, "Installing packages"). Elsewhere
   `apt-get install` says root is not available. The model is told this in the system prompt (below).
-- **Released** after `sandbox.idleMinutes` (default 30) with no turn and no typing, and always at
-  `sandbox.maxLifetimeHours` (default 8). Before deleting the pod the janitor pulls the sandbox's changed files and
+- **Released** after `sandbox.idleMinutes` (default 30) without use, and always at
+  `sandbox.maxLifetimeHours` (default 8). Use = a bash command starting or ending in it (with its files synced in and
+  out); its idle time (`sandboxes.last_active_at`, the monitor's "idle") counts from the last one. Typing and turns
+  that run no bash are not use; a sandbox is never released while its conversation has a turn going (a command still
+  running counts as in use). Before deleting the pod the janitor pulls the sandbox's changed files and
   saves them (files are also synced after every bash command, so this only catches what background processes wrote).
 - **Also released:** at once when the conversation is deleted (`DELETE`; the janitor catches a replica that died
   first), and by the janitor when its conversation never had a turn 5 minutes after it was made (a leftover; nothing
