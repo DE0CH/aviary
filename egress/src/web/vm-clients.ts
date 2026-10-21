@@ -25,6 +25,9 @@ export interface HostInfo {
   gateway?: boolean;
   wgAddress: string;
   wgPublicKey: string;
+  /** the host's WireGuard port and global IPv6 address: the gateway dials AWS hosts there (they also dial it) */
+  wgPort?: number;
+  publicIpv6?: string | null;
   peers: { publicKey: string; endpoint: string; allowedIps: string[]; latestHandshake: number }[];
   egressTargets: string[];
   memTotal: number;

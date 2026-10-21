@@ -200,6 +200,12 @@ export class HostNet {
     await this.applyHostRules();
   }
 
+  /** This host's global IPv6 address on its public interface (AWS hosts: the gateway dials it), or null. */
+  async publicIpv6(): Promise<string | null> {
+    const out = await run("ip", ["-6", "-o", "addr", "show", "dev", this.publicIf, "scope", "global"]);
+    return /inet6 ([0-9a-f:]+)\//.exec(out.stdout ?? "")?.[1] ?? null;
+  }
+
   async applyHostRules(): Promise<void> {
     await nftApply(hostRules(this.cfg, this.publicIf, this.privateIf, this.egressTargets));
   }

@@ -54,6 +54,8 @@ export interface HostRow {
   cpus: number | null;
   info: {
     gateway?: boolean;
+    publicIpv6?: string | null;
+    wgPort?: number | null;
     sandboxes?: HostSandbox[];
     cpuFeatures?: string;
     images?: string[];
@@ -118,6 +120,19 @@ interface Slot {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The hub's (gateway's) WireGuard peers: each AWS host with its overlay /32 and its sandboxes' /32s, and its IPv6
+ * endpoint when known, so the hub can reach a host first (e.g. a new gateway taking over the hub's key: the hosts roam
+ * to it on its first handshake).
+ */
+export function hubPeers(aws: HostRow[], byHost: Map<string, string[]>): { publicKey: string; endpoint?: string; allowedIps: string[] }[] {
+  return aws.map((h) => ({
+    publicKey: h.wg_public_key!,
+    ...(h.info?.publicIpv6 ? { endpoint: `[${h.info.publicIpv6}]:${h.info.wgPort ?? 51820}` } : {}),
+    allowedIps: [`${h.wg_ip}/32`, ...(byHost.get(h.name) ?? [])],
+  }));
+}
 
 export class VmController {
   readonly #d: VmDeps;
@@ -336,8 +351,7 @@ export class VmController {
     const { rows } = await this.#d.db.query<{ host: string; ip: string }>("select host, ip from sandboxes where status <> 'gone' and ip is not null and host is not null");
     const byHost = new Map<string, string[]>();
     for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), `${r.ip}/32`]);
-    const hubPeers = aws.map((h) => ({ publicKey: h.wg_public_key!, allowedIps: [`${h.wg_ip}/32`, ...(byHost.get(h.name) ?? [])] }));
-    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers }, 10_000);
+    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers(aws, byHost) }, 10_000);
     // AWS hosts reach each other directly (VPC addresses) for migrations; the hub peer they keep themselves
     for (const h of aws.filter((x) => x.status !== "booting" && this.#fresh(x))) {
       const others = aws.filter((o) => o.name !== h.name && o.private_ip).map((o) => ({ publicKey: o.wg_public_key!, endpoint: `${o.private_ip}:51820`, allowedIps: [`${o.wg_ip}/32`] }));
@@ -421,8 +435,7 @@ export class VmController {
     const { rows } = await c.query<{ host: string; ip: string }>("select host, ip from sandboxes where status <> 'gone' and ip is not null and host is not null");
     const byHost = new Map<string, string[]>();
     for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), `${r.ip}/32`]);
-    const peers = aws.map((h) => ({ publicKey: h.wg_public_key!, allowedIps: [`${h.wg_ip}/32`, ...(byHost.get(h.name) ?? [])] }));
-    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers }, 10_000);
+    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers(aws, byHost) }, 10_000);
   }
 
   /** May this sandbox move now? Never while its conversation has a turn going; across clouds only when idle. */
@@ -470,7 +483,7 @@ export class VmController {
               info.reserveMemory,
               info.cpus,
               info.wgPublicKey,
-              JSON.stringify({ gateway: !!info.gateway, sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
+              JSON.stringify({ gateway: !!info.gateway, publicIpv6: info.publicIpv6 ?? null, wgPort: info.wgPort ?? null, sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
                 memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets }),
               missing.length ? "retiring" : status,
             ],

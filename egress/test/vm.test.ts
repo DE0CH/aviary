@@ -7,7 +7,7 @@ import { after, before, test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { parseConfig } from "../src/common/config.ts";
 import type { Db } from "../src/common/db.ts";
-import { freeAddress, parseBytes, VmController, VmProvider, type HostRow } from "../src/web/sandbox-vm.ts";
+import { freeAddress, hubPeers, parseBytes, VmController, VmProvider, type HostRow } from "../src/web/sandbox-vm.ts";
 import { DEMAND_WINDOW_S, noteSandboxDemand, type SandboxRow } from "../src/web/sandbox.ts";
 import { parseInstances, SandboxdError, wgKeyPair, type Ec2Api, type Ec2Instance, type HostInfo, type SandboxdApi } from "../src/web/vm-clients.ts";
 import { sandboxRules, hostRules } from "../sandboxd/src/net.ts";
@@ -342,6 +342,15 @@ test("typing starts an AWS host only when no slot is free; an empty host goes on
   await ctl.pass();
   assert.equal(ec2.launched.length, 1);
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
+});
+
+test("hub peers: each AWS host's /32s, and its IPv6 endpoint when it reports one (the gateway can dial it)", () => {
+  const h = (name: string, info: any) => ({ name, wg_public_key: `k-${name}`, wg_ip: name === "a" ? "10.201.0.10" : "10.201.0.11", info }) as unknown as HostRow;
+  const peers = hubPeers([h("a", { publicIpv6: "2a05:d014::5", wgPort: 51820 }), h("b", null)], new Map([["a", ["10.200.0.10/32"]]]));
+  assert.deepEqual(peers, [
+    { publicKey: "k-a", endpoint: "[2a05:d014::5]:51820", allowedIps: ["10.201.0.10/32", "10.200.0.10/32"] },
+    { publicKey: "k-b", allowedIps: ["10.201.0.11/32"] },
+  ]);
 });
 
 test("slots: a sandbox made with a bigger limit takes more of them; a host short of memory takes no new one", async () => {

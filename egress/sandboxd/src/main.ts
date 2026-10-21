@@ -94,6 +94,8 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
         gateway: !!cfg.gateway,
         wgAddress: cfg.wgAddress,
         wgPublicKey: net.publicKey,
+        wgPort: cfg.wgPort,
+        publicIpv6: await net.publicIpv6().catch(() => null),
         peers: await net.peers(),
         egressTargets: net.egressTargets,
         memTotal: mem.total,
