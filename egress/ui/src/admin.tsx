@@ -110,7 +110,7 @@ function Card(p: { title: string; id: string; aside?: Any; error?: string; child
 }
 
 function Table(p: { head: (string | [string, "r"])[]; rows: Any[][]; empty?: string }) {
-  if (!p.rows.length) return <p class="empty">{p.empty ?? "Nothing."}</p>;
+  if (!p.rows.length) return <p class="m-empty">{p.empty ?? "Nothing."}</p>;
   return (
     <div class="table-wrap">
       <table>
@@ -210,7 +210,7 @@ function Sandboxes({ d }: { d: Any }) {
           ))}
         </ul>
       ) : (
-        <p class="empty">No live sandboxes.</p>
+        <p class="m-empty">No live sandboxes.</p>
       )}
       {s.unowned?.length > 0 && <p class="note is-warn">At the provider without a live row (the janitor removes them): {s.unowned.map((u: Any) => u.name).join(", ")}</p>}
       <h3>Recent allocation failures</h3>
@@ -273,7 +273,7 @@ function Hosts({ d }: { d: Any }) {
           ))}
         </ul>
       ) : (
-        <p class="empty">No hosts reported.</p>
+        <p class="m-empty">No hosts reported.</p>
       )}
       {h.notes.length > 0 && <p class="note">{h.notes.join(" · ")}</p>}
       {x?.scaler && (
@@ -484,7 +484,7 @@ function Health({ d }: { d: Any }) {
           ))}
         </ul>
       ) : (
-        <p class="empty">No errors since the replicas started.</p>
+        <p class="m-empty">No errors since the replicas started.</p>
       )}
     </Card>
   );
@@ -532,8 +532,8 @@ function Monitor() {
     };
   }, []);
 
-  if (status === 404) return <main class="mon"><p class="empty">Not found.</p></main>;
-  if (!d) return <main class="mon"><p class="empty">{err ? `Could not load: ${err}` : "Loading…"}</p></main>;
+  if (status === 404) return <main class="mon"><p class="m-empty">Not found.</p></main>;
+  if (!d) return <main class="mon"><p class="m-empty">{err ? `Could not load: ${err}` : "Loading…"}</p></main>;
   const s = d.sandboxes;
   const l = d.load;
   const age = Date.now() - Date.parse(d.at);
