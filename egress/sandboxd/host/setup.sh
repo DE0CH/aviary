@@ -83,17 +83,18 @@ Options=size=100%,mode=700
 WantedBy=multi-user.target
 EOF
 
-# Memory isolation (docs/SANDBOX-VM.md "Capacity"): the host's daemons (sandboxd and what it runs outside the
-# sandboxes: runsc CLI calls, image pulls) live in sbx-host.slice with a reservation and a hard cap, and the sandboxes'
-# parent cgroup /sbx is capped at RAM minus the host reserve, so neither side can starve the other. Each sandbox's
-# own cgroup (/sbx/<name>: sentry, gofer and the sandbox's memory) has the sandbox's limit.
-cat > /etc/systemd/system/sbx-host.slice <<'EOF'
-[Unit]
-Description=sandbox host daemons (sandboxd)
+# Memory isolation (docs/SANDBOX-VM.md "Capacity"): sandboxd's unit (sandboxd, the runsc CLI calls and image pulls it
+# runs, and runsc's per-sandbox runsc-fd-parking sidecars, ~8 KiB each) has a reservation and a hard cap, and the
+# sandboxes' parent cgroup /sbx is capped at RAM minus the host reserve, so neither side can starve the other. Each
+# sandbox's own cgroup (/sbx/<name>: sentry, gofer and the sandbox's memory) has the sandbox's limit. The limits sit on
+# the unit itself, not a slice of its own: the fd-parking sidecars stay in the unit's cgroup across restarts
+# (KillMode=process), so the unit could never move to another slice while sandboxes run. memory.min only protects
+# as far as every ancestor does, hence the same reservation on system.slice.
+rm -f /etc/systemd/system/sbx-host.slice
+mkdir -p /etc/systemd/system/system.slice.d
+cat > /etc/systemd/system/system.slice.d/50-sbx.conf <<'EOF'
 [Slice]
 MemoryMin=160M
-MemoryHigh=384M
-MemoryMax=512M
 EOF
 
 cat > /usr/local/sbin/sbx-cgroup <<'EOF'
@@ -121,7 +122,9 @@ ConditionPathExists=/etc/sbx/host.json
 
 [Service]
 Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Slice=sbx-host.slice
+MemoryMin=160M
+MemoryHigh=384M
+MemoryMax=512M
 ExecStartPre=/usr/local/sbin/sbx-cgroup
 ExecStart=/opt/node/bin/node --disable-warning=ExperimentalWarning /opt/sandboxd/src/main.ts
 # sandboxes are runsc processes in their own cgroups (/sbx/<name>); a restart of sandboxd must never touch them
