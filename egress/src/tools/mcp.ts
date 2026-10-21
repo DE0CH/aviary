@@ -22,8 +22,8 @@ export interface McpHandlers {
   serverName: string;
   serverVersion: string;
   instructions?: string;
-  /** the tools this caller may use (`ctx` absent: all) */
-  tools(ctx?: ToolCtx): ToolDef[];
+  /** the tools on offer */
+  tools(): ToolDef[];
   /** Runs a tool and logs it; returns the MCP result (tool errors are results with isError, not JSON-RPC errors). */
   call(tool: ToolDef, args: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult>;
 }
@@ -63,17 +63,16 @@ export async function handleMessage(h: McpHandlers, msg: unknown, ctx: ToolCtx):
     case "ping":
       return ok({});
     case "tools/list":
-      return ok({ tools: h.tools(ctx).map(toolListEntry) });
+      return ok({ tools: h.tools().map(toolListEntry) });
     case "tools/call": {
       const name = m.params?.name;
       const args = (m.params?.arguments ?? {}) as Record<string, unknown>;
       if (typeof name !== "string") return fail(ERR.params, "tools/call needs a tool name");
       if (typeof args !== "object" || Array.isArray(args)) return fail(ERR.params, "arguments must be an object");
-      const tool = h.tools(ctx).find((t) => t.name === name);
+      const tool = h.tools().find((t) => t.name === name);
       if (!tool) return fail(ERR.params, `unknown tool ${name}`);
       try {
-        const meta = m.params?._meta;
-        const r = await h.call(tool, args, meta && typeof meta === "object" && !Array.isArray(meta) ? { ...ctx, meta: meta as Record<string, unknown> } : ctx);
+        const r = await h.call(tool, args, ctx);
         const { costUsd: _cost, ...result } = r;
         return ok(result);
       } catch (e) {

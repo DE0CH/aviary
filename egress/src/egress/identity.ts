@@ -1,21 +1,14 @@
-// Who is calling egress: a sandbox (its egress token, Basic "sbx:<token>" or Bearer) or a running turn (its turn
-// token: claw's model calls). Lookups are cached for a few seconds; a released sandbox's token stops working within
-// that time.
+// Who is calling egress: a sandbox, by its egress token (Basic "sbx:<token>" or Bearer). Lookups are cached for a few
+// seconds; a released sandbox's token stops working within that time.
 import type { IncomingHttpHeaders } from "node:http";
 import type { Db } from "../common/db.ts";
-import { bearerOf, sha256hex, turnForToken } from "../common/tokens.ts";
+import { bearerOf, sha256hex } from "../common/tokens.ts";
 
 export interface SandboxId {
   sandboxId: string;
   conversationId: string;
   /** provider "vm": the sandbox's own address; its requests must come from there (null for other providers) */
   ip: string | null;
-}
-
-export interface TurnId {
-  turnId: string;
-  conversationId: string;
-  owner: string;
 }
 
 /** The token in `Proxy-Authorization` or `Authorization`: Basic (any user, the password is the token) or Bearer. */
@@ -36,7 +29,6 @@ export class Identities {
   readonly #db: Db;
   readonly #ttlMs: number;
   readonly #sandboxes = new Map<string, { at: number; v: SandboxId | null }>();
-  readonly #turns = new Map<string, { at: number; v: TurnId | null }>();
   constructor(db: Db, ttlMs = 5000) {
     this.#db = db;
     this.#ttlMs = ttlMs;
@@ -53,17 +45,6 @@ export class Identities {
     );
     const v = rows[0] ? { sandboxId: rows[0].id, conversationId: rows[0].conversation_id, ip: rows[0].ip ?? null } : null;
     this.#remember(this.#sandboxes, key, v);
-    return v;
-  }
-
-  async turn(token: string): Promise<TurnId | null> {
-    if (!token) return null;
-    const key = sha256hex(token);
-    const hit = this.#turns.get(key);
-    if (hit && Date.now() - hit.at < this.#ttlMs) return hit.v;
-    const t = await turnForToken(this.#db, token);
-    const v = t ? { turnId: t.id, conversationId: t.conversation_id, owner: t.owner } : null;
-    this.#remember(this.#turns, key, v);
     return v;
   }
 

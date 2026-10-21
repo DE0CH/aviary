@@ -1,11 +1,10 @@
 // What every tool of the tools server is (docs/CHAT.md, "tools"): an MCP tool definition plus the function that runs it
-// for one turn. Results are MCP content; costUsd (when the provider reports one) goes into tool_calls.
+// for one call. Results are MCP content; costUsd (when the provider reports one) goes into tool_calls.
 import type { ChatConfig } from "../common/config.ts";
 import type { Db } from "../common/db.ts";
 
-export interface TurnRef {
-  /** null: a call from Claude Code in a sandbox (docs/CLAUDE-CODE.md), authenticated by the sandbox's egress token */
-  id: string | null;
+/** Who is calling: Claude Code in a sandbox, identified by its sandbox's egress token (docs/CLAUDE-CODE.md). */
+export interface Caller {
   conversation_id: string;
   owner: string;
 }
@@ -46,17 +45,11 @@ export interface Deps {
   resolve?: (host: string) => Promise<{ address: string; family: number }>;
   /** Ports web_fetch may reach (default 80, 443, 8080, 8443). */
   fetchPorts?: string[] | "any";
-  /** Where sandbox_environment reads the sandbox image's Dockerfile and package list (default /app/sandbox-env). */
-  sandboxEnvDir?: string;
 }
 
 export interface ToolCtx {
-  turn: TurnRef;
-  /** The turn token, to post events to web as this turn. */
-  token: string;
+  caller: Caller;
   deps: Deps;
-  /** The tools/call request's `_meta` (set by jarvis-mcp-bridge, e.g. what it found in the workspace for present_files). */
-  meta?: Record<string, unknown>;
 }
 
 export const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) });

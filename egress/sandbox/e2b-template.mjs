@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds this directory's Dockerfile as the E2B template the "e2b" sandbox provider starts from (docs/CHAT.md,
+// Builds this directory's Dockerfile as the E2B template the "e2b" sandbox provider starts from (docs/CLAUDE-CODE.md,
 // "Sandbox providers"): name `jarvis3-sandbox`, tagged with the commit (`jarvis3-sandbox:<tag>`, what an instance pins
 // in sandbox.e2b.template), 1 vCPU / 1024 MB. The start command runs the agent in JARVIS_INIT mode (the server
 // configures each sandbox with POST /init); the template is ready when /livez answers. E2B builds remotely: no Docker
@@ -7,8 +7,8 @@
 //
 //   E2B_API_KEY=… node e2b-template.mjs <chat/sandbox dir> <tag> [--name jarvis3-sandbox] [--smoke]
 //
-// --smoke: then starts one sandbox from the new build with all internet denied, initialises its agent, runs a
-// command (python with pandas, as uid 1000) through the agent port and kills it.
+// --smoke: then starts one sandbox from the new build with all internet denied, initialises its agent, checks its
+// health with the exec token through the agent port and kills it.
 import { randomBytes } from "node:crypto";
 import { join, resolve } from "node:path";
 import { defaultBuildLogger, Template, waitForURL } from "e2b";
@@ -48,14 +48,10 @@ if (process.argv.includes("--smoke")) {
     const th = { "e2b-traffic-access-token": sb.trafficAccessToken, "content-type": "application/json" };
     const init = await fetch(`${base}/init`, { method: "POST", headers: th, body: JSON.stringify({ token, env: { SMOKE: "1" } }) });
     if (!init.ok) throw new Error(`init: HTTP ${init.status} ${await init.text()}`);
-    const ex = await fetch(`${base}/exec`, {
-      method: "POST",
-      headers: { ...th, "x-jarvis-exec-token": token },
-      body: JSON.stringify({ command: 'python3 -c "import pandas; print(pandas.__version__)" && id -u && echo $SMOKE' }),
-    });
-    const out = await ex.json();
-    console.log(JSON.stringify({ smoke: out, msToExec: Date.now() - t0 }));
-    if (out.exit_code !== 0 || !/\n1000\n1\n?$/.test(out.stdout)) throw new Error("smoke: unexpected output");
+    const hz = await fetch(`${base}/healthz`, { headers: { ...th, "x-jarvis-exec-token": token } });
+    const out = await hz.json();
+    console.log(JSON.stringify({ smoke: out, msToHealthy: Date.now() - t0 }));
+    if (!hz.ok || out.ok !== true) throw new Error("smoke: the agent is not healthy");
   } finally {
     await fetch(`${api}/sandboxes/${sb.sandboxID}`, { method: "DELETE", headers: h });
   }

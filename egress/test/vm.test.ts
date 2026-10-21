@@ -435,24 +435,11 @@ test("switching from kubernetes: the previous provider's sandboxes stay listed a
   assert.ok(!sbx.hosts.get(HUB)!.specs.has(fresh.pod));
 });
 
-test("stats(): hosts with their sandboxes, AWS cost so far, the scaler's decisions and migrations", async () => {
-  const sbx = new FakeSandboxd();
-  sbx.addHost(HUB, "hub", 8, "hub");
-  const p = new VmProvider({ db, config: config(), sandboxd: sbx, ec2: null, hostTls: null });
-  await p.controller.pass();
-  const st = await p.stats();
-  assert.equal(st.provider, "vm");
-  const hub = st.hosts.find((h) => h.name === "hub")!;
-  assert.equal(hub.kind, "hub");
-  assert.equal(hub.costUsd, null);
-  assert.ok(hub.slots >= 1);
+test("vm_events: the scaler's decisions and migrations are recorded", async () => {
   // the earlier tests launched, packed, migrated and terminated AWS hosts
-  assert.ok(st.events.some((e) => e.kind === "launch"));
-  assert.ok(st.events.some((e) => e.kind === "pack"));
-  assert.ok(st.events.some((e) => e.kind === "terminate"));
-  assert.ok(st.events.some((e) => e.kind === "migration-skipped"));
-  const m = st.migrations[0]!;
-  assert.equal(m.to, "hub");
-  assert.equal(m.pauseMs, 1);
-  assert.ok(st.awsCostLast30dUsd >= 0);
+  const kinds = new Set((await db.query<{ kind: string }>("select distinct kind from vm_events")).rows.map((r) => r.kind));
+  for (const k of ["launch", "pack", "terminate", "migration-skipped"]) assert.ok(kinds.has(k), k);
+  const m = (await db.query<{ data: any }>("select data from vm_events where kind = 'migration' order by id limit 1")).rows[0]!;
+  assert.equal(m.data.to, "hub");
+  assert.equal(m.data.pause_ms, 1);
 });

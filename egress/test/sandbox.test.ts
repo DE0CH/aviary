@@ -1,16 +1,16 @@
+// The sandbox agent (chat/sandbox/agent.mjs) as a local process: its health check, the exec token, and processes over
+// `GET /proc` (what the CloudCLI UI runs Claude Code through).
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { request } from "node:http";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
 import { after, before, test } from "node:test";
-import { packBuffers, unpack } from "../sandbox/tar.mjs";
 
 const TOKEN = "exec-token-test";
-let work: string;
-let outside: string;
+let workspace: string;
 let agent: ChildProcess;
 let base: string;
 
@@ -22,168 +22,135 @@ async function freePort(): Promise<number> {
   return p;
 }
 
-before(async () => {
-  work = realpathSync(mkdtempSync(join(tmpdir(), "sbx-work-")));
-  outside = realpathSync(mkdtempSync(join(tmpdir(), "sbx-outside-")));
+async function startAgent(env: Record<string, string>): Promise<{ child: ChildProcess; base: string }> {
   const port = await freePort();
-  agent = spawn(process.execPath, [join(import.meta.dirname, "../sandbox/agent.mjs")], {
-    env: { ...process.env, JARVIS_EXEC_TOKEN: TOKEN, JARVIS_WORK_DIR: work, PORT: String(port) },
+  const child = spawn(process.execPath, [join(import.meta.dirname, "../sandbox/agent.mjs")], {
+    env: { PATH: process.env.PATH!, JARVIS_WORKSPACE: workspace, PORT: String(port), ...env },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  await new Promise<void>((resolve) => agent.stdout!.once("data", () => resolve()));
-  base = `http://127.0.0.1:${port}`;
+  await new Promise<void>((resolve) => child.stdout!.once("data", () => resolve()));
+  return { child, base: `http://127.0.0.1:${port}` };
+}
+
+before(async () => {
+  workspace = realpathSync(mkdtempSync(join(tmpdir(), "sbx-ws-")));
+  ({ child: agent, base } = await startAgent({ JARVIS_EXEC_TOKEN: TOKEN }));
 });
 
 after(() => {
   agent.kill("SIGTERM");
-  rmSync(work, { recursive: true, force: true });
-  rmSync(outside, { recursive: true, force: true });
+  rmSync(workspace, { recursive: true, force: true });
 });
 
-const auth = { authorization: `Bearer ${TOKEN}` };
+const PROC_STDIN = 0, PROC_STDOUT = 1, PROC_STDERR = 2, PROC_EXIT = 3, PROC_STDIN_END = 4, PROC_SIGNAL = 5;
+const frame = (type: number, payload: string) => {
+  const b = Buffer.from(payload);
+  const h = Buffer.alloc(5);
+  h[0] = type;
+  h.writeUInt32BE(b.length, 1);
+  return Buffer.concat([h, b]);
+};
 
-async function exec(command: string, extra: Record<string, unknown> = {}) {
-  const r = await fetch(`${base}/exec`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ command, ...extra }) });
-  assert.equal(r.status, 200);
-  return (await r.json()) as { stdout: string; stderr: string; exit_code: number; interrupted: boolean; truncated: boolean; background_id?: string; log?: string };
+interface Proc {
+  socket: Socket;
+  done: Promise<{ stdout: string; stderr: string; exit: { code: number | null; signal: string | null } }>;
 }
 
-async function put(files: { name: string; data: string | Buffer; mode?: number }[], del: string[] = []) {
-  const r = await fetch(`${base}/files`, { method: "PUT", headers: { ...auth, "x-delete": JSON.stringify(del) }, body: packBuffers(files) });
-  return { status: r.status, body: (await r.json()) as { ok: boolean; written: number; deleted: number; error?: string } };
-}
-
-async function changes(since = "") {
-  const r = await fetch(`${base}/changes?since=${encodeURIComponent(since)}`, { headers: auth });
-  assert.equal(r.status, 200);
-  const files: Record<string, string> = {};
-  await unpack(Readable.fromWeb(r.body as any), async (h, body) => {
-    const chunks: Buffer[] = [];
-    for await (const c of body) chunks.push(c as Buffer);
-    files[h.name] = Buffer.concat(chunks).toString("utf8");
+/** Opens a /proc upgrade; resolves with the socket, or rejects with the refusal's status line. */
+function openProc(spec: Record<string, unknown>, token = TOKEN, url = base): Promise<Proc> {
+  return new Promise((resolve, reject) => {
+    const u = new URL("/proc", url);
+    const req = request({
+      hostname: u.hostname,
+      port: u.port,
+      path: u.pathname,
+      headers: { "x-jarvis-exec-token": token, connection: "Upgrade", upgrade: "jarvis-proc", "x-proc": Buffer.from(JSON.stringify(spec)).toString("base64") },
+    });
+    req.on("error", reject);
+    req.on("response", (res) => reject(new Error(String(res.statusCode))));
+    req.on("upgrade", (_res, socket) => {
+      let stdout = "";
+      let stderr = "";
+      let buf = Buffer.alloc(0);
+      const done = new Promise<Awaited<Proc["done"]>>((ok) => {
+        socket.on("data", (c: Buffer) => {
+          buf = Buffer.concat([buf, c]);
+          while (buf.length >= 5 && buf.length >= 5 + buf.readUInt32BE(1)) {
+            const n = buf.readUInt32BE(1);
+            const t = buf[0]!;
+            const p = buf.subarray(5, 5 + n);
+            buf = buf.subarray(5 + n);
+            if (t === PROC_STDOUT) stdout += p.toString("utf8");
+            if (t === PROC_STDERR) stderr += p.toString("utf8");
+            if (t === PROC_EXIT) ok({ stdout, stderr, exit: JSON.parse(p.toString("utf8")) });
+          }
+        });
+      });
+      resolve({ socket, done });
+    });
+    req.end();
   });
-  return {
-    cursor: r.headers.get("x-cursor")!,
-    full: r.headers.get("x-full") === "1",
-    deleted: JSON.parse(r.headers.get("x-deleted") || "[]") as string[],
-    skipped: JSON.parse(r.headers.get("x-skipped") || "[]") as string[],
-    files,
-  };
 }
 
-test("tar: round trip with a long and a non-ASCII name", async () => {
-  const long = `${"d".repeat(120)}/報告 2026.docx`;
-  const tar = packBuffers([{ name: "a.txt", data: "A" }, { name: long, data: Buffer.alloc(1500, 7) }, { name: "empty", data: "" }]);
-  const got: Record<string, number> = {};
-  await unpack(Readable.from([tar.subarray(0, 700), tar.subarray(700)]), async (h, body) => {
-    let n = 0;
-    for await (const c of body) n += (c as Buffer).length;
-    got[h.name] = n;
-  });
-  assert.deepEqual(got, { "a.txt": 1, [long]: 1500, empty: 0 });
-});
-
-test("healthz is open, everything else needs the exec token", async () => {
+test("healthz is open; /proc needs the exec token; nothing else is served", async () => {
   const h = await fetch(`${base}/healthz`);
   assert.equal(h.status, 200);
   assert.match(((await h.json()) as { boot_id: string }).boot_id, /^[0-9a-f]{16}$/);
-  assert.equal((await fetch(`${base}/changes`)).status, 401);
-  assert.equal((await fetch(`${base}/exec`, { method: "POST", headers: { authorization: "Bearer nope" }, body: "{}" })).status, 401);
+  await assert.rejects(openProc({ args: ["true"] }, "nope"), /401/);
+  assert.equal((await fetch(`${base}/exec`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: "{}" })).status, 404);
+  assert.equal((await fetch(`${base}/changes`, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 404);
 });
 
-test("PUT /files writes, deletes and refuses paths outside /work", async () => {
-  const r = await put([{ name: "docs/a.txt", data: "hello" }, { name: "run.sh", data: "#!/bin/sh\necho ran\n", mode: 0o755 }]);
-  assert.deepEqual(r.body, { ok: true, written: 2, deleted: 0 });
-  assert.equal(readFileSync(join(work, "docs/a.txt"), "utf8"), "hello");
-  assert.equal((await exec("./run.sh")).stdout, "ran\n");
-  assert.equal((await put([], ["docs"])).body.deleted, 1);
-  assert.ok(!existsSync(join(work, "docs")));
-  assert.equal((await put([{ name: "../escape.txt", data: "x" }])).status, 400);
-  assert.equal((await put([], ["/etc/passwd"])).status, 400);
-  symlinkSync(outside, join(work, "link"));
-  const viaLink = await put([{ name: "link/x.txt", data: "x" }]);
-  assert.equal(viaLink.status, 400);
-  assert.match(viaLink.body.error!, /escapes/);
-  assert.ok(!existsSync(join(outside, "x.txt")));
-  rmSync(join(work, "link"));
-});
-
-test("exec: output, exit codes, cwd, no token in the environment", async () => {
-  const r = await exec("echo out; echo err >&2; pwd; echo token=${JARVIS_EXEC_TOKEN:-none}; exit 3");
-  assert.equal(r.exit_code, 3);
-  assert.equal(r.stdout, `out\n${work}\ntoken=none\n`);
+test("/proc: stdin in, stdout and stderr out, the exit status, no token in the environment", async () => {
+  const p = await openProc({ args: ["sh", "-c", 'read x; echo "out:$x"; echo err >&2; echo "tok:${JARVIS_EXEC_TOKEN:-none} env:$EXTRA"; pwd; exit 3'], env: { EXTRA: "yes" } });
+  p.socket.write(frame(PROC_STDIN, "hi\n"));
+  p.socket.write(frame(PROC_STDIN_END, ""));
+  const r = await p.done;
+  assert.equal(r.stdout, `out:hi\ntok:none env:yes\n${workspace}\n`);
   assert.equal(r.stderr, "err\n");
-  assert.equal(r.interrupted, false);
+  assert.deepEqual(r.exit, { code: 3, signal: null });
 });
 
-test("exec: timeout kills the whole process group", async () => {
-  const t0 = Date.now();
-  const r = await exec("sleep 30 & sleep 30; echo never", { timeout_ms: 1000 });
-  assert.ok(r.interrupted);
-  assert.ok(Date.now() - t0 < 5000);
-  assert.notEqual(r.exit_code, 0);
-  assert.equal(r.stdout, "");
+test("/proc: cwd only inside /workspace (made if missing); bad specs are refused", async () => {
+  const p = await openProc({ args: ["pwd"], cwd: join(workspace, "sub/dir") });
+  p.socket.write(frame(PROC_STDIN_END, ""));
+  assert.equal((await p.done).stdout, `${join(workspace, "sub/dir")}\n`);
+  await assert.rejects(openProc({ args: ["pwd"], cwd: "/etc" }), /400/);
+  await assert.rejects(openProc({ args: [] }), /400/);
+  await assert.rejects(openProc({ args: ["true"], env: { "BAD-NAME": "x" } }), /400/);
+  const missing = await openProc({ args: ["no-such-program-here"] });
+  assert.equal((await missing.done).exit.code, 127);
 });
 
-test("exec: output over 1 MB keeps the tail", async () => {
-  const r = await exec("head -c 1500000 /dev/zero | tr '\\0' a; echo END");
-  assert.ok(r.truncated);
-  assert.ok(r.stdout.endsWith("aEND\n"));
-  assert.ok(r.stdout.length <= 1024 * 1024);
+test("/proc: a signal reaches the process group; a dropped connection kills the process", async () => {
+  const p = await openProc({ args: ["sh", "-c", "sleep 30 & wait"] });
+  p.socket.write(frame(PROC_SIGNAL, "SIGTERM"));
+  const r = await p.done;
+  assert.ok(r.exit.signal === "SIGTERM" || r.exit.code !== 0, JSON.stringify(r.exit));
+
+  const marker = join(workspace, "alive");
+  mkdirSync(marker);
+  const q = await openProc({ args: ["sh", "-c", `trap 'rmdir ${marker}; exit 0' TERM; while true; do sleep 0.1; done`] });
+  await new Promise((r) => setTimeout(r, 300));
+  q.socket.destroy();
+  for (let i = 0; i < 50 && existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(existsSync(marker), false, "the process got SIGTERM when its connection dropped");
 });
 
-test("exec: a command that leaves a process running returns; background jobs keep running between calls", async () => {
-  const t0 = Date.now();
-  const r = await exec("sleep 20 > /dev/null 2>&1 & echo started");
-  assert.equal(r.stdout, "started\n");
-  assert.ok(Date.now() - t0 < 3000);
-  const bg = await exec("for i in 1 2 3; do echo tick $i; sleep 0.2; done; sleep 20", { background: true });
-  assert.match(bg.background_id!, /^[0-9a-f]{12}$/);
-  await new Promise((res) => setTimeout(res, 900));
-  assert.match(readFileSync(join(work, bg.log!), "utf8"), /tick 3/);
-  const ps = await exec("pgrep -f 'sleep 20' | wc -l");
-  assert.ok(Number(ps.stdout.trim()) >= 2, ps.stdout);
-  await exec("pkill -f 'sleep 20' || true");
-});
-
-test("changes: full first, then only what changed; pushes are not echoed back; excludes and big files", async () => {
-  rmSync(join(work, ".jobs"), { recursive: true, force: true });
-  const first = await changes();
-  assert.ok(first.full);
-  assert.ok("run.sh" in first.files);
-  const c0 = first.cursor;
-
-  await exec("mkdir -p out node_modules/x && echo 'r1' > out/report.md && echo junk > node_modules/x/i.js && truncate -s 51M big.bin");
-  const second = await changes(c0);
-  assert.equal(second.full, false);
-  assert.deepEqual(Object.keys(second.files).sort(), ["out/report.md"]);
-  assert.equal(second.files["out/report.md"], "r1\n");
-  assert.deepEqual(second.skipped, ["big.bin"]);
-  assert.deepEqual(second.deleted, []);
-
-  await put([{ name: "uploads/brief.txt", data: "from the server" }]);
-  await exec("rm out/report.md");
-  const third = await changes(second.cursor);
-  assert.deepEqual(Object.keys(third.files), [], "the pushed file is not sent back");
-  assert.deepEqual(third.deleted, ["out/report.md"]);
-
-  const unknown = await changes("deadbeef:1");
-  assert.ok(unknown.full);
-  assert.ok("uploads/brief.txt" in unknown.files);
-});
-
-test("changes: very long deletion lists move into a meta entry", async () => {
-  mkdirSync(join(work, "many"), { recursive: true });
-  for (let i = 0; i < 400; i++) writeFileSync(join(work, "many", `file-number-${i}-with-a-long-name.txt`), "x");
-  const c = (await changes()).cursor;
-  rmSync(join(work, "many"), { recursive: true });
-  const r = await fetch(`${base}/changes?since=${c}`, { headers: auth });
-  assert.equal(r.headers.get("x-meta-entry"), ".jarvis-meta/changes.json");
-  let meta: { deleted: string[] } | null = null;
-  await unpack(Readable.fromWeb(r.body as any), async (h, body) => {
-    const chunks: Buffer[] = [];
-    for await (const x of body) chunks.push(x as Buffer);
-    if (h.name === ".jarvis-meta/changes.json") meta = JSON.parse(Buffer.concat(chunks).toString());
-  });
-  assert.equal(meta!.deleted.length, 400);
+test("JARVIS_INIT=1: not healthy until POST /init gives the token and env; init only once", async () => {
+  const { child, base: b } = await startAgent({ JARVIS_INIT: "1" });
+  try {
+    assert.equal((await fetch(`${b}/livez`)).status, 200);
+    assert.equal((await fetch(`${b}/healthz`)).status, 503);
+    const token = "init-token-0123456789";
+    const r = await fetch(`${b}/init`, { method: "POST", body: JSON.stringify({ token, env: { FROM_INIT: "1" } }) });
+    assert.equal(r.status, 200);
+    assert.equal((await fetch(`${b}/healthz`)).status, 200);
+    assert.equal((await fetch(`${b}/init`, { method: "POST", body: JSON.stringify({ token: "another-token-0123456" }) })).status, 409);
+    const p = await openProc({ args: ["sh", "-c", "echo $FROM_INIT"] }, token, b);
+    p.socket.write(frame(PROC_STDIN_END, ""));
+    assert.equal((await p.done).stdout, "1\n");
+  } finally {
+    child.kill("SIGTERM");
+  }
 });

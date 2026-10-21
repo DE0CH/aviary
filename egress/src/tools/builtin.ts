@@ -162,7 +162,7 @@ export const newsSearch: ToolDef = {
     const from = str(args, "from");
     const to = str(args, "to");
     if (!isDate(from) || !isDate(to)) throw new ToolInputError("dates are YYYY-MM-DD");
-    const r = await wisersSearch(ctx.deps, ctx.turn.owner, {
+    const r = await wisersSearch(ctx.deps, ctx.caller.owner, {
       query: str(args, "query", true),
       period: str(args, "period") || "7",
       from,

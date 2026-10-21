@@ -3,8 +3,8 @@
 // Service. Used by the tests (a fake Kubernetes API that runs the real agent) and by a self-hosted sandbox cluster.
 import type { ChatConfig } from "../common/config.ts";
 import { AgentClient } from "./agent.ts";
-import { cpuCores, memBytes, type K8sApi, type Pod } from "./k8s.ts";
-import type { AgentEndpoint, HostStats, ListedSandbox, ProviderStats, SandboxProvider, SandboxStats } from "./provider.ts";
+import type { K8sApi, Pod } from "./k8s.ts";
+import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
 import type { SandboxRow } from "./sandbox.ts";
 
 /** The env every sandbox gets (docs/CHAT.md, "No secrets in a sandbox"): proxy, mirrors, exec token. */
@@ -88,92 +88,6 @@ export class KubernetesProvider implements SandboxProvider {
   async list(): Promise<ListedSandbox[]> {
     const pods = await this.#k8s.listPods(this.#ns, "app=jarvis-sandbox");
     return pods.map((p) => ({ name: p.metadata.name, createdAt: p.metadata.creationTimestamp ? Date.parse(p.metadata.creationTimestamp) : NaN }));
-  }
-
-  /**
-   * The admin monitor's view: sandbox pods with their use (metrics.k8s.io, when metrics-server runs and the role may
-   * read it) and the nodes that can run them (the RuntimeClass's nodeSelector) or do. Read-only; what the web role's
-   * RBAC doesn't allow ends up in `notes`.
-   */
-  async stats(): Promise<ProviderStats> {
-    const notes: string[] = [];
-    const ns = this.#ns;
-    const get = this.#k8s.getJson?.bind(this.#k8s);
-    const why = (what: string, e: unknown) => notes.push(`${what}: ${(e as Error).message}`);
-    const pods = (await this.#k8s.listPods(ns, "app=jarvis-sandbox")) as (Pod & { spec?: any; status?: any })[];
-    const use = new Map<string, { cpu: number; mem: number }>();
-    const nodeUse = new Map<string, { cpu: number; mem: number }>();
-    let nodes: any[] = [];
-    let selector: Record<string, string> | null = null;
-    if (!get) notes.push("node and pod metrics: this Kubernetes client can't read them");
-    else {
-      await Promise.all([
-        get(`/apis/metrics.k8s.io/v1beta1/namespaces/${ns}/pods`).then(
-          (m) => {
-            for (const it of m?.items ?? []) {
-              const cs: any[] = it.containers ?? [];
-              use.set(it.metadata?.name, { cpu: cs.reduce((a, c) => a + (cpuCores(c.usage?.cpu) ?? 0), 0), mem: cs.reduce((a, c) => a + (memBytes(c.usage?.memory) ?? 0), 0) });
-            }
-          },
-          (e) => why("pod metrics", e),
-        ),
-        get("/api/v1/nodes").then((r) => (nodes = r?.items ?? []), (e) => why("nodes", e)),
-        get("/apis/metrics.k8s.io/v1beta1/nodes").then(
-          (m) => {
-            for (const it of m?.items ?? []) nodeUse.set(it.metadata?.name, { cpu: cpuCores(it.usage?.cpu) ?? 0, mem: memBytes(it.usage?.memory) ?? 0 });
-          },
-          (e) => why("node metrics", e),
-        ),
-        this.#config.sandbox.runtimeClass
-          ? get(`/apis/node.k8s.io/v1/runtimeclasses/${encodeURIComponent(this.#config.sandbox.runtimeClass)}`).then(
-              (rc) => (selector = rc?.scheduling?.nodeSelector ?? null),
-              (e) => why("runtime class", e),
-            )
-          : Promise.resolve(),
-      ]);
-    }
-    const sandboxes: SandboxStats[] = pods.map((p) => {
-      const c = p.spec?.containers?.[0];
-      const u = use.get(p.metadata.name);
-      const waiting = p.status?.containerStatuses?.[0]?.state?.waiting?.reason;
-      return {
-        name: p.metadata.name,
-        host: p.spec?.nodeName ?? null,
-        state: p.metadata.deletionTimestamp ? "Terminating" : waiting || p.status?.phase || "Unknown",
-        cpuUsed: u ? u.cpu : null,
-        cpuLimit: cpuCores(c?.resources?.limits?.cpu),
-        memUsed: u ? u.mem : null,
-        memLimit: memBytes(c?.resources?.limits?.memory),
-        restarts: (p.status?.containerStatuses ?? []).reduce((a: number, s: any) => a + (s.restartCount ?? 0), 0),
-      };
-    });
-    const perNode = new Map<string, number>();
-    for (const s of sandboxes) if (s.host) perNode.set(s.host, (perNode.get(s.host) ?? 0) + 1);
-    const sel = selector as Record<string, string> | null;
-    const hosts: HostStats[] = nodes
-      .filter((n) => perNode.has(n.metadata?.name) || (sel && Object.entries(sel).every(([k, v]) => n.metadata?.labels?.[k] === v)))
-      .map((n) => {
-        const name = n.metadata.name as string;
-        const ready = (n.status?.conditions ?? []).some((c: any) => c.type === "Ready" && c.status === "True");
-        const u = nodeUse.get(name);
-        return {
-          name,
-          kind: "node",
-          status: (ready ? "ready" : "not ready") + (n.spec?.unschedulable ? ", cordoned" : ""),
-          reachable: ready,
-          cpus: cpuCores(n.status?.allocatable?.cpu),
-          cpuUsed: u ? u.cpu : null,
-          memTotal: memBytes(n.status?.allocatable?.memory),
-          memUsed: u ? u.mem : null,
-          load1: null,
-          sandboxes: perNode.get(name) ?? 0,
-          maxSandboxes: null,
-          startedAt: n.metadata.creationTimestamp ?? null,
-          costUsd: null,
-          detail: { kubelet: n.status?.nodeInfo?.kubeletVersion ?? null },
-        };
-      });
-    return { provider: this.kind, hosts, sandboxes, capacity: null, notes };
   }
 
   podManifest(row: SandboxRow, egressToken: string): object {

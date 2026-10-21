@@ -1,13 +1,11 @@
-// The tools role's HTTP side: POST /mcp (turn-token auth → the turn's owner), GET /healthz. Every tools/call is a row
-// in tool_calls. Only read-only tools exist here: the built-in ones and the upstream tools each upstream's `tools`
+// The tools role's HTTP side: POST /mcp (a sandbox's egress token → its conversation and owner), GET /healthz. Every
+// tools/call is a row in tool_calls. Only read-only tools exist here: the built-in ones and the upstream tools each upstream's `tools`
 // list names (upstream.ts); nothing asks for or waits on a confirmation.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { logError } from "../common/log.ts";
-import { bearerOf, turnForToken, sandboxForToken } from "../common/tokens.ts";
+import { bearerOf, sandboxForToken } from "../common/tokens.ts";
 import { BUILTIN } from "./builtin.ts";
 import { handleMessage, type McpHandlers } from "./mcp.ts";
-import { presentFiles } from "./present.ts";
-import { sandboxEnvironment } from "./sandbox-env.ts";
 import type { Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
 import type { Upstream } from "./upstream.ts";
 
@@ -21,10 +19,8 @@ export function toolList(deps: Deps, upstreams: Upstream[]): ToolDef[] {
     web_fetch: true,
     news_search: !!t.wisers,
     social_search: !!t.tikhub,
-    sandbox_environment: true,
   };
-  // present_files needs no provider: every chat turn can show its deliverables
-  const own = [...[...BUILTIN, sandboxEnvironment].filter((d) => have[d.name]), presentFiles];
+  const own = BUILTIN.filter((d) => have[d.name]);
   const names = new Set(own.map((d) => d.name));
   const ups = upstreams.flatMap((u) => u.tools()).filter((d) => !names.has(d.name) && (names.add(d.name), true));
   return [...own, ...ups];
@@ -36,9 +32,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
   const handlers: McpHandlers = {
     serverName: "tools",
     serverVersion: "1",
-    instructions: "Read-only search and reading tools for news, PR and data analysis work, a description of the bash sandbox, and present_files to show the answer's deliverables to the user. None of them sends, posts or changes anything outside.",
-    // present_files belongs to the chat runtime's turns; Claude Code in a sandbox (no turn) shows files its own way
-    tools: (ctx) => toolList(deps, upstreams).filter((t) => !(ctx && ctx.turn.id === null && t.name === "present_files")),
+    instructions: "Read-only search and reading tools for news, PR and data analysis work. None of them sends, posts or changes anything outside.",
+    tools: () => toolList(deps, upstreams),
     async call(tool, args, ctx) {
       const t0 = Date.now();
       let r: ToolResult | undefined;
@@ -52,8 +47,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
       } finally {
         await deps.db
           .query(
-            `insert into tool_calls (turn_id, conversation_id, user_email, tool, args, ok, ms, error, cost_usd) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-            [ctx.turn.id, ctx.turn.conversation_id, ctx.turn.owner, tool.name, JSON.stringify(args), !err && !r?.isError, Date.now() - t0,
+            `insert into tool_calls (conversation_id, user_email, tool, args, ok, ms, error, cost_usd) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [ctx.caller.conversation_id, ctx.caller.owner, tool.name, JSON.stringify(args), !err && !r?.isError, Date.now() - t0,
               err ?? (r?.isError ? r.content.map((c) => (c as { text?: string }).text ?? "").join(" ").slice(0, 500) : null), r?.costUsd ?? null],
           )
           .catch((e) => logError("tool_calls insert", e, { tool: tool.name }));
@@ -93,15 +88,15 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
     active++;
     try {
       const token = bearerOf(req.headers.authorization);
-      const turn = (await turnForToken(deps.db, token)) ?? (await sandboxForToken(deps.db, token));
-      if (!turn) return send(res, 401, { error: "a running turn's or a sandbox's token is required" }, { "www-authenticate": "Bearer" });
+      const caller = await sandboxForToken(deps.db, token);
+      if (!caller) return send(res, 401, { error: "a live sandbox's token is required" }, { "www-authenticate": "Bearer" });
       let msg: unknown;
       try {
         msg = JSON.parse(await readBody(req));
       } catch {
         return send(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
       }
-      const ctx: ToolCtx = { turn, token, deps };
+      const ctx: ToolCtx = { caller, deps };
       if (Array.isArray(msg)) {
         const out = (await Promise.all(msg.map((m) => handleMessage(handlers, m, ctx)))).filter((x) => x !== null);
         return out.length ? send(res, 200, out) : send(res, 202);

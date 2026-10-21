@@ -30,9 +30,7 @@ let tlsPort: number;
 let tmp: string;
 const conv = randomUUID();
 const sbToken = "sandbox-token-1";
-const turnToken = "turn-token-1";
 let sandboxId = randomUUID();
-let turnId = randomUUID();
 
 const RESOLVE: Record<string, string[]> = {
   "allowed.test": ["127.0.0.1"],
@@ -46,13 +44,10 @@ const RESOLVE: Record<string, string[]> = {
 
 before(async () => {
   t = await freshDb("egress");
-  await t.db.query("insert into users (email) values ('a@x.org')");
-  await t.db.query("insert into conversations (id, owner, model) values ($1, 'a@x.org', 'm')", [conv]);
   await t.db.query(
     "insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at) values ($1,$2,'sbx-1',$3,'x','ready', now() + interval '1 hour')",
     [sandboxId, conv, sha256hex(sbToken)],
   );
-  await t.db.query("insert into turns (id, conversation_id, status, token_hash, model) values ($1,$2,'running',$3,'m')", [turnId, conv, sha256hex(turnToken)]);
 
   up = createServer((req, res) => {
     const p = req.url || "/";
@@ -118,7 +113,7 @@ before(async () => {
       configDeny: ["nope.ranked.test"],
     }),
     maxUploadBytes: 256 * 1024,
-    routes: [{ name: "model", upstream: `http://127.0.0.1:${upPort}/api`, auth: "turn", inject: { Authorization: "Bearer ${REAL_KEY}" } }],
+    routes: [{ name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" } }],
     cacheDir: join(tmp, "cache"),
     cacheBytes: 50 * 1024 * 1024,
     selfHosts: ["egress.test"],
@@ -381,12 +376,12 @@ test("npm mirror: tarball URLs point back at the mirror", async () => {
   assert.equal(tgz.body, "WHEELBYTES");
 });
 
-test("model route: turn token in, real key injected, caller auth dropped, cost logged (JSON and SSE)", async () => {
-  const bad = await http("/x/model/v1/messages", { method: "POST", headers: { authorization: "Bearer nope", "content-type": "application/json" }, body: "{}" });
+test("model route: sandbox token in, real key injected, caller auth dropped, cost logged (JSON and SSE)", async () => {
+  const bad = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: "Bearer nope", "content-type": "application/json" }, body: "{}" });
   assert.equal(bad.status, 401);
-  const r = await http("/x/model/v1/messages", {
+  const r = await http("/x/claude/v1/messages", {
     method: "POST",
-    headers: { authorization: `Bearer ${turnToken}`, "x-api-key": turnToken, cookie: "c=1", "content-type": "application/json" },
+    headers: { authorization: `Bearer ${sbToken}`, "x-api-key": sbToken, cookie: "c=1", "content-type": "application/json" },
     body: JSON.stringify({ model: "claude-x" }),
   });
   assert.equal(r.status, 200);
@@ -394,18 +389,18 @@ test("model route: turn token in, real key injected, caller auth dropped, cost l
   assert.equal(upLastHeaders.authorization, "Bearer sk-real");
   assert.equal(upLastHeaders["x-api-key"], undefined);
   assert.equal(upLastHeaders.cookie, undefined);
-  const s = await http("/x/model/v1/messages", { method: "POST", headers: { "x-api-key": turnToken, accept: "text/event-stream" }, body: "{}" });
+  const s = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, accept: "text/event-stream" }, body: "{}" });
   assert.match(s.body, /message_delta/);
   await new Promise((r2) => setTimeout(r2, 50));
   const models = (await rows()).filter((x) => x.kind === "model" && x.decision === "allow");
   assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042]);
-  assert.ok(models.every((x) => x.turn_id === turnId && x.conversation_id === conv));
+  assert.ok(models.every((x) => x.sandbox_id === sandboxId && x.conversation_id === conv));
   assert.equal((await http("/x/nope/v1")).status, 404);
 });
 
 test("model route: zero data retention is forced into every request body, whatever the caller sends", async () => {
   const send = (body: string) =>
-    http("/x/model/v1/messages", { method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-type": "application/json" }, body });
+    http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json" }, body });
   const plain = await send(JSON.stringify({ model: "claude-x" }));
   assert.equal(plain.status, 200);
   assert.deepEqual(JSON.parse(plain.body).echo.provider, { zdr: true, data_collection: "deny" });
@@ -443,7 +438,7 @@ test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket
   const wirePort = await freePort();
   const work = mkdtempSync(join(tmpdir(), "wire-work-"));
   const agent = spawn(process.execPath, [join(import.meta.dirname, "../sandbox/agent.mjs")], {
-    env: { PATH: process.env.PATH!, JARVIS_INIT: "1", JARVIS_WORK_DIR: work, PORT: String(agentPort), JARVIS_WIRE_PORT: String(wirePort) },
+    env: { PATH: process.env.PATH!, JARVIS_INIT: "1", JARVIS_WORKSPACE: work, PORT: String(agentPort), JARVIS_WIRE_PORT: String(wirePort) },
     stdio: ["ignore", "pipe", "inherit"],
   });
   try {
@@ -451,7 +446,7 @@ test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket
     const a = `http://127.0.0.1:${agentPort}`;
     assert.equal((await fetch(`${a}/livez`)).status, 200);
     assert.equal((await fetch(`${a}/healthz`)).status, 503, "not ready before /init");
-    assert.equal((await fetch(`${a}/exec`, { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await fetch(`${a}/healthz`, { headers: { "x-jarvis-exec-token": "nope" } })).status, 503);
     // a wrong token is refused at the upgrade
     const bad = await new Promise<number>((resolve) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/wire`, { headers: { authorization: "Bearer nope" } } as any);
@@ -466,8 +461,6 @@ test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket
     assert.equal(init.status, 200);
     assert.equal((await fetch(`${a}/init`, { method: "POST", body: JSON.stringify({ token: "x".repeat(20) }) })).status, 409, "only once");
     assert.equal((await fetch(`${a}/healthz`)).status, 200);
-    const ex = await fetch(`${a}/exec`, { method: "POST", headers: { "x-jarvis-exec-token": "exec-token-wire-0001" }, body: JSON.stringify({ command: "echo $MARK" }) });
-    assert.equal(((await ex.json()) as { stdout: string }).stdout.trim(), "set-by-init");
 
     // the mirror in proxy form (what pip sends with HTTP_PROXY=http://sbx:<token>@127.0.0.1:3128)
     const mirror = await new Promise<{ status: number; body: string }>((resolve, reject) => {

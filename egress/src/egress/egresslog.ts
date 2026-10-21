@@ -6,7 +6,6 @@ import { logError } from "../common/log.ts";
 export interface EgressRow {
   conversation_id?: string | null;
   sandbox_id?: string | null;
-  turn_id?: string | null;
   kind: "connect" | "http" | "mirror" | "model" | "inject";
   method?: string | null;
   host: string;
@@ -20,7 +19,7 @@ export interface EgressRow {
   cost_usd?: number | null;
 }
 
-const COLS = ["conversation_id", "sandbox_id", "turn_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd"] as const;
+const COLS = ["conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd"] as const;
 
 export class EgressLog {
   readonly #db: Db;

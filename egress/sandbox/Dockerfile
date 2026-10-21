@@ -1,5 +1,5 @@
-# The sandbox image (docs/CHAT.md, "Sandbox lifecycle"): where a conversation's bash commands run, as uid 1000 in
-# /work, inside a gVisor sandbox whose only way out is the egress proxy. It holds no secrets. Build context: chat/sandbox/.
+# The sandbox image (docs/CLAUDE-CODE.md): where Claude Code runs for a conversation, as uid 1000 in /workspace, inside
+# a gVisor sandbox whose only way out is the egress proxy. It holds no secrets. Build context: chat/sandbox/.
 # On our own hosts (provider "vm") uid 1000 has passwordless sudo: root and its capabilities exist only inside gVisor
 # (docs/SANDBOX-VM.md, "Installing packages"), so `apt-get install` works there.
 FROM node:22-trixie-slim
@@ -33,7 +33,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && mkdir -p /var/lib/docker
 COPY docker-wrapper.sh /usr/local/bin/docker
 
-# Claude Code (docs/CLAUDE-CODE.md): the agent runs inside the sandbox, started per turn through the agent's /proc
+# Claude Code (docs/CLAUDE-CODE.md): runs inside the sandbox, started by the CloudCLI UI through the agent's /proc
 # endpoint with cwd /workspace. Pinned to npm's "stable" tag. The instance's CLAUDE.md and MCP servers are written at
 # start by sbx-init.mjs into Claude Code's managed paths (/etc/claude-code), which uid 1000 can read but not change.
 RUN npm install -g @anthropic-ai/claude-code@2.1.304 \
@@ -58,16 +58,15 @@ RUN ln -s apt-get /usr/local/bin/apt \
  && visudo -cq
 
 # uid 1000 is the image's `node` user; the sandbox's home is /home/sandbox (not /home/user: E2B's template builder
-# makes that for its own user, mode 700), the workspace /work
-# /workspace and ~/.claude are the conversation's persistent folders, mounted from the host (JuiceFS) on our own
-# hosts; elsewhere they are plain folders
+# makes that for its own user, mode 700). /workspace and ~/.claude are the conversation's persistent folders, mounted
+# from the host (JuiceFS) on our own hosts; elsewhere they are plain folders. /work is only the folder sandboxd starts
+# the sandbox's first process in.
 RUN mkdir -p /home/sandbox/.claude /work /workspace /opt/agent \
  && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
  && usermod -d /home/sandbox node
-COPY agent.mjs tar.mjs sbx-init.mjs /opt/agent/
+COPY agent.mjs sbx-init.mjs /opt/agent/
 
 ENV HOME=/home/sandbox \
-    JARVIS_WORK_DIR=/work \
     PORT=7070 \
     NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -76,25 +75,16 @@ ENV HOME=/home/sandbox \
     MPLCONFIGDIR=/home/sandbox/.config/matplotlib \
     LANG=C.UTF-8
 ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:$PATH
-# Commands run as `bash -lc`, and a login shell's /etc/profile resets PATH: put the venv and the user's bins back
+# A login shell's /etc/profile resets PATH: put the venv and the user's bins back
 # (~/.local/bin and ~/.cargo/bin: where `curl … | sh` installers such as uv's and rustup's put their tools).
 USER root
 RUN printf 'export VIRTUAL_ENV=/opt/py\nexport PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.cargo/bin:/opt/py/bin:$PATH\n' > /etc/profile.d/00-sandbox-path.sh
-
-# What is preinstalled (apt, pip in /opt/py, global npm), for the tools role's sandbox_environment tool: the chat
-# workflow copies this file out of the built image into the chat image (docs/CHAT.md, "sandbox_environment").
-RUN { echo '# apt (dpkg-query)'; dpkg-query -W -f='${binary:Package} ${Version}\n'; \
-      echo '# pip (/opt/py)'; /opt/py/bin/pip freeze --all 2>/dev/null; \
-      echo '# npm (global, /usr/local)'; for d in /usr/local/lib/node_modules/*/ /usr/local/lib/node_modules/@*/*/; do [ -f "$d/package.json" ] && node -p "const p=require('$d/package.json'); p.name+' '+p.version"; done; \
-      echo "# node $(node --version), $(python3 --version), $(/usr/bin/docker --version)"; \
-    } > /opt/agent/packages.txt \
- && test "$(grep -c . /opt/agent/packages.txt)" -gt 100
 
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       org.opencontainers.image.description="Jarvis 3 chat sandbox"
 # by name: E2B's template builder takes only a user name (node = uid/gid 1000)
 USER node
-WORKDIR /work
+WORKDIR /workspace
 EXPOSE 7070
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "/opt/agent/agent.mjs"]

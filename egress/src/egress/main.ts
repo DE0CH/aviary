@@ -9,7 +9,6 @@ import { BudgetGate } from "../common/budget.ts";
 import { allowedModels, loadConfig } from "../common/config.ts";
 import { connect } from "../common/db.ts";
 import { log } from "../common/log.ts";
-import { startPresence } from "../common/ops.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard } from "./netguard.ts";
 import { Egress } from "./proxy.ts";
@@ -72,13 +71,6 @@ export async function main(): Promise<void> {
   });
   health.listen(Number(process.env.HEALTH_PORT || 9090), "::");
   log("egress listening", { port, selfHosts });
-  const stopPresence = startPresence(db, "egress", process.env.HOSTNAME || "egress", () => ({
-    openSockets: egress.openSockets,
-    draining: egress.draining,
-    cacheBytes: egress.cache.totalBytes,
-    cacheHits: egress.cache.hits,
-    cacheMisses: egress.cache.misses,
-  }));
   // provider "vm": this pod's address, for the hub's translation of the egress VIP (sandbox-vm.ts reads kv egress_pod:*)
   const podIp = process.env.POD_IP;
   const podKey = `egress_pod:${(process.env.HOSTNAME || "egress").replace(/[^a-z0-9-]/gi, "")}`;
@@ -103,7 +95,6 @@ export async function main(): Promise<void> {
     announcing = false;
     if (config.sandbox.vm) await db.query("delete from kv where key = $1", [podKey]).catch(() => {});
     await egress.drain(Number(process.env.EGRESS_DRAIN_SECONDS || 120) * 1000);
-    await stopPresence();
     health.close();
     await db.end().catch(() => {});
     log("egress stopped");

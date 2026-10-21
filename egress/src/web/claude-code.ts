@@ -5,7 +5,11 @@
 import { readFile } from "node:fs/promises";
 import type { ChatConfig } from "../common/config.ts";
 
-/** Appended to the instance's prompt in the managed CLAUDE.md. */
+/**
+ * Appended to the instance's prompt in the managed CLAUDE.md. The "Check big writes" rule is temporary: it covers the
+ * quota-on-close gap until the gVisor fork patch (sandboxd/gvisor-patches/0001-gofer-close-flush-error.patch) ships in
+ * the hosts' image; remove it then (docs/CLAUDE-CODE.md, "Storage in the sandbox").
+ */
 export const SANDBOX_RULES = `# Your computer
 
 You work on a sandboxed Linux computer. Your working folder is /workspace.
@@ -17,6 +21,9 @@ You work on a sandboxed Linux computer. Your working folder is /workspace.
   results in /workspace: put caches, installs and bulk files (.npm, node_modules, virtualenvs, unpacked archives,
   thousands of small files) in /tmp or your home folder. Each file write in /workspace is a network round trip, so
   bulk file work there is slow.
+- **Check big writes to /workspace.** A write that runs past the quota can be cut off without an error when the file
+  is closed. After writing a large file there, check its size (\`ls -l\` or \`stat\`) and tell the user if it was
+  truncated. Keep large intermediate data in /tmp (up to 5 GiB, not kept after a release).
 - **Installing software:** \`sudo apt-get install -y …\` for system packages, \`pip install …\` for Python, \`npm install
   -g …\` for Node. They work through the sandbox's proxy.
 - **Internet:** only sites on the sandbox's allowlist are reachable from here; a refused site cannot be enabled.

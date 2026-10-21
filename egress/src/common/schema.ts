@@ -71,7 +71,7 @@ create table vm_events (id bigserial primary key, at timestamptz not null defaul
   host text, sandbox_id uuid, data jsonb not null default '{}');
 create index vm_events_at on vm_events (at);
 `,
-  // the admin monitor (docs/CHAT.md, "Admin monitor"): sandbox starts (allocation latency) and failures with their reason
+  // sandbox starts (allocation latency) and failures with their reason
   `
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
@@ -87,10 +87,10 @@ delete from allowed_hosts;
 comment on table confirmations is 'unused since schema 6: no confirmations (old rows only)';
 comment on table allowed_hosts is 'unused since schema 6: the sandbox allowlist is automatic';
 `,
-  // the files a turn shows (docs/CHAT.md, "Presented files"): only what the agent passed to present_files, in its order,
+  // the files a turn of the old chat UI showed (retired, schema 10): only what the agent passed to present_files, in its order,
   // [{path, caption?, sha256, size}]; null = a turn from before (the UI then shows that turn's changed files as it did)
   `alter table turns add column presented jsonb;`,
-  // sharing and continuing (docs/CHAT.md, "Sharing and continuing"): a share is a frozen copy of a conversation's
+  // sharing and continuing in the old chat UI (retired, schema 10): a share is a frozen copy of a conversation's
   // finished turns; `blobs` says where a sha256's bytes are in the bucket (where they were first stored, never copied);
   // `blob_grants` lets a conversation read a sha256 stored elsewhere (a continued conversation's files)
   `
@@ -105,4 +105,18 @@ create table blob_grants (conversation_id uuid not null, sha256 text not null, p
   // Claude Code in the sandbox (docs/CLAUDE-CODE.md): a sandbox made for the CloudCLI UI knows its owner, and its
   // user_key names the owner's ~/.claude folder on JuiceFS (shared by the owner's sandboxes)
   `alter table sandboxes add column owner text, add column user_key text;`,
+  // the old chat UI and its server-side turn runner are retired (docs/CLAUDE-CODE.md): nothing reads or writes these
+  // tables any more. Their rows stay (the staff's old conversations) until they are dropped on purpose.
+  `
+comment on table users is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table conversations is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table messages is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table turns is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table events is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table claw_sessions is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table files is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table shares is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table blobs is 'unused since schema 10: the old chat UI is retired (old rows only)';
+comment on table blob_grants is 'unused since schema 10: the old chat UI is retired (old rows only)';
+`,
 ];

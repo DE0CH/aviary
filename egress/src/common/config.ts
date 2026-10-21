@@ -11,9 +11,9 @@ export interface ModelEntry {
 export interface EgressRoute {
   name: string;
   upstream: string;
-  auth: "turn" | "sandbox";
-  /** a model route (always true for the route named "model"): zero data retention forced, model + budget checked,
-   * cost logged as kind "model" (docs/CLAUDE-CODE.md: Claude Code in the sandbox uses one with auth "sandbox") */
+  /** a model route: zero data retention forced, model + budget checked, cost logged as kind "model" (Claude Code in
+   * the sandbox calls the model through one, docs/CLAUDE-CODE.md). Every route authenticates the caller by its
+   * sandbox's egress token. */
   model?: boolean;
   /** pass the caller's Authorization on (an upstream that identifies the sandbox by its own egress token: our tools
    * role's MCP endpoint for Claude Code, docs/CLAUDE-CODE.md); otherwise caller credentials never go upstream */
@@ -81,9 +81,9 @@ export interface VmConfig {
   /**
    * downtimeMs: pre-copy's target for the final stop; maxDowntimeMs: across clouds, a move whose final stop would be
    * longer is aborted before the switch (the sandbox keeps running); idleCpu: cores a sandbox may use and still move
-   * across clouds; duringTurns: a sandbox may move while its conversation has a turn going (a command running)
+   * across clouds
    */
-  migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number; duringTurns: boolean };
+  migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number };
   /**
    * The provider sandboxes came from before the switch ("kubernetes"): its sandboxes keep running until released
    * (with their files saved); remove once none is left.
@@ -105,9 +105,8 @@ export interface VmConfig {
 }
 
 /**
- * budget: one shared spending limit for everyone (docs/CHAT.md, "Budget"): model cost (egress_log, kind model) summed
- * from `since`; once it reaches `limitUsd` no turn starts and running turns stop at their next model call. An admin's
- * override in Postgres (kv budget:override) wins until this block changes.
+ * budget: one shared spending limit for everyone (docs/CHAT.md, "Budget"): model cost (egress_log, kind model)
+ * summed from `since`; once it reaches `limitUsd` egress refuses every model call (402 budget_exceeded).
  */
 export interface BudgetConfig {
   limitUsd: number;
@@ -166,15 +165,8 @@ export interface ChatConfig {
     wisers?: { url: string; accessClientIdEnv: string; accessClientSecretEnv: string };
     upstreams: UpstreamMcp[];
   };
-  s3: { endpoint: string; region: string; bucket: string; prefix: string };
   /** absent = no limit */
   budget?: BudgetConfig;
-}
-
-/** The model a turn runs on: the conversation's own while it is still offered, else the default (models removed from
- * the config, e.g. Opus after a switch to Sonnet only, continue on the default model). */
-export function effectiveModel(config: ChatConfig, model: string | null | undefined): string {
-  return model && config.models.some((m) => m.id === model) ? model : config.defaultModel;
 }
 
 /** Every model id this instance may call (egress refuses the rest): the offered models and the title model. */
@@ -234,7 +226,7 @@ export function parseConfig(raw: unknown): ChatConfig {
       ...v,
       hub: { endpoint: "", ...v.hub },
       tls: { caEnv: "SBX_CA_CERT", certEnv: "SBX_CLIENT_CERT", keyEnv: "SBX_CLIENT_KEY", hostCertEnv: "SBX_HOST_CERT", hostKeyEnv: "SBX_HOST_KEY", ...v.tls },
-      migration: { downtimeMs: 100, maxRounds: 20, maxDowntimeMs: 500, idleCpu: 0.05, duringTurns: false, ...v.migration },
+      migration: { downtimeMs: 100, maxRounds: 20, maxDowntimeMs: 500, idleCpu: 0.05, ...v.migration },
       aws,
     };
   }
@@ -279,7 +271,6 @@ export function parseConfig(raw: unknown): ChatConfig {
     sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b, vm },
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },
-    s3: { prefix: "", ...c.s3 },
     budget,
   };
 }

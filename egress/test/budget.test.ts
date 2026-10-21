@@ -1,7 +1,5 @@
-// The shared budget and the single-model rules (docs/CHAT.md, "Budget", "Models"): config parsing, spend from
-// egress_log, admin overrides with audit rows, egress /x/model refusing other models and calls once the budget is used
-// up, and the UI's small rules (model picker, budget event). The web role's side (turn refused before claw, a running
-// turn stopped, the admin API) is in web.test.ts.
+// The shared budget and the model rules (docs/CLAUDE-CODE.md, "Budget"): config parsing, spend from egress_log, and
+// egress's model route refusing other models and calls once the budget is used up.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -10,12 +8,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { BudgetGate, budgetAudit, budgetMessage, budgetStatus, changeBudget, effectiveBudget } from "../src/common/budget.ts";
-import { allowedModels, effectiveModel, parseConfig, type BudgetConfig } from "../src/common/config.ts";
+import { BudgetGate, budgetMessage, budgetStatus } from "../src/common/budget.ts";
+import { allowedModels, parseConfig, type BudgetConfig } from "../src/common/config.ts";
 import { sha256hex } from "../src/common/tokens.ts";
 import { Identities } from "../src/egress/identity.ts";
 import { Egress } from "../src/egress/proxy.ts";
-import { budgetOf, showModelPicker, usdAmount } from "../ui/src/rules.ts";
 import { freshDb } from "./pg.ts";
 
 let t: Awaited<ReturnType<typeof freshDb>>;
@@ -25,8 +22,8 @@ let port: number;
 let tmp: string;
 let upCalls = 0;
 const conv = randomUUID();
-const turnId = randomUUID();
-const turnToken = "budget-turn-token";
+const sandboxId = randomUUID();
+const sandboxToken = "budget-sandbox-token";
 const SONNET = "anthropic/claude-sonnet-5.5";
 let budgetCfg: BudgetConfig | undefined;
 let gate: BudgetGate;
@@ -41,14 +38,14 @@ const BASE = {
   titleModel: SONNET,
   systemPromptFile: "/dev/null",
   sandbox: { image: "x" },
-  s3: { endpoint: "http://s3", region: "r", bucket: "b" },
 };
 
 before(async () => {
   t = await freshDb("budget");
-  await t.db.query("insert into users (email) values ('a@x.org')");
-  await t.db.query("insert into conversations (id, owner, model) values ($1, 'a@x.org', $2)", [conv, SONNET]);
-  await t.db.query("insert into turns (id, conversation_id, status, token_hash, model) values ($1,$2,'running',$3,$4)", [turnId, conv, sha256hex(turnToken), SONNET]);
+  await t.db.query(
+    "insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at, owner, user_key) values ($1,$2,'sbx-budget',$3,'x','ready',now() + interval '1 hour','a@x.org','u1')",
+    [sandboxId, conv, sha256hex(sandboxToken)],
+  );
   up = createServer((req, res) => {
     upCalls++;
     req.resume();
@@ -65,7 +62,7 @@ before(async () => {
   const opts: any = {
     db: t.db,
     defaultAllowedHosts: [],
-    routes: [{ name: "model", upstream: `http://127.0.0.1:${upPort}/api`, auth: "turn", inject: { Authorization: "Bearer k" } }],
+    routes: [{ name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, inject: { Authorization: "Bearer k" } }],
     cacheDir: join(tmp, "cache"),
     cacheBytes: 1024 * 1024,
     selfHosts: ["egress.test"],
@@ -88,7 +85,7 @@ after(async () => {
 function model(body: unknown): Promise<{ status: number; body: string; headers: IncomingMessage["headers"] }> {
   return new Promise((resolve, reject) => {
     const r = request(
-      { host: "127.0.0.1", port, path: "/x/model/v1/messages", method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-type": "application/json" } },
+      { host: "127.0.0.1", port, path: "/x/claude/v1/messages", method: "POST", headers: { authorization: `Bearer ${sandboxToken}`, "content-type": "application/json" } },
       (res) => {
         let b = "";
         res.on("data", (c) => (b += c));
@@ -100,19 +97,16 @@ function model(body: unknown): Promise<{ status: number; body: string; headers: 
   });
 }
 
-const spend = (usd: number, at = "now()") => t.db.query(`insert into egress_log (at, kind, host, decision, cost_usd, turn_id) values (${at}, 'model', 'openrouter.ai', 'allow', $1, $2)`, [usd, turnId]);
+const spend = (usd: number, at = "now()") => t.db.query(`insert into egress_log (at, kind, host, decision, cost_usd, sandbox_id) values (${at}, 'model', 'openrouter.ai', 'allow', $1, $2)`, [usd, sandboxId]);
 const lastDecision = async () => {
   await egress.log.flush();
   return (await t.db.query("select decision, status from egress_log where kind = 'model' order by id desc limit 1")).rows[0];
 };
 
-test("config: budget is optional and validated; one model; a removed model continues on the default", () => {
+test("config: budget is optional and validated; the allowed models", () => {
   const c = parseConfig(BASE);
   assert.equal(c.budget, undefined);
   assert.deepEqual(allowedModels(c), [SONNET]);
-  assert.equal(effectiveModel(c, "anthropic/claude-opus-5.5"), SONNET, "an Opus conversation continues on Sonnet");
-  assert.equal(effectiveModel(c, SONNET), SONNET);
-  assert.equal(effectiveModel(c, null), SONNET);
   const b = parseConfig({ ...BASE, budget: { limitUsd: 30, since: "2026-10-21T10:00:00+08:00", ownerName: "Deyao" } });
   assert.deepEqual(b.budget, { limitUsd: 30, since: "2026-10-21T02:00:00.000Z", ownerName: "Deyao" });
   assert.throws(() => parseConfig({ ...BASE, budget: { limitUsd: -1, since: "2026-10-21T00:00:00Z" } }), /limitUsd/);
@@ -138,45 +132,13 @@ test("spend: model cost from `since` on (older calls and other kinds don't count
   assert.equal(s.spentUsd, 1.75);
   assert.equal(s.remainingUsd, 0.25);
   assert.equal(s.exhausted, false);
-  assert.equal(s.source, "config");
   assert.equal((await budgetStatus(t.db, { limitUsd: 1.75, since }))!.exhausted, true, "spent >= limit is used up");
-  assert.equal(await budgetStatus(t.db, undefined), null, "no budget, no override: no limit");
+  assert.equal(await budgetStatus(t.db, undefined), null, "no budget: no limit");
   assert.equal(await gate.status(), null);
 });
 
-test("admin overrides: reset, new limit, back to config; each an audit row; a config edit takes over again", async () => {
-  await t.db.query("delete from egress_log; delete from kv; delete from ops_events");
-  const cfg: BudgetConfig = { limitUsd: 1, since: new Date(Date.now() - 60_000).toISOString(), ownerName: "Deyao" };
-  await spend(1.5);
-  assert.equal((await budgetStatus(t.db, cfg))!.exhausted, true);
-  // raise the limit: spend so far still counts
-  let s = (await changeBudget(t.db, cfg, "deyao@x.org", { action: "set", limitUsd: 5 }))!;
-  assert.deepEqual([s.limitUsd, s.spentUsd, s.exhausted, s.source, s.since], [5, 1.5, false, "override", cfg.since]);
-  // reset: spend counts from now
-  await new Promise((r) => setTimeout(r, 20));
-  s = (await changeBudget(t.db, cfg, "deyao@x.org", { action: "reset" }))!;
-  assert.deepEqual([s.limitUsd, s.spentUsd, s.exhausted], [5, 0, false]);
-  assert.ok(Date.parse(s.since) > Date.parse(cfg.since));
-  // config edited after the override (e.g. a new `since` in config.json): config wins
-  const edited = { ...cfg, since: new Date().toISOString(), limitUsd: 30 };
-  assert.equal((await effectiveBudget(t.db, edited))!.source, "config");
-  // back to config
-  s = (await changeBudget(t.db, cfg, "deyao@x.org", { action: "clear" }))!;
-  assert.deepEqual([s.source, s.limitUsd, s.exhausted], ["config", 1, true]);
-  await assert.rejects(changeBudget(t.db, cfg, "deyao@x.org", { action: "set", limitUsd: -3 }), RangeError);
-  const audit = await budgetAudit(t.db);
-  assert.deepEqual(audit.map((a) => a.action), ["clear", "reset", "set"]);
-  assert.equal(audit[2]!.actor, "deyao@x.org");
-  assert.deepEqual(audit[2]!.after, { limitUsd: 5, since: cfg.since });
-  assert.equal((audit[2]!.before as any).spentUsd, 1.5);
-  // an override with no config budget at all is a limit too
-  await changeBudget(t.db, undefined, "deyao@x.org", { action: "set", limitUsd: 0 });
-  assert.equal((await gate.status())!.exhausted, true);
-  await t.db.query("delete from kv");
-});
-
-test("egress /x/model: only the configured models; refused with budget_exceeded once the budget is used up", async () => {
-  await t.db.query("delete from egress_log; delete from kv");
+test("egress model route: only the configured models; refused with budget_exceeded once the budget is used up", async () => {
+  await t.db.query("delete from egress_log");
   budgetCfg = { limitUsd: 1, since: new Date(Date.now() - 1000).toISOString(), ownerName: "Deyao" };
   const before = upCalls;
   const opus = await model({ model: "anthropic/claude-opus-5.5", messages: [] });
@@ -185,7 +147,7 @@ test("egress /x/model: only the configured models; refused with budget_exceeded 
   assert.deepEqual(await lastDecision(), { decision: "deny:model", status: 400 });
   assert.equal(upCalls, before, "a refused model never reaches OpenRouter");
 
-  // claw's own form: the id without the provider prefix
+  // the id without the provider prefix (as Claude Code may send it)
   assert.equal((await model({ model: "claude-sonnet-5.5", messages: [] })).status, 200);
   assert.equal((await model({ model: "claude-opus-5.5", messages: [] })).status, 400);
   const ok = await model({ model: SONNET, messages: [] });
@@ -204,13 +166,4 @@ test("egress /x/model: only the configured models; refused with budget_exceeded 
   assert.equal(upCalls, before + 2);
   budgetCfg = undefined;
   assert.equal((await model({ model: SONNET, messages: [] })).status, 200, "no budget: no limit");
-});
-
-test("UI rules: no model picker for one model; a budget event's details", () => {
-  assert.equal(showModelPicker([{ id: SONNET }]), false);
-  assert.equal(showModelPicker([{ id: SONNET }, { id: "x" }]), true);
-  assert.deepEqual(budgetOf({ code: "budget", limitUsd: 30, ownerName: "Deyao" }), { limitUsd: 30, ownerName: "Deyao" });
-  assert.equal(budgetOf({ message: "boom" }), undefined);
-  assert.equal(usdAmount(30), "30");
-  assert.equal(usdAmount(7.5), "7.50");
 });

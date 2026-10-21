@@ -1,15 +1,10 @@
 // The tools role end to end on the real local Postgres, with every outside service faked (test/fakes/tools-upstreams.ts):
-// auth by turn token, the MCP methods, each built-in tool, upstream proxying with its read-only allowlist, tool_calls logging, and the
-// stdio bridge claw uses.
+// auth by a live sandbox's egress token (what Claude Code sends through egress), the MCP methods, each built-in tool,
+// upstream proxying with its read-only allowlist, and tool_calls logging.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
-import { copyFileSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/common/config.ts";
 import { newToken, sha256hex } from "../src/common/tokens.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
@@ -27,19 +22,17 @@ let url = "";
 let close: () => Promise<void>;
 const owner = "staff@yyc.hk";
 let conv = "";
-let turnId = "";
 let token = "";
-// sandbox_environment's build-time files: the real Dockerfile and a small package list
-const envDir = mkdtempSync(join(tmpdir(), "sbxenv-"));
-copyFileSync(fileURLToPath(new URL("../sandbox/Dockerfile", import.meta.url)), join(envDir, "Dockerfile"));
-writeFileSync(join(envDir, "packages.txt"), "# apt (dpkg-query)\nffmpeg-is-not-here 0\njq 1.7.1-6\n# pip (/opt/py)\npandas==2.3.3\n# npm (global, /usr/local)\nnpm 10.9.4\n");
 
-async function newTurn(status = "running"): Promise<{ id: string; token: string }> {
+/** A sandbox row as the web role makes one (status, owner); returns its egress token. */
+async function newSandbox(status = "ready", who: string | null = owner, conversation = conv): Promise<string> {
   const id = randomUUID();
   const tok = newToken();
-  await t.db.query("update turns set status = 'done' where conversation_id = $1 and status in ('queued','running','waiting')", [conv]);
-  await t.db.query("insert into turns (id, conversation_id, status, token_hash, model) values ($1,$2,$3,$4,'m')", [id, conv, status, sha256hex(tok)]);
-  return { id, token: tok };
+  await t.db.query(
+    "insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at, owner, user_key) values ($1,$2,$3,$4,'x',$5,now() + interval '1 hour',$6,'u1')",
+    [id, conversation, `sbx-${id.slice(0, 8)}`, sha256hex(tok), status, who],
+  );
+  return tok;
 }
 
 async function rpc(method: string, params: Record<string, unknown> = {}, tok = token): Promise<{ status: number; body: any }> {
@@ -58,10 +51,8 @@ const textOf = (r: any) => r.content.map((c: any) => c.text).join("");
 before(async () => {
   t = await freshDb("tools");
   fakes = await startFakes();
-  await t.db.query("insert into users (email) values ($1)", [owner]);
   conv = randomUUID();
-  await t.db.query("insert into conversations (id, owner, model) values ($1,$2,'m')", [conv, owner]);
-  ({ id: turnId, token } = await newTurn());
+  token = await newSandbox();
   const config = parseConfig({
     product: { name: "YYC AI" },
     publicUrl: "https://ai.example.org",
@@ -87,7 +78,6 @@ before(async () => {
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
-    sandboxEnvDir: envDir,
   };
   const ups = config.tools.upstreams.map((u) => new Upstream(u, deps));
   for (const u of ups) await u.refresh("admin@yyc.hk");
@@ -103,25 +93,27 @@ after(async () => {
   await t.drop();
 });
 
-test("auth: a running turn's token only", async () => {
+test("auth: a live sandbox's egress token only", async () => {
   assert.equal((await rpc("tools/list", {}, "")).status, 401);
   assert.equal((await rpc("tools/list", {}, "nope")).status, 401);
-  const old = await newTurn("done");
-  assert.equal((await rpc("tools/list", {}, old.token)).status, 401);
-  ({ id: turnId, token } = await newTurn());
+  assert.equal((await rpc("tools/list", {}, await newSandbox("gone"))).status, 401, "a released sandbox");
+  assert.equal((await rpc("tools/list", {}, await newSandbox("ready", null, randomUUID()))).status, 401, "a row from before Claude Code (no owner)");
   assert.equal((await rpc("tools/list")).status, 200);
+  await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } });
+  const { rows } = await t.db.query("select conversation_id, user_email, turn_id from tool_calls order by id desc limit 1");
+  assert.deepEqual(rows[0], { conversation_id: conv, user_email: owner, turn_id: null });
 });
 
 test("MCP: initialize, ping, list, unknown method, notifications, batch", async () => {
-  const init = (await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claw" } })).body;
+  const init = (await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code" } })).body;
   assert.equal(init.result.protocolVersion, "2025-06-18");
   assert.ok(init.result.capabilities.tools);
   assert.equal((await rpc("initialize", { protocolVersion: "1999-01-01" })).body.result.protocolVersion, "2025-06-18");
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "sandbox_environment", "present_files", "yyc_posts_search"]);
-  for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names (claw's ask rules compare lowercased)");
+  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "yyc_posts_search"]);
+  for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
   const batch = await fetch(`${url}/mcp`, {
@@ -142,7 +134,7 @@ test("web_search: Exa results as text, cost logged in tool_calls", async () => {
   assert.equal(rows[0].user_email, owner);
   assert.equal(rows[0].ok, true);
   assert.equal(Number(rows[0].cost_usd), 0.007);
-  assert.equal(rows[0].turn_id, turnId);
+  assert.equal(rows[0].conversation_id, conv);
   const bad = await call("web_search", { query: "x", since: "yesterday" });
   assert.equal(bad.isError, true);
   assert.match(textOf(bad), /YYYY-MM-DD/);
@@ -219,79 +211,6 @@ test("upstream MCP: listed read-only tools are proxied with the staff member's i
   assert.equal(readOnlyAllowed(listed, { name: "b", annotations: { readOnlyHint: true } }), false);
 });
 
-test("jarvis-mcp-bridge: Content-Length framing (claw's) and NDJSON, both ways", async () => {
-  const bridge = fileURLToPath(new URL("../src/bin/jarvis-mcp-bridge", import.meta.url));
-  const run = (input: Buffer) =>
-    new Promise<string>((ok, fail) => {
-      const p = spawn(process.execPath, [bridge], { env: { ...process.env, JARVIS_TOOLS_URL: `${url}/mcp`, JARVIS_TURN_TOKEN: token } });
-      let out = "";
-      p.stdout.on("data", (c) => (out += c));
-      p.stderr.on("data", (c) => process.stderr.write(c));
-      p.on("exit", () => ok(out));
-      p.on("error", fail);
-      p.stdin.end(input);
-    });
-  const frame = (m: unknown) => {
-    const b = Buffer.from(JSON.stringify(m));
-    return Buffer.concat([Buffer.from(`Content-Length: ${b.length}\r\n\r\n`), b]);
-  };
-  const out = await run(
-    Buffer.concat([
-      frame({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claw" } } }),
-      frame({ jsonrpc: "2.0", method: "notifications/initialized" }),
-      frame({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
-      frame({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "web_search", arguments: { query: "香港" } } }),
-    ]),
-  );
-  const msgs: any[] = [];
-  let rest = out;
-  while (rest) {
-    const m = /^Content-Length: (\d+)\r\n\r\n/.exec(rest);
-    assert.ok(m, `framed output: ${rest.slice(0, 80)}`);
-    const len = Number(m[1]);
-    const b = Buffer.from(rest.slice(m[0].length), "utf8");
-    msgs.push(JSON.parse(b.subarray(0, len).toString("utf8")));
-    rest = b.subarray(len).toString("utf8");
-  }
-  assert.deepEqual(msgs.map((m) => m.id).sort(), [1, 2, 3]);
-  assert.ok(msgs.find((m) => m.id === 2).result.tools.length >= 5);
-  assert.match(msgs.find((m) => m.id === 3).result.content[0].text, /施政報告 2026/);
-
-  const lines = await run(Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "ping" }) + "\n"));
-  assert.deepEqual(JSON.parse(lines.trim()), { jsonrpc: "2.0", id: 9, result: {} });
-});
-
-test("sandbox_environment: summary from the config, the Dockerfile and the package list from the build, no secrets", async () => {
-  const sum = await call("sandbox_environment", {});
-  assert.notEqual(sum.isError, true);
-  const t0 = textOf(sum);
-  assert.match(t0, /Image: img/);
-  assert.match(t0, /CPU 1 core\(s\), memory 1Gi/);
-  assert.match(t0, /pip install/);
-  assert.match(t0, /npm install -g/);
-  assert.match(t0, /web_fetch/);
-  // provider kubernetes (the default): no apt, no Docker
-  assert.match(t0, /\(apt\) can't be installed/);
-  assert.match(t0, /Docker\n- Not available/);
-  assert.doesNotMatch(t0, /Dockerfile it is built|FROM node/);
-  const vm = (await import("../src/tools/sandbox-env.ts")).summary({ ...deps.config, sandbox: { ...deps.config.sandbox, provider: "vm" } }, "abc");
-  assert.match(vm, /sudo apt-get install -y x/);
-  assert.match(vm, /`docker` works/);
-  assert.match(vm, /capped at 5 GiB/);
-  const df = textOf(await call("sandbox_environment", { section: "dockerfile" }));
-  assert.match(df, /FROM node:22-trixie-slim/);
-  assert.match(df, /sudoers/);
-  const pk = textOf(await call("sandbox_environment", { section: "packages", match: "PANDAS" }));
-  assert.match(pk, /pandas==2\.3\.3/);
-  assert.doesNotMatch(pk, /jq 1/);
-  assert.match(textOf(await call("sandbox_environment", { match: "nothing-like-it" })), /No preinstalled package matches/);
-  const all = textOf(await call("sandbox_environment", { section: "all" }));
-  for (const secret of ["exa-key", "tik-key", "csecret", token]) assert.ok(!all.includes(secret), "no secrets");
-  assert.equal((await call("sandbox_environment", { section: "nope" })).isError, true);
-  const { rows } = await t.db.query("select ok from tool_calls where tool = 'sandbox_environment' order by id desc limit 1");
-  assert.equal(rows[0].ok, false);
-});
-
 test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () => {
   for (const a of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "100.64.0.1", "169.254.169.254", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "fd42::5"])
     assert.equal(isPrivateAddress(a), true, a);
@@ -302,42 +221,5 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("garbage"), null);
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
-  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch", "sandbox_environment", "present_files"]);
-});
-
-
-test("present_files: read-only, needs the bridge's workspace facts, all or nothing, merges calls on the turn (copies once, latest wins)", async () => {
-  ({ id: turnId, token } = await newTurn());
-  const listed = (await rpc("tools/list")).body.result.tools.find((x: any) => x.name === "present_files");
-  assert.equal(listed.annotations.readOnlyHint, true);
-  assert.match(listed.description, /never scripts, fonts or intermediate files/);
-  const callMeta = async (args: unknown, meta?: unknown) =>
-    (await rpc("tools/call", { name: "present_files", arguments: args, ...(meta ? { _meta: meta } : {}) })).body.result;
-  const f = (path: string, s: string, size = 3) => ({ path, sha256: s.repeat(64), size });
-  // no facts (not through the bridge): refused
-  assert.equal((await callMeta({ files: [{ path: "a.pdf" }] })).isError, true);
-  // bad input
-  assert.match(textOf(await callMeta({ files: [] }, { "jarvis/files": {} })), /non-empty list/);
-  assert.match(textOf(await callMeta({ files: Array.from({ length: 21 }, (_, i) => ({ path: `${i}` })) }, { "jarvis/files": {} })), /at most 20/);
-  // one bad path: nothing is shown
-  const bad = await callMeta({ files: [{ path: "a.pdf" }, { path: "nope.pdf" }] }, { "jarvis/files": { "a.pdf": f("a.pdf", "a"), "nope.pdf": { error: "no such file in the workspace" } } });
-  assert.equal(bad.isError, true);
-  assert.match(textOf(bad), /nope\.pdf: no such file/);
-  assert.equal((await t.db.query("select presented from turns where id = $1", [turnId])).rows[0].presented, null);
-  // two calls: the second adds, a copy (same contents) and a path given again are shown once, at the latest place
-  const one = await callMeta({ files: [{ path: "/work/build/a.pdf", caption: "  Report\n v1 " }, { path: "c.png" }] }, { "jarvis/files": { "/work/build/a.pdf": f("build/a.pdf", "a"), "c.png": f("c.png", "c") } });
-  assert.equal(one.isError, undefined, textOf(one));
-  const two = await callMeta({ files: [{ path: "a.pdf", caption: "Report" }] }, { "jarvis/files": { "a.pdf": f("a.pdf", "a") } });
-  assert.deepEqual(two.structuredContent.files, [f("c.png", "c"), { path: "a.pdf", caption: "Report", sha256: "a".repeat(64), size: 3 }]);
-  const { rows } = await t.db.query("select presented from turns where id = $1", [turnId]);
-  assert.deepEqual(rows[0].presented, two.structuredContent.files);
-  // the list as a JSON string (a model sent that live) or plain paths: read the same way
-  const asString = await callMeta({ files: JSON.stringify([{ path: "c.png", caption: "Chart" }]) }, { "jarvis/files": { "c.png": f("c.png", "c") } });
-  assert.equal(asString.isError, undefined, textOf(asString));
-  assert.equal(asString.structuredContent.files.at(-1).caption, "Chart");
-  assert.equal((await callMeta({ files: ["c.png"] }, { "jarvis/files": { "c.png": f("c.png", "c") } })).isError, undefined);
-  const { rows: ev } = await t.db.query("select data from events where turn_id = $1 and type = 'files_presented' order by seq", [turnId]);
-  assert.equal(ev.length, 4);
-  assert.deepEqual(ev[1].data.files, two.structuredContent.files);
-  assert.equal(ev[0].data.files[0].caption, "Report v1");
+  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch"]);
 });

@@ -1,5 +1,5 @@
 // Upstream MCP servers (config.tools.upstreams): their tools appear as <prefix>_<tool>, calls are forwarded with the
-// configured headers, ${USER_EMAIL} = the staff member the turn belongs to. Only the read-only tools the upstream's
+// configured headers, ${USER_EMAIL} = the staff member whose sandbox calls. Only the read-only tools the upstream's
 // `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The tool list is read at startup and every
 // 10 minutes (a failed refresh keeps the last good list). Streamable HTTP client: JSON or SSE answers, a session id
 // when the server hands one out.
@@ -132,7 +132,7 @@ export class Upstream {
       ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}),
       ...(t.annotations ? { annotations: t.annotations } : {}),
       run: async (args, ctx): Promise<ToolResult> => {
-        const r = await this.#rpc(ctx.turn.owner, "tools/call", { name: t.name, arguments: args });
+        const r = await this.#rpc(ctx.caller.owner, "tools/call", { name: t.name, arguments: args });
         return {
           content: (Array.isArray(r?.content) ? r.content : [{ type: "text", text: JSON.stringify(r ?? null) }]) as Content[],
           ...(r?.isError ? { isError: true } : {}),

@@ -64,7 +64,7 @@ export class FakeE2b {
     const port = await freePort();
     const work = mkdtempSync(join(tmpdir(), "e2b-work-"));
     const child = spawn(process.execPath, [AGENT], {
-      env: { PATH: process.env.PATH!, HOME: work, JARVIS_WORK_DIR: work, PORT: String(port), JARVIS_INIT: "1", JARVIS_WIRE_PORT: String(await freePort()) },
+      env: { PATH: process.env.PATH!, HOME: work, JARVIS_WORKSPACE: work, PORT: String(port), JARVIS_INIT: "1", JARVIS_WIRE_PORT: String(await freePort()) },
       stdio: "ignore",
     });
     const sb: FakeSandbox = { id, body, child, port, work, traffic: randomBytes(12).toString("hex"), startedAt: new Date().toISOString(), timeouts: [] };

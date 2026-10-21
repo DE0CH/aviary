@@ -1,4 +1,4 @@
-// Postgres access for every role: one pool, migrations under an advisory lock, LISTEN/NOTIFY helpers and
+// Postgres access for every role: one pool, migrations under an advisory lock and
 // advisory-lock leadership for singleton loops (the janitor). Every replica of every role shares one database.
 import pg from "pg";
 import { MIGRATIONS } from "./schema.ts";
@@ -8,7 +8,7 @@ export type Tx = pg.PoolClient;
 
 const MIGRATION_LOCK = 4_242_001;
 
-/** Names this process's connections in pg_stat_activity (the admin monitor: connections per role, lock holders). */
+/** Names this process's connections in pg_stat_activity (connections per role, lock holders). */
 export const appName = (): string => `jarvis-${process.env.JARVIS_ROLE || "chat"}:${process.env.HOSTNAME || "local"}`.slice(0, 63);
 
 export function connect(url = process.env.DATABASE_URL): Db {
@@ -53,74 +53,6 @@ export async function tx<T>(db: Db, fn: (c: Tx) => Promise<T>): Promise<T> {
     throw e;
   } finally {
     c.release();
-  }
-}
-
-/** Channel names may only hold [a-z0-9_]; uuids lose their dashes. */
-export const channel = (prefix: string, id: string): string => `${prefix}_${id.replace(/-/g, "").toLowerCase()}`;
-
-/**
- * One dedicated connection that LISTENs on many channels; reconnects (and re-LISTENs) after a drop and then calls
- * every handler with payload null, so subscribers re-read what they may have missed.
- */
-export class Listener {
-  #client: pg.Client | null = null;
-  #handlers = new Map<string, Set<(payload: string | null) => void>>();
-  #closed = false;
-  #connecting: Promise<void> | null = null;
-  readonly url: string | undefined;
-  constructor(url = process.env.DATABASE_URL) {
-    this.url = url;
-  }
-
-  async #connect(): Promise<void> {
-    if (this.#closed) return;
-    const c = new pg.Client({ connectionString: this.url, application_name: appName() });
-    c.on("notification", (n) => {
-      for (const h of this.#handlers.get(n.channel) ?? []) h(n.payload ?? "");
-    });
-    const reconnect = () => {
-      if (this.#client !== c || this.#closed) return;
-      this.#client = null;
-      setTimeout(() => {
-        this.#connecting = this.#connect().then(() => {
-          for (const hs of this.#handlers.values()) for (const h of hs) h(null);
-        }).catch(() => reconnect());
-      }, 1000);
-    };
-    c.on("error", reconnect);
-    c.on("end", reconnect);
-    await c.connect();
-    this.#client = c;
-    for (const ch of this.#handlers.keys()) await c.query(`listen ${ch}`);
-  }
-
-  async listen(ch: string, h: (payload: string | null) => void): Promise<() => Promise<void>> {
-    if (!/^[a-z0-9_]+$/.test(ch)) throw new Error(`bad channel ${ch}`);
-    if (!this.#client) await (this.#connecting ??= this.#connect().finally(() => (this.#connecting = null)));
-    let hs = this.#handlers.get(ch);
-    if (!hs) {
-      hs = new Set();
-      this.#handlers.set(ch, hs);
-      await this.#client?.query(`listen ${ch}`);
-    }
-    hs.add(h);
-    return async () => {
-      const set = this.#handlers.get(ch);
-      if (!set) return;
-      set.delete(h);
-      if (!set.size) {
-        this.#handlers.delete(ch);
-        await this.#client?.query(`unlisten ${ch}`).catch(() => {});
-      }
-    };
-  }
-
-  async close(): Promise<void> {
-    this.#closed = true;
-    const c = this.#client;
-    this.#client = null;
-    await c?.end().catch(() => {});
   }
 }
 

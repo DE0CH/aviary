@@ -1,63 +1,21 @@
-// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes and those
-// of deleted or never-used conversations, remove sandboxes the provider has without a live row, end turns whose
-// replica died. Every replica also writes its own heartbeat, which is how a dead replica's turns are recognised.
+// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes, clear
+// stuck starts and releases, remove sandboxes the provider has without a live row, and mark rows whose sandbox
+// vanished. A sandbox in use is touched every few seconds by the UI pod running Claude Code in it (/internal/cc/touch).
 import { lead } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import type { WebDeps } from "./ctx.ts";
-import { appendEvent } from "./events.ts";
 import type { SandboxManager, SandboxRow } from "./sandbox.ts";
 
 const JANITOR_LOCK = 4_242_003;
-const HEARTBEAT_MS = 10_000;
-const DEAD_AFTER_S = 60;
-/** a sandbox whose conversation never had a turn goes after this long */
-const UNUSED_MINUTES = 5;
-
-export function startHeartbeat(deps: WebDeps): () => void {
-  const beat = () =>
-    deps.db
-      .query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [
-        `replica:${deps.replica}`,
-        JSON.stringify({ at: new Date().toISOString() }),
-      ])
-      .catch((e) => logError("heartbeat", e));
-  void beat();
-  const t = setInterval(beat, HEARTBEAT_MS);
-  return () => clearInterval(t);
-}
 
 export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Promise<void> {
   const db = deps.db;
   const cfg = deps.config.sandbox;
-  const busy = `exists (select 1 from turns t where t.conversation_id = s.conversation_id and t.status in ('queued','running','waiting'))`;
 
-  // turns whose replica stopped beating (crashed or killed past its drain)
-  const { rows: dead } = await db.query<{ id: string; conversation_id: string }>(
-    `update turns t set status = 'error', finished_at = now(), error = 'interrupted: the server restarted'
-      where (t.status in ('running','waiting') and not exists (
-               select 1 from kv where kv.key = 'replica:' || t.replica and (kv.value->>'at')::timestamptz > now() - make_interval(secs => $1)))
-         or (t.status = 'queued' and t.started_at < now() - interval '2 minutes')
-      returning t.id, t.conversation_id`,
-    [DEAD_AFTER_S],
-  );
-  for (const t of dead) await appendEvent(db, t.conversation_id, t.id, "turn_finished", { turnId: t.id, status: "error", error: "interrupted: the server restarted", costUsd: null });
-
-  // sandboxes nobody can use: their conversation was deleted (DELETE releases at once; this catches a replica that
-  // died first), or it never had a turn (sandboxes come with a turn's first bash command, so only a leftover makes one)
-  const { rows: unused } = await db.query<SandboxRow & { why: string }>(
-    `select s.*, case when c.deleted_at is not null then 'deleted' else 'unused' end as why
-       from sandboxes s join conversations c on c.id = s.conversation_id
-      where s.status = 'ready' and (c.deleted_at is not null
-        or (not exists (select 1 from turns t where t.conversation_id = s.conversation_id) and s.created_at < now() - make_interval(mins => $1)))`,
-    [UNUSED_MINUTES],
-  );
-  for (const s of unused) await sandboxes.release(s, s.why).catch((e) => logError("janitor release", e, { sandbox: s.id }));
-
-  // idle and expired sandboxes (never while their conversation has a turn going)
+  // idle and expired sandboxes
   const { rows: toRelease } = await db.query<SandboxRow & { why: string }>(
     `select s.*, case when s.expires_at < now() then 'max-lifetime' else 'idle' end as why from sandboxes s
-      where s.status = 'ready' and not ${busy}
-        and (s.expires_at < now() or s.last_active_at < now() - make_interval(mins => $1))`,
+      where s.status = 'ready' and (s.expires_at < now() or s.last_active_at < now() - make_interval(mins => $1))`,
     [cfg.idleMinutes],
   );
   for (const s of toRelease) await sandboxes.release(s, s.why).catch((e) => logError("janitor release", e, { sandbox: s.id }));
@@ -85,9 +43,8 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
       await deps.sandboxProvider.destroy(p.name).catch((e) => logError("janitor orphan", e));
     }
   }
-  // the admin monitor's records: a month of sandbox starts and title failures, presence of replicas that are gone a day
-  await db.query("delete from ops_events where kind in ('sandbox_start', 'title') and at < now() - interval '30 days'");
-  await db.query("delete from kv where key like 'presence:%' and (value->>'at')::timestamptz < now() - interval '1 day'");
+  // a month of sandbox-start records (ops_events)
+  await db.query("delete from ops_events where kind = 'sandbox_start' and at < now() - interval '30 days'");
   const podNames = new Set(pods.map((p) => p.name));
   for (const r of live) {
     if (r.status === "ready" && !podNames.has(r.pod)) {

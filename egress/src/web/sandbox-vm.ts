@@ -6,17 +6,17 @@
 //
 // - Placement: the hub while it has room, then the fullest AWS host with room; none: the scaler starts an AWS host
 //   (at most aws.maxHosts in steady state; one more only while a `retiring` host is being replaced). An AWS host is
-//   also started as soon as someone types in a conversation without a sandbox while no host has a free slot (kv
-//   `sandbox_demand:<email>`, from POST /api/typing), so it is up by the time a bash command asks for a sandbox.
+//   also started while someone may need a sandbox soon and no host has a free slot (kv `sandbox_demand:<email>`,
+//   noteSandboxDemand; nothing sends that signal since the old chat UI was retired).
 // - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
 // - Packing (packing.ts): each pass plans a placement on the fewest hosts and, when it uses strictly fewer than now,
-//   live-migrates one sandbox toward it (during a turn only with migration.duringTurns). A move across clouds also needs the sandbox
+//   live-migrates one sandbox toward it, also while Claude Code runs in it. A move across clouds also needs the sandbox
 //   to be idle (CPU) and is aborted, sandbox untouched, if pre-copy wouldn't converge within migration.maxDowntimeMs
 //   (the gVisor fork's --migrate-max-downtime). A `retiring` host (the operator's) has its sandboxes moved off.
 // - An AWS host is terminated as soon as no sandbox is on it and it is older than vm.minHostLifetimeSeconds (default
 //   15 min, from launch); nothing else keeps or ends it.
 // - A host that stops answering for 30 s (the hub: 120 s) loses its sandboxes: their rows go `gone` ("host lost"),
-//   the next turn makes a new sandbox and gets the reset note. AWS hosts are then terminated.
+//   the next /internal/cc/sandbox makes a new one (`reset`). AWS hosts are then terminated.
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import type { ChatConfig, VmConfig } from "../common/config.ts";
@@ -163,7 +163,7 @@ export class VmController {
     this.#d = d;
   }
 
-  /** Records what the scaler/controller did (vm_events: the admin monitor's "recent decisions" and migrations). */
+  /** Records what the scaler/controller did (vm_events: launches, drains, migrations with their pause, terminations). */
   async event(kind: string, host: string | null, sandboxId: string | null, data: Record<string, unknown> = {}): Promise<void> {
     await this.#d.db
       .query("insert into vm_events (kind, host, sandbox_id, data) values ($1, $2, $3, $4)", [kind, host, sandboxId, JSON.stringify(data)])
@@ -240,7 +240,7 @@ export class VmController {
     });
   }
 
-  /** People who may need a new sandbox soon (typing, a turn started without one) within DEMAND_WINDOW_S. */
+  /** People who may need a new sandbox soon (noteSandboxDemand) within DEMAND_WINDOW_S. */
   async demand(): Promise<number> {
     const { rows } = await this.#d.db.query<{ n: string }>(
       "select count(*) as n from kv where key like 'sandbox_demand:%' and (value->>'at')::timestamptz > now() - make_interval(secs => $1)",
@@ -324,7 +324,7 @@ export class VmController {
     });
   }
 
-  /** The numbers behind launch decisions (also the admin monitor's). */
+  /** The numbers behind launch decisions. */
   async plan(c: Db | pg.PoolClient = this.#d.db, transient = false): Promise<Plan> {
     const available = (await this.#slots(c)).reduce((a, s) => a + s.free, 0);
     const perHost = await this.awsSlotsPerHost(c);
@@ -506,14 +506,9 @@ export class VmController {
     await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers(aws, byHost) }, 10_000);
   }
 
-  /** May this sandbox move now? Never while its conversation has a turn going; across clouds only when idle. */
+  /** May this sandbox move now? Not in its first 30 s; across clouds only when idle. */
   async #movable(s: { id: string; conversation_id: string; pod: string; created_at: Date }, from: HostRow, to: HostRow): Promise<boolean> {
     if (Date.now() - new Date(s.created_at).getTime() < 30_000) return false;
-    // moves during a turn (a bash command running) only once verified live (sandbox.vm.migration.duringTurns)
-    if (!this.vm.migration.duringTurns) {
-      const { rows } = await this.#d.db.query("select 1 from turns where conversation_id = $1 and status in ('queued','running','waiting') limit 1", [s.conversation_id]);
-      if (rows.length) return false;
-    }
     if (from.kind !== to.kind) {
       const usage = this.#lastInfo.get(from.name)?.sandboxes.find((x) => x.name === s.pod)?.cpuUsage ?? 1;
       if (usage > this.vm.migration.idleCpu) return false;
@@ -768,11 +763,6 @@ export class VmProvider implements SandboxProvider {
 
   async keepAlive(): Promise<void> {}
 
-  /** The admin monitor's view (hosts, their sandboxes, AWS cost so far, scaler decisions, migrations). */
-  stats(): Promise<VmStats> {
-    return vmStats(this.#d.db, this.controller);
-  }
-
   async destroy(name: string): Promise<void> {
     const { rows } = await this.#d.db.query<{ id: string; host: string | null }>("select id, host from sandboxes where pod = $1", [name]);
     if (this.#legacy && (rows[0] ? !rows[0].host : !(await this.#onHosts(name)))) return this.#legacy.destroy(name);
@@ -809,118 +799,6 @@ export class VmProvider implements SandboxProvider {
     );
     return out;
   }
-}
-
-/** On-demand price of an AWS burst host (m7i.xlarge, eu-central-1) plus its public IPv4 and 40 GB gp3, USD/hour. */
-export const AWS_HOST_USD_PER_HOUR = 0.2415 + 0.005 + (40 * 0.0952) / 730;
-
-export interface VmStats {
-  provider: "vm";
-  at: string;
-  scaler: { spareSlots: number; minHostLifetimeSeconds: number; maxAwsHosts: number; freeSlots: number; demand: number; plan: Plan | null; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
-  hosts: {
-    name: string;
-    kind: "hub" | "aws";
-    status: HostRow["status"];
-    instanceId: string | null;
-    cpus: number | null;
-    memTotal: number | null;
-    memAvailable: number | null;
-    loadAvg: number[] | null;
-    slots: number;
-    used: number;
-    underPressure: boolean;
-    /** the WireGuard hub as a gateway only (no sandboxes) */
-    gateway: boolean;
-    maxSandboxes: number | null;
-    lastSeenAt: string | null;
-    upSince: string;
-    upHours: number;
-    costUsd: number | null;
-    gvisorRelease: string | null;
-    sandboxes: { name: string; id: string | null; conversationId: string | null; ip: string; state: string; cpuUsage: number; memoryCurrent: number; memoryLimit: number; busy: boolean }[];
-  }[];
-  awsCostLast30dUsd: number;
-  events: { at: string; kind: string; host: string | null; sandboxId: string | null; data: Record<string, unknown> }[];
-  migrations: { at: string; sandboxId: string | null; from: string; to: string; ms: number; pauseMs: number | null; finalMs: number | null; restoreMs: number | null; rounds: number | null; bytes: number | null }[];
-}
-
-/** Everything the admin monitor shows for provider vm (hosts, their sandboxes, AWS cost so far, scaler decisions). */
-export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
-  const { rows: hosts } = await db.query<HostRow & { gone_at: Date | null }>(
-    "select * from vm_hosts where status <> 'gone' or gone_at > now() - interval '30 days' order by kind desc, created_at",
-  );
-  const { rows: sbx } = await db.query<{ id: string; pod: string; conversation_id: string; host: string; busy: boolean }>(
-    `select s.id, s.pod, s.conversation_id, s.host, exists (select 1 from turns t where t.conversation_id = s.conversation_id
-       and t.status in ('queued','running','waiting')) as busy from sandboxes s where s.status <> 'gone' and s.host is not null`,
-  );
-  const byPod = new Map(sbx.map((r) => [r.pod, r]));
-  const used = new Map<string, number>();
-  for (const r of sbx) used.set(r.host, (used.get(r.host) ?? 0) + 1);
-  const hours = (h: { created_at: Date; gone_at: Date | null }, since = 0) =>
-    Math.max(0, ((h.gone_at ? new Date(h.gone_at).getTime() : Date.now()) - Math.max(new Date(h.created_at).getTime(), since)) / 3_600_000);
-  const monthAgo = Date.now() - 30 * 86_400_000;
-  const live = hosts.filter((h) => h.status !== "gone");
-  const { rows: ev } = await db.query<{ at: Date; kind: string; host: string | null; sandbox_id: string | null; data: any }>(
-    "select at, kind, host, sandbox_id, data from vm_events order by id desc limit 100",
-  );
-  const { rows: last } = await db.query<{ at: Date }>("select max(last_seen_at) as at from vm_hosts where status <> 'gone'");
-  return {
-    provider: "vm",
-    at: new Date().toISOString(),
-    scaler: {
-      spareSlots: ctl.vm.spareSlots,
-      minHostLifetimeSeconds: ctl.vm.minHostLifetimeSeconds,
-      maxAwsHosts: ctl.vm.aws?.maxHosts ?? 0,
-      freeSlots: live.filter((h) => h.status === "active" && !ctl.underPressure(h)).reduce((a, h) => a + Math.max(0, ctl.slots(h) - ctl.units(h, used.get(h.name) ?? 0)), 0),
-      demand: await ctl.demand().catch(() => 0),
-      plan: await ctl.plan().catch(() => null),
-      memoryPerSandbox: ctl.memBytes,
-      cpuPerSandbox: ctl.cpuCores,
-      lastPassAt: last[0]?.at ? new Date(last[0].at).toISOString() : null,
-    },
-    hosts: live.map((h) => ({
-      name: h.name,
-      kind: h.kind,
-      status: h.status,
-      instanceId: h.instance_id,
-      cpus: h.cpus,
-      memTotal: h.mem_total == null ? null : Number(h.mem_total),
-      memAvailable: h.info?.memAvailable ?? null,
-      loadAvg: h.info?.loadAvg ?? null,
-      slots: ctl.slots(h),
-      used: ctl.units(h, used.get(h.name) ?? 0),
-      underPressure: ctl.underPressure(h),
-      maxSandboxes: h.max_sandboxes,
-      lastSeenAt: h.last_seen_at ? new Date(h.last_seen_at).toISOString() : null,
-      upSince: new Date(h.created_at).toISOString(),
-      upHours: Math.round(hours(h) * 100) / 100,
-      costUsd: h.kind === "aws" ? Math.round(hours(h) * AWS_HOST_USD_PER_HOUR * 100) / 100 : null,
-      gvisorRelease: h.info?.gvisorRelease ?? null,
-      gateway: !!h.info?.gateway,
-      sandboxes: (h.info?.sandboxes ?? []).map((s) => {
-        const r = byPod.get(s.name);
-        return { name: s.name, id: r?.id ?? null, conversationId: r?.conversation_id ?? null, ip: s.ip, state: s.state, cpuUsage: s.cpuUsage, memoryCurrent: s.memoryCurrent, memoryLimit: s.memory, busy: !!r?.busy };
-      }),
-    })),
-    awsCostLast30dUsd: Math.round(hosts.filter((h) => h.kind === "aws" && h.instance_id).reduce((a, h) => a + hours(h, monthAgo), 0) * AWS_HOST_USD_PER_HOUR * 100) / 100,
-    events: ev.map((e) => ({ at: new Date(e.at).toISOString(), kind: e.kind, host: e.host, sandboxId: e.sandbox_id, data: e.data })),
-    migrations: ev
-      .filter((e) => e.kind === "migration")
-      .slice(0, 20)
-      .map((e) => ({
-        at: new Date(e.at).toISOString(),
-        sandboxId: e.sandbox_id,
-        from: e.data.from,
-        to: e.data.to,
-        ms: e.data.ms,
-        pauseMs: e.data.pause_ms ?? null,
-        finalMs: e.data.final_ms ?? null,
-        restoreMs: e.data.restore_ms ?? null,
-        rounds: e.data.rounds ?? null,
-        bytes: e.data.bytes ?? null,
-      })),
-  };
 }
 
 export function startVmScaler(dbUrl: string, ctl: VmController, intervalMs = 5000): { stop(): Promise<void> } {

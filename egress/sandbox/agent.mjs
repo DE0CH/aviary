@@ -1,150 +1,36 @@
 #!/usr/bin/env node
-// The sandbox agent (docs/CHAT.md, "sandbox-agent"): the only process the server talks to inside a sandbox pod.
-// It writes the files the server pushes, runs commands in /work, and reports which files changed since a cursor so
-// the server can copy them back into the conversation's workdir. Plain Node, no dependencies.
+// The sandbox agent (docs/CHAT.md, "The sandbox agent"): the only process the server side talks to inside a
+// sandbox. It answers a health check and runs long-lived processes over an upgraded connection (`GET /proc`): the
+// CloudCLI UI runs Claude Code in the sandbox through it. Plain Node, no dependencies.
 //
-// Env: JARVIS_EXEC_TOKEN (removed from the environment commands see), JARVIS_WORK_DIR (default /work), PORT (default
-// 7070). The pod runs it as uid 1000 under tini (which reaps orphaned processes).
+// Env: JARVIS_EXEC_TOKEN (removed from the environment processes see), PORT (default 7070). The sandbox runs it as
+// uid 1000 under tini (which reaps orphaned processes).
 //
-// JARVIS_INIT=1 instead of a token (a hosted provider's template, docs/CHAT.md "Sandbox providers"): the agent starts
-// when the template is built, before any sandbox exists, so it waits for one `POST /init` {token, env, wire?} from the
-// server: the exec token, the env every command gets (proxy, mirrors) and, with `wire` {url, headers}, the local proxy
-// on 127.0.0.1:3128 that carries each TCP connection to egress over a WebSocket. Until then /healthz answers 503;
+// JARVIS_INIT=1 instead of a token (a hosted provider's template, provider e2b): the agent starts when the template is
+// built, before any sandbox exists, so it waits for one `POST /init` {token, env, wire?} from the server: the exec
+// token, the env every process gets (proxy, mirrors) and, with `wire` {url, headers}, the local proxy on
+// 127.0.0.1:3128 that carries each TCP connection to egress over a WebSocket. Until then /healthz answers 503;
 // /livez always answers 200 (the template's ready check).
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, chmodSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
-import { createWriteStream } from "node:fs";
-import { dirname, join, normalize, sep } from "node:path";
-import { END, entryHeader, entryPadding, unpack } from "./tar.mjs";
+import { normalize } from "node:path";
 
 let TOKEN = process.env.JARVIS_EXEC_TOKEN || "";
 delete process.env.JARVIS_EXEC_TOKEN;
 const AWAIT_INIT = !TOKEN && process.env.JARVIS_INIT === "1";
 delete process.env.JARVIS_INIT;
-const WORK = realpathSync(process.env.JARVIS_WORK_DIR || "/work");
 const PORT = Number(process.env.PORT || 7070);
 const BOOT_ID = randomBytes(8).toString("hex");
-const MAX_OUT = 1024 * 1024;
-const MAX_FILE = 50 * 1024 * 1024;
-const EXCLUDED_DIRS = new Set(["node_modules", ".venv", "venv", "__pycache__", ".cache"]);
-const HEADER_MAX = 8 * 1024;
-export const META_ENTRY = ".jarvis-meta/changes.json";
 
 if (!TOKEN && !AWAIT_INIT) {
   console.error("JARVIS_EXEC_TOKEN is not set (or JARVIS_INIT=1 to wait for POST /init)");
   process.exit(2);
 }
 
-// ---- paths ---------------------------------------------------------------------------------------------------
-
-/** The absolute path for a workspace-relative path, or throws (absolute paths, "..", escapes through symlinks). */
-function inWork(rel) {
-  if (typeof rel !== "string" || !rel || rel.includes("\0") || rel.startsWith("/")) throw new Error(`bad path ${JSON.stringify(rel)}`);
-  const n = normalize(rel);
-  if (n === "." || n.startsWith("..") || n.split(sep).includes("..")) throw new Error(`bad path ${JSON.stringify(rel)}`);
-  return join(WORK, n);
-}
-
-/** Creates the parent directories and checks that the real parent is still inside /work. */
-function safeParent(abs) {
-  const parent = dirname(abs);
-  mkdirSync(parent, { recursive: true });
-  const real = realpathSync(parent);
-  if (real !== WORK && !real.startsWith(WORK + sep)) throw new Error(`path escapes the workspace: ${abs.slice(WORK.length + 1)}`);
-}
-
-// ---- change tracking -----------------------------------------------------------------------------------------
-
-/** path -> signature, for every regular file under /work outside the excluded directories */
-function scan() {
-  const files = new Map();
-  const walk = (dir, rel) => {
-    let names;
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const abs = join(dir, name);
-      const r = rel ? `${rel}/${name}` : name;
-      let st;
-      try {
-        st = lstatSync(abs);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
-        if (EXCLUDED_DIRS.has(name) || r === ".git/objects" || r.endsWith("/.git/objects")) continue;
-        walk(abs, r);
-      } else if (st.isFile()) {
-        files.set(r, { sig: `${st.mtimeMs}:${st.size}:${st.ctimeMs}`, size: st.size });
-      }
-    }
-  };
-  walk(WORK, "");
-  return files;
-}
-
-const snapshots = new Map(); // seq -> Map(path -> { sig, size })
-let seq = 0;
-
-function remember(files) {
-  seq++;
-  snapshots.set(seq, files);
-  for (const k of snapshots.keys()) if (k <= seq - 8) snapshots.delete(k);
-  return `${BOOT_ID}:${seq}`;
-}
-
-/** After the server wrote or deleted files, it already has them: keep them out of the next /changes. */
-function absorb(written, deleted) {
-  for (const snap of snapshots.values()) {
-    for (const rel of written) {
-      try {
-        const st = statSync(join(WORK, rel));
-        snap.set(rel, { sig: `${st.mtimeMs}:${st.size}:${st.ctimeMs}`, size: st.size });
-      } catch {
-        snap.delete(rel);
-      }
-    }
-    for (const rel of deleted) for (const k of [...snap.keys()]) if (k === rel || k.startsWith(rel + "/")) snap.delete(k);
-  }
-}
-
 // ---- processes -----------------------------------------------------------------------------------------------
-
-function tail() {
-  let chunks = [];
-  let size = 0;
-  let truncated = false;
-  return {
-    push(c) {
-      chunks.push(c);
-      size += c.length;
-      while (size > MAX_OUT && chunks.length) {
-        const over = size - MAX_OUT;
-        const first = chunks[0];
-        truncated = true;
-        if (first.length <= over) {
-          chunks.shift();
-          size -= first.length;
-        } else {
-          chunks[0] = first.subarray(over);
-          size -= over;
-        }
-      }
-    },
-    text() {
-      return Buffer.concat(chunks).toString("utf8");
-    },
-    get truncated() {
-      return truncated;
-    },
-  };
-}
 
 function killGroup(pid, sig) {
   try {
@@ -156,62 +42,6 @@ function killGroup(pid, sig) {
       /* gone */
     }
   }
-}
-
-function runForeground(command, timeoutMs) {
-  return new Promise((resolve) => {
-    const t0 = Date.now();
-    const child = spawn("bash", ["-lc", command], { cwd: WORK, detached: true, stdio: ["ignore", "pipe", "pipe"], env: process.env });
-    const out = tail();
-    const err = tail();
-    child.stdout.on("data", (c) => out.push(c));
-    child.stderr.on("data", (c) => err.push(c));
-    let interrupted = false;
-    let killTimer = null;
-    const timer = setTimeout(() => {
-      interrupted = true;
-      killGroup(child.pid, "SIGTERM");
-      killTimer = setTimeout(() => killGroup(child.pid, "SIGKILL"), 2000);
-    }, timeoutMs);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ stdout: "", stderr: String(e.message), exit_code: 127, interrupted: false, ms: Date.now() - t0, truncated: false });
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      // a process the command left running may hold the pipes open: give them a moment, then stop reading
-      const finish = () => {
-        child.stdout.destroy();
-        child.stderr.destroy();
-        const signum = signal ? { SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 }[signal] ?? 0 : 0;
-        resolve({
-          stdout: out.text(),
-          stderr: err.text(),
-          exit_code: code ?? (signal ? 128 + signum : -1),
-          interrupted,
-          ms: Date.now() - t0,
-          truncated: out.truncated || err.truncated,
-        });
-      };
-      let left = 2;
-      const one = () => --left === 0 && finish();
-      child.stdout.once("close", one);
-      child.stderr.once("close", one);
-      setTimeout(() => left > 0 && ((left = 0), finish()), 200);
-    });
-  });
-}
-
-function runBackground(command) {
-  const id = randomBytes(6).toString("hex");
-  mkdirSync(join(WORK, ".jobs"), { recursive: true });
-  const fd = openSync(join(WORK, ".jobs", `${id}.log`), "a");
-  const child = spawn("bash", ["-lc", command], { cwd: WORK, detached: true, stdio: ["ignore", fd, fd], env: process.env });
-  closeSync(fd);
-  child.on("error", () => {});
-  child.unref();
-  return { background_id: id, pid: child.pid, log: `.jobs/${id}.log` };
 }
 
 // ---- the wire: local proxy -> egress over WebSocket ------------------------------------------------------------
@@ -304,100 +134,6 @@ async function readJson(req, limit = 1024 * 1024) {
   }
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
-
-async function putFiles(req, res) {
-  let deletes = [];
-  try {
-    deletes = JSON.parse(String(req.headers["x-delete"] || "[]"));
-    if (!Array.isArray(deletes)) throw new Error();
-  } catch {
-    return json(res, 400, { ok: false, error: "X-Delete must be a JSON array of paths" });
-  }
-  const written = [];
-  const deleted = [];
-  try {
-    for (const rel of deletes) {
-      const abs = inWork(rel);
-      safeParent(abs);
-      rmSync(abs, { recursive: true, force: true });
-      deleted.push(normalize(rel));
-    }
-    await unpack(req, async (h, body) => {
-      const abs = inWork(h.name);
-      safeParent(abs);
-      try {
-        const st = lstatSync(abs);
-        if (st.isDirectory()) rmSync(abs, { recursive: true, force: true });
-        else if (!st.isFile()) rmSync(abs, { force: true });
-      } catch {
-        /* new file */
-      }
-      const tmp = `${abs}.jarvis-${randomBytes(4).toString("hex")}`;
-      await new Promise((resolve, reject) => {
-        const ws = createWriteStream(tmp, { mode: 0o600 });
-        body.on("error", reject);
-        ws.on("error", reject);
-        ws.on("finish", resolve);
-        body.pipe(ws);
-      });
-      chmodSync(tmp, (h.mode & 0o777) | 0o600);
-      renameSync(tmp, abs);
-      written.push(normalize(h.name));
-    });
-  } catch (e) {
-    return json(res, 400, { ok: false, error: String(e.message), written: written.length, deleted: deleted.length });
-  }
-  absorb(written, deleted);
-  json(res, 200, { ok: true, written: written.length, deleted: deleted.length });
-}
-
-async function changes(req, res, since) {
-  const [boot, n] = String(since || "").split(":");
-  const prev = boot === BOOT_ID ? snapshots.get(Number(n)) : undefined;
-  const now = scan();
-  const changed = [];
-  const skipped = [];
-  for (const [rel, f] of now) {
-    const p = prev?.get(rel);
-    if (p && p.sig === f.sig) continue;
-    if (f.size > MAX_FILE) skipped.push(rel);
-    else changed.push(rel);
-  }
-  const deleted = prev ? [...prev.keys()].filter((k) => !now.has(k)) : [];
-  const cursor = remember(now);
-  const delHeader = JSON.stringify(deleted);
-  const skipHeader = JSON.stringify(skipped);
-  const headers = { "content-type": "application/x-tar", "x-cursor": cursor, "x-full": prev ? "0" : "1" };
-  let meta = null;
-  if (delHeader.length + skipHeader.length > HEADER_MAX) {
-    // too long for a header: the lists go first in the tar, as .jarvis-meta/changes.json
-    headers["x-meta-entry"] = META_ENTRY;
-    meta = Buffer.from(JSON.stringify({ deleted, skipped }));
-  } else {
-    headers["x-deleted"] = delHeader;
-    headers["x-skipped"] = skipHeader;
-  }
-  res.writeHead(200, headers);
-  const write = (b) => (res.write(b) ? Promise.resolve() : new Promise((r) => res.once("drain", r)));
-  if (meta) await write(Buffer.concat([entryHeader(META_ENTRY, meta.length), meta, entryPadding(meta.length)]));
-  for (const rel of changed) {
-    let data;
-    let mode = 0o644;
-    let mtime = Date.now() / 1000;
-    try {
-      const st = lstatSync(join(WORK, rel));
-      if (!st.isFile()) continue;
-      data = readFileSync(join(WORK, rel));
-      mode = st.mode;
-      mtime = st.mtimeMs / 1000;
-    } catch {
-      continue; // gone since the scan: the next /changes reports it deleted
-    }
-    await write(Buffer.concat([entryHeader(rel, data.length, mode, mtime), data, entryPadding(data.length)]));
-  }
-  res.end(END);
-}
-
 
 // ---- long-running processes over an upgraded connection (docs/CLAUDE-CODE.md: Claude Code in the sandbox) ---------
 //
@@ -505,10 +241,17 @@ function onProcUpgrade(req, socket) {
       socket.destroy();
     }
   });
-  socket.on("close", () => {
+  const dropped = () => {
     if (exited) return;
     killGroup(child.pid, "SIGTERM");
     setTimeout(() => !exited && killGroup(child.pid, "SIGKILL"), 2000).unref();
+  };
+  socket.on("close", dropped);
+  // the HTTP server's sockets are half-open: a client that goes away only sends FIN ('end'), and 'close' would wait
+  // for this side to end too (stdin's end is a frame, never a FIN)
+  socket.on("end", () => {
+    dropped();
+    socket.destroy();
   });
 }
 
@@ -519,15 +262,6 @@ const server = createServer(async (req, res) => {
     if (url.pathname === "/healthz") return TOKEN ? json(res, 200, { ok: true, boot_id: BOOT_ID }) : json(res, 503, { ok: false, waiting: "init" });
     if (req.method === "POST" && url.pathname === "/init") return await init(req, res);
     if (!authorized(req)) return json(res, 401, { error: "unauthorized" });
-    if (req.method === "PUT" && url.pathname === "/files") return await putFiles(req, res);
-    if (req.method === "GET" && url.pathname === "/changes") return await changes(req, res, url.searchParams.get("since"));
-    if (req.method === "POST" && url.pathname === "/exec") {
-      const b = await readJson(req);
-      if (typeof b.command !== "string" || !b.command.trim()) return json(res, 400, { error: "command is required" });
-      if (b.background) return json(res, 200, runBackground(b.command));
-      const timeout = Math.min(Math.max(Number(b.timeout_ms) || 120_000, 1000), 600_000);
-      return json(res, 200, await runForeground(b.command, timeout));
-    }
     json(res, 404, { error: "not found" });
   } catch (e) {
     if (!res.headersSent) json(res, 500, { error: String(e?.message || e) });
@@ -535,9 +269,8 @@ const server = createServer(async (req, res) => {
   }
 });
 server.on("upgrade", onProcUpgrade);
-server.requestTimeout = 0; // /exec may run for up to 10 minutes
 server.headersTimeout = 60_000;
 // longer than any client's idle keep-alive, so a reused connection is never closed under a request in flight
 server.keepAliveTimeout = 120_000;
-server.listen(PORT, "::", () => console.log(JSON.stringify({ at: "sandbox agent listening", port: PORT, work: WORK, boot_id: BOOT_ID })));
+server.listen(PORT, "::", () => console.log(JSON.stringify({ at: "sandbox agent listening", port: PORT, boot_id: BOOT_ID })));
 process.on("SIGTERM", () => server.close(() => process.exit(0)));

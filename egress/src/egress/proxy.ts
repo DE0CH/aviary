@@ -458,26 +458,15 @@ export class Egress {
     if (!m || !route) return text(res, 404, "egress: unknown route\n");
     const rest = m[2] ?? "/";
     const up = new URL(route.upstream);
-    const isModel = route.name === "model" || route.model === true;
+    const isModel = route.model === true;
     const row: EgressRow = { kind: isModel ? "model" : "inject", method: req.method ?? "GET", host: up.hostname, path: rest, decision: "allow" };
-    if (route.auth === "turn") {
-      const token = tokenFrom(req.headers, "authorization") || String(req.headers["x-api-key"] || "");
-      const turn = await this.ids.turn(token);
-      if (!turn) {
-        text(res, 401, '{"type":"error","error":{"type":"authentication_error","message":"egress: no running turn for this token"}}', { "content-type": "application/json" });
-        return this.#deny(row, "deny:auth", 401);
-      }
-      row.turn_id = turn.turnId;
-      row.conversation_id = turn.conversationId;
-    } else {
-      const sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
-      if (!sb) {
-        text(res, 401, "egress: authentication required\n");
-        return this.#deny(row, "deny:auth", 401);
-      }
-      row.sandbox_id = sb.sandboxId;
-      row.conversation_id = sb.conversationId;
+    const sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+    if (!sb) {
+      text(res, 401, "egress: authentication required\n");
+      return this.#deny(row, "deny:auth", 401);
     }
+    row.sandbox_id = sb.sandboxId;
+    row.conversation_id = sb.conversationId;
     if (route.allowPaths?.length && !route.allowPaths.some((p) => rest.startsWith(p))) {
       text(res, 403, `egress: path ${rest} is not allowed on route ${route.name}\n`);
       return this.#deny(row, "deny:path", 403);
@@ -535,7 +524,7 @@ export class Egress {
         res.on("close", () => {
           if (!ures.complete) ures.destroy();
           this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
-          // a model call's cost counts toward the budget at once (the turn's next call is usually < 1 s away)
+          // a model call's cost counts toward the budget at once (Claude Code's next call is usually < 1 s away)
           if (isModel) void this.log.flush();
           resolve();
         });
@@ -566,7 +555,7 @@ export class Egress {
       } catch {
         model = undefined;
       }
-      // claw sends the id without its provider prefix ("claude-sonnet-5.5" for "anthropic/claude-sonnet-5.5")
+      // a client may send the id without its provider prefix ("claude-sonnet-5.5" for "anthropic/claude-sonnet-5.5")
       const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
       const ok = typeof model === "string" && this.#o.models.some((m) => m === model || bare(m) === model);
       if (model !== undefined && !ok) {

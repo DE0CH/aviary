@@ -1,27 +1,21 @@
-// The web role (docs/CHAT.md): UI, API, SSE, turn runner, sandbox manager and janitor. Zero-downtime: on SIGTERM
-// the replica reports not ready, refuses new turns (the UI retries on another replica), ends its SSE streams so
-// clients reconnect elsewhere, and finishes its running turns before it exits.
+// The web role (docs/CHAT.md, "Control plane"): the sandbox manager behind /internal/cc/*, its janitor and,
+// with provider "vm", the scaler. Zero-downtime: on SIGTERM the replica reports not ready (the Service stops sending it
+// calls), answers the calls it already has (a sandbox start takes up to 3 minutes), then exits; the janitor and the
+// scaler run on one replica at a time (advisory locks), so the other replica takes them over.
 import { createServer } from "node:http";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { AccessVerifier } from "../common/access.ts";
 import { expandEnv, loadConfig, requireEnv, type ChatConfig } from "../common/config.ts";
-import { connect, Listener, migrate, type Db } from "../common/db.ts";
+import { connect, migrate, type Db } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
-import { startPresence } from "../common/ops.ts";
-import { S3BlobStore } from "../common/s3.ts";
 import { WebApp } from "./app.ts";
-import { replicaName, type WebDeps } from "./ctx.ts";
-import { startHeartbeat, startJanitor } from "./janitor.ts";
+import type { WebDeps } from "./ctx.ts";
+import { startJanitor } from "./janitor.ts";
 import { K8sClient } from "./k8s.ts";
 import type { SandboxProvider } from "./provider.ts";
 import { E2bProvider } from "./sandbox-e2b.ts";
-import { sharedBlobs } from "./share.ts";
 import { KubernetesProvider } from "./sandbox-k8s.ts";
 import { startVmScaler, VmProvider } from "./sandbox-vm.ts";
 import { Ec2Client, SandboxdClient } from "./vm-clients.ts";
 import { SandboxManager } from "./sandbox.ts";
-import { TurnRunner } from "./turns.ts";
 
 export interface WebServer {
   app: WebApp;
@@ -29,20 +23,16 @@ export interface WebServer {
   port: number;
 }
 
-/** Wires a WebApp to an HTTP server, the cancel channel, the heartbeat and the janitor. */
+/** Wires a WebApp to an HTTP server, the janitor and (provider vm) the scaler. */
 export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: number; scalerMs?: number } = {}): Promise<WebServer> {
   await migrate(deps.db);
-  // reads fall back to a granted sha256's first location (continued conversations; docs/CHAT.md "Sharing and continuing")
-  deps.blobs = sharedBlobs(deps.blobs, deps.db, deps.config.s3.prefix);
   const sandboxes = new SandboxManager(deps);
-  const runner = new TurnRunner(deps, sandboxes);
-  await runner.listen();
-  const app = new WebApp(deps, sandboxes, runner);
+  const app = new WebApp(deps, sandboxes);
   const server = createServer((req, res) => void app.handle(req, res));
   server.keepAliveTimeout = 65_000;
+  // a sandbox start may take up to 3 minutes
+  server.requestTimeout = 300_000;
   await new Promise<void>((r) => server.listen(port, r));
-  const stopBeat = startHeartbeat(deps);
-  const stopPresence = startPresence(deps.db, "web", deps.replica, () => ({ turns: runner.active, streams: app.streamCount, draining: runner.draining }));
   const janitor = startJanitor(deps, sandboxes, opts.janitorMs);
   const scaler = deps.sandboxProvider instanceof VmProvider ? startVmScaler(deps.dbUrl, deps.sandboxProvider.controller, opts.scalerMs) : null;
   const addr = server.address();
@@ -52,21 +42,10 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
     async close() {
       await janitor.stop();
       await scaler?.stop();
-      stopBeat();
-      await stopPresence();
-      app.closeStreams();
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
     },
   };
-}
-
-export function inCluster(): K8sClient | undefined {
-  try {
-    return process.env.KUBERNETES_SERVICE_HOST ? K8sClient.inCluster() : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export function sandboxProvider(config: ChatConfig, namespace: string, db: Db): SandboxProvider {
@@ -95,49 +74,28 @@ export async function main(): Promise<void> {
   const config = loadConfig();
   const namespace = process.env.JARVIS_NAMESPACE || "jarvis";
   const dbUrl = requireEnv("DATABASE_URL");
-  const appDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const db = connect(dbUrl);
   const deps: WebDeps = {
     config,
-    db: connect(dbUrl),
+    db,
     dbUrl,
-    listener: new Listener(dbUrl),
-    blobs: new S3BlobStore({
-      endpoint: config.s3.endpoint,
-      region: config.s3.region,
-      bucket: config.s3.bucket,
-      accessKeyId: requireEnv("S3_ACCESS_KEY_ID"),
-      secretAccessKey: requireEnv("S3_SECRET_ACCESS_KEY"),
-    }),
-    sandboxProvider: null as unknown as SandboxProvider,
-    verifier: new AccessVerifier(config.access),
-    replica: replicaName(process.env.HOSTNAME || "web"),
+    sandboxProvider: sandboxProvider(config, namespace, db),
     namespace,
-    workRoot: process.env.JARVIS_WORK_ROOT || "/var/lib/jarvis/work",
-    clawPath: process.env.CLAW_PATH || "/usr/local/bin/claw",
-    bashPath: process.env.JARVIS_BASH || join(appDir, "src/bin/jarvis-bash"),
-    mcpBridgePath: process.env.JARVIS_MCP_BRIDGE || join(appDir, "src/bin/jarvis-mcp-bridge"),
-    egressBase: process.env.JARVIS_EGRESS_URL || `http://egress.${namespace}.svc.cluster.local:3128`,
-    toolsUrl: process.env.JARVIS_TOOLS_URL || `http://tools.${namespace}.svc.cluster.local:8080/mcp`,
-    uiDir: process.env.JARVIS_UI_DIR || "/app/ui-dist",
-    brandDir: process.env.JARVIS_BRAND_DIR || "/etc/jarvis/brand",
-    drainSeconds: Number(process.env.JARVIS_DRAIN_SECONDS || 1770),
+    drainSeconds: Number(process.env.JARVIS_DRAIN_SECONDS || 300),
   };
-  deps.sandboxProvider = sandboxProvider(config, namespace, deps.db);
-  deps.k8s = inCluster();
   const web = await startWeb(deps, Number(process.env.PORT || 8080));
-  log("web listening", { port: web.port, replica: deps.replica });
+  log("web listening", { port: web.port });
   let stopping = false;
   const stop = async (sig: string) => {
     if (stopping) return;
     stopping = true;
-    log("draining", { signal: sig, turns: web.app.runner.active });
-    web.app.runner.draining = true;
-    // let the readiness probe see 503 and the Service drop this endpoint before streams are cut
-    setTimeout(() => web.app.closeStreams(), 5000).unref();
+    log("draining", { signal: sig, active: web.app.active });
+    web.app.draining = true;
     try {
-      await web.app.runner.drain(deps.drainSeconds * 1000);
+      // let the readiness probe see 503 and the Service drop this endpoint, then answer what is in flight
+      await new Promise((r) => setTimeout(r, 5000));
+      await web.app.drain(deps.drainSeconds * 1000);
       await web.close();
-      await deps.listener.close();
       await deps.db.end();
     } catch (e) {
       logError("shutdown", e);
