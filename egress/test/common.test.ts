@@ -4,6 +4,7 @@ import { expandEnv, parseConfig } from "../src/common/config.ts";
 import { lead, migrate } from "../src/common/db.ts";
 import { randomUUID } from "node:crypto";
 import { MIGRATIONS } from "../src/common/schema.ts";
+import { claudeCodeEnv } from "../src/web/claude-code.ts";
 import { freshDb } from "./pg.ts";
 
 const base = {
@@ -67,4 +68,13 @@ test("schema: the old chat UI's tables stay with their rows, marked unused", asy
   } finally {
     await t.drop();
   }
+});
+
+test("Claude Code in a sandbox: egress for the model and tools, SendUserFile on, the managed CLAUDE.md", async () => {
+  const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null" }), "http://10.201.1.1:3128", "tok");
+  assert.equal(env.ANTHROPIC_BASE_URL, "http://10.201.1.1:3128/x/claude");
+  assert.equal(env.CLAUDE_CODE_ATTACHMENTS_BY_PATH, "1");
+  const mcp = JSON.parse(Buffer.from(env.JARVIS_CLAUDE_MCP!, "base64").toString());
+  assert.equal(mcp.mcpServers.yyc.url, "http://10.201.1.1:3128/x/tools/mcp");
+  assert.match(Buffer.from(env.JARVIS_CLAUDE_MD!, "base64").toString(), /# Your computer/);
 });

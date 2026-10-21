@@ -35,7 +35,7 @@ export async function managedClaudeMd(config: ChatConfig): Promise<string> {
   return `${prompt.trimEnd()}\n\n${SANDBOX_RULES}`;
 }
 
-/** The sandbox env additions: Claude Code → egress for the model and the tools (MCP). */
+/** The sandbox env additions: Claude Code → egress for the model and the tools (MCP), and SendUserFile on. */
 export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egressToken: string): Promise<Record<string, string>> {
   const mcp = {
     mcpServers: {
@@ -52,6 +52,9 @@ export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egre
     DISABLE_AUTOUPDATER: "1",
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
+    // Turns on Claude Code's own SendUserFile tool without a claude.ai login (docs/CLAUDE-CODE.md, "Sent files"):
+    // the tool then only checks and records the paths; the CloudCLI UI shows the files from the transcript.
+    CLAUDE_CODE_ATTACHMENTS_BY_PATH: "1",
     JARVIS_CLAUDE_MD: Buffer.from(await managedClaudeMd(config)).toString("base64"),
     JARVIS_CLAUDE_MCP: Buffer.from(JSON.stringify(mcp)).toString("base64"),
   };
