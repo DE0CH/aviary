@@ -1,19 +1,18 @@
-# YYC AI (ai.yyc.deyaochen.com): an instance of the Jarvis 3 chat runtime (DE0CH/jarvis3, docs/CHAT.md). See
+# YYC AI (ai.yyc.deyaochen.com): Claude Code in a sandbox per conversation behind the CloudCLI fork's UI, on the
+# Jarvis 3 chat runtime (DE0CH/jarvis3, docs/CHAT.md, docs/CLAUDE-CODE.md). See
 # ../README.md. The cluster's Flux applies this folder (Kustomization `yyc-ai`, path ./yyc-ai/deploy). Its Secrets are
 # SealedSecrets in ./sealed/, applied by the fenced Kustomization `yyc-ai-secrets` (infra/seal.py, infra/secrets.txt).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2156d8a326073e9ea8b57ed02188df45efe85c4a
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=07e2e49196c61f9b18500fd60217a319a88afa0c
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
   - sealed-secrets-rbac.yaml
   # own sandbox hosts (provider vm, jarvis3 docs/SANDBOX-VM.md): overlay routes on the nodes, network policies
   - sandbox-vm.yaml
-  # the admin monitor reads this namespace's Deployments (web → Kubernetes API)
-  - monitor.yaml
   # the JuiceFS volume yyc-ai for the Claude Code UI: the CSI driver (kube-system) and the static PV + PVC jarvis/jfs
   - juicefs.yaml
   # the Claude Code UI (CloudCLI fork + router; README "Claude Code UI"): Deployment ui, Services, network policies
@@ -22,7 +21,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 2156d8a32607
+    newTag: 07e2e49196c6
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
@@ -31,9 +30,6 @@ configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
     files: [config.json, system-prompt.md]
-  - name: jarvis-brand
-    namespace: jarvis
-    files: [logo.svg, logo.png]
 # GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
 patches:
   # memory request = limit at about 2-4x the measured peak (2026-10-20, memory.peak since start: web 66 Mi, tools 60,
@@ -76,13 +72,10 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: EGRESS_WIRE_ACCESS_SECRET, valueFrom: {secretKeyRef: {name: web-env, key: EGRESS_WIRE_ACCESS_SECRET, optional: true}}}
-  # Claude Code in the sandbox (jarvis3 docs/CLAUDE-CODE.md): the UI pods' token for /internal/cc/*, and the JuiceFS
-  # metadata URL + password that web hands to burst hosts in their user data (they mount /var/lib/sbx/jfs)
+  # Claude Code in the sandbox (jarvis3 docs/CLAUDE-CODE.md): the JuiceFS metadata URL + password that web hands to
+  # burst hosts in their user data (they mount /var/lib/sbx/jfs); the UI pods' token JARVIS_CC_TOKEN is in the base
   - target: {kind: Deployment, name: web}
     patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: JARVIS_CC_TOKEN, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_CC_TOKEN, optional: true}}}
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: JARVIS_JUICEFS_META_URL, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_JUICEFS_META_URL, optional: true}}}
