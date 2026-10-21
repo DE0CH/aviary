@@ -1,106 +1,93 @@
 # Jarvis 3 chat runtime
 
-Status: being built 2026-10-20 for the YYC instance (YYC AI, `ai.yyc.deyaochen.com`). Agreed design: Deyao,
-2026-10-20. This is a second runtime next to the task runtime in `server/` (OpenCode in Fly machines): a staff web
-chat whose agent loop runs **on the server**, with bash sent to a per-conversation sandbox. The code is in `chat/`,
-its Kustomize base in `deploy/chat/`. An instance pins a tag of this repo and supplies its config and secrets.
-
-Staff never see the name "Jarvis 3": the product name, logo and wording come from the instance config.
+The server side of a staff AI chat instance (YYC AI, `ai.yyc.deyaochen.com`): **Claude Code runs in a sandbox per
+conversation**, and the staff UI is a fork of CloudCLI (DE0CH/claudecodeui) that the instance deploys itself. The
+design and why: docs/CLAUDE-CODE.md. This runtime provides the sandboxes and everything between them and the outside:
+the code is in `chat/`, its Kustomize base in `deploy/chat/`. An instance pins a commit of this repo and supplies its
+config and secrets. It is a second runtime next to the task runtime in `server/` (OpenCode in Fly machines).
 
 **What it is (Deyao, 2026-10-21): a read-only data-analysis tool, not an assistant that acts.** It searches, reads
 and analyses (news, social posts, the instance's own data, uploaded files, a sandbox for code and data work); it never
-sends, posts or changes anything outside the chat. So there is nothing to confirm and nobody is ever asked anything:
-every tool is read-only (outward actions such as sending mail are not offered at all), and the sandbox's internet
-access is decided automatically by an allowlist with no manual override ("either allow automatically or deny with
-no manual override"). There are no confirmation cards, no per-conversation site grants and no
-`request_network_access` tool (all removed in schema 6).
+sends, posts or changes anything outside. So nobody is ever asked anything: every tool is read-only (outward actions
+such as sending mail are not offered at all), and the sandbox's internet access is decided automatically by an
+allowlist with no manual override.
 
 ## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by `JARVIS_ROLE`)
 
 | Role | What | Replicas |
 |---|---|---|
-| `web` | Web UI, API, SSE streams, turn runner (spawns `claw`), sandbox manager, files, janitor | 2, rolling, drained |
-| `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, the automatic sandbox allowlist with threat-intel DNS, credential injection, logs every call, package cache | 2, rolling |
-| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools; read-only tools only | 2, rolling |
+| `web` | `/internal/cc/*` for the UI pods: the sandbox manager, its janitor and (provider `vm`) the scaler. No public route | 2, rolling, drained |
+| `egress` | The only way out of a sandbox: token identity, the automatic sandbox allowlist with threat-intel DNS, package mirror and cache, credential-injecting routes (the model with forced ZDR and the budget; our tools), logs every call | 2, rolling |
+| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, social search, upstream MCP tools; read-only tools only | 2, rolling |
 
-Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`): run by our own sandbox hosts
-(`sandbox.provider: "vm"`, the YYC instance since 2026-10-21: gVisor on a Hetzner hub + AWS burst hosts with live
-migration), built as an E2B template for hosted sandboxes (`"e2b"`), or started as gVisor pods
-(`runtimeClassName: gvisor`) in namespace `jarvis-sandbox` (`"kubernetes"`: tests, local runs, a self-hosted
-cluster). See "Sandbox providers".
+Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (Claude Code, Python/Node tools, Docker, the sandbox agent),
+run by our own sandbox hosts (`sandbox.provider: "vm"`: gVisor, AWS burst hosts behind a gateway on a cluster node,
+live migration; docs/SANDBOX-VM.md). See "Sandbox providers" for the others.
 
 ```
-browser ──Access──▶ web ──spawn per turn──▶ claw (cwd = conversation workdir, file tools confined there)
-   ▲  SSE (events from Postgres)            │ model calls ─▶ egress /x/model ─▶ OpenRouter (real key injected)
-   │                                        │ MCP (stdio bridge) ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
-   │                                        │ bash ─▶ jarvis-bash ─sync files + exec─▶ sandbox pod (gVisor)
-   └── events (text, tool steps) ◀──────────┘                                    │ all egress
-                                                                                 ▼
-                                                 egress (token → sandbox allowlist → threat-intel DNS → public IP)
-State: Postgres (conversations, messages, events, claw session files, file metadata, sandboxes, logs); file bytes in S3.
+browser ─Access─▶ UI pod (router → one CloudCLI server per person; DE0CH/claudecodeui)
+                    │ POST /internal/cc/sandbox {owner, conversation} ─▶ web ─▶ sandbox manager ─▶ provider (vm: sandboxd)
+                    │ GET /proc (upgrade, exec token) ─▶ sandbox agent :7070 ─▶ `claude` (cwd /workspace)
+                    ▼                                                              │ all traffic (HTTP(S)_PROXY)
+                  /jfs (JuiceFS: ws/<conversation>, users/<key>/claude)            ▼
+                                     egress :3128 ── sandbox allowlist → threat DNS → public internet
+                                                 ├─ /x/claude ─▶ OpenRouter (key injected, ZDR forced, budget)
+                                                 └─ /x/tools/mcp ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
+State: Postgres (sandboxes, vm hosts and events, egress_log, tool_calls, kv); /workspace and ~/.claude on JuiceFS.
 ```
 
-### Why these choices (2026-10-20)
+## Control plane (`web`, `/internal/cc/*`)
 
-- **Sandbox scope = one per conversation.** The workdir belongs to a conversation, so the sandbox mirrors exactly it;
-  a prompt injection in one chat can't reach another chat's files; "the sandbox was reset" means one thing.
-- **Sandbox provider = a hosted sandbox service, E2B (Deyao, 2026-10-20):** fast startup (a sandbox resumes from
-  the template's memory snapshot, agent already running) and no nodes to manage; "we can pay a slight premium". E2B
-  passed the hard requirement: a sandbox's outbound traffic can be limited to one host (`network.allowOut` with
-  `denyOut: ["0.0.0.0/0"]`), our egress proxy, so every byte still goes through `egress` with the sandbox's token.
-  Its SDK, CLI and infrastructure are Apache-2.0. The gVisor-pod provider stays for tests, local runs and any
-  instance that wants its own cluster. Staff files sit in E2B's sandbox only while it lives; the record stays in
-  Postgres and the instance's bucket.
-- **claw runs on the server, never inside a sandbox.** It holds no secrets: its model calls go to `egress`
-  with a per-turn token, and its tools are MCP calls to `tools` with the same token.
+Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and authenticated by the shared bearer token
+`JARVIS_CC_TOKEN` (401 otherwise); POST with a JSON body; `conversation` must be a uuid (400).
 
-## Sandbox lifecycle (design "B")
+- `POST /internal/cc/sandbox {owner, conversation}` → `{id, url, token, headers, reset}`: the conversation's live
+  sandbox, made if there is none, for `owner` (403 unless in config `users`). `url` + `headers` reach its agent,
+  `token` is the agent's exec token. `reset: true` when the conversation had a different sandbox before (kv
+  `cc_sandbox:<conversation>` remembers the last id): its installs and processes are gone, `/workspace` is not.
+  Concurrent calls in one replica share one start; a start takes up to 3 minutes (a host booting).
+- `POST /internal/cc/touch {conversation}`: it is in use; its idle time starts again. The UI touches every minute
+  while Claude Code runs in it.
+- `POST /internal/cc/release {conversation}`: the conversation was deleted; its sandbox goes at once.
+- `GET /healthz` → `{ok, draining}` (503 while draining or without Postgres): the readiness and liveness probe.
+- **Drain** (SIGTERM): readiness 503, 5 s for the Service to drop the endpoint, then the calls in flight are answered
+  (up to `JARVIS_DRAIN_SECONDS`, 300, < the 330 s grace period); the janitor and scaler locks pass to the other
+  replica.
 
-- **Made at the first bash command, never ahead of it.** jarvis-bash asks the turn runner for the conversation's
-  sandbox (`POST /sandbox` on the replica's unix socket, with the turn's token); the sandbox manager makes one if
-  there is none (a sandbox starts in well under a second once a host is up), and the workspace files are pushed into
-  it before the command runs. A turn that never runs bash never gets a sandbox; typing makes none either. There is at
-  most one live sandbox per conversation (unique index `sandboxes_one_live`).
-- **Typing only readies a host:** the UI calls `POST /api/typing` (debounced, at most every 30 s, with the open
-  conversation's id if any). In a conversation without a live sandbox (or a new chat) it is a signal (kv
-  `sandbox_demand:<email>`, counted for 2 minutes) on which the vm scaler starts an AWS host at once when no host has a
-  free slot (docs/SANDBOX-VM.md). It never touches a sandbox, and no conversation row is made for typing.
-- **Kept while used:** installs, caches and background processes carry over between turns (and across a live
+## Sandbox lifecycle
+
+- **Made when the UI first runs Claude Code** in a conversation (`/internal/cc/sandbox`), at most one live sandbox per
+  conversation (unique index `sandboxes_one_live`). The row records `owner` and `user_key` (`"u"` + the first 24 hex
+  of sha256 of the lower-cased email): provider `vm` mounts JuiceFS `ws/<conversation>` as `/workspace` and
+  `users/<user_key>/claude` as `~/.claude`, and gives the sandbox Claude Code's settings (docs/CLAUDE-CODE.md).
+- **Kept while used:** installs, caches and background processes carry over between messages (and across a live
   migration on provider `vm`).
+- **Released** after `sandbox.idleMinutes` (default 30) without a touch, and always at `sandbox.maxLifetimeHours`
+  (default 8); at once when the conversation is deleted. Nothing is saved on release: `/workspace` and `~/.claude` are
+  already on JuiceFS. The janitor (one replica at a time, every 30 s) also clears stuck starts and releases, removes
+  sandboxes a provider lists without a live row, and marks rows whose sandbox the provider no longer has.
+- **Pool:** at most `sandbox.maxActive` live sandboxes per instance; when full, the least recently touched sandbox
+  idle for 2 minutes or more is released to make room; with none, the call waits up to 60 s, then fails with "the
+  sandbox pool is full, try again in a minute".
+- **No secrets in a sandbox.** Its env has only the proxy settings `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/
+  `https_proxy` `=http://sbx:<egress token>@<egress>:3128` (`NO_PROXY` empty), the pip/npm mirror settings, its exec
+  token (removed before any process starts) and Claude Code's settings (the egress token again as
+  `ANTHROPIC_AUTH_TOKEN`, the model ids, the managed CLAUDE.md and MCP config). The model key stays in egress.
+- Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"); on `vm` a 5 GiB scratch for
+  everything outside `/workspace` and a 1 GiB / 1,000-file quota on `/workspace` (docs/CLAUDE-CODE.md).
 - **Installing software:** `pip install` (venv `/opt/py`, first on PATH, through the egress PyPI mirror), `npm install
-  -g` (prefix `~/.npm-global`, npm mirror), installers into `~/.local/bin` / `~/.cargo/bin` (on PATH, e.g. uv's or
-  rustup's `curl … | sh`) everywhere; system packages with `sudo apt-get install -y x` (or plain `apt-get`, a wrapper
-  that goes through sudo and fetches the package lists on the first install) only on provider `vm`, where uid 1000
-  has passwordless sudo and root exists only inside gVisor (docs/SANDBOX-VM.md, "Installing packages"). Elsewhere
-  `apt-get install` says root is not available. The model is told this in the system prompt (below).
-- **Released** after `sandbox.idleMinutes` (default 30) without use, and always at
-  `sandbox.maxLifetimeHours` (default 8). Use = a bash command starting or ending in it (with its files synced in and
-  out); its idle time (`sandboxes.last_active_at`, the monitor's "idle") counts from the last one. Typing and turns
-  that run no bash are not use; a sandbox is never released while its conversation has a turn going (a command still
-  running counts as in use). Before deleting the pod the janitor pulls the sandbox's changed files and
-  saves them (files are also synced after every bash command, so this only catches what background processes wrote).
-- **Also released:** at once when the conversation is deleted (`DELETE`; the janitor catches a replica that died
-  first), and by the janitor when its conversation never had a turn 5 minutes after it was made (a leftover; nothing
-  makes such a sandbox any more). The janitor also removes sandboxes a provider lists without a live row, and marks
-  rows whose sandbox the provider no longer has.
-- **Reset notice:** when the first bash command of a conversation lands in a fresh sandbox and the conversation had
-  an earlier one, that command's output starts with a line: `[System note: the sandbox was reset: files in the
-  workspace are restored; installed packages and background processes from before are gone.]`
-- **No secrets in a sandbox.** Its env has only `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/`https_proxy`
-  `=http://sbx:<egress token>@egress.<ns>.svc.cluster.local:3128`, `NO_PROXY=` (empty), the pip/npm mirror settings
-  and its exec token. NetworkPolicy: egress only to the `egress` pods (3128) and cluster DNS; ingress only from `web`
-  pods on 7070.
-- Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"), ephemeral storage 5Gi;
-  at most `sandbox.maxActive` (default 6) live sandboxes per instance; over the limit the least recently active idle
-  one is released first; if none is idle, the bash command waits up to 60 s, then reports
-  "the sandbox pool is full, try again in a minute".
+  -g` (prefix `~/.npm-global`, npm mirror), installers into `~/.local/bin` / `~/.cargo/bin`; system packages with
+  `sudo apt-get install -y x` on provider `vm`, where uid 1000 has passwordless sudo and root exists only inside
+  gVisor (docs/SANDBOX-VM.md, "Installing packages").
 
 ## Sandbox providers (`sandbox.provider`)
 
 The sandbox manager (`chat/src/web/sandbox.ts`) owns the lifecycle above and the `sandboxes` rows; a provider
 (`chat/src/web/provider.ts`) only creates (`create` → its name for the sandbox, stored in `sandboxes.pod`), waits for
-the agent (`waitReady` → `{url, headers}`, stored in `sandboxes.agent`), keeps alive, destroys and lists. jarvis-bash
-gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it works the same with either.
+the agent (`waitReady` → `{url, headers}`, stored in `sandboxes.agent`), keeps alive, destroys and lists. The UI gets
+the URL and headers from `/internal/cc/sandbox`, so it works the same with any of them. Only `vm` sets up Claude Code
+(its env, `/workspace` and `~/.claude` on JuiceFS): `kubernetes` and `e2b` start the same image and agent but without
+those, so they serve tests and a future instance, not YYC AI as it is.
 
 - **`vm`** (`sandbox-vm.ts`, `vm-clients.ts`; host agent `chat/sandboxd`; the YYC instance since 2026-10-21): gVisor
   sandboxes (the DE0CH/gvisor fork) on our own hosts: one always-on Hetzner hub plus AWS EC2 burst hosts (at most
@@ -110,11 +97,13 @@ gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it
     room; none: the scaler starts one, `create` waits up to ~170 s, or answers "all sandbox hosts are full" at the
     cap) and gives it a fixed /32 from `sandbox.vm.sandboxCidr` (`sandboxes.ip`; `sandboxes.host` = where it runs
     now). sandboxd on that host (`POST /v1/sandboxes`, mutual TLS) starts it with the env (proxy and mirrors at
-    `http://sbx:<egress token>@<egressVip>:3128`, `JARVIS_EXEC_TOKEN`). The sandbox's first process is
+    `http://sbx:<egress token>@<egressVip>:3128`, `JARVIS_EXEC_TOKEN`, Claude Code's settings from
+    `chat/src/web/claude-code.ts`) and `workspace` (the conversation id) and `user` (the owner's key), which sandboxd
+    bind-mounts from the host's JuiceFS mount as `/workspace` and `~/.claude` (docs/CLAUDE-CODE.md). The sandbox's first process is
     `sbx-init.mjs` (root inside gVisor only, to start dockerd on the first `docker` command); the agent runs as uid
     1000 with no capabilities and no_new_privs.
   - **Ready:** `http://<ip>:7070/healthz` (no provider headers); the URL never changes, also across migrations.
-  - **keepAlive:** a no-op; the janitor releases (with the final save).
+  - **keepAlive:** a no-op; the janitor releases.
   - **Egress:** sandboxes reach egress at `sandbox.vm.egressVip`, which the hub translates (DNAT only) to an egress
     pod: egress sees the sandbox's own address, and egress only accepts a vm sandbox's token from that address. Each
     egress pod announces `POD_IP` in `kv egress_pod:<pod>`; the scaler hands the live ones to the hub.
@@ -122,17 +111,16 @@ gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it
     decides when a host is lost). `sandbox.vm.legacyProvider: "kubernetes"` during a switch: the previous provider's
     sandboxes (rows without a host) stay listed and are removed through it once released.
   - **Scaler** (web, Postgres leader lock 4242012, every 5 s): heartbeats (a host silent 30 s, the hub 120 s, loses
-    its sandboxes: rows `gone`, "host lost", reset note on the next turn), the hub's WireGuard peers and egress
-    targets, AWS hosts up (spare slots) and down (drain-back, one idle sandbox at a time, never during a turn; a move
-    across clouds only when the sandbox is idle and aborted, unchanged, if pre-copy wouldn't converge within
+    its sandboxes: rows `gone`, "host lost", `reset` on the next `/internal/cc/sandbox`), the hub's WireGuard peers and
+    egress targets, AWS hosts up (spare slots) and down (drain-back, one sandbox at a time, also while Claude Code
+    runs in it; a move across clouds only when the sandbox is idle and aborted, unchanged, if pre-copy wouldn't converge within
     `migration.maxDowntimeMs`), empty AWS hosts terminated. Operator knobs live in table `vm_hosts`
     (`max_sandboxes`, `status` `retiring`).
 - **`kubernetes`** (`sandbox-k8s.ts`): a gVisor pod per sandbox in `sandbox.namespace`, agent at `http://<pod IP>:7070`,
   the env (proxy, mirrors, `JARVIS_EXEC_TOKEN`) in the pod spec, the proxy `sandbox.egressProxyUrl` (default
   `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op. `create` retries for up
   to a minute while a namespace ResourceQuota still counts a pod the pool just released (it terminates for a few
-  seconds). The YYC instance runs these pods in its own cluster (DE0CH/YYC `yyc-ai/deploy/sandbox.yaml`: RuntimeClass on
-  labelled nodes, a PriorityClass below its jobs that never preempts, quota, the web service account's Role, policies).
+  seconds). Used by the tests (a fake Kubernetes API starting the real agent); YYC AI ran on it until 2026-10-21.
 - **`e2b`** (`sandbox-e2b.ts`, REST with fetch, `X-API-Key: $E2B_API_KEY`, base `https://api.e2b.app`):
   - **Template:** the chat workflow builds `chat/sandbox/Dockerfile` as E2B template `jarvis3-sandbox`, tagged with
     the commit's 12 characters, 1 vCPU / 1024 MB, start command `JARVIS_INIT=1 node /opt/agent/agent.mjs`, ready
@@ -150,95 +138,58 @@ gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it
     `/wire` (`wss://<egress host>/wire`, through the Cloudflare tunnel); egress feeds it into its own proxy server, so
     CONNECT, plain HTTP, the mirror, the allowlist, the address checks and the log are the same as on 3128. E2B checks
     the allow-list by TLS SNI (443) and Host (80), and lets its DNS server (8.8.8.8) through.
-  - **Lifetime:** E2B kills a sandbox at its timeout. On every typing signal, every turn and every minute of a running turn
-    (at most every 30 s per sandbox) the manager sets it (`POST /sandboxes/{id}/timeout`) to the idle release + 5
-    minutes, capped at the hard maximum + 5 minutes, so the janitor's release (with the final save) always comes
-    first, and a sandbox whose web replicas died still ends. Release = `DELETE /sandboxes/{id}`.
+  - **Lifetime:** E2B kills a sandbox at its timeout. On every start and touch (at most every 30 s per sandbox) the
+    manager sets it (`POST /sandboxes/{id}/timeout`) to the idle release + 5 minutes, capped at the hard maximum + 5
+    minutes, so the janitor's release always comes first, and a sandbox whose web replicas died still ends. Release = `DELETE /sandboxes/{id}`.
   - **Janitor:** `GET /v2/sandboxes?metadata=jarvis=<instance>`; a sandbox older than a minute with no live row is
     killed. Other instances' sandboxes (another `jarvis` tag) are never touched.
   - **Plan limits:** E2B Hobby ends any sandbox after 1 hour of continuous running; `sandbox.maxLifetimeHours` above 1
     needs Pro (24 hours).
-  - **Measured** (2026-10-20, us-west-1, `chat/scripts/e2b-live.ts`, which re-runs the whole check: create, `/init`,
-    jarvis-bash, `pip install` through the mirror, allowed and refused hosts, direct internet blocked by name and by
-    IP, kill): create 1.1 s, `/init` + health 0.6 s; a pip install of a small package 6.4 s. Cloudflare refuses a
+  - **Measured** (2026-10-20, us-west-1, with the retired server-side bash path): create 1.1 s, `/init` + health
+    0.6 s; a pip install of a small package 6.4 s. Cloudflare refuses a
     request whose Host differs from the egress host's SNI (403), so the SNI allow-list can't be used to reach other
     sites behind Cloudflare.
 
 ## Interfaces
 
-### Postgres schema (owned by `web`, migrations in `chat/src/common/schema.ts`, applied under an advisory lock)
+### Postgres schema (migrations in `chat/src/common/schema.ts`, applied under an advisory lock by every role at start)
 
 ```sql
-create table users (email text primary key, name text, is_admin boolean not null default false,
-  created_at timestamptz not null default now(), last_seen_at timestamptz);
-create table conversations (id uuid primary key, owner text not null references users(email),
-  title text not null default '', model text not null, created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(), deleted_at timestamptz);
-create table messages (id bigserial primary key, conversation_id uuid not null references conversations(id),
-  role text not null check (role in ('user','assistant')), content text not null,
-  turn_id uuid, attachments jsonb not null default '[]', created_at timestamptz not null default now());
-create table turns (id uuid primary key, conversation_id uuid not null references conversations(id),
-  status text not null check (status in ('queued','running','waiting','done','error','cancelled')),
-  token_hash text not null unique,            -- sha256 hex of the per-turn token (egress /x/model + tools MCP)
-  replica text, model text not null, started_at timestamptz not null default now(), finished_at timestamptz,
-  error text, usage jsonb, cost_usd numeric,
-  presented jsonb);  -- migration 7: the files the turn shows, [{path, caption?, sha256, size}]; null = before present_files
-create table events (id bigserial primary key, conversation_id uuid not null, turn_id uuid not null,
-  seq int not null, type text not null, data jsonb not null, created_at timestamptz not null default now(),
-  unique (turn_id, seq));
-create table claw_sessions (conversation_id uuid primary key, content text not null, updated_at timestamptz not null default now());
-create table files (conversation_id uuid not null, path text not null, sha256 text not null, size bigint not null,
-  source text not null check (source in ('upload','agent')), updated_at timestamptz not null default now(),
-  deleted boolean not null default false, primary key (conversation_id, path));
 create table sandboxes (id uuid primary key, conversation_id uuid not null, pod text not null unique,
-  egress_token_hash text not null unique, exec_token text not null,   -- exec token: web<->agent only, never in Postgres logs
+  egress_token_hash text not null unique, exec_token text not null,
   status text not null check (status in ('starting','ready','releasing','gone')),
   created_at timestamptz not null default now(), last_active_at timestamptz not null default now(),
   expires_at timestamptz not null, released_at timestamptz, release_reason text,
   agent jsonb,                    -- {url, headers}: how to reach its agent (migration 2)
-  host text, ip text);            -- provider vm: the host it runs on now, its fixed /32 (migration 3)
-create table vm_hosts (name text primary key, kind text,   -- 'hub' | 'aws'   (provider vm, migration 3)
-  url text, wg_ip text, wg_public_key text, instance_id text, private_ip text,
-  status text,                    -- 'booting' | 'active' | 'draining' | 'retiring' | 'gone'
-  max_sandboxes int,              -- operator's cap (null: by memory/CPU)
-  mem_total bigint, mem_reserve bigint, cpus int, info jsonb, created_at, last_seen_at, empty_since, gone_at, gone_reason);
--- allowed_hosts (conversation_id, host, added_by, created_at): unused since migration 6 (emptied; the sandbox
--- allowlist is automatic); kept so an older replica still running during that rollout can read it
+  host text, ip text,             -- provider vm: the host it runs on now, its fixed /32 (migration 3)
+  owner text, user_key text);     -- its owner and ~/.claude key (migration 9)
+create table vm_hosts (...);      -- provider vm: hosts (migration 3; docs/SANDBOX-VM.md)
+create table vm_events (...);     -- provider vm: launches, packing, migrations with their pause, terminations
 create table egress_log (id bigserial primary key, at timestamptz not null default now(), conversation_id uuid,
-  sandbox_id uuid, turn_id uuid, kind text not null,   -- 'connect' | 'http' | 'mirror' | 'model' | 'inject'
+  sandbox_id uuid, turn_id uuid,  -- turn_id: old rows only
+  kind text not null,             -- 'connect' | 'http' | 'mirror' | 'model' | 'inject'
   method text, host text not null, port int, path text, status int, decision text not null,  -- 'allow' | 'deny:<why>'
   bytes_up bigint, bytes_down bigint, ms int, cost_usd numeric);
-create table tool_calls (id bigserial primary key, at timestamptz not null default now(), turn_id uuid,
+create table tool_calls (id bigserial primary key, at timestamptz not null default now(), turn_id uuid,  -- old rows
   conversation_id uuid, user_email text, tool text not null, args jsonb, ok boolean, ms int, error text, cost_usd numeric);
--- confirmations (id, conversation_id, turn_id, kind, summary, detail, status, …): unused since migration 6 (nothing
--- asks the user anything; pending rows were expired); old rows only
-create table kv (key text primary key, value jsonb not null);
--- sharing and continuing ("Sharing and continuing" below): a frozen snapshot per link; where a sha256's bytes are;
--- which conversations may read a sha256 stored under another conversation's prefix
-create table shares (id text primary key,           -- the link's id: 16 random bytes, base64url (22 characters)
-  conversation_id uuid not null references conversations(id), owner text not null references users(email),
-  created_at timestamptz not null default now(), revoked_at timestamptz, title text not null, model text not null,
-  messages jsonb not null, turns jsonb not null,      -- the finished turns' rows (to_jsonb, without token_hash/replica)
-  events jsonb not null, files jsonb not null,        -- [{path, sha256, size, source, updated_at}]: every live file
-  claw_session text);
-create table blobs (sha256 text primary key, key text not null, created_at timestamptz not null default now());
-create table blob_grants (conversation_id uuid not null, sha256 text not null, primary key (conversation_id, sha256));
--- the admin monitor (migration 5): sandbox starts (kind 'sandbox_start': ok, ms = allocation latency from the first
--- request incl. pool wait, detail {reason, error, provider, startMs}); kept 30 days by the janitor
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
+  -- kind 'sandbox_start': ok, ms = start latency incl. pool wait, detail {reason, error, provider, startMs}; 30 days
+create table kv (key text primary key, value jsonb not null);  -- cc_sandbox:<conv>, egress_pod:<pod>, sandbox_demand:<email>
 ```
 
-Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after inserting events. `turns.status`
-`waiting` (a turn held by a confirmation) no longer occurs; migration 6 set any such turn back to `running`.
+The old chat UI's tables (`users`, `conversations`, `messages`, `turns`, `events`, `claw_sessions`, `files`,
+`shares`, `blobs`, `blob_grants`, plus `confirmations` and `allowed_hosts`) keep their rows and are read and written by
+nothing (schema 10 comments them "unused"); dropping them is a decision for Deyao.
 
 ### Tokens
 
-- **Turn token** (32 random bytes, base64url), made by `web` per turn, stored as `turns.token_hash`, valid while the
-  turn is `running`/`waiting`. claw gets it as `ANTHROPIC_AUTH_TOKEN` (egress `/x/model`) and the MCP bridge sends it
-  as `Authorization: Bearer` to `tools`.
-- **Egress token**, per sandbox, stored as `sandboxes.egress_token_hash`; valid while the sandbox is not `gone`.
-- **Exec token**, per sandbox: `web` → `sandbox-agent` only (`Authorization: Bearer`).
+- **Egress token**, per sandbox (32 random bytes, base64url), stored as `sandboxes.egress_token_hash`; valid while the
+  sandbox is not `gone`. The sandbox's proxy, model and MCP calls carry it; egress and tools identify the sandbox (and
+  its conversation and owner) by it.
+- **Exec token**, per sandbox: the sandbox agent's own (`X-Jarvis-Exec-Token` or `Authorization: Bearer`), handed to
+  the UI by `/internal/cc/sandbox`.
+- **`JARVIS_CC_TOKEN`**: the UI pods → web.
 
 ### `egress` (port 3128, plus 9090 for /healthz and /metrics)
 
@@ -268,24 +219,28 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    npm tarball URLs are rewritten to `http://<the request's Host>/mirror/npm/…`, pypi file links to the root-relative
    `/mirror/pypi/files/…`.
 3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
-   (`{name, upstream, inject: {header: value-from-env-var}, auth: "turn"|"sandbox", allowPaths?}`). The YYC instance
-   has one: `model` → `https://openrouter.ai/api`, auth `turn` (`Authorization: Bearer <turn token>` or
-   `x-api-key`), injects `Authorization: Bearer $OPENROUTER_API_KEY`, forces zero data retention into every request
-   body (`provider.zdr: true`, `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is
+   (`{name, upstream, inject: {header: value-from-env-var}, model?, keepAuth?, allowPaths?}`), each authenticated by
+   a live sandbox's egress token (`Authorization: Bearer`/Basic or `Proxy-Authorization`; a vm sandbox's only from its
+   own address). The YYC instance has two. `claude` (`model: true`) → `https://openrouter.ai/api`: Claude Code's
+   model calls (`ANTHROPIC_BASE_URL=http://<egress>:3128/x/claude`, `ANTHROPIC_AUTH_TOKEN` = the egress token);
+   injects `Authorization: Bearer $OPENROUTER_API_KEY`, forces zero data retention into every request body (`provider.zdr: true`, `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is
    not a JSON object is refused with 400, `deny:body`; no config turns this off: `forceZdr` in
    `chat/src/egress/proxy.ts`), streams responses through, logs `cost_usd` from
    the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
    The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
    uncompressed body (`accept-encoding: identity`) so it can read the cost.
-   The `model` route also refuses, before anything goes upstream: a body whose `model` is not one of config `models`
+   A model route also refuses, before anything goes upstream: a body whose `model` is not one of config `models`
    or `titleModel` (400 `invalid_request_error`, `deny:model`), and every call once the shared budget is used up
    (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; a model
    call's `egress_log` row is written as soon as it ends and the budget is re-read at most every 0.5 s; see "Budget").
+   `tools` (`keepAuth: true`, `allowPaths: ["/mcp"]`) → `http://tools.<ns>.svc:8080`: Claude Code's MCP server
+   (`/x/tools/mcp`); the caller's `Authorization` (its egress token) goes on, so the tools role knows the sandbox.
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
    `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
    public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
    (`OPENROUTER_API_KEY`). Identity lookups are cached for 5 s. At start it logs `egress allowlist` with the lists'
-   version and sizes.
+   version and sizes. On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the
+   drain time, the log is flushed.
 
 ### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
 
@@ -345,21 +300,18 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
-- **The agent is told:** the runtime appends notes to the instance's system prompt on every turn
-  (`chat/src/web/turns.ts`): `SANDBOX_NETWORK_NOTE` (the sandbox reaches an automatic allowlist only, nobody can enable
-  a site from the chat, and web pages are read with `web_fetch`/`web_search`, server-side, any public site), then
-  `sandboxInstallNote` (how to install software: `sudo apt-get` on provider `vm` only, pip, npm -g, `~/.local`
-  installers; and "call sandbox_environment to see how the sandbox is set up" when the tools server offers it).
-   On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the drain time,
-   the log is flushed.
+- **The agent is told** in its managed CLAUDE.md (`SANDBOX_RULES`, `chat/src/web/claude-code.ts`): only sites on the
+  allowlist are reachable, a refused site cannot be enabled, and web pages are read with the web search and fetch
+  tools (server-side, any public site).
 
 ### `tools` (port 8080, `POST /mcp`, MCP Streamable HTTP, stateless, JSON responses)
 
-- Auth: `Authorization: Bearer <turn token>` → turn → conversation → owner email. Invalid → 401.
+- Auth: `Authorization: Bearer <egress token>` of a live sandbox made for a person (`sandboxes.owner`), passed on by
+  egress's `tools` route → conversation and owner email. Anything else → 401.
 - Every call → `tool_calls`.
 - **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
-  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), `sandbox_environment`, plus the **listed** tools of each configured upstream
+  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus the **listed** tools of each configured upstream
   MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
   `X-YYC-User: <owner email>`).
 - **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
@@ -373,424 +325,117 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
   ports other than 80/443/8080/8443. `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
-  every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the turn's owner on calls).
-- **`sandbox_environment`** (`chat/src/tools/sandbox-env.ts`, always offered, no outside calls): how the bash
-  sandbox is set up, for the model to check instead of probing. `section` = `summary` (default: the image reference
-  from `sandbox.image` (e2b: the template) and the runtime commit `JARVIS_COMMIT`; CPU/memory from the config, the 5 GiB
-  overlay cap and 4096 pids on `vm`, the 10-minute command limit, idle/lifetime release; how to install software per
-  provider; Docker on `vm` only; the network rules in short), `dockerfile` (chat/sandbox/Dockerfile, copied into the
-  chat image at build time: `/app/sandbox-env/Dockerfile`), `packages` (`/app/sandbox-env/packages.txt`: every apt
-  package, `pip freeze` of `/opt/py` and the global npm packages with versions, written by the sandbox image's build
-  into `/opt/agent/packages.txt` and copied by the `chat` workflow into the chat image through the build context
-  `sandbox-env`; `match` filters it) or `all`. The chat image and the sandbox image of one commit therefore agree; an
-  instance pinning a different sandbox tag sees that tag in the summary. Nothing secret: no tokens, no addresses.
+  every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the sandbox's owner on calls).
 - Env: `PORT` (8080), `JARVIS_DRAIN_MS` (150 s: an upstream call, up to 2 minutes, finishes before the pod stops;
   `terminationGracePeriodSeconds` 180), plus `DATABASE_URL` and the key env vars the config names.
-- **`jarvis-mcp-bridge`** (claw's stdio MCP server `tools`, in the image at `src/bin/`): reads JSON-RPC framed
-  with `Content-Length` headers (claw's MCP client) or one message per line, answers in the same framing, POSTs each
-  message to `$JARVIS_TOOLS_URL` (`http://tools.<ns>.svc.cluster.local:8080/mcp`) with
-  `Authorization: Bearer $JARVIS_TURN_TOKEN`; retries a 503 (a draining replica) up to 3 times.
 
-### `sandbox-agent` (port 7070, in the sandbox pod, `Authorization: Bearer <exec token>`)
+### The sandbox agent (`chat/sandbox/agent.mjs`, port 7070)
 
-The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/sandbox`; on
-provider `vm` commands may become root inside the sandbox with sudo).
+The only process the server side talks to inside a sandbox; runs as uid 1000.
 
-- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed: the kubelet's readiness probe); 503 while it waits for
-  `/init`. A new `boot_id` means the agent restarted and every earlier cursor is void. `GET /livez` → 200 always.
-- Auth: the exec token in `X-Jarvis-Exec-Token` (what the web role sends) or `Authorization: Bearer`.
-- `POST /init` (only with `JARVIS_INIT=1` and no `JARVIS_EXEC_TOKEN`, once, no token): `{token, env, wire?: {url,
-  headers}}` sets the exec token, adds `env` to every command's environment and, with `wire`, starts the local proxy
-  on `127.0.0.1:3128` (`JARVIS_WIRE_PORT`) that carries each connection to egress's `/wire` over a WebSocket. A
-  second call answers 409.
-- `PUT /files` — body: a tar stream (uncompressed) of files to write under `/work`; header `X-Delete: <JSON array of
-  relative paths>` for deletions. Returns `{ok, written, deleted}`.
-- `POST /exec` — `{command, timeout_ms (default 120000, max 600000), background: bool}` → runs `bash -lc` in `/work`.
-  Foreground: `{stdout, stderr, exit_code, interrupted, ms}` (each stream capped at 1 MB, tail kept, `truncated`
-  flag). Background: `{background_id, pid, log}` with output going to `log` = `.jobs/<id>.log` (under `/work`, so
-  it syncs back like any file). The command's process group is killed on timeout (`interrupted: true`); a process a
-  foreground command leaves running is not killed, but its output after the command ends is not collected.
-- `GET /changes?since=<cursor>` → tar stream of regular files under `/work` modified since the cursor (excluding
-  `egress.syncExclude`-style patterns: `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `.cache/`, `.git/objects/`,
-  files > 50 MB), header `X-Cursor: <new cursor>`, `X-Deleted: <JSON array>` (paths gone since the cursor),
-  `X-Skipped: <JSON array>` (changed files over 50 MB, not sent), `X-Full: 1|0`.
-  `since` empty or unknown (e.g. after an agent restart) = everything, `X-Full: 1`, no deletions (the caller must
-  treat a full answer as the complete list). When the two lists don't fit in 8 KB of headers they move into the
-  tar's first entry `.jarvis-meta/changes.json` = `{deleted, skipped}` and the response has
-  `X-Meta-Entry: .jarvis-meta/changes.json` instead of `X-Deleted`/`X-Skipped`. Files the caller wrote or deleted
-  with `PUT /files` are not reported back. Symlinks are never followed or sent.
-- `PUT /files` refuses (400) absolute paths, `..`, and any path whose real parent directory is outside `/work`
-  (a symlink planted by a command). Tar entries other than regular files are skipped.
-- Running processes survive between calls (tini is PID 1 and reaps; the agent's env loses `JARVIS_EXEC_TOKEN`
-  before any command runs).
-- Tar on both sides: `chat/sandbox/tar.mjs` (`packBuffers`, `entryHeader`/`entryPadding`/`END` to stream,
-  `unpack`; ustar + PAX long names; types in `tar.d.mts`). The `web` image can import it for `jarvis-bash`.
-
-### `jarvis-bash` (claw's bash, `CLAW_BASH_COMMAND`)
-
-claw (fork patch) runs `$CLAW_BASH_COMMAND` with the bash tool input JSON on stdin
-(`{command, timeout, description, run_in_background}`) and cwd = workdir, and expects JSON on stdout:
-`{stdout, stderr, exit_code, interrupted, background_task_id?}` (non-zero exit of the helper = tool error with its
-stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_SOCKET` (the replica's unix socket, mode 600 in the work
-root), `JARVIS_TURN_TOKEN` and `JARVIS_SYNC_STATE` (a JSON file outside the workdir with the last-synced manifest and
-the `/changes` cursor) from the turn runner. Each call first asks the socket for the sandbox (`POST /sandbox`, bearer
-= the turn token; only a turn running on that replica is accepted) → `{id, url, token, headers, reset}` (made now if
-the conversation has none: `sandbox` events `starting`/`ready`, and `reset` → the reset notice above the output) or
-`{unavailable: <reason>}`; then: push files that changed in the workdir since the manifest (`PUT /files`),
-`POST /exec`, pull `/changes` into the workdir and update the manifest. Without a sandbox the helper fails with a
-plain sentence (`The sandbox is not available for this message (<reason>). Try again in a minute.`, the reason the
-pool-full text or "it could not be started"), never an internal name, since the model passes it on to staff. A
-different sandbox id than the one in the state file (a new sandbox) resets the manifest and cursor, so the whole
-workdir is pushed again. A full `/changes`
-answer (`X-Full: 1`) is the complete list: files the manifest has and the answer lacks (and didn't skip) are deleted
-locally. Background commands answer `Started in the background … output goes to .jobs/<id>.log`; `.jobs/` is pulled
-into the workdir (the agent can read it) but never stored in the bucket. Code: `chat/src/web/bash.ts`.
-
-### claw fork patches (DE0CH/claw-code, all no-ops unless their env var is set)
-
-| Env | Effect |
-|---|---|
-| `CLAW_SYSTEM_PROMPT_FILE` | the system prompt = that file's text plus an `# Environment` section (real date, cwd); no coding sections, no git context, no instruction-file discovery, no runtime-config dump |
-| `CLAW_BASH_COMMAND` | the `bash` tool runs that executable as above instead of a local shell |
-| `CLAW_CONFIG_DIR` | the only config dir read (settings, `mcpServers`); nothing is read from the workdir |
-| `CLAW_SESSIONS_DIR` | where managed sessions live (instead of `<cwd>/.claw/sessions/…`), no workspace-root check |
-| `CLAW_PROMPT_CACHE=1` | `cache_control: ephemeral` on the system prompt, the tool list and the last user message (Anthropic format) |
-| `CLAW_IMAGES=1` | images reach the model: `read_file` on png/jpeg/webp/gif returns the image (heic/svg/bmp/tiff and a PDF page, `page`, converted to PNG), at most 1568 px on the long edge and 5 MB, at most 20 per run (then a text note); the session stores a reference (workdir path, sha256, media type), the bytes are read from the workdir for each request; `tool_result` events carry `images: [{path, sha256, media_type, width, height, page?}]`; at most 40 images per request (older ones become a text note); a file changed since it was viewed becomes a note too |
-| `CLAW_PROMPT_IMAGES` | JSON array of workdir paths attached to the prompt's user message as images, before its text (same rules; one `prompt_images` event) |
-
-### Turn runner (in `web`)
-
-1. `POST /api/conversations/:id/messages` → insert the user message and a `turns` row (`queued`), answer 202 with ids.
-   One running turn per conversation (409 otherwise). The turn's model is the conversation's while config `models`
-   still offers it, else `defaultModel` (the conversation is moved to it: e.g. Opus conversations continue on Sonnet
-   after a switch to Sonnet only).
-   **Budget:** when the shared budget is used up the turn ends at once (`error` = the budget message, events
-   `turn_started` + `turn_finished {code: "budget", limitUsd, ownerName}`): no sandbox, no claw, no model call. A
-   running turn whose model call egress refuses for the budget (claw: `error {message: "api returned 402 …
-   (budget_exceeded): …"}`) is stored with that `error` event rewritten to `{code: "budget", message, limitUsd,
-   ownerName}` and ends `error` with the budget message; its text so far stays.
-2. The receiving replica runs it: reconcile the local workdir `/var/lib/jarvis/work/<conv>` with `files` (download
-   from S3 what differs), write `claw_sessions.content` to `<sessions dir>/<conv>.jsonl`, ensure the sandbox, then
-   spawn `claw --model <model> --permission-mode danger-full-access --allowedTools <list> --output-format json
-   prompt <text>` with `CLAW_EVENT_STREAM=1`, `CLAW_RESUME_SESSION=<path>` (when a session exists), and the env above.
-   The MCP config (in `CLAW_CONFIG_DIR/settings.json`) lists one stdio server `tools` = `jarvis-mcp-bridge` (stdio ↔
-   HTTP, token from env, `JARVIS_WORKDIR` = the workdir). Also `CLAW_IMAGES=1` and, when the message has image
-   attachments (png, jpeg, gif, webp, heic, heif, bmp, tiff, svg; at most 20), `CLAW_PROMPT_IMAGES` (see "Presented
-   files and images"). The system prompt file = the instance's prompt + `SANDBOX_NETWORK_NOTE` + `FILES_NOTE`.
-3. Each NDJSON event → `events` (+ `pg_notify`). Text deltas are batched (≤ 250 ms) into one `text_delta` event.
-4. End: save the session file to `claw_sessions`, upload changed workdir files to S3 (`files/<conv>/<sha256>`) and
-   upsert `files` (source `agent`), settle the presented files (each at the version the turn left, gone ones dropped;
-   a new `files_presented` event when that changed the list), insert the assistant message (final text), set the
-   turn `done` with usage and cost. Title (chat/src/web/title.ts), when the conversation has none: after a `done` turn,
-   one `titleModel` call through egress's model route (ZDR forced, counts toward the budget; about USD 0.0004). Thinking
-   at the smallest budget (`thinking: {type: enabled, budget_tokens: 1024}`, `max_tokens` 2048): the Claude 5.5
-   endpoints on OpenRouter refuse `thinking: disabled` ("Reasoning is mandatory"), and a small `max_tokens` goes
-   entirely to thinking. The title is the last text block's first line, unquoted, at most 80 characters. When the call
-   fails (or returns no text), and after a turn that errored, was cancelled or was refused for the budget: the first
-   words of the user's first message (6 words; unspaced text such as Chinese: 16 characters; `…` when cut). A failed
-   call is logged (`at: title`, with `reason`) and recorded (`ops_events` kind `title`, `ok` false, detail
-   `{reason, error, fallback}`), which the monitor lists under errors by kind as `title: <reason>`.
-5. Cancel: `POST /api/turns/:id/cancel` → SIGTERM to claw (then SIGKILL after 5 s) on whichever replica runs it
-   (each replica LISTENs on `cancel_<replica>`).
-6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
-   the UI retries 503), and waits for its running turns up to `terminationGracePeriodSeconds - 30` (manifests: 1800 s).
-7. **Reset notice:** kv `turn_sandbox:<conv>` holds the sandbox id the conversation's last turn used; a turn on a
-   different sandbox gets the reset line prepended to its prompt and a `sandbox {status: "reset"}` event.
-8. A turn whose sandbox can't be had (pool full past 60 s, start failure) still runs; its `sandbox {status:
-   "unavailable", message}` event says why and `jarvis-bash` then fails with that reason. claw's session file is saved
-   only after a `done` turn (a cancelled or failed turn may leave a tool call without its result, which the model API
-   refuses on replay); the turn's files are stored whatever its outcome.
-9. Replicas write a heartbeat (kv `replica:<name>`, every 10 s); the janitor (one replica, advisory lock, every 30 s)
-   ends turns of replicas silent for 60 s and queued turns older than 2 minutes (`error`, "interrupted: the server
-   restarted"), releases idle/expired sandboxes, ends stuck starts, deletes
-   sandbox pods without a live row and marks rows whose pod vanished.
-
-### Presented files and images (Deyao, 2026-10-21)
-
-- **Staff see only what the agent presents.** Under an answer the UI shows download cards for exactly the files of
-  that turn's `presented` list, in its order (png/jpeg/gif/webp with an inline preview, a PDF with its first page),
-  each linked at its version (`?v=<sha256>`, so a later turn changing the path doesn't change an earlier card). There
-  is no file browser and no automatic list of changed files; staff uploads show in their own messages (images as
-  thumbnails). The workdir is stored and synced as before; the agent keeps using every file.
-- **`present_files({files: [{path, caption?}]})`** (tools role, read-only, `chat/src/tools/present.ts`): 1–20 paths
-  relative to the workdir (`/work/x` and `./x` accepted). The tools role can't see the workdir, so `jarvis-mcp-bridge`
-  (on the replica running the turn, `JARVIS_WORKDIR`) checks each path before forwarding and puts what it found in the
-  call's `params._meta["jarvis/files"]` (`{path, size, sha256}` or `{error}`): a regular file inside the workdir, no
-  symlink, not under an excluded folder (`node_modules/`, `.jobs/`, …), at most 50 MB. One bad path refuses the whole
-  call with every problem named. A good call merges into `turns.presented` (row lock) and appends `files_presented`.
-  Merging (`chat/src/common/presented.ts`): a path given again replaces its entry at the new place, and the same
-  contents under another path (a copy) are shown once, as the latest; at the end of the turn each entry takes the
-  version the turn left (the latest wins). The agent is told (`FILES_NOTE`): "When you finish, call present_files with
-  the deliverables only (reports, charts, data the user asked for) — never scripts, fonts or intermediate files."
-- **The duplicate PDF (2026-10-21):** the old UI listed every agent file changed during a turn by its file name; the
-  agent built `build/<name>.pdf` and then `cp` it to the workdir root, so two paths with the same name and contents
-  showed as two identical cards. Fixed both by showing only presented files and by the copy rule above.
-- **Old conversations:** a turn with `presented` null (run before migration 7, or by an older replica during the
-  rollout) shows, as before, the agent files whose last change falls between its start and 15 s after its end
-  (`legacyPresented` in `app.ts`, computed when the conversation is read), with copies shown once. Nothing is lost:
-  reports made before stay downloadable from their answer. A new turn that presents nothing shows no cards.
-- **Images to the model** (claw `CLAW_IMAGES`, above): `read_file` on an image or a PDF page shows it to the model;
-  staff-uploaded images in a message go with it (`CLAW_PROMPT_IMAGES`). Sandbox-made images need nothing extra: files
-  written under `/work` are in the workdir after each bash command. The tool step of a viewed image shows a thumbnail:
-  the runner puts that file's bytes in the bucket under its sha256 as soon as the `tool_result` arrives
-  (`?v=<sha>&preview=1` then loads mid-turn). OpenRouter passes Anthropic `image` blocks (user and `tool_result`)
-  through with ZDR forced (checked 2026-10-21, `anthropic/claude-sonnet-5.5`). The web image has `poppler-utils`,
-  `libheif-examples` and `librsvg2-bin` for the conversions.
-
-### Events (what the UI renders; `GET …/stream` and `turns[].events`)
-
-Each is `{id, turnId, seq, type, data, createdAt}`; the list of types is in "Public API" below. What `web` itself adds:
-`turn_started {turnId, model}`; `sandbox {status: starting|ready|reset|unavailable, message?}`; `files {changed:
-[path]}` (what the turn stored; kept for the record, the UI never lists it); `files_presented {files: [{path,
-caption?, sha256, size}]}` (the whole list so far, from present_files and once more at the end when the versions
-changed; the last one wins); `title {title}`;
-`turn_finished {turnId, status: done|error|cancelled, error, costUsd}` (plus `code: "budget", limitUsd, ownerName`
-when the budget stopped it: the UI words that in its own locale). claw's `result` is stored as it comes
-(`usage`, `estimated_cost`, `message`, …); its `session` line is not stored (a server path). `tool_result.output` is
-capped at 20 000 characters (`truncated: true`). The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug`
-event (tests only). Conversations stored before schema 6 may hold `confirmation_request`/`confirmation_resolved`
-events: they still load, and the UI shows nothing for them (like any event type it doesn't know).
+- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed); 503 while it waits for `/init`. `GET /livez` → 200.
+- Auth: the exec token in `X-Jarvis-Exec-Token` (survives a provider's port proxy) or `Authorization: Bearer`.
+- `GET /proc` with `Connection: Upgrade`, `Upgrade: jarvis-proc`, `X-Proc: <base64 JSON {args, cwd?, env?}>` → 101,
+  then frames both ways (1 byte type, 4 bytes big-endian length, payload). Client → agent: 0 stdin, 4 stdin end, 5
+  signal (its name). Agent → client: 1 stdout, 2 stderr, 3 exit (`{code, signal}`), then the socket closes. `args[0]`
+  is looked up on PATH; `cwd` must be `/workspace` or a folder in it (made if missing; default `/workspace`); `env` is
+  added for that process only. A dropped connection (close or FIN) kills the process group (SIGTERM, SIGKILL 2 s
+  later): the caller owns its life. This is how the UI runs `claude` in the sandbox.
+- `POST /init` (only with `JARVIS_INIT=1` and no `JARVIS_EXEC_TOKEN`, once, no token; provider `e2b`): `{token, env,
+  wire?: {url, headers}}` sets the exec token, adds `env` to every process's environment and, with `wire`, starts the
+  local proxy on `127.0.0.1:3128` that carries each connection to egress's `/wire` over a WebSocket. A second call
+  answers 409.
+- Nothing else is served (404).
 
 ### `web` deployment needs
 
-- Env: `JARVIS_ROLE=web`, `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `JARVIS_NAMESPACE` (its own
-  namespace, from the downward API; default `jarvis`), `HOSTNAME` (the pod name: the replica's name), optional
-  `JARVIS_EGRESS_URL`, `JARVIS_TOOLS_URL`, `JARVIS_WORK_ROOT` (default `/var/lib/jarvis/work`, an emptyDir),
-  `JARVIS_DRAIN_SECONDS` (default 1770), `JARVIS_UI_DIR`, `JARVIS_BRAND_DIR` (default `/etc/jarvis/brand`, served at
-  `/brand/*`), `CLAW_PATH`. Config at `/etc/jarvis/config.json`, the system prompt file it names.
-- RBAC (provider `kubernetes` only): a ServiceAccount (token mounted) bound to a Role in the sandbox namespace with
-  `pods`: create, get, list, watch, delete and `pods/status`: get. Read-only for the admin monitor (optional; what
-  is missing shows as a note on the page): in its own namespace `deployments` get/list (base Role `web-monitor`); the
-  instance may add `metrics.k8s.io` `pods` get/list in the sandbox namespace and a ClusterRole with `nodes`,
-  `metrics.k8s.io` `nodes` and `node.k8s.io` `runtimeclasses` get/list.
-- Provider `e2b`: `E2B_API_KEY` (from `web-env`) and any variable `sandbox.e2b.egressHeaders` names; outbound HTTPS to
-  `api.e2b.app` and `*.e2b.app`.
-- Pod: `terminationGracePeriodSeconds: 1800`, readiness `GET /healthz`, a writable emptyDir at the work root; the image
-  runs as uid 1000. NetworkPolicy: ingress from cloudflared only; egress to
-  Postgres, the bucket, the Kubernetes API, `egress` and `tools` Services and sandbox pods on 7070.
-
-### Public API (`web`, all behind Access; JSON)
-
-- `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [{id, label}], defaultModel}`
-- `GET /api/conversations` → newest first `[{id, title, model, updatedAt, running}]`; conversations without any
-  message are left out
-- `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title?, model?}` → 204 (the
-  model applies from the next turn); `DELETE` (soft) → 204
-- `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments: [path],
-  createdAt}], turns: [{id, status, model, startedAt, finishedAt, error, costUsd, presented: [{path, caption?, sha256,
-  size}], events: [event]}],
-  pendingConfirmations: [{id, turnId, kind, summary, detail, status}], lastEventId}` (oldest first; stream from
-  `lastEventId` to continue)
-- `POST /api/typing` `{conversationId?}` → 204 (keeps that conversation's sandbox, or signals the scaler; makes nothing)
-- `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → 202 `{turnId}`; 409 while a turn is going;
-  503 while this replica drains (retry)
-- `GET /api/conversations/:id/stream?after=<event id>` → SSE of events with an id greater than `after` (or the
-  `Last-Event-ID` header, whichever is greater), then live ones; `id:` = event id, `data:` = one event as JSON
-  `{id, turnId, seq, type, data, createdAt}`; heartbeats (`: hb`) every 15 s
-- Event types: claw's (`session`, `message_start`, `text_delta{text}`, `thinking_delta`, `tool_use{id,name,input}`,
-  `tool_result{id,name,output,is_error}`, `message_stop`, `result{usage, estimated_cost, …}`, `error{message}`) and
-  the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`,
-  `sandbox{status: starting|ready|reset|unavailable}`, `title{title}`, `files{changed}`, `files_presented{files}`. MCP tools
-  are named `mcp__tools__<tool>`.
-- `POST /api/turns/:id/cancel` → 204
-- `POST /api/conversations/:id/files?name=<file name>` (raw body, `content-type` = the file's, ≤ 100 MB) → 201
-  `{path, size}` (under `uploads/`, ` (2)` added before the extension when the name is taken)
-- `GET /api/conversations/:id/files` → `[{path, size, source: "upload"|"agent", updatedAt}]` (the UI doesn't list it);
-  `GET /api/conversations/:id/files/<path>` (each segment URL-encoded) → the bytes, `content-disposition` with the
-  file name; `?v=<sha256>` = that version (immutable, cached a day); `?inline=1` = `inline` for png/jpeg/gif/webp
-  (never svg); `?preview=1` = an image itself or a PDF page as a PNG ≤ 480 px wide (`&page=N`, poppler's `pdftoppm`
-  in the image; 404 when there is none)
-- Errors: JSON `{error: "<message>"}` with the status; 401 = no valid Access token, 403 = signed in but not on
-  `config.users` (the UI shows "not on the list"); 503 while draining (the UI retries)
-- Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`,
-  `GET /api/admin/monitor?tz=<IANA zone>` (the admin monitor's snapshot, below), `GET /api/admin/budget` →
-  `{budget: {limitUsd, since, ownerName, spentUsd, remainingUsd, exhausted, source: config|override, override}|null,
-  config, audit: [{at, actor, action, before, after}]}`, `POST /api/admin/budget` `{action: "reset"}` (spend from
-  now) | `{action: "set", limitUsd}` | `{action: "clear"}` (back to config) → the same shape
-- Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>` and `/s/<id>`
-  (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
-  instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
-  replaced by the product name. A new conversation's empty screen shows only the logo, a greeting and the
-  composer: no description line, no example or suggested prompts (removed 2026-10-21, Deyao). The greeting
-  (`chat/ui/src/greeting.ts`) is picked by Hong Kong time of day (05–12 morning, 12–18 afternoon, 18–23 evening,
-  23–05 late night), at random per page load from that slot's pool: the slot's own phrases, the any-time ones, a
-  daytime one (morning and afternoon) and, only when the user has earlier conversations, two returning-user ones
-  (又見面喇 / 歡迎返嚟, "Hello again" / "Welcome"). Each locale draws only from its own list. `firstName` from
-  `GET /api/me` follows when there is one ("Good morning, Deyao" / 「早晨，Deyao」), before a closing question mark
-  (「點呀，Tai Man？」). The phrase set is the one Deyao approved on 2026-10-21: the English phrases come from
-  Wiktionary's "Category:English greetings" (CC BY-SA); the Cantonese versions were translated by Claude in the
-  session and approved by Deyao. `firstName` = the Access identity's `given_name` (else the
-  first word of `name`; a CJK name whole) from the token or the team's `/cdn-cgi/access/get-identity` (Google
-  sign-in); null with an e-mailed code. Never derived from the address.
-- Sharing ("Sharing and continuing"): `POST /api/conversations/:id/shares` (owner) → 201 `{id, url, createdAt, turns}`
-  (400 when no turn has finished yet); `GET /api/conversations/:id/shares` (owner) → its live links;
-  `DELETE /api/shares/:id` (owner; anyone else 404) → 204; `GET /api/shares/:id` (any instance user) → `{id, title,
-  ownerName, isOwner, createdAt, messages, turns (with events and presented), files}` (404 once revoked or the
-  conversation deleted); `GET /api/shares/:id/files/<path>` (`?v=<sha256>`, `?inline=1`) → the bytes of a
-  downloadable file only; `POST /api/shares/:id/continue` → 201 `{id}` (a new conversation of the caller's)
-- `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
-
-Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
-(the instance's allowlist, the same list as the Access policy) → a `users` row is upserted. A user sees only their
-own conversations (others' ids answer 404); admins (`config.admins`) can read the usage/egress views and the
-monitor, not others' chats; to anyone else every admin path (`/api/admin/*`, `/admin`, `/admin/*`, `/admin-*` bundle
-files) answers 404. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
-with an `Origin` other than `publicUrl` are refused.
-
-### Sharing and continuing (Deyao, 2026-10-21; `chat/src/web/share.ts`, `chat/ui/src/share.tsx`)
-
-- **Share** (「分享」 / "Share": the conversation's top bar on phones, and the ⋯ menu of a conversation in the list
-  on any screen, since wide screens have no top bar): a sheet with one line 「已登入 YYC AI 的同事可以查看這段對話
-  （只讀）」 ("Colleagues signed in to YYC AI can view this conversation (read-only)", the product name from config),
-  「複製連結」 / "Copy link" and the conversation's live links, each with 「停止分享」 / "Stop sharing" (revoke). Every
-  copy makes a **new snapshot link**: the conversation as it is then, finished turns only (`done`/`error`/
-  `cancelled`; a turn still going and its message are left out); later messages never show on an earlier link.
-- **Audience:** instance users only. `/s/<id>` and `/api/shares/*` are behind Access and the `users` check like
-  everything else (401/403 otherwise); the id is 128 random bits. Not public.
-- **The shared page** `/s/<id>`: what the owner sees (messages with their uploads, tool steps with image thumbnails,
-  presented-file cards, the owner's name: 「<name> 分享的對話（只讀）」), read-only. Downloads (`/api/shares/:id/files/…`):
-  uploads, message attachments, presented files (a turn's `presented` list, else its last `files_presented` event,
-  else, for a turn from before present_files, the files it changed: the rule the UI used) and images shown in tool
-  steps (`tool_result.images`, by `?v=`). Never other workdir files (scripts, intermediates), neither by path nor by
-  sha256. Revoked, or the original conversation deleted: 404 「此連結已失效。」.
-- **Snapshot:** `shares` holds copies of the turns, messages, events, `files` rows (path → sha256) and claw's session
-  as they were; the original keeps changing freely. File bytes are never copied.
-- **Continue conversation** (the shared page's one action, 「繼續對話」 / "Continue conversation"; the UI never says
-  fork, copy or 副本): `POST /api/shares/:id/continue` makes a new conversation owned by the viewer, at the top of their
-  list with the same title, and opens it. In one transaction it gets: the snapshot's messages (with attachments),
-  turns (any column the row has, e.g. `presented`; new ids, a random unusable `token_hash`, `usage`/`cost_usd` null)
-  and their events, claw's session file (so the model has the whole context), every workdir file, hidden ones
-  included (new `files` rows, `updated_at` as it was, on the same bucket objects + `blob_grants`), and kv
-  `turn_sandbox:<new>` = `"earlier"` when the original used a sandbox. Not carried over: the sandbox (and installs or
-  processes in it: the first bash command starts a new one with the files restored and the usual reset note), a
-  running turn, egress/tool logs, spend (`egress_log` stays with the original; new turns count against the shared
-  budget as usual).
-- **No parent:** nothing in the new conversation names the share or the original. The original's conversation id
-  and turn ids are rewritten to the new ones everywhere they were copied (event data such as workdir paths, message
-  text, claw's session); claw's session gets a fresh `session_id` and no `fork` record. There is no parent column.
-  The two conversations are independent from then on; deleting the original stops its links but not the new one.
-- **Bytes and the bucket:** keys stay `files/<conversation>/<sha256>` where they were first stored. Sharing records
-  each sha256 the snapshot names in `blobs` (sha256 → its key: a content address, not a link between conversations;
-  a sha256 the conversation itself reads through a grant is registered already). The web role's bucket client
-  (`sharedBlobs`) falls back for reads: `files/<conv>/<sha>` missing → the `blobs` key, only when `blob_grants` has
-  `(conv, sha)`; so restore, downloads and previews work unchanged, and a grant opens only the bytes it names.
-  **Nothing deletes bucket objects** (no GC; the janitor never touches the bucket). Any future GC must keep every
-  object a `files` row (deleted or not), a `blobs` row, a `shares.files`/`presented` entry or a turn's `presented`
-  names, whichever conversation's prefix it is under.
-
-### Admin monitor (`/admin/monitor`, config `admins` only)
-
-A phone-friendly page (its own bundle `admin-<hash>.js|css` + `admin.html` from `chat/ui/src/admin.tsx`, so the
-staff bundle never contains it; the page may say "Jarvis 3") that polls `GET /api/admin/monitor` every 5 s while
-visible. Read-only except the **Budget** panel (its own `GET/POST /api/admin/budget`: spent / limit, remaining, where
-the limit comes from, reset / set limit / back to config with a confirm, the last changes). Code: `chat/src/web/monitor.ts` (one snapshot per replica cached 4 s; each section
-fails on its own into `errors`). It never shows message contents: conversation titles, owners, counts, timings.
-
-- **Sandboxes:** live rows (`starting`/`ready`/`releasing`) with conversation title, owner, conversation id (link `/c/<id>`, opens for its owner) and its number of turns (0 or "conversation deleted" is flagged: an orphan), provider + host, state,
-  age, idle time, CPU/memory use vs limit (the provider's `stats()`), last bash (`events` tool_use `bash`), resets
-  (earlier sandboxes of the conversation), pod restarts, vm migrations (count, last pause from `vm_events`); pool
-  live / `maxActive` (vm: the hosts' slots); 24 h starts with allocation p50/p95 and recent failures with their
-  reason (`ops_events`); release reasons.
-- **Hosts:** `SandboxProvider.stats()` (`provider.ts`: `ProviderStats` = hosts + sandboxes + capacity + notes):
-  `kubernetes` = sandbox pods + metrics-server, the nodes matching the RuntimeClass's nodeSelector or running
-  sandboxes (allocatable, use, Ready, kubelet); `vm` = the provider's own `VmStats` (hub + AWS hosts with load,
-  memory, slots, uptime, AWS cost so far, the scaler's settings, `vm_events` decisions and migrations), mapped by
-  `normalizeStats`; `e2b` = the list only.
-- **Load:** turns queued/running/waiting, claw processes and SSE streams (every web replica's presence), turns per
-  hour (24 h, errors marked), queue wait (`turn_started` − insert) and turn duration p50/p95, errors by kind (turn
-  errors, failed tool calls, model HTTP errors, sandbox start failures, failed title calls), active users now (5 min) and today (the
-  browser's time zone).
-- **Models & tools:** per model (the turn's model; title calls included) turns, input/output tokens (`turns.usage`)
-  and USD (`turns.cost_usd` = egress model cost) today and 7 days, egress model spend; tool calls 24 h by tool with
-  its service (Exa, Wisers, TikHub, `<prefix>-mcp`, web fetch), error rate, p50/p95, cost.
-- **Egress:** requests per minute (1 h), denied hosts with egress's deny reason (24 h), mirror hit rate
-  (`allow:cache`), per-pod cache counters, top talkers by sandbox (1 h).
-- **Health:** per role its replicas from presence (kv `presence:<role>:<replica>`, every 10 s: commit from
-  `JARVIS_COMMIT` = the image's build arg, start time, counters, its last 10 redacted error lines) and the
-  Deployment's ready/desired/image when readable; janitor (and vm scaler) leader from `pg_locks` + `application_name`
-  (`jarvis-<role>:<pod>`, set on every connection); Postgres round trip and connections by role; S3 reachability
-  (a HEAD, every 30 s); the latest error lines of all replicas. Error lines are redacted where they are recorded
-  (`redact` in `common/log.ts`: bearer/basic values, URL credentials, `token=`/`key=` values, long opaque strings).
+- Env: `JARVIS_ROLE=web`, `DATABASE_URL`, `JARVIS_CC_TOKEN`, `JARVIS_NAMESPACE` (default `jarvis`),
+  `JARVIS_DRAIN_SECONDS` (default 300). Config at `/etc/jarvis/config.json` and the system prompt file it names (the
+  managed CLAUDE.md starts with it).
+- Provider `vm`: the `sandbox-vm` Secret's PEMs and AWS key; `JARVIS_JUICEFS_META_URL`/`_PASSWORD`; egress to the
+  sandbox hosts (sandboxd :7443, agents :7070). Provider `kubernetes`: a ServiceAccount bound to a Role in the sandbox
+  namespace (`pods`: create, get, list, watch, delete; `pods/status`: get). Provider `e2b`: `E2B_API_KEY` and any
+  variable `sandbox.e2b.egressHeaders` names.
 
 ## Deploying an instance
 
 The base is `deploy/chat/` (Kustomize): namespace `jarvis` (Pod Security restricted) with `web`, `egress`, `tools`
-(2 replicas each, rolling with `maxUnavailable: 0`, PDBs, drained on SIGTERM: grace 1800 / 150 / 1020 s), the tunnel
-connector `cloudflared`, NetworkPolicies (ingress: web ← cloudflared + tools, tools ← web, egress:3128 ← web +
-cloudflared (the wire); egress: DNS, the namespace's pods, public internet only) and a LimitRange. With provider
-`e2b`, sandboxes reach egress at a public hostname of the instance's tunnel routed to `http://egress.jarvis.svc:3128`
-(`/wire` only is used; each request inside still needs a live sandbox's token), and `web` needs `E2B_API_KEY` in
-`web-env`. With provider `kubernetes`, sandbox pods run in a **separate cluster** (namespace `jarvis-sandbox` there,
-with its RuntimeClass, quota and RBAC); `web` gets its API server, CA and token from Secret `sandbox-cluster` (keys
-`server`, `ca.crt`, `token`, mounted at `$JARVIS_SANDBOX_CLUSTER_DIR`), and that link also carries the sandboxes' path
-to `egress:3128`. The image is the placeholder `jarvis3-chat`.
+(2 replicas each, rolling with `maxUnavailable: 0`, PDBs, drained on SIGTERM: grace 330 / 150 / 180 s), the tunnel
+connector `cloudflared`, NetworkPolicies (ingress: tools ← egress, egress:3128 ← cloudflared (the wire), nothing else;
+egress: DNS, the namespace's pods, public internet only) and a LimitRange. The instance adds its UI (YYC:
+`yyc-ai/deploy/ui.yaml`, image `ghcr.io/de0ch/yyc-ai-ui`), the policy admitting the UI pods to web, and its sandbox
+hosts' policies. The image is the placeholder `jarvis3-chat`.
 
 An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
 - uses `github.com/DE0CH/jarvis3//deploy/chat?ref=<commit>` as its base and maps `jarvis3-chat` to
   `ghcr.io/de0ch/jarvis3-chat:<sha12>` with `images:` (the sandbox image tag goes in `config.json`);
-- generates ConfigMaps `jarvis-config` (`config.json`, `system-prompt.md`) and `jarvis-brand` (`logo.svg`/`logo.png`);
-- supplies SOPS-encrypted Secrets `web-env` (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`), `egress-env`
-  (`DATABASE_URL`, `OPENROUTER_API_KEY`), `tools-env` (`DATABASE_URL` + the tool keys its config names), `tunnel`
-  (`token`) and `sandbox-cluster`, plus a `ghcr-pull` docker-registry Secret patched onto the Deployments while the
-  GHCR packages are private;
+- generates the ConfigMap `jarvis-config` (`config.json`, `system-prompt.md`);
+- supplies Secrets `web-env` (`DATABASE_URL`, `JARVIS_CC_TOKEN`), `egress-env` (`DATABASE_URL`,
+  `OPENROUTER_API_KEY`), `tools-env` (`DATABASE_URL` + the tool keys its config names), `tunnel` (`token`), plus a
+  `ghcr-pull` docker-registry Secret patched onto the Deployments while the GHCR packages are private;
 - defines the PriorityClass `serving` the base's pods use (or patches `priorityClassName`).
 
-A new version = bump the base `ref` and the image tags (chat image in `images:`, the sandbox's in `config.json`:
-`sandbox.e2b.template` = `jarvis3-sandbox:<sha12>`, or `sandbox.image`) to a commit whose `chat` workflow pushed
-images and built the template, and push; Flux rolls the Deployments one pod at a time.
+A new version = bump the base `ref` and the image tags (chat image in `images:`, the sandbox's in `config.json`
+`sandbox.image`) to a commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a
+time. A new sandbox image reaches new sandboxes only (each host fetches it once); running ones keep theirs.
+
+## Budget (`budget`, optional; absent = no limit; `chat/src/common/budget.ts`)
+
+One limit for everyone, admins included. Spend = `sum(egress_log.cost_usd)` of kind `model` (every model call Claude
+Code makes, its small/fast-model calls too) with `at >= since`. Spent ≥ `limitUsd` = used up: egress refuses every
+model call with 402 `{"type":"error","error":{"type":"budget_exceeded","message":"<message>"}}` (`deny:budget`). A
+call already in flight when the limit is crossed completes, so the spend can end above the limit by about one model
+call per running conversation. Message (`product.locale`): zh-HK「<ownerName> 設定了 <limit> 美元的使用上限，目前已用完。」,
+English "<ownerName> has set a USD <limit> budget limit and it has now been used up." (no `ownerName`: 管理員 / The
+administrator). There is no automatic reset. To reset or raise: edit `budget` in the instance's config.json (`since`
+= now resets the spend to 0; a bigger `limitUsd` raises it) and roll out the config. Check:
+`select sum(cost_usd) from egress_log where kind = 'model' and at >= '<since>'`.
 
 ## Config (`/etc/jarvis/config.json`, from the instance)
 
 ```json
 {
-  "product": {"name": "YYC AI", "locale": "zh-HK", "logo": "/brand/logo.svg"},
+  "product": {"name": "YYC AI", "locale": "zh-HK"},
   "publicUrl": "https://ai.yyc.deyaochen.com",
   "access": {"teamDomain": "de0ch.cloudflareaccess.com", "audience": "<aud tag>"},
   "users": ["chendeyao000@gmail.com"], "admins": ["chendeyao000@gmail.com"],
-  "models": [{"id": "anthropic/claude-opus-5.5", "label": "Opus"}, {"id": "anthropic/claude-sonnet-5.5", "label": "Sonnet"}],
-  "defaultModel": "anthropic/claude-opus-5.5", "titleModel": "anthropic/claude-haiku-5.5",
+  "models": [{"id": "anthropic/claude-sonnet-5.5", "label": "Sonnet 5.5"}],
+  "defaultModel": "anthropic/claude-sonnet-5.5", "titleModel": "anthropic/claude-sonnet-5.5",
   "systemPromptFile": "/etc/jarvis/system-prompt.md",
-  "sandbox": {"provider": "e2b", "idleMinutes": 30, "maxLifetimeHours": 8, "maxActive": 6,
-              "e2b": {"template": "jarvis3-sandbox:<tag>", "egressUrl": "wss://egress.ai.yyc.deyaochen.com/wire",
-                      "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": "ai.yyc.deyaochen.com"}},
-  // provider "kubernetes" instead: {"provider": "kubernetes", "image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>",
-  //   "namespace": "jarvis-sandbox", "runtimeClass": "gvisor", "cpu": "1", "memory": "1Gi", "egressProxyUrl"?: …}
-  // provider "vm" instead (docs/SANDBOX-VM.md "Config"): {"provider": "vm", "image": …, "cpu": "1", "memory": "1Gi",
-  //   "vm": {"hub": {"name", "url": "https://10.201.0.1:7443", "endpoint": "<hub IPv4>:51820"}, "cpuFeatures": "…",
-  //          "spareSlots": 1, "legacyProvider"?: "kubernetes", "aws"?: {"launchTemplate", "maxHosts": 3, …}}}
+  // provider "vm" (docs/SANDBOX-VM.md "Config"): our own gVisor hosts, the only one that runs Claude Code
+  "sandbox": {"provider": "vm", "image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>", "idleMinutes": 30,
+              "maxLifetimeHours": 8, "maxActive": 10, "cpu": "1", "memory": "1Gi",
+              "vm": {"hub": {"name", "url": "https://10.201.0.1:7443", "endpoint": "<hub IPv6>:51821"}, "cpuFeatures": "…",
+                     "spareSlots": 0, "legacyProvider"?: "kubernetes", "aws"?: {"launchTemplate", "maxHosts": 3, …}}},
+  // provider "kubernetes" instead: {"provider": "kubernetes", "image": …, "namespace": "jarvis-sandbox",
+  //   "runtimeClass": "gvisor", "cpu": "1", "memory": "1Gi", "egressProxyUrl"?: …}
+  // provider "e2b" instead: {"provider": "e2b", "e2b": {"template": "jarvis3-sandbox:<tag>",
+  //   "egressUrl": "wss://egress.ai.yyc.deyaochen.com/wire", "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": …}}
   // the sandbox allowlist ("The sandbox allowlist"): the generated lists (generatedAllowlist, default true) plus
   // defaultAllowedHosts; denyHosts wins over everything; maxUploadBytes per tunnel/request (default 8 MiB)
   "egress": {"defaultAllowedHosts": [], "denyHosts": [], "generatedAllowlist": true, "maxUploadBytes": 8388608,
-             "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
-                         "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}}], "cacheGiB": 5},
+             "routes": [{"name": "claude", "upstream": "https://openrouter.ai/api", "model": true,
+                         "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}},
+                        {"name": "tools", "upstream": "http://tools.jarvis.svc.cluster.local:8080", "keepAuth": true,
+                         "inject": {}, "allowPaths": ["/mcp"]}], "cacheGiB": 5},
   "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
             "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "WISERS_ACCESS_CLIENT_ID", "accessClientSecretEnv": "WISERS_ACCESS_CLIENT_SECRET"},
             "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
                            // read-only tools to offer (default deny; "tools" above): the upstream's own names
                            "tools": ["posts_search", "post_get", "streams_list"]}]},
-  "s3": {"endpoint": "...", "region": "...", "bucket": "...", "prefix": "jarvis/"},
   "budget": {"limitUsd": 30, "since": "2026-10-21T12:00:00Z", "ownerName": "Deyao"}
 }
 ```
 
-**Models:** `models` is what staff may pick (the UI shows no picker when there is one), `defaultModel` one of them,
-`titleModel` the title call's. The API refuses any other id (`POST`/`PATCH` conversations: 400) and so does egress
-(the `model` route).
+**Who and which models:** `users` (lower-cased) is who may sign in (the UI's router checks it; web checks
+`/internal/cc/sandbox`'s owner against it); `admins` is read by the tools role (the identity it lists upstream tools
+as). `access` is the Cloudflare Access app the UI's router verifies. `models`/`defaultModel`/`titleModel`: egress's
+model routes refuse any other id (400, `deny:model`); `defaultModel` is Claude Code's model in the sandbox
+(`ANTHROPIC_MODEL`), `titleModel` its small/fast model.
 
-**Budget** (`budget`, optional; absent = no limit; code `chat/src/common/budget.ts`): one limit for everyone, admins
-included. Spend = `sum(egress_log.cost_usd)` of kind `model` (every model call: turns and titles) with `at >= since`.
-Spent ≥ `limitUsd` = used up: no turn starts and egress refuses model calls (see "Turn runner", "egress"). A call
-already in flight when the limit is crossed completes, so the spend can end above the limit by about one model call
-per running turn (cents to a few dimes). Message (`product.locale`; the UI uses its own locale):
-zh-HK「<ownerName> 設定了 <limit> 美元的使用上限，目前已用完。」, English "<ownerName> has set a USD <limit> budget
-limit and it has now been used up." (no `ownerName`: 管理員 / The administrator). There is no automatic reset.
-To reset or raise: edit `budget` (`since` = now resets the spend to 0; a bigger `limitUsd` raises it) and roll out the
-config, or use the admin monitor's Budget panel: its override (kv `budget:override`, an audit row in `ops_events`
-kind `budget` per change) wins as long as config `budget` is what it was when the override was made; editing
-config `budget` afterwards takes over again.
-
-Secrets come from the environment (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `OPENROUTER_API_KEY`
-(egress only), tool keys (tools only); provider "vm", web only: `SBX_CA_CERT`, `SBX_CLIENT_CERT`, `SBX_CLIENT_KEY`,
-`SBX_HOST_CERT`, `SBX_HOST_KEY` (PEMs) and the scaler's least-privilege AWS key `SBX_AWS_ACCESS_KEY_ID`,
-`SBX_AWS_SECRET_ACCESS_KEY`). Each role gets only the Secret it needs.
+Secrets come from the environment (`DATABASE_URL`, `JARVIS_CC_TOKEN` (web), `OPENROUTER_API_KEY` (egress only), tool
+keys (tools only); provider "vm", web only: `SBX_CA_CERT`, `SBX_CLIENT_CERT`, `SBX_CLIENT_KEY`, `SBX_HOST_CERT`,
+`SBX_HOST_KEY` (PEMs), the scaler's least-privilege AWS key `SBX_AWS_ACCESS_KEY_ID`, `SBX_AWS_SECRET_ACCESS_KEY`, and
+`JARVIS_JUICEFS_META_URL`/`JARVIS_JUICEFS_META_PASSWORD` for the burst hosts' user data). Each role gets only the
+Secret it needs.
