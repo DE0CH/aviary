@@ -7,6 +7,8 @@
 //                                       env MOCK_ONE_MODEL=1 → one model only (no picker)
 //                                       env MOCK_BUDGET=1 → the shared budget is used up (every turn refused)
 //                                       env MOCK_NO_NAME=1 → no identity first name (greeting without a name)
+// Sharing: the share sheet's links, /s/<id> (a read-only snapshot of the finished turns) and "continue conversation".
+// With MOCK_SEED a colleague's share of a finished conversation is at /s/MockShareColleague0001.
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -83,6 +85,7 @@ if (process.env.MOCK_ONE_MODEL) {
 }
 
 const convs = new Map();
+const shares = new Map(); // share id -> {id, convId, ownerName, createdAt, revoked, title, messages, turns, files}
 let eventId = 0;
 const subs = new Map(); // conv id -> Set<res>
 
@@ -171,6 +174,7 @@ async function playTurn(c, turn, prompt) {
   emit(c, turn, "tool_use", { id: "t5", name: "mcp__tools__present_files", input: { files: [{ path: "summary.xlsx", caption: "按媒體統計" }, { path: "chart.png", caption: "報道數量" }] } });
   emit(c, turn, "files_presented", { files: [{ path: "summary.xlsx", caption: "按媒體統計", sha256: "a".repeat(64), size: 18_432 }, { path: "chart.png", caption: "報道數量", sha256: "c".repeat(64), size: CHART.length }] });
   emit(c, turn, "tool_result", { id: "t5", name: "mcp__tools__present_files", is_error: false, output: "Shown to the user under your answer: summary.xlsx, chart.png." });
+  turn.presented = [{ path: "summary.xlsx", caption: "按媒體統計", sha256: "a".repeat(64), size: 18_432 }, { path: "chart.png", caption: "報道數量", sha256: "c".repeat(64), size: CHART.length }];
   emit(c, turn, "result", { usage: { input_tokens: 31000, output_tokens: 900 }, estimated_cost: 0.12 });
   c.messages.push({ id: ++eventId, role: "assistant", content: reply.trim(), turnId: turn.id, attachments: [], createdAt: new Date().toISOString() });
   fin("done");
@@ -188,6 +192,12 @@ function seed() {
   emit(a, t, "turn_started", {});
   emit(a, t, "tool_use", { id: "x", name: "mcp__tools__yyc_posts_search", input: { query: "金融服務", stream: "FSHK" } });
   emit(a, t, "tool_result", { id: "x", name: "mcp__tools__yyc_posts_search", output: "18 posts", is_error: false });
+  emit(a, t, "tool_use", { id: "y", name: "read_file", input: { path: "chart.png" } });
+  emit(a, t, "tool_result", { id: "y", name: "read_file", output: "chart.png (image)", is_error: false, images: [{ path: "chart.png", sha256: "c".repeat(64) }] });
+  t.presented = [
+    { path: "chart.png", sha256: "c".repeat(64), size: CHART.length, caption: "各媒體報道數量" },
+    { path: "summary.xlsx", sha256: "a".repeat(64), size: 18_432 },
+  ];
   // what an older version stored: a confirmation and its answer (the UI shows nothing for them now)
   const cid = randomUUID();
   emit(a, t, "confirmation_request", { id: cid, kind: "network_access", summary: "允許沙盒連接 data.gov.hk？", detail: { host: "data.gov.hk", reason: "下載數據" } });
@@ -195,10 +205,20 @@ function seed() {
   emit(a, t, "text_delta", { text: "本週共有 **18** 篇相關報道，以監管和銀行業績為主。" });
   emit(a, t, "turn_finished", { status: "done" });
   t.finishedAt = new Date().toISOString();
+  a.files.push({ path: "uploads/coverage.csv", size: 2_048, source: "upload", updatedAt: t.startedAt });
+  a.files.push({ path: "summary.xlsx", size: 18_432, source: "agent", updatedAt: t.finishedAt });
+  a.files.push({ path: "scripts/count.py", size: 812, source: "agent", updatedAt: new Date(Date.now() - 7_200_000).toISOString() }); // hidden: no card
+  // a colleague's conversation shared with this person (a snapshot, as the server keeps it)
+  const sid = "MockShareColleague0001";
+  const snap = structuredClone({ messages: a.messages, turns: a.turns });
+  snap.messages.push({ id: ++eventId, role: "assistant", content: "本週共有 **18** 篇相關報道，以監管和銀行業績為主。", turnId: t.id, attachments: [], createdAt: t.finishedAt });
+  shares.set(sid, { id: sid, convId: null, ownerName: "wong.siuming", createdAt: new Date().toISOString(), title: "本週金融服務報道摘要", ...snap, files: a.files.filter((f) => f.path !== "scripts/count.py"), allFiles: structuredClone(a.files) });
   const b = newConv(me.defaultModel, "新聞稿草擬：可持續基金");
   b.updatedAt = new Date(Date.now() - 2 * 86_400_000).toISOString();
 }
 if (process.env.MOCK_SEED) seed();
+
+const link = (x) => ({ id: x.id, url: `http://127.0.0.1:${port}/s/${x.id}`, createdAt: x.createdAt, turns: x.turns.length });
 
 const json = (res, code, body) => {
   res.writeHead(code, { "content-type": "application/json" });
@@ -234,6 +254,45 @@ createServer(async (req, res) => {
       return json(res, 200, { id: newConv(body.model).id });
     }
     let m;
+    if ((m = /^\/api\/conversations\/([^/]+)\/shares$/.exec(p))) {
+      const c = convs.get(m[1]);
+      if (!c) return json(res, 404, { error: "not found" });
+      if (req.method === "GET")
+        return json(res, 200, [...shares.values()].filter((x) => x.convId === c.id && !x.revoked).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map(link));
+      const finished = c.turns.filter((t) => ["done", "error", "cancelled"].includes(t.status));
+      if (!finished.length) return json(res, 400, { error: "there is nothing to share yet" });
+      const ids = new Set(finished.map((t) => t.id));
+      const id = randomUUID().replace(/-/g, "").slice(0, 22);
+      const snap = structuredClone({ messages: c.messages.filter((x) => !x.turnId || ids.has(x.turnId)), turns: finished, allFiles: c.files });
+      shares.set(id, { id, convId: c.id, ownerName: me.email.split("@")[0], createdAt: new Date().toISOString(), title: c.title, ...snap, files: snap.allFiles.filter((f) => f.source === "upload" || f.path === "summary.xlsx") });
+      return json(res, 201, link(shares.get(id)));
+    }
+    if ((m = /^\/api\/shares\/([^/]+)(\/.*)?$/.exec(p))) {
+      const sh = shares.get(m[1]);
+      const rest = m[2] || "";
+      if (!rest && req.method === "DELETE") {
+        if (!sh || sh.convId === null) return json(res, 404, { error: "not found" });
+        sh.revoked = true;
+        return json(res, 204);
+      }
+      if (!sh || sh.revoked) return json(res, 404, { error: "this link is no longer available" });
+      if (!rest) return json(res, 200, { id: sh.id, title: sh.title, ownerName: sh.ownerName, isOwner: sh.convId !== null, createdAt: sh.createdAt, messages: sh.messages, turns: sh.turns, files: sh.files });
+      if (rest.startsWith("/files/")) {
+        const path = decodeURIComponent(rest.slice(7));
+        const img = /\.(png|jpe?g|gif|webp)$/i.exec(path);
+        const body = blobs.get(path);
+        res.writeHead(200, { "content-type": img && body ? `image/${img[1].toLowerCase().replace("jpg", "jpeg")}` : "application/octet-stream" });
+        return res.end(body ?? "mock file");
+      }
+      if (rest === "/continue" && req.method === "POST") {
+        const c = newConv(me.defaultModel, sh.title);
+        const ids = new Map(sh.turns.map((t) => [t.id, randomUUID()]));
+        c.turns = structuredClone(sh.turns).map((t) => ({ ...t, id: ids.get(t.id), events: t.events.map((e) => ({ ...e, id: ++eventId, turnId: ids.get(t.id) })) }));
+        c.messages = structuredClone(sh.messages).map((x) => ({ ...x, id: ++eventId, turnId: x.turnId ? ids.get(x.turnId) : null }));
+        c.files = structuredClone(sh.allFiles);
+        return json(res, 201, { id: c.id });
+      }
+    }
     if ((m = /^\/api\/conversations\/([^/]+)(\/.*)?$/.exec(p))) {
       const c = convs.get(m[1]);
       if (!c) return json(res, 404, { error: "not found" });
@@ -294,7 +353,7 @@ createServer(async (req, res) => {
     return json(res, 404, { error: "no route" });
   }
   let file = join(dist, p === "/" ? "index.html" : p);
-  if (!file.startsWith(dist) || !existsSync(file) || p.startsWith("/c/")) file = join(dist, "index.html");
+  if (!file.startsWith(dist) || !existsSync(file) || p.startsWith("/c/") || p.startsWith("/s/")) file = join(dist, "index.html");
   if (p.startsWith("/brand/")) {
     res.writeHead(404);
     return res.end();

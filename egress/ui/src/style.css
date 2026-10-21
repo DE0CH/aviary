@@ -309,3 +309,25 @@ button { cursor: pointer; }
 .blocked-card { max-width: 420px; text-align: center; color: var(--muted); }
 .blocked-card .icon { margin: 0 auto; color: var(--accent); }
 .blocked-card h1 { color: var(--ink); font-size: 22px; margin: 14px 0 8px; }
+
+/* sharing: the share sheet (a bottom sheet on phones, a dialog on wide screens) and the read-only shared page */
+.sheet-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(12, 18, 26, .38); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 440px; background: var(--surface); border-radius: 18px 18px 0 0; padding: 14px 18px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(0, 0, 0, .18); }
+@media (min-width: 600px) {
+  .sheet-scrim { align-items: center; }
+  .sheet { border-radius: 18px; padding-bottom: 20px; }
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.sheet-head h2 { margin: 0; font-size: 18px; }
+.sheet-lead { margin: 6px 0 16px; color: var(--muted); font-size: 15px; }
+.sheet-error { margin: 8px 0 0; color: var(--danger); font-size: 14px; }
+.primary-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 16px; padding: 10px 16px; }
+.primary-btn:disabled { opacity: .6; cursor: default; }
+.share-links { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
+.share-links h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.share-link { display: flex; align-items: center; gap: 8px; padding: 6px 0; color: var(--muted); font-size: 14px; }
+.share-link-when { flex: 1; }
+.link-btn.danger-text { color: var(--danger); font-size: 14px; }
+.shared-note { display: flex; align-items: center; gap: 6px; margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.continue-bar { display: flex; flex-direction: column; align-items: center; }
+.continue-bar .primary-btn { max-width: 780px; }

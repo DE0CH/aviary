@@ -90,4 +90,16 @@ comment on table allowed_hosts is 'unused since schema 6: the sandbox allowlist 
   // the files a turn shows (docs/CHAT.md, "Presented files"): only what the agent passed to present_files, in its order,
   // [{path, caption?, sha256, size}]; null = a turn from before (the UI then shows that turn's changed files as it did)
   `alter table turns add column presented jsonb;`,
+  // sharing and continuing (docs/CHAT.md, "Sharing and continuing"): a share is a frozen copy of a conversation's
+  // finished turns; `blobs` says where a sha256's bytes are in the bucket (where they were first stored, never copied);
+  // `blob_grants` lets a conversation read a sha256 stored elsewhere (a continued conversation's files)
+  `
+create table shares (id text primary key, conversation_id uuid not null references conversations(id),
+  owner text not null references users(email), created_at timestamptz not null default now(), revoked_at timestamptz,
+  title text not null, model text not null, messages jsonb not null, turns jsonb not null, events jsonb not null,
+  files jsonb not null, claw_session text);
+create index shares_conv on shares (conversation_id, created_at desc);
+create table blobs (sha256 text primary key, key text not null, created_at timestamptz not null default now());
+create table blob_grants (conversation_id uuid not null, sha256 text not null, primary key (conversation_id, sha256));
+`,
 ];

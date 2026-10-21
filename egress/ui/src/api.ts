@@ -64,6 +64,29 @@ export interface Conversation {
   turns: Turn[];
 }
 
+/** A share link of the caller's conversation. */
+export interface ShareLink {
+  id: string;
+  url: string;
+  createdAt: string;
+  turns: number;
+}
+
+/** A shared conversation as its viewers see it: read-only, frozen when it was shared. */
+export interface SharedConversation {
+  id: string;
+  title: string;
+  ownerName: string;
+  isOwner: boolean;
+  createdAt: string;
+  messages: Message[];
+  turns: Turn[];
+  files: { path: string; size: number; source: "upload" | "agent"; updatedAt?: string }[];
+}
+
+/** The id components use for a share page's files: api.fileUrl sends it to the share's own download route. */
+export const shareRef = (shareId: string) => `share:${shareId}`;
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -119,7 +142,7 @@ export const api = {
   send: (id: string, text: string, attachments: string[]) =>
     call<{ turnId: string }>("POST", `/api/conversations/${enc(id)}/messages`, { text, attachments }),
   cancel: (turnId: string) => call<void>("POST", `/api/turns/${enc(turnId)}/cancel`),
-  /** a file's bytes; `v` = a version (sha256), `inline` = shown in the page (images), `preview` = a small image (PDF page) */
+  /** a file's bytes (`id`: a conversation's, or shareRef(<share id>) on a share page); `v` = a version (sha256), `inline` = shown in the page (images), `preview` = a small image (PDF page) */
   fileUrl: (id: string, path: string, o: { v?: string; inline?: boolean; preview?: boolean; page?: number } = {}) => {
     const q = new URLSearchParams();
     if (o.v) q.set("v", o.v);
@@ -127,8 +150,15 @@ export const api = {
     if (o.preview) q.set("preview", "1");
     if (o.page && o.page > 1) q.set("page", String(o.page));
     const qs = q.toString();
-    return `/api/conversations/${enc(id)}/files/${filePath(path)}${qs ? `?${qs}` : ""}`;
+    // a share page's files (id = shareRef(<share id>)) come from the share's own download route
+    const base = id.startsWith("share:") ? `/api/shares/${enc(id.slice(6))}` : `/api/conversations/${enc(id)}`;
+    return `${base}/files/${filePath(path)}${qs ? `?${qs}` : ""}`;
   },
+  createShare: (id: string) => call<ShareLink>("POST", `/api/conversations/${enc(id)}/shares`),
+  shares: (id: string) => call<ShareLink[]>("GET", `/api/conversations/${enc(id)}/shares`),
+  revokeShare: (shareId: string) => call<void>("DELETE", `/api/shares/${enc(shareId)}`),
+  share: (shareId: string) => call<SharedConversation>("GET", `/api/shares/${enc(shareId)}`),
+  continueShare: (shareId: string) => call<{ id: string }>("POST", `/api/shares/${enc(shareId)}/continue`),
   streamUrl: (id: string, after: number) => `/api/conversations/${enc(id)}/stream?after=${after}`,
   /** Raw body upload with progress (XHR: fetch has no upload progress). */
   upload(id: string, file: File, onProgress: (f: number) => void): Promise<{ path: string }> {

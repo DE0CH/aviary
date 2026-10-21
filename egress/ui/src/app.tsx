@@ -8,6 +8,7 @@ import { Icon } from "./icons.tsx";
 import { renderMarkdown } from "./md.ts";
 import { describeTool, toolIcon } from "./tools.ts";
 import { isActive, mergeEvent, replyText, viewTurn, type Block, type TurnView } from "./turns.ts";
+import { ShareSheet, SharedView, shareRoute } from "./share.tsx";
 
 const coarse = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
@@ -24,6 +25,10 @@ export function App() {
   const [, setLoc] = useState<Locale>(locale());
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [current, setCurrent] = useState<string | null>(routeId());
+  // a shared conversation (/s/<id>): read-only, with "continue conversation"
+  const [shareId, setShareId] = useState<string | null>(shareRoute());
+  const [shareTitle, setShareTitle] = useState("");
+  const [sharing, setSharing] = useState(false);
   // The open chat view; a chat created by its own first keystroke keeps its view (and the text being typed).
   const [viewKey, setViewKey] = useState(0);
   const [drawer, setDrawer] = useState(false);
@@ -61,6 +66,7 @@ export function App() {
   useEffect(() => {
     const pop = () => {
       setCurrent(routeId());
+      setShareId(shareRoute());
       setViewKey((k) => k + 1);
     };
     addEventListener("popstate", pop);
@@ -70,6 +76,7 @@ export function App() {
   const open = (id: string | null) => {
     history.pushState(null, "", id ? `/c/${id}` : "/");
     setCurrent(id);
+    setShareId(null);
     setViewKey((k) => k + 1);
     setDrawer(false);
   };
@@ -83,7 +90,7 @@ export function App() {
   if (blocked) return <Blocked kind={blocked} />;
   if (!me) return <div class="boot" aria-busy="true" />;
 
-  const currentTitle = list.find((c) => c.id === current)?.title || (current ? "" : t().newChat);
+  const currentTitle = shareId ? shareTitle : list.find((c) => c.id === current)?.title || (current ? "" : t().newChat);
 
   return (
     <div class={`shell ${drawer ? "drawer-open" : ""}`}>
@@ -107,23 +114,41 @@ export function App() {
             <Icon name="menu" />
           </button>
           <h1 class="topbar-title">{currentTitle || t().untitled}</h1>
+          {current && !shareId && (
+            <button class="icon-btn" aria-label={t().share} title={t().share} onClick={() => setSharing(true)}>
+              <Icon name="share" />
+            </button>
+          )}
           <button class="icon-btn only-narrow" aria-label={t().newChat} onClick={() => open(null)}>
             <Icon name="plus" />
           </button>
         </header>
-        <ChatView
-          key={viewKey}
-          me={me}
-          id={current}
-          onCreated={(id) => {
-            history.replaceState(null, "", `/c/${id}`);
-            setCurrent(id);
-            refreshList();
-          }}
-          onActivity={refreshList}
-          onTitle={(id, title) => setList((l) => l.map((c) => (c.id === id ? { ...c, title } : c)))}
-        />
+        {shareId ? (
+          <SharedView
+            key={`s${viewKey}`}
+            id={shareId}
+            onTitle={setShareTitle}
+            onContinued={(id) => {
+              refreshList();
+              open(id);
+            }}
+          />
+        ) : (
+          <ChatView
+            key={viewKey}
+            me={me}
+            id={current}
+            onCreated={(id) => {
+              history.replaceState(null, "", `/c/${id}`);
+              setCurrent(id);
+              refreshList();
+            }}
+            onActivity={refreshList}
+            onTitle={(id, title) => setList((l) => l.map((c) => (c.id === id ? { ...c, title } : c)))}
+          />
+        )}
       </main>
+      {sharing && current && <ShareSheet me={me} convId={current} onClose={() => setSharing(false)} />}
     </div>
   );
 }
@@ -141,7 +166,7 @@ function Blocked({ kind }: { kind: "denied" | "failed" }) {
   );
 }
 
-function Logo({ me }: { me: Me }) {
+export function Logo({ me }: { me: Me }) {
   const [broken, setBroken] = useState(false);
   const src = me.product.logoUrl || me.product.logo;
   if (src && !broken) return <img class="logo" src={src} alt="" onError={() => setBroken(true)} />;
@@ -467,30 +492,8 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
     }
   };
 
-  // timeline: each user message, then its turn's reply
-  const timeline = useMemo(() => {
-    const byTurn = new Map(views.map((v) => [v.id, v]));
-    const used = new Set<string>();
-    const out: ({ kind: "user"; m: Message } | { kind: "reply"; v: TurnView } | { kind: "plain"; m: Message })[] = [];
-    for (const m of messages) {
-      if (m.role === "user") {
-        out.push({ kind: "user", m });
-        const v = m.turnId ? byTurn.get(m.turnId) : undefined;
-        if (v) {
-          out.push({ kind: "reply", v });
-          used.add(v.id);
-        }
-      } else if (!m.turnId || !byTurn.get(m.turnId)?.blocks.length) {
-        out.push({ kind: "plain", m });
-        if (m.turnId) used.add(m.turnId);
-      }
-    }
-    for (const v of views) if (!used.has(v.id)) out.push({ kind: "reply", v });
-    return out;
-  }, [messages, views]);
-
+  const timeline = useMemo(() => timelineOf(messages, views), [messages, views]);
   const empty = timeline.length === 0;
-
   return (
     <div class="chat">
       {offline && (
@@ -549,6 +552,32 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
 // One draw per page load picks among the time slot's greetings.
 const greetingDraw = Math.random();
 
+// ---- the thread ----------------------------------------------------------------------------------
+
+export type TimelineItem = { kind: "user"; m: Message } | { kind: "reply"; v: TurnView } | { kind: "plain"; m: Message };
+
+/** Each user message, then its turn's reply (also a shared conversation's page). */
+export function timelineOf(messages: Message[], views: TurnView[]): TimelineItem[] {
+  const byTurn = new Map(views.map((v) => [v.id, v]));
+  const used = new Set<string>();
+  const out: TimelineItem[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      out.push({ kind: "user", m });
+      const v = m.turnId ? byTurn.get(m.turnId) : undefined;
+      if (v) {
+        out.push({ kind: "reply", v });
+        used.add(v.id);
+      }
+    } else if (!m.turnId || !byTurn.get(m.turnId)?.blocks.length) {
+      out.push({ kind: "plain", m });
+      if (m.turnId) used.add(m.turnId);
+    }
+  }
+  for (const v of views) if (!used.has(v.id)) out.push({ kind: "reply", v });
+  return out;
+}
+
 function Empty({ me }: { me: Me }) {
   return (
     <div class="empty">
@@ -560,7 +589,7 @@ function Empty({ me }: { me: Me }) {
 
 const VIEWABLE = /\.(png|jpe?g|gif|webp)$/i;
 
-function UserMessage({ m, convId }: { m: Message; convId: string }) {
+export function UserMessage({ m, convId }: { m: Message; convId: string }) {
   return (
     <div class="user-msg">
       <div class="bubble">{m.content}</div>
@@ -621,7 +650,7 @@ function FileCards({ files, convId }: { files: PresentedFile[]; convId: string }
 
 // ---- a reply: text, tool steps ----------------------------------------------------------------
 
-function Reply({ v, convId }: { v: TurnView; convId: string }) {
+export function Reply({ v, convId }: { v: TurnView; convId: string }) {
   const s = t();
   const running = isActive(v.status);
   const [copied, setCopied] = useState(false);

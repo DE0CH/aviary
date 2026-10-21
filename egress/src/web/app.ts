@@ -19,6 +19,7 @@ import { mergePresented, presentedOf, type PresentedFile } from "../common/prese
 import { Monitor } from "./monitor.ts";
 import { bad, HttpError, notFound, readJson, Router, sendHtml, sendJson, uuidParam } from "./http.ts";
 import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
+import { continueShare, createShare, loadShare, shareBlob, shareKey, shareView, SHARE_ID_RE } from "./share.ts";
 import type { TurnRunner } from "./turns.ts";
 
 export interface Caller {
@@ -84,6 +85,12 @@ export class WebApp {
     r.add("POST", "/api/conversations/:id/files", (q, s, p, c) => this.#upload(q, s, p, c));
     r.add("GET", "/api/conversations/:id/files", (q, s, p, c) => this.#files(s, p, c));
     r.add("GET", "/api/conversations/:id/files/*", (q, s, p, c) => this.#download(q, s, p, c));
+    r.add("POST", "/api/conversations/:id/shares", (q, s, p, c) => this.#share(s, p, c));
+    r.add("GET", "/api/conversations/:id/shares", (q, s, p, c) => this.#shares(s, p, c));
+    r.add("DELETE", "/api/shares/:id", (q, s, p, c) => this.#revokeShare(s, p, c));
+    r.add("GET", "/api/shares/:id", (q, s, p, c) => this.#getShare(s, p, c));
+    r.add("GET", "/api/shares/:id/files/*", (q, s, p, c) => this.#shareDownload(q, s, p, c));
+    r.add("POST", "/api/shares/:id/continue", (q, s, p, c) => this.#continueShare(s, p, c));
     r.add("GET", "/api/admin/usage", (q, s, p, c) => this.#usage(q, s, c));
     r.add("GET", "/api/admin/egress", (q, s, p, c) => this.#egress(s, c));
     r.add("GET", "/api/admin/monitor", (q, s, p, c) => this.#monitorSnapshot(q, s, c));
@@ -439,6 +446,87 @@ export class WebApp {
     });
     body.on("error", () => res.destroy());
     body.pipe(res);
+  }
+
+  /** Shares a snapshot of the conversation's finished turns (docs/CHAT.md, "Sharing and continuing"). */
+  async #share(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const conv = await this.#own(c, p.id);
+    const id = await createShare(c.deps, conv, c.caller.email);
+    if (!id) throw bad("there is nothing to share yet");
+    sendJson(res, 201, { id, url: `${c.deps.config.publicUrl}/s/${id}` });
+  }
+
+  /** The conversation's live share links (its owner only). */
+  async #shares(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const conv = await this.#own(c, p.id);
+    const { rows } = await c.deps.db.query<{ id: string; createdAt: Date; turns: number }>(
+      `select id, created_at as "createdAt", jsonb_array_length(turns) as turns from shares
+        where conversation_id = $1 and revoked_at is null order by created_at desc`,
+      [conv.id],
+    );
+    sendJson(res, 200, rows.map((r) => ({ ...r, url: `${c.deps.config.publicUrl}/s/${r.id}` })));
+  }
+
+  /** Revokes a link (its owner only; anyone else: 404). */
+  async #revokeShare(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const id = p.id ?? "";
+    if (!SHARE_ID_RE.test(id)) throw notFound();
+    const { rowCount } = await c.deps.db.query("update shares set revoked_at = coalesce(revoked_at, now()) where id = $1 and owner = $2", [id, c.caller.email]);
+    if (!rowCount) throw notFound();
+    res.writeHead(204).end();
+  }
+
+  async #loadShare(c: Ctx, id: string | undefined) {
+    const s = await loadShare(c.deps.db, id ?? "");
+    if (!s) throw notFound("this link is no longer available");
+    return s;
+  }
+
+  /** A shared conversation, read-only, for any instance user with the link. */
+  async #getShare(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const s = await this.#loadShare(c, p.id);
+    sendJson(res, 200, shareView(s, c.caller.email));
+  }
+
+  /**
+   * A file on a share page: only uploads, attachments, presented files (by path, or `?v=<sha256>` for a turn's
+   * version) and images shown in tool steps (`?v=`). `?inline=1` shows an image in the page, `?preview=1` a PDF page.
+   */
+  async #shareDownload(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const s = await this.#loadShare(c, p.id);
+    const path = p.rest ?? "";
+    const q = new URL(req.url || "/", "http://x").searchParams;
+    const sha = shareBlob(s, path, q.get("v") ?? "");
+    if (!sha) throw notFound();
+    const key = await shareKey(c.deps, s, sha);
+    const type = contentType(path);
+    const image = /^image\/(png|jpeg|gif|webp)$/.test(type);
+    if (q.get("preview") === "1" && !image) {
+      if (type !== "application/pdf") throw notFound("no preview");
+      const png = await pdfPreview(c.deps, key, Math.max(1, Math.min(9999, Number(q.get("page")) || 1)));
+      if (!png) throw notFound("no preview");
+      res.writeHead(200, { "content-type": "image/png", "content-length": png.length, "cache-control": "private, no-store", "x-content-type-options": "nosniff" });
+      return void res.end(png);
+    }
+    const body = await c.deps.blobs.getStream(key);
+    if (!body) throw notFound("the file's contents are missing");
+    const name = path.split("/").pop() || "file";
+    const inline = image && (q.get("inline") === "1" || q.get("preview") === "1");
+    res.writeHead(200, {
+      "content-type": type,
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    });
+    body.on("error", () => res.destroy());
+    body.pipe(res);
+  }
+
+  /** "Continue conversation": a new conversation of the caller's from the share's snapshot. */
+  async #continueShare(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+    const s = await this.#loadShare(c, p.id);
+    const id = await continueShare(c.deps, s, c.caller.email);
+    sendJson(res, 201, { id });
   }
 
   async #usage(req: IncomingMessage, res: ServerResponse, c: Ctx) {

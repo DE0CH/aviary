@@ -16,6 +16,7 @@ import { startHeartbeat, startJanitor } from "./janitor.ts";
 import { K8sClient } from "./k8s.ts";
 import type { SandboxProvider } from "./provider.ts";
 import { E2bProvider } from "./sandbox-e2b.ts";
+import { sharedBlobs } from "./share.ts";
 import { KubernetesProvider } from "./sandbox-k8s.ts";
 import { startVmScaler, VmProvider } from "./sandbox-vm.ts";
 import { Ec2Client, SandboxdClient } from "./vm-clients.ts";
@@ -31,6 +32,8 @@ export interface WebServer {
 /** Wires a WebApp to an HTTP server, the cancel channel, the heartbeat and the janitor. */
 export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: number; scalerMs?: number } = {}): Promise<WebServer> {
   await migrate(deps.db);
+  // reads fall back to a granted sha256's first location (continued conversations; docs/CHAT.md "Sharing and continuing")
+  deps.blobs = sharedBlobs(deps.blobs, deps.db, deps.config.s3.prefix);
   const sandboxes = new SandboxManager(deps);
   const runner = new TurnRunner(deps, sandboxes);
   await runner.listen();
