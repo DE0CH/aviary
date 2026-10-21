@@ -6,9 +6,9 @@ kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
   - https://github.com/DE0CH/jarvis3//deploy/chat?ref=80a4944d1bce19aa030a2ce37c3276d034f337ff
-  # sandboxes in this cluster (provider kubernetes): namespace jarvis-sandbox, RuntimeClass gvisor, PriorityClass sandbox
+  # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
-  # the fenced SealedSecret applier may write SealedSecrets in jarvis and jarvis-sandbox (./sealed/, Kustomization yyc-ai-secrets)
+  # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
   - sealed-secrets-rbac.yaml
   # own sandbox hosts (provider vm, jarvis3 docs/SANDBOX-VM.md): overlay routes on the nodes, network policies
   - sandbox-vm.yaml
