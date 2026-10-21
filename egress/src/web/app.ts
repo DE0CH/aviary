@@ -13,7 +13,9 @@ import { logError } from "../common/log.ts";
 import { newToken, sha256hex } from "../common/tokens.ts";
 import { blobKey, type WebDeps } from "./ctx.ts";
 import { appendEvent, publicEvent, type EventRow } from "./events.ts";
-import { contentType, liveFiles, saveUpload } from "./files.ts";
+import { contentType, liveFiles, saveUpload, type FileRow } from "./files.ts";
+import { pdfPreview } from "./preview.ts";
+import { mergePresented, presentedOf, type PresentedFile } from "../common/presented.ts";
 import { Monitor } from "./monitor.ts";
 import { bad, HttpError, notFound, readJson, Router, sendHtml, sendJson, uuidParam } from "./http.ts";
 import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
@@ -29,6 +31,19 @@ interface Ctx {
   sandboxes: SandboxManager;
   runner: TurnRunner;
   caller: Caller;
+}
+
+/**
+ * What a turn from before present_files showed (the old UI's rule: agent files whose last change fell between the
+ * turn's start and 15 s after its end), with copies of the same contents shown once (the cause of a PDF listed twice:
+ * build/x.pdf and its copy x.pdf, both shown by file name).
+ */
+export function legacyPresented(files: FileRow[], startedAt: Date | string | null, finishedAt: Date | string | null): PresentedFile[] {
+  if (!startedAt || !finishedAt) return [];
+  const from = new Date(startedAt).getTime() - 1000;
+  const to = new Date(finishedAt).getTime() + 15_000;
+  const made = files.filter((f) => f.source === "agent" && f.updated_at.getTime() >= from && f.updated_at.getTime() <= to);
+  return mergePresented([], made.map((f) => ({ path: f.path, sha256: f.sha256, size: Number(f.size) })));
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -68,7 +83,7 @@ export class WebApp {
     r.add("POST", "/api/turns/:id/cancel", (q, s, p, c) => this.#cancel(s, p, c));
     r.add("POST", "/api/conversations/:id/files", (q, s, p, c) => this.#upload(q, s, p, c));
     r.add("GET", "/api/conversations/:id/files", (q, s, p, c) => this.#files(s, p, c));
-    r.add("GET", "/api/conversations/:id/files/*", (q, s, p, c) => this.#download(s, p, c));
+    r.add("GET", "/api/conversations/:id/files/*", (q, s, p, c) => this.#download(q, s, p, c));
     r.add("GET", "/api/admin/usage", (q, s, p, c) => this.#usage(q, s, c));
     r.add("GET", "/api/admin/egress", (q, s, p, c) => this.#egress(s, c));
     r.add("GET", "/api/admin/monitor", (q, s, p, c) => this.#monitorSnapshot(q, s, c));
@@ -191,7 +206,7 @@ export class WebApp {
     const db = c.deps.db;
     const [{ rows: messages }, { rows: turns }, { rows: events }] = await Promise.all([
       db.query(`select id, role, content, turn_id as "turnId", attachments, created_at as "createdAt" from messages where conversation_id = $1 order by id`, [conv.id]),
-      db.query(`select id, status, model, started_at as "startedAt", finished_at as "finishedAt", error, cost_usd as "costUsd" from turns where conversation_id = $1 order by started_at`, [conv.id]),
+      db.query(`select id, status, model, started_at as "startedAt", finished_at as "finishedAt", error, cost_usd as "costUsd", presented from turns where conversation_id = $1 order by started_at`, [conv.id]),
       db.query<EventRow>("select * from events where conversation_id = $1 order by id", [conv.id]),
     ]);
     const byTurn = new Map<string, unknown[]>();
@@ -201,12 +216,19 @@ export class WebApp {
       byTurn.set(e.turn_id, list);
     }
     const lastEventId = events.length ? Number(events[events.length - 1]!.id) : 0;
+    // turns from before present_files (presented null): the files they changed, as the UI used to list them
+    const legacy = turns.some((t: any) => t.presented == null && t.finishedAt) ? await liveFiles(c.deps, conv.id) : [];
     sendJson(res, 200, {
       id: conv.id,
       title: conv.title,
       model: conv.model,
       messages,
-      turns: turns.map((t: any) => ({ ...t, costUsd: t.costUsd == null ? null : Number(t.costUsd), events: byTurn.get(t.id) ?? [] })),
+      turns: turns.map((t: any) => ({
+        ...t,
+        costUsd: t.costUsd == null ? null : Number(t.costUsd),
+        presented: presentedOf(t.presented) ?? legacyPresented(legacy, t.startedAt, t.finishedAt),
+        events: byTurn.get(t.id) ?? [],
+      })),
       lastEventId,
     });
   }
@@ -371,23 +393,49 @@ export class WebApp {
     sendJson(res, 200, rows.map((r) => ({ path: r.path, size: Number(r.size), source: r.source, updatedAt: r.updated_at })));
   }
 
-  async #download(res: ServerResponse, p: Record<string, string>, c: Ctx) {
+  /**
+   * A file's bytes. `?v=<sha256>`: that version (a presented file or a viewed image as the turn left it, even after a
+   * later turn changed the path; blobs are per conversation and never deleted). `?inline=1`: shown in the page (images
+   * only). `?preview=1`: a small PNG of a PDF's page (`&page=N`, default 1) or the image itself.
+   */
+  async #download(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
     const conv = await this.#own(c, p.id);
     const path = p.rest ?? "";
-    const { rows } = await c.deps.db.query<{ sha256: string; size: string }>(
-      "select sha256, size from files where conversation_id = $1 and path = $2 and not deleted",
-      [conv.id, path],
-    );
-    const f = rows[0];
-    if (!f) throw notFound();
-    const body = await c.deps.blobs.getStream(blobKey(c.deps, conv.id, f.sha256));
+    const q = new URL(req.url || "/", "http://x").searchParams;
+    const v = q.get("v") ?? "";
+    let sha: string;
+    let size: string | null = null;
+    if (/^[0-9a-f]{64}$/.test(v)) sha = v;
+    else {
+      const { rows } = await c.deps.db.query<{ sha256: string; size: string }>(
+        "select sha256, size from files where conversation_id = $1 and path = $2 and not deleted",
+        [conv.id, path],
+      );
+      const f = rows[0];
+      if (!f) throw notFound();
+      sha = f.sha256;
+      size = f.size;
+    }
+    const key = blobKey(c.deps, conv.id, sha);
+    const type = contentType(path);
+    const image = /^image\/(png|jpeg|gif|webp)$/.test(type);
+    if (q.get("preview") === "1" && !image) {
+      if (type !== "application/pdf") throw notFound("no preview");
+      const png = await pdfPreview(c.deps, key, Math.max(1, Math.min(9999, Number(q.get("page")) || 1)));
+      if (!png) throw notFound("no preview");
+      res.writeHead(200, { "content-type": "image/png", "content-length": png.length, "cache-control": "private, max-age=86400, immutable", "x-content-type-options": "nosniff" });
+      return void res.end(png);
+    }
+    const body = await c.deps.blobs.getStream(key);
     if (!body) throw notFound("the file's contents are missing");
     const name = path.split("/").pop() || "file";
+    const inline = image && (q.get("inline") === "1" || q.get("preview") === "1");
     res.writeHead(200, {
-      "content-type": contentType(path),
-      "content-length": f.size,
-      "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
-      "cache-control": "private, no-store",
+      "content-type": type,
+      ...(size != null ? { "content-length": size } : {}),
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      // a version (v=) never changes; the latest one may
+      "cache-control": v ? "private, max-age=86400, immutable" : "private, no-store",
       "x-content-type-options": "nosniff",
     });
     body.on("error", () => res.destroy());

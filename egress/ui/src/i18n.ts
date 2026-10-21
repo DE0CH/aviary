@@ -49,6 +49,7 @@ const zh = {
   you: "你",
   conversationOptions: "對話選項",
   openFile: "開啟",
+  viewedImage: "已查看的圖片",
   tool: {
     web_search: "搜尋網絡",
     news_search: "搜尋慧科新聞",
@@ -61,6 +62,7 @@ const zh = {
     glob_search: "尋找檔案",
     grep_search: "搜尋檔案內容",
     yyc: "查詢新聞監察數據",
+    present_files: "展示檔案",
     other: "使用工具",
   },
 };
@@ -114,6 +116,7 @@ const en: Strings = {
   you: "You",
   conversationOptions: "Chat options",
   openFile: "Open",
+  viewedImage: "Image viewed",
   tool: {
     web_search: "Searching the web",
     news_search: "Searching Wisers news",
@@ -126,6 +129,7 @@ const en: Strings = {
     glob_search: "Finding files",
     grep_search: "Searching in files",
     yyc: "Checking the news monitor",
+    present_files: "Showing files",
     other: "Using a tool",
   },
 };

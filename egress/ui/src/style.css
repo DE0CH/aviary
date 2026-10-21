@@ -243,6 +243,19 @@ button { cursor: pointer; }
 .file-chip.made .icon { color: var(--accent); }
 .file-chip:hover { background: var(--sunken); }
 .file-size { color: var(--faint); font-size: 12px; }
+/* the agent's presented files (present_files): cards in its order; images and PDFs with a preview */
+.file-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+.file-card { display: flex; flex-direction: column; gap: 6px; max-width: min(100%, 280px); }
+.file-card.is-image { max-width: min(100%, 360px); }
+.file-preview { display: block; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--sunken); }
+.file-preview img { display: block; width: 100%; max-height: 320px; object-fit: contain; }
+.file-card .file-chip { align-self: flex-start; }
+.file-name { min-width: 0; }
+.file-caption { margin: 0; font-size: 13px; color: var(--muted); }
+.upload-thumb { display: block; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--sunken); }
+.upload-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.step-thumbs { display: flex; gap: 6px; padding: 0 10px 6px 40px; }
+.step-thumbs img { display: block; height: 56px; max-width: 120px; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: var(--sunken); }
 
 .reply-actions { display: flex; gap: 4px; }
 .ghost-btn { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--faint); font-size: 13px; padding: 4px 8px; border-radius: 8px; }

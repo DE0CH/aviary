@@ -1,7 +1,11 @@
 // The web role end to end on fakes: real Postgres, the real jarvis-bash and sandbox agent, a fake claw, a fake S3,
 // a fake Kubernetes API and a fake egress/tools endpoint.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { deflateSync } from "node:zlib";
+import { truncate } from "node:fs/promises";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +18,10 @@ import { S3BlobStore } from "../src/common/s3.ts";
 import type { WebDeps } from "../src/web/ctx.ts";
 import { janitorPass } from "../src/web/janitor.ts";
 import { startWeb, type WebServer } from "../src/web/main.ts";
-import { RESET_NOTE, SANDBOX_NETWORK_NOTE } from "../src/web/turns.ts";
+import { FILES_NOTE, imageAttachments, MAX_PROMPT_IMAGES, RESET_NOTE, SANDBOX_NETWORK_NOTE } from "../src/web/turns.ts";
+import { createToolsServer } from "../src/tools/server.ts";
+import { legacyPresented } from "../src/web/app.ts";
+import { mergePresented } from "../src/common/presented.ts";
 import { AUD, fakeAccess, TEAM } from "./fakes/access.ts";
 import { FakeK8s } from "./fakes/k8s.ts";
 import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
@@ -33,6 +40,8 @@ let k8s: FakeK8s;
 let web: WebServer;
 let deps: WebDeps;
 let base: string;
+let realToolsUrl = "";
+let realTools: { server: import("node:http").Server } | null = null;
 let upstream: { close(): Promise<void>; titleCalls: number; port: number; modelCalls: number; budgetOut: string | null };
 
 async function fakeUpstream(): Promise<typeof upstream> {
@@ -42,6 +51,13 @@ async function fakeUpstream(): Promise<typeof upstream> {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     if (req.url === "/mcp") {
+      // tools/call goes to a real tools server (present_files checks and stores for real); the list stays fixed
+      const msg = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      if (msg.method === "tools/call" && realToolsUrl) {
+        const r = await fetch(realToolsUrl, { method: "POST", headers: { authorization: String(req.headers.authorization ?? ""), "content-type": "application/json" }, body: JSON.stringify(msg) });
+        res.writeHead(r.status, { "content-type": "application/json" });
+        return void res.end(await r.text());
+      }
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "web_search" }, { name: "news_search" }] } }));
     }
@@ -113,10 +129,14 @@ before(async () => {
   };
   deps.sandboxProvider = new KubernetesProvider({ k8s, config, egressNamespace: "jarvis", agentUrlFor: k8s.agentUrlFor });
   web = await startWeb(deps, 0, { janitorMs: 3_600_000 });
+  realTools = createToolsServer({ config, db: pg.db, env: {}, fetch: globalThis.fetch }, []);
+  await new Promise<void>((r) => realTools!.server.listen(0, "127.0.0.1", r));
+  realToolsUrl = `http://127.0.0.1:${(realTools.server.address() as { port: number }).port}/mcp`;
   base = `http://127.0.0.1:${web.port}`;
 });
 
 after(async () => {
+  realTools?.server.close();
   await web.close();
   await deps.listener.close();
   await k8s.closeAll();
@@ -272,7 +292,12 @@ test("a full turn: upload, typing, a lazy sandbox at the first bash, streaming, 
   assert.equal(dbg.env.CLAW_EVENT_STREAM, "1");
   // the instance's prompt, then the runtime's note on the sandbox's internet access
   assert.ok(dbg.systemPrompt.startsWith(readFileSync(deps.config.systemPromptFile, "utf8").trimEnd()), dbg.systemPrompt);
-  assert.ok(dbg.systemPrompt.endsWith(SANDBOX_NETWORK_NOTE));
+  // ... then how files reach the user (present_files only) and that images can be seen
+  assert.ok(dbg.systemPrompt.includes(SANDBOX_NETWORK_NOTE));
+  assert.ok(dbg.systemPrompt.endsWith(FILES_NOTE));
+  assert.match(dbg.systemPrompt, /call present_files with the\ndeliverables only \(reports, charts, data the user asked for\) — never scripts, fonts or intermediate files/);
+  assert.equal(dbg.env.CLAW_IMAGES, "1");
+  assert.equal(dbg.env.CLAW_PROMPT_IMAGES, undefined, "a CSV is not an image");
   assert.match(dbg.systemPrompt, /no one can enable a site from the chat/);
   assert.equal(dbg.env.ANTHROPIC_BASE_URL, `${deps.egressBase}/x/model`);
   assert.equal(dbg.env.CLAW_RESUME_SESSION, undefined);
@@ -282,6 +307,7 @@ test("a full turn: upload, typing, a lazy sandbox at the first bash, streaming, 
   assert.match(dbg.prompt, /Attached files, in the workspace: uploads\/報告 data\.csv/);
   const settings = JSON.parse(readFileSync(join(dbg.env.CLAW_CONFIG_DIR, "settings.json"), "utf8"));
   assert.equal(settings.mcpServers.tools.env.JARVIS_TURN_TOKEN, dbg.env.ANTHROPIC_AUTH_TOKEN);
+  assert.equal(settings.mcpServers.tools.env.JARVIS_WORKDIR, dbg.cwd);
 
   const files = await call(A, "GET", `/api/conversations/${conv}/files`);
   const byPath = Object.fromEntries(files.json.map((f: any) => [f.path, f]));
@@ -636,4 +662,175 @@ test("budget: a used-up budget refuses the turn before claw runs; a running turn
     upstream.budgetOut = null;
     await pg.db.query("delete from kv where key = 'budget:override'");
   }
+});
+
+const sha = (b: string | Uint8Array) => createHash("sha256").update(b).digest("hex");
+
+/** A tiny valid PNG (w x h, one colour). */
+function png(w = 2, h = 2): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (b: Buffer) => {
+    let c = 0xffffffff;
+    for (const x of b) c = crcTable[(c ^ x) & 0xff]! ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const t = Buffer.concat([Buffer.from(type), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(t));
+    return Buffer.concat([len, t, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const raw = Buffer.concat(Array.from({ length: h }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 0x80)])));
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+const MINI_PDF = "%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n";
+
+test("present_files: only presented files are shown, checked in the workspace, copies once, the latest version wins, survives reload", async () => {
+  const conv = await newConversation();
+  // a refused call: nothing is shown, every bad path is named
+  const bad = JSON.stringify([{ path: "missing.pdf" }, { path: "../etc/passwd" }, { path: "/etc/passwd" }, { path: "node_modules/x.js" }]);
+  const t0 = await runTurn(conv, `WRITE:node_modules/x.js=1 PRESENT:${bad}`);
+  const r0 = t0.events.find((e) => e.type === "tool_result");
+  assert.equal(r0.data.is_error, true);
+  for (const p of ["missing.pdf: no such file", "../etc/passwd: not a path inside", "/etc/passwd: not a path inside", "node_modules/x.js: files in that folder are not kept"]) assert.ok(r0.data.output.includes(p), r0.data.output);
+  assert.ok(!t0.events.some((e) => e.type === "files_presented"));
+  const got0 = await call(A, "GET", `/api/conversations/${conv}`);
+  assert.deepEqual(got0.json.turns[0].presented, [], "a new-style turn that presents nothing shows no cards");
+
+  // helper files and a copy of the PDF (the duplicate bug: build/r.pdf and r.pdf); the sandbox path /work/x is accepted
+  const files = JSON.stringify([{ path: "build/r.pdf" }, { path: "/work/r.pdf", caption: "The report" }, { path: "./chart.png" }]);
+  const t1 = await runTurn(conv, `WRITE:build/r.pdf=v1 WRITE:r.pdf=v1 WRITE:build/fonts.ttf=f WRITE:build/main.py=p WRITE:chart.png=c PRESENT:${files} AFTER:r.pdf=v22`);
+  const res = t1.events.find((e) => e.type === "tool_result");
+  assert.equal(res.data.is_error, false, res.data.output);
+  assert.match(res.data.output, /Shown to the user under your answer: build\/r\.pdf, r\.pdf, chart\.png/);
+  const shown = t1.events.filter((e) => e.type === "files_presented");
+  assert.equal(shown.length, 2, "at the call, then the final versions");
+  assert.deepEqual(shown[0].data.files, [
+    { path: "r.pdf", caption: "The report", sha256: sha("v1"), size: 2 },
+    { path: "chart.png", sha256: sha("c"), size: 1 },
+  ]);
+  const final = [
+    { path: "r.pdf", caption: "The report", sha256: sha("v22"), size: 3 },
+    { path: "chart.png", sha256: sha("c"), size: 1 },
+  ];
+  assert.deepEqual(shown[1].data.files, final);
+  // the turn's files are all stored (the agent keeps using them) but only the presented ones are shown
+  const all = (await call(A, "GET", `/api/conversations/${conv}/files`)).json.map((f: any) => f.path);
+  for (const p of ["build/fonts.ttf", "build/main.py", "build/r.pdf"]) assert.ok(all.includes(p));
+  const got = await call(A, "GET", `/api/conversations/${conv}`);
+  assert.deepEqual(got.json.turns[1].presented, final, "stored with the turn (reload)");
+  // the card's link is that version
+  const dl = await call(A, "GET", `/api/conversations/${conv}/files/r.pdf?v=${sha("v22")}`);
+  assert.equal(dl.text, "v22");
+  assert.match(dl.headers.get("content-disposition")!, /^attachment/);
+  assert.match(dl.headers.get("cache-control")!, /immutable/);
+  // tool steps name the files
+  assert.equal(t1.events.find((e) => e.type === "tool_use").data.name, "mcp__tools__present_files");
+
+  // a later turn may change r.pdf: the earlier card keeps its version
+  await runTurn(conv, "WRITE:r.pdf=v333");
+  assert.equal((await call(A, "GET", `/api/conversations/${conv}/files/r.pdf?v=${sha("v22")}`)).text, "v22");
+  assert.equal((await call(A, "GET", `/api/conversations/${conv}/files/r.pdf`)).text, "v333");
+  // someone else's conversation: 404 whatever the version
+  assert.equal((await call(B, "GET", `/api/conversations/${conv}/files/r.pdf?v=${sha("v22")}`)).status, 404);
+});
+
+test("present_files: a file over 50 MB is refused; a presented file deleted before the turn ends is dropped", async () => {
+  const conv = await newConversation();
+  // the sandbox never sends a file over 50 MB back (X-Skipped), so it can only come from elsewhere: put one there
+  await runTurn(conv, "hi");
+  await truncate(join(deps.workRoot, conv, "work", "big.bin"), 51 * 1024 * 1024).catch(async () => {
+    writeFileSync(join(deps.workRoot, conv, "work", "big.bin"), "");
+    await truncate(join(deps.workRoot, conv, "work", "big.bin"), 51 * 1024 * 1024);
+  });
+  const t2 = await runTurn(conv, `PRESENT:${JSON.stringify([{ path: "big.bin" }])}`);
+  const r = t2.events.find((e) => e.type === "tool_result");
+  assert.equal(r.data.is_error, true);
+  assert.match(r.data.output, /big\.bin: larger than 50 MB/);
+  const t3 = await runTurn(conv, `WRITE:gone.csv=1 PRESENT:${JSON.stringify([{ path: "gone.csv" }])} RM:gone.csv`);
+  const shown = t3.events.filter((e) => e.type === "files_presented");
+  assert.deepEqual(shown.at(-1).data.files, []);
+});
+
+test("old conversations: a turn from before present_files shows the files it changed, as before, copies once", async () => {
+  const conv = await newConversation();
+  const turn = randomUUID();
+  const start = new Date(Date.now() - 600_000);
+  const end = new Date(start.getTime() + 60_000);
+  await pg.db.query("insert into turns (id, conversation_id, status, token_hash, model, started_at, finished_at) values ($1,$2,'done',$3,'m',$4,$5)", [turn, conv, sha(turn), start, end]);
+  await pg.db.query("insert into messages (conversation_id, role, content, turn_id) values ($1,'user','make a report',$2)", [conv, turn]);
+  const row = (path: string, content: string, at: Date, source = "agent") =>
+    pg.db.query("insert into files (conversation_id, path, sha256, size, source, updated_at) values ($1,$2,$3,$4,$5,$6)", [conv, path, sha(content), content.length, source, at]);
+  await row("build/香港 簡報.pdf", "pdf", new Date(start.getTime() + 30_000));
+  await row("香港 簡報.pdf", "pdf", new Date(start.getTime() + 31_000));
+  await row("build/main.py", "py", new Date(start.getTime() + 20_000));
+  await row("uploads/in.csv", "csv", new Date(start.getTime() + 10_000), "upload");
+  await row("later.txt", "later", new Date(end.getTime() + 60_000));
+  const got = await call(A, "GET", `/api/conversations/${conv}`);
+  assert.deepEqual(got.json.turns[0].presented.map((f: any) => f.path), ["build/main.py", "香港 簡報.pdf"]);
+  // the rule itself
+  assert.deepEqual(legacyPresented([], start, null), []);
+  assert.deepEqual(mergePresented([{ path: "a", sha256: "1", size: 1 }], [{ path: "b", sha256: "2", size: 1 }, { path: "a", sha256: "3", size: 1 }]).map((f) => f.path), ["b", "a"]);
+});
+
+test("images: attached images go to claw as prompt images (at most 20), a viewed image's thumbnail and a PDF preview load", async () => {
+  const conv = await newConversation();
+  const img = png();
+  const up = await call(A, "POST", `/api/conversations/${conv}/files?name=photo.png`, img);
+  assert.equal(up.status, 201);
+  const up2 = await call(A, "POST", `/api/conversations/${conv}/files?name=IMG_1.HEIC`, "heic-bytes");
+  await call(A, "POST", `/api/conversations/${conv}/files?name=notes.txt`, "n");
+  const t1 = await runTurn(conv, "what is in this photo?", ["uploads/photo.png", up2.json.path, "uploads/notes.txt"]);
+  const dbg = t1.events.find((e) => e.type === "debug").data;
+  assert.deepEqual(JSON.parse(dbg.env.CLAW_PROMPT_IMAGES), ["uploads/photo.png", "uploads/IMG_1.HEIC"]);
+  // an uploaded image shows inline in the staff member's own message
+  const inl = await call(A, "GET", `/api/conversations/${conv}/files/uploads/photo.png?inline=1`);
+  assert.match(inl.headers.get("content-disposition")!, /^inline/);
+  assert.equal(inl.headers.get("content-type"), "image/png");
+  // an SVG is never inline (scripts)
+  await call(A, "POST", `/api/conversations/${conv}/files?name=x.svg`, "<svg/>");
+  assert.match((await call(A, "GET", `/api/conversations/${conv}/files/uploads/x.svg?inline=1`)).headers.get("content-disposition")!, /^attachment/);
+
+  // the model looks at a chart the sandbox made: the bytes are in the bucket by the time the step's event arrives
+  const r = await call(A, "POST", `/api/conversations/${conv}/messages`, { text: "VIEW:chart.png\nBASH:printf '%s' 'chart-bytes' > chart.png", attachments: [] });
+  const events = await streamUntil(A, conv, (e) => e.type === "tool_result" && e.data.name === "read_file");
+  const viewed = events.at(-1).data.images[0];
+  assert.equal(viewed.path, "chart.png");
+  assert.equal(viewed.sha256, sha("chart-bytes"));
+  const thumb = await call(A, "GET", `/api/conversations/${conv}/files/chart.png?v=${viewed.sha256}&preview=1`);
+  assert.equal(thumb.status, 200, "loads mid-turn");
+  assert.equal(thumb.text, "chart-bytes");
+  await streamUntil(A, conv, turnEnd(r.json.turnId));
+
+  // a PDF's first page as a small PNG (poppler in the web image; skipped where pdftoppm is missing)
+  const hasPdftoppm = spawnSync("pdftoppm", ["-v"]).error === undefined;
+  await runTurn(conv, `WRITE:doc.pdf=x`);
+  await pg.db.query("update files set sha256 = $3, size = $4 where conversation_id = $1 and path = $2", [conv, "doc.pdf", sha(MINI_PDF), MINI_PDF.length]);
+  await deps.blobs.put(`jarvis/files/${conv}/${sha(MINI_PDF)}`, Buffer.from(MINI_PDF));
+  const prev = await fetch(`${base}/api/conversations/${conv}/files/doc.pdf?v=${sha(MINI_PDF)}&preview=1`, { headers: { "cf-access-jwt-assertion": await access.token(A) } });
+  if (hasPdftoppm) {
+    assert.equal(prev.status, 200);
+    assert.equal(prev.headers.get("content-type"), "image/png");
+    assert.equal(Buffer.from(await prev.arrayBuffer()).subarray(1, 4).toString(), "PNG");
+  }
+  assert.equal((await call(A, "GET", `/api/conversations/${conv}/files/notes.txt?preview=1`)).status, 404);
+
+  // the cap and the filter, directly
+  const dir = mkdtempSync(join(tmpdir(), "imgs-"));
+  const names = Array.from({ length: 25 }, (_, i) => `p${i}.jpg`);
+  for (const n of names) writeFileSync(join(dir, n), "x");
+  assert.equal((await imageAttachments(dir, [...names, "a.txt"])).length, MAX_PROMPT_IMAGES);
+  assert.deepEqual(await imageAttachments(dir, ["missing.png", "a.txt"]), []);
 });

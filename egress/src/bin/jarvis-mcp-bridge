@@ -3,7 +3,17 @@
 // stdio side: JSON-RPC framed with Content-Length headers (claw's MCP client) or one JSON message per line; answers go
 // back in the framing the first message used. HTTP side: POST $JARVIS_TOOLS_URL, Authorization: Bearer
 // $JARVIS_TURN_TOKEN, JSON or text/event-stream answers. Requests run concurrently; answers keep their ids.
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, realpath } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+
 const URL_ = process.env.JARVIS_TOOLS_URL;
+// the conversation's workdir (present_files paths are checked here); claw starts this bridge in it too
+const WORKDIR = process.env.JARVIS_WORKDIR || process.cwd();
+// never stored or shown (chat/src/web/workspace.ts: EXCLUDED_DIRS, MAX_FILE_BYTES)
+const EXCLUDED = new Set(["node_modules", ".venv", "venv", "__pycache__", ".cache", ".claw", ".jobs"]);
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const TOKEN = process.env.JARVIS_TURN_TOKEN;
 if (!URL_ || !TOKEN) {
   process.stderr.write("jarvis-mcp-bridge: JARVIS_TOOLS_URL and JARVIS_TURN_TOKEN must be set\n");
@@ -39,7 +49,52 @@ function pickAnswers(body, contentType) {
   return Array.isArray(m) ? m : [m];
 }
 
+function sha256(path) {
+  return new Promise((ok, fail) => {
+    const h = createHash("sha256");
+    createReadStream(path).on("data", (c) => h.update(c)).on("end", () => ok(h.digest("hex"))).on("error", fail);
+  });
+}
+
+/**
+ * What one present_files path is in the workspace: {path, size, sha256} (path relative to the workdir) or {error}.
+ * A sandbox path (/work/x) or an absolute path inside the workdir is made relative; nothing outside it is accepted.
+ */
+async function fileFact(given, workdir = WORKDIR) {
+  let p = String(given ?? "").trim();
+  if (!p) return { error: "empty path" };
+  if (p.startsWith("/work/")) p = p.slice(6);
+  else if (p.startsWith(workdir + "/")) p = p.slice(workdir.length + 1);
+  p = p.replace(/^(\.\/)+/, "").replace(/\/+/g, "/");
+  if (p.startsWith("/") || p.split("/").some((x) => x === ".." || x === "")) return { error: "not a path inside the workspace" };
+  const parts = p.split("/");
+  if (parts.slice(0, -1).some((x) => EXCLUDED.has(x)) || (parts[0] === ".git" && parts[1] === "objects")) return { error: "files in that folder are not kept, so they can't be shown; copy it elsewhere in the workspace first" };
+  const abs = join(workdir, p);
+  const st = await lstat(abs).catch(() => null);
+  if (!st) return { error: "no such file in the workspace (files written in the sandbox under /work appear here after the bash command that wrote them)" };
+  if (st.isSymbolicLink()) return { error: "a symbolic link; give the file itself" };
+  if (!st.isFile()) return { error: "not a file" };
+  const real = await realpath(abs).catch(() => abs);
+  const root = await realpath(workdir).catch(() => workdir);
+  if (relative(root, real).split(sep)[0] === "..") return { error: "not a path inside the workspace" };
+  if (st.size > MAX_FILE_BYTES) return { error: "larger than 50 MB, too large to keep or download" };
+  return { path: p, size: st.size, sha256: await sha256(abs) };
+}
+
+/** present_files: the tools role can't see the workspace, so the facts travel in the call's _meta. */
+async function annotate(msg) {
+  if (!msg || msg.method !== "tools/call" || msg.params?.name !== "present_files") return msg;
+  const files = Array.isArray(msg.params?.arguments?.files) ? msg.params.arguments.files : [];
+  const facts = {};
+  for (const f of files.slice(0, 50)) {
+    const p = f && typeof f === "object" ? f.path : undefined;
+    if (typeof p === "string" && !(p in facts)) facts[p] = await fileFact(p).catch((e) => ({ error: String(e?.message ?? e) }));
+  }
+  return { ...msg, params: { ...msg.params, _meta: { ...(msg.params._meta ?? {}), "jarvis/files": facts } } };
+}
+
 async function forward(msg) {
+  msg = await annotate(msg);
   const isRequest = msg && typeof msg === "object" && "id" in msg && msg.id !== null && typeof msg.method === "string";
   pending++;
   try {

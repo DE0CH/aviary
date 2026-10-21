@@ -1,13 +1,20 @@
 // Turns a turn's event list (claw's NDJSON events plus the server's own) into what the reply shows: text, tool
 // steps, notices. Pure, so the same function serves the history load and the live stream.
-import type { ChatEvent, Turn } from "./api.ts";
+import type { ChatEvent, PresentedFile, Turn } from "./api.ts";
 import { budgetOf } from "./rules.ts";
 
 export type Block =
   | { kind: "text"; text: string }
-  | { kind: "tool"; id: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
+  | { kind: "tool"; id: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean; images?: ViewedImage[] }
   | { kind: "notice"; notice: "sandbox_reset" }
   | { kind: "error"; message: string };
+
+/** An image the model looked at (read_file; claw's tool_result `images`): the step shows it small. */
+export interface ViewedImage {
+  path: string;
+  sha256: string;
+  page?: number;
+}
 
 export interface TurnView {
   id: string;
@@ -19,6 +26,8 @@ export interface TurnView {
   error?: string | null;
   cost?: number;
   sandboxStarting: boolean;
+  /** the files the agent presented (present_files), in its order: the only file cards under the answer */
+  presented: PresentedFile[];
   /** the shared budget ran out (before or during the turn): its limit and who set it, for the UI's own wording */
   budget?: { limitUsd: number; ownerName: string | null };
 }
@@ -35,6 +44,7 @@ export function viewTurn(turn: Turn): TurnView {
     finishedAt: turn.finishedAt,
     error: turn.error,
     sandboxStarting: false,
+    presented: Array.isArray(turn.presented) ? turn.presented : [],
   };
   const tools = new Map<string, Extract<Block, { kind: "tool" }>>();
   let text: Extract<Block, { kind: "text" }> | null = null;
@@ -71,12 +81,14 @@ export function viewTurn(turn: Turn): TurnView {
       case "tool_result": {
         const b = tools.get(String(d.id));
         const output = typeof d.output === "string" ? d.output : JSON.stringify(d.output, null, 2);
+        const images = viewedImages(d.images);
         if (b) {
           b.output = output;
           b.isError = !!d.is_error;
           b.done = true;
+          if (images.length) b.images = images;
         } else {
-          v.blocks.push({ kind: "tool", id: String(d.id), name: String(d.name ?? ""), input: undefined, output, isError: !!d.is_error, done: true });
+          v.blocks.push({ kind: "tool", id: String(d.id), name: String(d.name ?? ""), input: undefined, output, isError: !!d.is_error, done: true, ...(images.length ? { images } : {}) });
         }
         text = null;
         break;
@@ -99,6 +111,10 @@ export function viewTurn(turn: Turn): TurnView {
         }
         v.blocks.push({ kind: "error", message: String(d.message ?? "") });
         break;
+      case "files_presented":
+        // each event carries the whole list so far; the last one wins
+        if (Array.isArray(d.files)) v.presented = d.files.filter((f: any) => f && typeof f.path === "string");
+        break;
       case "result":
         if (typeof d.estimated_cost === "number") v.cost = d.estimated_cost;
         break;
@@ -114,6 +130,13 @@ export function viewTurn(turn: Turn): TurnView {
   }
   if (!isActive(v.status)) v.thinking = false;
   return v;
+}
+
+function viewedImages(v: unknown): ViewedImage[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x: any) => x && typeof x.path === "string" && typeof x.sha256 === "string")
+    .map((x: any) => ({ path: x.path, sha256: x.sha256, ...(typeof x.page === "number" ? { page: x.page } : {}) }));
 }
 
 /** Plain text of a reply (for the copy button): the text blocks only. */

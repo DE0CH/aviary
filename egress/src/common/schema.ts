@@ -87,4 +87,7 @@ delete from allowed_hosts;
 comment on table confirmations is 'unused since schema 6: no confirmations (old rows only)';
 comment on table allowed_hosts is 'unused since schema 6: the sandbox allowlist is automatic';
 `,
+  // the files a turn shows (docs/CHAT.md, "Presented files"): only what the agent passed to present_files, in its order,
+  // [{path, caption?, sha256, size}]; null = a turn from before (the UI then shows that turn's changed files as it did)
+  `alter table turns add column presented jsonb;`,
 ];

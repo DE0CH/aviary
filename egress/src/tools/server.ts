@@ -6,6 +6,7 @@ import { logError } from "../common/log.ts";
 import { bearerOf, turnForToken } from "../common/tokens.ts";
 import { BUILTIN } from "./builtin.ts";
 import { handleMessage, type McpHandlers } from "./mcp.ts";
+import { presentFiles } from "./present.ts";
 import type { Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
 import type { Upstream } from "./upstream.ts";
 
@@ -20,7 +21,8 @@ export function toolList(deps: Deps, upstreams: Upstream[]): ToolDef[] {
     news_search: !!t.wisers,
     social_search: !!t.tikhub,
   };
-  const own = BUILTIN.filter((d) => have[d.name]);
+  // present_files needs no provider: every chat turn can show its deliverables
+  const own = [...BUILTIN.filter((d) => have[d.name]), presentFiles];
   const names = new Set(own.map((d) => d.name));
   const ups = upstreams.flatMap((u) => u.tools()).filter((d) => !names.has(d.name) && (names.add(d.name), true));
   return [...own, ...ups];
@@ -32,7 +34,7 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
   const handlers: McpHandlers = {
     serverName: "tools",
     serverVersion: "1",
-    instructions: "Read-only search and reading tools for news, PR and data analysis work. None of them sends, posts or changes anything outside.",
+    instructions: "Read-only search and reading tools for news, PR and data analysis work, and present_files to show the answer's deliverables to the user. None of them sends, posts or changes anything outside.",
     tools: () => toolList(deps, upstreams),
     async call(tool, args, ctx) {
       const t0 = Date.now();

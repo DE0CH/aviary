@@ -3,7 +3,7 @@
 // file are restored before and stored after, and bash goes to the conversation's sandbox through jarvis-bash.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, rm } from "node:fs/promises";
+import { chmod, rm, stat } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -13,9 +13,11 @@ import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import { sha256hex } from "../common/tokens.ts";
-import type { WebDeps } from "./ctx.ts";
+import { blobKey, type WebDeps } from "./ctx.ts";
 import { appendEvent } from "./events.ts";
 import { dirs, restoreWorkdir, storeWorkdir } from "./files.ts";
+import { mergePresented, presentedOf, type PresentedFile } from "../common/presented.ts";
+import { sha256File } from "./workspace.ts";
 import { PoolFullError, type SandboxManager } from "./sandbox.ts";
 import type { SandboxGrant } from "./bash.ts";
 
@@ -39,6 +41,24 @@ not ask for it. Pastebins, file-sharing, form and webhook sites are always refus
 use the web_fetch and web_search tools (they work for any public site); use the sandbox's internet only to install
 packages or download data files.
 `;
+
+/**
+ * Appended too: how the answer's files reach the staff member (only through present_files) and that the model can see
+ * images (claw's CLAW_IMAGES: read_file on an image or PDF page; staff-uploaded images are attached to their message).
+ */
+export const FILES_NOTE = `## Showing files and seeing images
+The user sees none of the workspace's files unless you present them. When you finish, call present_files with the
+deliverables only (reports, charts, data the user asked for) — never scripts, fonts or intermediate files. Don't paste
+paths or download links for them in your answer.
+You can see images: read_file on a PNG, JPEG, WebP or GIF shows it to you (HEIC, SVG, BMP and TIFF are converted, and
+read_file on a PDF shows one page as an image: \`page\`, default 1). Files a bash command writes under /work in the
+sandbox are in the workspace right after that command, so to check a chart you made, save it (e.g. matplotlib
+savefig to /work/chart.png) and read_file it. Images the user attached to their message are shown to you with it.
+`;
+
+/** Staff-uploaded images attached to their message as image blocks (claw: CLAW_PROMPT_IMAGES); at most this many. */
+export const PROMPT_IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|svg)$/i;
+export const MAX_PROMPT_IMAGES = 20;
 
 interface Running {
   child: ChildProcess | null;
@@ -179,7 +199,7 @@ export class TurnRunner {
     const deps = this.#deps;
     const db = deps.db;
     const { rows } = await db.query<TurnInfo>(
-      `update turns t set status = 'running', replica = $2 from conversations c
+      `update turns t set status = 'running', replica = $2, presented = coalesce(t.presented, '[]') from conversations c
         where t.id = $1 and t.status = 'queued' and c.id = t.conversation_id
         returning t.id, t.conversation_id, t.model, c.owner, c.title`,
       [turnId, deps.replica],
@@ -220,20 +240,22 @@ export class TurnRunner {
       let prompt = msg.content;
       const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
       if (attachments.length) prompt += `\n\n[Attached files, in the workspace: ${attachments.join(", ")}]`;
+      // attached images go to the model as images too (claw downsizes them); the same files stay in the workspace
+      const promptImages = await imageAttachments(d.work, attachments);
 
       // claw's config: the tools MCP server through the stdio bridge; nothing is read from the workdir
       const toolNames = await this.#toolNames(token);
       const settings: Record<string, unknown> = { permissions: { defaultMode: "danger-full-access" } };
       if (toolNames.length) {
         settings.mcpServers = {
-          tools: { command: abs(deps.mcpBridgePath), args: [], env: { JARVIS_TOOLS_URL: deps.toolsUrl, JARVIS_TURN_TOKEN: token } },
+          tools: { command: abs(deps.mcpBridgePath), args: [], env: { JARVIS_TOOLS_URL: deps.toolsUrl, JARVIS_TURN_TOKEN: token, JARVIS_WORKDIR: d.work } },
         };
       }
       await writeFile(join(d.clawConfig, "settings.json"), JSON.stringify(settings, null, 2));
       // the instance's system prompt plus the runtime's note on the sandbox's internet access
       const promptFile = join(d.clawConfig, "system-prompt.md");
       const instancePrompt = await readFile(abs(deps.config.systemPromptFile), "utf8");
-      await writeFile(promptFile, `${instancePrompt.trimEnd()}\n\n${SANDBOX_NETWORK_NOTE}`);
+      await writeFile(promptFile, `${instancePrompt.trimEnd()}\n\n${SANDBOX_NETWORK_NOTE}\n${FILES_NOTE}`);
       const { rows: sess } = await db.query<{ content: string }>("select content from claw_sessions where conversation_id = $1", [conv]);
       const resumePath = join(d.sessions, `${conv}.jsonl`);
       if (sess[0]) await writeFile(resumePath, sess[0].content);
@@ -251,12 +273,14 @@ export class TurnRunner {
         CLAW_CONFIG_HOME: d.clawConfig,
         CLAW_SESSIONS_DIR: d.sessions,
         CLAW_PROMPT_CACHE: "1",
+        CLAW_IMAGES: "1",
         ANTHROPIC_BASE_URL: `${deps.egressBase}/x/model`,
         ANTHROPIC_AUTH_TOKEN: token,
         JARVIS_SYNC_STATE: d.syncState,
         ...(deps.clawEnv ?? {}),
       };
       if (sess[0]) env.CLAW_RESUME_SESSION = resumePath;
+      if (promptImages.length) env.CLAW_PROMPT_IMAGES = JSON.stringify(promptImages);
       env.JARVIS_SANDBOX_SOCKET = socket;
       env.JARVIS_TURN_TOKEN = token;
       if (r.cancelled) throw new CancelledError();
@@ -321,6 +345,11 @@ export class TurnRunner {
             child.stdin!.write(JSON.stringify({ type: "permission_response", request_id: data.request_id, allow: false, reason: "not allowed here" }) + "\n");
             break;
           case "tool_result":
+            // an image the model looked at: its bytes go to the bucket now, so the step's thumbnail loads mid-turn
+            if (Array.isArray(data.images) && data.images.length) {
+              const imgs = data.images as { path?: unknown; sha256?: unknown }[];
+              queue(() => this.#keepViewed(conv, d.work, imgs));
+            }
             if (typeof data.output === "string" && data.output.length > MAX_TOOL_OUTPUT) {
               data.output = data.output.slice(0, MAX_TOOL_OUTPUT);
               data.truncated = true;
@@ -384,7 +413,9 @@ export class TurnRunner {
         }
       }
       const changed = await storeWorkdir(deps, conv, startedAt);
+      // kept for the record; the UI shows only the presented files (below), never this list
       if (changed.length) await emit("files", { changed });
+      await this.#finalPresented(turnId, conv, emit);
     } catch (e) {
       logError("turn store", e, { turn: turnId });
       if (status === "done") {
@@ -412,6 +443,47 @@ export class TurnRunner {
     await emit("turn_finished", { turnId, status, error, costUsd, ...(budgetHit && status === "error" ? budgetEventData(budgetHit, error ?? "") : {}) });
     await this.#sandboxes.touch(conv);
     log("turn", { turn: turnId, conversation: conv, status, ms: Date.now() - startedAt.getTime() });
+  }
+
+  /**
+   * The turn's presented files once its files are stored: each path at the version the turn left (the latest wins),
+   * files gone since dropped, copies shown once. Sent again only when that changed what the UI has.
+   */
+  async #finalPresented(turnId: string, conv: string, emit: (type: string, data: Record<string, unknown>) => Promise<unknown>): Promise<void> {
+    const db = this.#deps.db;
+    const { rows } = await db.query<{ presented: unknown }>("select presented from turns where id = $1", [turnId]);
+    const before = presentedOf(rows[0]?.presented);
+    if (!before?.length) return;
+    const { rows: live } = await db.query<{ path: string; sha256: string; size: string }>(
+      "select path, sha256, size from files where conversation_id = $1 and path = any($2) and not deleted",
+      [conv, before.map((f) => f.path)],
+    );
+    const now = new Map(live.map((r) => [r.path, r]));
+    const kept: PresentedFile[] = [];
+    for (const f of before) {
+      const r = now.get(f.path);
+      if (r) kept.push({ ...f, sha256: r.sha256, size: Number(r.size) });
+    }
+    const after = mergePresented([], kept);
+    if (JSON.stringify(after) === JSON.stringify(before)) return;
+    await db.query("update turns set presented = $2 where id = $1", [turnId, JSON.stringify(after)]);
+    await emit("files_presented", { files: after });
+  }
+
+  /** Images the model viewed with read_file: put in the bucket under their sha256 (what the thumbnail URL names). */
+  async #keepViewed(conv: string, work: string, images: { path?: unknown; sha256?: unknown }[]): Promise<void> {
+    for (const img of images.slice(0, 5)) {
+      const rel = typeof img.path === "string" ? img.path : "";
+      const sha = typeof img.sha256 === "string" && /^[0-9a-f]{64}$/.test(img.sha256) ? img.sha256 : "";
+      if (!rel || !sha || rel.startsWith("/") || rel.split("/").includes("..")) continue;
+      const p = join(work, rel);
+      const st = await stat(p).catch(() => null);
+      if (!st?.isFile() || st.size > 50 * 1024 * 1024) continue;
+      if ((await sha256File(p).catch(() => "")) !== sha) continue;
+      const key = blobKey(this.#deps, conv, sha);
+      if (await this.#deps.blobs.exists(key).catch(() => false)) continue;
+      await this.#deps.blobs.putFile(key, p, st.size);
+    }
   }
 
   /** The budget is used up: the turn ends at once with the budget message (no sandbox, no claw, no model call). */
@@ -474,6 +546,18 @@ export class TurnRunner {
 }
 
 class CancelledError extends Error {}
+
+/** The message's attachments that are images (in the workspace, at most MAX_PROMPT_IMAGES): claw's CLAW_PROMPT_IMAGES. */
+export async function imageAttachments(work: string, attachments: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const a of attachments) {
+    if (out.length >= MAX_PROMPT_IMAGES) break;
+    if (!PROMPT_IMAGE_EXT.test(a)) continue;
+    const st = await stat(join(work, a)).catch(() => null);
+    if (st?.isFile()) out.push(a);
+  }
+  return out;
+}
 
 /** What a budget refusal's events carry: the UI words it in its own locale from these (staff see the limit, not the spend). */
 function budgetEventData(b: Pick<BudgetStatus, "limitUsd" | "ownerName">, message: string): Record<string, unknown> {

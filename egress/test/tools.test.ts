@@ -112,7 +112,7 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "yyc_posts_search"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "present_files", "yyc_posts_search"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names (claw's ask rules compare lowercased)");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
@@ -263,6 +263,37 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("garbage"), null);
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
-  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch"]);
+  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch", "present_files"]);
 });
 
+
+test("present_files: read-only, needs the bridge's workspace facts, all or nothing, merges calls on the turn (copies once, latest wins)", async () => {
+  ({ id: turnId, token } = await newTurn());
+  const listed = (await rpc("tools/list")).body.result.tools.find((x: any) => x.name === "present_files");
+  assert.equal(listed.annotations.readOnlyHint, true);
+  assert.match(listed.description, /never scripts, fonts or intermediate files/);
+  const callMeta = async (args: unknown, meta?: unknown) =>
+    (await rpc("tools/call", { name: "present_files", arguments: args, ...(meta ? { _meta: meta } : {}) })).body.result;
+  const f = (path: string, s: string, size = 3) => ({ path, sha256: s.repeat(64), size });
+  // no facts (not through the bridge): refused
+  assert.equal((await callMeta({ files: [{ path: "a.pdf" }] })).isError, true);
+  // bad input
+  assert.match(textOf(await callMeta({ files: [] }, { "jarvis/files": {} })), /non-empty list/);
+  assert.match(textOf(await callMeta({ files: Array.from({ length: 21 }, (_, i) => ({ path: `${i}` })) }, { "jarvis/files": {} })), /at most 20/);
+  // one bad path: nothing is shown
+  const bad = await callMeta({ files: [{ path: "a.pdf" }, { path: "nope.pdf" }] }, { "jarvis/files": { "a.pdf": f("a.pdf", "a"), "nope.pdf": { error: "no such file in the workspace" } } });
+  assert.equal(bad.isError, true);
+  assert.match(textOf(bad), /nope\.pdf: no such file/);
+  assert.equal((await t.db.query("select presented from turns where id = $1", [turnId])).rows[0].presented, null);
+  // two calls: the second adds, a copy (same contents) and a path given again are shown once, at the latest place
+  const one = await callMeta({ files: [{ path: "/work/build/a.pdf", caption: "  Report\n v1 " }, { path: "c.png" }] }, { "jarvis/files": { "/work/build/a.pdf": f("build/a.pdf", "a"), "c.png": f("c.png", "c") } });
+  assert.equal(one.isError, undefined, textOf(one));
+  const two = await callMeta({ files: [{ path: "a.pdf", caption: "Report" }] }, { "jarvis/files": { "a.pdf": f("a.pdf", "a") } });
+  assert.deepEqual(two.structuredContent.files, [f("c.png", "c"), { path: "a.pdf", caption: "Report", sha256: "a".repeat(64), size: 3 }]);
+  const { rows } = await t.db.query("select presented from turns where id = $1", [turnId]);
+  assert.deepEqual(rows[0].presented, two.structuredContent.files);
+  const { rows: ev } = await t.db.query("select data from events where turn_id = $1 and type = 'files_presented' order by seq", [turnId]);
+  assert.equal(ev.length, 2);
+  assert.deepEqual(ev[1].data.files, two.structuredContent.files);
+  assert.equal(ev[0].data.files[0].caption, "Report v1");
+});

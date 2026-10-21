@@ -37,12 +37,22 @@ export interface Message {
   createdAt: string;
 }
 
+/** A file the agent showed under its answer (present_files), at the version the turn left. */
+export interface PresentedFile {
+  path: string;
+  caption?: string;
+  sha256: string;
+  size: number;
+}
+
 export interface Turn {
   id: string;
   status: "queued" | "running" | "waiting" | "done" | "error" | "cancelled";
   startedAt?: string;
   finishedAt?: string | null;
   error?: string | null;
+  /** what the turn shows as file cards (a turn from before present_files: the files it changed) */
+  presented?: PresentedFile[] | null;
   events: ChatEvent[];
 }
 
@@ -52,13 +62,6 @@ export interface Conversation {
   model: string;
   messages: Message[];
   turns: Turn[];
-}
-
-export interface FileEntry {
-  path: string;
-  size: number;
-  source: "upload" | "agent";
-  updatedAt: string;
 }
 
 export class ApiError extends Error {
@@ -116,8 +119,16 @@ export const api = {
   send: (id: string, text: string, attachments: string[]) =>
     call<{ turnId: string }>("POST", `/api/conversations/${enc(id)}/messages`, { text, attachments }),
   cancel: (turnId: string) => call<void>("POST", `/api/turns/${enc(turnId)}/cancel`),
-  files: (id: string) => call<FileEntry[]>("GET", `/api/conversations/${enc(id)}/files`),
-  fileUrl: (id: string, path: string) => `/api/conversations/${enc(id)}/files/${filePath(path)}`,
+  /** a file's bytes; `v` = a version (sha256), `inline` = shown in the page (images), `preview` = a small image (PDF page) */
+  fileUrl: (id: string, path: string, o: { v?: string; inline?: boolean; preview?: boolean; page?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (o.v) q.set("v", o.v);
+    if (o.inline) q.set("inline", "1");
+    if (o.preview) q.set("preview", "1");
+    if (o.page && o.page > 1) q.set("page", String(o.page));
+    const qs = q.toString();
+    return `/api/conversations/${enc(id)}/files/${filePath(path)}${qs ? `?${qs}` : ""}`;
+  },
   streamUrl: (id: string, after: number) => `/api/conversations/${enc(id)}/stream?after=${after}`,
   /** Raw body upload with progress (XHR: fetch has no upload progress). */
   upload(id: string, file: File, onProgress: (f: number) => void): Promise<{ path: string }> {

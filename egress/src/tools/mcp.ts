@@ -71,7 +71,8 @@ export async function handleMessage(h: McpHandlers, msg: unknown, ctx: ToolCtx):
       const tool = h.tools().find((t) => t.name === name);
       if (!tool) return fail(ERR.params, `unknown tool ${name}`);
       try {
-        const r = await h.call(tool, args, ctx);
+        const meta = m.params?._meta;
+        const r = await h.call(tool, args, meta && typeof meta === "object" && !Array.isArray(meta) ? { ...ctx, meta: meta as Record<string, unknown> } : ctx);
         const { costUsd: _cost, ...result } = r;
         return ok(result);
       } catch (e) {

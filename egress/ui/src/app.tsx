@@ -1,7 +1,7 @@
 // The staff chat: a sidebar of conversations (a drawer on phones) and the open conversation.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { showModelPicker, usdAmount } from "./rules.ts";
-import { api, ApiError, type ChatEvent, type Conversation, type ConversationSummary, type FileEntry, type Me, type Message, type Turn } from "./api.ts";
+import { api, ApiError, type ChatEvent, type Conversation, type ConversationSummary, type Me, type Message, type PresentedFile, type Turn } from "./api.ts";
 import { locale, normaliseLocale, relativeTime, saveLocale, savedLocale, setLocale, t, type Locale } from "./i18n.ts";
 import { greeting } from "./greeting.ts";
 import { Icon } from "./icons.tsx";
@@ -294,7 +294,6 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [files, setFiles] = useState<FileEntry[]>([]);
   const [loadError, setLoadError] = useState(false);
   const [offline, setOffline] = useState(false);
   const [text, setText] = useState("");
@@ -330,10 +329,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
         p.onTitle(convId, e.data.title);
       }
       setTurns((ts) => mergeEvent(ts, e));
-      if (e.type === "turn_finished") {
-        api.files(convId).then(setFiles).catch(() => {});
-        p.onActivity();
-      }
+      if (e.type === "turn_finished") p.onActivity();
     };
 
     const connect = () => {
@@ -363,7 +359,6 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
         setTurns(c.turns);
         lastEvent.current = Math.max(0, ...c.turns.flatMap((tn) => tn.events.map((e) => e.id)));
         connect();
-        api.files(convId).then(setFiles).catch(() => {});
       } catch {
         if (!stopped) setLoadError(true);
       }
@@ -516,7 +511,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
                   <div class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.m.content) }} />
                 </div>
               ) : (
-                <Reply key={item.v.id} v={item.v} convId={convId!} files={files} />
+                <Reply key={item.v.id} v={item.v} convId={convId!} />
               ),
             )}
           </div>
@@ -561,36 +556,73 @@ function Empty({ me }: { me: Me }) {
   );
 }
 
+const VIEWABLE = /\.(png|jpe?g|gif|webp)$/i;
+
 function UserMessage({ m, convId }: { m: Message; convId: string }) {
   return (
     <div class="user-msg">
       <div class="bubble">{m.content}</div>
       {!!m.attachments?.length && (
         <div class="file-row right">
-          {m.attachments.map((path) => (
-            <a key={path} class="file-chip" href={api.fileUrl(convId, path)} target="_blank" rel="noopener">
-              <Icon name="file" size={16} />
-              <span>{path.split("/").pop()}</span>
-            </a>
-          ))}
+          {m.attachments.map((path) =>
+            VIEWABLE.test(path) && m.id > 0 ? (
+              <a key={path} class="upload-thumb" href={api.fileUrl(convId, path, { inline: true })} target="_blank" rel="noopener" title={path.split("/").pop()}>
+                <img src={api.fileUrl(convId, path, { inline: true })} alt={path.split("/").pop()} loading="lazy" />
+              </a>
+            ) : (
+              <a key={path} class="file-chip" href={api.fileUrl(convId, path)} target="_blank" rel="noopener">
+                <Icon name="file" size={16} />
+                <span>{path.split("/").pop()}</span>
+              </a>
+            ),
+          )}
         </div>
       )}
     </div>
   );
 }
 
+/** The files the agent presented (present_files), in its order: download cards, images and PDFs with a preview. */
+function FileCards({ files, convId }: { files: PresentedFile[]; convId: string }) {
+  const s = t();
+  return (
+    <div class="file-cards">
+      {files.map((f) => {
+        const name = f.path.split("/").pop() || f.path;
+        const url = api.fileUrl(convId, f.path, { v: f.sha256 });
+        const image = VIEWABLE.test(f.path);
+        const pdf = /\.pdf$/i.test(f.path);
+        return (
+          <div key={f.path} class={`file-card ${image ? "is-image" : ""}`}>
+            {(image || pdf) && (
+              <a class="file-preview" href={image ? api.fileUrl(convId, f.path, { v: f.sha256, inline: true }) : url} target={image ? "_blank" : undefined} rel="noopener" download={image ? undefined : name}>
+                <img
+                  src={image ? api.fileUrl(convId, f.path, { v: f.sha256, inline: true }) : api.fileUrl(convId, f.path, { v: f.sha256, preview: true })}
+                  alt={f.caption || name}
+                  loading="lazy"
+                  onError={(e) => ((e.currentTarget.parentElement as HTMLElement).style.display = "none")}
+                />
+              </a>
+            )}
+            <a class="file-chip made" href={url} download={name} aria-label={`${s.download}: ${name}`}>
+              <Icon name="download" size={16} />
+              <span class="file-name">{name}</span>
+              <span class="file-size">{formatSize(f.size)}</span>
+            </a>
+            {f.caption && <p class="file-caption">{f.caption}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- a reply: text, tool steps ----------------------------------------------------------------
 
-function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileEntry[] }) {
+function Reply({ v, convId }: { v: TurnView; convId: string }) {
   const s = t();
   const running = isActive(v.status);
   const [copied, setCopied] = useState(false);
-  const made = useMemo(() => {
-    if (running || !v.startedAt) return [];
-    const from = Date.parse(v.startedAt) - 1000;
-    const to = v.finishedAt ? Date.parse(v.finishedAt) + 15_000 : Infinity;
-    return files.filter((f) => f.source === "agent" && Date.parse(f.updatedAt) >= from && Date.parse(f.updatedAt) <= to);
-  }, [files, running, v.startedAt, v.finishedAt]);
 
   const last = v.blocks[v.blocks.length - 1];
   const showWorking = running && (!last || last.kind !== "text" || v.thinking);
@@ -615,7 +647,7 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
       {groupBlocks(v.blocks).map((g, i) =>
         g.kind === "steps" ? (
           <div class="steps" key={`s${i}`}>
-            {g.blocks.map((b) => (b.kind === "tool" ? <ToolStep key={b.id} b={b} /> : null))}
+            {g.blocks.map((b) => (b.kind === "tool" ? <ToolStep key={b.id} b={b} convId={convId} /> : null))}
           </div>
         ) : g.block.kind === "text" ? (
           <div key={`t${i}`} class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(g.block.text) }} />
@@ -647,17 +679,7 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
           {v.error ? `: ${v.error}` : ""}
         </p>
       )}
-      {made.length > 0 && (
-        <div class="file-row">
-          {made.map((f) => (
-            <a key={f.path} class="file-chip made" href={api.fileUrl(convId, f.path)} download={f.path.split("/").pop()}>
-              <Icon name="download" size={16} />
-              <span>{f.path.split("/").pop()}</span>
-              <span class="file-size">{formatSize(f.size)}</span>
-            </a>
-          ))}
-        </div>
-      )}
+      {v.presented.length > 0 && <FileCards files={v.presented} convId={convId} />}
       {!running && replyText(v) && (
         <div class="reply-actions">
           <button class="ghost-btn" onClick={copy} aria-label={s.copy}>
@@ -685,10 +707,11 @@ function groupBlocks(blocks: Block[]): Group[] {
 
 const formatSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
-function ToolStep({ b }: { b: Extract<Block, { kind: "tool" }> }) {
+function ToolStep({ b, convId }: { b: Extract<Block, { kind: "tool" }>; convId: string }) {
   const s = t();
   const [open, setOpen] = useState(false);
   const [label, detail] = describeTool(b.name, b.input);
+  const thumbs = (b.images ?? []).slice(0, 4);
   return (
     <div class={`step ${b.done ? (b.isError ? "is-error" : "is-done") : "is-running"} ${open ? "open" : ""}`}>
       <button class="step-head" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -704,6 +727,20 @@ function ToolStep({ b }: { b: Extract<Block, { kind: "tool" }> }) {
           <Icon name="chevron" size={14} />
         </span>
       </button>
+      {thumbs.length > 0 && (
+        <div class="step-thumbs">
+          {thumbs.map((im) => {
+            const pdf = /\.pdf$/i.test(im.path);
+            if (!pdf && !VIEWABLE.test(im.path)) return null;
+            const src = api.fileUrl(convId, im.path, { v: im.sha256, preview: true, page: im.page });
+            return (
+              <a key={`${im.path}#${im.page ?? 1}`} href={src} target="_blank" rel="noopener" title={s.viewedImage}>
+                <img src={src} alt={`${s.viewedImage}: ${im.path.split("/").pop()}`} loading="lazy" onError={(e) => (e.currentTarget.parentElement as HTMLElement).remove()} />
+              </a>
+            );
+          })}
+        </div>
+      )}
       {open && (
         <div class="step-body">
           <StepPart title={s.input} value={b.input === undefined ? "" : typeof b.input === "string" ? b.input : JSON.stringify(b.input, null, 2)} />

@@ -52,6 +52,8 @@ export interface ToolCtx {
   /** The turn token, to post events to web as this turn. */
   token: string;
   deps: Deps;
+  /** The tools/call request's `_meta` (set by jarvis-mcp-bridge, e.g. what it found in the workspace for present_files). */
+  meta?: Record<string, unknown>;
 }
 
 export const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) });

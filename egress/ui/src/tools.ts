@@ -46,6 +46,10 @@ export function describeTool(name: string, input: any): [string, string] {
     case "edit_file":
     case "edit":
       return [s.edit_file, baseName(str(i.path) || str(i.file_path))];
+    case "present_files": {
+      const fs: unknown[] = Array.isArray(i.files) ? i.files : [];
+      return [s.present_files, fs.map((f: any) => baseName(str(f?.path))).filter(Boolean).join(", ")];
+    }
     case "glob_search":
     case "glob":
       return [s.glob_search, str(i.pattern)];
