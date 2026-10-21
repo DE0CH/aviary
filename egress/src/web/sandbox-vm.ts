@@ -134,11 +134,29 @@ export function hubPeers(aws: HostRow[], byHost: Map<string, string[]>): { publi
   }));
 }
 
+export interface Plan {
+  /** free slots on ready hosts: the only room placement uses */
+  available: number;
+  /** slots of booting hosts */
+  pending: number;
+  planned: number;
+  perHost: number;
+  demand: number;
+  /** sandboxes waiting for a host */
+  waiting: number;
+  need: number;
+  want: number;
+}
+
+const planText = (p: Plan) => `need ${p.need} (demand ${p.demand}, waiting ${p.waiting}), planned ${p.planned} (available ${p.available}, pending ${p.pending}), ${p.perHost} slots per host`;
+
 export class VmController {
   readonly #d: VmDeps;
   readonly #digests = new Map<string, string>();
   /** the scaler's last view of each host (sandboxes with CPU use), by name */
   readonly #lastInfo = new Map<string, HostInfo>();
+  /** since when the hub has answered without a gap (this replica's scaler passes), null while it doesn't */
+  hubUpSince: number | null = null;
 
   constructor(d: VmDeps) {
     this.#d = d;
@@ -175,9 +193,17 @@ export class VmController {
 
   async ensureHub(): Promise<void> {
     const wg = new URL(this.vm.hub.url).hostname;
+    // a hub under another name at the same overlay address (renamed in config, e.g. the hub replaced by a gateway) is
+    // the same machine role: its old row goes, or the new one could never be added (unique wg_ip among live hosts)
+    await this.#d.db.query(
+      "update vm_hosts set status = 'gone', gone_at = now(), gone_reason = 'replaced by ' || $1 where kind = 'hub' and name <> $1 and wg_ip = $2 and status <> 'gone'",
+      [this.vm.hub.name, wg],
+    );
     await this.#d.db.query(
       `insert into vm_hosts (name, kind, url, wg_ip, status) values ($1, 'hub', $2, $3, 'active')
-       on conflict (name) do update set url = excluded.url, wg_ip = excluded.wg_ip`,
+       on conflict (name) do update set url = excluded.url, wg_ip = excluded.wg_ip,
+         status = case when vm_hosts.status = 'gone' then 'active' else vm_hosts.status end,
+         gone_at = case when vm_hosts.status = 'gone' then null else vm_hosts.gone_at end`,
       [this.vm.hub.name, this.vm.hub.url, wg],
     );
   }
@@ -265,21 +291,59 @@ export class VmController {
 
   // ---- AWS hosts -----------------------------------------------------------------------------------------------
 
+  /** Slots of one AWS host (from the latest one that reported its size; else an m7i.xlarge's), for booting hosts. */
+  async awsSlotsPerHost(c: Db | pg.PoolClient = this.#d.db): Promise<number> {
+    const { rows } = await c.query<HostRow>("select * from vm_hosts where kind = 'aws' and mem_total is not null order by created_at desc limit 1");
+    const h = rows[0] ?? ({ mem_total: 15.5 * 1024 ** 3, mem_reserve: 1024 ** 3, cpus: 4 } as HostRow);
+    return Math.max(1, this.slots({ ...h, max_sandboxes: null }));
+  }
+
   /**
-   * Starts an AWS host unless one is booting already or the cap is reached. `transient`: one more than maxHosts is
-   * allowed while a `retiring` host is replaced. Returns what happened.
+   * Capacity planning (docs/SANDBOX-VM.md, "Scaler"): planned = free slots on ready hosts (available, the only room
+   * placement uses) + the slots of booting hosts (pending); need = spare slots + people typing without a sandbox +
+   * sandboxes waiting for a host. want = need - planned; want > 0 starts ceil(want / slots per host) AWS hosts. Decided
+   * and recorded (booting rows inserted before RunInstances) under one lock, so the next signal, on any replica,
+   * already counts the new hosts' slots. `transient`: one more than maxHosts while a `retiring` host is replaced.
    */
-  async launch(reason: string, transient = false): Promise<"launched" | "booting" | "full" | "off"> {
+  async launch(reason: string, transient = false): Promise<"launched" | "planned" | "full" | "off"> {
     const aws = this.vm.aws;
     if (!aws || !this.#d.ec2 || !this.#d.hostTls) return "off";
     return tx(this.#d.db, async (c) => {
       await c.query("select pg_advisory_xact_lock($1)", [PLACE_LOCK + 100]);
+      const plan = await this.plan(c, transient);
+      if (plan.want <= 0) return "planned";
       const hosts = (await this.hosts(c)).filter((h) => h.kind === "aws");
-      if (hosts.some((h) => h.status === "booting")) return "booting";
       const retiring = hosts.filter((h) => h.status === "retiring").length;
       const cap = transient && retiring ? aws.maxHosts + 1 : aws.maxHosts;
       const count = transient ? hosts.length : hosts.length - retiring;
-      if (count >= cap) return "full";
+      const n = Math.min(Math.ceil(plan.want / plan.perHost), cap - count);
+      if (n <= 0) return "full";
+      for (let i = 0; i < n; i++) await this.#launchOne(c, `${reason}; ${planText(plan)}`, transient);
+      return "launched";
+    });
+  }
+
+  /** The numbers behind launch decisions (also the admin monitor's). */
+  async plan(c: Db | pg.PoolClient = this.#d.db, transient = false): Promise<Plan> {
+    const available = (await this.#slots(c)).reduce((a, s) => a + s.free, 0);
+    const perHost = await this.awsSlotsPerHost(c);
+    const { rows: b } = await c.query<{ n: string }>("select count(*) as n from vm_hosts where kind = 'aws' and status = 'booting'");
+    const pending = Number(b[0]!.n) * perHost;
+    const { rows: w } = await c.query<{ n: string }>("select count(*) as n from sandboxes where status = 'starting' and host is null");
+    const waiting = Number(w[0]!.n);
+    const demand = await this.demand();
+    let retiringNeed = 0;
+    if (transient) {
+      const { rows } = await c.query<{ n: string }>("select count(*) as n from sandboxes s join vm_hosts h on h.name = s.host where s.status <> 'gone' and h.status = 'retiring'");
+      retiringNeed = Number(rows[0]!.n);
+    }
+    const need = this.vm.spareSlots + demand + waiting + retiringNeed;
+    return { available, pending, planned: available + pending, perHost, demand, waiting, need, want: need - (available + pending) };
+  }
+
+  async #launchOne(c: pg.PoolClient, reason: string, transient: boolean): Promise<void> {
+    const aws = this.vm.aws!;
+    {
       const hub = (await c.query<HostRow>("select * from vm_hosts where name = $1", [this.vm.hub.name])).rows[0];
       if (!hub?.wg_public_key) throw new Error("the hub's WireGuard key is not known yet");
       const { rows: ips } = await c.query<{ wg_ip: string }>("select wg_ip from vm_hosts where status <> 'gone'");
@@ -314,14 +378,12 @@ export class VmController {
         await c.query("update vm_hosts set instance_id = $2, private_ip = $3 where name = $1", [name, inst.id, inst.privateIp || null]);
         log("vm: AWS host launched", { host: name, instance: inst.id, reason });
         void this.event("launch", name, null, { instance: inst.id, reason, transient });
-        return "launched";
       } catch (e) {
         await c.query("update vm_hosts set status = 'gone', gone_at = now(), gone_reason = $2 where name = $1", [name, `launch failed: ${(e as Error).message}`.slice(0, 500)]);
         logError("vm: AWS launch failed", e, { host: name });
         void this.event("launch-failed", name, null, { reason, error: (e as Error).message.slice(0, 300) });
-        return "full";
       }
-    });
+    }
   }
 
   async #terminate(h: HostRow, reason: string): Promise<void> {
@@ -508,9 +570,14 @@ export class VmController {
         }
       }),
     );
+    // AWS hosts are reached through the hub: judged only once the hub has answered for HOST_DEAD_MS (after it was away,
+    // e.g. a new gateway taking over, the hosts first get its peers and roam to it)
+    if (!hubUp) this.hubUpSince = null;
+    else this.hubUpSince ??= Date.now();
+    const hubSteady = this.hubUpSince !== null && Date.now() - this.hubUpSince > HOST_DEAD_MS;
     for (const h of hosts) {
       const age = down.get(h.name);
-      if (hubUp && age !== undefined && age > HOST_DEAD_MS) await this.#hostLost(h, "stopped answering");
+      if (hubSteady && age !== undefined && age > HOST_DEAD_MS) await this.#hostLost(h, "stopped answering");
     }
     if (!hubUp) return; // without the hub nothing else can be judged or changed
 
@@ -535,23 +602,11 @@ export class VmController {
     const draining = aws.filter((h) => h.status === "draining");
     const retiring = hosts.filter((h) => h.status === "retiring");
 
-    // scale out: keep spare slots, plus one for each person typing in a conversation without a sandbox (an AWS host
-    // boots in about a minute, so it starts while they type; unused, it goes by the rule below). A draining host
-    // comes back first.
+    // scale out (capacity planning in launch()): spare slots + people typing without a sandbox + sandboxes waiting,
+    // against free slots on ready hosts + slots on booting ones; a retiring host's sandboxes count when it is replaced
     await this.#d.db.query("delete from kv where key like 'sandbox_demand:%' and (value->>'at')::timestamptz < now() - interval '1 hour'");
-    const demand = await this.demand();
-    const want = this.vm.spareSlots + demand;
-    if (free < want) {
-      if (draining[0]) {
-        await this.#d.db.query("update vm_hosts set status = 'active' where name = $1 and status = 'draining'", [draining[0].name]);
-        log("vm: drain cancelled, capacity needed", { host: draining[0].name });
-        await this.event("drain-cancelled", draining[0].name, null, { free, demand });
-        return;
-      }
-      await this.launch(`free slots ${free} < ${want} (spare ${this.vm.spareSlots}, demand ${demand})`).catch((e) => logError("vm: launch", e));
-    }
-    // a retiring host with sandboxes and nowhere to put them: one transient host
-    if (retiring.some((h) => (used.get(h.name) ?? 0) > 0) && free === 0) await this.launch("replacing a retiring host", true).catch((e) => logError("vm: launch", e));
+    await this.launch("scaler").catch((e) => logError("vm: launch", e));
+    if (retiring.some((h) => (used.get(h.name) ?? 0) > 0)) await this.launch("replacing a retiring host", true).catch((e) => logError("vm: launch", e));
 
     // an AWS host goes as soon as no sandbox is on it and it is past its minimum lifetime (from launch)
     for (const h of aws) {
@@ -658,7 +713,8 @@ export class VmProvider implements SandboxProvider {
     for (;;) {
       placed = await ctl.place(row);
       if (placed) break;
-      const r = await ctl.launch("no room for a new sandbox");
+      // this sandbox waits for a host (a starting row without one): counted in the plan, which starts a host if needed
+      const r = await ctl.launch("a sandbox waits for a host");
       if (r === "full" || r === "off") throw new PoolFullError("all sandbox hosts are full, try again in a few minutes");
       if (Date.now() > until) throw new Error("no sandbox host became available in time");
       await sleep(3000);
@@ -751,7 +807,7 @@ export const AWS_HOST_USD_PER_HOUR = 0.2415 + 0.005 + (40 * 0.0952) / 730;
 export interface VmStats {
   provider: "vm";
   at: string;
-  scaler: { spareSlots: number; minHostLifetimeSeconds: number; maxAwsHosts: number; freeSlots: number; demand: number; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
+  scaler: { spareSlots: number; minHostLifetimeSeconds: number; maxAwsHosts: number; freeSlots: number; demand: number; plan: Plan | null; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
   hosts: {
     name: string;
     kind: "hub" | "aws";
@@ -808,6 +864,7 @@ export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
       maxAwsHosts: ctl.vm.aws?.maxHosts ?? 0,
       freeSlots: live.filter((h) => h.status === "active" && !ctl.underPressure(h)).reduce((a, h) => a + Math.max(0, ctl.slots(h) - ctl.units(h, used.get(h.name) ?? 0)), 0),
       demand: await ctl.demand().catch(() => 0),
+      plan: await ctl.plan().catch(() => null),
       memoryPerSandbox: ctl.memBytes,
       cpuPerSandbox: ctl.cpuCores,
       lastPassAt: last[0]?.at ? new Date(last[0].at).toISOString() : null,

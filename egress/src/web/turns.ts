@@ -25,7 +25,7 @@ const TEXT_BATCH_MS = 250;
 const MAX_TOOL_OUTPUT = 20_000;
 /** claw and jarvis-bash run in the workdir: relative paths become absolute (bare command names stay PATH lookups). */
 const abs = (p: string) => (p.includes("/") ? resolve(p) : p);
-/** How often a running turn marks its sandbox active. */
+/** How often a running turn keeps its sandbox alive at a provider with its own timeout (E2B). */
 const KEEPALIVE_MS = 60_000;
 export { RESET_NOTE } from "./bash.ts";
 
@@ -165,9 +165,16 @@ export class TurnRunner {
         const reply = (status: number, body: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
         const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1] ?? "";
         const t = token ? this.#byToken.get(sha256hex(token)) : undefined;
-        if (req.method !== "POST" || req.url !== "/sandbox") return reply(404, { error: "not found" });
+        if (req.method !== "POST" || (req.url !== "/sandbox" && req.url !== "/sandbox/used")) return reply(404, { error: "not found" });
         if (!t) return reply(403, { error: "no such turn" });
         req.resume();
+        // a bash command ended: the sandbox was used (its idle time starts now)
+        if (req.url === "/sandbox/used") {
+          return void this.#sandboxes.touch(t.conv).then(
+            () => reply(200, {}),
+            (e) => (logError("sandbox used", e, { turn: t.turnId }), reply(500, {})),
+          );
+        }
         this.#grant(t).then(
           (g) => reply(200, g),
           (e) => (logError("sandbox for bash", e, { turn: t.turnId }), reply(500, { unavailable: "it could not be started" })),
@@ -311,7 +318,8 @@ export class TurnRunner {
       child.stdin!.on("error", () => {});
       const exited = new Promise<number | null>((res) => child.on("close", (code) => res(code)));
       // the agent's bash calls go straight to the sandbox: keep it (and a provider's own timeout) alive meanwhile
-      const keep = setInterval(() => void this.#sandboxes.touch(conv).catch((e) => logError("sandbox touch", e, { turn: turnId })), KEEPALIVE_MS);
+      // a provider's own timeout (E2B) must not end the sandbox mid-turn; its idle time counts only use (bash)
+      const keep = setInterval(() => void this.#sandboxes.keepAlive(conv).catch((e) => logError("sandbox keep-alive", e, { turn: turnId })), KEEPALIVE_MS);
       void exited.finally(() => clearInterval(keep));
       const spawnError = new Promise<Error>((res) => child.on("error", res));
       void spawnError.then(() => clearInterval(keep));
@@ -460,7 +468,6 @@ export class TurnRunner {
     );
     await db.query("update conversations set updated_at = now() where id = $1", [conv]);
     await emit("turn_finished", { turnId, status, error, costUsd, ...(budgetHit && status === "error" ? budgetEventData(budgetHit, error ?? "") : {}) });
-    await this.#sandboxes.touch(conv);
     log("turn", { turn: turnId, conversation: conv, status, ms: Date.now() - startedAt.getTime() });
   }
 

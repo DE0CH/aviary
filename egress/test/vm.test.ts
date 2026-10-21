@@ -352,6 +352,17 @@ test("typing starts an AWS host only when no slot is free; an empty host goes on
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
 });
 
+test("a hub renamed in config (the same overlay address) replaces the old row instead of failing", async () => {
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub");
+  await db.query("update vm_hosts set status = 'gone' where name = 'hub'");
+  await db.query("insert into vm_hosts (name, kind, url, wg_ip, status) values ('old-hub', 'hub', $1, '10.201.0.1', 'active')", [HUB]);
+  const p = new VmProvider({ db, config: config(), sandboxd: sbx, ec2: null, hostTls: null });
+  await p.controller.ensureHub();
+  assert.equal((await hostRow("old-hub")).status, "gone");
+  assert.equal((await hostRow("hub")).status, "active", "the configured hub is live again");
+});
+
 test("hub peers: each AWS host's /32s, and its IPv6 endpoint when it reports one (the gateway can dial it)", () => {
   const h = (name: string, info: any) => ({ name, wg_public_key: `k-${name}`, wg_ip: name === "a" ? "10.201.0.10" : "10.201.0.11", info }) as unknown as HostRow;
   const peers = hubPeers([h("a", { publicIpv6: "2a05:d014::5", wgPort: 51820 }), h("b", null)], new Map([["a", ["10.200.0.10/32"]]]));
@@ -359,6 +370,41 @@ test("hub peers: each AWS host's /32s, and its IPv6 endpoint when it reports one
     { publicKey: "k-a", endpoint: "[2a05:d014::5]:51820", allowedIps: ["10.201.0.10/32", "10.200.0.10/32"] },
     { publicKey: "k-b", allowedIps: ["10.201.0.11/32"] },
   ]);
+});
+
+test("capacity planning: two people typing at once -> one host (pending slots count); a burst -> enough hosts at once", async () => {
+  await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
+  await db.query("update sandboxes set status = 'gone'");
+  await db.query("delete from kv where key like 'sandbox_demand:%'");
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub");
+  const ec2 = new FakeEc2(sbx);
+  const mk = () => new VmProvider({ db, config: config({ spareSlots: 0 }), sandboxd: sbx, ec2, hostTls: { ca: "", cert: "", key: "" } });
+  const [p1, p2] = [mk(), mk()]; // two web replicas
+  await db.query("update vm_hosts set max_sandboxes = 0 where name = 'hub'");
+  await Promise.all([noteSandboxDemand(db, "a@example.org"), noteSandboxDemand(db, "b@example.org")]);
+  await Promise.all([p1.controller.pass(), p2.controller.pass(), p1.controller.launch("race"), p2.controller.launch("race")]);
+  assert.equal(ec2.launched.length, 1, "the second signal fits into the booting host's pending slots");
+  const { rows } = await db.query("select status from vm_hosts where kind = 'aws' and status <> 'gone'");
+  assert.deepEqual(rows.map((r) => r.status), ["booting"]);
+  const plan = await p1.controller.plan();
+  assert.equal(plan.available, 0);
+  assert.equal(plan.pending, plan.perHost);
+  // nothing is placed on a booting host
+  await assert.rejects(p1.controller.place(await newRow()).then((r) => r ?? Promise.reject(new Error("no room"))), /no room/);
+
+  // a burst bigger than one host's slots: enough hosts at once
+  await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
+  const n = plan.perHost + 1;
+  await Promise.all(Array.from({ length: n }, (_, i) => noteSandboxDemand(db, `u${i}@example.org`)));
+  const before = ec2.launched.length;
+  await p1.controller.launch("burst");
+  assert.equal(ec2.launched.length - before, 2, `${n} people typing, ${plan.perHost} slots per host: two hosts`);
+  await p2.controller.launch("burst again");
+  assert.equal(ec2.launched.length - before, 2, "already planned");
+  await db.query("delete from kv where key like 'sandbox_demand:%'");
+  await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
+  await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
 });
 
 test("slots: a sandbox made with a bigger limit takes more of them; a host short of memory takes no new one", async () => {
@@ -389,6 +435,11 @@ test("a host that stops answering loses its sandboxes and is terminated", async 
   const inst = ec2.launched.at(-1)!;
   sbx.down.add(`https://${inst.userData.host.wgAddress}:7443`);
   await db.query("update vm_hosts set last_seen_at = now() - interval '1 minute' where name = $1", [aws]);
+  // the hub just came back (say, a new gateway): the host first gets its peers, it is not judged yet
+  p.controller.hubUpSince = Date.now();
+  await p.controller.pass();
+  assert.equal((await hostRow(aws)).status, "active", "not lost while the hub has only just come back");
+  p.controller.hubUpSince = Date.now() - 60_000;
   await p.controller.pass();
   const { rows } = await db.query<{ status: string; release_reason: string }>("select status, release_reason from sandboxes where id = $1", [s.id]);
   assert.deepEqual(rows[0], { status: "gone", release_reason: "host lost" });

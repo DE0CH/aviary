@@ -33,10 +33,13 @@ export type SandboxGrant =
   | { id: string; url: string; token: string; headers: Record<string, string>; reset: boolean; unavailable?: undefined }
   | { unavailable: string };
 
-/** Asks this replica's turn runner (unix socket JARVIS_SANDBOX_SOCKET) for the conversation's sandbox, made if needed. */
-export function requestSandbox(socketPath: string, turnToken: string, timeoutMs = 240_000): Promise<SandboxGrant> {
+/**
+ * Asks this replica's turn runner (unix socket JARVIS_SANDBOX_SOCKET) for the conversation's sandbox, made if needed;
+ * with path "/sandbox/used", says a command ended (the sandbox's idle time starts again).
+ */
+export function requestSandbox(socketPath: string, turnToken: string, timeoutMs = 240_000, path = "/sandbox"): Promise<SandboxGrant> {
   return new Promise((resolve, reject) => {
-    const req = request({ socketPath, path: "/sandbox", method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-length": "0" }, timeout: timeoutMs }, (res) => {
+    const req = request({ socketPath, path, method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-length": "0" }, timeout: timeoutMs }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {

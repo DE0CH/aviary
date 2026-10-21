@@ -194,7 +194,7 @@ function Sandboxes({ d }: { d: Any }) {
                 <Meter used={x.provider?.memUsed} max={x.provider?.memLimit} fmt={bytes} />
                 <span class="lbl">Age</span>
                 <span>{secs(x.ageS)}</span>
-                <span class="lbl">Idle</span>
+                <span class="lbl" title="since the sandbox was last used (a bash command); typing and turns without bash do not count">Unused for</span>
                 <span class={x.idleS > s.pool.idleMinutes * 60 * 0.8 ? "is-warn-text" : ""}>{secs(x.idleS)}</span>
                 <span class="lbl">Last bash</span>
                 <span>{ago(x.lastExecAt)}</span>
@@ -296,6 +296,11 @@ function Hosts({ d }: { d: Any }) {
             {x.scaler.minHostLifetimeSeconds != null && (
               <span title="an AWS host is terminated once it has no sandbox and is at least this old">
                 Min host lifetime <b>{secs(x.scaler.minHostLifetimeSeconds)}</b>
+              </span>
+            )}
+            {x.scaler.plan && (
+              <span title="available: free slots on ready hosts (where sandboxes go); pending: slots on booting hosts; a host is started when need exceeds planned = available + pending">
+                Slots available <b>{x.scaler.plan.available}</b> · pending <b>{x.scaler.plan.pending}</b> · need <b>{x.scaler.plan.need}</b>
               </span>
             )}
             {x.scaler.demand != null && (

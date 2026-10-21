@@ -261,8 +261,8 @@ export class WebApp {
 
   /**
    * The staff member is typing (debounced by the UI). No sandbox is made for it (that waits for the first bash
-   * command): an open conversation's live sandbox is kept, and without one this is a hint to the vm scaler, which may
-   * start an AWS host early when no host has a free slot.
+   * command) and a live one's idle time is not reset (only use counts); in a conversation without a sandbox (or a new
+   * chat) it is a hint to the vm scaler, which starts an AWS host at once when no host has a free slot.
    */
   async #typing(req: IncomingMessage, res: ServerResponse, c: Ctx) {
     const body = await readJson(req).catch(() => ({}) as Record<string, unknown>);
@@ -270,8 +270,7 @@ export class WebApp {
     const { rows } = conv
       ? await c.deps.db.query("select 1 from sandboxes where conversation_id = $1 and status in ('starting','ready')", [conv.id])
       : { rows: [] };
-    if (conv && rows.length) await c.sandboxes.touch(conv.id);
-    else if (!this.runner.draining) await noteSandboxDemand(c.deps.db, c.caller.email);
+    if (!rows.length && !this.runner.draining) await noteSandboxDemand(c.deps.db, c.caller.email);
     res.writeHead(204).end();
   }
 

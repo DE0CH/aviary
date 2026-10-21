@@ -48,7 +48,7 @@ test("vm stats map onto hosts and sandboxes", () => {
   const s = normalizeStats({
     provider: "vm",
     at: now,
-    scaler: { spareSlots: 1, minHostLifetimeSeconds: 900, maxAwsHosts: 3, freeSlots: 2, demand: 0, memoryPerSandbox: 1024 ** 3, cpuPerSandbox: 1, lastPassAt: now },
+    scaler: { spareSlots: 1, minHostLifetimeSeconds: 900, maxAwsHosts: 3, freeSlots: 2, demand: 0, plan: null, memoryPerSandbox: 1024 ** 3, cpuPerSandbox: 1, lastPassAt: now },
     hosts: [
       {
         name: "hub", kind: "hub", status: "active", instanceId: null, cpus: 8, memTotal: 32e9, memAvailable: 20e9, loadAvg: [0.5, 0.4, 0.3], slots: 12, used: 1, underPressure: false, gateway: false,

@@ -34,6 +34,8 @@ try {
   const out = await runBash(input, { workdir: process.cwd(), sandboxUrl: grant.url, sandboxToken: grant.token, sandboxId: grant.id, statePath, sandboxHeaders: grant.headers });
   // a new sandbox replaced the conversation's earlier one: the model hears it once, with this command's output
   if (grant.reset) out.stdout = `${RESET_NOTE}\n${out.stdout}`;
+  // the command ended: the sandbox was used now (its idle release counts from here)
+  await requestSandbox(socket, process.env.JARVIS_TURN_TOKEN || "", 10_000, "/sandbox/used").catch(() => {});
   process.stdout.write(JSON.stringify(out) + "\n");
 } catch (e) {
   process.stderr.write(`The sandbox did not answer (${e instanceof Error ? e.message : e}). It will be restarted for the next message.\n`);

@@ -447,6 +447,20 @@ test("janitor: orphan pods, turns of dead replicas", async () => {
   assert.equal((await pg.db.query("select status from turns where id = $1", [turnId])).rows[0].status, "error");
 });
 
+test("idle time counts only use: typing and a turn without bash leave it, a bash command resets it", async () => {
+  const conv = await newConversation();
+  await runTurn(conv, "BASH:echo hi");
+  const old = "2026-01-01T00:00:00Z";
+  await pg.db.query("update sandboxes set last_active_at = $2 where conversation_id = $1 and status = 'ready'", [conv, old]);
+  const last = async () => new Date((await pg.db.query("select last_active_at from sandboxes where conversation_id = $1 and status = 'ready'", [conv])).rows[0].last_active_at).toISOString();
+  assert.equal((await call(A, "POST", "/api/typing", { conversationId: conv })).status, 204);
+  assert.equal(await last(), new Date(old).toISOString(), "typing is not use");
+  await runTurn(conv, "just talk");
+  assert.equal(await last(), new Date(old).toISOString(), "a turn without bash is not use");
+  await runTurn(conv, "BASH:echo again");
+  assert.ok(Date.now() - Date.parse(await last()) < 60_000, "a bash command is use");
+});
+
 test("janitor: sandboxes of deleted and never-used conversations are released; DELETE releases at once", async () => {
   // a leftover sandbox in a conversation that never had a turn (an older replica warmed on typing)
   const unused = await newConversation();

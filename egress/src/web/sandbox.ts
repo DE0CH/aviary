@@ -92,13 +92,22 @@ export class SandboxManager {
     await this.provider.keepAlive(row, this.#keepUntil(row)).catch((e) => logError("sandbox keep-alive", e, { sandbox: row.id }));
   }
 
-  /** The staff member or the agent is active in the conversation: the sandbox stays (typing, each turn, during turns). */
+  /**
+   * The sandbox was used just now (a bash command started or ended; its files went in or out): its idle time starts
+   * again. Nothing else counts as use: not typing, not a turn without bash (docs/CHAT.md, "Sandbox lifecycle").
+   */
   async touch(conversationId: string): Promise<void> {
     const { rows } = await this.#deps.db.query<SandboxRow>(
       "update sandboxes set last_active_at = now() where conversation_id = $1 and status in ('starting','ready') returning *",
       [conversationId],
     );
     for (const r of rows) if (r.status === "ready") await this.#keepAlive(r);
+  }
+
+  /** A turn is going: a provider with its own timeout (E2B) keeps the sandbox; its idle time is not reset. */
+  async keepAlive(conversationId: string): Promise<void> {
+    const { rows } = await this.#deps.db.query<SandboxRow>("select * from sandboxes where conversation_id = $1 and status = 'ready'", [conversationId]);
+    for (const r of rows) await this.#keepAlive(r);
   }
 
   /** The conversation's live sandbox, made if there is none. Concurrent callers in this process share one attempt. */
