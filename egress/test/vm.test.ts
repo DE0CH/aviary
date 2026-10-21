@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { parseConfig } from "../src/common/config.ts";
 import type { Db } from "../src/common/db.ts";
 import { freeAddress, parseBytes, VmController, VmProvider, type HostRow } from "../src/web/sandbox-vm.ts";
-import type { SandboxRow } from "../src/web/sandbox.ts";
+import { DEMAND_WINDOW_S, noteSandboxDemand, type SandboxRow } from "../src/web/sandbox.ts";
 import { parseInstances, SandboxdError, wgKeyPair, type Ec2Api, type Ec2Instance, type HostInfo, type SandboxdApi } from "../src/web/vm-clients.ts";
 import { sandboxRules, hostRules } from "../sandboxd/src/net.ts";
 import { bundleSpec } from "../sandboxd/src/runsc.ts";
@@ -26,7 +26,7 @@ function config(extra: Record<string, unknown> = {}) {
     sandbox: {
       provider: "vm", image: `ghcr.io/x/sandbox@sha256:${"a".repeat(64)}`, memory: "2Gi", cpu: "1",
       vm: {
-        hub: { name: "hub", url: HUB, endpoint: "203.0.113.1:51820" }, cpuFeatures: "fpu,sse2", spareSlots: 1,
+        hub: { name: "hub", url: HUB, endpoint: "203.0.113.1:51820" }, cpuFeatures: "fpu,sse2", spareSlots: 1, minHostLifetimeSeconds: 900,
         aws: { region: "eu-central-1", launchTemplate: "lt", maxHosts: 3, emptyMinutes: 0, instance: "test" },
         ...extra,
       },
@@ -246,6 +246,10 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   await ctl.pass();
   assert.equal(await hostOf(b.id), "hub");
   assert.ok(sbx.hosts.get(HUB)!.specs.has(b.pod));
+  // empty now; terminated once past its minimum lifetime (15 min from launch)
+  await ctl.pass();
+  assert.equal((await hostRow(awsName)).status, "draining");
+  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [awsName]);
   await ctl.pass();
   assert.equal((await hostRow(awsName)).status, "gone");
   assert.deepEqual(ec2.terminated, [ec2.launched[0]!.id]);
@@ -270,6 +274,67 @@ test("never more than maxHosts AWS hosts; a full pool is reported, not waited ou
   await assert.rejects(p.create(await newRow(), "t"), /full/);
   assert.equal(ec2.launched.length, 1);
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
+});
+
+test("typing starts an AWS host only when no slot is free; an empty host goes once past its minimum lifetime", async () => {
+  await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
+  await db.query("update sandboxes set status = 'gone'");
+  await db.query("delete from kv where key like 'sandbox_demand:%'");
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub"); // 3 slots
+  const ec2 = new FakeEc2(sbx);
+  const p = new VmProvider({ db, config: config({ spareSlots: 0, minHostLifetimeSeconds: 900 }), sandboxd: sbx, ec2, hostTls: { ca: "", cert: "", key: "" } });
+  const ctl = p.controller;
+  await ctl.pass();
+  // no warm host: nobody typing, nothing launched
+  assert.equal(ec2.launched.length, 0);
+  // someone types while the hub has room: still nothing
+  await noteSandboxDemand(db, "a@example.org");
+  await ctl.pass();
+  assert.equal(ec2.launched.length, 0);
+  // the hub is full: typing starts an AWS host at once
+  for (let i = 0; i < 3; i++) await p.create(await newRow(), "t");
+  await ctl.pass();
+  assert.equal(ec2.launched.length, 1);
+  await ctl.pass(); // active
+  const aws = ec2.launched[0]!.userData.host.name as string;
+  assert.equal((await hostRow(aws)).status, "active");
+  // empty but younger than its minimum lifetime: kept, even with nobody typing any more
+  await db.query("delete from kv where key like 'sandbox_demand:%'");
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "active");
+  // a sandbox on it keeps it past the minimum lifetime
+  await db.query("update vm_hosts set max_sandboxes = 3 where name = 'hub'");
+  const s = await newRow();
+  await p.create(s, "t");
+  assert.equal(await hostOf(s.id), aws);
+  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [aws]);
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "active");
+  // no sandbox and past 15 minutes: terminated
+  await p.destroy(s.pod);
+  await db.query("update sandboxes set status = 'gone' where id = $1", [s.id]);
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "gone");
+  assert.deepEqual(ec2.terminated, [ec2.launched[0]!.id]);
+  // a typing signal counts for DEMAND_WINDOW_S only
+  await noteSandboxDemand(db, "b@example.org");
+  await db.query("update kv set value = $2 where key = $1", ["sandbox_demand:b@example.org", JSON.stringify({ at: new Date(Date.now() - (DEMAND_WINDOW_S + 5) * 1000).toISOString() })]);
+  assert.equal(await ctl.demand(), 0);
+  await ctl.pass();
+  assert.equal(ec2.launched.length, 1);
+  await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
+});
+
+test("slots: a sandbox made with a bigger limit takes more of them; a host short of memory takes no new one", async () => {
+  const ctl = new VmProvider({ db, config: config({ spareSlots: 0 }), sandboxd: new FakeSandboxd(), ec2: null as any, hostTls: null as any }).controller;
+  const base = { mem_total: 8 * GiB, mem_reserve: GiB, cpus: 4, max_sandboxes: null } as unknown as HostRow;
+  assert.equal(ctl.slots(base), 3); // (8 - 1) GiB / 2 GiB
+  const old = { ...base, info: { sandboxes: [{ name: "sbx-old", memory: 4 * GiB }, { name: "sbx-new", memory: 2 * GiB }] } } as unknown as HostRow;
+  assert.equal(ctl.units(old, 2), 3, "a 4 GiB sandbox from before a smaller sandbox.memory counts as two");
+  assert.equal(ctl.underPressure({ ...base, info: { memAvailable: 100 * 1024 ** 2 } } as unknown as HostRow), true);
+  assert.equal(ctl.underPressure({ ...base, info: { memAvailable: 2 * GiB } } as unknown as HostRow), false);
+  assert.equal(VmController.pick([{ host: { ...base, name: "hub", kind: "hub" } as HostRow, used: 2, free: 1 }], undefined, 2), null, "a 2-slot sandbox needs 2 free");
 });
 
 test("a host that stops answering loses its sandboxes and is terminated", async () => {

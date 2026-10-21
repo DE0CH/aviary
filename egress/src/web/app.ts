@@ -16,7 +16,7 @@ import { appendEvent, publicEvent, type EventRow } from "./events.ts";
 import { contentType, liveFiles, saveUpload } from "./files.ts";
 import { Monitor } from "./monitor.ts";
 import { bad, HttpError, notFound, readJson, Router, sendHtml, sendJson, uuidParam } from "./http.ts";
-import type { SandboxManager } from "./sandbox.ts";
+import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
 import type { TurnRunner } from "./turns.ts";
 
 export interface Caller {
@@ -48,7 +48,6 @@ export class WebApp {
   readonly #router = new Router<Ctx>();
   readonly #seen = new Map<string, number>();
   readonly #streams = new Set<ServerResponse>();
-  readonly #warming = new Set<string>();
   readonly #monitor: Monitor;
 
   constructor(deps: WebDeps, sandboxes: SandboxManager, runner: TurnRunner) {
@@ -63,7 +62,7 @@ export class WebApp {
     r.add("GET", "/api/conversations/:id", (q, s, p, c) => this.#get(s, p, c));
     r.add("PATCH", "/api/conversations/:id", (q, s, p, c) => this.#rename(q, s, p, c));
     r.add("DELETE", "/api/conversations/:id", (q, s, p, c) => this.#delete(s, p, c));
-    r.add("POST", "/api/conversations/:id/warm", (q, s, p, c) => this.#warm(s, p, c));
+    r.add("POST", "/api/typing", (q, s, p, c) => this.#typing(q, s, c));
     r.add("POST", "/api/conversations/:id/messages", (q, s, p, c) => this.#message(q, s, p, c));
     r.add("GET", "/api/conversations/:id/stream", (q, s, p, c) => this.#stream(q, s, p, c));
     r.add("POST", "/api/turns/:id/cancel", (q, s, p, c) => this.#cancel(s, p, c));
@@ -236,15 +235,19 @@ export class WebApp {
     res.writeHead(204).end();
   }
 
-  async #warm(res: ServerResponse, p: Record<string, string>, c: Ctx) {
-    const conv = await this.#own(c, p.id);
-    if (!this.#warming.has(conv.id) && !this.runner.draining) {
-      this.#warming.add(conv.id);
-      c.sandboxes
-        .ensure(conv.id)
-        .catch((e) => logError("warm", e, { conversation: conv.id }))
-        .finally(() => this.#warming.delete(conv.id));
-    }
+  /**
+   * The staff member is typing (debounced by the UI). No sandbox is made for it (that waits for the first bash
+   * command): an open conversation's live sandbox is kept, and without one this is a hint to the vm scaler, which may
+   * start an AWS host early when no host has a free slot.
+   */
+  async #typing(req: IncomingMessage, res: ServerResponse, c: Ctx) {
+    const body = await readJson(req).catch(() => ({}) as Record<string, unknown>);
+    const conv = typeof body.conversationId === "string" ? await this.#own(c, body.conversationId).catch(() => null) : null;
+    const { rows } = conv
+      ? await c.deps.db.query("select 1 from sandboxes where conversation_id = $1 and status in ('starting','ready')", [conv.id])
+      : { rows: [] };
+    if (conv && rows.length) await c.sandboxes.touch(conv.id);
+    else if (!this.runner.draining) await noteSandboxDemand(c.deps.db, c.caller.email);
     res.writeHead(204).end();
   }
 

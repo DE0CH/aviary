@@ -177,6 +177,12 @@ function Sandboxes({ d }: { d: Any }) {
               </div>
               <div class="sbx-meta">
                 <span>{x.owner}</span>
+                <a class="mono" href={`/c/${x.conversationId}`} title={`conversation ${x.conversationId} (opens for its owner only)`}>
+                  conv {short(x.conversationId, 8)}
+                </a>
+                <span class={x.conversationGone || !x.turns ? "is-warn-text" : ""}>
+                  {x.conversationGone ? "conversation deleted" : `${x.turns} ${x.turns === 1 ? "turn" : "turns"}`}
+                </span>
                 <span class="mono" title={x.pod}>{x.pod}</span>
                 <span>{x.provider?.host ?? x.host ?? "–"}</span>
                 {x.provider && <span>{x.provider.state}</span>}

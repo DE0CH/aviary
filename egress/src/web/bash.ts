@@ -2,6 +2,7 @@
 // conversation's sandbox, never here: push what changed in the workdir since the last call, exec, pull what the
 // command changed back into the workdir. The sync state (what the sandbox already has, the /changes cursor) is a JSON
 // file outside the workdir, so the agent's file tools can't touch it.
+import { request } from "node:http";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { tarPack } from "../common/tar.ts";
@@ -21,6 +22,37 @@ export interface BashOutput {
   exit_code: number | null;
   interrupted: boolean;
   background_task_id?: string;
+}
+
+/** Told to the model (with the output of its first command there) when a new sandbox replaced the conversation's earlier one. */
+export const RESET_NOTE =
+  "[System note: the sandbox was reset: files in the workspace are restored; installed packages and background processes from before are gone.]";
+
+/** The turn runner's answer to jarvis-bash's `POST /sandbox` (turns.ts): the sandbox, or why there is none. */
+export type SandboxGrant =
+  | { id: string; url: string; token: string; headers: Record<string, string>; reset: boolean; unavailable?: undefined }
+  | { unavailable: string };
+
+/** Asks this replica's turn runner (unix socket JARVIS_SANDBOX_SOCKET) for the conversation's sandbox, made if needed. */
+export function requestSandbox(socketPath: string, turnToken: string, timeoutMs = 240_000): Promise<SandboxGrant> {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path: "/sandbox", method: "POST", headers: { authorization: `Bearer ${turnToken}`, "content-length": "0" }, timeout: timeoutMs }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (res.statusCode === 200 || body?.unavailable) resolve(body);
+          else reject(new Error(`sandbox request: HTTP ${res.statusCode}`));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("sandbox request timed out")));
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 export interface SyncState {

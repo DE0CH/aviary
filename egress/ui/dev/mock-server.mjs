@@ -163,6 +163,7 @@ createServer(async (req, res) => {
   if (p.startsWith("/api/")) {
     if (process.env.MOCK_DENY) return json(res, 403, { error: "not on the list" });
     if (p === "/api/me") return json(res, 200, me);
+    if (p === "/api/typing") return json(res, 204);
     if (p === "/api/conversations" && req.method === "GET")
       return json(
         res,
@@ -190,7 +191,6 @@ createServer(async (req, res) => {
         convs.delete(c.id);
         return json(res, 204);
       }
-      if (rest === "/warm") return json(res, 204);
       if (rest === "/messages" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)).toString());
         if (c.turns.some((t) => ["queued", "running", "waiting"].includes(t.status))) return json(res, 409, { error: "busy" });

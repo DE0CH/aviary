@@ -1,10 +1,10 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
 // claw's bash tool (CLAW_BASH_COMMAND): reads the tool input JSON on stdin, runs it in the conversation's sandbox
 // and prints {stdout, stderr, exit_code, interrupted, background_task_id?} as JSON (src/web/bash.ts).
-// The turn runner sets JARVIS_SANDBOX_URL, JARVIS_SANDBOX_TOKEN, JARVIS_SANDBOX_ID, JARVIS_SYNC_STATE and, for a
-// provider that needs them (E2B), JARVIS_SANDBOX_HEADERS (a JSON object of headers for every agent call); the
+// The turn runner sets JARVIS_SANDBOX_SOCKET (its unix socket), JARVIS_TURN_TOKEN and JARVIS_SYNC_STATE; the
+// sandbox is asked for there on every call and made at the first one (docs/CHAT.md, "Sandbox lifecycle"). The
 // workdir is the current directory.
-import { runBash } from "../web/bash.ts";
+import { requestSandbox, RESET_NOTE, runBash } from "../web/bash.ts";
 
 const chunks = [];
 for await (const c of process.stdin) chunks.push(c);
@@ -15,24 +15,25 @@ try {
   process.stderr.write("bash: the input is not JSON\n");
   process.exit(2);
 }
-const need = (k) => {
-  const v = process.env[k];
-  if (!v) {
-    // no sandbox for this turn: say why in plain words (the model passes this on; no internal names)
-    process.stderr.write(`The sandbox is not available for this message (${process.env.JARVIS_SANDBOX_UNAVAILABLE || "it could not be started"}). Try again in a minute.\n`);
-    process.exit(2);
-  }
-  return v;
+const unavailable = (why) => {
+  // no sandbox for this command: say why in plain words (the model passes this on; no internal names)
+  process.stderr.write(`The sandbox is not available for this message (${why || "it could not be started"}). Try again in a minute.\n`);
+  process.exit(2);
 };
+const socket = process.env.JARVIS_SANDBOX_SOCKET;
+const statePath = process.env.JARVIS_SYNC_STATE;
+if (!socket || !statePath) unavailable("");
+let grant;
 try {
-  const out = await runBash(input, {
-    workdir: process.cwd(),
-    sandboxUrl: need("JARVIS_SANDBOX_URL"),
-    sandboxToken: need("JARVIS_SANDBOX_TOKEN"),
-    sandboxId: need("JARVIS_SANDBOX_ID"),
-    statePath: need("JARVIS_SYNC_STATE"),
-    sandboxHeaders: JSON.parse(process.env.JARVIS_SANDBOX_HEADERS || "{}"),
-  });
+  grant = await requestSandbox(socket, process.env.JARVIS_TURN_TOKEN || "");
+} catch {
+  unavailable("");
+}
+if (grant.unavailable) unavailable(grant.unavailable);
+try {
+  const out = await runBash(input, { workdir: process.cwd(), sandboxUrl: grant.url, sandboxToken: grant.token, sandboxId: grant.id, statePath, sandboxHeaders: grant.headers });
+  // a new sandbox replaced the conversation's earlier one: the model hears it once, with this command's output
+  if (grant.reset) out.stdout = `${RESET_NOTE}\n${out.stdout}`;
   process.stdout.write(JSON.stringify(out) + "\n");
 } catch (e) {
   process.stderr.write(`The sandbox did not answer (${e instanceof Error ? e.message : e}). It will be restarted for the next message.\n`);

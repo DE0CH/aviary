@@ -56,6 +56,9 @@ async function fakeUpstream(): Promise<typeof upstream> {
         return void res.end(JSON.stringify({ content: [{ type: "text", text: "ok" }] }));
       }
       state.titleCalls++;
+      // titles never think: a thinking-by-default model spent the whole budget on thinking and gave no title
+      const titleBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.deepEqual(titleBody.thinking, { type: "disabled" });
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify({ content: [{ type: "text", text: "「A test title」" }] }));
     }
@@ -219,19 +222,32 @@ test("Access and the allowlist", async () => {
   assert.equal((await call(A, "GET", "/api/admin/usage")).status, 200);
 });
 
-test("a full turn: upload, warm, bash in the sandbox, streaming, files back, title, session saved, resume", async () => {
+test("a full turn: upload, typing, a lazy sandbox at the first bash, streaming, files back, title, session saved, resume", async () => {
   const conv = await newConversation();
   const up = await call(A, "POST", `/api/conversations/${conv}/files?name=${encodeURIComponent("報告 data.csv")}`, "a,b\n1,2\n");
   assert.equal(up.status, 201, up.text);
   assert.equal(up.json.path, "uploads/報告 data.csv");
 
-  assert.equal((await call(A, "POST", `/api/conversations/${conv}/warm`)).status, 204);
-  for (let i = 0; i < 100; i++) {
-    const { rows } = await pg.db.query("select status from sandboxes where conversation_id = $1", [conv]);
-    if (rows[0]?.status === "ready") break;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.equal(k8s.created.length >= 1, true);
+  // typing makes no sandbox: it only tells the scaler someone may need one soon
+  const made = k8s.created.length;
+  assert.equal((await call(A, "POST", "/api/typing", { conversationId: conv })).status, 204);
+  assert.equal((await pg.db.query("select 1 from sandboxes where conversation_id = $1", [conv])).rows.length, 0);
+  assert.equal(k8s.created.length, made);
+  assert.equal((await pg.db.query("select 1 from kv where key = $1", [`sandbox_demand:${A}`])).rows.length, 1);
+
+  // a turn without bash never gets a sandbox
+  const other = await newConversation();
+  const plain = await runTurn(other, "just talk");
+  assert.equal(plain.events.at(-1).data.status, "done");
+  assert.ok(!plain.events.some((e) => e.type === "sandbox"));
+  assert.equal((await pg.db.query("select 1 from sandboxes where conversation_id = $1", [other])).rows.length, 0);
+  assert.equal(k8s.created.length, made);
+  const titles = upstream.titleCalls;
+
+  const { turnId, events } = await runTurn(conv, "please BASH:cat 'uploads/報告 data.csv' | wc -l > lines.txt; echo made", ["uploads/報告 data.csv"]);
+  // the first bash command made the sandbox
+  assert.deepEqual(events.filter((e) => e.type === "sandbox").map((e) => e.data.status), ["starting", "ready"]);
+  assert.equal(k8s.created.length, made + 1);
   const pod = k8s.created.at(-1);
   assert.equal(pod.spec.runtimeClassName, "gvisor");
   assert.equal(pod.spec.automountServiceAccountToken, false);
@@ -240,8 +256,6 @@ test("a full turn: upload, warm, bash in the sandbox, streaming, files back, tit
   assert.match(env.HTTPS_PROXY, /^http:\/\/sbx:[^@]+@egress\.jarvis\.svc\.cluster\.local:3128$/);
   assert.match(env.PIP_INDEX_URL, /\/mirror\/pypi\/simple$/);
   assert.equal(Object.keys(env).some((k) => /OPENROUTER|S3_|DATABASE/.test(k)), false, "no secrets in a sandbox");
-
-  const { turnId, events } = await runTurn(conv, "please BASH:cat 'uploads/報告 data.csv' | wc -l > lines.txt; echo made", ["uploads/報告 data.csv"]);
   const types = events.map((e) => e.type);
   assert.deepEqual(types.filter((t) => ["turn_started", "tool_use", "tool_result", "result", "turn_finished"].includes(t)), ["turn_started", "tool_use", "tool_result", "result", "turn_finished"]);
   assert.equal(events.find((e) => e.type === "result").data.estimated_cost, 0.001);
@@ -293,7 +307,7 @@ test("a full turn: upload, warm, bash in the sandbox, streaming, files back, tit
   assert.ok(!dbg2.prompt.includes(RESET_NOTE));
   const files2 = await call(A, "GET", `/api/conversations/${conv}/files`);
   assert.ok(files2.json.some((f: any) => f.path === "notes/a.md"));
-  assert.equal(upstream.titleCalls, 1, "the title is made once");
+  assert.equal(upstream.titleCalls, titles + 1, "the title is made once");
 
   // catch-up: a stream that starts after the first event replays the rest
   const first = second.events[0].id;
@@ -306,11 +320,12 @@ test("conversations are private to their owner", async () => {
   assert.equal((await call(B, "GET", `/api/conversations/${conv}`)).status, 404);
   assert.equal((await call(B, "GET", `/api/conversations/${conv}/stream`)).status, 404);
   assert.equal((await call(B, "POST", `/api/conversations/${conv}/messages`, { text: "hi" })).status, 404);
-  assert.equal((await call(B, "POST", `/api/conversations/${conv}/warm`)).status, 404);
+  // another person's conversation id in a typing signal is ignored (no sandbox kept, nothing revealed)
+  assert.equal((await call(B, "POST", "/api/typing", { conversationId: conv })).status, 204);
   assert.equal((await call(B, "GET", `/api/conversations/${conv}/files`)).status, 404);
   assert.equal((await call(B, "PATCH", `/api/conversations/${conv}`, { title: "x" })).status, 404);
   assert.equal((await call(B, "DELETE", `/api/conversations/${conv}`)).status, 404);
-  // a conversation with no message yet (made on the first keystroke, to warm it) is not listed
+  // a conversation with no message yet is not listed
   assert.ok(!(await call(A, "GET", "/api/conversations")).json.some((c: any) => c.id === conv));
   await pg.db.query("insert into messages (conversation_id, role, content) values ($1, 'user', 'hi')", [conv]);
   assert.ok(!(await call(B, "GET", "/api/conversations")).json.some((c: any) => c.id === conv));
@@ -376,10 +391,11 @@ test("sandbox release: idle release saves background output, the next turn is to
   assert.ok(files.json.some((f: any) => f.path === "bg.txt"), "the final save kept what the background process wrote");
 
   const next = await runTurn(conv, "BASH:cat bg.txt");
-  const dbg = next.events.find((e) => e.type === "debug").data;
-  assert.ok(dbg.prompt.startsWith(RESET_NOTE));
   assert.ok(next.events.some((e) => e.type === "sandbox" && e.data.status === "reset"));
-  assert.equal(JSON.parse(next.events.find((e) => e.type === "tool_result").data.output).stdout.trim(), "late", "files are restored into the new sandbox");
+  // the model hears of the reset with the first command's output in the new sandbox
+  const out = JSON.parse(next.events.find((e) => e.type === "tool_result").data.output).stdout;
+  assert.ok(out.startsWith(RESET_NOTE), out);
+  assert.equal(out.slice(RESET_NOTE.length).trim(), "late", "files are restored into the new sandbox");
 
   // pool of 2: two other conversations warm; the least recently used idle sandbox makes room
   const c2 = await newConversation();
@@ -400,6 +416,34 @@ test("janitor: orphan pods, turns of dead replicas", async () => {
   await janitorPass(deps, web.app.sandboxes);
   assert.equal(k8s.ghosts.has("sbx-orphan"), false);
   assert.equal((await pg.db.query("select status from turns where id = $1", [turnId])).rows[0].status, "error");
+});
+
+test("janitor: sandboxes of deleted and never-used conversations are released; DELETE releases at once", async () => {
+  // a leftover sandbox in a conversation that never had a turn (an older replica warmed on typing)
+  const unused = await newConversation();
+  await web.app.sandboxes.ensure(unused);
+  await janitorPass(deps, web.app.sandboxes);
+  assert.equal((await pg.db.query("select status from sandboxes where conversation_id = $1", [unused])).rows[0].status, "ready", "young: kept");
+  await pg.db.query("update sandboxes set created_at = now() - interval '6 minutes' where conversation_id = $1", [unused]);
+  await janitorPass(deps, web.app.sandboxes);
+  assert.deepEqual((await pg.db.query("select status, release_reason from sandboxes where conversation_id = $1", [unused])).rows[0], { status: "gone", release_reason: "unused" });
+
+  // a conversation deleted while its replica died before releasing
+  const deleted = await newConversation();
+  await runTurn(deleted, "BASH:echo hi");
+  await pg.db.query("update conversations set deleted_at = now() where id = $1", [deleted]);
+  await janitorPass(deps, web.app.sandboxes);
+  assert.deepEqual((await pg.db.query("select status, release_reason from sandboxes where conversation_id = $1", [deleted])).rows[0], { status: "gone", release_reason: "deleted" });
+
+  // DELETE releases its sandbox right away
+  const del = await newConversation();
+  await runTurn(del, "BASH:echo hi");
+  assert.equal((await call(A, "DELETE", `/api/conversations/${del}`)).status, 204);
+  for (let i = 0; i < 50; i++) {
+    if ((await pg.db.query("select 1 from sandboxes where conversation_id = $1 and status <> 'gone'", [del])).rows.length === 0) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.equal((await pg.db.query("select 1 from sandboxes where conversation_id = $1 and status <> 'gone'", [del])).rows.length, 0);
 });
 
 test("drain: not ready, no new turns, running turns finish or are cancelled", async () => {

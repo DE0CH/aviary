@@ -5,12 +5,16 @@
 // over HTTPS with mutual TLS on the WireGuard overlay.
 //
 // - Placement: the hub while it has room, then the fullest AWS host with room; none: the scaler starts an AWS host
-//   (at most aws.maxHosts in steady state; one more only while a `retiring` host is being replaced).
+//   (at most aws.maxHosts in steady state; one more only while a `retiring` host is being replaced). An AWS host is
+//   also started as soon as someone types in a conversation without a sandbox while no host has a free slot (kv
+//   `sandbox_demand:<email>`, from POST /api/typing), so it is up by the time a bash command asks for a sandbox.
 // - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
 // - Drain-back: when an AWS host's sandboxes fit elsewhere (spare slots kept), it is marked `draining`, its sandboxes
-//   move one at a time while their conversation has no turn going (never mid-bash), then the instance is terminated.
-//   A move across clouds also needs the sandbox to be idle (CPU) and is aborted, sandbox untouched, if pre-copy
-//   wouldn't converge within migration.maxDowntimeMs (the gVisor fork's --migrate-max-downtime).
+//   move one at a time while their conversation has no turn going (never mid-bash). A move across clouds also needs
+//   the sandbox to be idle (CPU) and is aborted, sandbox untouched, if pre-copy wouldn't converge within
+//   migration.maxDowntimeMs (the gVisor fork's --migrate-max-downtime).
+// - An AWS host is terminated as soon as no sandbox is on it and it is older than vm.minHostLifetimeSeconds (default
+//   15 min, from launch); nothing else keeps or ends it.
 // - A host that stops answering for 30 s (the hub: 120 s) loses its sandboxes: their rows go `gone` ("host lost"),
 //   the next turn makes a new sandbox and gets the reset note. AWS hosts are then terminated.
 import { randomBytes } from "node:crypto";
@@ -21,7 +25,7 @@ import { log, logError } from "../common/log.ts";
 import { AgentClient } from "./agent.ts";
 import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
 import { sandboxEnv } from "./sandbox-k8s.ts";
-import { PoolFullError, type SandboxRow } from "./sandbox.ts";
+import { DEMAND_WINDOW_S, PoolFullError, type SandboxRow } from "./sandbox.ts";
 import { SandboxdError, wgKeyPair, type Ec2Api, type HostInfo, type HostSandbox, type SandboxdApi } from "./vm-clients.ts";
 
 const PLACE_LOCK = 4_242_010;
@@ -166,17 +170,44 @@ export class VmController {
     return rows;
   }
 
-  /** Placeable hosts (active, answering) with their use; `extra` counts sandboxes not yet in the table. */
+  /**
+   * Slots a host's sandboxes take: one each, more for one made with a bigger memory limit than the configured one
+   * (sandboxes keep the size they started with until released, so a smaller `sandbox.memory` never overcommits).
+   */
+  units(h: HostRow, rowsOnHost: number): number {
+    const extra = (h.info?.sandboxes ?? []).reduce((a, s) => a + Math.max(0, Math.ceil(s.memory / this.memBytes) - 1), 0);
+    return rowsOnHost + extra;
+  }
+
+  /** The host is short of memory: nothing new goes there (MemAvailable below sandbox.vm.minAvailableMemory). */
+  underPressure(h: HostRow): boolean {
+    const avail = h.info?.memAvailable;
+    return typeof avail === "number" && avail < this.vm.minAvailableMemory;
+  }
+
+  /** Placeable hosts (active, answering) with their use. */
   async #slots(c: Db | pg.PoolClient): Promise<Slot[]> {
     const hosts = (await this.hosts(c)).filter((h) => h.status === "active" && this.#fresh(h));
     const { rows } = await c.query<{ host: string; n: string }>("select host, count(*) as n from sandboxes where status <> 'gone' and host is not null group by host");
     const used = new Map(rows.map((r) => [r.host, Number(r.n)]));
-    return hosts.map((h) => ({ host: h, used: used.get(h.name) ?? 0, free: Math.max(0, this.slots(h) - (used.get(h.name) ?? 0)) }));
+    return hosts.map((h) => {
+      const u = this.units(h, used.get(h.name) ?? 0);
+      return { host: h, used: u, free: this.underPressure(h) ? 0 : Math.max(0, this.slots(h) - u) };
+    });
   }
 
-  /** The hub while it has room, else the fullest AWS host with room. */
-  static pick(slots: Slot[], exclude?: string): Slot | null {
-    const c = slots.filter((s) => s.free > 0 && s.host.name !== exclude);
+  /** People who may need a new sandbox soon (typing, a turn started without one) within DEMAND_WINDOW_S. */
+  async demand(): Promise<number> {
+    const { rows } = await this.#d.db.query<{ n: string }>(
+      "select count(*) as n from kv where key like 'sandbox_demand:%' and (value->>'at')::timestamptz > now() - make_interval(secs => $1)",
+      [DEMAND_WINDOW_S],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /** The hub while it has room, else the fullest AWS host with room (`need`: slots the sandbox takes). */
+  static pick(slots: Slot[], exclude?: string, need = 1): Slot | null {
+    const c = slots.filter((s) => s.free >= need && s.host.name !== exclude);
     return c.find((s) => s.host.kind === "hub") ?? c.filter((s) => s.host.kind === "aws").sort((a, b) => a.free - b.free || a.host.name.localeCompare(b.host.name))[0] ?? null;
   }
 
@@ -486,25 +517,28 @@ export class VmController {
     const draining = aws.filter((h) => h.status === "draining");
     const retiring = hosts.filter((h) => h.status === "retiring");
 
-    // scale out: keep spare slots; a draining host comes back first
-    if (free < this.vm.spareSlots) {
+    // scale out: keep spare slots, plus one for each person typing in a conversation without a sandbox (an AWS host
+    // boots in about a minute, so it starts while they type; unused, it goes by the rule below). A draining host
+    // comes back first.
+    await this.#d.db.query("delete from kv where key like 'sandbox_demand:%' and (value->>'at')::timestamptz < now() - interval '1 hour'");
+    const demand = await this.demand();
+    const want = this.vm.spareSlots + demand;
+    if (free < want) {
       if (draining[0]) {
         await this.#d.db.query("update vm_hosts set status = 'active' where name = $1 and status = 'draining'", [draining[0].name]);
         log("vm: drain cancelled, capacity needed", { host: draining[0].name });
-        await this.event("drain-cancelled", draining[0].name, null, { free });
+        await this.event("drain-cancelled", draining[0].name, null, { free, demand });
         return;
       }
-      await this.launch(`spare slots ${free} < ${this.vm.spareSlots}`).catch((e) => logError("vm: launch", e));
+      await this.launch(`free slots ${free} < ${want} (spare ${this.vm.spareSlots}, demand ${demand})`).catch((e) => logError("vm: launch", e));
     }
     // a retiring host with sandboxes and nowhere to put them: one transient host
     if (retiring.some((h) => (used.get(h.name) ?? 0) > 0) && free === 0) await this.launch("replacing a retiring host", true).catch((e) => logError("vm: launch", e));
 
-    // empty AWS hosts go (draining/retiring at once; active ones after emptyMinutes, if the rest keeps the spare)
+    // an AWS host goes as soon as no sandbox is on it and it is past its minimum lifetime (from launch)
     for (const h of aws) {
       if ((used.get(h.name) ?? 0) > 0 || h.status === "booting") continue;
-      const own = slots.find((s) => s.host.name === h.name)?.free ?? 0;
-      const emptyFor = h.empty_since ? Date.now() - new Date(h.empty_since).getTime() : 0;
-      if (h.status === "draining" || h.status === "retiring" || (emptyFor > (this.vm.aws?.emptyMinutes ?? 5) * 60_000 && free - own >= this.vm.spareSlots)) {
+      if (Date.now() - new Date(h.created_at).getTime() >= this.vm.minHostLifetimeSeconds * 1000) {
         await this.#terminate(h, h.status === "active" ? "empty" : `${h.status}, empty`);
         return;
       }
@@ -532,7 +566,8 @@ export class VmController {
         [from.name],
       );
       for (const s of rows) {
-        const target = VmController.pick(slots, from.name);
+        const size = from.info?.sandboxes?.find((x) => x.name === s.pod)?.memory ?? this.memBytes;
+        const target = VmController.pick(slots, from.name, Math.max(1, Math.ceil(size / this.memBytes)));
         if (!target) break;
         if (!(await this.#movable(s, from, target.host))) continue;
         await this.migrate(s.id, target.host, from.status);
@@ -679,7 +714,7 @@ export const AWS_HOST_USD_PER_HOUR = 0.2415 + 0.005 + (40 * 0.0952) / 730;
 export interface VmStats {
   provider: "vm";
   at: string;
-  scaler: { spareSlots: number; maxAwsHosts: number; freeSlots: number; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
+  scaler: { spareSlots: number; minHostLifetimeSeconds: number; maxAwsHosts: number; freeSlots: number; demand: number; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
   hosts: {
     name: string;
     kind: "hub" | "aws";
@@ -691,6 +726,7 @@ export interface VmStats {
     loadAvg: number[] | null;
     slots: number;
     used: number;
+    underPressure: boolean;
     maxSandboxes: number | null;
     lastSeenAt: string | null;
     upSince: string;
@@ -729,8 +765,10 @@ export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
     at: new Date().toISOString(),
     scaler: {
       spareSlots: ctl.vm.spareSlots,
+      minHostLifetimeSeconds: ctl.vm.minHostLifetimeSeconds,
       maxAwsHosts: ctl.vm.aws?.maxHosts ?? 0,
-      freeSlots: live.filter((h) => h.status === "active").reduce((a, h) => a + Math.max(0, ctl.slots(h) - (used.get(h.name) ?? 0)), 0),
+      freeSlots: live.filter((h) => h.status === "active" && !ctl.underPressure(h)).reduce((a, h) => a + Math.max(0, ctl.slots(h) - ctl.units(h, used.get(h.name) ?? 0)), 0),
+      demand: await ctl.demand().catch(() => 0),
       memoryPerSandbox: ctl.memBytes,
       cpuPerSandbox: ctl.cpuCores,
       lastPassAt: last[0]?.at ? new Date(last[0].at).toISOString() : null,
@@ -745,7 +783,8 @@ export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
       memAvailable: h.info?.memAvailable ?? null,
       loadAvg: h.info?.loadAvg ?? null,
       slots: ctl.slots(h),
-      used: used.get(h.name) ?? 0,
+      used: ctl.units(h, used.get(h.name) ?? 0),
+      underPressure: ctl.underPressure(h),
       maxSandboxes: h.max_sandboxes,
       lastSeenAt: h.last_seen_at ? new Date(h.last_seen_at).toISOString() : null,
       upSince: new Date(h.created_at).toISOString(),

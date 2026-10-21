@@ -109,7 +109,8 @@ export const api = {
   conversation: (id: string) => call<Conversation>("GET", `/api/conversations/${enc(id)}`),
   update: (id: string, patch: { title?: string; model?: string }) => call<void>("PATCH", `/api/conversations/${enc(id)}`, patch),
   remove: (id: string) => call<void>("DELETE", `/api/conversations/${enc(id)}`),
-  warm: (id: string) => call<void>("POST", `/api/conversations/${enc(id)}/warm`, undefined, 0),
+  /** typing: keeps the open conversation's sandbox, or lets the server get a host ready (no sandbox is made) */
+  typing: (conversationId: string | null) => call<void>("POST", "/api/typing", conversationId ? { conversationId } : {}, 0),
   send: (id: string, text: string, attachments: string[]) =>
     call<{ turnId: string }>("POST", `/api/conversations/${enc(id)}/messages`, { text, attachments }),
   cancel: (turnId: string) => call<void>("POST", `/api/turns/${enc(turnId)}/cancel`),

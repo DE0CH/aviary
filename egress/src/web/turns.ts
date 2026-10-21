@@ -2,6 +2,9 @@
 // claw's NDJSON events become rows in `events` (text deltas batched), the conversation's files and claw's session
 // file are restored before and stored after, and bash goes to the conversation's sandbox through jarvis-bash.
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { chmod, rm } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -9,10 +12,12 @@ import { BUDGET_ERROR_TYPE, budgetMessage, budgetStatus, type BudgetStatus } fro
 import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
+import { sha256hex } from "../common/tokens.ts";
 import type { WebDeps } from "./ctx.ts";
 import { appendEvent } from "./events.ts";
 import { dirs, restoreWorkdir, storeWorkdir } from "./files.ts";
-import { PoolFullError, type LiveSandbox, type SandboxManager } from "./sandbox.ts";
+import { PoolFullError, type SandboxManager } from "./sandbox.ts";
+import type { SandboxGrant } from "./bash.ts";
 
 const TEXT_BATCH_MS = 250;
 const MAX_TOOL_OUTPUT = 20_000;
@@ -20,8 +25,7 @@ const MAX_TOOL_OUTPUT = 20_000;
 const abs = (p: string) => (p.includes("/") ? resolve(p) : p);
 /** How often a running turn marks its sandbox active. */
 const KEEPALIVE_MS = 60_000;
-export const RESET_NOTE =
-  "[System note: the sandbox was reset: files in the workspace are restored; installed packages and background processes from before are gone.]";
+export { RESET_NOTE } from "./bash.ts";
 
 /**
  * Appended to the instance's system prompt on every turn: what the sandbox can reach (docs/CHAT.md, "The sandbox
@@ -50,10 +54,21 @@ interface TurnInfo {
   title: string;
 }
 
+interface TurnSandboxCtx {
+  turnId: string;
+  conv: string;
+  emit: (type: string, data: Record<string, unknown>) => Promise<unknown>;
+  /** the "unavailable" event was sent already (once per turn) */
+  unavailable: boolean;
+}
+
 export class TurnRunner {
   readonly #deps: WebDeps;
   readonly #sandboxes: SandboxManager;
   readonly #running = new Map<string, Running>();
+  /** running turns by sha256 of their token: what jarvis-bash's sandbox requests are checked against */
+  readonly #byToken = new Map<string, TurnSandboxCtx>();
+  #server: Promise<{ server: Server; path: string }> | null = null;
   readonly #pendingCancel = new Set<string>();
   draining = false;
 
@@ -81,6 +96,7 @@ export class TurnRunner {
       .catch((e) => logError("turn", e, { turn: turnId }))
       .finally(() => {
         this.#running.delete(turnId);
+        this.#byToken.delete(sha256hex(token));
         resolveDone();
       });
   }
@@ -95,6 +111,59 @@ export class TurnRunner {
       setTimeout(() => child.exitCode === null && child.kill("SIGKILL"), 5000).unref();
     }
     return true;
+  }
+
+  /**
+   * This replica's socket for jarvis-bash (JARVIS_SANDBOX_SOCKET): `POST /sandbox` with the turn's token as bearer
+   * gives the conversation's sandbox, made now if there is none (docs/CHAT.md, "jarvis-bash"). A unix socket in the
+   * work root (mode 600): nothing outside this pod can reach it, and only a running turn's token is accepted.
+   */
+  #socket(): Promise<string> {
+    this.#server ??= (async () => {
+      await mkdir(this.#deps.workRoot, { recursive: true });
+      const path = join(resolve(this.#deps.workRoot), `.sbx-${randomBytes(4).toString("hex")}.sock`);
+      await rm(path, { force: true });
+      const server = createServer((req, res) => {
+        const reply = (status: number, body: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+        const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1] ?? "";
+        const t = token ? this.#byToken.get(sha256hex(token)) : undefined;
+        if (req.method !== "POST" || req.url !== "/sandbox") return reply(404, { error: "not found" });
+        if (!t) return reply(403, { error: "no such turn" });
+        req.resume();
+        this.#grant(t).then(
+          (g) => reply(200, g),
+          (e) => (logError("sandbox for bash", e, { turn: t.turnId }), reply(500, { unavailable: "it could not be started" })),
+        );
+      });
+      await new Promise<void>((ok, fail) => server.once("error", fail).listen(path, () => ok()));
+      server.unref();
+      await chmod(path, 0o600);
+      return { server, path };
+    })();
+    return this.#server.then((s) => s.path);
+  }
+
+  /** The turn's sandbox for a bash command: made if needed, with the reset flag when it replaced an earlier one. */
+  async #grant(t: TurnSandboxCtx): Promise<SandboxGrant> {
+    const db = this.#deps.db;
+    const { rows: live } = await db.query("select 1 from sandboxes where conversation_id = $1 and status = 'ready'", [t.conv]);
+    if (!live.length) await t.emit("sandbox", { status: "starting" });
+    let sandbox;
+    try {
+      sandbox = await this.#sandboxes.ensure(t.conv);
+    } catch (e) {
+      if (!t.unavailable) await t.emit("sandbox", { status: "unavailable", message: (e as Error).message });
+      t.unavailable = true;
+      // what the bash tool tells the model (and so the staff member): plain words, no internals
+      return { unavailable: e instanceof PoolFullError ? e.message : "it could not be started" };
+    }
+    if (!live.length) await t.emit("sandbox", { status: "ready" });
+    const key = `turn_sandbox:${t.conv}`;
+    const { rows: seen } = await db.query<{ value: string }>("select value from kv where key = $1", [key]);
+    const reset = !!seen[0] && seen[0].value !== sandbox.id;
+    if (reset) await t.emit("sandbox", { status: "reset" });
+    if (!seen[0] || reset) await db.query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [key, JSON.stringify(sandbox.id)]);
+    return { id: sandbox.id, url: sandbox.url, token: sandbox.execToken, headers: sandbox.headers, reset };
   }
 
   /** Waits for running turns (up to timeoutMs), then cancels what is left. */
@@ -144,33 +213,13 @@ export class TurnRunner {
       await mkdir(d.sessions, { recursive: true });
       await mkdir(d.clawConfig, { recursive: true });
 
-      // sandbox (warm already, usually); a turn without one still runs, its bash calls then fail with a reason
-      let sandbox: LiveSandbox | null = null;
-      let sandboxUnavailable = "";
-      try {
-        const { rows: live } = await db.query("select 1 from sandboxes where conversation_id = $1 and status = 'ready'", [conv]);
-        if (!live.length) await emit("sandbox", { status: "starting" });
-        sandbox = await this.#sandboxes.ensure(conv);
-        if (!live.length) await emit("sandbox", { status: "ready" });
-      } catch (e) {
-        await emit("sandbox", { status: "unavailable", message: (e as Error).message });
-        // what the bash tool tells the model (and so the staff member): plain words, no internals
-        sandboxUnavailable = e instanceof PoolFullError ? e.message : "it could not be started";
-      }
+      // the sandbox is made at the turn's first bash command (jarvis-bash asks over this replica's socket); a turn
+      // that never runs bash never gets one
+      const socket = await this.#socket();
+      this.#byToken.set(sha256hex(token), { turnId, conv, emit, unavailable: false });
       let prompt = msg.content;
       const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
       if (attachments.length) prompt += `\n\n[Attached files, in the workspace: ${attachments.join(", ")}]`;
-      if (sandbox) {
-        const { rows: seen } = await db.query<{ value: string }>("select value from kv where key = $1", [`turn_sandbox:${conv}`]);
-        if (seen[0] && seen[0].value !== sandbox.id) {
-          prompt = `${RESET_NOTE}\n\n${prompt}`;
-          await emit("sandbox", { status: "reset" });
-        }
-        await db.query(
-          "insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value",
-          [`turn_sandbox:${conv}`, JSON.stringify(sandbox.id)],
-        );
-      }
 
       // claw's config: the tools MCP server through the stdio bridge; nothing is read from the workdir
       const toolNames = await this.#toolNames(token);
@@ -208,11 +257,8 @@ export class TurnRunner {
         ...(deps.clawEnv ?? {}),
       };
       if (sess[0]) env.CLAW_RESUME_SESSION = resumePath;
-      if (!sandbox) env.JARVIS_SANDBOX_UNAVAILABLE = sandboxUnavailable || "it could not be started";
-      if (sandbox) {
-        Object.assign(env, { JARVIS_SANDBOX_URL: sandbox.url, JARVIS_SANDBOX_TOKEN: sandbox.execToken, JARVIS_SANDBOX_ID: sandbox.id });
-        if (Object.keys(sandbox.headers).length) env.JARVIS_SANDBOX_HEADERS = JSON.stringify(sandbox.headers);
-      }
+      env.JARVIS_SANDBOX_SOCKET = socket;
+      env.JARVIS_TURN_TOKEN = token;
       if (r.cancelled) throw new CancelledError();
 
       const child = spawn(abs(deps.clawPath), args, { cwd: d.work, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -412,7 +458,9 @@ export class TurnRunner {
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: this.#deps.config.titleModel,
-        max_tokens: 40,
+        // a thinking-by-default model spent the old 40-token budget on thinking and returned no text (2026-10-21)
+        max_tokens: 200,
+        thinking: { type: "disabled" },
         system: "Write a short title (at most 6 words) for this conversation, in the language the user wrote in. Reply with the title only, no quotes.",
         messages: [{ role: "user", content: `User: ${first.slice(0, 2000)}\n\nAssistant: ${reply.slice(0, 1000)}` }],
       }),

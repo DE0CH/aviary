@@ -1,6 +1,6 @@
-// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes, remove
-// sandboxes nobody owns, end turns whose replica died. Every replica also writes its own
-// heartbeat, which is how a dead replica's turns are recognised.
+// Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes and those
+// of deleted or never-used conversations, remove sandboxes the provider has without a live row, end turns whose
+// replica died. Every replica also writes its own heartbeat, which is how a dead replica's turns are recognised.
 import { lead } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import type { WebDeps } from "./ctx.ts";
@@ -10,6 +10,8 @@ import type { SandboxManager, SandboxRow } from "./sandbox.ts";
 const JANITOR_LOCK = 4_242_003;
 const HEARTBEAT_MS = 10_000;
 const DEAD_AFTER_S = 60;
+/** a sandbox whose conversation never had a turn goes after this long */
+const UNUSED_MINUTES = 5;
 
 export function startHeartbeat(deps: WebDeps): () => void {
   const beat = () =>
@@ -39,6 +41,17 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
     [DEAD_AFTER_S],
   );
   for (const t of dead) await appendEvent(db, t.conversation_id, t.id, "turn_finished", { turnId: t.id, status: "error", error: "interrupted: the server restarted", costUsd: null });
+
+  // sandboxes nobody can use: their conversation was deleted (DELETE releases at once; this catches a replica that
+  // died first), or it never had a turn (sandboxes come with a turn's first bash command, so only a leftover makes one)
+  const { rows: unused } = await db.query<SandboxRow & { why: string }>(
+    `select s.*, case when c.deleted_at is not null then 'deleted' else 'unused' end as why
+       from sandboxes s join conversations c on c.id = s.conversation_id
+      where s.status = 'ready' and (c.deleted_at is not null
+        or (not exists (select 1 from turns t where t.conversation_id = s.conversation_id) and s.created_at < now() - make_interval(mins => $1)))`,
+    [UNUSED_MINUTES],
+  );
+  for (const s of unused) await sandboxes.release(s, s.why).catch((e) => logError("janitor release", e, { sandbox: s.id }));
 
   // idle and expired sandboxes (never while their conversation has a turn going)
   const { rows: toRelease } = await db.query<SandboxRow & { why: string }>(

@@ -303,7 +303,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
   const [model, setModel] = useState(p.me.defaultModel);
   const lastEvent = useRef(0);
   const creating = useRef<Promise<string> | null>(null);
-  const lastWarm = useRef(0);
+  const lastTyping = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -405,13 +405,12 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
     return creating.current;
   };
 
-  const warm = () => {
+  // typing: no conversation and no sandbox are made for it (a sandbox comes with the first bash command)
+  const typing = () => {
     const now = Date.now();
-    if (now - lastWarm.current < 30_000) return;
-    lastWarm.current = now;
-    ensureConversation()
-      .then((id) => api.warm(id))
-      .catch(() => {});
+    if (now - lastTyping.current < 30_000) return;
+    lastTyping.current = now;
+    api.typing(convId).catch(() => {});
   };
 
   const views = useMemo(() => turns.map(viewTurn), [turns]);
@@ -510,7 +509,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
             onPick={(ex) => {
               setText(ex);
               textarea.current?.focus();
-              warm();
+              typing();
             }}
           />
         ) : (
@@ -535,7 +534,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
         setText={(v) => {
           setText(v);
           setSendError(null);
-          if (v) warm();
+          if (v) typing();
         }}
         attachments={attachments}
         removeAttachment={(key) => setAttachments((a) => a.filter((x) => x.key !== key))}

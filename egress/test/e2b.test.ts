@@ -134,15 +134,10 @@ test("config: provider e2b needs a template and a wss egress URL, not an image",
   );
 });
 
-test("warm → an E2B sandbox locked to the egress host, configured by /init; bash runs through the port proxy", async () => {
+test("first bash → an E2B sandbox locked to the egress host, configured by /init; bash runs through the port proxy", async () => {
   const conv = (await call("POST", "/api/conversations", {})).json.id;
-  assert.equal((await call("POST", `/api/conversations/${conv}/warm`)).status, 204);
-  let row: any;
-  for (let i = 0; i < 100; i++) {
-    row = (await pg.db.query("select * from sandboxes where conversation_id = $1", [conv])).rows[0];
-    if (row?.status === "ready") break;
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  await web.app.sandboxes.ensure(conv);
+  const row: any = (await pg.db.query("select * from sandboxes where conversation_id = $1", [conv])).rows[0];
   assert.equal(row.status, "ready");
   const sb = e2b.sandboxes.get(row.pod);
   assert.ok(sb, "sandboxes.pod holds E2B's sandbox id");
@@ -160,7 +155,7 @@ test("warm → an E2B sandbox locked to the egress host, configured by /init; ba
   assert.deepEqual(out, ["http://sbx:T@127.0.0.1:3128", "http://sbx:T@127.0.0.1:3128/mirror/pypi/simple"]);
   const files = await call("GET", `/api/conversations/${conv}/files`);
   assert.ok(files.json.some((f: any) => f.path === "made.txt"));
-  // keep-alive (warm, turns, every minute of a running turn; at most every 30 s per sandbox) sets E2B's timeout
+  // keep-alive (typing, turns, every minute of a running turn; at most every 30 s per sandbox) sets E2B's timeout
   await deps.sandboxProvider.keepAlive(row, new Date(Date.now() + 600_000));
   assert.ok(Math.abs(sb.timeouts.at(-1)! - 600) <= 1, String(sb.timeouts));
 

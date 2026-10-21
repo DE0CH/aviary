@@ -1,7 +1,7 @@
-// Sandboxes, design "B" (docs/CHAT.md, "Sandbox lifecycle"): one sandbox per active conversation, made when the
-// staff member starts typing or a turn needs it, kept while active, released when idle or at its hard maximum
-// lifetime (after a final save of what it changed). Postgres `sandboxes` is the record; the sandboxes themselves come
-// from the configured provider (provider.ts) and are disposable.
+// Sandboxes, design "B" (docs/CHAT.md, "Sandbox lifecycle"): one sandbox per active conversation, made lazily at the
+// conversation's first bash command (never ahead of it: a sandbox starts in well under a second), kept while active,
+// released when idle or at its hard maximum lifetime (after a final save of what it changed). Postgres `sandboxes`
+// is the record; the sandboxes themselves come from the configured provider (provider.ts) and are disposable.
 import { randomUUID } from "node:crypto";
 import { tx } from "../common/db.ts";
 import { logError, log, redact } from "../common/log.ts";
@@ -36,6 +36,23 @@ export interface LiveSandbox {
 }
 
 export class PoolFullError extends Error {}
+
+/** How long a typing signal (noteSandboxDemand) counts for the scaler's launch decision. */
+export const DEMAND_WINDOW_S = 120;
+
+type Q = { query: (q: string, v: unknown[]) => Promise<unknown> };
+
+/**
+ * Someone is typing in a conversation without a sandbox (or a new chat). Nothing is created: the vm scaler counts
+ * these and starts an AWS host at once when no host has a free slot, so a sandbox can start there if the turn asks for
+ * one (docs/CHAT.md, "Sandbox lifecycle"). One key per person, so a busy typist counts once.
+ */
+export async function noteSandboxDemand(db: Q, who: string): Promise<void> {
+  await db.query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [
+    `sandbox_demand:${who}`,
+    JSON.stringify({ at: new Date().toISOString() }),
+  ]);
+}
 
 const CAPACITY_LOCK = 4_242_002;
 const POOL_WAIT_MS = 60_000;
@@ -75,7 +92,7 @@ export class SandboxManager {
     await this.provider.keepAlive(row, this.#keepUntil(row)).catch((e) => logError("sandbox keep-alive", e, { sandbox: row.id }));
   }
 
-  /** The staff member or the agent is active in the conversation: the sandbox stays (warm, each turn, during turns). */
+  /** The staff member or the agent is active in the conversation: the sandbox stays (typing, each turn, during turns). */
   async touch(conversationId: string): Promise<void> {
     const { rows } = await this.#deps.db.query<SandboxRow>(
       "update sandboxes set last_active_at = now() where conversation_id = $1 and status in ('starting','ready') returning *",

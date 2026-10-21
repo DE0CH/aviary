@@ -63,6 +63,13 @@ export interface VmConfig {
   /** free sandbox slots the scaler keeps (an AWS host takes ~1 min to boot) */
   spareSlots: number;
   cpuOvercommit: number;
+  /**
+   * No new sandbox is placed on a host whose available memory (MemAvailable) is below this many bytes, whatever its
+   * slots say (a backstop: slot sizes already keep every sandbox's full limit within RAM minus the host's reserve)
+   */
+  minAvailableMemory: number;
+  /** an AWS host is terminated once it has no sandbox and is at least this old (from launch) */
+  minHostLifetimeSeconds: number;
   /** env vars with PEMs: the CA, the controller's client certificate/key, and the burst hosts' server certificate/key */
   tls: { caEnv: string; certEnv: string; keyEnv: string; hostCertEnv: string; hostKeyEnv: string };
   /**
@@ -84,7 +91,7 @@ export interface VmConfig {
     maxHosts: number;
     accessKeyIdEnv: string;
     secretAccessKeyEnv: string;
-    /** an empty AWS host is terminated after this long */
+    /** unused (an empty AWS host goes once past sandbox.vm.minHostLifetimeSeconds); still accepted in configs */
     emptyMinutes: number;
     /** tag `jarvis` on every instance: the scaler only ever touches instances with its own value */
     instance: string;
@@ -216,6 +223,8 @@ export function parseConfig(raw: unknown): ChatConfig {
       controlCidr: "10.0.0.0/16",
       spareSlots: 1,
       cpuOvercommit: 3,
+      minAvailableMemory: 256 * 1024 * 1024,
+      minHostLifetimeSeconds: 900,
       ...v,
       hub: { endpoint: "", ...v.hub },
       tls: { caEnv: "SBX_CA_CERT", certEnv: "SBX_CLIENT_CERT", keyEnv: "SBX_CLIENT_KEY", hostCertEnv: "SBX_HOST_CERT", hostKeyEnv: "SBX_HOST_KEY", ...v.tls },

@@ -171,6 +171,8 @@ export class Monitor {
     const { rows } = await db.query(
       `select s.id, s.pod, s.conversation_id as "conversationId", s.status, s.host, s.created_at as "createdAt",
               s.last_active_at as "lastActiveAt", s.expires_at as "expiresAt", c.title, c.owner,
+              (select count(*) from turns t where t.conversation_id = s.conversation_id)::int as turns,
+              (c.id is null or c.deleted_at is not null) as "conversationGone",
               exists (select 1 from turns t where t.conversation_id = s.conversation_id and t.status in ('queued','running','waiting')) as busy,
               (select count(*) from sandboxes p where p.conversation_id = s.conversation_id and p.id <> s.id)::int as resets
          from sandboxes s left join conversations c on c.id = s.conversation_id
