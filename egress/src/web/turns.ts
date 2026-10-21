@@ -11,13 +11,15 @@ import { createInterface } from "node:readline";
 import { BUDGET_ERROR_TYPE, budgetMessage, budgetStatus, type BudgetStatus } from "../common/budget.ts";
 import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
-import { log, logError } from "../common/log.ts";
+import { log, logError, redact } from "../common/log.ts";
+import { opsEvent } from "../common/ops.ts";
 import { sha256hex } from "../common/tokens.ts";
 import { blobKey, type WebDeps } from "./ctx.ts";
 import { appendEvent } from "./events.ts";
 import { dirs, restoreWorkdir, storeWorkdir } from "./files.ts";
 import { mergePresented, presentedOf, type PresentedFile } from "../common/presented.ts";
 import { sha256File } from "./workspace.ts";
+import { fallbackTitle, titleFromResponse, titleRequest } from "./title.ts";
 import { PoolFullError, type SandboxManager } from "./sandbox.ts";
 import type { SandboxGrant } from "./bash.ts";
 
@@ -455,11 +457,11 @@ export class TurnRunner {
     if (finalText || status === "done") {
       await db.query("insert into messages (conversation_id, role, content, turn_id) values ($1, 'assistant', $2, $3)", [conv, finalText, turnId]);
     }
-    if (status === "done" && !turn.title) {
-      const title = await this.#title(token, turn, finalText).catch((e) => (logError("title", e, { turn: turnId }), ""));
+    if (!turn.title) {
+      const title = await this.#title(token, turn, finalText, status === "done").catch((e) => (logError("title", e, { turn: turnId }), ""));
       if (title) {
-        await db.query("update conversations set title = $2 where id = $1 and title = ''", [conv, title]);
-        await emit("title", { title });
+        const { rowCount } = await db.query("update conversations set title = $2 where id = $1 and title = ''", [conv, title]);
+        if (rowCount) await emit("title", { title });
       }
     }
     const { rows: cost } = await db.query<{ c: string | null }>("select sum(cost_usd) as c from egress_log where turn_id = $1 and kind = 'model'", [turnId]);
@@ -521,6 +523,11 @@ export class TurnRunner {
     const error = budgetMessage(this.#deps.config.product.locale, b.limitUsd, b.ownerName);
     await appendEvent(db, conv, turn.id, "turn_started", { turnId: turn.id, model: turn.model });
     await db.query("update turns set status = 'error', finished_at = now(), error = $2, cost_usd = 0 where id = $1 and status in ('running','waiting')", [turn.id, error]);
+    // no model call for the title either: the first words of the message
+    const title = turn.title ? "" : await this.#title("", turn, "", false).catch(() => "");
+    if (title && (await db.query("update conversations set title = $2 where id = $1 and title = ''", [conv, title])).rowCount) {
+      await appendEvent(db, conv, turn.id, "title", { title });
+    }
     await db.query("update conversations set updated_at = now() where id = $1", [conv]);
     await appendEvent(db, conv, turn.id, "turn_finished", { turnId: turn.id, status: "error", error, costUsd: 0, ...budgetEventData(b, error) });
     log("turn", { turn: turn.id, conversation: conv, status: "error", reason: "budget", ms: Date.now() - startedAt.getTime() });
@@ -547,30 +554,48 @@ export class TurnRunner {
     }
   }
 
-  async #title(token: string, turn: TurnInfo, reply: string): Promise<string> {
+  /**
+   * The conversation's title: the title model's (only after a turn that finished), else the first words of the
+   * user's first message. A failed model call is logged and recorded (ops_events kind 'title', the monitor's errors).
+   */
+  async #title(token: string, turn: TurnInfo, reply: string, askModel: boolean): Promise<string> {
     const { rows } = await this.#deps.db.query<{ content: string }>(
       "select content from messages where conversation_id = $1 and role = 'user' order by id limit 1",
       [turn.conversation_id],
     );
     const first = rows[0]?.content ?? "";
-    const r = await fetch(`${this.#deps.egressBase}/x/model/v1/messages`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: this.#deps.config.titleModel,
-        // a thinking-by-default model spent the old 40-token budget on thinking and returned no text (2026-10-21)
-        max_tokens: 200,
-        thinking: { type: "disabled" },
-        system: "Write a short title (at most 6 words) for this conversation, in the language the user wrote in. Reply with the title only, no quotes.",
-        messages: [{ role: "user", content: `User: ${first.slice(0, 2000)}\n\nAssistant: ${reply.slice(0, 1000)}` }],
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!r.ok) throw new Error(`title: HTTP ${r.status}`);
-    const body = (await r.json()) as { content?: { type: string; text?: string }[] };
-    const text = (body.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-    return text.replace(/^["'「『]+|["'」』]+$/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const fallback = fallbackTitle(first) || fallbackTitle(reply);
+    if (!askModel) return fallback;
+    const t0 = performance.now();
+    try {
+      const r = await fetch(`${this.#deps.egressBase}/x/model/v1/messages`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(titleRequest(this.#deps.config.titleModel, first, reply)),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = (await r.json().catch(() => null)) as { error?: { message?: unknown } } | null;
+      if (!r.ok) {
+        const msg = typeof body?.error?.message === "string" ? `: ${body.error.message.slice(0, 200)}` : "";
+        throw Object.assign(new Error(`title: HTTP ${r.status}${msg}`), { reason: `HTTP ${r.status}` });
+      }
+      const title = titleFromResponse(body);
+      if (!title) throw Object.assign(new Error("title: the model returned no text"), { reason: "no text" });
+      return title;
+    } catch (e) {
+      const err = e as Error & { reason?: string };
+      const reason = err.reason ?? (err.name === "TimeoutError" ? "timeout" : "request failed");
+      logError("title", err, { turn: turn.id, conversation: turn.conversation_id, reason, fallback: Boolean(fallback) });
+      await opsEvent(this.#deps.db, "title", {
+        ok: false,
+        ms: performance.now() - t0,
+        conversationId: turn.conversation_id,
+        detail: { reason, error: redact(err.message).slice(0, 300), fallback: Boolean(fallback) },
+      });
+      return fallback;
+    }
   }
+
 }
 
 class CancelledError extends Error {}

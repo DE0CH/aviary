@@ -5,7 +5,7 @@
 import type { Db } from "./db.ts";
 import { logError, recentErrors } from "./log.ts";
 
-export type OpsKind = "sandbox_start";
+export type OpsKind = "sandbox_start" | "title";
 
 export interface OpsFields {
   ok?: boolean | null;

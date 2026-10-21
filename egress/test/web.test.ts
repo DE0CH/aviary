@@ -42,11 +42,11 @@ let deps: WebDeps;
 let base: string;
 let realToolsUrl = "";
 let realTools: { server: import("node:http").Server } | null = null;
-let upstream: { close(): Promise<void>; titleCalls: number; port: number; modelCalls: number; budgetOut: string | null };
+let upstream: { close(): Promise<void>; titleCalls: number; port: number; modelCalls: number; budgetOut: string | null; titleRefuses: boolean };
 
 async function fakeUpstream(): Promise<typeof upstream> {
   // budgetOut: answer model calls as egress does once the budget is used up (402 budget_exceeded with this message)
-  const state = { titleCalls: 0, modelCalls: 0, budgetOut: null as string | null };
+  const state = { titleCalls: 0, modelCalls: 0, budgetOut: null as string | null, titleRefuses: false };
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
@@ -72,11 +72,17 @@ async function fakeUpstream(): Promise<typeof upstream> {
         return void res.end(JSON.stringify({ content: [{ type: "text", text: "ok" }] }));
       }
       state.titleCalls++;
-      // titles never think: a thinking-by-default model spent the whole budget on thinking and gave no title
+      // titles think at the smallest budget (Sonnet 5.5 on OpenRouter refuses thinking: disabled) and max_tokens
+      // leaves room for the title after it (a 40-token budget went entirely to thinking)
       const titleBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      assert.deepEqual(titleBody.thinking, { type: "disabled" });
+      assert.deepEqual(titleBody.thinking, { type: "enabled", budget_tokens: 1024 });
+      assert.ok(titleBody.max_tokens >= 1024 + 500, String(titleBody.max_tokens));
+      if (state.titleRefuses) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return void res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "Reasoning is mandatory for this endpoint and cannot be disabled." } }));
+      }
       res.writeHead(200, { "content-type": "application/json" });
-      return void res.end(JSON.stringify({ content: [{ type: "text", text: "「A test title」" }] }));
+      return void res.end(JSON.stringify({ content: [{ type: "thinking", thinking: "A title about a test." }, { type: "text", text: "「A test title」" }] }));
     }
     res.writeHead(404).end();
   });
@@ -241,6 +247,26 @@ test("Access and the allowlist", async () => {
   // admin views are invisible to others
   assert.equal((await call(B, "GET", "/api/admin/usage")).status, 404);
   assert.equal((await call(A, "GET", "/api/admin/usage")).status, 200);
+});
+
+test("a failed title call: the first words of the first message, logged and on the monitor", async () => {
+  upstream.titleRefuses = true;
+  try {
+    const conv = await newConversation();
+    const { events } = await runTurn(conv, "just talk about the quarterly sales numbers for Hong Kong please");
+    assert.equal(events.at(-1).data.status, "done");
+    assert.equal(events.find((e) => e.type === "title")?.data.title, "just talk about the quarterly sales…");
+    assert.equal((await call(A, "GET", `/api/conversations/${conv}`)).json.title, "just talk about the quarterly sales…");
+    const { rows } = await pg.db.query("select ok, detail from ops_events where kind = 'title' and conversation_id = $1", [conv]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].ok, false);
+    assert.equal(rows[0].detail.reason, "HTTP 400");
+    assert.match(rows[0].detail.error, /Reasoning is mandatory/);
+    const mon = await call(A, "GET", "/api/admin/monitor");
+    assert.ok(JSON.stringify(mon.json).includes("title: HTTP 400"), "the monitor lists title failures");
+  } finally {
+    upstream.titleRefuses = false;
+  }
 });
 
 test("a full turn: upload, typing, a lazy sandbox at the first bash, streaming, files back, title, session saved, resume", async () => {

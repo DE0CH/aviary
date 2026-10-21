@@ -85,8 +85,8 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
       await deps.sandboxProvider.destroy(p.name).catch((e) => logError("janitor orphan", e));
     }
   }
-  // the admin monitor's records: a month of sandbox starts, presence of replicas that are gone a day
-  await db.query("delete from ops_events where kind = 'sandbox_start' and at < now() - interval '30 days'");
+  // the admin monitor's records: a month of sandbox starts and title failures, presence of replicas that are gone a day
+  await db.query("delete from ops_events where kind in ('sandbox_start', 'title') and at < now() - interval '30 days'");
   await db.query("delete from kv where key like 'presence:%' and (value->>'at')::timestamptz < now() - interval '1 day'");
   const podNames = new Set(pods.map((p) => p.name));
   for (const r of live) {

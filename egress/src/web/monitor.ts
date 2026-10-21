@@ -265,6 +265,9 @@ export class Monitor {
            union all
            select 'sandbox: ' || coalesce(detail->>'reason', '?'), count(*)::int from ops_events
             where kind = 'sandbox_start' and not ok and at > now() - interval '24 hours' group by detail->>'reason'
+           union all
+           select 'title: ' || coalesce(detail->>'reason', '?'), count(*)::int from ops_events
+            where kind = 'title' and not ok and at > now() - interval '24 hours' group by detail->>'reason'
          ) x order by n desc limit 20`,
       ),
       db.query(
