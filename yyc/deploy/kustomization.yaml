@@ -5,7 +5,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=84acb0baa9aad9f3349eeb6ebeb5fbbc68fdfd0a
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=3aa5ac6cc111505218abe82596390ddc843d6932
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -18,7 +18,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 84acb0baa9aa
+    newTag: 3aa5ac6cc111
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
