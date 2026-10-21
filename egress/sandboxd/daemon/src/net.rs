@@ -138,7 +138,14 @@ fn iface_from_route(out: &str) -> Option<Str<32>> {
 
 /// Host rules: forwarding only between wg0, the private network (hub) and sandbox veths; the hub's egress table.
 /// A gateway (a shared k3s node) only fences wg0's own traffic and leaves everything else on the machine alone.
-pub fn host_rules(b: &mut Buf, cfg: &HostConfig, public_if: &str, private_if: Option<&str>, targets: &[Str<16>]) {
+pub fn host_rules(
+    b: &mut Buf,
+    cfg: &HostConfig,
+    public_if: &str,
+    private_if: Option<&str>,
+    private_addr: &str,
+    targets: &[Str<16>],
+) {
     b.s("table ip sbxhost\ndelete table ip sbxhost\ntable ip sbxhost {");
     if cfg.hub {
         b.s("\n  chain egress_dnat {\n    type nat hook prerouting priority dstnat; policy accept;\n");
@@ -165,8 +172,17 @@ pub fn host_rules(b: &mut Buf, cfg: &HostConfig, public_if: &str, private_if: Op
         let sbx = cfg.sandbox_cidr.as_str();
         let _ = write!(
             b,
-            "\n  chain keep_source {{\n    type nat hook postrouting priority srcnat - 10; policy accept;\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}\n  }}"
+            "\n  chain keep_source {{\n    type nat hook postrouting priority srcnat - 10; policy accept;\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}"
         );
+        // this node's own pods reaching a sandbox (the ui pod's Claude Code runs, the controller): they leave through
+        // wg0, where flannel's masquerade would give them wg0's address 10.201.0.1, which a sandbox's lock drops (it
+        // admits the controlCidr only); other nodes' pods arrive masqueraded to their node's private address. So
+        // these get this node's private address too, before iptables' nat runs.
+        if !private_addr.is_empty() {
+            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            let _ = write!(b, "\n    oifname \"wg0\" ip saddr {pods} ip daddr {sbx} snat to {private_addr}");
+        }
+        b.s("\n  }");
         let _ = write!(
             b,
             "\n  chain forward {{\n    type filter hook forward priority 0; policy accept;\n    iifname \"wg0\" ip daddr {vip} drop\n    iifname \"wg0\" oifname \"{public_if}\" drop\n    iifname \"{public_if}\" oifname \"wg0\" drop\n  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    iifname \"wg0\" tcp dport {{ {api}, {img} }} accept\n    iifname \"wg0\" icmp type echo-request accept\n    iifname \"wg0\" ct state established,related accept\n    iifname \"wg0\" drop\n    tcp dport {{ {api}, {img} }} iifname \"{public_if}\" drop\n  }}\n}}\n"
@@ -200,6 +216,8 @@ pub const MAX_PEERS: usize = 32;
 pub struct NetState {
     pub public_if: Str<32>,
     pub private_if: Option<Str<32>>,
+    /// gateway: the node's address on the private network (the controlCidr sandboxes admit on :7070)
+    pub private_addr: Str<16>,
     pub targets: [Str<16>; MAX_TARGETS],
     pub ntargets: usize,
     pub public_key: Str<64>,
@@ -219,6 +237,7 @@ impl HostNet {
             st: Mutex::new(NetState {
                 public_if: Str::new(),
                 private_if: None,
+                private_addr: Str::new(),
                 targets: [Str::new(); MAX_TARGETS],
                 ntargets: 0,
                 public_key: Str::new(),
@@ -282,6 +301,9 @@ impl HostNet {
                 .split_once("inet ")
                 .and_then(|(_, r)| r.split('/').next())
                 .filter(|s| crate::util::looks_like_ip(s));
+            if let Some(src) = src {
+                st.private_addr = Str::lossy(src);
+            }
             match src {
                 Some(src) => sh(&["ip", "route", "replace", cfg.sandbox_cidr.as_str(), "dev", "wg0", "src", src])?,
                 None => sh(&["ip", "route", "replace", cfg.sandbox_cidr.as_str(), "dev", "wg0"])?,
@@ -474,6 +496,7 @@ pub fn apply_host_rules(cfg: &HostConfig, st: &NetState) -> Res<()> {
         cfg,
         st.public_if.as_str(),
         st.private_if.as_ref().map(|s| s.as_str()),
+        st.private_addr.as_str(),
         &st.targets[..st.ntargets],
     );
     if b.full {
@@ -674,7 +697,7 @@ mod tests {
         let cfg = HostConfig::parse(br#"{"name":"h","role":"hub","wgAddress":"10.201.0.1"}"#).ok().unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        host_rules(&mut b, &cfg, "eth0", Some("enp7s0"), &[Str::lossy("10.244.3.5"), Str::lossy("10.244.6.7")]);
+        host_rules(&mut b, &cfg, "eth0", Some("enp7s0"), "", &[Str::lossy("10.244.3.5"), Str::lossy("10.244.6.7")]);
         assert!(
             b.as_str().contains("dnat to numgen random mod 2 map { 0 : 10.244.3.5, 1 : 10.244.6.7 }"),
             "{}",
@@ -692,7 +715,7 @@ mod tests {
                 .unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        host_rules(&mut b, &burst, "ens5", None, &[]);
+        host_rules(&mut b, &burst, "ens5", None, "", &[]);
         assert!(!b.as_str().contains("10.201.1.1") && !b.as_str().contains("egress_dnat"), "{}", b.as_str());
         assert!(b.as_str().contains("ip daddr 10.0.0.0/16 oifname != \"wg0\" drop"));
         // a gateway on a k3s node fences wg0's traffic only: the node's pods keep their own forwarding
@@ -700,7 +723,13 @@ mod tests {
             HostConfig::parse(br#"{"name":"g","role":"hub","gateway":true,"wgAddress":"10.201.0.1"}"#).ok().unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        host_rules(&mut b, &gw, "eth0", Some("enp7s0"), &[Str::lossy("10.244.3.5")]);
+        host_rules(&mut b, &gw, "eth0", Some("enp7s0"), "10.0.0.6", &[Str::lossy("10.244.3.5")]);
+        // the node's own pods reach sandboxes from its private address (not wg0's 10.201.0.1, which sandboxes drop)
+        assert!(
+            b.as_str().contains("oifname \"wg0\" ip saddr 10.244.0.0/16 ip daddr 10.200.0.0/16 snat to 10.0.0.6"),
+            "{}",
+            b.as_str()
+        );
         let g = b.as_str();
         assert!(g.contains("dnat to numgen random mod 1 map { 0 : 10.244.3.5 }"));
         assert!(

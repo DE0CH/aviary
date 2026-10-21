@@ -92,6 +92,15 @@ pub fn setup(spec: &Spec) -> Res<P> {
     if (!spec.workspace.is_empty() || !spec.user.is_empty()) && !is_mount(jfs_root().as_str()) {
         return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
     }
+    // the top folders belong to the sandbox user (uid 1000) too, so the UI (CloudCLI, uid 1000, the same volume
+    // at /jfs) can remove a deleted conversation's ws/<id> and not only empty it; no sandbox sees them (each gets
+    // its own folder bind-mounted)
+    let persistent = !spec.workspace.is_empty() || !spec.user.is_empty();
+    for top in ["/var/lib/sbx/jfs/ws", "/var/lib/sbx/jfs/users"].iter().filter(|_| persistent) {
+        let t = path!("{top}");
+        sh(&["mkdir", "-p", t.as_str()])?;
+        sh(&["chown", UID, t.as_str()])?;
+    }
     if !spec.user.is_empty() {
         let cd = claude_dir(spec.user.as_str());
         sh(&["mkdir", "-p", cd.as_str()])?;
