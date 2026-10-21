@@ -525,7 +525,8 @@ events: they still load, and the UI shows nothing for them (like any event type 
 - Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
   (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
   instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
-  replaced by the product name.
+  replaced by the product name. A new conversation's empty screen shows only the logo, a one-line heading and
+  lead, and the composer: no example or suggested prompts (removed 2026-10-21, Deyao).
 - `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
