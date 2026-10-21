@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Prepares an Ubuntu 24.04 VM as a sandbox host for provider "vm" (docs/SANDBOX-VM.md). Idempotent: run it again to
-# upgrade sandboxd, runsc (the DE0CH/gvisor fork) or Node; running sandboxes are not touched (sandboxd restarts with
+# upgrade sandboxd or runsc (the DE0CH/gvisor fork); running sandboxes are not touched (sandboxd restarts with
 # KillMode=process, runsc sandboxes live in their own cgroups).
 #
-# Usage (as root, from a copy of chat/sandboxd: host/ and src/ side by side):
+# Usage (as root, from a copy of chat/sandboxd: host/ and bin/sandboxd side by side; host/fetch-sandboxd.sh puts the
+# released binary into bin/):
 #   setup.sh hub   [image ref]   the Hetzner hub: writes /etc/sbx/host.json from the environment below, starts sandboxd
 #   setup.sh burst [image ref]   an AWS image (AMI) bake: everything but host.json, which each instance gets from its
 #                                user data at first boot (sbx-userdata.service)
@@ -16,7 +17,6 @@
 set -euo pipefail
 ROLE=${1:?hub or burst}; IMAGE=${2:-}
 GV=${GV:-precopy-20261021.1}
-NODE_VERSION=22.23.3
 CRANE_VERSION=0.20.6
 here=$(cd "$(dirname "$0")" && pwd)
 export DEBIAN_FRONTEND=noninteractive
@@ -25,14 +25,8 @@ apt-get -qq update || apt-get -qq update
 apt-get -qq install -y jq nftables wireguard-tools zstd curl iproute2 ca-certificates logrotate >/dev/null
 systemctl disable --now nftables.service >/dev/null 2>&1 || true   # sandboxd owns its tables; no flush at boot
 
-# Node (sandboxd is TypeScript run by Node's type stripping; no npm packages)
-if [ "$(/opt/node/bin/node --version 2>/dev/null)" != "v$NODE_VERSION" ]; then
-  t=$(mktemp -d); f=node-v$NODE_VERSION-linux-x64.tar.xz
-  curl -fsSL -o "$t/$f" "https://nodejs.org/dist/v$NODE_VERSION/$f"
-  curl -fsSL -o "$t/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
-  (cd "$t" && grep " $f\$" SHASUMS256.txt | sha256sum -c --quiet)
-  rm -rf /opt/node; mkdir -p /opt/node; tar -xJf "$t/$f" -C /opt/node --strip-components=1; rm -rf "$t"
-fi
+# the Node sandboxd's leftovers (sandboxd is a static Rust binary now)
+rm -rf /opt/node /opt/sandboxd /opt/sandboxd.old
 
 # gVisor: the fork's release tarball (runsc + its sidecars in gvisor-bin/), checked against SHA256SUMS
 if [ "$(cat /usr/local/bin/gvisor-bin/.release 2>/dev/null)" != "$GV" ]; then
@@ -51,11 +45,9 @@ if [ "$(crane version 2>/dev/null)" != "$CRANE_VERSION" ]; then
   curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane
 fi
 
-# sandboxd's code
-rm -rf /opt/sandboxd.new; mkdir -p /opt/sandboxd.new
-cp -r "$here/../src" /opt/sandboxd.new/src; cp -r "$here" /opt/sandboxd.new/host
-[ -f "$here/../VERSION" ] && cp "$here/../VERSION" /opt/sandboxd.new/
-rm -rf /opt/sandboxd.old; [ -d /opt/sandboxd ] && mv /opt/sandboxd /opt/sandboxd.old; mv /opt/sandboxd.new /opt/sandboxd
+# sandboxd: one static binary (docs/SANDBOXD-MEMORY.md); replaced atomically, the running one keeps its inode
+[ -x "$here/../bin/sandboxd" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
+install -m755 "$here/../bin/sandboxd" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
 
 install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/log/sbx
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
@@ -121,12 +113,17 @@ Requires=run-sbx-ckpt.mount
 ConditionPathExists=/etc/sbx/host.json
 
 [Service]
-Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MemoryMin=160M
 MemoryHigh=384M
 MemoryMax=512M
+# sandboxd splits its cgroup: daemon/ (itself: memory.min = memory.max = its budget, docs/SANDBOXD-MEMORY.md) and
+# helpers/ (the commands it runs, capped by limits.helperMemoryMaxMiB); systemd starts it in daemon/
+Delegate=yes
+DelegateSubgroup=daemon
+LimitMEMLOCK=infinity
 ExecStartPre=/usr/local/sbin/sbx-cgroup
-ExecStart=/opt/node/bin/node --disable-warning=ExperimentalWarning /opt/sandboxd/src/main.ts
+ExecStart=/usr/local/bin/sandboxd
 # sandboxes are runsc processes in their own cgroups (/sbx/<name>); a restart of sandboxd must never touch them
 KillMode=process
 Restart=always

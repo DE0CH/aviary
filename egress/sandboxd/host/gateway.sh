@@ -4,38 +4,31 @@
 # address 10.201.1.1:3128 to an egress pod, and serves sandbox images to the AWS hosts. The Hetzner network route
 # 10.200.0.0/15 points at this node.
 #
-# The node is shared with the cluster, so this changes nothing of it beyond: Node and crane under /opt and
-# /usr/local/bin, sandboxd's code in /opt/sandboxd, /etc/sbx, /var/lib/sbx (images), the unit sandboxd.service, wg0
+# The node is shared with the cluster, so this changes nothing of it beyond: crane and sandboxd (one static binary) in
+# /usr/local/bin, /etc/sbx, /var/lib/sbx (images), the unit sandboxd.service, wg0
 # (UDP port $SBX_WG_PORT; flannel's own WireGuard has 51820) and nft table `ip sbxhost`, whose rules only concern wg0's
 # traffic. No packages, no sysctl beyond ip_forward (already on), no nftables.service.
 #
-# Usage (as root, from a copy of chat/sandboxd: host/ and src/ side by side):  gateway.sh [image ref]
+# Usage (as root, from a copy of chat/sandboxd: host/ and bin/sandboxd side by side; host/fetch-sandboxd.sh fills
+# bin/):  gateway.sh [image ref]
 # Beforehand: /etc/sbx/tls/{ca.crt,host.crt,host.key} (a host certificate for 10.201.0.1, e.g. the old hub's) and,
 # optionally, /etc/sbx/wg.key (the old hub's, so AWS hosts that know its public key keep working).
 # Environment: SBX_NAME (yyc-sbx-gw), SBX_WG_PORT (51821), SBX_PRIVATE_GATEWAY (10.0.0.1), SBX_CONTROL_CIDR (10.0.0.0/16),
 #              SBX_START (1: start or restart sandboxd now; 0: install only)
 set -euo pipefail
 IMAGE=${1:-}
-NODE_VERSION=22.23.3
 CRANE_VERSION=0.20.6
 here=$(cd "$(dirname "$0")" && pwd)
 
 for t in nft wg zstd curl ip; do command -v $t >/dev/null || { echo "missing $t on this node" >&2; exit 1; }; done
 
-if [ "$(/opt/node/bin/node --version 2>/dev/null)" != "v$NODE_VERSION" ]; then
-  t=$(mktemp -d); f=node-v$NODE_VERSION-linux-x64.tar.xz
-  curl -fsSL -o "$t/$f" "https://nodejs.org/dist/v$NODE_VERSION/$f"
-  curl -fsSL -o "$t/SHASUMS256.txt" "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
-  (cd "$t" && grep " $f\$" SHASUMS256.txt | sha256sum -c --quiet)
-  rm -rf /opt/node; mkdir -p /opt/node; tar -xJf "$t/$f" -C /opt/node --strip-components=1; rm -rf "$t"
-fi
 if [ "$(crane version 2>/dev/null)" != "$CRANE_VERSION" ]; then
   curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane
 fi
 
-rm -rf /opt/sandboxd.new; mkdir -p /opt/sandboxd.new
-cp -r "$here/../src" /opt/sandboxd.new/src; cp -r "$here" /opt/sandboxd.new/host
-rm -rf /opt/sandboxd.old; [ -d /opt/sandboxd ] && mv /opt/sandboxd /opt/sandboxd.old; mv /opt/sandboxd.new /opt/sandboxd
+[ -x "$here/../bin/sandboxd" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
+install -m755 "$here/../bin/sandboxd" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
+rm -rf /opt/node /opt/sandboxd /opt/sandboxd.old   # the Node sandboxd's leftovers
 
 install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/log/sbx
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
@@ -62,10 +55,14 @@ Wants=network-online.target
 ConditionPathExists=/etc/sbx/host.json
 
 [Service]
-Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MemoryHigh=192M
 MemoryMax=256M
-ExecStart=/opt/node/bin/node --disable-warning=ExperimentalWarning /opt/sandboxd/src/main.ts
+# sandboxd's own cgroup (daemon/: memory.min = memory.max = its budget) and its commands' (helpers/); docs/SANDBOXD-MEMORY.md
+Delegate=yes
+DelegateSubgroup=daemon
+LimitMEMLOCK=infinity
+ExecStart=/usr/local/bin/sandboxd
 # wg0 and the nft table stay across restarts (peers and routes keep working); to remove the gateway:
 # systemctl disable --now sandboxd; ip link del wg0; nft delete table ip sbxhost
 Restart=always

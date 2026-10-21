@@ -7,7 +7,7 @@
 #   infra.sh ipv6                  IPv6 for the hosts (free): an Amazon /56 on the VPC, a /64 on the subnet, ::/0 to the
 #                                  internet gateway, IPv6 egress in the SG. The gateway (a k3s node, IPv6 only from the
 #                                  outside) is reached over it (docs/SANDBOX-VM.md, "Gateway").
-#   infra.sh ami <image ref>       bakes an AMI: Ubuntu 24.04 + host/setup.sh burst (Node, the gVisor fork, sandboxd,
+#   infra.sh ami <image ref>       bakes an AMI: Ubuntu 24.04 + host/setup.sh burst (the gVisor fork, sandboxd's binary,
 #                                  the sandbox image unpacked); a temporary t3.large builder + key + SSH rule, removed
 #                                  after. Needs GHCR_USER/GHCR_TOKEN (read:packages) for the private image.
 #   infra.sh template <ami id>     launch template yyc-ai-sandbox-host (new default version): m7i.xlarge, that AMI, the
@@ -92,7 +92,9 @@ ami)
   o=(-i "$t/key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5)
   until ssh "${o[@]}" "ubuntu@$ip" true 2>/dev/null; do sleep 3; done
   ssh "${o[@]}" "ubuntu@$ip" "cloud-init status --wait >/dev/null 2>&1 || true; mkdir -p sbx"
-  tar -C "$here/.." -cf - host src | ssh "${o[@]}" "ubuntu@$ip" "tar -xf - -C sbx"
+  # sandboxd: the newest CI release (SANDBOXD_RELEASE / SANDBOXD_BINARY to choose), checked against its SHA256SUMS
+  bin=$(mktemp -d); bash "$here/../host/fetch-sandboxd.sh" "$bin" >&2
+  tar -cf - -C "$here/.." host -C "$bin" bin | ssh "${o[@]}" "ubuntu@$ip" "tar -xf - -C sbx"; rm -rf "$bin"
   # the registry login exists only for the pull, in a file the setup deletes; it never reaches the AMI
   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 -w0)" | ssh "${o[@]}" "ubuntu@$ip" "umask 077; cat > /tmp/ghcr.json"
   ssh "${o[@]}" "ubuntu@$ip" "sudo REGISTRY_AUTH_FILE=/tmp/ghcr.json bash sbx/host/setup.sh burst $IMAGE; rm -f /tmp/ghcr.json" >&2
