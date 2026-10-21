@@ -213,6 +213,16 @@ create table tool_calls (id bigserial primary key, at timestamptz not null defau
 -- confirmations (id, conversation_id, turn_id, kind, summary, detail, status, …): unused since migration 6 (nothing
 -- asks the user anything; pending rows were expired); old rows only
 create table kv (key text primary key, value jsonb not null);
+-- sharing and continuing ("Sharing and continuing" below): a frozen snapshot per link; where a sha256's bytes are;
+-- which conversations may read a sha256 stored under another conversation's prefix
+create table shares (id text primary key,           -- the link's id: 16 random bytes, base64url (22 characters)
+  conversation_id uuid not null references conversations(id), owner text not null references users(email),
+  created_at timestamptz not null default now(), revoked_at timestamptz, title text not null, model text not null,
+  messages jsonb not null, turns jsonb not null,      -- the finished turns' rows (to_jsonb, without token_hash/replica)
+  events jsonb not null, files jsonb not null,        -- [{path, sha256, size, source, updated_at}]: every live file
+  claw_session text);
+create table blobs (sha256 text primary key, key text not null, created_at timestamptz not null default now());
+create table blob_grants (conversation_id uuid not null, sha256 text not null, primary key (conversation_id, sha256));
 -- the admin monitor (migration 5): sandbox starts (kind 'sandbox_start': ok, ms = allocation latency from the first
 -- request incl. pool wait, detail {reason, error, provider, startMs}); kept 30 days by the janitor
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
@@ -589,7 +599,7 @@ events: they still load, and the UI shows nothing for them (like any event type 
   `{budget: {limitUsd, since, ownerName, spentUsd, remainingUsd, exhausted, source: config|override, override}|null,
   config, audit: [{at, actor, action, before, after}]}`, `POST /api/admin/budget` `{action: "reset"}` (spend from
   now) | `{action: "set", limitUsd}` | `{action: "clear"}` (back to config) → the same shape
-- Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
+- Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>` and `/s/<id>`
   (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
   instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
   replaced by the product name. A new conversation's empty screen shows only the logo, a greeting and the
@@ -601,6 +611,12 @@ events: they still load, and the UI shows nothing for them (like any event type 
   zh-HK, Wiktionary's "Category:English greetings" for en. `firstName` = the Access identity's `given_name` (else the
   first word of `name`; a CJK name whole) from the token or the team's `/cdn-cgi/access/get-identity` (Google
   sign-in); null with an e-mailed code. Never derived from the address.
+- Sharing ("Sharing and continuing"): `POST /api/conversations/:id/shares` (owner) → 201 `{id, url, createdAt, turns}`
+  (400 when no turn has finished yet); `GET /api/conversations/:id/shares` (owner) → its live links;
+  `DELETE /api/shares/:id` (owner; anyone else 404) → 204; `GET /api/shares/:id` (any instance user) → `{id, title,
+  ownerName, isOwner, createdAt, messages, turns (with events and presented), files}` (404 once revoked or the
+  conversation deleted); `GET /api/shares/:id/files/<path>` (`?v=<sha256>`, `?inline=1`) → the bytes of a
+  downloadable file only; `POST /api/shares/:id/continue` → 201 `{id}` (a new conversation of the caller's)
 - `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
@@ -609,6 +625,46 @@ own conversations (others' ids answer 404); admins (`config.admins`) can read th
 monitor, not others' chats; to anyone else every admin path (`/api/admin/*`, `/admin`, `/admin/*`, `/admin-*` bundle
 files) answers 404. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
 with an `Origin` other than `publicUrl` are refused.
+
+### Sharing and continuing (Deyao, 2026-10-21; `chat/src/web/share.ts`, `chat/ui/src/share.tsx`)
+
+- **Share** (the conversation's top bar, 「分享」 / "Share"): a sheet with one line 「已登入 YYC AI 的同事可以查看這段對話
+  （只讀）」 ("Colleagues signed in to YYC AI can view this conversation (read-only)", the product name from config),
+  「複製連結」 / "Copy link" and the conversation's live links, each with 「停止分享」 / "Stop sharing" (revoke). Every
+  copy makes a **new snapshot link**: the conversation as it is then, finished turns only (`done`/`error`/
+  `cancelled`; a turn still going and its message are left out); later messages never show on an earlier link.
+- **Audience:** instance users only. `/s/<id>` and `/api/shares/*` are behind Access and the `users` check like
+  everything else (401/403 otherwise); the id is 128 random bits. Not public.
+- **The shared page** `/s/<id>`: what the owner sees (messages with their uploads, tool steps with image thumbnails,
+  presented-file cards, the owner's name: 「<name> 分享的對話（只讀）」), read-only. Downloads (`/api/shares/:id/files/…`):
+  uploads, message attachments, presented files (a turn's `presented` list, else its last `files_presented` event,
+  else, for a turn from before present_files, the files it changed: the rule the UI used) and images shown in tool
+  steps (`tool_result.images`, by `?v=`). Never other workdir files (scripts, intermediates), neither by path nor by
+  sha256. Revoked, or the original conversation deleted: 404 「此連結已失效。」.
+- **Snapshot:** `shares` holds copies of the turns, messages, events, `files` rows (path → sha256) and claw's session
+  as they were; the original keeps changing freely. File bytes are never copied.
+- **Continue conversation** (the shared page's one action, 「繼續對話」 / "Continue conversation"; the UI never says
+  fork, copy or 副本): `POST /api/shares/:id/continue` makes a new conversation owned by the viewer, at the top of their
+  list with the same title, and opens it. In one transaction it gets: the snapshot's messages (with attachments),
+  turns (any column the row has, e.g. `presented`; new ids, a random unusable `token_hash`, `usage`/`cost_usd` null)
+  and their events, claw's session file (so the model has the whole context), every workdir file, hidden ones
+  included (new `files` rows, `updated_at` as it was, on the same bucket objects + `blob_grants`), and kv
+  `turn_sandbox:<new>` = `"earlier"` when the original used a sandbox. Not carried over: the sandbox (and installs or
+  processes in it: the first bash command starts a new one with the files restored and the usual reset note), a
+  running turn, egress/tool logs, spend (`egress_log` stays with the original; new turns count against the shared
+  budget as usual).
+- **No parent:** nothing in the new conversation names the share or the original. The original's conversation id
+  and turn ids are rewritten to the new ones everywhere they were copied (event data such as workdir paths, message
+  text, claw's session); claw's session gets a fresh `session_id` and no `fork` record. There is no parent column.
+  The two conversations are independent from then on; deleting the original stops its links but not the new one.
+- **Bytes and the bucket:** keys stay `files/<conversation>/<sha256>` where they were first stored. Sharing records
+  each sha256 the snapshot names in `blobs` (sha256 → its key: a content address, not a link between conversations;
+  a sha256 the conversation itself reads through a grant is registered already). The web role's bucket client
+  (`sharedBlobs`) falls back for reads: `files/<conv>/<sha>` missing → the `blobs` key, only when `blob_grants` has
+  `(conv, sha)`; so restore, downloads and previews work unchanged, and a grant opens only the bytes it names.
+  **Nothing deletes bucket objects** (no GC; the janitor never touches the bucket). Any future GC must keep every
+  object a `files` row (deleted or not), a `blobs` row, a `shares.files`/`presented` entry or a turn's `presented`
+  names, whichever conversation's prefix it is under.
 
 ### Admin monitor (`/admin/monitor`, config `admins` only)
 
