@@ -45,6 +45,36 @@ if [ "$(crane version 2>/dev/null)" != "$CRANE_VERSION" ]; then
   curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane
 fi
 
+# JuiceFS (docs/CLAUDE-CODE.md): the conversations' /workspace and the users' ~/.claude, mounted at /var/lib/sbx/jfs
+# by sbx-jfs.service from /etc/sbx/juicefs.env (META_URL without the password, META_PASSWORD; the bucket's keys are
+# in the volume's metadata). No --writeback: after a live migration the destination host must see every write.
+JFS=${JFS:-1.4.1}
+if ! juicefs version 2>/dev/null | grep -q "version $JFS"; then
+  t=$(mktemp -d)
+  curl -fsSL -o "$t/jfs.tgz" "https://github.com/juicedata/juicefs/releases/download/v$JFS/juicefs-$JFS-linux-amd64.tar.gz"
+  curl -fsSL -o "$t/sums" "https://github.com/juicedata/juicefs/releases/download/v$JFS/checksums.txt"
+  (cd "$t" && grep "juicefs-$JFS-linux-amd64.tar.gz" sums | sed 's/  .*$/  jfs.tgz/' | sha256sum -c - >/dev/null)
+  tar -xzf "$t/jfs.tgz" -C "$t" juicefs && install -m755 "$t/juicefs" /usr/local/bin/juicefs; rm -rf "$t"
+fi
+cat > /etc/systemd/system/sbx-jfs.service <<'EOF'
+[Unit]
+Description=JuiceFS: the sandboxes' /workspace and ~/.claude (/var/lib/sbx/jfs)
+After=network-online.target sbx-userdata.service
+Wants=network-online.target
+Before=sandboxd.service
+ConditionPathExists=/etc/sbx/juicefs.env
+[Service]
+Type=simple
+EnvironmentFile=/etc/sbx/juicefs.env
+ExecStartPre=/bin/mkdir -p /var/lib/sbx/jfs /var/cache/sbx-jfs
+ExecStart=/bin/sh -c 'exec /usr/local/bin/juicefs mount --no-usage-report --cache-dir /var/cache/sbx-jfs --cache-size 4096 --open-cache 0 "$META_URL" /var/lib/sbx/jfs'
+ExecStop=/bin/umount -l /var/lib/sbx/jfs
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # sandboxd: one static binary (docs/SANDBOXD-MEMORY.md); replaced atomically, the running one keeps its inode
 [ -x "$here/../bin/sandboxd" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
 install -m755 "$here/../bin/sandboxd" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
@@ -161,6 +191,9 @@ jq -r .wgPrivateKey "$ud" > /etc/sbx/wg.key
 jq -r .tls.ca "$ud" > /etc/sbx/tls/ca.crt
 jq -r .tls.cert "$ud" > /etc/sbx/tls/host.crt
 jq -r .tls.key "$ud" > /etc/sbx/tls/host.key
+if jq -e .juicefs "$ud" >/dev/null; then
+  { echo "META_URL=$(jq -r .juicefs.metaUrl "$ud")"; echo "META_PASSWORD=$(jq -r .juicefs.metaPassword "$ud")"; } > /etc/sbx/juicefs.env
+fi
 jq '.host + {tls: {ca: "/etc/sbx/tls/ca.crt", cert: "/etc/sbx/tls/host.crt", key: "/etc/sbx/tls/host.key"}, wgKeyFile: "/etc/sbx/wg.key"}' "$ud" > /etc/sbx/host.json
 rm -f "$ud"
 EOF
@@ -183,7 +216,7 @@ EOF
 fi
 
 systemctl daemon-reload
-systemctl enable -q run-sbx-ckpt.mount sandboxd.service
+systemctl enable -q run-sbx-ckpt.mount sandboxd.service sbx-jfs.service
 [ "$ROLE" = burst ] && systemctl enable -q sbx-userdata.service
 systemctl start run-sbx-ckpt.mount
 
@@ -217,7 +250,7 @@ if [ "$ROLE" = hub ]; then
   echo "hub ready: $(runsc --version | head -1) ($GV), wg $(wg show wg0 public-key)"
 else
   # an image bake: leave no instance identity behind
-  rm -f /etc/sbx/host.json /etc/sbx/tls/* /etc/sbx/wg.key
+  rm -f /etc/sbx/host.json /etc/sbx/tls/* /etc/sbx/wg.key /etc/sbx/juicefs.env
   cloud-init clean --logs >/dev/null 2>&1 || true
   echo "burst image ready: $(runsc --version | head -1) ($GV)"
 fi

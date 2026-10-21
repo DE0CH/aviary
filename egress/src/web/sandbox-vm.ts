@@ -369,6 +369,11 @@ export class VmController {
         },
         wgPrivateKey: keys.privateKey,
         tls: this.#d.hostTls,
+        // the conversations' /workspace and the users' ~/.claude (docs/CLAUDE-CODE.md): the JuiceFS volume's metadata
+        // URL and password (the bucket's keys live in the volume's metadata); the host mounts it at boot
+        ...(process.env.JARVIS_JUICEFS_META_URL
+          ? { juicefs: { metaUrl: process.env.JARVIS_JUICEFS_META_URL, metaPassword: process.env.JARVIS_JUICEFS_META_PASSWORD ?? "" } }
+          : {}),
       });
       try {
         const inst = await this.#d.ec2!.runInstance({
