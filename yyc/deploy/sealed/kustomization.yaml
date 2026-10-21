@@ -3,4 +3,5 @@
 # create nothing but SealedSecrets: anything else here fails as Forbidden.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - sandbox-vm.yaml

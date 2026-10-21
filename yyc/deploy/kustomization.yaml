@@ -55,6 +55,13 @@ patches:
       - op: add
         path: /spec/template/spec/imagePullSecrets
         value: [{name: ghcr-pull}]
+  # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
+  # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
+  - target: {kind: Deployment, name: web}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/envFrom
+        value: [{secretRef: {name: sandbox-vm, optional: true}}]
   # provider e2b: the sandboxes' wire passes Access on egress.ai.yyc.deyaochen.com with service token
   # yyc-ai-sandbox-wire (config sandbox.e2b.egressHeaders); optional until web-env has them
   - target: {kind: Deployment, name: web}
