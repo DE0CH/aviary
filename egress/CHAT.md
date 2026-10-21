@@ -525,8 +525,15 @@ events: they still load, and the UI shows nothing for them (like any event type 
 - Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
   (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
   instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
-  replaced by the product name. A new conversation's empty screen shows only the logo, a one-line heading and
-  lead, and the composer: no example or suggested prompts (removed 2026-10-21, Deyao).
+  replaced by the product name. A new conversation's empty screen shows only the logo, a greeting and the
+  composer: no description line, no example or suggested prompts (removed 2026-10-21, Deyao). The greeting
+  (`chat/ui/src/greeting.ts`) is picked by Hong Kong time of day (05–12 morning, 12–18 afternoon, 18–23 evening,
+  23–05 late night), at random per page load among that slot's phrases, followed by `firstName` from `GET /api/me`
+  when there is one ("Good morning, Deyao" / 「早晨，Deyao」). The phrases are not made up: they come from published
+  lists, CC BY-SA, cited in that file: Wikivoyage's Cantonese phrasebook and Wiktionary (午安, 晚上好, 早唞) for
+  zh-HK, Wiktionary's "Category:English greetings" for en. `firstName` = the Access identity's `given_name` (else the
+  first word of `name`; a CJK name whole) from the token or the team's `/cdn-cgi/access/get-identity` (Google
+  sign-in); null with an e-mailed code. Never derived from the address.
 - `GET /healthz` (no auth; readiness = not draining and Postgres reachable)
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
