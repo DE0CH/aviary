@@ -481,7 +481,15 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 4. End: save the session file to `claw_sessions`, upload changed workdir files to S3 (`files/<conv>/<sha256>`) and
    upsert `files` (source `agent`), settle the presented files (each at the version the turn left, gone ones dropped;
    a new `files_presented` event when that changed the list), insert the assistant message (final text), set the
-   turn `done` with usage and cost. Title: after the first turn, a short title from the model (Haiku-class, via egress) if the user did not set one.
+   turn `done` with usage and cost. Title (chat/src/web/title.ts), when the conversation has none: after a `done` turn,
+   one `titleModel` call through egress's model route (ZDR forced, counts toward the budget; about USD 0.0004). Thinking
+   at the smallest budget (`thinking: {type: enabled, budget_tokens: 1024}`, `max_tokens` 2048): the Claude 5.5
+   endpoints on OpenRouter refuse `thinking: disabled` ("Reasoning is mandatory"), and a small `max_tokens` goes
+   entirely to thinking. The title is the last text block's first line, unquoted, at most 80 characters. When the call
+   fails (or returns no text), and after a turn that errored, was cancelled or was refused for the budget: the first
+   words of the user's first message (6 words; unspaced text such as Chinese: 16 characters; `…` when cut). A failed
+   call is logged (`at: title`, with `reason`) and recorded (`ops_events` kind `title`, `ok` false, detail
+   `{reason, error, fallback}`), which the monitor lists under errors by kind as `title: <reason>`.
 5. Cancel: `POST /api/turns/:id/cancel` → SIGTERM to claw (then SIGKILL after 5 s) on whichever replica runs it
    (each replica LISTENs on `cancel_<replica>`).
 6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
@@ -690,7 +698,7 @@ fails on its own into `errors`). It never shows message contents: conversation t
   `normalizeStats`; `e2b` = the list only.
 - **Load:** turns queued/running/waiting, claw processes and SSE streams (every web replica's presence), turns per
   hour (24 h, errors marked), queue wait (`turn_started` − insert) and turn duration p50/p95, errors by kind (turn
-  errors, failed tool calls, model HTTP errors, sandbox start failures), active users now (5 min) and today (the
+  errors, failed tool calls, model HTTP errors, sandbox start failures, failed title calls), active users now (5 min) and today (the
   browser's time zone).
 - **Models & tools:** per model (the turn's model; title calls included) turns, input/output tokens (`turns.usage`)
   and USD (`turns.cost_usd` = egress model cost) today and 7 days, egress model spend; tool calls 24 h by tool with
