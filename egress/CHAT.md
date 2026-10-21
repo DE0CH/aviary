@@ -631,7 +631,8 @@ with an `Origin` other than `publicUrl` are refused.
 
 ### Sharing and continuing (Deyao, 2026-10-21; `chat/src/web/share.ts`, `chat/ui/src/share.tsx`)
 
-- **Share** (the conversation's top bar, 「分享」 / "Share"): a sheet with one line 「已登入 YYC AI 的同事可以查看這段對話
+- **Share** (「分享」 / "Share": the conversation's top bar on phones, and the ⋯ menu of a conversation in the list
+  on any screen, since wide screens have no top bar): a sheet with one line 「已登入 YYC AI 的同事可以查看這段對話
   （只讀）」 ("Colleagues signed in to YYC AI can view this conversation (read-only)", the product name from config),
   「複製連結」 / "Copy link" and the conversation's live links, each with 「停止分享」 / "Stop sharing" (revoke). Every
   copy makes a **new snapshot link**: the conversation as it is then, finished turns only (`done`/`error`/
