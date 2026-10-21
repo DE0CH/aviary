@@ -4,7 +4,7 @@
 # stop-and-copy modes). Run as root on the host.
 # Usage: host-setup.sh <sandbox image ref> [gVisor: a DE0CH/gvisor release tag, default below, or upstream:<yyyymmdd.N>]
 set -euo pipefail
-IMAGE=${1:?image}; GV=${2:-precopy-20261020.3}
+IMAGE=${1:?image}; GV=${2:-precopy-20261020.4}
 export DEBIAN_FRONTEND=noninteractive
 apt-get -qq update || apt-get -qq update || true
 apt-get -qq install -y jq nftables nfs-kernel-server nfs-common iperf3 python3 zstd wireguard-tools >/dev/null
@@ -42,8 +42,11 @@ ln -sfn "$dir" /var/lib/sbx/images/current
 
 sysctl -qw net.ipv4.ip_forward=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0
 mkdir -p /run/sbx/ckpt /etc/exports.d
-# checkpoint images live in RAM: saving is a memory copy, and the target reads them from here over NFS
-mountpoint -q /run/sbx/ckpt || mount -t tmpfs -o size=60%,mode=700 sbx-ckpt /run/sbx/ckpt
+# checkpoint images live in RAM. A sandbox received by pre-copy migration keeps using its received memory.img (in
+# /run/sbx/ckpt/in-NAME, unlinked after the move) as its memory, so this tmpfs holds the memory of every sandbox that
+# migrated in: no size cap below RAM (the sandboxes' cgroups limit their memory). The old stop-and-copy modes read
+# images from here over NFS.
+mountpoint -q /run/sbx/ckpt || mount -t tmpfs -o size=100%,mode=700 sbx-ckpt /run/sbx/ckpt
 echo "/run/sbx/ckpt *(ro,no_subtree_check,no_root_squash,fsid=1)" > /etc/exports.d/sbx.exports
 exportfs -ra
 # each page a dirty-tracked sandbox writes during a pre-copy round can split a host mapping of its memory

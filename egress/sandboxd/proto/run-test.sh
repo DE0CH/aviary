@@ -12,7 +12,7 @@ if [ "$from" = c ] || [ "$to" = c ]; then
   # host c is outside the VPC: the stream and the sandbox's traffic use the WireGuard overlay (overlay-up.sh)
   wg() { awk -v n="$1" '$1==n{print $'"$2"'}' "$STATE/wg.txt"; }
   S=$(wg $from 2) D=$(wg $to 2)
-  if [ "$to" = c ]; then route="ROUTE_VIA='dev wg0' WG_PEER=$(wg c 3)"; else route="ROUTE_VIA='via $(col host-$to 4)'"; fi
+  if [ "$to" = c ]; then route="ROUTE_VIA='dev wg0 src $Ep' WG_PEER=$(wg c 3)"; else route="ROUTE_VIA='via $(col host-$to 4)'"; fi
 fi
 o=(-i "$STATE/key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 ssh "${o[@]}" ubuntu@$E "set -e

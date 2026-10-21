@@ -29,4 +29,4 @@ for h in $A $B $C; do ssh "${o[@]}" ubuntu@$h "sudo mkdir -p /var/lib/sbx && ech
 echo "$(echo "$common" | tr ',' '\n' | wc -l) CPU features common to all hosts" >&2
 for h in $B $C; do ssh "${o[@]}" ubuntu@$h "sudo ./sbx.sh rm s1 >/dev/null 2>&1; sudo rm -rf /run/sbx/ckpt/*"; done
 ssh "${o[@]}" ubuntu@$A "sudo ./sbx.sh rm s1 >/dev/null 2>&1; sudo rm -rf /run/sbx/ckpt/*; sudo ./sbx.sh net s1 10.200.0.10 $Ep $Ep && sudo ./sbx.sh bundle s1 10.200.0.10 $Ep $TOKEN && sudo ./sbx.sh run s1"
-ssh "${o[@]}" ubuntu@$E "sudo ip route replace 10.200.0.10/32 via $Ap; until curl -sf -m 1 http://10.200.0.10:7070/healthz; do sleep 0.2; done; echo"
+ssh "${o[@]}" ubuntu@$E "sudo ip route replace 10.200.0.10/32 via $Ap ${ROUTE_OPTS:-}; until curl -sf -m 1 http://10.200.0.10:7070/healthz; do sleep 0.2; done; echo"

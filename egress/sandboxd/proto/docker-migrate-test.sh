@@ -25,7 +25,7 @@ mig() {  # from to
   s=$(col host-$1 4) d=$(col host-$2 4)
   if [ "$1" = c ] || [ "$2" = c ]; then
     s=$(wg $1 2) d=$(wg $2 2)
-    if [ "$2" = c ]; then route="ROUTE_VIA='dev wg0' WG_PEER=$(wg c 3)"; else route="ROUTE_VIA='via $(col host-$2 4)'"; fi
+    if [ "$2" = c ]; then route="ROUTE_VIA='dev wg0 src $Ep' WG_PEER=$(wg c 3)"; else route="ROUTE_VIA='via $(col host-$2 4)'"; fi
   fi
   ssh "${o[@]}" ubuntu@$E "KEY=\$HOME/key DOWNTIME=${DOWNTIME:-100ms} BUNDLE=bundle-dind NOHEALTH=1 $route ./migrate.sh d1 10.200.0.20 $s $d $Ep $TOKEN precopy"
 }
