@@ -7,13 +7,21 @@ its Kustomize base in `deploy/chat/`. An instance pins a tag of this repo and su
 
 Staff never see the name "Jarvis 3": the product name, logo and wording come from the instance config.
 
+**What it is (Deyao, 2026-10-21): a read-only data-analysis tool, not an assistant that acts.** It searches, reads
+and analyses (news, social posts, the instance's own data, uploaded files, a sandbox for code and data work); it never
+sends, posts or changes anything outside the chat. So there is nothing to confirm and nobody is ever asked anything:
+every tool is read-only (outward actions such as sending mail are not offered at all), and the sandbox's internet
+access is decided automatically by an allowlist with no manual override ("either allow automatically or deny with
+no manual override"). There are no confirmation cards, no per-conversation site grants and no
+`request_network_access` tool (all removed in schema 6).
+
 ## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by `JARVIS_ROLE`)
 
 | Role | What | Replicas |
 |---|---|---|
 | `web` | Web UI, API, SSE streams, turn runner (spawns `claw`), sandbox manager, files, janitor | 2, rolling, drained |
-| `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, per-conversation host allowlist, credential injection, logs every call, package cache | 2, rolling |
-| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools, confirmations | 2, rolling |
+| `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, the automatic sandbox allowlist with threat-intel DNS, credential injection, logs every call, package cache | 2, rolling |
+| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools; read-only tools only | 2, rolling |
 
 Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`): run by our own sandbox hosts
 (`sandbox.provider: "vm"`, the YYC instance since 2026-10-21: gVisor on a Hetzner hub + AWS burst hosts with live
@@ -26,9 +34,9 @@ browser ──Access──▶ web ──spawn per turn──▶ claw (cwd = conv
    ▲  SSE (events from Postgres)            │ model calls ─▶ egress /x/model ─▶ OpenRouter (real key injected)
    │                                        │ MCP (stdio bridge) ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
    │                                        │ bash ─▶ jarvis-bash ─sync files + exec─▶ sandbox pod (gVisor)
-   └── confirmations (outward actions) ◀────┘                                    │ all egress
+   └── events (text, tool steps) ◀──────────┘                                    │ all egress
                                                                                  ▼
-                                                                      egress (token → conversation → allowlist)
+                                                 egress (token → sandbox allowlist → threat-intel DNS → public IP)
 State: Postgres (conversations, messages, events, claw session files, file metadata, sandboxes, logs); file bytes in S3.
 ```
 
@@ -173,18 +181,16 @@ create table vm_hosts (name text primary key, kind text,   -- 'hub' | 'aws'   (p
   status text,                    -- 'booting' | 'active' | 'draining' | 'retiring' | 'gone'
   max_sandboxes int,              -- operator's cap (null: by memory/CPU)
   mem_total bigint, mem_reserve bigint, cpus int, info jsonb, created_at, last_seen_at, empty_since, gone_at, gone_reason);
-create table allowed_hosts (conversation_id uuid not null, host text not null, added_by text not null,
-  created_at timestamptz not null default now(), primary key (conversation_id, host));
+-- allowed_hosts (conversation_id, host, added_by, created_at): unused since migration 6 (emptied; the sandbox
+-- allowlist is automatic); kept so an older replica still running during that rollout can read it
 create table egress_log (id bigserial primary key, at timestamptz not null default now(), conversation_id uuid,
   sandbox_id uuid, turn_id uuid, kind text not null,   -- 'connect' | 'http' | 'mirror' | 'model' | 'inject'
   method text, host text not null, port int, path text, status int, decision text not null,  -- 'allow' | 'deny:<why>'
   bytes_up bigint, bytes_down bigint, ms int, cost_usd numeric);
 create table tool_calls (id bigserial primary key, at timestamptz not null default now(), turn_id uuid,
   conversation_id uuid, user_email text, tool text not null, args jsonb, ok boolean, ms int, error text, cost_usd numeric);
-create table confirmations (id uuid primary key, conversation_id uuid not null, turn_id uuid not null,
-  kind text not null, summary text not null, detail jsonb not null default '{}',
-  status text not null check (status in ('pending','approved','denied','expired')),
-  created_at timestamptz not null default now(), decided_at timestamptz, decided_by text);
+-- confirmations (id, conversation_id, turn_id, kind, summary, detail, status, …): unused since migration 6 (nothing
+-- asks the user anything; pending rows were expired); old rows only
 create table kv (key text primary key, value jsonb not null);
 -- the admin monitor (migration 5): sandbox starts (kind 'sandbox_start': ok, ms = allocation latency from the first
 -- request incl. pool wait, detail {reason, error, provider, startMs}); kept 30 days by the janitor
@@ -192,8 +198,8 @@ create table ops_events (id bigserial primary key, at timestamptz not null defau
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
 ```
 
-Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after inserting events, and
-`pg_notify('confirm_<confirmation uuid without dashes>', status)` when a confirmation is decided.
+Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after inserting events. `turns.status`
+`waiting` (a turn held by a confirmation) no longer occurs; migration 6 set any such turn back to `running`.
 
 ### Tokens
 
@@ -206,11 +212,16 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 ### `egress` (port 3128, plus 9090 for /healthz and /metrics)
 
 1. **Forward proxy for sandboxes.** `CONNECT host:port` and absolute-URI HTTP requests with
-   `Proxy-Authorization: Basic base64("sbx:<egress token>")`. Unknown/expired token → 407. Allowed when the host
-   matches `egress.defaultAllowedHosts` (config; suffix match on entries starting with `.`) or the conversation's
-   `allowed_hosts`. Ports: 80, 443 only. Everything else → 403 with a plain-text body naming the host and saying the
-   agent can ask the user to allow it (`request_network_access` tool). Every request → `egress_log`.
-   Private, loopback, link-local and cluster addresses are refused after DNS resolution (no SSRF into the cluster).
+   `Proxy-Authorization: Basic base64("sbx:<egress token>")`. Unknown/expired token → 407. The host must pass the
+   sandbox allowlist (below; `deny:host`, `deny:denylist`, `deny:config`), then resolve through the threat-intel
+   resolvers (`deny:threat`, `deny:nxdomain`, `deny:dns`), then to a public address (`deny:address`: private,
+   loopback, link-local and cluster addresses are refused after resolution, no SSRF into the cluster). Ports: 80, 443
+   only (`deny:port`). A refusal is a 403 with a plain-text body: "egress: <host> is not on the sandbox's internet
+   allowlist, and it cannot be enabled from the chat. … To read a web page, use the web_fetch and web_search tools
+   instead of the sandbox." (or the DNS/address reason). Nobody is asked and nothing can grant a host. A tunnel or
+   request that sends more than `egress.maxUploadBytes` (default 8 MiB) is cut (`deny:upload`): bulk upload is the
+   exfiltration path, and installing packages or reading data sends little. Every request → `egress_log` with its
+   decision (`allow`, `allow:cache` or `deny:<reason>`).
    **The wire:** `GET /wire` with a WebSocket upgrade and `Authorization: Bearer <egress token>` (401 otherwise):
    the WebSocket's binary messages are one proxy connection, handed to this same server, so everything above
    applies unchanged. Pings every 30 s. This is how hosted sandboxes (E2B) reach egress through the tunnel.
@@ -242,7 +253,69 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
    `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
    public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
-   (`OPENROUTER_API_KEY`). Identity lookups are cached for 5 s, a conversation's `allowed_hosts` for 2 s.
+   (`OPENROUTER_API_KEY`). Identity lookups are cached for 5 s. At start it logs `egress allowlist` with the lists'
+   version and sizes.
+
+### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
+
+Which hosts a sandbox may reach is decided automatically; there is no per-conversation grant and no staff override.
+
+- **Matching.** Entries are `host` (that name only) or `.domain` (the domain and every name under it). A host passes
+  when its most specific allow entry is more specific than its most specific deny entry (an exact entry beats a
+  suffix entry of the same name; equally specific → deny). So `.google.com` lets `www.google.com` through while
+  `.drive.google.com` refuses Drive, and the exact `raw.githubusercontent.com` passes under the denied
+  `.githubusercontent.com`. Config `egress.denyHosts` wins over everything (`deny:config`).
+- **Allow = generated `allow.txt` + config `egress.defaultAllowedHosts`.** `allow.txt` is built by
+  `chat/egress-allowlist/generate.py` (Python standard library) from:
+  - `sources/dev.txt`: package registries, code hosts, toolchains, container registries, distro mirrors, merged from
+    two lists made for AI coding sandboxes: OpenAI Codex cloud's "Common dependencies" preset
+    (https://developers.openai.com/codex/cloud/agent-internet) and Claude Code on the web's "Default allowed domains"
+    (https://code.claude.com/docs/en/cloud-environments), plus the hosts `docker pull` really uses (traced:
+    `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudflare.docker.com`,
+    `production.cloudfront.docker.com`, Docker's R2 bucket host; `ghcr.io`, `pkg-containers.githubusercontent.com`).
+    Left out of both: catch-alls that contain upload services (`google.com`, `microsoft.com`, `azure.com`,
+    `*.amazonaws.com`, `*.googleapis.com` storage, `*.r2.cloudflarestorage.com`, `gist.github.com`, telemetry intake).
+    Domain names are facts; both sources are public documentation.
+  - `sources/yyc.txt`: a short curated list of the news and data sources YYC staff use (HK/Macao/mainland government
+    and statistics sites under `.gov.hk`, `.gov.mo`, `.gov.cn`, `data.gov.hk`, `censtatd.gov.hk`, `info.gov.hk`; HK,
+    mainland and international news outlets; World Bank, IMF, OECD, UN, Wikipedia), from the hosts YYC's news-stream
+    collects from.
+  - **A ranked set: the top 50,000 registrable domains by the Tranco method** (Dowdall rule over popularity lists,
+    Le Pochat et al., NDSS 2019, https://tranco-list.eu) computed over the providers whose terms allow any use: the
+    Chrome UX Report (CC BY-SA 4.0, via github.com/zakird/crux-top-lists), the Majestic Million (CC BY 3.0) and the
+    Cisco Umbrella top 1M (free of charge). The published Tranco list itself is not used: it also folds in Cloudflare
+    Radar (CC BY-NC 4.0, non-commercial) and Farsight. Registrable domains by the Public Suffix List's ICANN section
+    (MPL 2.0). Newly registered domains never make the ranked set.
+  - **Minus risky categories** from the UT1 web classification (Université Toulouse Capitole, CC BY-SA 4.0,
+    https://dsi.ut-capitole.fr/blacklists/): malware, phishing, cryptojacking, ddos, dialer, stalkerware, hacking,
+    warez, adult, mixed_adult, filehosting, webhosting, redirector (also its strict/strong variants), shortener, proxy,
+    vpn, residential-proxies, doh, dynamic-dns, webmail, chat, remote-control. A listed ranked domain is dropped; a
+    listed subdomain of a kept domain goes on the deny list (adult: drop only).
+- **Deny = generated `deny.txt`:** `sources/deny.txt` (curated: pastebins and code-sharing with anonymous upload,
+  anonymous file drops and file sharing incl. Google Drive/Docs/Forms and Apps Script, public object storage,
+  request catchers and webhooks incl. Discord/Slack/Telegram bot APIs, tunnels, anyone-runs-a-server hosting,
+  form builders, webmail) + the UT1 subdomains above + every Public Suffix List **private-section** suffix under an
+  allowed domain (user-content platforms where anyone gets a subdomain: `.workers.dev`, `.github.io`,
+  `.herokuapp.com`, …). Upload to a place that takes it without an account of its own is the main exfiltration
+  path a prompt-injected command could use, so these are refused even though they are popular.
+- **Size and version (2026-10-21):** allow 48,933 entries (105 dev + 78 YYC curated, ranked 48,856 kept of 50,000;
+  1,144 dropped by category), deny 14,659. Each file's header carries `# version: <date> <digest>` and the sources;
+  egress logs the version at start.
+- **Refresh:** workflow `egress-allowlist` (Mondays) runs `generate.py`, commits to main only when an entry changed,
+  and dispatches the `chat` workflow so the images carry the new lists; an instance takes them with its next jarvis3
+  pin bump. Change the curated sets in `sources/` and run `python3 -I chat/egress-allowlist/generate.py` (about a
+  minute and 100 MB of downloads; `--cache DIR` keeps them).
+- **Threat-intel DNS on every connection:** egress resolves sandbox destinations through Cloudflare's malware-blocking
+  resolvers (1.1.1.2, 1.0.0.2: a blocked name answers 0.0.0.0/::) with Quad9 (9.9.9.9: NXDOMAIN for a blocked name)
+  as fallback, over plain DNS from the egress pod. 0.0.0.0/:: → `deny:threat`; NXDOMAIN/no address → `deny:nxdomain`;
+  no resolver answering → `deny:dns` (fail closed). Answers are cached for their TTL (30 s – 5 min). The connection
+  goes to exactly the checked address, after the private-address check.
+- **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
+  token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
+  the workspace is what such an upload could carry, and the upload cap bounds it.
+- **The agent is told:** the runtime appends a note to the instance's system prompt on every turn
+  (`SANDBOX_NETWORK_NOTE`, `chat/src/web/turns.ts`): the sandbox reaches an automatic allowlist only, nobody can enable
+  a site from the chat, and web pages are read with `web_fetch`/`web_search` (server-side, any public site).
    On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the drain time,
    the log is flushed.
 
@@ -250,35 +323,29 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
 
 - Auth: `Authorization: Bearer <turn token>` → turn → conversation → owner email. Invalid → 401.
 - Every call → `tool_calls`.
-- Tools (names lowercase, `snake_case`; annotations set `readOnlyHint` correctly):
-  `web_search`, `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus every tool of each configured
-  upstream MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
-  `X-YYC-User: <owner email>`), and `request_network_access(host, reason)`.
-- **Outward actions need the staff member's confirmation:** a tool marked `confirm` in config (and
-  `request_network_access` always) inserts a `confirmations` row, emits an event through `web`
-  (`POST http://web.<ns>.svc:8080/internal/events` with the turn token: `{type:"confirmation_request", id, kind,
-  summary, detail}`; `summary` is in the instance's `product.locale`, zh-HK or English), then waits (LISTEN `confirm_<id>`, up to 15 minutes) for approve/deny. Denied/expired → the
-  tool returns an error text "The user declined." / "No answer from the user." On expiry `tools` itself sets the row
-  `expired` and posts `{type:"confirmation_resolved", id, status:"expired"}`; on approve/deny `web` posts it.
-  `kind` is `network_access` (detail `{host, reason}`) or `tool` (detail `{tool, arguments}`).
+- **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
+  waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
+  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus the **listed** tools of each configured upstream
+  MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
+  `X-YYC-User: <owner email>`).
+- **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
+  tools (their own names, without the prefix) that may be offered: search/get/list-style tools only. A tool not on
+  the list is hidden (a new upstream tool stays hidden until someone adds it), and so is a listed tool the upstream
+  marks `readOnlyHint: false` or `destructiveHint: true`. An upstream without a `tools` list offers nothing. Hidden
+  tools are not in `tools/list` and `tools/call` answers "unknown tool" for them; each refresh logs the hidden names
+  (`upstream tools … hidden`). Anything that sends mail, posts or mutates (e.g. a `send_mail`) must never be listed.
 - A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
   `news_search` `tools.wisers`, `social_search` `tools.tikhub`; `web_fetch` without Exa reads pages directly).
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
   ports other than 80/443/8080/8443. `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
   every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the turn's owner on calls).
-- Env: `PORT` (8080), `JARVIS_WEB_URL` (default `http://web.$POD_NAMESPACE.svc.cluster.local:8080`),
-  `JARVIS_CONFIRM_TIMEOUT_MS` (15 min), `JARVIS_DRAIN_MS` (16 min: a held confirmation finishes before the pod
-  stops; `terminationGracePeriodSeconds` ≥ 1020), plus `DATABASE_URL` and the key env vars the config names.
+- Env: `PORT` (8080), `JARVIS_DRAIN_MS` (150 s: an upstream call, up to 2 minutes, finishes before the pod stops;
+  `terminationGracePeriodSeconds` 180), plus `DATABASE_URL` and the key env vars the config names.
 - **`jarvis-mcp-bridge`** (claw's stdio MCP server `tools`, in the image at `src/bin/`): reads JSON-RPC framed
   with `Content-Length` headers (claw's MCP client) or one message per line, answers in the same framing, POSTs each
   message to `$JARVIS_TOOLS_URL` (`http://tools.<ns>.svc.cluster.local:8080/mcp`) with
   `Authorization: Bearer $JARVIS_TURN_TOKEN`; retries a 503 (a draining replica) up to 3 times.
-
-### `web` internal endpoints (cluster-only; NetworkPolicy admits `tools` pods)
-
-- `POST /internal/events` — `Authorization: Bearer <turn token>`, body = one event object; appended to the turn's
-  events (same as claw's own events).
 
 ### `sandbox-agent` (port 7070, in the sandbox pod, `Authorization: Bearer <exec token>`)
 
@@ -374,20 +441,20 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
    refuses on replay); the turn's files are stored whatever its outcome.
 9. Replicas write a heartbeat (kv `replica:<name>`, every 10 s); the janitor (one replica, advisory lock, every 30 s)
    ends turns of replicas silent for 60 s and queued turns older than 2 minutes (`error`, "interrupted: the server
-   restarted"), expires confirmations after 15 minutes, releases idle/expired sandboxes, ends stuck starts, deletes
+   restarted"), releases idle/expired sandboxes, ends stuck starts, deletes
    sandbox pods without a live row and marks rows whose pod vanished.
 
 ### Events (what the UI renders; `GET …/stream` and `turns[].events`)
 
 Each is `{id, turnId, seq, type, data, createdAt}`; the list of types is in "Public API" below. What `web` itself adds:
 `turn_started {turnId, model}`; `sandbox {status: starting|ready|reset|unavailable, message?}`; `files {changed:
-[path]}` (what the turn stored); `title {title}`; `confirmation_resolved {id, status}` on approve/deny (and, as a
-backstop for a tools pod that died, on expiry after 20 minutes; `tools` posts the expiry itself at 15);
+[path]}` (what the turn stored); `title {title}`;
 `turn_finished {turnId, status: done|error|cancelled, error, costUsd}` (plus `code: "budget", limitUsd, ownerName`
 when the budget stopped it: the UI words that in its own locale). claw's `result` is stored as it comes
 (`usage`, `estimated_cost`, `message`, …); its `session` line is not stored (a server path). `tool_result.output` is
 capped at 20 000 characters (`truncated: true`). The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug`
-event (tests only).
+event (tests only). Conversations stored before schema 6 may hold `confirmation_request`/`confirmation_resolved`
+events: they still load, and the UI shows nothing for them (like any event type it doesn't know).
 
 ### `web` deployment needs
 
@@ -404,7 +471,7 @@ event (tests only).
 - Provider `e2b`: `E2B_API_KEY` (from `web-env`) and any variable `sandbox.e2b.egressHeaders` names; outbound HTTPS to
   `api.e2b.app` and `*.e2b.app`.
 - Pod: `terminationGracePeriodSeconds: 1800`, readiness `GET /healthz`, a writable emptyDir at the work root; the image
-  runs as uid 1000. NetworkPolicy: ingress from cloudflared and the `tools` pods (`/internal/events`); egress to
+  runs as uid 1000. NetworkPolicy: ingress from cloudflared only; egress to
   Postgres, the bucket, the Kubernetes API, `egress` and `tools` Services and sandbox pods on 7070.
 
 ### Public API (`web`, all behind Access; JSON)
@@ -426,11 +493,9 @@ event (tests only).
   `{id, turnId, seq, type, data, createdAt}`; heartbeats (`: hb`) every 15 s
 - Event types: claw's (`session`, `message_start`, `text_delta{text}`, `thinking_delta`, `tool_use{id,name,input}`,
   `tool_result{id,name,output,is_error}`, `message_stop`, `result{usage, estimated_cost, …}`, `error{message}`) and
-  the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`, `confirmation_request{id, kind,
-  summary, detail}` (kind `network_access` has `detail: {host, reason}`), `confirmation_resolved{id, status}`,
+  the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`,
   `sandbox{status: starting|ready|reset|unavailable}`, `title{title}`, `files{changed}`. MCP tools are named `mcp__tools__<tool>`.
 - `POST /api/turns/:id/cancel` → 204
-- `POST /api/confirmations/:id` `{approve: bool}` → 204
 - `POST /api/conversations/:id/files?name=<file name>` (raw body, `content-type` = the file's, ≤ 100 MB) → 201
   `{path, size}` (under `uploads/`, ` (2)` added before the extension when the name is taken)
 - `GET /api/conversations/:id/files` → `[{path, size, source: "upload"|"agent", updatedAt}]`;
@@ -536,15 +601,17 @@ images and built the template, and push; Flux rolls the Deployments one pod at a
   // provider "vm" instead (docs/SANDBOX-VM.md "Config"): {"provider": "vm", "image": …, "cpu": "1", "memory": "1Gi",
   //   "vm": {"hub": {"name", "url": "https://10.201.0.1:7443", "endpoint": "<hub IPv4>:51820"}, "cpuFeatures": "…",
   //          "spareSlots": 1, "legacyProvider"?: "kubernetes", "aws"?: {"launchTemplate", "maxHosts": 3, …}}}
-  "egress": {"defaultAllowedHosts": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org",
-             "security.debian.org", "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"],
+  // the sandbox allowlist ("The sandbox allowlist"): the generated lists (generatedAllowlist, default true) plus
+  // defaultAllowedHosts; denyHosts wins over everything; maxUploadBytes per tunnel/request (default 8 MiB)
+  "egress": {"defaultAllowedHosts": [], "denyHosts": [], "generatedAllowlist": true, "maxUploadBytes": 8388608,
              "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
                          "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}}], "cacheGiB": 5},
   "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
             "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "WISERS_ACCESS_CLIENT_ID", "accessClientSecretEnv": "WISERS_ACCESS_CLIENT_SECRET"},
             "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
-                           "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"}}],
-            "confirm": []},
+                           "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
+                           // read-only tools to offer (default deny; "tools" above): the upstream's own names
+                           "tools": ["posts_search", "post_get", "streams_list"]}]},
   "s3": {"endpoint": "...", "region": "...", "bucket": "...", "prefix": "jarvis/"},
   "budget": {"limitUsd": 30, "since": "2026-10-21T12:00:00Z", "ownerName": "Deyao"}
 }
