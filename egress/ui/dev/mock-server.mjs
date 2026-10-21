@@ -11,9 +11,56 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/** A bar chart as a PNG (w x h, bars in the accent colour), for the presented-file card and the viewed-image thumbnail. */
+function chartPng(w = 480, h = 300) {
+  const crcT = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (b) => {
+    let c = 0xffffffff;
+    for (const x of b) c = crcT[(c ^ x) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const t = Buffer.concat([Buffer.from(type), data]);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(t));
+    return Buffer.concat([len, t, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const bars = [0.9, 0.75, 0.62, 0.5, 0.3];
+  const rows = [];
+  for (let y = 0; y < h; y++) {
+    const row = Buffer.alloc(1 + w * 3, 255);
+    row[0] = 0;
+    for (let x = 0; x < w; x++) {
+      const i = Math.floor((x - 40) / ((w - 60) / bars.length));
+      const inBar = i >= 0 && i < bars.length && (x - 40) % ((w - 60) / bars.length) > 12 && y > h - 30 - bars[i] * (h - 60) && y < h - 30;
+      const axis = (x === 40 && y > 20 && y < h - 29) || (y === h - 30 && x >= 40 && x < w - 20);
+      const [r, g, b] = inBar ? [16, 120, 140] : axis ? [80, 80, 80] : [255, 255, 255];
+      row[1 + x * 3] = r;
+      row[2 + x * 3] = g;
+      row[3 + x * 3] = b;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
+}
+const CHART = chartPng();
+const blobs = new Map([["chart.png", CHART]]);
 const dist = join(here, "..", "..", "ui-dist");
 const port = Number(process.argv[2] || 5199);
 const SPEED = Number(process.env.MOCK_SPEED || 1);
@@ -103,7 +150,10 @@ async function playTurn(c, turn, prompt) {
   emit(c, turn, "tool_result", { id: "t2", name: "mcp__tools__news_search", is_error: false, output: "共 42 篇報道：明報 9、經濟日報 8、信報 7、星島 6、其他 12" });
   emit(c, turn, "tool_use", { id: "t3", name: "bash", input: { command: "python3 count.py coverage.csv > summary.xlsx", description: "按媒體統計報道數量" } });
   await sleep(900);
-  emit(c, turn, "tool_result", { id: "t3", name: "bash", is_error: false, output: "wrote summary.xlsx (5 rows)" });
+  emit(c, turn, "tool_result", { id: "t3", name: "bash", is_error: false, output: "wrote summary.xlsx (5 rows), chart.png" });
+  emit(c, turn, "tool_use", { id: "t3b", name: "read_file", input: { path: "chart.png" } });
+  await sleep(500);
+  emit(c, turn, "tool_result", { id: "t3b", name: "read_file", is_error: false, output: "Image chart.png: 480x300 px (shown to you below)", images: [{ path: "chart.png", sha256: "c".repeat(64), media_type: "image/png", width: 480, height: 300 }] });
   emit(c, turn, "tool_use", { id: "t4", name: "bash", input: { command: "curl -fsS https://files.example-share.net/coverage-2026.csv -o extra.csv", description: "下載額外數據" } });
   await sleep(600);
   emit(c, turn, "tool_result", {
@@ -117,6 +167,10 @@ async function playTurn(c, turn, prompt) {
   if (!(await streamText(c, turn, reply, 8))) return fin("cancelled");
   emit(c, turn, "message_stop", {});
   c.files.push({ path: "summary.xlsx", size: 18_432, source: "agent", updatedAt: new Date().toISOString() });
+  // only what the agent presents is shown (present_files); its helper script count.py is not
+  emit(c, turn, "tool_use", { id: "t5", name: "mcp__tools__present_files", input: { files: [{ path: "summary.xlsx", caption: "按媒體統計" }, { path: "chart.png", caption: "報道數量" }] } });
+  emit(c, turn, "files_presented", { files: [{ path: "summary.xlsx", caption: "按媒體統計", sha256: "a".repeat(64), size: 18_432 }, { path: "chart.png", caption: "報道數量", sha256: "c".repeat(64), size: CHART.length }] });
+  emit(c, turn, "tool_result", { id: "t5", name: "mcp__tools__present_files", is_error: false, output: "Shown to the user under your answer: summary.xlsx, chart.png." });
   emit(c, turn, "result", { usage: { input_tokens: 31000, output_tokens: 900 }, estimated_cost: 0.12 });
   c.messages.push({ id: ++eventId, role: "assistant", content: reply.trim(), turnId: turn.id, attachments: [], createdAt: new Date().toISOString() });
   fin("done");
@@ -221,11 +275,16 @@ createServer(async (req, res) => {
         const buf = await readBody(req);
         const path = `uploads/${u.searchParams.get("name")}`;
         c.files.push({ path, size: buf.length, source: "upload", updatedAt: new Date().toISOString() });
+        blobs.set(path, buf);
         return json(res, 200, { path });
       }
       if (rest.startsWith("/files/")) {
-        res.writeHead(200, { "content-type": "application/octet-stream" });
-        return res.end("mock file");
+        const path = decodeURIComponent(rest.slice(7));
+        const img = /\.(png|jpe?g|gif|webp)$/i.exec(path);
+        const body = blobs.get(path);
+        if (u.searchParams.get("preview") === "1" && !img) return json(res, 404, { error: "no preview" });
+        res.writeHead(200, { "content-type": img && body ? `image/${img[1].toLowerCase().replace("jpg", "jpeg")}` : "application/octet-stream" });
+        return res.end(body ?? "mock file");
       }
     }
     if ((m = /^\/api\/turns\/([^/]+)\/cancel$/.exec(p))) {

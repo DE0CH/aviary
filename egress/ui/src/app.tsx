@@ -447,7 +447,9 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
   };
 
   const attach = async (fl: FileList | null) => {
-    if (!fl?.length) return;
+    // copy now: the input is cleared right after this call returns (at the first await), which empties its FileList
+    const picked = Array.from(fl ?? []);
+    if (!picked.length) return;
     let id: string;
     try {
       id = await ensureConversation();
@@ -455,7 +457,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
       setSendError(s.uploadFailed);
       return;
     }
-    for (const f of Array.from(fl)) {
+    for (const f of picked) {
       const key = `${f.name}-${f.size}-${Math.random()}`;
       setAttachments((a) => [...a, { key, name: f.name, progress: 0 }]);
       api
@@ -565,7 +567,7 @@ function UserMessage({ m, convId }: { m: Message; convId: string }) {
       {!!m.attachments?.length && (
         <div class="file-row right">
           {m.attachments.map((path) =>
-            VIEWABLE.test(path) && m.id > 0 ? (
+            VIEWABLE.test(path) ? (
               <a key={path} class="upload-thumb" href={api.fileUrl(convId, path, { inline: true })} target="_blank" rel="noopener" title={path.split("/").pop()}>
                 <img src={api.fileUrl(convId, path, { inline: true })} alt={path.split("/").pop()} loading="lazy" />
               </a>
