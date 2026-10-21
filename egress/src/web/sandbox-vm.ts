@@ -7,7 +7,7 @@
 // - Placement: the hub while it has room, then the fullest AWS host with room; none: the scaler starts an AWS host
 //   (at most aws.maxHosts in steady state; one more only while a `retiring` host is being replaced). An AWS host is
 //   also started while someone may need a sandbox soon and no host has a free slot (kv `sandbox_demand:<email>`,
-//   noteSandboxDemand; nothing sends that signal since the old chat UI was retired).
+//   noteSandboxDemand, from POST /internal/cc/warm when the user types in the CloudCLI composer).
 // - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
 // - Packing (packing.ts): each pass plans a placement on the fewest hosts and, when it uses strictly fewer than now,
 //   live-migrates one sandbox toward it, also while Claude Code runs in it. A move across clouds also needs the sandbox

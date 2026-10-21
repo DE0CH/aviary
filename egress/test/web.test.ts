@@ -170,6 +170,35 @@ test("a sandbox per conversation: made once, the owner's ~/.claude key, Claude C
   assert.equal((await pg.db.query("select 1 from sandboxes where conversation_id = $1 and status <> 'gone'", [conv])).rows.length, 0);
 });
 
+test("/internal/cc/warm: typing hints the scaler (no sandbox made), not when the conversation has a live sandbox", async () => {
+  const demandAt = async (who: string) => (await pg.db.query("select value->>'at' as at from kv where key = $1", [`sandbox_demand:${who}`])).rows[0]?.at ?? null;
+  await pg.db.query("delete from kv where key like 'sandbox_demand:%'");
+  assert.equal((await cc("/internal/cc/warm", { owner: A }, "wrong")).status, 401);
+  assert.equal((await cc("/internal/cc/warm", { owner: "eve@example.org" })).status, 403);
+  assert.equal((await cc("/internal/cc/warm", { owner: A, conversation: "nope" })).status, 400);
+  // a new chat (no id yet): a hint for the owner, nothing created
+  const before = (await pg.db.query("select count(*)::int as n from sandboxes")).rows[0].n;
+  const w = await cc("/internal/cc/warm", { owner: A.toUpperCase() });
+  assert.equal(w.status, 200, w.text);
+  assert.equal(w.json.hinted, true);
+  assert.ok(await demandAt(A));
+  assert.equal((await pg.db.query("select count(*)::int as n from sandboxes")).rows[0].n, before, "no sandbox is made");
+  // a conversation without a live sandbox: a hint
+  assert.equal((await cc("/internal/cc/warm", { owner: B, conversation: randomUUID() })).json.hinted, true);
+  assert.ok(await demandAt(B));
+  // a conversation with a live sandbox: no hint, and its idle time is not reset
+  await pg.db.query("delete from kv where key like 'sandbox_demand:%'");
+  const conv = randomUUID();
+  const sb = await cc("/internal/cc/sandbox", { owner: A, conversation: conv });
+  await pg.db.query("update sandboxes set last_active_at = now() - interval '10 minutes' where id = $1", [sb.json.id]);
+  const lw = await cc("/internal/cc/warm", { owner: A, conversation: conv });
+  assert.equal(lw.json.hinted, false);
+  assert.equal(await demandAt(A), null);
+  const idle = Date.now() - new Date((await pg.db.query("select last_active_at from sandboxes where id = $1", [sb.json.id])).rows[0].last_active_at).getTime();
+  assert.ok(idle > 9 * 60_000, "warm does not count as use");
+  await cc("/internal/cc/release", { conversation: conv });
+});
+
 test("a full pool frees the least recently used idle sandbox, never one in use", async () => {
   const [c1, c2, c3] = [randomUUID(), randomUUID(), randomUUID()];
   await cc("/internal/cc/sandbox", { owner: A, conversation: c1 });

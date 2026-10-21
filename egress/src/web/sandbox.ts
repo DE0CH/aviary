@@ -53,8 +53,8 @@ type Q = { query: (q: string, v: unknown[]) => Promise<unknown> };
 
 /**
  * Someone may need a sandbox soon. Nothing is created: the vm scaler counts these and starts an AWS host at once when
- * no host has a free slot (docs/SANDBOX-VM.md, "Scaler"). One key per person, so a busy typist counts once. Nothing in
- * production sends this signal since the old chat UI was retired; the CloudCLI UI does not (yet) report typing.
+ * no host has a free slot (docs/SANDBOX-VM.md, "Scaler"). One key per person, so a busy typist counts once. Sent by
+ * POST /internal/cc/warm when the user types in the CloudCLI composer (docs/CLAUDE-CODE.md, "Warming").
  */
 export async function noteSandboxDemand(db: Q, who: string): Promise<void> {
   await db.query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [

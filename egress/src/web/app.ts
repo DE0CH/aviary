@@ -6,7 +6,7 @@ import { logError } from "../common/log.ts";
 import { sha256hex } from "../common/tokens.ts";
 import type { WebDeps } from "./ctx.ts";
 import { bad, HttpError, notFound, readJson, sendJson } from "./http.ts";
-import type { SandboxManager } from "./sandbox.ts";
+import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -49,7 +49,8 @@ export class WebApp {
    * The CloudCLI UI pods' calls (docs/CLAUDE-CODE.md), cluster-only (NetworkPolicy) and with the shared bearer token
    * JARVIS_CC_TOKEN: `POST /internal/cc/sandbox {owner, conversation}` → the conversation's sandbox (made if needed;
    * `reset` when it replaced an earlier one), `POST /internal/cc/touch {conversation}` (it is in use: its idle time
-   * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted).
+   * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted), `POST /internal/cc/warm
+   * {owner, conversation?}` (the user is typing; #warm).
    */
   async #claudeCodeInternal(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const want = process.env.JARVIS_CC_TOKEN || "";
@@ -57,6 +58,7 @@ export class WebApp {
     if (!want || sha256hex(given) !== sha256hex(want)) throw new HttpError(401, "unauthorized");
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const b = await readJson(req);
+    if (path === "/internal/cc/warm") return this.#warm(res, b);
     const conv = String(b.conversation || "");
     if (!UUID_RE.test(conv)) throw bad("conversation must be a uuid");
     if (path === "/internal/cc/sandbox") {
@@ -81,6 +83,26 @@ export class WebApp {
       return sendJson(res, 200, { ok: true });
     }
     throw notFound();
+  }
+
+  /**
+   * The user is typing in the composer (debounced by the UI; `conversation` absent for a new chat). Nothing is created
+   * and a live sandbox's idle time is not reset (only use counts): when the conversation has no live sandbox, it is a
+   * hint to the vm scaler (noteSandboxDemand, counted for DEMAND_WINDOW_S), which starts an AWS host at once when no
+   * host has a free slot. A host started for a hint nobody follows ends by the usual rule (empty and past its minimum
+   * lifetime), so a warm costs at most that.
+   */
+  async #warm(res: ServerResponse, b: Record<string, unknown>): Promise<void> {
+    const owner = String(b.owner || "").trim().toLowerCase();
+    if (!this.deps.config.users.includes(owner)) throw new HttpError(403, "not a user of this instance");
+    const conv = b.conversation == null || b.conversation === "" ? null : String(b.conversation);
+    if (conv !== null && !UUID_RE.test(conv)) throw bad("conversation must be a uuid");
+    const { rows } = conv
+      ? await this.deps.db.query("select 1 from sandboxes where conversation_id = $1 and status in ('starting','ready')", [conv])
+      : { rows: [] };
+    const hinted = !rows.length && !this.draining;
+    if (hinted) await noteSandboxDemand(this.deps.db, owner);
+    return sendJson(res, 200, { ok: true, hinted });
   }
 
   /** Waits (at most `ms`) for the calls being answered to finish. */
