@@ -3,5 +3,6 @@
 case "$*" in
   "-o route show default") echo "default via 10.9.9.1 dev eth0 proto static" ;;
   "-o route get "*) echo "10.0.0.1 dev enp7s0 src 10.0.0.7" ;;
+  "-o route show table all") printf '10.0.0.0/16 dev wg0 scope link \n10.201.1.1 dev wg0 scope link \n10.200.0.0/16 dev wg0 scope link \n10.244.0.0/16 via 10.0.0.1 dev enp7s0 table 51822 \n' ;;
   *) : ;;
 esac

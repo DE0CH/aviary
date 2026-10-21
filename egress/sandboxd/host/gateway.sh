@@ -26,6 +26,12 @@ if [ "$(crane version 2>/dev/null)" != "$CRANE_VERSION" ]; then
   curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane
 fi
 
+# systemd-networkd dropped the gateway's routes (10.200.0.0/16 dev wg0, table 51822) when it restarted on this node
+# (2026-10-21): keep it off routes and rules it didn't make (k3s/flannel's are of the same kind); sandboxd re-makes
+# its own within 10 s too. Takes effect at networkd's next start; nothing is restarted here.
+mkdir -p /etc/systemd/networkd.conf.d
+printf '[Network]\nManageForeignRoutes=no\nManageForeignRoutingPolicyRules=no\n' > /etc/systemd/networkd.conf.d/50-sbx.conf
+
 [ -x "$here/../bin/sandboxd" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
 install -m755 "$here/../bin/sandboxd" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
 rm -rf /opt/node /opt/sandboxd /opt/sandboxd.old   # the Node sandboxd's leftovers

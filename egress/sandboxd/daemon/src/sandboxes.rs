@@ -345,6 +345,28 @@ impl Sandboxes {
         Ok(())
     }
 
+    /// The /32 route of every running sandbox (to its veth), re-made if something removed it (net::routes_missing).
+    pub fn ensure_routes(&self, table: &str) {
+        let mut todo: [Option<(Str<48>, Str<16>)>; 64] = [None; 64];
+        {
+            let t = self.table();
+            for (i, sl) in t.iter().filter(|s| s.used && s.entry.state == RUNNING).take(64).enumerate() {
+                todo[i] = Some((sl.entry.spec.name, sl.entry.spec.ip));
+            }
+        }
+        for (name, ip) in todo.iter().flatten() {
+            let veth = net::veth_of(name.as_str());
+            let present = table.lines().any(|l| {
+                l.strip_prefix(ip.as_str()).map(|r| r.starts_with(' ')).unwrap_or(false)
+                    && l.split_whitespace().nth(2) == Some(veth.as_str())
+            });
+            if !present {
+                Log::info("sandbox route restored").s("sandbox", name.as_str()).emit();
+                let _ = net::route_sandbox(name.as_str(), ip.as_str());
+            }
+        }
+    }
+
     /// Every 10 s: CPU use per sandbox (cores, averaged over the interval).
     pub fn sample_cpu(&self) {
         let now = mono_ms();

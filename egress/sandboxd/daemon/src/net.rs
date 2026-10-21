@@ -342,6 +342,33 @@ impl HostNet {
         apply_host_rules(cfg, &st)
     }
 
+    /// The host-level routes `init` makes, as `ip -o route show table all` should list them; true if one is gone.
+    /// Something else on the machine can remove them: systemd-networkd drops routes it didn't make when it restarts
+    /// or reconfigures (seen on the gateway node, 2026-10-21: sandboxes lost the controller and egress); host setup
+    /// turns that off (ManageForeignRoutes=no) and sandboxd checks every 10 s and re-runs `init` if needed.
+    pub fn routes_missing(cfg: &HostConfig, table: &str) -> bool {
+        let has = |dst: &str, extra: &str| {
+            table.lines().any(|l| {
+                l.strip_prefix(dst).map(|r| r.starts_with(' ')).unwrap_or(false)
+                    && l.contains(" dev wg0")
+                    && (extra.is_empty() || l.contains(extra))
+            })
+        };
+        let has_tbl = |dst: &str| {
+            table
+                .lines()
+                .any(|l| l.strip_prefix(dst).map(|r| r.starts_with(' ')).unwrap_or(false) && l.contains(" table 51822"))
+        };
+        if cfg.gateway {
+            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            !has(cfg.sandbox_cidr.as_str(), "") || !has_tbl(pods)
+        } else if cfg.hub {
+            !has(cfg.sandbox_cidr.as_str(), "")
+        } else {
+            !has(cfg.control_cidr.as_str(), "") || !has(cfg.egress_vip.as_str(), "")
+        }
+    }
+
     /// hub: the egress pods' addresses; new connections to the VIP go to one of them.
     pub fn set_egress_targets(&self, cfg: &HostConfig, list: &[Str<16>]) -> Res<()> {
         // dedupe + sort as strings (as the Node code did)
@@ -603,6 +630,22 @@ pub fn set_peers(cfg: &HostConfig, peers: &[Peer], scratch: &mut [u8]) -> Res<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_routes() {
+        let g =
+            HostConfig::parse(br#"{"name":"g","role":"hub","gateway":true,"wgAddress":"10.201.0.1"}"#).ok().unwrap();
+        let ok = "10.200.0.0/16 dev wg0 scope link src 10.0.0.6 \n10.200.0.0/15 via 10.0.0.1 dev enp7s0 \n10.244.0.0/16 via 10.0.0.1 dev enp7s0 table 51822 \n";
+        assert!(!HostNet::routes_missing(&g, ok));
+        // what the gateway node had after systemd-networkd restarted: only the Hetzner network's /15
+        assert!(HostNet::routes_missing(
+            &g,
+            "10.200.0.0/15 via 10.0.0.1 dev enp7s0 \n10.201.0.0/24 dev wg0 proto kernel scope link src 10.201.0.1 \n"
+        ));
+        let b = HostConfig::parse(br#"{"name":"b","role":"burst","wgAddress":"10.201.0.10","controlCidr":"10.0.0.0/16","hub":{"publicKey":"k"}}"#).ok().unwrap();
+        assert!(!HostNet::routes_missing(&b, "10.0.0.0/16 dev wg0 scope link \n10.201.1.1 dev wg0 scope link \n"));
+        assert!(HostNet::routes_missing(&b, "10.201.1.1 dev wg0 scope link \n"));
+    }
 
     #[test]
     fn rules() {

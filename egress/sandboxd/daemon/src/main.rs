@@ -259,8 +259,26 @@ fn start() {
     let mut n = 0u64;
     loop {
         util::sleep_ms(10_000);
+        if let Ok(o) = proc::run(&["ip", "-o", "route", "show", "table", "all"], &mut *sc.small, 10_000)
+            && o.code == 0
+            && !o.truncated
+        {
+            let table = o.out_str();
+            if net::HostNet::routes_missing(cfg, table) {
+                Log::error("host routes were removed (re-made)").emit();
+                if let Err(e) = app.net.init(cfg) {
+                    Log::error("re-making host routes failed").s("error", e.msg.as_str()).emit();
+                }
+            }
+        }
         if cfg.gateway {
             continue;
+        }
+        if let Ok(o) = proc::run(&["ip", "-o", "-4", "route", "show"], &mut *sc.small, 10_000)
+            && o.code == 0
+            && !o.truncated
+        {
+            app.sbx.ensure_routes(o.out_str());
         }
         app.sbx.sample_cpu();
         n += 1;

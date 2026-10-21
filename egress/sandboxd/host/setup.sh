@@ -68,6 +68,10 @@ Type=simple
 EnvironmentFile=/etc/sbx/juicefs.env
 ExecStartPre=/bin/mkdir -p /var/lib/sbx/jfs /var/cache/sbx-jfs
 ExecStart=/bin/sh -c 'exec /usr/local/bin/juicefs mount --no-usage-report --cache-dir /var/cache/sbx-jfs --cache-size 4096 --open-cache 0 "$META_URL" /var/lib/sbx/jfs'
+# started = mounted: sandboxd (ordered after) must not take a sandbox with a workspace before the mount is there
+# (a host is "active" ~30 s after launch, and the controller places at once; it used to be refused with 503)
+ExecStartPost=/bin/sh -c 'for i in $(seq 240); do mountpoint -q /var/lib/sbx/jfs && exit 0; sleep 0.5; done; exit 1'
+TimeoutStartSec=150
 ExecStop=/bin/umount -l /var/lib/sbx/jfs
 Restart=always
 RestartSec=2
@@ -81,6 +85,11 @@ install -m755 "$here/../bin/sandboxd" /usr/local/bin/sandboxd.new && mv /usr/loc
 
 install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/log/sbx
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
+
+# systemd-networkd must leave sandboxd's routes alone (it drops routes it didn't make when it restarts; sandboxd also
+# re-makes them within 10 s)
+mkdir -p /etc/systemd/networkd.conf.d
+printf '[Network]\nManageForeignRoutes=no\nManageForeignRoutingPolicyRules=no\n' > /etc/systemd/networkd.conf.d/50-sbx.conf
 
 cat > /etc/sysctl.d/90-sbx.conf <<'EOF'
 net.ipv4.ip_forward = 1
