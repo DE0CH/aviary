@@ -5,7 +5,8 @@
 // list; default egress, egress.<POD_NAMESPACE>.svc, egress.<POD_NAMESPACE>.svc.cluster.local), EGRESS_BLOCK_CIDRS
 // (extra refused ranges, e.g. the node's own /64), and every variable a route's inject names (OPENROUTER_API_KEY).
 import { createServer } from "node:http";
-import { loadConfig } from "../common/config.ts";
+import { BudgetGate } from "../common/budget.ts";
+import { allowedModels, loadConfig } from "../common/config.ts";
 import { connect } from "../common/db.ts";
 import { log } from "../common/log.ts";
 import { startPresence } from "../common/ops.ts";
@@ -28,6 +29,9 @@ export async function main(): Promise<void> {
     cacheBytes: Math.round(config.egress.cacheGiB * 1024 ** 3),
     selfHosts,
     guard: new AddressGuard((process.env.EGRESS_BLOCK_CIDRS || "").split(",").map((s) => s.trim())),
+    models: allowedModels(config),
+    budget: ((g) => () => g.status())(new BudgetGate(db, config.budget)),
+    locale: config.product.locale,
   });
   const port = await egress.listen(Number(process.env.PORT || 3128));
 

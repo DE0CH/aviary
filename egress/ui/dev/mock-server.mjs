@@ -4,6 +4,8 @@
 //   node dev/mock-server.mjs [port]     env MOCK_DENY=1 → every API call is 403 (the not-on-the-list page)
 //                                       env MOCK_LOCALE=en → the instance locale is English
 //                                       env MOCK_SEED=1 → two finished conversations to start with
+//                                       env MOCK_ONE_MODEL=1 → one model only (no picker)
+//                                       env MOCK_BUDGET=1 → the shared budget is used up (every turn refused)
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -26,6 +28,10 @@ const me = {
   ],
   defaultModel: "anthropic/claude-opus-5.5",
 };
+if (process.env.MOCK_ONE_MODEL) {
+  me.models = [{ id: "anthropic/claude-sonnet-5.5", label: "Sonnet 5.5" }];
+  me.defaultModel = "anthropic/claude-sonnet-5.5";
+}
 
 const convs = new Map();
 let eventId = 0;
@@ -67,6 +73,13 @@ async function playTurn(c, turn, prompt) {
   };
   turn.status = "running";
   emit(c, turn, "turn_started", { turnId: turn.id });
+  if (process.env.MOCK_BUDGET) {
+    turn.status = "error";
+    turn.finishedAt = new Date().toISOString();
+    const error = "Deyao 設定了 30 美元的使用上限，目前已用完。";
+    emit(c, turn, "turn_finished", { turnId: turn.id, status: "error", error, code: "budget", limitUsd: 30, ownerName: "Deyao" });
+    return;
+  }
   emit(c, turn, "sandbox", { status: "starting" });
   await sleep(500);
   emit(c, turn, "sandbox", { status: "ready" });

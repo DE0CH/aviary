@@ -1,5 +1,6 @@
 // The staff chat: a sidebar of conversations (a drawer on phones) and the open conversation.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { showModelPicker, usdAmount } from "./rules.ts";
 import { api, ApiError, type ChatEvent, type Conversation, type ConversationSummary, type FileEntry, type Me, type Message, type Turn } from "./api.ts";
 import { locale, normaliseLocale, relativeTime, saveLocale, savedLocale, setLocale, t, type Locale } from "./i18n.ts";
 import { Icon } from "./icons.tsx";
@@ -648,7 +649,12 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
         </p>
       )}
       {v.status === "cancelled" && <p class="muted-note">{s.stopped}</p>}
-      {v.status === "error" && (
+      {v.status === "error" && v.budget && (
+        <p class="inline-error is-budget" role="alert">
+          <Icon name="alert" size={16} /> {s.budgetExhausted(usdAmount(v.budget.limitUsd), v.budget.ownerName)}
+        </p>
+      )}
+      {v.status === "error" && !v.budget && (
         <p class="inline-error">
           <Icon name="alert" size={16} /> {s.failed}
           {v.error ? `: ${v.error}` : ""}
@@ -882,7 +888,7 @@ function Composer(p: {
               el.value = "";
             }}
           />
-          {p.models.length > 1 && (
+          {showModelPicker(p.models) && (
             <label class="model-pick">
               <span class="visually-hidden">{s.model}</span>
               <select value={p.model} onChange={(e) => p.onModel((e.target as HTMLSelectElement).value)}>

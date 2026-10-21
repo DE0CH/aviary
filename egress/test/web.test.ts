@@ -33,10 +33,11 @@ let k8s: FakeK8s;
 let web: WebServer;
 let deps: WebDeps;
 let base: string;
-let upstream: { close(): Promise<void>; titleCalls: number; port: number };
+let upstream: { close(): Promise<void>; titleCalls: number; port: number; modelCalls: number; budgetOut: string | null };
 
 async function fakeUpstream(): Promise<typeof upstream> {
-  const state = { titleCalls: 0 };
+  // budgetOut: answer model calls as egress does once the budget is used up (402 budget_exceeded with this message)
+  const state = { titleCalls: 0, modelCalls: 0, budgetOut: null as string | null };
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
@@ -45,6 +46,15 @@ async function fakeUpstream(): Promise<typeof upstream> {
       return void res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "web_search" }, { name: "news_search" }] } }));
     }
     if (req.url === "/x/model/v1/messages") {
+      if (state.budgetOut) {
+        res.writeHead(402, { "content-type": "application/json" });
+        return void res.end(JSON.stringify({ type: "error", error: { type: "budget_exceeded", message: state.budgetOut } }));
+      }
+      if (JSON.parse(Buffer.concat(chunks).toString() || "{}").max_tokens === 10) {
+        state.modelCalls++;
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end(JSON.stringify({ content: [{ type: "text", text: "ok" }] }));
+      }
       state.titleCalls++;
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify({ content: [{ type: "text", text: "「A test title」" }] }));
@@ -520,4 +530,81 @@ test("admin monitor: admins only (404 for staff: API, page and bundle), a snapsh
   assert.equal(d.health.leaders[0].name, "janitor");
   // no message contents anywhere in the snapshot
   assert.doesNotMatch(r.text, /hello/);
+});
+
+test("models: only configured ids; a conversation on a model no longer offered continues on the default", async () => {
+  assert.equal((await call(A, "POST", "/api/conversations", { model: "anthropic/claude-opus-4" })).status, 400);
+  const conv = await newConversation();
+  assert.equal((await call(A, "PATCH", `/api/conversations/${conv}`, { model: "openai/gpt-x" })).status, 400);
+  await pg.db.query("update conversations set model = 'anthropic/claude-opus-4' where id = $1", [conv]);
+  assert.equal((await call(A, "GET", `/api/conversations/${conv}`)).json.model, deps.config.defaultModel);
+  const { events } = await runTurn(conv, "hello");
+  const dbg = events.find((e) => e.type === "debug").data;
+  assert.equal(dbg.args[dbg.args.indexOf("--model") + 1], deps.config.defaultModel);
+  const { rows } = await pg.db.query("select model from conversations where id = $1", [conv]);
+  assert.equal(rows[0].model, deps.config.defaultModel);
+});
+
+test("budget: a used-up budget refuses the turn before claw runs; a running turn stops at its next model call; admin reset/raise", async () => {
+  await pg.db.query("delete from egress_log; delete from kv where key = 'budget:override'");
+  const since = new Date(Date.now() - 60_000).toISOString();
+  deps.config.budget = { limitUsd: 1, since, ownerName: "Deyao" };
+  try {
+    // staff never see the budget API
+    assert.equal((await call(B, "GET", "/api/admin/budget")).status, 404);
+    assert.equal((await call(B, "POST", "/api/admin/budget", { action: "reset" })).status, 404);
+    const st = await call(A, "GET", "/api/admin/budget");
+    assert.equal(st.status, 200);
+    assert.deepEqual([st.json.budget.spentUsd, st.json.budget.limitUsd, st.json.budget.remainingUsd, st.json.budget.exhausted], [0, 1, 1, false]);
+
+    // used up: the turn is refused at once, with the message, and claw never runs
+    await pg.db.query("insert into egress_log (kind, host, decision, cost_usd) values ('model', 'openrouter.ai', 'allow', 1.2)");
+    const conv = await newConversation(B);
+    const refused = await runTurn(conv, "hello", [], B);
+    assert.ok(!refused.events.some((e) => e.type === "debug"), "no claw process");
+    const fin = refused.events.at(-1);
+    assert.equal(fin.data.status, "error");
+    assert.equal(fin.data.code, "budget");
+    assert.equal(fin.data.error, "Deyao 設定了 1 美元的使用上限，目前已用完。");
+    assert.deepEqual([fin.data.limitUsd, fin.data.ownerName], [1, "Deyao"]);
+    const got = (await call(B, "GET", `/api/conversations/${conv}`)).json;
+    assert.equal(got.turns.at(-1).status, "error");
+    assert.equal(got.turns.at(-1).error, "Deyao 設定了 1 美元的使用上限，目前已用完。");
+
+    // the admin raises the limit: turns run again (audit row written)
+    const raised = await call(A, "POST", "/api/admin/budget", { action: "set", limitUsd: 5 });
+    assert.equal(raised.status, 200, raised.text);
+    assert.deepEqual([raised.json.budget.limitUsd, raised.json.budget.source, raised.json.budget.exhausted], [5, "override", false]);
+    assert.equal(raised.json.audit[0].action, "set");
+    assert.equal(raised.json.audit[0].actor, A);
+    assert.equal((await call(A, "POST", "/api/admin/budget", { action: "set", limitUsd: "lots" })).status, 400);
+    assert.equal((await call(A, "POST", "/api/admin/budget", { action: "nope" })).status, 400);
+
+    // a running turn crosses the limit: egress refuses its next model call (402 budget_exceeded), the turn ends with
+    // the budget message and keeps what it wrote so far
+    upstream.budgetOut = "Deyao 設定了 5 美元的使用上限，目前已用完。";
+    const stopped = await runTurn(conv, "MODELCALL please", [], B);
+    const err = stopped.events.find((e) => e.type === "error");
+    assert.deepEqual([err.data.code, err.data.message, err.data.limitUsd], ["budget", "Deyao 設定了 5 美元的使用上限，目前已用完。", 5]);
+    const end = stopped.events.at(-1);
+    assert.deepEqual([end.data.status, end.data.code, end.data.error], ["error", "budget", "Deyao 設定了 5 美元的使用上限，目前已用完。"]);
+    assert.ok(stopped.events.some((e) => e.type === "text_delta"), "the words before the refused call stay");
+    upstream.budgetOut = null;
+    const calls = upstream.modelCalls;
+    const fine = await runTurn(conv, "MODELCALL again", [], B);
+    assert.equal(fine.events.at(-1).data.status, "done");
+    assert.equal(upstream.modelCalls, calls + 1);
+
+    // reset: spend counts from now
+    const reset = await call(A, "POST", "/api/admin/budget", { action: "reset" });
+    assert.deepEqual([reset.json.budget.spentUsd, reset.json.budget.limitUsd], [0, 5]);
+    // back to config: used up again (the 1.2 spent counts from config's since)
+    const cleared = await call(A, "POST", "/api/admin/budget", { action: "clear" });
+    assert.deepEqual([cleared.json.budget.source, cleared.json.budget.exhausted], ["config", true]);
+    assert.deepEqual(cleared.json.audit.slice(0, 3).map((a: any) => a.action), ["clear", "reset", "set"]);
+  } finally {
+    deps.config.budget = undefined;
+    upstream.budgetOut = null;
+    await pg.db.query("delete from kv where key = 'budget:override'");
+  }
 });

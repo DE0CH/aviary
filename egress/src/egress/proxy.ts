@@ -11,6 +11,7 @@ import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
 import type { Db } from "../common/db.ts";
 import { expandEnv, type EgressRoute } from "../common/config.ts";
 import { logError } from "../common/log.ts";
+import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetStatus } from "../common/budget.ts";
 import { DiskCache } from "./cache.ts";
 import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { Identities, tokenFrom, type SandboxId } from "./identity.ts";
@@ -32,6 +33,12 @@ export interface EgressOptions {
   aptHosts?: string[];
   env?: Record<string, string | undefined>;
   identities?: Identities;
+  /** The model route's allowed model ids (config models + titleModel); absent = any. */
+  models?: string[];
+  /** The shared budget (common/budget.ts); a model call is refused once it is used up. */
+  budget?: () => Promise<BudgetStatus | null>;
+  /** product.locale: the language of the budget message */
+  locale?: string;
 }
 
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -446,6 +453,11 @@ export class Egress {
     let forcedBody: Buffer | null = null;
     if (route.name === "model" && req.method !== "GET" && req.method !== "HEAD") {
       const raw = await readBody(req, MODEL_BODY_MAX);
+      const refusal = raw === null ? null : await this.#modelRefusal(raw);
+      if (refusal) {
+        text(res, refusal.status, JSON.stringify({ type: "error", error: { type: refusal.type, message: refusal.message } }), { "content-type": "application/json" });
+        return this.#deny(row, refusal.decision, refusal.status);
+      }
       const forced = raw === null ? null : forceZdr(raw);
       if (forced === null) {
         text(res, 400, '{"type":"error","error":{"type":"invalid_request_error","message":"egress: a model request body must be a JSON object"}}', { "content-type": "application/json" });
@@ -498,6 +510,24 @@ export class Egress {
         req.pipe(out);
       }
     });
+  }
+
+  /** A model call this instance doesn't make: a model outside config `models`/`titleModel`, or the budget is used up. */
+  async #modelRefusal(raw: Buffer): Promise<{ status: number; type: string; message: string; decision: string } | null> {
+    if (this.#o.models?.length) {
+      let model: unknown;
+      try {
+        model = (JSON.parse(raw.toString("utf8")) as { model?: unknown })?.model;
+      } catch {
+        model = undefined;
+      }
+      if (model !== undefined && (typeof model !== "string" || !this.#o.models.includes(model))) {
+        return { status: 400, type: "invalid_request_error", message: `egress: model ${String(model)} is not offered here`, decision: "deny:model" };
+      }
+    }
+    const b = this.#o.budget ? await this.#o.budget() : null;
+    if (b?.exhausted) return { status: 402, type: BUDGET_ERROR_TYPE, message: budgetMessage(this.#o.locale ?? "en", b.limitUsd, b.ownerName), decision: "deny:budget" };
+    return null;
   }
 
   // ---- lifecycle -----------------------------------------------------------------------------------------

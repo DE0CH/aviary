@@ -7,6 +7,8 @@ import { readFile, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { accessToken } from "../common/access.ts";
+import { budgetAudit, budgetStatus, changeBudget } from "../common/budget.ts";
+import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
 import { logError } from "../common/log.ts";
 import { bearerOf, newToken, sha256hex, turnForToken } from "../common/tokens.ts";
@@ -73,6 +75,8 @@ export class WebApp {
     r.add("GET", "/api/admin/usage", (q, s, p, c) => this.#usage(q, s, c));
     r.add("GET", "/api/admin/egress", (q, s, p, c) => this.#egress(s, c));
     r.add("GET", "/api/admin/monitor", (q, s, p, c) => this.#monitorSnapshot(q, s, c));
+    r.add("GET", "/api/admin/budget", (q, s, p, c) => this.#budget(s, c));
+    r.add("POST", "/api/admin/budget", (q, s, p, c) => this.#budgetChange(q, s, c));
   }
 
   /** Open SSE streams on this replica (the admin monitor). */
@@ -147,7 +151,8 @@ export class WebApp {
     const conv = uuidParam(id);
     const { rows } = await c.deps.db.query("select id, title, model from conversations where id = $1 and owner = $2 and deleted_at is null", [conv, c.caller.email]);
     if (!rows[0]) throw notFound();
-    return rows[0];
+    // a model no longer offered (e.g. Opus after a switch to Sonnet only): the conversation continues on the default
+    return { ...rows[0], model: effectiveModel(c.deps.config, rows[0].model) };
   }
 
   async #me(res: ServerResponse, c: Ctx) {
@@ -265,6 +270,7 @@ export class WebApp {
     const db = c.deps.db;
     try {
       await db.query("insert into turns (id, conversation_id, status, token_hash, model) values ($1, $2, 'queued', $3, $4)", [turnId, conv.id, sha256hex(token), conv.model]);
+      await db.query("update conversations set model = $2 where id = $1 and model <> $2", [conv.id, conv.model]);
     } catch (e) {
       if ((e as { code?: string }).code === "23505") throw new HttpError(409, "a reply is still being written in this conversation");
       throw e;
@@ -440,6 +446,33 @@ export class WebApp {
     if (!c.caller.isAdmin) throw notFound();
     const tz = new URL(req.url || "/", "http://x").searchParams.get("tz") || "UTC";
     sendJson(res, 200, await this.#monitor.snapshot(tz));
+  }
+
+  /** The shared budget (admins only): spend, limit, remaining, where the limit comes from, recent changes. */
+  async #budget(res: ServerResponse, c: Ctx) {
+    if (!c.caller.isAdmin) throw notFound();
+    const [status, audit] = await Promise.all([budgetStatus(c.deps.db, c.deps.config.budget), budgetAudit(c.deps.db)]);
+    sendJson(res, 200, { budget: status, config: c.deps.config.budget ?? null, audit });
+  }
+
+  /** An admin's reset ({action: "reset"}), new limit ({action: "set", limitUsd}) or return to config ({action: "clear"}). */
+  async #budgetChange(req: IncomingMessage, res: ServerResponse, c: Ctx) {
+    if (!c.caller.isAdmin) throw notFound();
+    const body = await readJson(req);
+    const action = body.action;
+    if (action !== "reset" && action !== "set" && action !== "clear") throw bad('action must be "reset", "set" or "clear"');
+    if (action === "set" && typeof body.limitUsd !== "number") throw bad("limitUsd must be a number");
+    if (action === "reset" && !c.deps.config.budget) {
+      const { rows } = await c.deps.db.query("select 1 from kv where key = 'budget:override'");
+      if (!rows.length) throw bad("there is no budget to reset: set a limit first");
+    }
+    try {
+      const budget = await changeBudget(c.deps.db, c.deps.config.budget, c.caller.email, { action, limitUsd: body.limitUsd });
+      sendJson(res, 200, { budget, config: c.deps.config.budget ?? null, audit: await budgetAudit(c.deps.db) });
+    } catch (e) {
+      if (e instanceof RangeError) throw bad(e.message);
+      throw e;
+    }
   }
 
   async #egress(res: ServerResponse, c: Ctx) {

@@ -5,6 +5,8 @@
 //   WRITE:<path>=<txt> writes a file in the workdir (cwd), as the file tools would
 //   SLEEP              keeps running until killed
 //   FAIL               emits an error and exits 1
+//   MODELCALL          after its first words, one model call to $ANTHROPIC_BASE_URL/v1/messages; an error answer ends
+//                      the run the way claw does (error event "api returned <status> (<type>): <message>", exit 1)
 // It also emits a `debug` event with its args, cwd and the CLAW_*/JARVIS_* env it was given, and keeps a session file
 // (one line per turn) so resume is visible as "turn N".
 import { spawn } from "node:child_process";
@@ -37,6 +39,24 @@ const say = (t) => {
 out({ type: "message_start" });
 say("Hello ");
 say(`turn ${turnNo}`);
+
+if (prompt.includes("MODELCALL")) {
+  const r = await fetch(`${process.env.ANTHROPIC_BASE_URL}/v1/messages`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.ANTHROPIC_AUTH_TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: args[args.indexOf("--model") + 1], max_tokens: 10, messages: [{ role: "user", content: prompt }] }),
+  });
+  if (!r.ok) {
+    const body = await r.text();
+    let e = null;
+    try {
+      e = JSON.parse(body).error;
+    } catch {}
+    out({ type: "error", message: e ? `api returned ${r.status} ${r.statusText} (${e.type}): ${e.message}` : `api returned ${r.status}: ${body}` });
+    process.exit(1);
+  }
+  await r.text();
+}
 
 const write = /WRITE:([^=\s]+)=(\S*)/.exec(prompt);
 if (write) {

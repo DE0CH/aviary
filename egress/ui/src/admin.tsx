@@ -1,6 +1,7 @@
 // The admin monitor (docs/CHAT.md, "Admin monitor"), served at /admin/monitor to config admins only (the web role
 // answers 404 to everyone else, for this page, its bundle and GET /api/admin/monitor). Polls the snapshot every 5 s
-// while the tab is visible. Read-only.
+// while the tab is visible. Read-only, except the Budget panel (GET/POST /api/admin/budget: reset, new limit, back to
+// config; each change is an audit row).
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "./style.css";
@@ -492,6 +493,115 @@ function Health({ d }: { d: Any }) {
 
 // ---- page ---------------------------------------------------------------------------------------------------------
 
+// ---- budget (its own API: /api/admin/budget) ------------------------------------------------------------------------
+
+const usd2 = (v: number | null | undefined) => (v == null ? "–" : `$${v.toFixed(2)}`);
+
+function Budget() {
+  const [b, setB] = useState<Any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [limit, setLimit] = useState("");
+  const load = async () => {
+    try {
+      const r = await fetch("/api/admin/budget", { credentials: "same-origin" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setB(await r.json());
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => !document.hidden && void load(), POLL_MS);
+    return () => window.clearInterval(t);
+  }, []);
+  const act = async (body: Any, confirmText: string) => {
+    if (!window.confirm(confirmText)) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/admin/budget", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setB(j);
+      setErr(null);
+      setLimit("");
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const s = b?.budget;
+  const newLimit = Number(limit);
+  return (
+    <Card title="Budget" id="budget" error={err ?? undefined} aside={s ? <span class={s.exhausted ? "is-bad-text" : ""}>{s.exhausted ? "used up: turns refused" : `${usd2(s.remainingUsd)} left`}</span> : undefined}>
+      {b && !s && <p class="m-empty">No budget: config has no `budget` and there is no override.</p>}
+      {s && (
+        <>
+          <Meter used={s.spentUsd} max={s.limitUsd} label="Spent" fmt={usd2} />
+          <div class="kv-row">
+            <span>
+              Spent <b>{usd2(s.spentUsd)}</b> of <b>{usd2(s.limitUsd)}</b>
+            </span>
+            <span>
+              Remaining <b>{usd2(s.remainingUsd)}</b>
+            </span>
+            <span>
+              Since <b>{new Date(s.since).toLocaleString()}</b>
+            </span>
+          </div>
+          <p class="note">
+            {s.source === "override"
+              ? `Override by ${s.override.by} at ${new Date(s.override.at).toLocaleString()} (config: ${b.config ? `${usd2(b.config.limitUsd)} since ${new Date(b.config.since).toLocaleString()}` : "none"}; editing config budget takes over again).`
+              : "From config.json budget."}{" "}
+            Model cost of every call (titles included), everyone together; staff see no amounts until it is used up.
+          </p>
+        </>
+      )}
+      {b && (
+        <div class="budget-actions">
+          <button type="button" disabled={busy || !s} onClick={() => act({ action: "reset" }, "Reset the budget? Spend counts from now (USD 0 used), the limit stays.")}>
+            Reset spend
+          </button>
+          <label>
+            <span class="visually-hidden">New limit in USD</span>
+            <input type="number" min="0" step="1" inputMode="decimal" placeholder="Limit USD" value={limit} onInput={(e) => setLimit((e.target as HTMLInputElement).value)} />
+          </label>
+          <button
+            type="button"
+            disabled={busy || limit === "" || !Number.isFinite(newLimit) || newLimit < 0}
+            onClick={() => act({ action: "set", limitUsd: newLimit }, `Set the limit to USD ${newLimit}? Spend so far still counts.`)}
+          >
+            Set limit
+          </button>
+          {s?.source === "override" && (
+            <button type="button" disabled={busy} onClick={() => act({ action: "clear" }, "Drop the override and use config.json budget again?")}>
+              Back to config
+            </button>
+          )}
+        </div>
+      )}
+      {b?.audit?.length > 0 && (
+        <>
+          <h3>Changes</h3>
+          <Table
+            head={["When", "Who", "Change", "Before", "After"]}
+            rows={b.audit.slice(0, 8).map((a: Any) => [
+              new Date(a.at).toLocaleString(),
+              a.actor,
+              a.action,
+              a.before ? `${usd2(a.before.limitUsd)}, ${usd2(a.before.spentUsd)} spent` : "–",
+              a.after ? `${usd2(a.after.limitUsd)} from ${new Date(a.after.since).toLocaleString()}` : "–",
+            ])}
+          />
+        </>
+      )}
+    </Card>
+  );
+}
+
 const POLL_MS = 5000;
 
 function Monitor() {
@@ -553,7 +663,7 @@ function Monitor() {
         </p>
       </header>
       <nav class="jump" aria-label="Sections">
-        {[["sandboxes", "Sandboxes"], ["hosts", "Hosts"], ["load", "Load"], ["models", "Models"], ["egress", "Egress"], ["health", "Health"]].map(([id, t]) => (
+        {[["budget", "Budget"], ["sandboxes", "Sandboxes"], ["hosts", "Hosts"], ["load", "Load"], ["models", "Models"], ["egress", "Egress"], ["health", "Health"]].map(([id, t]) => (
           <a key={id} href={`#${id}`}>
             {t}
           </a>
@@ -568,8 +678,8 @@ function Monitor() {
         <Tile label="Errors 24 h" value={errs24 == null ? "–" : String(errs24)} tone={errs24 ? "warn" : ""} sub={d.health ? `PG ${d.health.postgres.ms} ms` : undefined} />
       </div>
       <div class="cols">
-        {/* Budget panel slot (shared model budget): a <Budget d={d} /> card goes first here, fed by a `budget` section
-            of the snapshot (web/monitor.ts #build) or its own admin API; any action needs a confirm and is logged. */}
+        {/* Budget panel: own admin API (/api/admin/budget); every action asks to confirm and is an audit row */}
+        <Budget />
         <Sandboxes d={d} />
         <Hosts d={d} />
         <Load d={d} />

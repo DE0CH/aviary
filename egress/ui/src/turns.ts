@@ -1,6 +1,7 @@
 // Turns a turn's event list (claw's NDJSON events plus the server's own) into what the reply shows: text, tool
 // steps, confirmations, notices. Pure, so the same function serves the history load and the live stream.
 import type { ChatEvent, Turn } from "./api.ts";
+import { budgetOf } from "./rules.ts";
 
 export type Block =
   | { kind: "text"; text: string }
@@ -19,6 +20,8 @@ export interface TurnView {
   error?: string | null;
   cost?: number;
   sandboxStarting: boolean;
+  /** the shared budget ran out (before or during the turn): its limit and who set it, for the UI's own wording */
+  budget?: { limitUsd: number; ownerName: string | null };
 }
 
 export const isActive = (s: Turn["status"]) => s === "queued" || s === "running" || s === "waiting";
@@ -104,6 +107,10 @@ export function viewTurn(turn: Turn): TurnView {
         break;
       case "error":
         text = null;
+        if (budgetOf(d)) {
+          v.budget = budgetOf(d);
+          break;
+        }
         v.blocks.push({ kind: "error", message: String(d.message ?? "") });
         break;
       case "result":
@@ -113,6 +120,7 @@ export function viewTurn(turn: Turn): TurnView {
         v.status = d.status ?? "done";
         v.finishedAt = e.createdAt;
         if (d.error) v.error = d.error;
+        if (budgetOf(d)) v.budget = budgetOf(d);
         v.thinking = false;
         v.sandboxStarting = false;
         break;

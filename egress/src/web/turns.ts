@@ -5,6 +5,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { BUDGET_ERROR_TYPE, budgetMessage, budgetStatus, type BudgetStatus } from "../common/budget.ts";
+import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import type { WebDeps } from "./ctx.ts";
@@ -102,6 +104,7 @@ export class TurnRunner {
     );
     const turn = rows[0];
     if (!turn) return;
+    turn.model = effectiveModel(deps.config, turn.model);
     const conv = turn.conversation_id;
     const startedAt = new Date();
     const emit = (type: string, data: Record<string, unknown>) => appendEvent(db, conv, turnId, type, data);
@@ -112,6 +115,10 @@ export class TurnRunner {
     let usage: unknown = null;
     let sessionPath = "";
     let clawCost: number | null = null;
+    let budgetHit: BudgetStatus | null = null;
+    // the shared budget: used up = no turn (and so no model call); fails open when it can't be read
+    const budget = await budgetStatus(db, deps.config.budget).catch((e) => (logError("budget", e, { turn: turnId }), null));
+    if (budget?.exhausted) return await this.#refuseForBudget(turn, budget, startedAt);
     try {
       await emit("turn_started", { turnId, model: turn.model });
       const { rows: msgs } = await db.query<{ content: string; attachments: string[] }>(
@@ -263,6 +270,14 @@ export class TurnRunner {
             break;
           case "error":
             errorMessage = String(data.message ?? "error");
+            // egress refused a model call: the budget ran out during this turn
+            if (errorMessage.includes(BUDGET_ERROR_TYPE)) {
+              const msg = /budget_exceeded\)?:\s*(.+)$/s.exec(errorMessage)?.[1]?.trim() || errorMessage;
+              budgetHit = { ...(budget ?? emptyBudget()), exhausted: true };
+              errorMessage = msg;
+              for (const k of Object.keys(data)) delete data[k];
+              Object.assign(data, budgetEventData(budgetHit, msg));
+            }
             break;
         }
         queue(() => emit(type, data));
@@ -272,6 +287,12 @@ export class TurnRunner {
       flush();
       await chain;
       if (!finalText) finalText = lastMessageText;
+      if (budgetHit) {
+        // the reply so far is kept; the budget message ends it (code "budget": the UI shows it in its own locale)
+        const fresh = await budgetStatus(db, deps.config.budget).catch(() => null);
+        if (fresh) budgetHit = fresh;
+        errorMessage = budgetMessage(deps.config.product.locale, budgetHit.limitUsd, budgetHit.ownerName);
+      }
       if (r.cancelled) status = "cancelled";
       else if (code === 0 && !errorMessage) status = "done";
       else {
@@ -325,9 +346,21 @@ export class TurnRunner {
       [turnId, status, error, usage == null ? null : JSON.stringify(usage), costUsd],
     );
     await db.query("update conversations set updated_at = now() where id = $1", [conv]);
-    await emit("turn_finished", { turnId, status, error, costUsd });
+    await emit("turn_finished", { turnId, status, error, costUsd, ...(budgetHit && status === "error" ? budgetEventData(budgetHit, error ?? "") : {}) });
     await this.#sandboxes.touch(conv);
     log("turn", { turn: turnId, conversation: conv, status, ms: Date.now() - startedAt.getTime() });
+  }
+
+  /** The budget is used up: the turn ends at once with the budget message (no sandbox, no claw, no model call). */
+  async #refuseForBudget(turn: TurnInfo, b: BudgetStatus, startedAt: Date): Promise<void> {
+    const db = this.#deps.db;
+    const conv = turn.conversation_id;
+    const error = budgetMessage(this.#deps.config.product.locale, b.limitUsd, b.ownerName);
+    await appendEvent(db, conv, turn.id, "turn_started", { turnId: turn.id, model: turn.model });
+    await db.query("update turns set status = 'error', finished_at = now(), error = $2, cost_usd = 0 where id = $1 and status in ('running','waiting')", [turn.id, error]);
+    await db.query("update conversations set updated_at = now() where id = $1", [conv]);
+    await appendEvent(db, conv, turn.id, "turn_finished", { turnId: turn.id, status: "error", error, costUsd: 0, ...budgetEventData(b, error) });
+    log("turn", { turn: turn.id, conversation: conv, status: "error", reason: "budget", ms: Date.now() - startedAt.getTime() });
   }
 
   /** The tools service's tool names (claw's --allowedTools must name MCP tools explicitly); [] when it can't answer. */
@@ -376,3 +409,12 @@ export class TurnRunner {
 }
 
 class CancelledError extends Error {}
+
+/** What a budget refusal's events carry: the UI words it in its own locale from these (staff see the limit, not the spend). */
+function budgetEventData(b: Pick<BudgetStatus, "limitUsd" | "ownerName">, message: string): Record<string, unknown> {
+  return { code: "budget", message, limitUsd: b.limitUsd, ownerName: b.ownerName };
+}
+
+const emptyBudget = (): BudgetStatus => ({
+  limitUsd: 0, since: new Date(0).toISOString(), ownerName: null, spentUsd: 0, remainingUsd: 0, exhausted: true, source: "config", override: null, config: null,
+});

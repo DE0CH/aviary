@@ -97,3 +97,9 @@ details { margin-top: 8px; font-size: 13px; }
 summary { cursor: pointer; color: var(--muted); }
 .log li { font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .log li:last-child { border-bottom: 0; }
+
+/* budget panel: the only controls on the monitor */
+.budget-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.budget-actions button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; min-height: 36px; }
+.budget-actions button:disabled { opacity: .5; cursor: default; }
+.budget-actions input { font: inherit; font-size: 16px; width: 7.5rem; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-height: 36px; }

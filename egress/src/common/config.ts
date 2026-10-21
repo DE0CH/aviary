@@ -86,6 +86,19 @@ export interface VmConfig {
   };
 }
 
+/**
+ * budget: one shared spending limit for everyone (docs/CHAT.md, "Budget"): model cost (egress_log, kind model) summed
+ * from `since`; once it reaches `limitUsd` no turn starts and running turns stop at their next model call. An admin's
+ * override in Postgres (kv budget:override) wins until this block changes.
+ */
+export interface BudgetConfig {
+  limitUsd: number;
+  /** ISO timestamp: spend counts from here (a reset = a newer `since`) */
+  since: string;
+  /** who set it, named in the message staff see when it is used up */
+  ownerName?: string;
+}
+
 export interface ChatConfig {
   product: { name: string; locale: string; logo?: string };
   publicUrl: string;
@@ -126,6 +139,19 @@ export interface ChatConfig {
     confirm: string[];
   };
   s3: { endpoint: string; region: string; bucket: string; prefix: string };
+  /** absent = no limit */
+  budget?: BudgetConfig;
+}
+
+/** The model a turn runs on: the conversation's own while it is still offered, else the default (models removed from
+ * the config, e.g. Opus after a switch to Sonnet only, continue on the default model). */
+export function effectiveModel(config: ChatConfig, model: string | null | undefined): string {
+  return model && config.models.some((m) => m.id === model) ? model : config.defaultModel;
+}
+
+/** Every model id this instance may call (egress refuses the rest): the offered models and the title model. */
+export function allowedModels(config: ChatConfig): string[] {
+  return [...new Set([...config.models.map((m) => m.id), config.titleModel])];
 }
 
 const DEFAULTS = {
@@ -201,6 +227,14 @@ export function parseConfig(raw: unknown): ChatConfig {
   if (!Array.isArray(c.users) || !c.users.length) throw new Error("config: users must list at least one email");
   if (!Array.isArray(c.models) || !c.models.length) throw new Error("config: models must not be empty");
   if (!c.models.some((m: ModelEntry) => m.id === c.defaultModel)) throw new Error("config: defaultModel must be one of models");
+  let budget: BudgetConfig | undefined;
+  if (c.budget != null) {
+    const b = c.budget;
+    if (typeof b.limitUsd !== "number" || !Number.isFinite(b.limitUsd) || b.limitUsd < 0) throw new Error("config: budget.limitUsd must be a number >= 0");
+    if (typeof b.since !== "string" || Number.isNaN(Date.parse(b.since))) throw new Error("config: budget.since must be an ISO timestamp");
+    if (b.ownerName !== undefined && typeof b.ownerName !== "string") throw new Error("config: budget.ownerName must be a string");
+    budget = { limitUsd: b.limitUsd, since: new Date(b.since).toISOString(), ...(b.ownerName ? { ownerName: b.ownerName } : {}) };
+  }
   const lower = (xs: unknown[]) => xs.map((x) => String(x).trim().toLowerCase());
   return {
     product: { locale: "en", ...c.product },
@@ -216,6 +250,7 @@ export function parseConfig(raw: unknown): ChatConfig {
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },
     s3: { prefix: "", ...c.s3 },
+    budget,
   };
 }
 
