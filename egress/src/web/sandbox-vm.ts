@@ -9,10 +9,10 @@
 //   also started as soon as someone types in a conversation without a sandbox while no host has a free slot (kv
 //   `sandbox_demand:<email>`, from POST /api/typing), so it is up by the time a bash command asks for a sandbox.
 // - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
-// - Drain-back: when an AWS host's sandboxes fit elsewhere (spare slots kept), it is marked `draining`, its sandboxes
-//   move one at a time while their conversation has no turn going (never mid-bash). A move across clouds also needs
-//   the sandbox to be idle (CPU) and is aborted, sandbox untouched, if pre-copy wouldn't converge within
-//   migration.maxDowntimeMs (the gVisor fork's --migrate-max-downtime).
+// - Packing (packing.ts): each pass plans a placement that uses fewer hosts past their minimum lifetime and live-migrates
+//   one sandbox toward it (during a turn only with migration.duringTurns). A move across clouds also needs the sandbox
+//   to be idle (CPU) and is aborted, sandbox untouched, if pre-copy wouldn't converge within migration.maxDowntimeMs
+//   (the gVisor fork's --migrate-max-downtime). A `retiring` host (the operator's) has its sandboxes moved off.
 // - An AWS host is terminated as soon as no sandbox is on it and it is older than vm.minHostLifetimeSeconds (default
 //   15 min, from launch); nothing else keeps or ends it.
 // - A host that stops answering for 30 s (the hub: 120 s) loses its sandboxes: their rows go `gone` ("host lost"),
@@ -25,6 +25,7 @@ import { log, logError } from "../common/log.ts";
 import { AgentClient } from "./agent.ts";
 import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
 import { sandboxEnv } from "./sandbox-k8s.ts";
+import { planPacking } from "./packing.ts";
 import { DEMAND_WINDOW_S, PoolFullError, type SandboxRow } from "./sandbox.ts";
 import { SandboxdError, wgKeyPair, type Ec2Api, type HostInfo, type HostSandbox, type SandboxdApi } from "./vm-clients.ts";
 
@@ -426,8 +427,11 @@ export class VmController {
   /** May this sandbox move now? Never while its conversation has a turn going; across clouds only when idle. */
   async #movable(s: { id: string; conversation_id: string; pod: string; created_at: Date }, from: HostRow, to: HostRow): Promise<boolean> {
     if (Date.now() - new Date(s.created_at).getTime() < 30_000) return false;
-    const { rows } = await this.#d.db.query("select 1 from turns where conversation_id = $1 and status in ('queued','running','waiting') limit 1", [s.conversation_id]);
-    if (rows.length) return false;
+    // moves during a turn (a bash command running) only once verified live (sandbox.vm.migration.duringTurns)
+    if (!this.vm.migration.duringTurns) {
+      const { rows } = await this.#d.db.query("select 1 from turns where conversation_id = $1 and status in ('queued','running','waiting') limit 1", [s.conversation_id]);
+      if (rows.length) return false;
+    }
     if (from.kind !== to.kind) {
       const usage = this.#lastInfo.get(from.name)?.sandboxes.find((x) => x.name === s.pod)?.cpuUsage ?? 1;
       if (usage > this.vm.migration.idleCpu) return false;
@@ -538,28 +542,13 @@ export class VmController {
     // an AWS host goes as soon as no sandbox is on it and it is past its minimum lifetime (from launch)
     for (const h of aws) {
       if ((used.get(h.name) ?? 0) > 0 || h.status === "booting") continue;
-      if (Date.now() - new Date(h.created_at).getTime() >= this.vm.minHostLifetimeSeconds * 1000) {
+      if (!this.#paid(h)) {
         await this.#terminate(h, h.status === "active" ? "empty" : `${h.status}, empty`);
         return;
       }
     }
 
-    // scale in: drain the emptiest AWS host when its sandboxes fit elsewhere with the spare kept
-    if (!draining.length && !aws.some((h) => h.status === "booting")) {
-      for (const h of aws.filter((x) => x.status === "active").sort((a, b) => (used.get(a.name) ?? 0) - (used.get(b.name) ?? 0))) {
-        const n = used.get(h.name) ?? 0;
-        const elsewhere = slots.filter((s) => s.host.name !== h.name).reduce((a, s) => a + s.free, 0);
-        if (n > 0 && n <= elsewhere - this.vm.spareSlots) {
-          await this.#d.db.query("update vm_hosts set status = 'draining' where name = $1 and status = 'active'", [h.name]);
-          log("vm: draining AWS host", { host: h.name, sandboxes: n, freeElsewhere: elsewhere });
-          await this.event("drain", h.name, null, { sandboxes: n, freeElsewhere: elsewhere });
-          return;
-        }
-        break;
-      }
-    }
-
-    // one migration per pass, off draining/retiring hosts, longest-idle first
+    // a retiring (or draining) host: its sandboxes move off, one per pass, longest-idle first
     for (const from of [...draining, ...retiring]) {
       const { rows } = await this.#d.db.query<{ id: string; conversation_id: string; pod: string; created_at: Date }>(
         "select id, conversation_id, pod, created_at from sandboxes where host = $1 and status = 'ready' order by last_active_at",
@@ -574,6 +563,40 @@ export class VmController {
         return;
       }
     }
+
+    // packing: fewer hosts past their minimum lifetime (packing.ts); a host it empties goes by the rule above
+    const active = hosts.filter((h) => h.status === "active" && this.#fresh(h));
+    const { rows: live } = await this.#d.db.query<{ id: string; conversation_id: string; pod: string; created_at: Date; host: string }>(
+      "select id, conversation_id, pod, created_at, host from sandboxes where status = 'ready' and host = any($1::text[])",
+      [active.map((h) => h.name)],
+    );
+    const sizeOf = (r: { pod: string; host: string }) => {
+      const mem = active.find((h) => h.name === r.host)?.info?.sandboxes?.find((x) => x.name === r.pod)?.memory ?? this.memBytes;
+      return Math.max(1, Math.ceil(mem / this.memBytes));
+    };
+    const { rows: moved } = await this.#d.db.query<{ id: string; at: Date }>(
+      "select sandbox_id as id, max(at) as at from vm_events where kind = 'migration' and sandbox_id = any($1::uuid[]) group by 1",
+      [live.map((r) => r.id)],
+    );
+    const movedAt = new Map(moved.map((m) => [m.id, new Date(m.at).getTime()]));
+    const moves = planPacking(
+      active.map((h) => ({ name: h.name, slots: this.slots(h), paid: h.kind === "hub" || this.#paid(h), open: !this.underPressure(h) })),
+      live.map((r) => ({ id: r.id, host: r.host, size: sizeOf(r), movedAt: movedAt.get(r.id) ?? 0 })),
+    );
+    for (const m of moves) {
+      const r = live.find((x) => x.id === m.id)!;
+      const from = active.find((h) => h.name === m.from)!;
+      const to = active.find((h) => h.name === m.to)!;
+      if (!(await this.#movable(r, from, to))) continue;
+      void this.event("pack", from.name, r.id, { to: to.name, moves: moves.length, plan: moves.map((x) => `${x.from}->${x.to}`) });
+      await this.migrate(r.id, to, "packing");
+      return;
+    }
+  }
+
+  /** Still within its minimum lifetime (from launch): already paid for, and not released yet even when empty. */
+  #paid(h: HostRow): boolean {
+    return Date.now() - new Date(h.created_at).getTime() < this.vm.minHostLifetimeSeconds * 1000;
   }
 
   async #reconcileEc2(): Promise<void> {

@@ -293,6 +293,16 @@ function Hosts({ d }: { d: Any }) {
             <span>
               AWS hosts max <b>{x.scaler.maxAwsHosts}</b>
             </span>
+            {x.scaler.minHostLifetimeSeconds != null && (
+              <span title="an AWS host is terminated once it has no sandbox and is at least this old">
+                Min host lifetime <b>{secs(x.scaler.minHostLifetimeSeconds)}</b>
+              </span>
+            )}
+            {x.scaler.demand != null && (
+              <span title="people typing in a conversation without a sandbox (last 2 min): a host is started for them when no slot is free">
+                Typing <b>{x.scaler.demand}</b>
+              </span>
+            )}
             <span>Last heartbeat {ago(x.scaler.lastPassAt)}</span>
           </div>
           <Table

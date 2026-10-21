@@ -234,11 +234,12 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   assert.equal(await hostOf(b.id), awsName);
   await ready(b.id);
 
-  // the hub has room again: the AWS host drains (one pass marks, the next migrates), then it is terminated
+  // the hub has room again, but the AWS host is within its minimum lifetime (paid for): nothing moves
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
   await ctl.pass();
-  assert.equal((await hostRow(awsName)).status, "draining");
-  // a migration that wouldn't converge leaves the sandbox where it was
+  assert.equal(await hostOf(b.id), awsName);
+  // past it: packing moves its sandbox to the hub (a move that wouldn't converge leaves it where it was first)
+  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [awsName]);
   sbx.refuseSend = true;
   await ctl.pass();
   assert.equal(await hostOf(b.id), awsName);
@@ -246,10 +247,9 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   await ctl.pass();
   assert.equal(await hostOf(b.id), "hub");
   assert.ok(sbx.hosts.get(HUB)!.specs.has(b.pod));
-  // empty now; terminated once past its minimum lifetime (15 min from launch)
-  await ctl.pass();
-  assert.equal((await hostRow(awsName)).status, "draining");
-  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [awsName]);
+  const { rows: pack } = await db.query("select data from vm_events where kind = 'pack' and sandbox_id = $1", [b.id]);
+  assert.ok(pack.length >= 1, "the packing decision is recorded");
+  // empty and past its minimum lifetime: terminated
   await ctl.pass();
   assert.equal((await hostRow(awsName)).status, "gone");
   assert.deepEqual(ec2.terminated, [ec2.launched[0]!.id]);
@@ -409,9 +409,9 @@ test("stats(): hosts with their sandboxes, AWS cost so far, the scaler's decisio
   assert.equal(hub.kind, "hub");
   assert.equal(hub.costUsd, null);
   assert.ok(hub.slots >= 1);
-  // the earlier tests launched, drained, migrated and terminated AWS hosts
+  // the earlier tests launched, packed, migrated and terminated AWS hosts
   assert.ok(st.events.some((e) => e.kind === "launch"));
-  assert.ok(st.events.some((e) => e.kind === "drain"));
+  assert.ok(st.events.some((e) => e.kind === "pack"));
   assert.ok(st.events.some((e) => e.kind === "terminate"));
   assert.ok(st.events.some((e) => e.kind === "migration-skipped"));
   const m = st.migrations[0]!;

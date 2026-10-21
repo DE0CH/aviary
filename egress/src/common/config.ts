@@ -75,9 +75,9 @@ export interface VmConfig {
   /**
    * downtimeMs: pre-copy's target for the final stop; maxDowntimeMs: across clouds, a move whose final stop would be
    * longer is aborted before the switch (the sandbox keeps running); idleCpu: cores a sandbox may use and still move
-   * across clouds
+   * across clouds; duringTurns: a sandbox may move while its conversation has a turn going (a command running)
    */
-  migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number };
+  migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number; duringTurns: boolean };
   /**
    * The provider sandboxes came from before the switch ("kubernetes"): its sandboxes keep running until released
    * (with their files saved); remove once none is left.
@@ -228,7 +228,7 @@ export function parseConfig(raw: unknown): ChatConfig {
       ...v,
       hub: { endpoint: "", ...v.hub },
       tls: { caEnv: "SBX_CA_CERT", certEnv: "SBX_CLIENT_CERT", keyEnv: "SBX_CLIENT_KEY", hostCertEnv: "SBX_HOST_CERT", hostKeyEnv: "SBX_HOST_KEY", ...v.tls },
-      migration: { downtimeMs: 100, maxRounds: 20, maxDowntimeMs: 500, idleCpu: 0.05, ...v.migration },
+      migration: { downtimeMs: 100, maxRounds: 20, maxDowntimeMs: 500, idleCpu: 0.05, duringTurns: false, ...v.migration },
       aws,
     };
   }
