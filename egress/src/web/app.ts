@@ -56,7 +56,7 @@ export class WebApp {
     this.runner = runner;
     this.#monitor = new Monitor({ deps, runner, streamCount: () => this.#streams.size });
     const r = this.#router;
-    r.add("GET", "/api/me", (q, s, p, c) => this.#me(s, c));
+    r.add("GET", "/api/me", (q, s, p, c) => this.#me(q, s, c));
     r.add("GET", "/api/conversations", (q, s, p, c) => this.#list(s, c));
     r.add("POST", "/api/conversations", (q, s, p, c) => this.#create(q, s, c));
     r.add("GET", "/api/conversations/:id", (q, s, p, c) => this.#get(s, p, c));
@@ -151,11 +151,13 @@ export class WebApp {
     return { ...rows[0], model: effectiveModel(c.deps.config, rows[0].model) };
   }
 
-  async #me(res: ServerResponse, c: Ctx) {
+  async #me(req: IncomingMessage, res: ServerResponse, c: Ctx) {
     const cfg = c.deps.config;
     sendJson(res, 200, {
       email: c.caller.email,
       name: c.caller.email.split("@")[0],
+      // The identity provider's first name (Google), for the greeting; null with an e-mailed code.
+      firstName: await c.deps.verifier.firstName(accessToken(req), c.caller.email),
       isAdmin: c.caller.isAdmin,
       product: { name: cfg.product.name, logoUrl: cfg.product.logo ?? null, locale: cfg.product.locale },
       models: cfg.models,

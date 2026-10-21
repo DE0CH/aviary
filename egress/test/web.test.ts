@@ -213,6 +213,7 @@ test("Access and the allowlist", async () => {
   assert.equal(me.json.isAdmin, true);
   assert.equal(me.json.product.name, "YYC AI");
   assert.equal(me.json.defaultModel, "anthropic/claude-opus-5.5");
+  assert.equal(me.json.firstName, null, "no identity name: no name in the greeting (never the address)");
   assert.equal((await call(B, "GET", "/api/me")).json.isAdmin, false);
   assert.equal((await call(null, "GET", "/healthz")).status, 200);
   // cross-origin writes are refused

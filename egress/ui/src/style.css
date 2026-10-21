@@ -252,7 +252,6 @@ button { cursor: pointer; }
 .empty { max-width: 640px; margin: 0 auto; padding: max(48px, 12vh) 20px 24px; }
 .empty .logo { width: 48px; height: 48px; border-radius: 13px; font-size: 16px; }
 .empty h2 { font-size: clamp(24px, 4.5vw, 30px); line-height: 1.25; margin: 18px 0 8px; font-weight: 700; letter-spacing: -.01em; }
-.empty p { margin: 0 0 24px; color: var(--muted); }
 
 /* composer */
 .composer-wrap {

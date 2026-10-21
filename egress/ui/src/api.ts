@@ -4,6 +4,8 @@
 export interface Me {
   email: string;
   name?: string | null;
+  /** The identity provider's first name (Google sign-in), for the greeting; null otherwise. */
+  firstName?: string | null;
   isAdmin: boolean;
   product: { name: string; logoUrl?: string | null; logo?: string | null; locale?: string };
   models: { id: string; label: string }[];

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { showModelPicker, usdAmount } from "./rules.ts";
 import { api, ApiError, type ChatEvent, type Conversation, type ConversationSummary, type FileEntry, type Me, type Message, type Turn } from "./api.ts";
 import { locale, normaliseLocale, relativeTime, saveLocale, savedLocale, setLocale, t, type Locale } from "./i18n.ts";
+import { greeting } from "./greeting.ts";
 import { Icon } from "./icons.tsx";
 import { renderMarkdown } from "./md.ts";
 import { describeTool, toolIcon } from "./tools.ts";
@@ -548,13 +549,14 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
   );
 }
 
+// One draw per page load picks among the time slot's greetings.
+const greetingDraw = Math.random();
+
 function Empty({ me }: { me: Me }) {
-  const s = t();
   return (
     <div class="empty">
       <Logo me={me} />
-      <h2>{s.emptyTitle}</h2>
-      <p>{s.emptyLead}</p>
+      <h2>{greeting(locale(), new Date(), greetingDraw, me.firstName)}</h2>
     </div>
   );
 }

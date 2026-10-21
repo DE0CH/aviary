@@ -6,6 +6,7 @@
 //                                       env MOCK_SEED=1 → two finished conversations to start with
 //                                       env MOCK_ONE_MODEL=1 → one model only (no picker)
 //                                       env MOCK_BUDGET=1 → the shared budget is used up (every turn refused)
+//                                       env MOCK_NO_NAME=1 → no identity first name (greeting without a name)
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
@@ -20,6 +21,7 @@ const SPEED = Number(process.env.MOCK_SPEED || 1);
 const me = {
   email: "staff@example.org",
   name: "Chan Tai Man",
+  firstName: process.env.MOCK_NO_NAME ? null : "Tai Man",
   isAdmin: false,
   product: { name: "YYC AI", logoUrl: null, locale: process.env.MOCK_LOCALE || "zh-HK" },
   models: [
