@@ -84,10 +84,20 @@ async function fileFact(given, workdir = WORKDIR) {
 /** present_files: the tools role can't see the workspace, so the facts travel in the call's _meta. */
 async function annotate(msg) {
   if (!msg || msg.method !== "tools/call" || msg.params?.name !== "present_files") return msg;
-  const files = Array.isArray(msg.params?.arguments?.files) ? msg.params.arguments.files : [];
+  // the same leniency as the tool (chat/src/tools/present.ts filesArg): a JSON string, one object, plain paths
+  let files = msg.params?.arguments?.files;
+  if (typeof files === "string") {
+    try {
+      files = JSON.parse(files);
+    } catch {
+      files = [files];
+    }
+  }
+  if (files && typeof files === "object" && !Array.isArray(files)) files = [files];
+  if (!Array.isArray(files)) files = [];
   const facts = {};
   for (const f of files.slice(0, 50)) {
-    const p = f && typeof f === "object" ? f.path : undefined;
+    const p = typeof f === "string" ? f : f && typeof f === "object" ? f.path : undefined;
     if (typeof p === "string" && !(p in facts)) facts[p] = await fileFact(p).catch((e) => ({ error: String(e?.message ?? e) }));
   }
   return { ...msg, params: { ...msg.params, _meta: { ...(msg.params._meta ?? {}), "jarvis/files": facts } } };

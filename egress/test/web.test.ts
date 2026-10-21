@@ -746,8 +746,9 @@ test("present_files: a file over 50 MB is refused; a presented file deleted befo
   const r = t2.events.find((e) => e.type === "tool_result");
   assert.equal(r.data.is_error, true);
   assert.match(r.data.output, /big\.bin: larger than 50 MB/);
-  const t3 = await runTurn(conv, `WRITE:gone.csv=1 PRESENT:${JSON.stringify([{ path: "gone.csv" }])} RM:gone.csv`);
+  const t3 = await runTurn(conv, `WRITE:gone.csv=1 PRESENTSTR:${JSON.stringify([{ path: "gone.csv" }])} RM:gone.csv`);
   const shown = t3.events.filter((e) => e.type === "files_presented");
+  assert.equal(shown[0].data.files[0].path, "gone.csv", "the list as a JSON string works");
   assert.deepEqual(shown.at(-1).data.files, []);
 });
 

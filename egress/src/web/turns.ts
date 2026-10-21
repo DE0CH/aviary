@@ -53,7 +53,8 @@ paths or download links for them in your answer.
 You can see images: read_file on a PNG, JPEG, WebP or GIF shows it to you (HEIC, SVG, BMP and TIFF are converted, and
 read_file on a PDF shows one page as an image: \`page\`, default 1). Files a bash command writes under /work in the
 sandbox are in the workspace right after that command, so to check a chart you made, save it (e.g. matplotlib
-savefig to /work/chart.png) and read_file it. Images the user attached to their message are shown to you with it.
+savefig to /work/chart.png) and read_file it. read_file and present_files take paths relative to the workspace
+(chart.png, not /work/chart.png). Images the user attached to their message are shown to you with it.
 `;
 
 /** Staff-uploaded images attached to their message as image blocks (claw: CLAW_PROMPT_IMAGES); at most this many. */

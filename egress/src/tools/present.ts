@@ -12,6 +12,24 @@ export const FILES_META = "jarvis/files";
 /** What the bridge found for one path the agent gave: the workspace-relative path with its size and hash, or why not. */
 export type FileFact = { path: string; size: number; sha256: string } | { error: string };
 
+/**
+ * The `files` argument as a list of {path, caption?}. Lenient on shape, because models sometimes send the list as a
+ * JSON string ("[{\"path\": …}]", seen live 2026-10-21) or plain path strings; jarvis-mcp-bridge reads it the same way.
+ */
+export function filesArg(v: unknown): unknown[] | null {
+  let x = v;
+  if (typeof x === "string") {
+    try {
+      x = JSON.parse(x);
+    } catch {
+      x = [x];
+    }
+  }
+  if (x && typeof x === "object" && !Array.isArray(x)) x = [x];
+  if (!Array.isArray(x)) return null;
+  return x.map((i) => (typeof i === "string" ? { path: i } : i));
+}
+
 export const presentFiles: ToolDef = {
   name: "present_files",
   title: "Show files to the user",
@@ -45,7 +63,7 @@ export const presentFiles: ToolDef = {
   },
   annotations: { title: "Show files to the user", readOnlyHint: true, openWorldHint: false },
   async run(args, ctx) {
-    const list = args.files;
+    const list = filesArg(args.files);
     if (!Array.isArray(list) || !list.length) throw new ToolInputError('"files" must be a non-empty list of {path, caption?}');
     if (list.length > MAX_PRESENTED) throw new ToolInputError(`at most ${MAX_PRESENTED} files at once`);
     const facts = (ctx.meta?.[FILES_META] ?? null) as Record<string, FileFact> | null;

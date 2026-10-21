@@ -4,6 +4,7 @@
 //   BASH:<command>     one bash tool call through $CLAW_BASH_COMMAND (the real jarvis-bash)
 //   WRITE:<path>=<txt> writes a file in the workdir (cwd), as the file tools would (every such marker)
 //   PRESENT:<json>     one present_files call (input {files: <json>}) through the MCP bridge in CLAW_CONFIG_DIR
+//   PRESENTSTR:<json> the same with the list sent as a JSON string
 //   AFTER:<path>=<txt> writes a file after the PRESENT call (a later version of a presented file)
 //   RM:<path>          deletes a file after the PRESENT call
 //   VIEW:<path>        a read_file of an image: tool_result with `images` [{path, sha256, media_type}] as claw sends
@@ -70,11 +71,12 @@ const writeFile_ = (path, txt) => {
 };
 for (const w of prompt.matchAll(/(?<![A-Z])WRITE:([^=\s]+)=(\S*)/g)) writeFile_(w[1], w[2]);
 
-const present = /PRESENT:(\[.*?\])(?:\s|$)/.exec(prompt);
+const present = /PRESENT(STR)?:(\[.*?\])(?:\s|$)/.exec(prompt);
 if (present) {
   const settings = JSON.parse(readFileSync(join(process.env.CLAW_CONFIG_DIR, "settings.json"), "utf8"));
   const srv = settings.mcpServers.tools;
-  const input = { files: JSON.parse(present[1]) };
+  // PRESENTSTR: the list as a JSON string, as a model sent it live
+  const input = { files: present[1] ? present[2] : JSON.parse(present[2]) };
   out({ type: "tool_use", id: "p1", name: "mcp__tools__present_files", input });
   const answer = await new Promise((resolve) => {
     const c = spawn(srv.command, srv.args, { env: { ...process.env, ...srv.env }, stdio: ["pipe", "pipe", "inherit"] });

@@ -331,8 +331,13 @@ test("present_files: read-only, needs the bridge's workspace facts, all or nothi
   assert.deepEqual(two.structuredContent.files, [f("c.png", "c"), { path: "a.pdf", caption: "Report", sha256: "a".repeat(64), size: 3 }]);
   const { rows } = await t.db.query("select presented from turns where id = $1", [turnId]);
   assert.deepEqual(rows[0].presented, two.structuredContent.files);
+  // the list as a JSON string (a model sent that live) or plain paths: read the same way
+  const asString = await callMeta({ files: JSON.stringify([{ path: "c.png", caption: "Chart" }]) }, { "jarvis/files": { "c.png": f("c.png", "c") } });
+  assert.equal(asString.isError, undefined, textOf(asString));
+  assert.equal(asString.structuredContent.files.at(-1).caption, "Chart");
+  assert.equal((await callMeta({ files: ["c.png"] }, { "jarvis/files": { "c.png": f("c.png", "c") } })).isError, undefined);
   const { rows: ev } = await t.db.query("select data from events where turn_id = $1 and type = 'files_presented' order by seq", [turnId]);
-  assert.equal(ev.length, 2);
+  assert.equal(ev.length, 4);
   assert.deepEqual(ev[1].data.files, two.structuredContent.files);
   assert.equal(ev[0].data.files[0].caption, "Report v1");
 });
