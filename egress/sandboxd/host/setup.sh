@@ -9,7 +9,7 @@
 #                                user data at first boot (sbx-userdata.service)
 # Environment:
 #   GV           DE0CH/gvisor release tag (default below)
-#   hub: SBX_NAME (default yyc-sbx-hub), SBX_RESERVE_MIB (default 1536), SBX_PRIVATE_GATEWAY (10.0.0.1),
+#   hub: SBX_NAME (default yyc-sbx-hub), SBX_RESERVE_MIB (default 1536; the cx23 hub: 700 = 6 sandboxes of 512 MiB), SBX_PRIVATE_GATEWAY (10.0.0.1),
 #        SBX_POD_CIDR (10.244.0.0/16), SBX_CONTROL_CIDR (10.0.0.0/16); TLS files in /etc/sbx/tls/{ca.crt,host.crt,host.key}
 #        (installed beforehand); a registry login for private images in /etc/sbx/docker/config.json (beforehand)
 #   bake: REGISTRY_AUTH_FILE  a docker config.json used only while pre-pulling the image, then deleted
@@ -83,6 +83,34 @@ Options=size=100%,mode=700
 WantedBy=multi-user.target
 EOF
 
+# Memory isolation (docs/SANDBOX-VM.md "Capacity"): the host's daemons (sandboxd and what it runs outside the
+# sandboxes: runsc CLI calls, image pulls) live in sbx-host.slice with a reservation and a hard cap, and the sandboxes'
+# parent cgroup /sbx is capped at RAM minus the host reserve, so neither side can starve the other. Each sandbox's
+# own cgroup (/sbx/<name>: sentry, gofer and the sandbox's memory) has the sandbox's limit.
+cat > /etc/systemd/system/sbx-host.slice <<'EOF'
+[Unit]
+Description=sandbox host daemons (sandboxd)
+[Slice]
+MemoryMin=160M
+MemoryHigh=384M
+MemoryMax=512M
+EOF
+
+cat > /usr/local/sbin/sbx-cgroup <<'EOF'
+#!/bin/bash
+# /sbx: the sandboxes' parent cgroup, capped at MemTotal - reserveMemory (host.json). A backstop: the controller
+# places no more sandbox limits than that.
+set -euo pipefail
+cg=/sys/fs/cgroup/sbx
+mkdir -p "$cg"
+for c in cpu memory pids; do grep -qw "$c" /sys/fs/cgroup/cgroup.subtree_control || echo "+$c" > /sys/fs/cgroup/cgroup.subtree_control; done
+echo "+cpu +memory +pids" > "$cg/cgroup.subtree_control"
+total=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) * 1024 ))
+reserve=$(jq -r '.reserveMemory // 1610612736' /etc/sbx/host.json)
+echo $(( total - reserve )) > "$cg/memory.max"
+EOF
+chmod 755 /usr/local/sbin/sbx-cgroup
+
 cat > /etc/systemd/system/sandboxd.service <<'EOF'
 [Unit]
 Description=sandboxd (sandbox provider "vm" host agent, docs/SANDBOX-VM.md)
@@ -93,6 +121,8 @@ ConditionPathExists=/etc/sbx/host.json
 
 [Service]
 Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Slice=sbx-host.slice
+ExecStartPre=/usr/local/sbin/sbx-cgroup
 ExecStart=/opt/node/bin/node --disable-warning=ExperimentalWarning /opt/sandboxd/src/main.ts
 # sandboxes are runsc processes in their own cgroups (/sbx/<name>); a restart of sandboxd must never touch them
 KillMode=process
