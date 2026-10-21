@@ -605,10 +605,13 @@ events: they still load, and the UI shows nothing for them (like any event type 
   replaced by the product name. A new conversation's empty screen shows only the logo, a greeting and the
   composer: no description line, no example or suggested prompts (removed 2026-10-21, Deyao). The greeting
   (`chat/ui/src/greeting.ts`) is picked by Hong Kong time of day (05–12 morning, 12–18 afternoon, 18–23 evening,
-  23–05 late night), at random per page load among that slot's phrases, followed by `firstName` from `GET /api/me`
-  when there is one ("Good morning, Deyao" / 「早晨，Deyao」). The phrases are not made up: they come from published
-  lists, CC BY-SA, cited in that file: Wikivoyage's Cantonese phrasebook and Wiktionary (午安, 晚上好, 早唞) for
-  zh-HK, Wiktionary's "Category:English greetings" for en. `firstName` = the Access identity's `given_name` (else the
+  23–05 late night), at random per page load from that slot's pool: the slot's own phrases, the any-time ones, a
+  daytime one (morning and afternoon) and, only when the user has earlier conversations, two returning-user ones
+  (又見面喇 / 歡迎返嚟, "Hello again" / "Welcome"). Each locale draws only from its own list. `firstName` from
+  `GET /api/me` follows when there is one ("Good morning, Deyao" / 「早晨，Deyao」), before a closing question mark
+  (「點呀，Tai Man？」). The phrase set is the one Deyao approved on 2026-10-21: the English phrases come from
+  Wiktionary's "Category:English greetings" (CC BY-SA); the Cantonese versions were translated by Claude in the
+  session and approved by Deyao. `firstName` = the Access identity's `given_name` (else the
   first word of `name`; a CJK name whole) from the token or the team's `/cdn-cgi/access/get-identity` (Google
   sign-in); null with an e-mailed code. Never derived from the address.
 - Sharing ("Sharing and continuing"): `POST /api/conversations/:id/shares` (owner) → 201 `{id, url, createdAt, turns}`
