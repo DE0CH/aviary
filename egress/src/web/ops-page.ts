@@ -100,7 +100,7 @@ function render(d){
 
   // hosts
   var h = d.hosts;
-  out.push(card("Sandbox hosts", h && h.maxHosts != null ? "AWS max " + h.maxHosts : "", h ? rows(h.list, function(x){
+  out.push(card("Sandbox hosts", h ? (h.maxHosts != null ? "AWS max " + h.maxHosts + " · " : "") + h.gone24h + " gone in 24 h (latest shown)" : "", h ? rows(h.list, function(x){
     var kind = x.gateway ? "gateway" : x.kind;
     return '<div class="row"><span class="main">' + esc(x.name) + '</span><span class="chip">' + esc(kind) + '</span><span class="chip ' + statusClass(x.status) + '">' + esc(x.status) + "</span>" +
       (x.status !== "gone" ? '<span class="' + (x.reachable ? "ok" : "bad") + ' f">' + (x.reachable ? "answering" : "not answering") + "</span>" : "") +

@@ -145,6 +145,7 @@ test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, 
   assert.equal(host("aws-2").reachable, false);
   assert.equal(host("aws-0").status, "gone");
   assert.equal(host("aws-0").goneReason, "empty");
+  assert.equal(d.hosts.gone24h, 1);
   // scaler
   assert.equal(d.scaler.plan.demand, 1);
   assert.equal(d.scaler.hints[0].who, B);

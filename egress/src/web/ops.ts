@@ -12,6 +12,8 @@ import { VmProvider, type HostRow } from "./sandbox-vm.ts";
 const CACHE_MS = 4000;
 const SECTION_TIMEOUT_MS = 8000;
 const HOST_FRESH_MS = 30_000;
+/** hosts gone in the last 24 hours that are listed (the latest); the rest are only counted */
+const GONE_HOSTS_SHOWN = 8;
 
 type Row = Record<string, any>;
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
@@ -143,16 +145,20 @@ export class OpsSnapshot {
     const db = this.#deps.db;
     const p = this.#deps.sandboxProvider;
     const ctl = p instanceof VmProvider ? p.controller : null;
-    const [{ rows }, { rows: used }] = await Promise.all([
+    const [{ rows }, { rows: goneCount }, { rows: used }] = await Promise.all([
       db.query<HostRow & { gone_at: Date | null; gone_reason: string | null }>(
-        "select * from vm_hosts where status <> 'gone' or gone_at > now() - interval '24 hours' order by (status = 'gone'), kind desc, created_at",
+        `(select * from vm_hosts where status <> 'gone' order by kind desc, created_at)
+         union all (select * from vm_hosts where status = 'gone' and gone_at > now() - interval '24 hours' order by gone_at desc limit $1)`,
+        [GONE_HOSTS_SHOWN],
       ),
+      db.query<{ n: number }>("select count(*)::int as n from vm_hosts where status = 'gone' and gone_at > now() - interval '24 hours'"),
       db.query<{ host: string; n: number }>("select host, count(*)::int as n from sandboxes where status <> 'gone' and host is not null group by host"),
     ]);
     const on = new Map(used.map((u) => [u.host, u.n]));
     const now = Date.now();
     return {
       maxHosts: this.#deps.config.sandbox.vm?.aws?.maxHosts ?? null,
+      gone24h: goneCount[0]?.n ?? 0,
       list: rows.map((h) => ({
         name: h.name,
         kind: h.kind,
@@ -219,8 +225,9 @@ export class OpsSnapshot {
       budgetStatus(db, cfg),
       db.query(`select ${sums} from egress_log e where e.kind = 'model' and e.at >= $1`, args),
       db.query(
-        `select coalesce(s.owner, '(unknown)') as owner, ${sums}
-           from egress_log e left join sandboxes s on s.id = e.sandbox_id
+        // a model call's person: its sandbox's owner, or for calls of the old chat UI (before schema 9) its conversation's
+        `select coalesce(s.owner, c.owner, '(unknown)') as owner, ${sums}
+           from egress_log e left join sandboxes s on s.id = e.sandbox_id left join conversations c on c.id = e.conversation_id
           where e.kind = 'model' and e.at >= $1 group by 1 order by month desc, "sinceBudget" desc`,
         args,
       ),
