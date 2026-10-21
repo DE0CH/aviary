@@ -21,6 +21,8 @@ export interface HostSandbox {
 export interface HostInfo {
   name: string;
   role: "hub" | "burst";
+  /** the hub as a gateway only (on a k3s node): no sandboxes, its CPU features don't matter */
+  gateway?: boolean;
   wgAddress: string;
   wgPublicKey: string;
   peers: { publicKey: string; endpoint: string; allowedIps: string[]; latestHandshake: number }[];

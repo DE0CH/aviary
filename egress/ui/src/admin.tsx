@@ -304,6 +304,13 @@ function Hosts({ d }: { d: Any }) {
               </span>
             )}
             <span>Last heartbeat {ago(x.scaler.lastPassAt)}</span>
+            {(x.hosts ?? [])
+              .filter((g: Any) => g.gateway)
+              .map((g: Any) => (
+                <span key={g.name} title="WireGuard hub and egress address translation for the sandbox hosts (no sandboxes)">
+                  Gateway <b class="mono">{g.name}</b> {g.lastSeenAt && Date.now() - Date.parse(g.lastSeenAt) < 30_000 ? "answering" : "not answering"}
+                </span>
+              ))}
           </div>
           <Table
             head={["When", "Decision", "Host", "Detail"]}

@@ -51,12 +51,12 @@ test("vm stats map onto hosts and sandboxes", () => {
     scaler: { spareSlots: 1, minHostLifetimeSeconds: 900, maxAwsHosts: 3, freeSlots: 2, demand: 0, memoryPerSandbox: 1024 ** 3, cpuPerSandbox: 1, lastPassAt: now },
     hosts: [
       {
-        name: "hub", kind: "hub", status: "active", instanceId: null, cpus: 8, memTotal: 32e9, memAvailable: 20e9, loadAvg: [0.5, 0.4, 0.3], slots: 12, used: 1, underPressure: false,
+        name: "hub", kind: "hub", status: "active", instanceId: null, cpus: 8, memTotal: 32e9, memAvailable: 20e9, loadAvg: [0.5, 0.4, 0.3], slots: 12, used: 1, underPressure: false, gateway: false,
         maxSandboxes: null, lastSeenAt: now, upSince: now, upHours: 1, costUsd: null, gvisorRelease: "x",
         sandboxes: [{ name: "sbx-1", id: "i", conversationId: "c", ip: "10.0.0.1", state: "running", cpuUsage: 0.3, memoryCurrent: 2e8, memoryLimit: 1024 ** 3, busy: false }],
       },
       {
-        name: "aws-1", kind: "aws", status: "draining", instanceId: "i-1", cpus: 4, memTotal: 16e9, memAvailable: null, loadAvg: null, slots: 6, used: 0, underPressure: false,
+        name: "aws-1", kind: "aws", status: "draining", instanceId: "i-1", cpus: 4, memTotal: 16e9, memAvailable: null, loadAvg: null, slots: 6, used: 0, underPressure: false, gateway: false,
         maxSandboxes: null, lastSeenAt: null, upSince: now, upHours: 2, costUsd: 0.5, gvisorRelease: null, sandboxes: [],
       },
     ],

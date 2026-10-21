@@ -45,6 +45,12 @@ export interface HostConfig {
   imageSource?: string;
   /** MTU of sandbox veths and wg0 */
   mtu: number;
+  /**
+   * hub only: a gateway on a shared machine (a k3s node), no sandboxes: the WireGuard hub, egress address translation
+   * and image source only; host rules that touch nothing but wg0's traffic; no runsc needed (docs/SANDBOX-VM.md,
+   * "Gateway")
+   */
+  gateway?: boolean;
 }
 
 export function loadHostConfig(path = process.env.SBX_CONFIG || "/etc/sbx/host.json"): HostConfig {
@@ -65,6 +71,7 @@ export function loadHostConfig(path = process.env.SBX_CONFIG || "/etc/sbx/host.j
   for (const k of ["name", "role", "wgAddress"] as const) if (!cfg[k]) throw new Error(`host.json: ${k} is required`);
   if (cfg.role !== "hub" && cfg.role !== "burst") throw new Error("host.json: role must be hub or burst");
   if (cfg.role === "burst" && !cfg.hub) throw new Error("host.json: a burst host needs `hub`");
+  if (cfg.gateway && cfg.role !== "hub") throw new Error("host.json: only the hub can be a gateway");
   if (!inCidr(cfg.wgAddress, cfg.hostCidr)) throw new Error("host.json: wgAddress must be in hostCidr");
   return cfg;
 }

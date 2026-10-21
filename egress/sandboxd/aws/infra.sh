@@ -4,11 +4,14 @@
 #
 #   infra.sh sg                    security group yyc-ai-sandbox-host: WireGuard (udp 51820) from the VPC only (hosts
 #                                  peer each other for migrations; each dials the hub itself); no SSH, nothing else in
+#   infra.sh ipv6                  IPv6 for the hosts (free): an Amazon /56 on the VPC, a /64 on the subnet, ::/0 to the
+#                                  internet gateway, IPv6 egress in the SG. The gateway (a k3s node, IPv6 only from the
+#                                  outside) is reached over it (docs/SANDBOX-VM.md, "Gateway").
 #   infra.sh ami <image ref>       bakes an AMI: Ubuntu 24.04 + host/setup.sh burst (Node, the gVisor fork, sandboxd,
 #                                  the sandbox image unpacked); a temporary t3.large builder + key + SSH rule, removed
 #                                  after. Needs GHCR_USER/GHCR_TOKEN (read:packages) for the private image.
 #   infra.sh template <ami id>     launch template yyc-ai-sandbox-host (new default version): m7i.xlarge, that AMI, the
-#                                  SG, one subnet (one AZ: host-to-host traffic is free), IMDSv2 with hop limit 1, no
+#                                  SG, a public IPv4 and an IPv6 address, one subnet (one AZ: host-to-host traffic is free), IMDSv2 with hop limit 1, no
 #                                  instance profile, no key pair, gp3 40 GB deleted with the instance, terminate on
 #                                  shutdown
 #   infra.sh iam                   IAM user yyc-ai-sandbox-scaler with only: RunInstances from that template (m7i.xlarge,
@@ -35,6 +38,30 @@ sg)
     aws ec2 authorize-security-group-ingress --group-id "$id" --ip-permissions "IpProtocol=udp,FromPort=51820,ToPort=51820,IpRanges=[{CidrIp=$VPC_CIDR,Description=sandbox hosts}]" >/dev/null
   fi
   echo "$id"
+  ;;
+ipv6)
+  vpc=$(aws ec2 describe-subnets --subnet-ids "$SUBNET" --query 'Subnets[0].VpcId' --output text)
+  v6=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].Ipv6CidrBlockAssociationSet[?Ipv6CidrBlockState.State==`associated`].Ipv6CidrBlock | [0]' --output text)
+  if [ -z "$v6" ] || [ "$v6" = None ]; then
+    aws ec2 associate-vpc-cidr-block --vpc-id "$vpc" --amazon-provided-ipv6-cidr-block >/dev/null
+    for i in $(seq 30); do
+      v6=$(aws ec2 describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].Ipv6CidrBlockAssociationSet[?Ipv6CidrBlockState.State==`associated`].Ipv6CidrBlock | [0]' --output text)
+      [ -n "$v6" ] && [ "$v6" != None ] && break; sleep 2
+    done
+  fi
+  sub6=$(aws ec2 describe-subnets --subnet-ids "$SUBNET" --query 'Subnets[0].Ipv6CidrBlockAssociationSet[0].Ipv6CidrBlock' --output text)
+  if [ -z "$sub6" ] || [ "$sub6" = None ]; then
+    # the subnet's /64: the /56's first one (one subnet uses IPv6 here)
+    sub6="${v6%::/56}::/64"
+    aws ec2 associate-subnet-cidr-block --subnet-id "$SUBNET" --ipv6-cidr-block "$sub6" >/dev/null
+  fi
+  rt=$(aws ec2 describe-route-tables --filters Name=association.subnet-id,Values="$SUBNET" --query 'RouteTables[0].RouteTableId' --output text)
+  [ -n "$rt" ] && [ "$rt" != None ] || rt=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values="$vpc" Name=association.main,Values=true --query 'RouteTables[0].RouteTableId' --output text)
+  igw=$(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values="$vpc" --query 'InternetGateways[0].InternetGatewayId' --output text)
+  aws ec2 create-route --route-table-id "$rt" --destination-ipv6-cidr-block ::/0 --gateway-id "$igw" >/dev/null 2>&1 || true
+  sg=$(sg_id)
+  [ -n "$sg" ] && { aws ec2 authorize-security-group-egress --group-id "$sg" --ip-permissions 'IpProtocol=-1,Ipv6Ranges=[{CidrIpv6=::/0,Description=gateway over IPv6}]' >/dev/null 2>&1 || true; }
+  echo "vpc $vpc $v6, subnet $SUBNET $sub6, route ::/0 -> $igw in $rt, sg $sg"
   ;;
 ami)
   IMAGE=${2:?image ref}
@@ -87,7 +114,7 @@ template)
   sg=$(sg_id)
   data=$(jq -cn --arg ami "$AMI" --arg sg "$sg" --arg subnet "$SUBNET" '{
     ImageId: $ami, InstanceType: "m7i.xlarge",
-    NetworkInterfaces: [{DeviceIndex: 0, SubnetId: $subnet, Groups: [$sg], AssociatePublicIpAddress: true, DeleteOnTermination: true}],
+    NetworkInterfaces: [{DeviceIndex: 0, SubnetId: $subnet, Groups: [$sg], AssociatePublicIpAddress: true, Ipv6AddressCount: 1, DeleteOnTermination: true}],
     MetadataOptions: {HttpTokens: "required", HttpPutResponseHopLimit: 1, HttpEndpoint: "enabled", InstanceMetadataTags: "disabled"},
     BlockDeviceMappings: [{DeviceName: "/dev/sda1", Ebs: {VolumeSize: 40, VolumeType: "gp3", DeleteOnTermination: true}}],
     InstanceInitiatedShutdownBehavior: "terminate",

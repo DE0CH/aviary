@@ -53,6 +53,7 @@ export interface HostRow {
   mem_reserve: string | number | null;
   cpus: number | null;
   info: {
+    gateway?: boolean;
     sandboxes?: HostSandbox[];
     cpuFeatures?: string;
     images?: string[];
@@ -455,7 +456,7 @@ export class VmController {
         try {
           const info = await this.#d.sandboxd.host(h.url, 5000);
           this.#lastInfo.set(h.name, info);
-          const missing = this.vm.cpuFeatures.split(",").filter((f) => f && !info.cpuFeatures.split(",").includes(f));
+          const missing = info.gateway ? [] : this.vm.cpuFeatures.split(",").filter((f) => f && !info.cpuFeatures.split(",").includes(f));
           const status = h.status === "booting" ? "active" : h.status;
           if (missing.length && h.status !== "retiring") {
             logError("vm: host lacks CPU features of the pool; not used", missing.join(","), { host: h.name });
@@ -469,7 +470,7 @@ export class VmController {
               info.reserveMemory,
               info.cpus,
               info.wgPublicKey,
-              JSON.stringify({ sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
+              JSON.stringify({ gateway: !!info.gateway, sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
                 memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets }),
               missing.length ? "retiring" : status,
             ],
@@ -750,6 +751,8 @@ export interface VmStats {
     slots: number;
     used: number;
     underPressure: boolean;
+    /** the WireGuard hub as a gateway only (no sandboxes) */
+    gateway: boolean;
     maxSandboxes: number | null;
     lastSeenAt: string | null;
     upSince: string;
@@ -814,6 +817,7 @@ export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
       upHours: Math.round(hours(h) * 100) / 100,
       costUsd: h.kind === "aws" ? Math.round(hours(h) * AWS_HOST_USD_PER_HOUR * 100) / 100 : null,
       gvisorRelease: h.info?.gvisorRelease ?? null,
+      gateway: !!h.info?.gateway,
       sandboxes: (h.info?.sandboxes ?? []).map((s) => {
         const r = byPod.get(s.name);
         return { name: s.name, id: r?.id ?? null, conversationId: r?.conversation_id ?? null, ip: s.ip, state: s.state, cpuUsage: s.cpuUsage, memoryCurrent: s.memoryCurrent, memoryLimit: s.memory, busy: !!r?.busy };

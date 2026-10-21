@@ -107,7 +107,10 @@ async function ifaceFor(addr: string): Promise<string> {
   return m[1]!;
 }
 
-/** Host rules: forwarding only between wg0, the private network (hub) and sandbox veths; the hub's egress table. */
+/**
+ * Host rules: forwarding only between wg0, the private network (hub) and sandbox veths; the hub's egress table. A
+ * gateway (a shared k3s node) only fences wg0's own traffic and leaves everything else on the machine alone.
+ */
 export function hostRules(cfg: HostConfig, publicIf: string, privateIf: string | null, egressTargets: string[]): string {
   const nat =
     cfg.role === "hub"
@@ -117,13 +120,34 @@ export function hostRules(cfg: HostConfig, publicIf: string, privateIf: string |
 ${egressTargets.length ? `    ip daddr ${cfg.egressVip} tcp dport 3128 dnat to numgen random mod ${egressTargets.length} map { ${egressTargets.map((t, i) => `${i} : ${t}`).join(", ")} }` : ""}
   }`
       : "";
+  if (cfg.gateway) {
+    return `table ip sbxhost
+delete table ip sbxhost
+table ip sbxhost {${nat}
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname "wg0" ip daddr ${cfg.egressVip} drop
+    iifname "wg0" oifname "${publicIf}" drop
+    iifname "${publicIf}" oifname "wg0" drop
+  }
+  chain input {
+    type filter hook input priority 0; policy accept;
+    iifname "wg0" tcp dport { ${cfg.apiPort}, ${cfg.imagePort} } accept
+    iifname "wg0" icmp type echo-request accept
+    iifname "wg0" ct state established,related accept
+    iifname "wg0" drop
+    tcp dport { ${cfg.apiPort}, ${cfg.imagePort} } iifname "${publicIf}" drop
+  }
+}
+`;
+  }
+  // the hub drops what reaches the egress address untranslated; a burst host forwards it into wg0 (to the hub)
   return `table ip sbxhost
 delete table ip sbxhost
 table ip sbxhost {${nat}
   chain forward {
     type filter hook forward priority 0; policy accept;
-    ip daddr ${cfg.egressVip} drop
-    iifname "${publicIf}" drop
+${cfg.role === "hub" ? `    ip daddr ${cfg.egressVip} drop\n` : ""}    iifname "${publicIf}" drop
     oifname "${publicIf}" drop
 ${privateIf ? "" : `    ip daddr ${cfg.controlCidr} oifname != "wg0" drop\n`}  }
   chain input {
@@ -147,8 +171,10 @@ export class HostNet {
 
   async init(): Promise<void> {
     const c = this.cfg;
-    await sh("sysctl", "-qw", "net.ipv4.ip_forward=1", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.default.rp_filter=0", "vm.max_map_count=262144");
-    this.publicIf = await defaultIface();
+    // a gateway shares its machine (a k3s node): forwarding only, the node's own rp_filter and limits stay
+    if (c.gateway) await sh("sysctl", "-qw", "net.ipv4.ip_forward=1");
+    else await sh("sysctl", "-qw", "net.ipv4.ip_forward=1", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.default.rp_filter=0", "vm.max_map_count=262144");
+    this.publicIf = c.gateway ? await defaultIface().catch(() => "eth0") : await defaultIface();
     // wg0: the overlay
     if ((await run("ip", ["link", "show", "wg0"])).code !== 0) await sh("ip", "link", "add", "wg0", "type", "wireguard");
     await sh("wg", "set", "wg0", "private-key", c.wgKeyFile, "listen-port", String(c.wgPort));
@@ -156,7 +182,13 @@ export class HostNet {
     await run("ip", ["addr", "replace", `${c.wgAddress}/${prefix}`, "dev", "wg0"], { check: true });
     await sh("ip", "link", "set", "wg0", "mtu", String(c.mtu), "up");
     this.publicKey = (await sh("wg", "show", "wg0", "public-key")).trim();
-    if (c.role === "hub") {
+    if (c.gateway) {
+      // every sandbox is behind WireGuard; the node's own pods reach them from its private address (they are
+      // masqueraded to it, and sandboxes accept the controller only from the private network); the node routes pods
+      this.privateIf = await ifaceFor(c.privateGateway ?? "10.0.0.1");
+      const src = /inet (\d+\.\d+\.\d+\.\d+)/.exec(await sh("ip", "-o", "-4", "addr", "show", "dev", this.privateIf))?.[1];
+      await sh("ip", "route", "replace", c.sandboxCidr, "dev", "wg0", ...(src ? ["src", src] : []));
+    } else if (c.role === "hub") {
       this.privateIf = await ifaceFor(c.privateGateway ?? "10.0.0.1");
       // sandboxes elsewhere are behind WireGuard (the peer whose AllowedIPs hold the /32); local ones have /32 routes
       await sh("ip", "route", "replace", c.sandboxCidr, "dev", "wg0");

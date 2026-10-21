@@ -173,6 +173,19 @@ test("sandboxd: nft lock, bundle and spec checks", () => {
     tls: { cert: "", key: "", ca: "" }, controlCidr: "10.0.0.0/16", sandboxCidr: "10.200.0.0/16", egressVip: "10.201.1.1", reserveMemory: 0, mtu: 1420 } as HostConfig;
   assert.match(hostRules(cfg, "eth0", "enp7s0", ["10.244.3.5", "10.244.6.7"]), /dnat to numgen random mod 2 map \{ 0 : 10\.244\.3\.5, 1 : 10\.244\.6\.7 \}/);
   assert.doesNotMatch(hostRules(cfg, "eth0", "enp7s0", ["10.244.3.5"]), /snat|masquerade/);
+  assert.match(hostRules(cfg, "eth0", "enp7s0", []), /ip daddr 10\.201\.1\.1 drop/, "the hub drops what reaches the egress address untranslated");
+  // a burst host forwards its sandboxes' egress traffic into wg0 untranslated: never dropped there (it was, 2026-10-21)
+  const burst = { ...cfg, role: "burst" } as HostConfig;
+  assert.doesNotMatch(hostRules(burst, "ens5", null, []), /10\.201\.1\.1/);
+  assert.doesNotMatch(hostRules(burst, "ens5", null, []), /egress_dnat/);
+  // a gateway on a k3s node fences wg0's traffic only: the node's pods keep their own forwarding to the internet
+  const gw = hostRules({ ...cfg, gateway: true } as HostConfig, "eth0", "enp7s0", ["10.244.3.5"]);
+  assert.match(gw, /dnat to numgen random mod 1 map \{ 0 : 10\.244\.3\.5 \}/);
+  assert.match(gw, /iifname "wg0" oifname "eth0" drop/);
+  assert.match(gw, /iifname "eth0" oifname "wg0" drop/);
+  assert.match(gw, /iifname "wg0" drop/);
+  assert.doesNotMatch(gw, /^\s+iifname "eth0" drop$/m);
+  assert.doesNotMatch(gw, /^\s+oifname "eth0" drop$/m);
   const spec = validateSpec({ name: "sbx-abc", ip: "10.200.0.10", image: "b".repeat(64), env: { HTTP_PROXY: "http://sbx:t@10.201.1.1:3128", JARVIS_EXEC_TOKEN: "e" }, cpu: 1, memory: 2 * GiB, cpuFeatures: "fpu,sse2" }, cfg);
   const b = bundleSpec(spec, ["PATH=/usr/bin", "HOME=/root"]) as any;
   assert.equal(b.annotations["dev.gvisor.internal.cpufeatures"], "fpu,sse2");

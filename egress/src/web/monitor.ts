@@ -38,7 +38,6 @@ export function toolService(tool: string, upstreamPrefixes: string[]): string {
   if (t === "web_fetch") return "web fetch";
   if (t === "news_search") return "Wisers";
   if (t === "social_search") return "TikHub";
-  if (t === "request_network_access") return "network access";
   const p = upstreamPrefixes.find((x) => t.startsWith(`${x}_`));
   return p ? `${p}-mcp` : "other";
 }
@@ -47,7 +46,9 @@ export function toolService(tool: string, upstreamPrefixes: string[]): string {
 export function normalizeStats(s: ProviderStats | VmStats): ProviderStats {
   if (!("scaler" in s)) return s;
   const reachable = (at: string | null) => !!at && Date.now() - Date.parse(at) < 30_000;
-  const hosts: HostStats[] = s.hosts.map((h) => ({
+  // the gateway (WireGuard hub on a k3s node, no sandboxes) is not a sandbox host: shown with the scaler instead
+  const sandboxHosts = s.hosts.filter((h) => !h.gateway);
+  const hosts: HostStats[] = sandboxHosts.map((h) => ({
     name: h.name,
     kind: h.kind,
     status: h.status,
@@ -63,15 +64,15 @@ export function normalizeStats(s: ProviderStats | VmStats): ProviderStats {
     costUsd: h.costUsd,
     detail: { instanceId: h.instanceId, gvisor: h.gvisorRelease, upHours: h.upHours, lastSeenAt: h.lastSeenAt },
   }));
-  const sandboxes: SandboxStats[] = s.hosts.flatMap((h) =>
+  const sandboxes: SandboxStats[] = sandboxHosts.flatMap((h) =>
     h.sandboxes.map((x) => ({ name: x.name, host: h.name, state: x.state, cpuUsed: x.cpuUsage, cpuLimit: s.scaler.cpuPerSandbox, memUsed: x.memoryCurrent, memLimit: x.memoryLimit, restarts: null })),
   );
   return {
     provider: "vm",
     hosts,
     sandboxes,
-    capacity: s.hosts.filter((h) => h.status === "active").reduce((a, h) => a + h.slots, 0),
-    notes: s.hosts.some((h) => h.loadAvg == null) ? ["vm: a host's sandboxd doesn't report its load yet"] : [],
+    capacity: sandboxHosts.filter((h) => h.status === "active").reduce((a, h) => a + h.slots, 0),
+    notes: sandboxHosts.some((h) => h.loadAvg == null) ? ["vm: a host's sandboxd doesn't report its load yet"] : [],
     extra: { scaler: s.scaler, events: s.events.slice(0, 30), migrations: s.migrations, awsCostLast30dUsd: s.awsCostLast30dUsd },
   };
 }

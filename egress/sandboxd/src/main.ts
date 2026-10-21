@@ -63,10 +63,13 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
   const net = new HostNet(cfg);
   await net.init();
   const sbx = new Sandboxes(cfg);
-  await sbx.init();
-  await sbx.sweep();
-  const features = (await runsc(["cpu-features"])).stdout.trim();
-  const version = (await runsc(["--version"])).stdout.split("\n")[0]?.trim() ?? "";
+  // a gateway runs no sandboxes (and has no runsc)
+  if (!cfg.gateway) {
+    await sbx.init();
+    await sbx.sweep();
+  }
+  const features = cfg.gateway ? "" : (await runsc(["cpu-features"])).stdout.trim();
+  const version = cfg.gateway ? "" : ((await runsc(["--version"])).stdout.split("\n")[0]?.trim() ?? "");
   const release = (() => {
     try {
       return readFileSync("/usr/local/bin/gvisor-bin/.release", "utf8").trim();
@@ -88,13 +91,15 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
       return json(res, 200, {
         name: cfg.name,
         role: cfg.role,
+        gateway: !!cfg.gateway,
         wgAddress: cfg.wgAddress,
         wgPublicKey: net.publicKey,
         peers: await net.peers(),
         egressTargets: net.egressTargets,
         memTotal: mem.total,
         memAvailable: mem.available,
-        reserveMemory: cfg.reserveMemory,
+        // a gateway offers no room for sandboxes
+        reserveMemory: cfg.gateway ? mem.total : cfg.reserveMemory,
         cpus: cpus().length,
         loadAvg: loadavg(),
         uptimeS: Math.round(uptime()),
@@ -130,6 +135,10 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
       return json(res, 200, { digest });
     }
     if (p[0] === "v1" && p[1] === "sandboxes") {
+      if (cfg.gateway) {
+        if (p.length === 2 && m === "GET") return json(res, 200, { sandboxes: [] });
+        throw new HttpError(409, "a gateway runs no sandboxes");
+      }
       if (p.length === 2 && m === "GET") return json(res, 200, { sandboxes: sbx.list() });
       if (p.length === 2 && m === "POST") {
         const spec = validateSpec(await readBody(req), cfg);
@@ -206,7 +215,7 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
     await new Promise<void>((r) => img.listen(cfg.imagePort, cfg.wgAddress, r));
   }
 
-  setInterval(() => void sbx.sweep().catch((e) => logError("sweep", e)), 5 * 60_000).unref();
+  if (!cfg.gateway) setInterval(() => void sbx.sweep().catch((e) => logError("sweep", e)), 5 * 60_000).unref();
   const stop = () => {
     // sandboxes keep running (KillMode=process); the next start finds them in their state files
     log("sandboxd stopping");
