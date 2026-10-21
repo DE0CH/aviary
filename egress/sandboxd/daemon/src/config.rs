@@ -286,8 +286,15 @@ pub struct Spec {
     pub cpu: f64,
     pub memory: u64,
     pub cpu_features: Str<2048>,
+    /// the conversation's persistent storage (docs/CLAUDE-CODE.md): `/workspace` and `~/.claude` are subfolders
+    /// `ws/<workspace>/…` of the host's JuiceFS mount; empty = none (both are then plain scratch)
+    pub workspace: Str<64>,
 }
 unsafe impl crate::fixed::Zeroed for Spec {}
+
+pub fn valid_workspace(w: &str) -> bool {
+    !w.is_empty() && w.len() <= 64 && w.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
 
 pub fn valid_name(n: &str) -> bool {
     n.len() > 4
@@ -324,6 +331,7 @@ impl Spec {
             cpu: f64::NAN,
             memory: 0,
             cpu_features: Str::new(),
+            workspace: Str::new(),
         };
         let mut memory = f64::NAN;
         let (mut have_name, mut have_ip, mut have_image) = (false, false, false);
@@ -400,6 +408,15 @@ impl Spec {
                     Val::Str(s) => num_from_str(s),
                     _ => f64::NAN,
                 };
+            } else if k.is("workspace") {
+                if matches!(v, Val::Null) {
+                    return Ok(());
+                }
+                let ws: Str<64> = spec_str(v).ok_or_else(|| e400("spec: bad workspace"))?;
+                if !valid_workspace(ws.as_str()) {
+                    return Err(e400("spec: bad workspace"));
+                }
+                sp.workspace = ws;
             } else if k.is("cpuFeatures") {
                 if matches!(v, Val::Null) {
                     return Ok(());

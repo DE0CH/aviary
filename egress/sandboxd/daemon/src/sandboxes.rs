@@ -455,7 +455,9 @@ impl Sandboxes {
         let dir = path!("/var/lib/sbx/bundles/{}", spec.name);
         crate::util::mkdir(dir.as_str(), 0o700)?;
         let mut b = Buf::new(sc.big);
-        runsc::bundle_spec(&mut b, spec, &env[..n], paths::images().as_str());
+        let root = crate::storage::setup(spec)?;
+        let scratch = crate::storage::scratch_dir(spec.name.as_str());
+        runsc::bundle_spec(&mut b, spec, &env[..n], root.as_str(), scratch.as_str());
         if b.full {
             return Err(Error::new(500, "bundle too large"));
         }
@@ -530,10 +532,11 @@ impl Sandboxes {
         }
         net::remove_sandbox_net(name, ip);
         quiet(&["rm", "-rf", path!("/var/lib/sbx/bundles/{name}").as_str(), path!("/run/sbx/ckpt/in-{name}").as_str()]);
-        // the root overlay's upper layer (--overlay2=root:self) is a file in the image's rootfs, named after the sandbox
+        // older sandboxes (--overlay2=root:self) kept their upper layer as a file in the image's rootfs
         let _ = each_dir_entry(paths::images().as_str(), |d| {
             crate::util::remove_file(path!("/var/lib/sbx/images/{d}/rootfs/.gvisor.filestore.{name}").as_str());
         });
+        crate::storage::teardown(name);
         self.forget(lk, name);
     }
 

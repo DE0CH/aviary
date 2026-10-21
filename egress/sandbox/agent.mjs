@@ -398,6 +398,120 @@ async function changes(req, res, since) {
   res.end(END);
 }
 
+
+// ---- long-running processes over an upgraded connection (docs/CLAUDE-CODE.md: Claude Code in the sandbox) ---------
+//
+// `GET /proc` with `Connection: Upgrade`, `Upgrade: jarvis-proc` and `X-Proc: <base64 JSON {args, cwd?, env?}>`
+// (exec token as usual) → 101, then the socket carries frames both ways: 1 byte type, 4 bytes big-endian length,
+// payload. Client → agent: 0 stdin bytes, 4 stdin end, 5 signal (payload: its name, e.g. "SIGTERM").
+// Agent → client: 1 stdout, 2 stderr, 3 exit (payload JSON {code, signal}); the socket is closed after it.
+// `args` is the argv (args[0] is looked up on PATH); cwd must be /workspace or a folder in it (default /workspace);
+// env is added to the agent's own environment (the proxy and mirror settings) for that process only. A dropped
+// connection kills the process (SIGTERM, SIGKILL 2 s later): the caller owns its life.
+export const PROC_STDIN = 0, PROC_STDOUT = 1, PROC_STDERR = 2, PROC_EXIT = 3, PROC_STDIN_END = 4, PROC_SIGNAL = 5;
+const WORKSPACE = process.env.JARVIS_WORKSPACE || "/workspace"; // overridable for tests only
+const SIGNALS = new Set(["SIGTERM", "SIGINT", "SIGKILL", "SIGHUP", "SIGQUIT"]);
+
+export function frame(type, payload) {
+  const b = Buffer.isBuffer(payload) ? payload : Buffer.from(payload ?? "");
+  const h = Buffer.alloc(5);
+  h[0] = type;
+  h.writeUInt32BE(b.length, 1);
+  return Buffer.concat([h, b]);
+}
+
+/** Splits a byte stream into frames; calls on(type, payload) for each complete one. */
+export function frameReader(on) {
+  let buf = Buffer.alloc(0);
+  return (chunk) => {
+    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+    while (buf.length >= 5) {
+      const n = buf.readUInt32BE(1);
+      if (n > 16 * 1024 * 1024) throw new Error("frame too large");
+      if (buf.length < 5 + n) break;
+      on(buf[0], buf.subarray(5, 5 + n));
+      buf = buf.subarray(5 + n);
+    }
+  };
+}
+
+function procSpec(req) {
+  let spec;
+  try {
+    spec = JSON.parse(Buffer.from(String(req.headers["x-proc"] || ""), "base64").toString("utf8"));
+  } catch {
+    throw new Error("X-Proc must be base64 JSON");
+  }
+  if (!Array.isArray(spec?.args) || !spec.args.length || !spec.args.every((a) => typeof a === "string" && !a.includes("\0"))) throw new Error("args must be a non-empty array of strings");
+  const cwd = normalize(spec.cwd || WORKSPACE);
+  if (cwd !== WORKSPACE && !cwd.startsWith(WORKSPACE + "/")) throw new Error("cwd must be /workspace or a folder in it");
+  const env = { ...process.env };
+  for (const [k, v] of Object.entries(spec.env || {})) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string" || v.includes("\0")) throw new Error(`bad env ${k}`);
+    env[k] = v;
+  }
+  return { args: spec.args, cwd, env };
+}
+
+function onProcUpgrade(req, socket) {
+  const refuse = (status, msg) => {
+    socket.end(`HTTP/1.1 ${status}\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\n${msg}\n`);
+  };
+  const url = new URL(req.url || "/", "http://agent");
+  if (url.pathname !== "/proc" || String(req.headers.upgrade || "").toLowerCase() !== "jarvis-proc") return refuse("404 Not Found", "not found");
+  if (!authorized(req)) return refuse("401 Unauthorized", "unauthorized");
+  let spec;
+  try {
+    spec = procSpec(req);
+    mkdirSync(spec.cwd, { recursive: true });
+  } catch (e) {
+    return refuse("400 Bad Request", String(e.message || e));
+  }
+  socket.write("HTTP/1.1 101 Switching Protocols\r\nupgrade: jarvis-proc\r\nconnection: upgrade\r\n\r\n");
+  socket.setNoDelay(true);
+  const child = spawn(spec.args[0], spec.args.slice(1), { cwd: spec.cwd, env: spec.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  let exited = false;
+  const send = (type, payload) => {
+    if (!socket.destroyed) socket.write(frame(type, payload));
+  };
+  child.stdout.on("data", (c) => send(PROC_STDOUT, c));
+  child.stderr.on("data", (c) => send(PROC_STDERR, c));
+  child.stdin.on("error", () => {}); // the process closed its stdin; later writes are dropped
+  child.on("error", (e) => {
+    if (exited) return;
+    exited = true;
+    send(PROC_STDERR, `${e.message}\n`);
+    send(PROC_EXIT, JSON.stringify({ code: 127, signal: null }));
+    socket.end();
+  });
+  child.on("close", (code, signal) => {
+    if (exited) return;
+    exited = true;
+    send(PROC_EXIT, JSON.stringify({ code, signal }));
+    socket.end();
+  });
+  const read = frameReader((type, payload) => {
+    if (type === PROC_STDIN) child.stdin.write(payload);
+    else if (type === PROC_STDIN_END) child.stdin.end();
+    else if (type === PROC_SIGNAL) {
+      const sig = payload.toString("utf8");
+      if (SIGNALS.has(sig)) killGroup(child.pid, sig);
+    }
+  });
+  socket.on("data", (c) => {
+    try {
+      read(c);
+    } catch {
+      socket.destroy();
+    }
+  });
+  socket.on("close", () => {
+    if (exited) return;
+    killGroup(child.pid, "SIGTERM");
+    setTimeout(() => !exited && killGroup(child.pid, "SIGKILL"), 2000).unref();
+  });
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", "http://agent");
@@ -420,6 +534,7 @@ const server = createServer(async (req, res) => {
     else res.destroy();
   }
 });
+server.on("upgrade", onProcUpgrade);
 server.requestTimeout = 0; // /exec may run for up to 10 minutes
 server.headersTimeout = 60_000;
 // longer than any client's idle keep-alive, so a reused connection is never closed under a request in flight

@@ -24,6 +24,7 @@ mod sandboxes;
 mod server;
 mod sock;
 mod stack;
+mod storage;
 mod util;
 
 use crate::api::{App, Facts, Worker};

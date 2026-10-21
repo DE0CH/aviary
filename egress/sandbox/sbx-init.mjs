@@ -24,6 +24,20 @@ const DIR = "/run/sbx-docker";
 const SOCK = `${DIR}/start.sock`;
 const DOCKER_SOCK = "/var/run/docker.sock";
 
+// Claude Code's managed instructions and MCP servers (docs/CLAUDE-CODE.md): the controller passes them base64-encoded
+// in JARVIS_CLAUDE_MD and JARVIS_CLAUDE_MCP; they are written root-owned, mode 644, and removed from the environment
+for (const [key, file] of [["JARVIS_CLAUDE_MD", "/etc/claude-code/CLAUDE.md"], ["JARVIS_CLAUDE_MCP", "/etc/claude-code/managed-mcp.json"]]) {
+  const v = process.env[key];
+  delete process.env[key];
+  if (!v) continue;
+  try {
+    mkdirSync("/etc/claude-code", { recursive: true });
+    writeFileSync(file, Buffer.from(v, "base64"), { mode: 0o644 });
+  } catch (e) {
+    console.error(JSON.stringify({ at: "sbx-init claude config", file, error: String(e?.message || e) }));
+  }
+}
+
 // the agent's environment: the sandbox's (proxy, exec token); dockerd gets it without the exec token
 const agentEnv = { ...process.env };
 const dockerEnv = { ...process.env };

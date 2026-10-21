@@ -33,6 +33,14 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && mkdir -p /var/lib/docker
 COPY docker-wrapper.sh /usr/local/bin/docker
 
+# Claude Code (docs/CLAUDE-CODE.md): the agent runs inside the sandbox, started per turn through the agent's /proc
+# endpoint with cwd /workspace. Pinned to npm's "stable" tag. The instance's CLAUDE.md and MCP servers are written at
+# start by sbx-init.mjs into Claude Code's managed paths (/etc/claude-code), which uid 1000 can read but not change.
+RUN npm install -g @anthropic-ai/claude-code@2.1.304 \
+ && npm cache clean --force \
+ && mkdir -p /etc/claude-code \
+ && claude --version
+
 # Installing system packages (docs/SANDBOX-VM.md, "Installing packages"): `apt-get`/`apt` are wrappers that go through
 # sudo for uid 1000 and fetch the package lists on the first install (the image ships without them). apt reaches the
 # Debian mirrors through the egress proxy: sudo keeps the proxy variables, and sbx-init.mjs writes them into
@@ -51,8 +59,10 @@ RUN ln -s apt-get /usr/local/bin/apt \
 
 # uid 1000 is the image's `node` user; the sandbox's home is /home/sandbox (not /home/user: E2B's template builder
 # makes that for its own user, mode 700), the workspace /work
-RUN mkdir -p /home/sandbox /work /opt/agent \
- && chown 1000:1000 /home/sandbox /work \
+# /workspace and ~/.claude are the conversation's persistent folders, mounted from the host (JuiceFS) on our own
+# hosts; elsewhere they are plain folders
+RUN mkdir -p /home/sandbox/.claude /work /workspace /opt/agent \
+ && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
  && usermod -d /home/sandbox node
 COPY agent.mjs tar.mjs sbx-init.mjs /opt/agent/
 
