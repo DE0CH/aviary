@@ -40,6 +40,47 @@ export interface E2bConfig {
   instance: string;
 }
 
+/**
+ * sandbox.vm: our own sandbox hosts (docs/SANDBOX-VM.md): the always-on Hetzner hub plus AWS burst hosts, gVisor with
+ * pre-copy live migration. The controller and scaler run in the web role.
+ */
+export interface VmConfig {
+  /** the hub (Hetzner, always on): its sandboxd URL (overlay address) and the WireGuard endpoint AWS hosts dial */
+  hub: { name: string; url: string; endpoint: string };
+  sandboxCidr: string;
+  hostCidr: string;
+  /** the egress proxy's address as sandboxes see it (translated by the hub to an egress pod) */
+  egressVip: string;
+  /** where the controller's connections come from (the cluster's private network; the web pods are masqueraded) */
+  controlCidr: string;
+  /** comma-separated CPU features every sandbox sees: those all host types have (`runsc cpu-features`, intersected) */
+  cpuFeatures: string;
+  /** free sandbox slots the scaler keeps (an AWS host takes ~1 min to boot) */
+  spareSlots: number;
+  cpuOvercommit: number;
+  /** env vars with PEMs: the CA, the controller's client certificate/key, and the burst hosts' server certificate/key */
+  tls: { caEnv: string; certEnv: string; keyEnv: string; hostCertEnv: string; hostKeyEnv: string };
+  /**
+   * downtimeMs: pre-copy's target for the final stop; maxDowntimeMs: across clouds, a move whose final stop would be
+   * longer is aborted before the switch (the sandbox keeps running); idleCpu: cores a sandbox may use and still move
+   * across clouds
+   */
+  migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number };
+  /** AWS burst hosts; absent = the hub only */
+  aws?: {
+    region: string;
+    launchTemplate: string;
+    /** steady-state maximum (the quota: 3 x m7i.xlarge = 12 of 16 vCPU); one more only while a host is replaced */
+    maxHosts: number;
+    accessKeyIdEnv: string;
+    secretAccessKeyEnv: string;
+    /** an empty AWS host is terminated after this long */
+    emptyMinutes: number;
+    /** tag `jarvis` on every instance: the scaler only ever touches instances with its own value */
+    instance: string;
+  };
+}
+
 export interface ChatConfig {
   product: { name: string; locale: string; logo?: string };
   publicUrl: string;
@@ -52,7 +93,7 @@ export interface ChatConfig {
   systemPromptFile: string;
   sandbox: {
     /** Where sandboxes run (docs/CHAT.md, "Sandbox providers"). */
-    provider: "kubernetes" | "e2b";
+    provider: "kubernetes" | "e2b" | "vm";
     /** kubernetes: the sandbox image. */
     image: string;
     /** kubernetes: the proxy sandboxes use (default http://egress.<web namespace>.svc.cluster.local:3128); e2b uses e2b.egressUrl. */
@@ -69,6 +110,7 @@ export interface ChatConfig {
     /** A docker-registry Secret in the sandbox namespace, when the sandbox image is private. */
     imagePullSecret?: string;
     e2b?: E2bConfig;
+    vm?: VmConfig;
   };
   egress: { defaultAllowedHosts: string[]; routes: EgressRoute[]; cacheGiB: number };
   tools: {
@@ -100,8 +142,41 @@ export function parseConfig(raw: unknown): ChatConfig {
   need("defaultModel", c.defaultModel, "string");
   need("systemPromptFile", c.systemPromptFile, "string");
   const provider = c.sandbox?.provider ?? "kubernetes";
-  if (provider !== "kubernetes" && provider !== "e2b") throw new Error('config: sandbox.provider must be "kubernetes" or "e2b"');
-  if (provider === "kubernetes") need("sandbox.image", c.sandbox?.image, "string");
+  if (provider !== "kubernetes" && provider !== "e2b" && provider !== "vm") throw new Error('config: sandbox.provider must be "kubernetes", "e2b" or "vm"');
+  if (provider === "kubernetes" || provider === "vm") need("sandbox.image", c.sandbox?.image, "string");
+  let vm: VmConfig | undefined;
+  if (provider === "vm" || c.sandbox?.vm) {
+    const v = c.sandbox?.vm ?? {};
+    need("sandbox.vm.hub.url", v.hub?.url, "string");
+    need("sandbox.vm.hub.name", v.hub?.name, "string");
+    need("sandbox.vm.cpuFeatures", v.cpuFeatures, "string");
+    const aws = v.aws
+      ? {
+          region: "eu-central-1",
+          launchTemplate: "yyc-ai-sandbox-host",
+          maxHosts: 3,
+          accessKeyIdEnv: "SBX_AWS_ACCESS_KEY_ID",
+          secretAccessKeyEnv: "SBX_AWS_SECRET_ACCESS_KEY",
+          emptyMinutes: 5,
+          instance: new URL(String(c.publicUrl)).hostname,
+          ...v.aws,
+        }
+      : undefined;
+    if (aws) need("sandbox.vm.hub.endpoint", v.hub?.endpoint, "string");
+    vm = {
+      sandboxCidr: "10.200.0.0/16",
+      hostCidr: "10.201.0.0/24",
+      egressVip: "10.201.1.1",
+      controlCidr: "10.0.0.0/16",
+      spareSlots: 1,
+      cpuOvercommit: 3,
+      ...v,
+      hub: { endpoint: "", ...v.hub },
+      tls: { caEnv: "SBX_CA_CERT", certEnv: "SBX_CLIENT_CERT", keyEnv: "SBX_CLIENT_KEY", hostCertEnv: "SBX_HOST_CERT", hostKeyEnv: "SBX_HOST_KEY", ...v.tls },
+      migration: { downtimeMs: 100, maxRounds: 20, maxDowntimeMs: 500, idleCpu: 0.05, ...v.migration },
+      aws,
+    };
+  }
   let e2b: E2bConfig | undefined;
   if (provider === "e2b") {
     const e = c.sandbox?.e2b ?? {};
@@ -132,7 +207,7 @@ export function parseConfig(raw: unknown): ChatConfig {
     defaultModel: c.defaultModel,
     titleModel: c.titleModel ?? c.defaultModel,
     systemPromptFile: c.systemPromptFile,
-    sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b },
+    sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b, vm },
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },
     s3: { prefix: "", ...c.s3 },

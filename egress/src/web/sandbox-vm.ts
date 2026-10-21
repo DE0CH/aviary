@@ -1,0 +1,628 @@
+// Sandbox provider "vm" (docs/SANDBOX-VM.md): gVisor sandboxes on our own hosts, the always-on Hetzner hub plus AWS
+// EC2 burst hosts, with pre-copy live migration between them. The controller (placement, migrations) and the scaler
+// (AWS hosts up and down, drain-back, heartbeats, the hub's WireGuard peers and egress targets) run in the web role;
+// the scaler behind a Postgres leader lock like the janitor. Hosts run sandboxd (chat/sandboxd), which this calls
+// over HTTPS with mutual TLS on the WireGuard overlay.
+//
+// - Placement: the hub while it has room, then the fullest AWS host with room; none: the scaler starts an AWS host
+//   (at most aws.maxHosts in steady state; one more only while a `retiring` host is being replaced).
+// - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
+// - Drain-back: when an AWS host's sandboxes fit elsewhere (spare slots kept), it is marked `draining`, its sandboxes
+//   move one at a time while their conversation has no turn going (never mid-bash), then the instance is terminated.
+//   A move across clouds also needs the sandbox to be idle (CPU) and is aborted, sandbox untouched, if pre-copy
+//   wouldn't converge within migration.maxDowntimeMs (the gVisor fork's --migrate-max-downtime).
+// - A host that stops answering for 30 s (the hub: 120 s) loses its sandboxes: their rows go `gone` ("host lost"),
+//   the next turn makes a new sandbox and gets the reset note. AWS hosts are then terminated.
+import { randomBytes } from "node:crypto";
+import type pg from "pg";
+import type { ChatConfig, VmConfig } from "../common/config.ts";
+import { lead, tx, type Db } from "../common/db.ts";
+import { log, logError } from "../common/log.ts";
+import { AgentClient } from "./agent.ts";
+import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
+import { sandboxEnv } from "./sandbox-k8s.ts";
+import { PoolFullError, type SandboxRow } from "./sandbox.ts";
+import { SandboxdError, wgKeyPair, type Ec2Api, type HostInfo, type HostSandbox, type SandboxdApi } from "./vm-clients.ts";
+
+const PLACE_LOCK = 4_242_010;
+const SBX_LOCK = 4_242_011;
+export const SCALER_LOCK = 4_242_012;
+const HOST_DEAD_MS = 30_000;
+const HUB_DEAD_MS = 120_000;
+const BOOT_TIMEOUT_MS = 8 * 60_000;
+/** an EC2 instance tagged for us that the database doesn't know is terminated after this long */
+const ORPHAN_INSTANCE_MS = 10 * 60_000;
+const PLACE_WAIT_MS = 170_000;
+
+export interface HostRow {
+  name: string;
+  kind: "hub" | "aws";
+  url: string;
+  wg_ip: string;
+  wg_public_key: string | null;
+  instance_id: string | null;
+  private_ip: string | null;
+  status: "booting" | "active" | "draining" | "retiring" | "gone";
+  max_sandboxes: number | null;
+  mem_total: string | number | null;
+  mem_reserve: string | number | null;
+  cpus: number | null;
+  info: { sandboxes?: HostSandbox[]; cpuFeatures?: string; images?: string[]; bootId?: string; gvisorRelease?: string } | null;
+  created_at: Date;
+  last_seen_at: Date | null;
+  empty_since: Date | null;
+}
+
+/** Kubernetes-style quantity: "2Gi", "1536Mi", "1G", "512M", bytes */
+export function parseBytes(s: string): number {
+  const m = /^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|K|M|G|T)?$/.exec(String(s).trim());
+  if (!m) throw new Error(`bad memory quantity ${s}`);
+  const mul: Record<string, number> = { "": 1, Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, K: 1e3, M: 1e6, G: 1e9, T: 1e12 };
+  return Math.round(Number(m[1]) * mul[m[2] ?? ""]!);
+}
+/** "1", "0.5", "500m" */
+export function parseCpu(s: string): number {
+  const t = String(s).trim();
+  return t.endsWith("m") ? Number(t.slice(0, -1)) / 1000 : Number(t);
+}
+
+function ipInt(ip: string): number {
+  return ip.split(".").reduce((a, x) => a * 256 + Number(x), 0);
+}
+const intIp = (n: number) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+
+/** The lowest free address in `cidr` from host part `first` on (skipping .0 and .255 of every /24). */
+export function freeAddress(cidr: string, used: Set<string>, first = 10, last?: number): string | null {
+  const [base, bits] = cidr.split("/");
+  const size = 2 ** (32 - Number(bits));
+  const start = ipInt(base!);
+  for (let i = first; i < Math.min(size - 1, last ?? size - 1); i++) {
+    const ip = intIp(start + i);
+    const low = (start + i) & 255;
+    if (low === 0 || low === 255) continue;
+    if (!used.has(ip)) return ip;
+  }
+  return null;
+}
+
+export interface VmDeps {
+  db: Db;
+  config: ChatConfig;
+  sandboxd: SandboxdApi;
+  ec2: Ec2Api | null;
+  /** PEMs handed to new AWS hosts (their server certificate, shared, and the CA that signs the controller) */
+  hostTls: { ca: string; cert: string; key: string } | null;
+}
+
+interface Slot {
+  host: HostRow;
+  used: number;
+  free: number;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export class VmController {
+  readonly #d: VmDeps;
+  readonly #digests = new Map<string, string>();
+  /** the scaler's last view of each host (sandboxes with CPU use), by name */
+  readonly #lastInfo = new Map<string, HostInfo>();
+
+  constructor(d: VmDeps) {
+    this.#d = d;
+  }
+
+  get vm(): VmConfig {
+    return this.#d.config.sandbox.vm!;
+  }
+  get memBytes(): number {
+    return parseBytes(this.#d.config.sandbox.memory);
+  }
+  get cpuCores(): number {
+    return parseCpu(this.#d.config.sandbox.cpu);
+  }
+
+  /** How many sandboxes a host can hold (memory by the sandbox limit, CPU overcommitted, the operator's cap). */
+  slots(h: HostRow): number {
+    const mem = Number(h.mem_total ?? 0) - Number(h.mem_reserve ?? 0);
+    const byMem = Math.floor(mem / this.memBytes);
+    const byCpu = Math.floor(((h.cpus ?? 0) * this.vm.cpuOvercommit) / this.cpuCores);
+    return Math.max(0, Math.min(byMem, byCpu, h.max_sandboxes ?? Infinity));
+  }
+
+  #fresh(h: HostRow): boolean {
+    return !!h.last_seen_at && Date.now() - new Date(h.last_seen_at).getTime() < HOST_DEAD_MS;
+  }
+
+  async ensureHub(): Promise<void> {
+    const wg = new URL(this.vm.hub.url).hostname;
+    await this.#d.db.query(
+      `insert into vm_hosts (name, kind, url, wg_ip, status) values ($1, 'hub', $2, $3, 'active')
+       on conflict (name) do update set url = excluded.url, wg_ip = excluded.wg_ip`,
+      [this.vm.hub.name, this.vm.hub.url, wg],
+    );
+  }
+
+  async hosts(c: Db | pg.PoolClient = this.#d.db): Promise<HostRow[]> {
+    const { rows } = await c.query<HostRow>("select * from vm_hosts where status <> 'gone' order by kind desc, created_at");
+    return rows;
+  }
+
+  /** Placeable hosts (active, answering) with their use; `extra` counts sandboxes not yet in the table. */
+  async #slots(c: Db | pg.PoolClient): Promise<Slot[]> {
+    const hosts = (await this.hosts(c)).filter((h) => h.status === "active" && this.#fresh(h));
+    const { rows } = await c.query<{ host: string; n: string }>("select host, count(*) as n from sandboxes where status <> 'gone' and host is not null group by host");
+    const used = new Map(rows.map((r) => [r.host, Number(r.n)]));
+    return hosts.map((h) => ({ host: h, used: used.get(h.name) ?? 0, free: Math.max(0, this.slots(h) - (used.get(h.name) ?? 0)) }));
+  }
+
+  /** The hub while it has room, else the fullest AWS host with room. */
+  static pick(slots: Slot[], exclude?: string): Slot | null {
+    const c = slots.filter((s) => s.free > 0 && s.host.name !== exclude);
+    return c.find((s) => s.host.kind === "hub") ?? c.filter((s) => s.host.kind === "aws").sort((a, b) => a.free - b.free || a.host.name.localeCompare(b.host.name))[0] ?? null;
+  }
+
+  /** Places a `starting` sandbox: a host and an address, recorded in its row. Null when no host has room. */
+  async place(row: SandboxRow): Promise<{ host: HostRow; ip: string } | null> {
+    return tx(this.#d.db, async (c) => {
+      await c.query("select pg_advisory_xact_lock($1)", [PLACE_LOCK]);
+      const s = VmController.pick(await this.#slots(c));
+      if (!s) return null;
+      const { rows } = await c.query<{ ip: string }>("select ip from sandboxes where status <> 'gone' and ip is not null");
+      const ip = freeAddress(this.vm.sandboxCidr, new Set(rows.map((r) => r.ip)));
+      if (!ip) throw new Error("no free sandbox address");
+      await c.query("update sandboxes set host = $2, ip = $3 where id = $1", [row.id, s.host.name, ip]);
+      return { host: s.host, ip };
+    });
+  }
+
+  /** The configured image's digest (the hub resolves and pulls it). */
+  async imageDigest(): Promise<string> {
+    const ref = this.#d.config.sandbox.image;
+    const pinned = /@sha256:([a-f0-9]{64})$/.exec(ref)?.[1];
+    if (pinned) return pinned;
+    let d = this.#digests.get(ref);
+    if (!d) {
+      const r = await this.#d.sandboxd.call<{ digest: string }>(this.vm.hub.url, "POST", "/v1/images", { ref }, 15 * 60_000);
+      d = r.digest;
+      this.#digests.set(ref, d);
+    }
+    return d;
+  }
+
+  async withSandboxLock<T>(id: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+    return tx(this.#d.db, async (c) => {
+      await c.query("select pg_advisory_xact_lock($1, hashtext($2))", [SBX_LOCK, id]);
+      return fn(c);
+    });
+  }
+
+  // ---- AWS hosts -----------------------------------------------------------------------------------------------
+
+  /**
+   * Starts an AWS host unless one is booting already or the cap is reached. `transient`: one more than maxHosts is
+   * allowed while a `retiring` host is replaced. Returns what happened.
+   */
+  async launch(reason: string, transient = false): Promise<"launched" | "booting" | "full" | "off"> {
+    const aws = this.vm.aws;
+    if (!aws || !this.#d.ec2 || !this.#d.hostTls) return "off";
+    return tx(this.#d.db, async (c) => {
+      await c.query("select pg_advisory_xact_lock($1)", [PLACE_LOCK + 100]);
+      const hosts = (await this.hosts(c)).filter((h) => h.kind === "aws");
+      if (hosts.some((h) => h.status === "booting")) return "booting";
+      const retiring = hosts.filter((h) => h.status === "retiring").length;
+      const cap = transient && retiring ? aws.maxHosts + 1 : aws.maxHosts;
+      const count = transient ? hosts.length : hosts.length - retiring;
+      if (count >= cap) return "full";
+      const hub = (await c.query<HostRow>("select * from vm_hosts where name = $1", [this.vm.hub.name])).rows[0];
+      if (!hub?.wg_public_key) throw new Error("the hub's WireGuard key is not known yet");
+      const { rows: ips } = await c.query<{ wg_ip: string }>("select wg_ip from vm_hosts where status <> 'gone'");
+      const wgIp = freeAddress(this.vm.hostCidr, new Set(ips.map((r) => r.wg_ip)), 10, 250);
+      if (!wgIp) throw new Error("no free host address");
+      const keys = wgKeyPair();
+      const name = `aws-${randomBytes(3).toString("hex")}`;
+      const url = `https://${wgIp}:7443`;
+      await c.query("insert into vm_hosts (name, kind, url, wg_ip, wg_public_key, status) values ($1, 'aws', $2, $3, $4, 'booting')", [name, url, wgIp, keys.publicKey]);
+      const userData = JSON.stringify({
+        host: {
+          name,
+          role: "burst",
+          wgAddress: wgIp,
+          hostCidr: this.vm.hostCidr,
+          controlCidr: this.vm.controlCidr,
+          sandboxCidr: this.vm.sandboxCidr,
+          egressVip: this.vm.egressVip,
+          reserveMemory: 1024 * 1024 * 1024,
+          imageSource: `http://${new URL(this.vm.hub.url).hostname}:7444`,
+          hub: { publicKey: hub.wg_public_key, endpoint: this.vm.hub.endpoint, allowedIps: [this.vm.controlCidr, `${hub.wg_ip}/32`, `${this.vm.egressVip}/32`] },
+        },
+        wgPrivateKey: keys.privateKey,
+        tls: this.#d.hostTls,
+      });
+      try {
+        const inst = await this.#d.ec2!.runInstance({
+          launchTemplate: aws.launchTemplate,
+          userData,
+          tags: { app: "yyc-ai-sandbox", jarvis: aws.instance, Name: `yyc-ai-sandbox-${name}` },
+        });
+        await c.query("update vm_hosts set instance_id = $2, private_ip = $3 where name = $1", [name, inst.id, inst.privateIp || null]);
+        log("vm: AWS host launched", { host: name, instance: inst.id, reason });
+        return "launched";
+      } catch (e) {
+        await c.query("update vm_hosts set status = 'gone', gone_at = now(), gone_reason = $2 where name = $1", [name, `launch failed: ${(e as Error).message}`.slice(0, 500)]);
+        logError("vm: AWS launch failed", e, { host: name });
+        return "full";
+      }
+    });
+  }
+
+  async #terminate(h: HostRow, reason: string): Promise<void> {
+    if (h.kind !== "aws") return;
+    if (h.instance_id && this.#d.ec2) await this.#d.ec2.terminate([h.instance_id]);
+    await this.#d.db.query("update vm_hosts set status = 'gone', gone_at = now(), gone_reason = $2 where name = $1 and status <> 'gone'", [h.name, reason]);
+    log("vm: host gone", { host: h.name, instance: h.instance_id, reason });
+  }
+
+  async #hostLost(h: HostRow, reason: string): Promise<void> {
+    const { rows } = await this.#d.db.query<{ id: string }>(
+      "update sandboxes set status = 'gone', released_at = now(), release_reason = 'host lost' where host = $1 and status <> 'gone' returning id",
+      [h.name],
+    );
+    logError("vm: host lost", reason, { host: h.name, sandboxes: rows.length });
+    if (h.kind === "aws") await this.#terminate(h, `lost: ${reason}`);
+  }
+
+  // ---- network ---------------------------------------------------------------------------------------------------
+
+  /** The hub's WireGuard peers (AWS hosts with the /32s they hold) and each AWS host's mesh peers. */
+  async pushPeers(): Promise<void> {
+    const hosts = await this.hosts();
+    const aws = hosts.filter((h) => h.kind === "aws" && h.wg_public_key);
+    const { rows } = await this.#d.db.query<{ host: string; ip: string }>("select host, ip from sandboxes where status <> 'gone' and ip is not null and host is not null");
+    const byHost = new Map<string, string[]>();
+    for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), `${r.ip}/32`]);
+    const hubPeers = aws.map((h) => ({ publicKey: h.wg_public_key!, allowedIps: [`${h.wg_ip}/32`, ...(byHost.get(h.name) ?? [])] }));
+    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers: hubPeers }, 10_000);
+    // AWS hosts reach each other directly (VPC addresses) for migrations; the hub peer they keep themselves
+    for (const h of aws.filter((x) => x.status !== "booting" && this.#fresh(x))) {
+      const others = aws.filter((o) => o.name !== h.name && o.private_ip).map((o) => ({ publicKey: o.wg_public_key!, endpoint: `${o.private_ip}:51820`, allowedIps: [`${o.wg_ip}/32`] }));
+      await this.#d.sandboxd.call(h.url, "PUT", "/v1/peers", { peers: others }, 10_000).catch((e) => logError("vm: peers", e, { host: h.name }));
+    }
+  }
+
+  /** The egress pods' addresses (each egress pod announces itself in kv) for the hub's VIP translation. */
+  async pushEgress(): Promise<void> {
+    const { rows } = await this.#d.db.query<{ value: { ip: string; at: string } }>("select value from kv where key like 'egress_pod:%'");
+    const targets = rows.filter((r) => Date.now() - Date.parse(r.value.at) < 30_000).map((r) => r.value.ip);
+    if (!targets.length) return; // keep the last known ones rather than none
+    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/egress", { targets }, 10_000);
+  }
+
+  // ---- migration -------------------------------------------------------------------------------------------------
+
+  /**
+   * Moves a sandbox to another host while it runs. False (and nothing changed) when it can't now: its row changed,
+   * or the copy failed or would not converge before the switch (it keeps running where it was).
+   */
+  async migrate(sandboxId: string, to: HostRow, reason: string): Promise<boolean> {
+    return this.withSandboxLock(sandboxId, async (c) => {
+      const { rows } = await c.query<{ pod: string; ip: string; host: string; status: string }>("select pod, ip, host, status from sandboxes where id = $1", [sandboxId]);
+      const s = rows[0];
+      if (!s || s.status !== "ready" || !s.host || s.host === to.name) return false;
+      const from = (await c.query<HostRow>("select * from vm_hosts where name = $1", [s.host])).rows[0];
+      if (!from) return false;
+      const sd = this.#d.sandboxd;
+      const crossCloud = from.kind !== to.kind;
+      const t0 = Date.now();
+      const spec = await sd.call(from.url, "GET", `/v1/sandboxes/${s.pod}/spec`);
+      const rx = await sd.call<{ port: number; address: string }>(to.url, "POST", `/v1/sandboxes/${s.pod}/receive`, spec, 15 * 60_000);
+      let sendError: unknown = null;
+      try {
+        await sd.call(from.url, "POST", `/v1/sandboxes/${s.pod}/send`, {
+          to: `${rx.address}:${rx.port}`,
+          downtimeMs: this.vm.migration.downtimeMs,
+          maxRounds: this.vm.migration.maxRounds,
+          maxDowntimeMs: crossCloud ? this.vm.migration.maxDowntimeMs : 0,
+        }, 15 * 60_000);
+      } catch (e) {
+        sendError = e;
+        if (e instanceof SandboxdError && e.status === 409) {
+          // not moved: it still runs on the source
+          await sd.call(to.url, "DELETE", `/v1/sandboxes/${s.pod}`).catch(() => {});
+          log("vm: migration not done, sandbox unchanged", { sandbox: sandboxId, from: from.name, to: to.name, error: e.message });
+          return false;
+        }
+      }
+      const res = await sd.call<{ state: string; error?: string; stats?: any }>(to.url, "GET", `/v1/sandboxes/${s.pod}/receive?wait=90000`, undefined, 100_000).catch((e) => ({ state: "unknown", error: (e as Error).message, stats: undefined }));
+      if (res.state === "running") {
+        await c.query("update sandboxes set host = $2 where id = $1", [sandboxId, to.name]);
+        await this.pushPeersWith(c).catch((e) => logError("vm: peers after migration", e));
+        log("vm: sandbox migrated", { sandbox: sandboxId, from: from.name, to: to.name, reason, ms: Date.now() - t0, final_ms: res.stats?.final_ms, restore_ms: res.stats?.restore_ms, rounds: res.stats?.rounds, bytes: res.stats?.bytes });
+        return true;
+      }
+      // did the source keep it?
+      const still = await sd.call<{ sandboxes: HostSandbox[] }>(from.url, "GET", "/v1/sandboxes").then((r) => r.sandboxes.some((x) => x.name === s.pod && x.state === "running"), () => false);
+      await sd.call(to.url, "DELETE", `/v1/sandboxes/${s.pod}`).catch(() => {});
+      if (still) {
+        logError("vm: migration failed, sandbox still on the source", sendError ?? res.error, { sandbox: sandboxId });
+        return false;
+      }
+      await c.query("update sandboxes set status = 'gone', released_at = now(), release_reason = 'migration failed' where id = $1", [sandboxId]);
+      logError("vm: migration lost the sandbox", sendError ?? res.error, { sandbox: sandboxId, from: from.name, to: to.name });
+      return false;
+    });
+  }
+
+  /** pushPeers inside a migration's transaction (its host change isn't committed yet). */
+  async pushPeersWith(c: pg.PoolClient): Promise<void> {
+    const { rows: aws } = await c.query<HostRow>("select * from vm_hosts where status <> 'gone' and kind = 'aws' and wg_public_key is not null");
+    const { rows } = await c.query<{ host: string; ip: string }>("select host, ip from sandboxes where status <> 'gone' and ip is not null and host is not null");
+    const byHost = new Map<string, string[]>();
+    for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), `${r.ip}/32`]);
+    const peers = aws.map((h) => ({ publicKey: h.wg_public_key!, allowedIps: [`${h.wg_ip}/32`, ...(byHost.get(h.name) ?? [])] }));
+    await this.#d.sandboxd.call(this.vm.hub.url, "PUT", "/v1/peers", { peers }, 10_000);
+  }
+
+  /** May this sandbox move now? Never while its conversation has a turn going; across clouds only when idle. */
+  async #movable(s: { id: string; conversation_id: string; pod: string; created_at: Date }, from: HostRow, to: HostRow): Promise<boolean> {
+    if (Date.now() - new Date(s.created_at).getTime() < 30_000) return false;
+    const { rows } = await this.#d.db.query("select 1 from turns where conversation_id = $1 and status in ('queued','running','waiting') limit 1", [s.conversation_id]);
+    if (rows.length) return false;
+    if (from.kind !== to.kind) {
+      const usage = this.#lastInfo.get(from.name)?.sandboxes.find((x) => x.name === s.pod)?.cpuUsage ?? 1;
+      if (usage > this.vm.migration.idleCpu) return false;
+    }
+    return true;
+  }
+
+  // ---- the scaler ------------------------------------------------------------------------------------------------
+
+  /** One pass: heartbeats, network state, AWS hosts up/down, at most one migration. */
+  async pass(): Promise<void> {
+    await this.ensureHub();
+    let hosts = await this.hosts();
+    const hubName = this.vm.hub.name;
+
+    // heartbeats
+    let hubUp = false;
+    const down = new Map<string, number>();
+    await Promise.all(
+      hosts.map(async (h) => {
+        try {
+          const info = await this.#d.sandboxd.host(h.url, 5000);
+          this.#lastInfo.set(h.name, info);
+          const missing = this.vm.cpuFeatures.split(",").filter((f) => f && !info.cpuFeatures.split(",").includes(f));
+          const status = h.status === "booting" ? "active" : h.status;
+          if (missing.length && h.status !== "retiring") {
+            logError("vm: host lacks CPU features of the pool; not used", missing.join(","), { host: h.name });
+          }
+          await this.#d.db.query(
+            `update vm_hosts set last_seen_at = now(), mem_total = $2, mem_reserve = $3, cpus = $4, wg_public_key = $5,
+               info = $6, status = $7 where name = $1`,
+            [
+              h.name,
+              info.memTotal,
+              info.reserveMemory,
+              info.cpus,
+              info.wgPublicKey,
+              JSON.stringify({ sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease }),
+              missing.length ? "retiring" : status,
+            ],
+          );
+          if (h.status === "booting") {
+            log("vm: AWS host active", { host: h.name, bootMs: Date.now() - new Date(h.created_at).getTime() });
+            // warm the current image there now rather than at the first sandbox
+            void this.imageDigest().then((digest) => this.#d.sandboxd.call(h.url, "POST", "/v1/images", { digest }, 15 * 60_000)).catch((e) => logError("vm: image warm-up", e, { host: h.name }));
+          }
+          if (h.name === hubName) hubUp = true;
+        } catch (e) {
+          const seen = h.last_seen_at ? new Date(h.last_seen_at).getTime() : new Date(h.created_at).getTime();
+          const age = Date.now() - seen;
+          if (h.status === "booting") {
+            if (Date.now() - new Date(h.created_at).getTime() > BOOT_TIMEOUT_MS) await this.#hostLost(h, "did not come up");
+          } else if (h.kind === "hub") {
+            if (age > HUB_DEAD_MS && h.last_seen_at) await this.#hostLost(h, (e as Error).message);
+          }
+          // AWS hosts are judged below, once the hub's state is known (they are reached through it)
+          if (h.kind === "aws" && h.status !== "booting") down.set(h.name, age);
+        }
+      }),
+    );
+    for (const h of hosts) {
+      const age = down.get(h.name);
+      if (hubUp && age !== undefined && age > HOST_DEAD_MS) await this.#hostLost(h, "stopped answering");
+    }
+    if (!hubUp) return; // without the hub nothing else can be judged or changed
+
+    await this.pushPeers().catch((e) => logError("vm: peers", e));
+    await this.pushEgress().catch((e) => logError("vm: egress targets", e));
+    await this.imageDigest().catch((e) => logError("vm: image", e));
+    await this.#reconcileEc2().catch((e) => logError("vm: ec2 reconcile", e));
+
+    hosts = await this.hosts();
+    const slots = await this.#slots(this.#d.db);
+    const free = slots.reduce((a, s) => a + s.free, 0);
+    const used = new Map<string, number>();
+    {
+      const { rows } = await this.#d.db.query<{ host: string; n: string }>("select host, count(*) as n from sandboxes where status <> 'gone' and host is not null group by host");
+      for (const r of rows) used.set(r.host, Number(r.n));
+    }
+    for (const h of hosts.filter((x) => x.kind === "aws")) {
+      await this.#d.db.query("update vm_hosts set empty_since = case when $2::boolean then coalesce(empty_since, now()) else null end where name = $1", [h.name, (used.get(h.name) ?? 0) === 0]);
+    }
+    hosts = await this.hosts();
+    const aws = hosts.filter((h) => h.kind === "aws");
+    const draining = aws.filter((h) => h.status === "draining");
+    const retiring = hosts.filter((h) => h.status === "retiring");
+
+    // scale out: keep spare slots; a draining host comes back first
+    if (free < this.vm.spareSlots) {
+      if (draining[0]) {
+        await this.#d.db.query("update vm_hosts set status = 'active' where name = $1 and status = 'draining'", [draining[0].name]);
+        log("vm: drain cancelled, capacity needed", { host: draining[0].name });
+        return;
+      }
+      await this.launch(`spare slots ${free} < ${this.vm.spareSlots}`).catch((e) => logError("vm: launch", e));
+    }
+    // a retiring host with sandboxes and nowhere to put them: one transient host
+    if (retiring.some((h) => (used.get(h.name) ?? 0) > 0) && free === 0) await this.launch("replacing a retiring host", true).catch((e) => logError("vm: launch", e));
+
+    // empty AWS hosts go (draining/retiring at once; active ones after emptyMinutes, if the rest keeps the spare)
+    for (const h of aws) {
+      if ((used.get(h.name) ?? 0) > 0 || h.status === "booting") continue;
+      const own = slots.find((s) => s.host.name === h.name)?.free ?? 0;
+      const emptyFor = h.empty_since ? Date.now() - new Date(h.empty_since).getTime() : 0;
+      if (h.status === "draining" || h.status === "retiring" || (emptyFor > (this.vm.aws?.emptyMinutes ?? 5) * 60_000 && free - own >= this.vm.spareSlots)) {
+        await this.#terminate(h, h.status === "active" ? "empty" : `${h.status}, empty`);
+        return;
+      }
+    }
+
+    // scale in: drain the emptiest AWS host when its sandboxes fit elsewhere with the spare kept
+    if (!draining.length && !aws.some((h) => h.status === "booting")) {
+      for (const h of aws.filter((x) => x.status === "active").sort((a, b) => (used.get(a.name) ?? 0) - (used.get(b.name) ?? 0))) {
+        const n = used.get(h.name) ?? 0;
+        const elsewhere = slots.filter((s) => s.host.name !== h.name).reduce((a, s) => a + s.free, 0);
+        if (n > 0 && n <= elsewhere - this.vm.spareSlots) {
+          await this.#d.db.query("update vm_hosts set status = 'draining' where name = $1 and status = 'active'", [h.name]);
+          log("vm: draining AWS host", { host: h.name, sandboxes: n, freeElsewhere: elsewhere });
+          return;
+        }
+        break;
+      }
+    }
+
+    // one migration per pass, off draining/retiring hosts, longest-idle first
+    for (const from of [...draining, ...retiring]) {
+      const { rows } = await this.#d.db.query<{ id: string; conversation_id: string; pod: string; created_at: Date }>(
+        "select id, conversation_id, pod, created_at from sandboxes where host = $1 and status = 'ready' order by last_active_at",
+        [from.name],
+      );
+      for (const s of rows) {
+        const target = VmController.pick(slots, from.name);
+        if (!target) break;
+        if (!(await this.#movable(s, from, target.host))) continue;
+        await this.migrate(s.id, target.host, from.status);
+        return;
+      }
+    }
+  }
+
+  async #reconcileEc2(): Promise<void> {
+    const aws = this.vm.aws;
+    if (!aws || !this.#d.ec2) return;
+    const insts = await this.#d.ec2.describe({ app: "yyc-ai-sandbox", jarvis: aws.instance });
+    const { rows } = await this.#d.db.query<HostRow>("select * from vm_hosts where kind = 'aws'");
+    const live = new Map(rows.filter((r) => r.status !== "gone" && r.instance_id).map((r) => [r.instance_id!, r]));
+    const orphans = insts.filter((i) => !live.has(i.id) && i.state !== "shutting-down" && Date.now() - Date.parse(i.launchTime) > ORPHAN_INSTANCE_MS);
+    if (orphans.length) {
+      log("vm: terminating instances the database doesn't know", { instances: orphans.map((i) => i.id) });
+      await this.#d.ec2.terminate(orphans.map((i) => i.id));
+    }
+    const running = new Map(insts.map((i) => [i.id, i]));
+    for (const h of live.values()) {
+      const i = running.get(h.instance_id!);
+      if (!i && Date.now() - new Date(h.created_at).getTime() > 120_000) await this.#hostLost(h, "instance no longer exists");
+      else if (i && !h.private_ip && i.privateIp) await this.#d.db.query("update vm_hosts set private_ip = $2 where name = $1", [h.name, i.privateIp]);
+    }
+  }
+}
+
+export class VmProvider implements SandboxProvider {
+  readonly kind = "vm" as const;
+  readonly controller: VmController;
+  readonly #d: VmDeps;
+
+  constructor(d: VmDeps) {
+    this.#d = d;
+    this.controller = new VmController(d);
+  }
+
+  async create(row: SandboxRow, egressToken: string): Promise<{ name: string }> {
+    const ctl = this.controller;
+    const vm = ctl.vm;
+    const until = Date.now() + PLACE_WAIT_MS;
+    let placed: { host: HostRow; ip: string } | null = null;
+    for (;;) {
+      placed = await ctl.place(row);
+      if (placed) break;
+      const r = await ctl.launch("no room for a new sandbox");
+      if (r === "full" || r === "off") throw new PoolFullError("all sandbox hosts are full, try again in a few minutes");
+      if (Date.now() > until) throw new Error("no sandbox host became available in time");
+      await sleep(3000);
+    }
+    const digest = await ctl.imageDigest();
+    const env = {
+      ...sandboxEnv(`http://${vm.egressVip}:3128`, vm.egressVip, egressToken),
+      JARVIS_EXEC_TOKEN: row.exec_token,
+      HOME: "/home/sandbox",
+    };
+    await this.#d.sandboxd.call(
+      placed.host.url,
+      "POST",
+      "/v1/sandboxes",
+      { name: row.pod, ip: placed.ip, image: digest, imageRef: this.#d.config.sandbox.image, env, cpu: ctl.cpuCores, memory: ctl.memBytes, cpuFeatures: vm.cpuFeatures },
+      15 * 60_000,
+    );
+    // AWS: the hub must route the new /32 to that host
+    if (placed.host.kind === "aws") await ctl.pushPeers();
+    log("vm: sandbox placed", { sandbox: row.id, host: placed.host.name, ip: placed.ip });
+    return { name: row.pod };
+  }
+
+  async waitReady(row: SandboxRow, deadline: number): Promise<AgentEndpoint> {
+    const { rows } = await this.#d.db.query<{ ip: string }>("select ip from sandboxes where id = $1", [row.id]);
+    const ip = rows[0]?.ip;
+    if (!ip) throw new Error("the sandbox has no address");
+    const url = `http://${ip}:7070`;
+    let last = "";
+    while (Date.now() < deadline) {
+      try {
+        const h = await new AgentClient(url, row.exec_token).health(2000);
+        if (h.ok) return { url, headers: {} };
+      } catch (e) {
+        last = (e as Error).message;
+      }
+      await sleep(300);
+    }
+    throw new Error(`the sandbox's agent did not answer in time (${last})`);
+  }
+
+  async keepAlive(): Promise<void> {}
+
+  async destroy(name: string): Promise<void> {
+    const { rows } = await this.#d.db.query<{ id: string }>("select id from sandboxes where pod = $1", [name]);
+    const del = async (host: string | null) => {
+      const hosts = (await this.controller.hosts()).filter((h) => !host || h.name === host);
+      await Promise.all(hosts.map((h) => this.#d.sandboxd.call(h.url, "DELETE", `/v1/sandboxes/${name}`, undefined, 60_000)));
+    };
+    if (!rows[0]) return del(null);
+    // waits for a migration of this sandbox to finish, then deletes it where it is
+    await this.controller.withSandboxLock(rows[0].id, async (c) => {
+      const { rows: r } = await c.query<{ host: string | null }>("select host from sandboxes where id = $1", [rows[0]!.id]);
+      await del(r[0]?.host ?? null);
+    });
+  }
+
+  async list(): Promise<ListedSandbox[]> {
+    const hosts = await this.controller.hosts();
+    const out: ListedSandbox[] = [];
+    await Promise.all(
+      hosts.map(async (h) => {
+        try {
+          const r = await this.#d.sandboxd.call<{ sandboxes: HostSandbox[] }>(h.url, "GET", "/v1/sandboxes", undefined, 5000);
+          for (const s of r.sandboxes) out.push({ name: s.name, createdAt: Date.parse(s.createdAt) });
+        } catch {
+          // unreachable: assume its sandboxes are there (the scaler decides when a host is lost)
+          const { rows } = await this.#d.db.query<{ pod: string }>("select pod from sandboxes where host = $1 and status <> 'gone'", [h.name]);
+          for (const r of rows) out.push({ name: r.pod, createdAt: NaN });
+        }
+      }),
+    );
+    return out;
+  }
+}
+
+export function startVmScaler(dbUrl: string, ctl: VmController, intervalMs = 5000): { stop(): Promise<void> } {
+  return lead(dbUrl, SCALER_LOCK, () => ctl.pass(), intervalMs);
+}

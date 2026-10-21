@@ -1,7 +1,7 @@
 // Where sandboxes come from (docs/CHAT.md, "Sandbox providers"): the sandbox manager (sandbox.ts) owns the lifecycle
 // and the Postgres record; a provider only makes, finds, keeps alive and removes the machines. Chosen by config
-// `sandbox.provider`: "kubernetes" (gVisor pods, sandbox-k8s.ts: tests, local runs, a self-hosted cluster) or "e2b"
-// (E2B's hosted sandboxes, sandbox-e2b.ts).
+// `sandbox.provider`: "kubernetes" (gVisor pods, sandbox-k8s.ts: tests, local runs, a self-hosted cluster), "e2b"
+// (E2B's hosted sandboxes, sandbox-e2b.ts) or "vm" (our own gVisor hosts with live migration, sandbox-vm.ts).
 import type { SandboxRow } from "./sandbox.ts";
 
 /** How the web role (and jarvis-bash) reaches a sandbox's agent: base URL plus headers sent on every call. */
@@ -19,7 +19,7 @@ export interface ListedSandbox {
 }
 
 export interface SandboxProvider {
-  readonly kind: "kubernetes" | "e2b";
+  readonly kind: "kubernetes" | "e2b" | "vm";
   /**
    * Starts making the sandbox for a `starting` row and returns the provider's name for it as soon as it exists (the
    * manager stores it in `sandboxes.pod` before waiting, so the janitor never takes it for an orphan).

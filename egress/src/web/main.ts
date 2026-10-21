@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccessVerifier } from "../common/access.ts";
 import { expandEnv, loadConfig, requireEnv, type ChatConfig } from "../common/config.ts";
-import { connect, Listener, migrate } from "../common/db.ts";
+import { connect, Listener, migrate, type Db } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import { S3BlobStore } from "../common/s3.ts";
 import { WebApp } from "./app.ts";
@@ -16,6 +16,8 @@ import { K8sClient } from "./k8s.ts";
 import type { SandboxProvider } from "./provider.ts";
 import { E2bProvider } from "./sandbox-e2b.ts";
 import { KubernetesProvider } from "./sandbox-k8s.ts";
+import { startVmScaler, VmProvider } from "./sandbox-vm.ts";
+import { Ec2Client, SandboxdClient } from "./vm-clients.ts";
 import { SandboxManager } from "./sandbox.ts";
 import { TurnRunner } from "./turns.ts";
 
@@ -26,7 +28,7 @@ export interface WebServer {
 }
 
 /** Wires a WebApp to an HTTP server, the cancel channel, the heartbeat and the janitor. */
-export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: number } = {}): Promise<WebServer> {
+export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: number; scalerMs?: number } = {}): Promise<WebServer> {
   await migrate(deps.db);
   const sandboxes = new SandboxManager(deps);
   const runner = new TurnRunner(deps, sandboxes);
@@ -37,12 +39,14 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
   await new Promise<void>((r) => server.listen(port, r));
   const stopBeat = startHeartbeat(deps);
   const janitor = startJanitor(deps, sandboxes, opts.janitorMs);
+  const scaler = deps.sandboxProvider instanceof VmProvider ? startVmScaler(deps.dbUrl, deps.sandboxProvider.controller, opts.scalerMs) : null;
   const addr = server.address();
   return {
     app,
     port: typeof addr === "object" && addr ? addr.port : port,
     async close() {
       await janitor.stop();
+      await scaler?.stop();
       stopBeat();
       app.closeStreams();
       server.closeAllConnections();
@@ -51,7 +55,16 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
   };
 }
 
-function sandboxProvider(config: ChatConfig, namespace: string): SandboxProvider {
+function sandboxProvider(config: ChatConfig, namespace: string, db: Db): SandboxProvider {
+  if (config.sandbox.provider === "vm") {
+    const vm = config.sandbox.vm!;
+    const pem = (name: string) => requireEnv(name).replace(/\\n/g, "\n");
+    const sandboxd = new SandboxdClient({ ca: pem(vm.tls.caEnv), cert: pem(vm.tls.certEnv), key: pem(vm.tls.keyEnv) });
+    const aws = vm.aws;
+    const ec2 = aws ? new Ec2Client({ accessKeyId: requireEnv(aws.accessKeyIdEnv), secretAccessKey: requireEnv(aws.secretAccessKeyEnv), region: aws.region }) : null;
+    const hostTls = aws ? { ca: pem(vm.tls.caEnv), cert: pem(vm.tls.hostCertEnv), key: pem(vm.tls.hostKeyEnv) } : null;
+    return new VmProvider({ db, config, sandboxd, ec2, hostTls });
+  }
   if (config.sandbox.provider === "e2b") {
     const e = config.sandbox.e2b!;
     const apiKey = requireEnv(e.apiKeyEnv);
@@ -80,7 +93,7 @@ export async function main(): Promise<void> {
       accessKeyId: requireEnv("S3_ACCESS_KEY_ID"),
       secretAccessKey: requireEnv("S3_SECRET_ACCESS_KEY"),
     }),
-    sandboxProvider: sandboxProvider(config, namespace),
+    sandboxProvider: null as unknown as SandboxProvider,
     verifier: new AccessVerifier(config.access),
     replica: replicaName(process.env.HOSTNAME || "web"),
     namespace,
@@ -94,6 +107,7 @@ export async function main(): Promise<void> {
     brandDir: process.env.JARVIS_BRAND_DIR || "/etc/jarvis/brand",
     drainSeconds: Number(process.env.JARVIS_DRAIN_SECONDS || 1770),
   };
+  deps.sandboxProvider = sandboxProvider(config, namespace, deps.db);
   const web = await startWeb(deps, Number(process.env.PORT || 8080));
   log("web listening", { port: web.port, replica: deps.replica });
   let stopping = false;

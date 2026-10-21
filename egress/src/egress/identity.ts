@@ -9,6 +9,8 @@ import { bearerOf, sha256hex, turnForToken } from "../common/tokens.ts";
 export interface SandboxId {
   sandboxId: string;
   conversationId: string;
+  /** provider "vm": the sandbox's own address; its requests must come from there (null for other providers) */
+  ip: string | null;
 }
 
 export interface TurnId {
@@ -47,11 +49,11 @@ export class Identities {
     const key = sha256hex(token);
     const hit = this.#sandboxes.get(key);
     if (hit && Date.now() - hit.at < this.#ttlMs) return hit.v;
-    const { rows } = await this.#db.query<{ id: string; conversation_id: string }>(
-      "select id, conversation_id from sandboxes where egress_token_hash = $1 and status <> 'gone'",
+    const { rows } = await this.#db.query<{ id: string; conversation_id: string; ip: string | null }>(
+      "select id, conversation_id, ip from sandboxes where egress_token_hash = $1 and status <> 'gone'",
       [key],
     );
-    const v = rows[0] ? { sandboxId: rows[0].id, conversationId: rows[0].conversation_id } : null;
+    const v = rows[0] ? { sandboxId: rows[0].id, conversationId: rows[0].conversation_id, ip: rows[0].ip ?? null } : null;
     this.#remember(this.#sandboxes, key, v);
     return v;
   }

@@ -16,6 +16,9 @@ export async function main(): Promise<void> {
   const db = connect();
   const ns = process.env.POD_NAMESPACE || "jarvis";
   const selfHosts = (process.env.EGRESS_SELF_HOSTS || `egress,egress.${ns},egress.${ns}.svc,egress.${ns}.svc.cluster.local`).split(",").map((s) => s.trim()).filter(Boolean);
+  // provider "vm": sandboxes reach this proxy (and its mirror) at the egress VIP, which the hub translates to a pod
+  const vip = config.sandbox.vm?.egressVip;
+  if (vip && !selfHosts.includes(vip)) selfHosts.push(vip);
   const egress = new Egress({
     db,
     defaultAllowedHosts: config.egress.defaultAllowedHosts,
@@ -55,12 +58,29 @@ export async function main(): Promise<void> {
   });
   health.listen(Number(process.env.HEALTH_PORT || 9090), "::");
   log("egress listening", { port, selfHosts });
+  // provider "vm": this pod's address, for the hub's translation of the egress VIP (sandbox-vm.ts reads kv egress_pod:*)
+  const podIp = process.env.POD_IP;
+  const podKey = `egress_pod:${(process.env.HOSTNAME || "egress").replace(/[^a-z0-9-]/gi, "")}`;
+  let announcing = true;
+  const announce = () =>
+    !announcing || !podIp
+      ? Promise.resolve()
+      : db
+          .query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [podKey, JSON.stringify({ ip: podIp, at: new Date().toISOString() })])
+          .then(() => {}, () => {});
+  if (config.sandbox.vm && podIp) {
+    void announce();
+    setInterval(() => void announce(), 10_000).unref();
+  }
 
   let stopping = false;
   process.on("SIGTERM", async () => {
     if (stopping) return;
     stopping = true;
     log("egress draining", { open: egress.openSockets });
+    // new sandbox connections go to the other pods from the hub's next update on (open ones finish here)
+    announcing = false;
+    if (config.sandbox.vm) await db.query("delete from kv where key = $1", [podKey]).catch(() => {});
     await egress.drain(Number(process.env.EGRESS_DRAIN_SECONDS || 120) * 1000);
     health.close();
     await db.end().catch(() => {});

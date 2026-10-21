@@ -114,7 +114,7 @@ export class Egress {
     if (path !== "/wire") return refuse(404, "egress: not found\n");
     if (this.draining) return refuse(503, "egress: restarting, try again\n");
     const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization"));
-    if (!sb) {
+    if (!sb || sb.ip) {
       this.#deny({ kind: "connect", method: "WIRE", host: "-", decision: "deny:auth" }, "deny:auth", 401);
       return refuse(401, "egress: unknown or expired sandbox token\n");
     }
@@ -125,6 +125,14 @@ export class Egress {
       ws.on("close", () => clearInterval(ping));
       this.server.emit("connection", stream);
     });
+  }
+
+  /** The sandbox a token belongs to; a "vm" sandbox's token only counts from that sandbox's own address. */
+  async #sandbox(req: IncomingMessage, token: string): Promise<SandboxId | null> {
+    const sb = await this.ids.sandbox(token);
+    if (!sb) return null;
+    if (sb.ip && (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "") !== sb.ip) return null;
+    return sb;
   }
 
   get openSockets(): number {
@@ -159,7 +167,7 @@ export class Egress {
     deny: (status: number, msg: string, extra?: Record<string, string>) => void,
     row: EgressRow,
   ): Promise<{ sb: SandboxId; addrs: string[] } | null> {
-    const sb = await this.ids.sandbox(tokenFrom(req.headers, "proxy-authorization"));
+    const sb = await this.#sandbox(req, tokenFrom(req.headers, "proxy-authorization"));
     if (!sb) {
       deny(407, "egress: proxy authentication required\n", { "proxy-authenticate": 'Basic realm="jarvis-egress"' });
       this.#deny(row, "deny:auth", 407);
@@ -311,7 +319,7 @@ export class Egress {
   async #mirror(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const t0 = Date.now();
     const row: EgressRow = { kind: "mirror", method: req.method ?? "GET", host: "mirror", path, decision: "allow" };
-    const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+    const sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
     if (!sb) {
       text(res, 401, "egress: authentication required\n", { "www-authenticate": 'Basic realm="jarvis-mirror"' });
       return this.#deny(row, "deny:auth", 401);
@@ -413,7 +421,7 @@ export class Egress {
       row.turn_id = turn.turnId;
       row.conversation_id = turn.conversationId;
     } else {
-      const sb = await this.ids.sandbox(tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+      const sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
       if (!sb) {
         text(res, 401, "egress: authentication required\n");
         return this.#deny(row, "deny:auth", 401);

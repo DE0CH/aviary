@@ -20,12 +20,23 @@ RUN python3 -m venv /opt/py \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
 
+# Docker (docs/SANDBOX-VM.md, "Docker in sandboxes"): on our own hosts (provider "vm") dockerd starts on the first
+# docker command (sbx-init.mjs + the wrapper /usr/local/bin/docker); elsewhere the wrapper says Docker isn't available.
+RUN install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
+ && mkdir -p /var/lib/docker
+COPY docker-wrapper.sh /usr/local/bin/docker
+
 # uid 1000 is the image's `node` user; the sandbox's home is /home/sandbox (not /home/user: E2B's template builder
 # makes that for its own user, mode 700), the workspace /work
 RUN mkdir -p /home/sandbox /work /opt/agent \
  && chown 1000:1000 /home/sandbox /work \
  && usermod -d /home/sandbox node
-COPY agent.mjs tar.mjs /opt/agent/
+COPY agent.mjs tar.mjs sbx-init.mjs /opt/agent/
 
 ENV HOME=/home/sandbox \
     JARVIS_WORK_DIR=/work \

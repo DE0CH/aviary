@@ -53,4 +53,16 @@ create table kv (key text primary key, value jsonb not null);
 `,
   // sandbox providers (docs/CHAT.md, "Sandbox providers"): how to reach a sandbox's agent, {url, headers}
   `alter table sandboxes add column agent jsonb;`,
+  // sandbox provider "vm" (docs/SANDBOX-VM.md): the host a sandbox runs on now and its fixed overlay address; the hosts
+  `
+alter table sandboxes add column host text, add column ip text;
+create unique index sandboxes_ip_live on sandboxes (ip) where status <> 'gone' and ip is not null;
+create table vm_hosts (name text primary key, kind text not null check (kind in ('hub','aws')),
+  url text not null, wg_ip text not null, wg_public_key text, instance_id text, private_ip text,
+  status text not null check (status in ('booting','active','draining','retiring','gone')),
+  max_sandboxes int, mem_total bigint, mem_reserve bigint, cpus int, info jsonb,
+  created_at timestamptz not null default now(), last_seen_at timestamptz, empty_since timestamptz,
+  gone_at timestamptz, gone_reason text);
+create unique index vm_hosts_wg_ip_live on vm_hosts (wg_ip) where status <> 'gone';
+`,
 ];
