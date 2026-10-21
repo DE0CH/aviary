@@ -16,7 +16,7 @@
 #   bake: REGISTRY_AUTH_FILE  a docker config.json used only while pre-pulling the image, then deleted
 set -euo pipefail
 ROLE=${1:?hub or burst}; IMAGE=${2:-}
-GV=${GV:-precopy-20261021.1}
+GV=${GV:-precopy-20261021.2}
 CRANE_VERSION=0.20.6
 here=$(cd "$(dirname "$0")" && pwd)
 export DEBIAN_FRONTEND=noninteractive
