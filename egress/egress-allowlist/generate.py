@@ -232,10 +232,11 @@ def main() -> int:
         if (reg in kept_set or covered(suffix, curated_allow)) and suffix not in curated_allow and "." + suffix not in curated_allow:
             platform_deny.add("." + suffix)
 
-    allow = sorted(curated_allow | {"." + d for d in kept})
     deny_all = (curated_deny | sub_deny | platform_deny) - curated_allow
     # an entry inside a broader deny suffix adds nothing
     deny = sorted(e for e in deny_all if not covered(e.lstrip(".").split(".", 1)[-1], {x for x in deny_all if x.startswith(".")}) or "." not in e.lstrip("."))
+    # a ranked domain the deny list names exactly (e.g. .pastebin.com) is not on the allow list at all
+    allow = sorted((curated_allow | {"." + d for d in kept}) - set(deny))
 
     today = dt.date.today().isoformat()
     sources = (
