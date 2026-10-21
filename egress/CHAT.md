@@ -173,7 +173,8 @@ create table egress_log (id bigserial primary key, at timestamptz not null defau
   sandbox_id uuid, turn_id uuid,  -- turn_id: old rows only
   kind text not null,             -- 'connect' | 'http' | 'mirror' | 'model' | 'inject'
   method text, host text not null, port int, path text, status int, decision text not null,  -- 'allow' | 'deny:<why>'
-  bytes_up bigint, bytes_down bigint, ms int, cost_usd numeric);
+  bytes_up bigint, bytes_down bigint, ms int, cost_usd numeric,
+  model text);                    -- kind model: the model the request asked for (migration 11)
 create table tool_calls (id bigserial primary key, at timestamptz not null default now(), turn_id uuid,  -- old rows
   conversation_id uuid, user_email text, tool text not null, args jsonb, ok boolean, ms int, error text, cost_usd numeric);
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
@@ -433,8 +434,8 @@ administrator). There is no automatic reset. To reset or raise: edit `budget` in
 ```
 
 **Who and which models:** `users` (lower-cased) is who may sign in (the UI's router checks it; web checks
-`/internal/cc/sandbox`'s owner against it); `admins` is read by the tools role (the identity it lists upstream tools
-as). `access` is the Cloudflare Access app the UI's router verifies. `models`/`defaultModel`/`titleModel`: egress's
+`/internal/cc/sandbox`'s owner against it); `admins` may open the operator page (router and web check it) and the
+first admin is the identity the tools role lists upstream tools as. `access` is the Cloudflare Access app the UI's router verifies. `models`/`defaultModel`/`titleModel`: egress's
 model routes refuse any other id (400, `deny:model`); `defaultModel` is Claude Code's model in the sandbox
 (`ANTHROPIC_MODEL`), `titleModel` its small/fast model.
 
