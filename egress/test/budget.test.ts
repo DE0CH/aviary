@@ -185,10 +185,14 @@ test("egress /x/model: only the configured models; refused with budget_exceeded 
   assert.deepEqual(await lastDecision(), { decision: "deny:model", status: 400 });
   assert.equal(upCalls, before, "a refused model never reaches OpenRouter");
 
+  // claw's own form: the id without the provider prefix
+  assert.equal((await model({ model: "claude-sonnet-5.5", messages: [] })).status, 200);
+  assert.equal((await model({ model: "claude-opus-5.5", messages: [] })).status, 400);
   const ok = await model({ model: SONNET, messages: [] });
   assert.equal(ok.status, 200);
-  assert.equal(upCalls, before + 1);
+  assert.equal(upCalls, before + 2);
   await egress.log.flush();
+  await t.db.query("delete from egress_log where kind = 'model' and decision = 'allow' and cost_usd = 0.5 and id <> (select min(id) from egress_log where cost_usd = 0.5)");
   await spend(0.6); // the in-flight overshoot: this pushes spend (0.5 + 0.6) past the limit
   const refused = await model({ model: SONNET, messages: [] });
   assert.equal(refused.status, 402);
@@ -197,7 +201,7 @@ test("egress /x/model: only the configured models; refused with budget_exceeded 
   assert.equal(err.error.type, "budget_exceeded");
   assert.equal(err.error.message, "Deyao 設定了 1 美元的使用上限，目前已用完。");
   assert.deepEqual(await lastDecision(), { decision: "deny:budget", status: 402 });
-  assert.equal(upCalls, before + 1);
+  assert.equal(upCalls, before + 2);
   budgetCfg = undefined;
   assert.equal((await model({ model: SONNET, messages: [] })).status, 200, "no budget: no limit");
 });

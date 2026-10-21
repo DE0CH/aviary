@@ -562,7 +562,10 @@ export class Egress {
       } catch {
         model = undefined;
       }
-      if (model !== undefined && (typeof model !== "string" || !this.#o.models.includes(model))) {
+      // claw sends the id without its provider prefix ("claude-sonnet-5.5" for "anthropic/claude-sonnet-5.5")
+      const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
+      const ok = typeof model === "string" && this.#o.models.some((m) => m === model || bare(m) === model);
+      if (model !== undefined && !ok) {
         return { status: 400, type: "invalid_request_error", message: `egress: model ${String(model)} is not offered here`, decision: "deny:model" };
       }
     }
