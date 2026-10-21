@@ -65,7 +65,14 @@ State: Postgres (conversations, messages, events, claw session files, file metad
   conversation's id if any). If that conversation has a live sandbox it is kept active; otherwise it is a signal
   (kv `sandbox_demand:<email>`, counted for 2 minutes) on which the vm scaler starts an AWS host at once when no host
   has a free slot (docs/SANDBOX-VM.md). No conversation row is made for typing.
-- **Kept while active:** installs, caches and background processes carry over between turns.
+- **Kept while active:** installs, caches and background processes carry over between turns (and across a live
+  migration on provider `vm`).
+- **Installing software:** `pip install` (venv `/opt/py`, first on PATH, through the egress PyPI mirror), `npm install
+  -g` (prefix `~/.npm-global`, npm mirror), installers into `~/.local/bin` / `~/.cargo/bin` (on PATH, e.g. uv's or
+  rustup's `curl … | sh`) everywhere; system packages with `sudo apt-get install -y x` (or plain `apt-get`, a wrapper
+  that goes through sudo and fetches the package lists on the first install) only on provider `vm`, where uid 1000
+  has passwordless sudo and root exists only inside gVisor (docs/SANDBOX-VM.md, "Installing packages"). Elsewhere
+  `apt-get install` says root is not available. The model is told this in the system prompt (below).
 - **Released** after `sandbox.idleMinutes` (default 30) with no turn and no typing, and always at
   `sandbox.maxLifetimeHours` (default 8). Before deleting the pod the janitor pulls the sandbox's changed files and
   saves them (files are also synced after every bash command, so this only catches what background processes wrote).
@@ -325,9 +332,11 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
-- **The agent is told:** the runtime appends a note to the instance's system prompt on every turn
-  (`SANDBOX_NETWORK_NOTE`, `chat/src/web/turns.ts`): the sandbox reaches an automatic allowlist only, nobody can enable
-  a site from the chat, and web pages are read with `web_fetch`/`web_search` (server-side, any public site).
+- **The agent is told:** the runtime appends notes to the instance's system prompt on every turn
+  (`chat/src/web/turns.ts`): `SANDBOX_NETWORK_NOTE` (the sandbox reaches an automatic allowlist only, nobody can enable
+  a site from the chat, and web pages are read with `web_fetch`/`web_search`, server-side, any public site), then
+  `sandboxInstallNote` (how to install software: `sudo apt-get` on provider `vm` only, pip, npm -g, `~/.local`
+  installers; and "call sandbox_environment to see how the sandbox is set up" when the tools server offers it).
    On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the drain time,
    the log is flushed.
 
@@ -337,7 +346,7 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - Every call → `tool_calls`.
 - **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
-  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus the **listed** tools of each configured upstream
+  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), `sandbox_environment`, plus the **listed** tools of each configured upstream
   MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
   `X-YYC-User: <owner email>`).
 - **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
@@ -352,6 +361,16 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   ports other than 80/443/8080/8443. `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
   every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the turn's owner on calls).
+- **`sandbox_environment`** (`chat/src/tools/sandbox-env.ts`, always offered, no outside calls): how the bash
+  sandbox is set up, for the model to check instead of probing. `section` = `summary` (default: the image reference
+  from `sandbox.image` (e2b: the template) and the runtime commit `JARVIS_COMMIT`; CPU/memory from the config, the 5 GiB
+  overlay cap and 4096 pids on `vm`, the 10-minute command limit, idle/lifetime release; how to install software per
+  provider; Docker on `vm` only; the network rules in short), `dockerfile` (chat/sandbox/Dockerfile, copied into the
+  chat image at build time: `/app/sandbox-env/Dockerfile`), `packages` (`/app/sandbox-env/packages.txt`: every apt
+  package, `pip freeze` of `/opt/py` and the global npm packages with versions, written by the sandbox image's build
+  into `/opt/agent/packages.txt` and copied by the `chat` workflow into the chat image through the build context
+  `sandbox-env`; `match` filters it) or `all`. The chat image and the sandbox image of one commit therefore agree; an
+  instance pinning a different sandbox tag sees that tag in the summary. Nothing secret: no tokens, no addresses.
 - Env: `PORT` (8080), `JARVIS_DRAIN_MS` (150 s: an upstream call, up to 2 minutes, finishes before the pod stops;
   `terminationGracePeriodSeconds` 180), plus `DATABASE_URL` and the key env vars the config names.
 - **`jarvis-mcp-bridge`** (claw's stdio MCP server `tools`, in the image at `src/bin/`): reads JSON-RPC framed
@@ -361,7 +380,8 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 
 ### `sandbox-agent` (port 7070, in the sandbox pod, `Authorization: Bearer <exec token>`)
 
-The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/sandbox`).
+The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1000; `$HOME=/home/sandbox`; on
+provider `vm` commands may become root inside the sandbox with sudo).
 
 - `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed: the kubelet's readiness probe); 503 while it waits for
   `/init`. A new `boot_id` means the agent restarted and every earlier cursor is void. `GET /livez` → 200 always.
