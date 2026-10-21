@@ -9,22 +9,43 @@
 #                                  outside) is reached over it (docs/SANDBOX-VM.md, "Gateway").
 #   infra.sh ami <image ref>       bakes an AMI: Ubuntu 24.04 + host/setup.sh burst (the gVisor fork, sandboxd's binary,
 #                                  the sandbox image unpacked); a temporary t3.large builder + key + SSH rule, removed
-#                                  after. Needs GHCR_USER/GHCR_TOKEN (read:packages) for the private image.
+#                                  after. Needs GHCR_USER/GHCR_TOKEN (read:packages) for the private image. Tags the AMI
+#                                  with what it holds: image=<manifest digest>, sandboxd=<release>, runsc=<GV>.
+#   infra.sh current               the launch template's default AMI and its tags (image, sandboxd, runsc)
+#   infra.sh check <image ref>     exit 0 when that AMI has <image ref>'s digest pre-pulled, else 1 (GHCR_USER/GHCR_TOKEN)
+#   infra.sh sync <image ref>      makes the template's AMI hold <image ref>: if `check` fails (or FORCE=1), bakes an AMI
+#                                  with the SAME sandboxd release and runsc as the current one (only the image changes),
+#                                  then `template` and `prune-amis`. Run by DE0CH/YYC's workflow yyc-ai-ami whenever
+#                                  yyc-ai/deploy/config.json changes (docs/SANDBOX-VM.md, "New AMI").
 #   infra.sh template <ami id>     launch template yyc-ai-sandbox-host (new default version): m7i.xlarge, that AMI, the
 #                                  SG, a public IPv4 and an IPv6 address, one subnet (one AZ: host-to-host traffic is free), IMDSv2 with hop limit 1, no
 #                                  instance profile, no key pair, gp3 40 GB deleted with the instance, terminate on
-#                                  shutdown
+#                                  shutdown; the template's other versions are deleted (one version = the AMI in use)
 #   infra.sh iam                   IAM user yyc-ai-sandbox-scaler with only: RunInstances from that template (m7i.xlarge,
 #                                  tag app=yyc-ai-sandbox), tags at launch, TerminateInstances of app=yyc-ai-sandbox
 #                                  instances, DescribeInstances. Prints nothing secret; `infra.sh iam-key` makes an
 #                                  access key and writes it to a file given as $KEY_OUT (mode 600), never to stdout.
-#   infra.sh prune-amis            deregisters all but the newest sandbox AMI (and their snapshots)
+#   infra.sh ci-iam                IAM user yyc-ai-sandbox-ami-ci for that workflow (ami-ci-policy.json: a tagged t3.large
+#                                  builder, its key pair and SSH rule, the image, this template, pruning tagged AMIs);
+#                                  `infra.sh ci-iam-key` writes a new access key to $KEY_OUT (mode 600), never to stdout
+#   infra.sh prune-amis            deregisters every sandbox AMI but the template's (and their snapshots)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 aws() { "$here/../proto/aws.sh" "$@"; }
 NAME=yyc-ai-sandbox-host
 SUBNET=${SBX_SUBNET:-subnet-009eab323e09d6338}   # eu-central-1a, default VPC
 VPC_CIDR=172.31.0.0/16
+
+# the default template version's AMI, and one of its tags
+cur_ami() { aws ec2 describe-launch-template-versions --launch-template-name $NAME --versions '$Default' --query 'LaunchTemplateVersions[0].LaunchTemplateData.ImageId' --output text; }
+ami_tag() { aws ec2 describe-images --image-ids "$1" --query "Images[0].Tags[?Key=='$2'].Value | [0]" --output text | grep -v '^None$' || true; }
+# <image ref>'s manifest digest (64 hex), with a throwaway registry login
+digest_of() {
+  : "${GHCR_USER:?}" "${GHCR_TOKEN:?}"
+  local d; d=$(mktemp -d)
+  printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 -w0)" > "$d/config.json"
+  DOCKER_CONFIG=$d crane digest "$1" | sed 's/^sha256://'; rm -rf "$d"
+}
 
 sg_id() { aws ec2 describe-security-groups --filters Name=group-name,Values=$NAME --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null | grep -v None || true; }
 
@@ -94,10 +115,12 @@ ami)
   ssh "${o[@]}" "ubuntu@$ip" "cloud-init status --wait >/dev/null 2>&1 || true; mkdir -p sbx"
   # sandboxd: the newest CI release (SANDBOXD_RELEASE / SANDBOXD_BINARY to choose), checked against its SHA256SUMS
   bin=$(mktemp -d); bash "$here/../host/fetch-sandboxd.sh" "$bin" >&2
+  rel=$(cat "$bin/bin/RELEASE" 2>/dev/null || echo local)
+  gv=${GV:-$(sed -n 's/^GV=\${GV:-\(.*\)}$/\1/p' "$here/../host/setup.sh")}
   tar -cf - -C "$here/.." host -C "$bin" bin | ssh "${o[@]}" "ubuntu@$ip" "tar -xf - -C sbx"; rm -rf "$bin"
   # the registry login exists only for the pull, in a file the setup deletes; it never reaches the AMI
   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 -w0)" | ssh "${o[@]}" "ubuntu@$ip" "umask 077; cat > /tmp/ghcr.json"
-  ssh "${o[@]}" "ubuntu@$ip" "sudo REGISTRY_AUTH_FILE=/tmp/ghcr.json bash sbx/host/setup.sh burst $IMAGE; rm -f /tmp/ghcr.json" >&2
+  ssh "${o[@]}" "ubuntu@$ip" "sudo GV=$gv REGISTRY_AUTH_FILE=/tmp/ghcr.json bash sbx/host/setup.sh burst $IMAGE; rm -f /tmp/ghcr.json" >&2
   digest=$(ssh "${o[@]}" "ubuntu@$ip" "sudo ls /var/lib/sbx/images | grep -E '^[0-9a-f]{64}$' | head -1")
   [ -n "$digest" ] || { echo "no image on the builder" >&2; exit 1; }
   # no way in afterwards: the build key goes, and instances from this AMI get no key pair
@@ -106,7 +129,7 @@ ami)
   aws ec2 wait instance-stopped --instance-ids "$iid"
   ami=$(aws ec2 create-image --instance-id "$iid" --name "yyc-ai-sandbox-host-$(date -u +%Y%m%d-%H%M)" \
     --description "YYC AI sandbox burst host: gVisor fork, sandboxd, sandbox image ${digest:0:12}" \
-    --tag-specifications "ResourceType=image,Tags=[{Key=app,Value=yyc-ai-sandbox},{Key=image,Value=${digest}}]" "ResourceType=snapshot,Tags=[{Key=app,Value=yyc-ai-sandbox}]" \
+    --tag-specifications "ResourceType=image,Tags=[{Key=app,Value=yyc-ai-sandbox},{Key=image,Value=${digest}},{Key=sandboxd,Value=${rel}},{Key=runsc,Value=${gv}}]" "ResourceType=snapshot,Tags=[{Key=app,Value=yyc-ai-sandbox}]" \
     --query ImageId --output text)
   aws ec2 wait image-available --image-ids "$ami"
   echo "$ami"
@@ -125,6 +148,8 @@ template)
   if aws ec2 describe-launch-templates --launch-template-names $NAME >/dev/null 2>&1; then
     v=$(aws ec2 create-launch-template-version --launch-template-name $NAME --launch-template-data "$data" --query LaunchTemplateVersion.VersionNumber --output text)
     aws ec2 modify-launch-template --launch-template-name $NAME --default-version "$v" >/dev/null
+    old=$(aws ec2 describe-launch-template-versions --launch-template-name $NAME --query "LaunchTemplateVersions[?VersionNumber!=\`$v\`].VersionNumber" --output text)
+    [ -z "$old" ] || aws ec2 delete-launch-template-versions --launch-template-name $NAME --versions $old >/dev/null
   else
     aws ec2 create-launch-template --launch-template-name $NAME --launch-template-data "$data" \
       --tag-specifications 'ResourceType=launch-template,Tags=[{Key=app,Value=yyc-ai-sandbox}]' >/dev/null
@@ -139,14 +164,52 @@ iam)
   aws iam put-user-policy --user-name yyc-ai-sandbox-scaler --policy-name sandbox-hosts --policy-document "$pol"
   echo "user yyc-ai-sandbox-scaler: inline policy sandbox-hosts (template $lt)"
   ;;
+ci-iam)
+  lt=$(aws ec2 describe-launch-templates --launch-template-names $NAME --query 'LaunchTemplates[0].LaunchTemplateId' --output text)
+  pol=$(sed -e "s/LT_ID/$lt/g" "$here/ami-ci-policy.json" | jq -c .)   # inline user policies: 2048 characters at most
+  aws iam get-user --user-name yyc-ai-sandbox-ami-ci >/dev/null 2>&1 || aws iam create-user --user-name yyc-ai-sandbox-ami-ci --tags Key=app,Value=yyc-ai-sandbox >/dev/null
+  aws iam put-user-policy --user-name yyc-ai-sandbox-ami-ci --policy-name sandbox-ami --policy-document "$pol"
+  echo "user yyc-ai-sandbox-ami-ci: inline policy sandbox-ami (template $lt)"
+  ;;
+ci-iam-key)
+  : "${KEY_OUT:?file to write the new access key to}"
+  (umask 077; aws iam create-access-key --user-name yyc-ai-sandbox-ami-ci --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text > "$KEY_OUT")
+  echo "access key written to $KEY_OUT"
+  ;;
 iam-key)
   : "${KEY_OUT:?file to write the new access key to}"
   (umask 077; aws iam create-access-key --user-name yyc-ai-sandbox-scaler --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text > "$KEY_OUT")
   echo "access key written to $KEY_OUT"
   ;;
 prune-amis)
-  aws ec2 describe-images --owners self --filters Name=tag:app,Values=yyc-ai-sandbox --query 'sort_by(Images,&CreationDate)[].[ImageId,BlockDeviceMappings[0].Ebs.SnapshotId]' --output text | head -n -1 |
-    while read -r ami snap; do aws ec2 deregister-image --image-id "$ami"; aws ec2 delete-snapshot --snapshot-id "$snap"; echo "deleted $ami $snap"; done
+  keep=$(cur_ami)
+  aws ec2 describe-images --owners self --filters Name=tag:app,Values=yyc-ai-sandbox --query 'Images[].[ImageId,BlockDeviceMappings[0].Ebs.SnapshotId]' --output text |
+    while read -r ami snap; do
+      [ "$ami" = "$keep" ] && continue
+      aws ec2 deregister-image --image-id "$ami" >/dev/null; aws ec2 delete-snapshot --snapshot-id "$snap"; echo "deleted $ami $snap"
+    done
   ;;
-*) sed -n '2,25p' "$0"; exit 2 ;;
+current)
+  ami=$(cur_ami)
+  echo "$ami image=$(ami_tag "$ami" image) sandboxd=$(ami_tag "$ami" sandboxd) runsc=$(ami_tag "$ami" runsc)"
+  ;;
+check)
+  IMAGE=${2:?image ref}
+  want=$(digest_of "$IMAGE"); ami=$(cur_ami); have=$(ami_tag "$ami" image)
+  if [ -n "$want" ] && [ "$want" = "$have" ]; then echo "ok: $ami has $IMAGE ($want)"; exit 0; fi
+  echo "stale: $ami has image ${have:-?}, $IMAGE is $want" >&2; exit 1
+  ;;
+sync)
+  IMAGE=${2:?image ref}
+  if [ -z "${FORCE:-}" ] && bash "$here/infra.sh" check "$IMAGE"; then exit 0; fi
+  ami=$(cur_ami); rel=$(ami_tag "$ami" sandboxd); gv=$(ami_tag "$ami" runsc)
+  # only the image changes: a new sandboxd or runsc goes with retiring the hosts (docs/SANDBOX-VM.md, "Operations")
+  [ -n "$rel" ] && [ -n "$gv" ] || { echo "$ami has no sandboxd/runsc tags: bake it by hand (infra.sh ami)" >&2; exit 1; }
+  new=$(SANDBOXD_RELEASE=$rel GV=$gv bash "$here/infra.sh" ami "$IMAGE" | tail -1)
+  [[ $new == ami-* ]] || { echo "bake failed" >&2; exit 1; }
+  bash "$here/infra.sh" template "$new"
+  bash "$here/infra.sh" prune-amis
+  bash "$here/infra.sh" current
+  ;;
+*) sed -n '2,/^set -euo/p' "$0" | head -n -1; exit 2 ;;
 esac
