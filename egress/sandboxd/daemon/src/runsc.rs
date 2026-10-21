@@ -1,5 +1,7 @@
 //! gVisor (the DE0CH/gvisor fork's runsc with pre-copy live migration): flags and the OCI bundle of a sandbox.
 //! Flags are identical for every sandbox on every host (a migration restores with the source's configuration).
+//! `--allow-suid`: set-user-ID binaries work inside the sandbox (sudo for package installs, docs/SANDBOX-VM.md
+//! "Installing packages"); a uid inside gVisor is never a host uid, and the setting is saved in the sandbox's state.
 use crate::config::Spec;
 use crate::fixed::Buf;
 use crate::json::W;
@@ -7,7 +9,7 @@ use crate::paths::RUNSC_ROOT;
 use crate::proc::runsc_bin;
 use crate::util::{Error, Res};
 
-pub const FLAGS: [&str; 9] = [
+pub const FLAGS: [&str; 10] = [
     "--root",
     RUNSC_ROOT,
     "--platform=systrap",
@@ -17,6 +19,7 @@ pub const FLAGS: [&str; 9] = [
     "--host-fifo=none",
     "--net-raw",
     "--allow-packet-socket-write",
+    "--allow-suid",
 ];
 
 /// runsc argv: [runsc, FLAGS..., args...] into `out` (returns the used part).
@@ -31,7 +34,8 @@ pub fn argv<'a>(out: &'a mut [&'a str; 40], args: &[&'a str]) -> Res<&'a [&'a st
     Ok(&out[..n])
 }
 
-/// The capabilities a sandbox's root has INSIDE gVisor (for dockerd); the agent drops all of them (sbx-init.mjs).
+/// The capabilities a sandbox's root has INSIDE gVisor (dockerd, and sudo for package installs); the agent runs as
+/// uid 1000 with none of them and gets them back only through sudo (sbx-init.mjs).
 const DOCKER_CAPS: [&str; 20] = [
     "CAP_CHOWN",
     "CAP_DAC_OVERRIDE",
@@ -156,6 +160,16 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], images_dir: &st
 mod tests {
     use super::*;
     use crate::json::{self, Val};
+
+    #[test]
+    fn flags() {
+        // package installs (docs/SANDBOX-VM.md "Installing packages") with the host isolation flags unchanged
+        for f in
+            ["--allow-suid", "--host-uds=none", "--host-fifo=none", "--network=sandbox", "--overlay2=root:self,size=5g"]
+        {
+            assert!(FLAGS.contains(&f), "{f}");
+        }
+    }
 
     #[test]
     fn bundle() {
