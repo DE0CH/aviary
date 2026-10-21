@@ -598,6 +598,39 @@ mod tests {
             b.as_str()
         );
         assert!(!b.as_str().contains("snat") && !b.as_str().contains("masquerade"));
+        assert!(
+            b.as_str().contains("ip daddr 10.201.1.1 drop"),
+            "the hub drops what reaches the egress address untranslated"
+        );
+        // a burst host forwards its sandboxes' egress traffic into wg0 untranslated: never dropped there
+        let burst =
+            HostConfig::parse(br#"{"name":"h","role":"burst","wgAddress":"10.201.0.10","hub":{"publicKey":"k"}}"#)
+                .ok()
+                .unwrap();
+        let mut mem = [0u8; 4096];
+        let mut b = Buf::new(&mut mem);
+        host_rules(&mut b, &burst, "ens5", None, &[]);
+        assert!(!b.as_str().contains("10.201.1.1") && !b.as_str().contains("egress_dnat"), "{}", b.as_str());
+        assert!(b.as_str().contains("ip daddr 10.0.0.0/16 oifname != \"wg0\" drop"));
+        // a gateway on a k3s node fences wg0's traffic only: the node's pods keep their own forwarding
+        let gw =
+            HostConfig::parse(br#"{"name":"g","role":"hub","gateway":true,"wgAddress":"10.201.0.1"}"#).ok().unwrap();
+        let mut mem = [0u8; 4096];
+        let mut b = Buf::new(&mut mem);
+        host_rules(&mut b, &gw, "eth0", Some("enp7s0"), &[Str::lossy("10.244.3.5")]);
+        let g = b.as_str();
+        assert!(g.contains("dnat to numgen random mod 1 map { 0 : 10.244.3.5 }"));
+        assert!(
+            g.contains("iifname \"wg0\" oifname \"eth0\" drop") && g.contains("iifname \"eth0\" oifname \"wg0\" drop")
+        );
+        assert!(g.contains("    iifname \"wg0\" drop\n"));
+        assert!(!g.contains("    iifname \"eth0\" drop\n") && !g.contains("    oifname \"eth0\" drop\n"));
+        assert!(
+            HostConfig::parse(
+                br#"{"name":"g","role":"burst","gateway":true,"wgAddress":"10.201.0.1","hub":{"publicKey":"k"}}"#
+            )
+            .is_err()
+        );
         assert!(valid_wg_key("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ="));
         assert!(!valid_wg_key("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPB="));
         assert!(sorted_eq("10.0.0.1/32,10.0.0.2/32", "10.0.0.2/32,10.0.0.1/32"));

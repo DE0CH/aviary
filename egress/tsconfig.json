@@ -19,5 +19,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "sandboxd/src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

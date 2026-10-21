@@ -1,7 +1,7 @@
 // Sandbox provider "vm" without hosts: placement (hub first, then the fullest AWS host), the scaler (an AWS host when
 // the hub is full, drain-back by live migration when it has room again, termination of the empty host), a migration
-// that would not converge leaving the sandbox where it was, a lost host, and the pure parts of sandboxd (nft rules,
-// OCI bundle, spec checks) and of the EC2 client.
+// that would not converge leaving the sandbox where it was, a lost host, and the pure parts of the EC2 client.
+// sandboxd itself (Rust, chat/sandboxd/daemon) has its own tests: nft rules, OCI bundle, spec checks (cargo test).
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -10,9 +10,6 @@ import type { Db } from "../src/common/db.ts";
 import { freeAddress, hubPeers, parseBytes, VmController, VmProvider, type HostRow } from "../src/web/sandbox-vm.ts";
 import { DEMAND_WINDOW_S, noteSandboxDemand, type SandboxRow } from "../src/web/sandbox.ts";
 import { parseInstances, SandboxdError, wgKeyPair, type Ec2Api, type Ec2Instance, type HostInfo, type SandboxdApi } from "../src/web/vm-clients.ts";
-import { sandboxRules, hostRules } from "../sandboxd/src/net.ts";
-import { bundleSpec, RUNSC_FLAGS } from "../sandboxd/src/runsc.ts";
-import { validateSpec, type HostConfig } from "../sandboxd/src/config.ts";
 import { freshDb } from "./pg.ts";
 
 const GiB = 1024 ** 3;
@@ -160,52 +157,6 @@ test("pure helpers: addresses, quantities, EC2 answers", () => {
   const k = wgKeyPair();
   assert.match(k.publicKey, /^[A-Za-z0-9+/]{43}=$/);
   assert.match(k.privateKey, /^[A-Za-z0-9+/]{43}=$/);
-});
-
-test("sandboxd: nft lock, bundle and spec checks", () => {
-  const rules = sandboxRules("sbx-abc", "10.200.0.10", { egressVip: "10.201.1.1", controlCidr: "10.0.0.0/16" });
-  assert.match(rules, /iifname "v[0-9a-f]{12}" ip saddr 10\.200\.0\.10 ip daddr 10\.201\.1\.1 tcp dport 3128 accept/);
-  assert.match(rules, /oifname "v[0-9a-f]{12}" ip saddr 10\.0\.0\.0\/16 tcp dport 7070 ip daddr 10\.200\.0\.10 accept/);
-  assert.match(rules, /iifname "v[0-9a-f]{12}" counter drop/);
-  assert.match(rules, /oifname "v[0-9a-f]{12}" counter drop/);
-  assert.doesNotMatch(rules, /ct state/); // stateless: a connection arriving mid-stream after a move passes
-  const cfg = { name: "h", role: "hub", wgAddress: "10.201.0.1", hostCidr: "10.201.0.0/24", wgPort: 51820, wgKeyFile: "", apiPort: 7443, imagePort: 7444,
-    tls: { cert: "", key: "", ca: "" }, controlCidr: "10.0.0.0/16", sandboxCidr: "10.200.0.0/16", egressVip: "10.201.1.1", reserveMemory: 0, mtu: 1420 } as HostConfig;
-  assert.match(hostRules(cfg, "eth0", "enp7s0", ["10.244.3.5", "10.244.6.7"]), /dnat to numgen random mod 2 map \{ 0 : 10\.244\.3\.5, 1 : 10\.244\.6\.7 \}/);
-  assert.doesNotMatch(hostRules(cfg, "eth0", "enp7s0", ["10.244.3.5"]), /snat|masquerade/);
-  assert.match(hostRules(cfg, "eth0", "enp7s0", []), /ip daddr 10\.201\.1\.1 drop/, "the hub drops what reaches the egress address untranslated");
-  // a burst host forwards its sandboxes' egress traffic into wg0 untranslated: never dropped there (it was, 2026-10-21)
-  const burst = { ...cfg, role: "burst" } as HostConfig;
-  assert.doesNotMatch(hostRules(burst, "ens5", null, []), /10\.201\.1\.1/);
-  assert.doesNotMatch(hostRules(burst, "ens5", null, []), /egress_dnat/);
-  // a gateway on a k3s node fences wg0's traffic only: the node's pods keep their own forwarding to the internet
-  const gw = hostRules({ ...cfg, gateway: true } as HostConfig, "eth0", "enp7s0", ["10.244.3.5"]);
-  assert.match(gw, /dnat to numgen random mod 1 map \{ 0 : 10\.244\.3\.5 \}/);
-  assert.match(gw, /iifname "wg0" oifname "eth0" drop/);
-  assert.match(gw, /iifname "eth0" oifname "wg0" drop/);
-  assert.match(gw, /iifname "wg0" drop/);
-  assert.doesNotMatch(gw, /^\s+iifname "eth0" drop$/m);
-  assert.doesNotMatch(gw, /^\s+oifname "eth0" drop$/m);
-  const spec = validateSpec({ name: "sbx-abc", ip: "10.200.0.10", image: "b".repeat(64), env: { HTTP_PROXY: "http://sbx:t@10.201.1.1:3128", JARVIS_EXEC_TOKEN: "e" }, cpu: 1, memory: 2 * GiB, cpuFeatures: "fpu,sse2" }, cfg);
-  const b = bundleSpec(spec, ["PATH=/usr/bin", "HOME=/root"]) as any;
-  assert.equal(b.annotations["dev.gvisor.internal.cpufeatures"], "fpu,sse2");
-  assert.deepEqual(b.process.args, ["/usr/bin/tini", "--", "node", "/opt/agent/sbx-init.mjs"]);
-  assert.ok(b.process.env.includes("HOME=/home/sandbox"));
-  assert.ok(b.process.env.includes("JARVIS_EXEC_TOKEN=e"));
-  assert.equal(b.linux.resources.memory.limit, 2 * GiB);
-  assert.ok(!b.mounts.some((m: any) => m.type === "bind"), "no host mounts");
-  // package installs (docs/SANDBOX-VM.md "Installing packages"): sudo works inside (setuid honoured, the init's
-  // capabilities exist only inside gVisor and are not dropped from the bounding set by the spec), host isolation stays
-  assert.ok(RUNSC_FLAGS.includes("--allow-suid"));
-  for (const f of ["--host-uds=none", "--host-fifo=none", "--network=sandbox", "--overlay2=root:self,size=5g"]) assert.ok(RUNSC_FLAGS.includes(f), f);
-  assert.equal(b.process.noNewPrivileges, undefined);
-  assert.ok(b.process.capabilities.bounding.includes("CAP_SETUID") && b.process.capabilities.bounding.includes("CAP_CHOWN"));
-  assert.ok(!b.process.capabilities.bounding.includes("CAP_SYS_MODULE") && !b.process.capabilities.bounding.includes("CAP_SYS_RAWIO"));
-  assert.ok(!b.linux.namespaces.some((n: any) => n.type === "network" && !n.path), "the host-prepared netns (nft lock) only");
-  assert.equal(b.linux.namespaces.find((n: any) => n.type === "network").path, "/var/run/netns/sbx-abc");
-  assert.throws(() => validateSpec({ ...spec, ip: "10.0.0.5" }, cfg), /sandbox range/);
-  assert.throws(() => validateSpec({ ...spec, name: "../x" }, cfg), /bad name/);
-  assert.throws(() => validateSpec({ ...spec, env: { "A B": "x" } }, cfg), /bad env/);
 });
 
 test("placement, burst to AWS, drain-back by live migration, termination", async () => {
