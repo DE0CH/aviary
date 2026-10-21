@@ -24,6 +24,15 @@ export interface SandboxRow {
   expires_at: Date;
   /** How to reach its agent, set when it became ready. */
   agent: AgentEndpoint | null;
+  /** Set for a sandbox made for the CloudCLI UI (docs/CLAUDE-CODE.md): its owner, and the key of the owner's
+   * ~/.claude folder; the provider then runs it with the conversation's /workspace and Claude Code's settings. */
+  owner?: string | null;
+  user_key?: string | null;
+}
+
+/** The ~/.claude folder name of a user (docs/CLAUDE-CODE.md): stable, no email in paths. */
+export function userKey(email: string): string {
+  return "u" + sha256hex(email.trim().toLowerCase()).slice(0, 24);
 }
 
 export interface LiveSandbox {
@@ -110,17 +119,20 @@ export class SandboxManager {
     for (const r of rows) await this.#keepAlive(r);
   }
 
-  /** The conversation's live sandbox, made if there is none. Concurrent callers in this process share one attempt. */
-  ensure(conversationId: string): Promise<LiveSandbox> {
+  /**
+   * The conversation's live sandbox, made if there is none. Concurrent callers in this process share one attempt.
+   * `owner`: a sandbox for the CloudCLI UI (Claude Code inside, docs/CLAUDE-CODE.md).
+   */
+  ensure(conversationId: string, owner?: string): Promise<LiveSandbox> {
     let p = this.#inflight.get(conversationId);
     if (!p) {
-      p = this.#ensure(conversationId).finally(() => this.#inflight.delete(conversationId));
+      p = this.#ensure(conversationId, owner).finally(() => this.#inflight.delete(conversationId));
       this.#inflight.set(conversationId, p);
     }
     return p;
   }
 
-  async #ensure(conv: string): Promise<LiveSandbox> {
+  async #ensure(conv: string, owner?: string): Promise<LiveSandbox> {
     const t0 = Date.now();
     const deadline = Date.now() + START_TIMEOUT_MS;
     const poolDeadline = Date.now() + POOL_WAIT_MS;
@@ -148,7 +160,7 @@ export class SandboxManager {
         await sleep(500);
         continue;
       }
-      const created = await this.#claimSlot(conv);
+      const created = await this.#claimSlot(conv, owner);
       if (created === "full") {
         if (Date.now() > poolDeadline) {
           void opsEvent(this.#deps.db, "sandbox_start", { ok: false, ms: Date.now() - t0, conversationId: conv, detail: { reason: "pool full", provider: this.provider.kind } });
@@ -165,7 +177,7 @@ export class SandboxManager {
   }
 
   /** Inserts a `starting` row if the pool has room (freeing the least recently used idle sandbox if not). */
-  async #claimSlot(conv: string): Promise<SandboxRow | "full" | "raced"> {
+  async #claimSlot(conv: string, owner?: string): Promise<SandboxRow | "full" | "raced"> {
     const cfg = this.#deps.config.sandbox;
     const egressToken = newToken();
     let victim: SandboxRow | null = null;
@@ -185,9 +197,9 @@ export class SandboxManager {
       const id = randomUUID();
       try {
         const { rows } = await c.query<SandboxRow>(
-          `insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at)
-           values ($1, $2, $3, $4, $5, 'starting', now() + make_interval(hours => $6)) returning *`,
-          [id, conv, `sbx-${id.replace(/-/g, "").slice(0, 16)}`, sha256hex(egressToken), newToken(), cfg.maxLifetimeHours],
+          `insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at, owner, user_key)
+           values ($1, $2, $3, $4, $5, 'starting', now() + make_interval(hours => $6), $7, $8) returning *`,
+          [id, conv, `sbx-${id.replace(/-/g, "").slice(0, 16)}`, sha256hex(egressToken), newToken(), cfg.maxLifetimeHours, owner ?? null, owner ? userKey(owner) : null],
         );
         return { row: rows[0]!, egressToken };
       } catch (e) {

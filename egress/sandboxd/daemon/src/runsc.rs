@@ -139,11 +139,13 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
     let docker = crate::paths::join(scratch, "/docker");
     mount(&mut w, "/tmp", "bind", tmp.as_str(), &["rbind", "rw"]);
     mount(&mut w, "/var/lib/docker", "bind", docker.as_str(), &["rbind", "rw"]);
-    // the conversation's persistent folders on JuiceFS (docs/CLAUDE-CODE.md)
+    // the persistent folders on JuiceFS (docs/CLAUDE-CODE.md): the conversation's /workspace, the user's ~/.claude
     if !spec.workspace.is_empty() {
         let ws = crate::storage::workspace_dir(spec.workspace.as_str());
-        let cl = crate::storage::claude_dir(spec.workspace.as_str());
         mount(&mut w, "/workspace", "bind", ws.as_str(), &["rbind", "rw"]);
+    }
+    if !spec.user.is_empty() {
+        let cl = crate::storage::claude_dir(spec.user.as_str());
         mount(&mut w, "/home/sandbox/.claude", "bind", cl.as_str(), &["rbind", "rw"]);
     }
     w.end_arr();
@@ -181,7 +183,7 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","JARVIS_EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1"}"#;
+        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","JARVIS_EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1","user":"u-1"}"#;
         let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
@@ -208,14 +210,12 @@ mod tests {
             "{s}"
         );
         assert!(
-            s.contains(
-                r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1/workspace""#
-            ),
+            s.contains(r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1""#),
             "{s}"
         );
         assert!(
             s.contains(
-                r#"{"destination":"/home/sandbox/.claude","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1/claude""#
+                r#"{"destination":"/home/sandbox/.claude","type":"bind","source":"/var/lib/sbx/jfs/users/u-1/claude""#
             ),
             "{s}"
         );

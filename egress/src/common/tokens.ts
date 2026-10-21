@@ -30,3 +30,19 @@ export async function turnForToken(
   );
   return rows[0] ?? null;
 }
+
+/**
+ * The CloudCLI sandbox an egress token belongs to (docs/CLAUDE-CODE.md: Claude Code calls our MCP tools through egress
+ * with its sandbox's token), as a turn-like reference without a turn.
+ */
+export async function sandboxForToken(
+  db: { query: (q: string, v: unknown[]) => Promise<{ rows: any[] }> },
+  token: string,
+): Promise<{ id: null; conversation_id: string; owner: string; status: string } | null> {
+  if (!token) return null;
+  const { rows } = await db.query(
+    `select conversation_id, owner from sandboxes where egress_token_hash = $1 and status in ('starting','ready') and owner is not null`,
+    [sha256hex(token)],
+  );
+  return rows[0] ? { id: null, conversation_id: rows[0].conversation_id, owner: rows[0].owner, status: "running" } : null;
+}

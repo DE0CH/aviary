@@ -102,4 +102,7 @@ create index shares_conv on shares (conversation_id, created_at desc);
 create table blobs (sha256 text primary key, key text not null, created_at timestamptz not null default now());
 create table blob_grants (conversation_id uuid not null, sha256 text not null, primary key (conversation_id, sha256));
 `,
+  // Claude Code in the sandbox (docs/CLAUDE-CODE.md): a sandbox made for the CloudCLI UI knows its owner, and its
+  // user_key names the owner's ~/.claude folder on JuiceFS (shared by the owner's sandboxes)
+  `alter table sandboxes add column owner text, add column user_key text;`,
 ];

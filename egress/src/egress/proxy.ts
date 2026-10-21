@@ -458,7 +458,8 @@ export class Egress {
     if (!m || !route) return text(res, 404, "egress: unknown route\n");
     const rest = m[2] ?? "/";
     const up = new URL(route.upstream);
-    const row: EgressRow = { kind: route.name === "model" ? "model" : "inject", method: req.method ?? "GET", host: up.hostname, path: rest, decision: "allow" };
+    const isModel = route.name === "model" || route.model === true;
+    const row: EgressRow = { kind: isModel ? "model" : "inject", method: req.method ?? "GET", host: up.hostname, path: rest, decision: "allow" };
     if (route.auth === "turn") {
       const token = tokenFrom(req.headers, "authorization") || String(req.headers["x-api-key"] || "");
       const turn = await this.ids.turn(token);
@@ -492,7 +493,7 @@ export class Egress {
     // The model route (OpenRouter) gets zero data retention forced into every request body: no config, caller or
     // conversation can route a model call to an endpoint that retains or collects prompts.
     let forcedBody: Buffer | null = null;
-    if (route.name === "model" && req.method !== "GET" && req.method !== "HEAD") {
+    if (isModel && req.method !== "GET" && req.method !== "HEAD") {
       const raw = await readBody(req, MODEL_BODY_MAX);
       const refusal = raw === null ? null : await this.#modelRefusal(raw);
       if (refusal) {
@@ -506,7 +507,8 @@ export class Egress {
       }
       forcedBody = forced;
     }
-    const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, CALLER_AUTH), ...injected, host: up.host, "accept-encoding": "identity" };
+    const passed = route.keepAuth ? new Set([...CALLER_AUTH].filter((h) => h !== "authorization")) : CALLER_AUTH;
+    const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, passed), ...injected, host: up.host, "accept-encoding": "identity" };
     if (forcedBody) {
       delete headers["transfer-encoding"];
       headers["content-length"] = String(forcedBody.length);
@@ -534,7 +536,7 @@ export class Egress {
           if (!ures.complete) ures.destroy();
           this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
           // a model call's cost counts toward the budget at once (the turn's next call is usually < 1 s away)
-          if (route.name === "model") void this.log.flush();
+          if (isModel) void this.log.flush();
           resolve();
         });
       });

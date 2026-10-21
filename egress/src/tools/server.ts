@@ -3,7 +3,7 @@
 // list names (upstream.ts); nothing asks for or waits on a confirmation.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { logError } from "../common/log.ts";
-import { bearerOf, turnForToken } from "../common/tokens.ts";
+import { bearerOf, turnForToken, sandboxForToken } from "../common/tokens.ts";
 import { BUILTIN } from "./builtin.ts";
 import { handleMessage, type McpHandlers } from "./mcp.ts";
 import { presentFiles } from "./present.ts";
@@ -37,7 +37,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
     serverName: "tools",
     serverVersion: "1",
     instructions: "Read-only search and reading tools for news, PR and data analysis work, a description of the bash sandbox, and present_files to show the answer's deliverables to the user. None of them sends, posts or changes anything outside.",
-    tools: () => toolList(deps, upstreams),
+    // present_files belongs to the chat runtime's turns; Claude Code in a sandbox (no turn) shows files its own way
+    tools: (ctx) => toolList(deps, upstreams).filter((t) => !(ctx && ctx.turn.id === null && t.name === "present_files")),
     async call(tool, args, ctx) {
       const t0 = Date.now();
       let r: ToolResult | undefined;
@@ -92,8 +93,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
     active++;
     try {
       const token = bearerOf(req.headers.authorization);
-      const turn = await turnForToken(deps.db, token);
-      if (!turn) return send(res, 401, { error: "a running turn's token is required" }, { "www-authenticate": "Bearer" });
+      const turn = (await turnForToken(deps.db, token)) ?? (await sandboxForToken(deps.db, token));
+      if (!turn) return send(res, 401, { error: "a running turn's or a sandbox's token is required" }, { "www-authenticate": "Bearer" });
       let msg: unknown;
       try {
         msg = JSON.parse(await readBody(req));

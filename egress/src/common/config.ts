@@ -12,6 +12,12 @@ export interface EgressRoute {
   name: string;
   upstream: string;
   auth: "turn" | "sandbox";
+  /** a model route (always true for the route named "model"): zero data retention forced, model + budget checked,
+   * cost logged as kind "model" (docs/CLAUDE-CODE.md: Claude Code in the sandbox uses one with auth "sandbox") */
+  model?: boolean;
+  /** pass the caller's Authorization on (an upstream that identifies the sandbox by its own egress token: our tools
+   * role's MCP endpoint for Claude Code, docs/CLAUDE-CODE.md); otherwise caller credentials never go upstream */
+  keepAuth?: boolean;
   inject: Record<string, string>;
   allowPaths?: string[];
 }

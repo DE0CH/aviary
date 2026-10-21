@@ -4,7 +4,8 @@ import type { ChatConfig } from "../common/config.ts";
 import type { Db } from "../common/db.ts";
 
 export interface TurnRef {
-  id: string;
+  /** null: a call from Claude Code in a sandbox (docs/CLAUDE-CODE.md), authenticated by the sandbox's egress token */
+  id: string | null;
   conversation_id: string;
   owner: string;
 }

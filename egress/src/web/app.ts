@@ -116,6 +116,7 @@ export class WebApp {
         const ok = !this.runner.draining && (await this.deps.db.query("select 1").then(() => true, () => false));
         return sendJson(res, ok ? 200 : 503, { ok, draining: this.runner.draining });
       }
+      if (path.startsWith("/internal/cc/")) return await this.#claudeCodeInternal(req, res, path);
       const caller = await this.#authenticate(req);
       if (!caller.ok) {
         if (caller.status === 403 && !path.startsWith("/api/")) return sendHtml(res, 403, notAllowedPage(this.deps.config.product.name, caller.email));
@@ -139,6 +140,44 @@ export class WebApp {
       if (!res.headersSent) sendJson(res, status, { error: status === 500 ? "internal error" : (e as Error).message });
       else res.end();
     }
+  }
+
+  /**
+   * The CloudCLI UI pods' calls (docs/CLAUDE-CODE.md), cluster-only (NetworkPolicy) and with the shared bearer token
+   * JARVIS_CC_TOKEN: `POST /internal/cc/sandbox {owner, conversation}` → the conversation's sandbox (made if needed;
+   * `reset` when it replaced an earlier one), `POST /internal/cc/touch {conversation}` (it is in use: its idle time
+   * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted).
+   */
+  async #claudeCodeInternal(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    const want = process.env.JARVIS_CC_TOKEN || "";
+    const given = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ""))?.[1] ?? "";
+    if (!want || sha256hex(given) !== sha256hex(want)) throw new HttpError(401, "unauthorized");
+    if (req.method !== "POST") throw new HttpError(405, "method not allowed");
+    const b = await readJson(req);
+    const conv = String(b.conversation || "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(conv)) throw bad("conversation must be a uuid");
+    if (path === "/internal/cc/sandbox") {
+      const owner = String(b.owner || "").trim().toLowerCase();
+      if (!this.deps.config.users.includes(owner)) throw new HttpError(403, "not a user of this instance");
+      const sb = await this.sandboxes.ensure(conv, owner);
+      // reset: this conversation had a different sandbox before (its installs and processes are gone)
+      const key = `cc_sandbox:${conv}`;
+      const { rows: seen } = await this.deps.db.query<{ value: string }>("select value from kv where key = $1", [key]);
+      const reset = !!seen[0] && seen[0].value !== sb.id;
+      if (!seen[0] || reset) {
+        await this.deps.db.query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [key, JSON.stringify(sb.id)]);
+      }
+      return sendJson(res, 200, { id: sb.id, url: sb.url, token: sb.execToken, headers: sb.headers, reset });
+    }
+    if (path === "/internal/cc/touch") {
+      await this.sandboxes.touch(conv);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (path === "/internal/cc/release") {
+      await this.sandboxes.releaseConversation(conv, "deleted");
+      return sendJson(res, 200, { ok: true });
+    }
+    throw notFound();
   }
 
   async #authenticate(req: IncomingMessage): Promise<{ ok: true; caller: Caller } | { ok: false; status: number; message: string; email: string }> {

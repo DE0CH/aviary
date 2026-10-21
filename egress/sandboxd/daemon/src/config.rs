@@ -286,9 +286,12 @@ pub struct Spec {
     pub cpu: f64,
     pub memory: u64,
     pub cpu_features: Str<2048>,
-    /// the conversation's persistent storage (docs/CLAUDE-CODE.md): `/workspace` and `~/.claude` are subfolders
-    /// `ws/<workspace>/…` of the host's JuiceFS mount; empty = none (both are then plain scratch)
+    /// the conversation's `/workspace` (docs/CLAUDE-CODE.md): folder `ws/<workspace>` of the host's JuiceFS mount;
+    /// empty = none (a plain folder in scratch)
     pub workspace: Str<64>,
+    /// the user's `~/.claude` (Claude Code's transcripts and settings, shared by the user's sandboxes): folder
+    /// `users/<user>/claude` of the JuiceFS mount; empty = none
+    pub user: Str<64>,
 }
 unsafe impl crate::fixed::Zeroed for Spec {}
 
@@ -332,6 +335,7 @@ impl Spec {
             memory: 0,
             cpu_features: Str::new(),
             workspace: Str::new(),
+            user: Str::new(),
         };
         let mut memory = f64::NAN;
         let (mut have_name, mut have_ip, mut have_image) = (false, false, false);
@@ -417,6 +421,15 @@ impl Spec {
                     return Err(e400("spec: bad workspace"));
                 }
                 sp.workspace = ws;
+            } else if k.is("user") {
+                if matches!(v, Val::Null) {
+                    return Ok(());
+                }
+                let u: Str<64> = spec_str(v).ok_or_else(|| e400("spec: bad user"))?;
+                if !valid_workspace(u.as_str()) {
+                    return Err(e400("spec: bad user"));
+                }
+                sp.user = u;
             } else if k.is("cpuFeatures") {
                 if matches!(v, Val::Null) {
                     return Ok(());

@@ -25,6 +25,7 @@ import { log, logError } from "../common/log.ts";
 import { AgentClient } from "./agent.ts";
 import type { AgentEndpoint, ListedSandbox, SandboxProvider } from "./provider.ts";
 import { sandboxEnv } from "./sandbox-k8s.ts";
+import { claudeCodeEnv } from "./claude-code.ts";
 import { planPacking } from "./packing.ts";
 import { DEMAND_WINDOW_S, PoolFullError, type SandboxRow } from "./sandbox.ts";
 import { SandboxdError, wgKeyPair, type Ec2Api, type HostInfo, type HostSandbox, type SandboxdApi } from "./vm-clients.ts";
@@ -720,16 +721,20 @@ export class VmProvider implements SandboxProvider {
       await sleep(3000);
     }
     const digest = await ctl.imageDigest();
-    const env = {
+    const env: Record<string, string> = {
       ...sandboxEnv(`http://${vm.egressVip}:3128`, vm.egressVip, egressToken),
       JARVIS_EXEC_TOKEN: row.exec_token,
       HOME: "/home/sandbox",
     };
+    // a sandbox for the CloudCLI UI (docs/CLAUDE-CODE.md): Claude Code's settings, the conversation's /workspace and
+    // the owner's ~/.claude on JuiceFS
+    const cc = row.user_key ? { workspace: row.conversation_id, user: row.user_key } : {};
+    if (row.user_key) Object.assign(env, await claudeCodeEnv(this.#d.config, `http://${vm.egressVip}:3128`, egressToken));
     await this.#d.sandboxd.call(
       placed.host.url,
       "POST",
       "/v1/sandboxes",
-      { name: row.pod, ip: placed.ip, image: digest, imageRef: this.#d.config.sandbox.image, env, cpu: ctl.cpuCores, memory: ctl.memBytes, cpuFeatures: vm.cpuFeatures },
+      { name: row.pod, ip: placed.ip, image: digest, imageRef: this.#d.config.sandbox.image, env, cpu: ctl.cpuCores, memory: ctl.memBytes, cpuFeatures: vm.cpuFeatures, ...cc },
       15 * 60_000,
     );
     // AWS: the hub must route the new /32 to that host

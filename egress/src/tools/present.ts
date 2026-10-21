@@ -87,14 +87,16 @@ export const presentFiles: ToolDef = {
       return text(`Nothing was shown. Fix these paths and call present_files again (paths are relative to the workspace):\n${problems.map((p) => `- ${p}`).join("\n")}`, true);
     }
     const db = ctx.deps.db;
+    const turnId = ctx.turn.id;
+    if (turnId === null) return text("present_files is not available here.", true);
     // one writer per turn at a time (the agent may call tools in parallel)
     const merged = await tx(db, async (q) => {
-      const { rows } = await q.query<{ presented: unknown }>("select presented from turns where id = $1 for update", [ctx.turn.id]);
+      const { rows } = await q.query<{ presented: unknown }>("select presented from turns where id = $1 for update", [turnId]);
       const next = mergePresented(presentedOf(rows[0]?.presented) ?? [], picked);
-      await q.query("update turns set presented = $2 where id = $1", [ctx.turn.id, JSON.stringify(next)]);
+      await q.query("update turns set presented = $2 where id = $1", [turnId, JSON.stringify(next)]);
       return next;
     });
-    await appendEvent(db, ctx.turn.conversation_id, ctx.turn.id, "files_presented", { files: merged });
+    await appendEvent(db, ctx.turn.conversation_id, turnId, "files_presented", { files: merged });
     const names = picked.map((f) => f.path).join(", ");
     return {
       content: [{ type: "text", text: `Shown to the user under your answer: ${names}. Don't repeat links or paths for them in your text.` }],

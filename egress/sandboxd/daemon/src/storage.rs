@@ -4,8 +4,9 @@
 //!   ENOSPC and one sandbox can't fill the host's disk. Plain files: a migration copies them file by file.
 //! - root: Linux overlayfs, the image's rootfs (read-only, shared) under scratch/upper, at /var/lib/sbx/root/<name>;
 //!   runsc runs with --overlay2=none, so nothing of the root lives in gVisor's memory file.
-//! - persistent: `/workspace` and `~/.claude` are folders ws/<workspace>/{workspace,claude} of the host's JuiceFS
-//!   mount (/var/lib/sbx/jfs, mounted by the host setup); `/workspace` has a quota of 1 GiB and 1,000 files.
+//! - persistent, on the host's JuiceFS mount (/var/lib/sbx/jfs, mounted by the host setup): `/workspace` is folder
+//!   ws/<workspace> (one per conversation; quota 1 GiB and 1,000 files), `~/.claude` is users/<user>/claude (one per
+//!   user: Claude Code's transcripts of all the user's conversations, which the UI reads).
 use crate::config::Spec;
 use crate::path;
 use crate::paths::{self, P};
@@ -31,10 +32,10 @@ pub fn jfs_root() -> P {
     path!("/var/lib/sbx/jfs")
 }
 pub fn workspace_dir(ws: &str) -> P {
-    path!("/var/lib/sbx/jfs/ws/{ws}/workspace")
+    path!("/var/lib/sbx/jfs/ws/{ws}")
 }
-pub fn claude_dir(ws: &str) -> P {
-    path!("/var/lib/sbx/jfs/ws/{ws}/claude")
+pub fn claude_dir(user: &str) -> P {
+    path!("/var/lib/sbx/jfs/users/{user}/claude")
 }
 
 fn is_mount(dir: &str) -> bool {
@@ -84,30 +85,33 @@ pub fn setup(spec: &Spec) -> Res<P> {
         }
         sh(&["mount", "-t", "overlay", "overlay", "-o", opts.as_str(), root.as_str()])?;
     }
+    if (!spec.workspace.is_empty() || !spec.user.is_empty()) && !is_mount(jfs_root().as_str()) {
+        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
+    }
+    if !spec.user.is_empty() {
+        let cd = claude_dir(spec.user.as_str());
+        sh(&["mkdir", "-p", cd.as_str()])?;
+        sh(&["chown", UID, cd.as_str()])?;
+    }
     if !spec.workspace.is_empty() {
         workspace(spec.workspace.as_str())?;
     }
     Ok(root)
 }
 
-/// The conversation's JuiceFS folders; a new `/workspace` gets its quota (1 GiB, 1,000 files) at once.
+/// The conversation's `/workspace`; a new one gets its quota (1 GiB, 1,000 files) at once.
 fn workspace(ws: &str) -> Res<()> {
-    if !is_mount(jfs_root().as_str()) {
-        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
-    }
     let wd = workspace_dir(ws);
     let fresh = std::fs::metadata(wd.as_str()).is_err();
-    for d in [wd, claude_dir(ws)] {
-        sh(&["mkdir", "-p", d.as_str()])?;
-        sh(&["chown", UID, d.as_str()])?;
-    }
+    sh(&["mkdir", "-p", wd.as_str()])?;
+    sh(&["chown", UID, wd.as_str()])?;
     if fresh {
         set_quota(ws)?;
     }
     Ok(())
 }
 
-/// `juicefs quota set` on ws/<ws>/workspace. The metadata URL and its password come from /etc/sbx/juicefs.env
+/// `juicefs quota set` on ws/<ws>. The metadata URL and its password come from /etc/sbx/juicefs.env
 /// (META_URL without the password, META_PASSWORD; host setup writes it, mode 600).
 fn set_quota(ws: &str) -> Res<()> {
     let mut buf = [0u8; 1024];
@@ -130,7 +134,7 @@ fn set_quota(ws: &str) -> Res<()> {
         return Err(Error::new(500, "META_PASSWORD too long"));
     }
     let mut rel: crate::fixed::Str<100> = crate::fixed::Str::new();
-    let _ = rel.push("/ws/") && rel.push(ws) && rel.push("/workspace");
+    let _ = rel.push("/ws/") && rel.push(ws);
     let mut out = [0u8; 4096];
     let argv = [
         "juicefs",
