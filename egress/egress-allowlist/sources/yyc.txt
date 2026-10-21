@@ -1,0 +1,94 @@
+# YYC set: the news and data sources YYC staff work with (curated from the hosts YYC's news-stream collects from,
+# DE0CH/YYC news-stream/, and the outlets YYC AI's tools name). Short on purpose: most of these are also in the
+# ranked set; listing them here keeps them reachable whatever the ranking does.
+# Syntax: `host` = exactly that name; `.domain` = the domain and every name under it.
+
+# --- Hong Kong and Macao government, statistics, regulators
+.gov.hk
+.gov.mo
+.hkma.gov.hk
+.legco.gov.hk
+.hkex.com.hk
+.hkexnews.hk
+.hkeaa.edu.hk
+
+# --- Hong Kong news
+.rthk.hk
+.scmp.com
+.mingpao.com
+.hk01.com
+.on.cc
+.stheadline.com
+.hket.com
+.hkej.com
+.am730.com.hk
+.wenweipo.com
+.takungpao.com
+.tkww.hk
+.dotdotnews.com
+.orangenews.hk
+.thestandard.com.hk
+.tvb.com
+news.now.com
+.i-cable.com
+.881903.com
+.hongkongfp.com
+.inmediahk.net
+.hkcd.com
+.bastillepost.com
+.lihkg.com
+.discuss.com.hk
+.baby-kingdom.com
+
+# --- Macao news
+.tdm.com.mo
+.exmoo.com
+.macaodaily.com
+.plataformamedia.com
+
+# --- Mainland China news and statistics
+.gov.cn
+.stats.gov.cn
+.xinhuanet.com
+.news.cn
+.people.com.cn
+.chinadaily.com.cn
+.cctv.com
+.thepaper.cn
+.caixin.com
+.yicai.com
+.chinanews.com.cn
+.globaltimes.cn
+news.163.com
+news.sina.com.cn
+news.qq.com
+
+# --- international news
+.reuters.com
+.apnews.com
+.bbc.com
+.bbc.co.uk
+.nytimes.com
+.ft.com
+.bloomberg.com
+.wsj.com
+.theguardian.com
+.economist.com
+.cnn.com
+.aljazeera.com
+.nikkei.com
+.channelnewsasia.com
+.straitstimes.com
+.afp.com
+
+# --- data and reference
+.wikipedia.org
+.wikimedia.org
+.wikidata.org
+.worldbank.org
+.imf.org
+.oecd.org
+.un.org
+.who.int
+.bis.org
+.archive.org

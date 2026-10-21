@@ -1,7 +1,7 @@
 // Housekeeping, run by one replica at a time (advisory-lock leadership): release idle and expired sandboxes, remove
-// sandboxes nobody owns, end turns whose replica died, expire unanswered confirmations. Every replica also writes its own
+// sandboxes nobody owns, end turns whose replica died. Every replica also writes its own
 // heartbeat, which is how a dead replica's turns are recognised.
-import { channel, lead } from "../common/db.ts";
+import { lead } from "../common/db.ts";
 import { log, logError } from "../common/log.ts";
 import type { WebDeps } from "./ctx.ts";
 import { appendEvent } from "./events.ts";
@@ -10,8 +10,6 @@ import type { SandboxManager, SandboxRow } from "./sandbox.ts";
 const JANITOR_LOCK = 4_242_003;
 const HEARTBEAT_MS = 10_000;
 const DEAD_AFTER_S = 60;
-// tools expires its own confirmations at 15 minutes; this is the backstop for a tools pod that died meanwhile
-const CONFIRM_TTL_MIN = 20;
 
 export function startHeartbeat(deps: WebDeps): () => void {
   const beat = () =>
@@ -41,17 +39,6 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
     [DEAD_AFTER_S],
   );
   for (const t of dead) await appendEvent(db, t.conversation_id, t.id, "turn_finished", { turnId: t.id, status: "error", error: "interrupted: the server restarted", costUsd: null });
-
-  // confirmations nobody answered
-  const { rows: expired } = await db.query<{ id: string; conversation_id: string; turn_id: string }>(
-    `update confirmations set status = 'expired', decided_at = now() where status = 'pending' and created_at < now() - make_interval(mins => $1)
-     returning id, conversation_id, turn_id`,
-    [CONFIRM_TTL_MIN],
-  );
-  for (const c of expired) {
-    await db.query("select pg_notify($1, 'expired')", [channel("confirm", c.id)]);
-    await appendEvent(db, c.conversation_id, c.turn_id, "confirmation_resolved", { id: c.id, status: "expired" });
-  }
 
   // idle and expired sandboxes (never while their conversation has a turn going)
   const { rows: toRelease } = await db.query<SandboxRow & { why: string }>(

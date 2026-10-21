@@ -1,5 +1,4 @@
-// The web role's HTTP surface (docs/CHAT.md, "Public API"): Access + allowlist on every request but /healthz and
-// /internal/*, a user sees only their own conversations, SSE streams read from Postgres so any replica can serve any
+// The web role's HTTP surface (docs/CHAT.md, "Public API"): Access + allowlist on every request but /healthz, a user sees only their own conversations, SSE streams read from Postgres so any replica can serve any
 // conversation, and the static UI with its SPA fallback.
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -11,7 +10,7 @@ import { budgetAudit, budgetStatus, changeBudget } from "../common/budget.ts";
 import { effectiveModel } from "../common/config.ts";
 import { channel } from "../common/db.ts";
 import { logError } from "../common/log.ts";
-import { bearerOf, newToken, sha256hex, turnForToken } from "../common/tokens.ts";
+import { newToken, sha256hex } from "../common/tokens.ts";
 import { blobKey, type WebDeps } from "./ctx.ts";
 import { appendEvent, publicEvent, type EventRow } from "./events.ts";
 import { contentType, liveFiles, saveUpload } from "./files.ts";
@@ -68,7 +67,6 @@ export class WebApp {
     r.add("POST", "/api/conversations/:id/messages", (q, s, p, c) => this.#message(q, s, p, c));
     r.add("GET", "/api/conversations/:id/stream", (q, s, p, c) => this.#stream(q, s, p, c));
     r.add("POST", "/api/turns/:id/cancel", (q, s, p, c) => this.#cancel(s, p, c));
-    r.add("POST", "/api/confirmations/:id", (q, s, p, c) => this.#confirm(q, s, p, c));
     r.add("POST", "/api/conversations/:id/files", (q, s, p, c) => this.#upload(q, s, p, c));
     r.add("GET", "/api/conversations/:id/files", (q, s, p, c) => this.#files(s, p, c));
     r.add("GET", "/api/conversations/:id/files/*", (q, s, p, c) => this.#download(s, p, c));
@@ -97,7 +95,6 @@ export class WebApp {
         const ok = !this.runner.draining && (await this.deps.db.query("select 1").then(() => true, () => false));
         return sendJson(res, ok ? 200 : 503, { ok, draining: this.runner.draining });
       }
-      if (path === "/internal/events" && req.method === "POST") return await this.#internalEvent(req, res);
       const caller = await this.#authenticate(req);
       if (!caller.ok) {
         if (caller.status === 403 && !path.startsWith("/api/")) return sendHtml(res, 403, notAllowedPage(this.deps.config.product.name, caller.email));
@@ -191,11 +188,10 @@ export class WebApp {
   async #get(res: ServerResponse, p: Record<string, string>, c: Ctx) {
     const conv = await this.#own(c, p.id);
     const db = c.deps.db;
-    const [{ rows: messages }, { rows: turns }, { rows: events }, { rows: pending }] = await Promise.all([
+    const [{ rows: messages }, { rows: turns }, { rows: events }] = await Promise.all([
       db.query(`select id, role, content, turn_id as "turnId", attachments, created_at as "createdAt" from messages where conversation_id = $1 order by id`, [conv.id]),
       db.query(`select id, status, model, started_at as "startedAt", finished_at as "finishedAt", error, cost_usd as "costUsd" from turns where conversation_id = $1 order by started_at`, [conv.id]),
       db.query<EventRow>("select * from events where conversation_id = $1 order by id", [conv.id]),
-      db.query(`select id, turn_id as "turnId", kind, summary, detail, status from confirmations where conversation_id = $1 and status = 'pending'`, [conv.id]),
     ]);
     const byTurn = new Map<string, unknown[]>();
     for (const e of events) {
@@ -210,7 +206,6 @@ export class WebApp {
       model: conv.model,
       messages,
       turns: turns.map((t: any) => ({ ...t, costUsd: t.costUsd == null ? null : Number(t.costUsd), events: byTurn.get(t.id) ?? [] })),
-      pendingConfirmations: pending,
       lastEventId,
     });
   }
@@ -356,33 +351,6 @@ export class WebApp {
     res.writeHead(204).end();
   }
 
-  async #confirm(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
-    const id = uuidParam(p.id);
-    const body = await readJson(req);
-    if (typeof body.approve !== "boolean") throw bad("approve must be true or false");
-    const status = body.approve ? "approved" : "denied";
-    const db = c.deps.db;
-    const { rows } = await db.query<{ conversation_id: string; turn_id: string }>(
-      `update confirmations f set status = $2, decided_at = now(), decided_by = $3 from conversations c
-        where f.id = $1 and f.status = 'pending' and c.id = f.conversation_id and c.owner = $3
-        returning f.conversation_id, f.turn_id`,
-      [id, status, c.caller.email],
-    );
-    const row = rows[0];
-    if (!row) {
-      const { rows: any } = await db.query(
-        "select f.status from confirmations f join conversations c on c.id = f.conversation_id where f.id = $1 and c.owner = $2",
-        [id, c.caller.email],
-      );
-      if (!any[0]) throw notFound();
-      throw new HttpError(409, `already ${any[0].status}`);
-    }
-    await db.query("select pg_notify($1, $2)", [channel("confirm", id), status]);
-    await db.query("update turns set status = 'running' where id = $1 and status = 'waiting'", [row.turn_id]);
-    await appendEvent(db, row.conversation_id, row.turn_id, "confirmation_resolved", { id, status });
-    res.writeHead(204).end();
-  }
-
   async #upload(req: IncomingMessage, res: ServerResponse, p: Record<string, string>, c: Ctx) {
     const conv = await this.#own(c, p.id);
     const name = new URL(req.url || "/", "http://x").searchParams.get("name") || "";
@@ -483,19 +451,6 @@ export class WebApp {
          from egress_log e left join conversations cc on cc.id = e.conversation_id order by e.id desc limit 500`,
     );
     sendJson(res, 200, rows);
-  }
-
-  /** From the tools role: one event for a running turn (e.g. a confirmation request), authorised by the turn token. */
-  async #internalEvent(req: IncomingMessage, res: ServerResponse) {
-    const turn = await turnForToken(this.deps.db, bearerOf(req.headers.authorization));
-    if (!turn) throw new HttpError(401, "unknown or finished turn");
-    const body = await readJson(req);
-    const type = String(body.type ?? "");
-    if (!/^[a-z_]{1,40}$/.test(type)) throw bad("bad event type");
-    const { type: _t, ...data } = body;
-    if (type === "confirmation_request") await this.deps.db.query("update turns set status = 'waiting' where id = $1 and status = 'running'", [turn.id]);
-    const id = await appendEvent(this.deps.db, turn.conversation_id, turn.id, type, data);
-    sendJson(res, 201, { id: Number(id) });
   }
 
   /** The UI's web manifest with the instance's product name (the static build says "AI"). */

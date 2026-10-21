@@ -592,7 +592,7 @@ function UserMessage({ m, convId }: { m: Message; convId: string }) {
   );
 }
 
-// ---- a reply: text, tool steps, confirmations ----------------------------------------------------
+// ---- a reply: text, tool steps ----------------------------------------------------------------
 
 function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileEntry[] }) {
   const s = t();
@@ -606,7 +606,7 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
   }, [files, running, v.startedAt, v.finishedAt]);
 
   const last = v.blocks[v.blocks.length - 1];
-  const showWorking = running && v.status !== "waiting" && (!last || last.kind !== "text" || v.thinking);
+  const showWorking = running && (!last || last.kind !== "text" || v.thinking);
   const copy = async () => {
     const txt = replyText(v);
     try {
@@ -628,7 +628,7 @@ function Reply({ v, convId, files }: { v: TurnView; convId: string; files: FileE
       {groupBlocks(v.blocks).map((g, i) =>
         g.kind === "steps" ? (
           <div class="steps" key={`s${i}`}>
-            {g.blocks.map((b) => (b.kind === "tool" ? <ToolStep key={b.id} b={b} /> : b.kind === "confirm" ? <ConfirmCard key={b.id} b={b} /> : null))}
+            {g.blocks.map((b) => (b.kind === "tool" ? <ToolStep key={b.id} b={b} /> : null))}
           </div>
         ) : g.block.kind === "text" ? (
           <div key={`t${i}`} class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(g.block.text) }} />
@@ -687,7 +687,7 @@ type Group = { kind: "steps"; blocks: Block[] } | { kind: "one"; block: Block };
 function groupBlocks(blocks: Block[]): Group[] {
   const out: Group[] = [];
   for (const b of blocks) {
-    if (b.kind === "tool" || b.kind === "confirm") {
+    if (b.kind === "tool") {
       const g = out[out.length - 1];
       if (g && g.kind === "steps") g.blocks.push(b);
       else out.push({ kind: "steps", blocks: [b] });
@@ -742,63 +742,6 @@ function StepPart({ title, value, error }: { title: string; value: string; error
           {s.showMore} ({Math.round(value.length / 1000)}k)
         </button>
       )}
-    </div>
-  );
-}
-
-function ConfirmCard({ b }: { b: Extract<Block, { kind: "confirm" }> }) {
-  const s = t();
-  const [busy, setBusy] = useState<boolean | null>(null);
-  const [err, setErr] = useState(false);
-  const decide = async (approve: boolean) => {
-    setBusy(approve);
-    setErr(false);
-    try {
-      await api.confirm(b.id, approve);
-    } catch {
-      setErr(true);
-      setBusy(null);
-    }
-  };
-  const pending = b.status === "pending";
-  const d = b.detail ?? {};
-  const rows: [string, string][] =
-    b.confirmKind === "network_access" || d.host
-      ? ([
-          [s.site, String(d.host ?? "")],
-          [s.reason, String(d.reason ?? "")],
-        ].filter(([, v]) => v) as [string, string][])
-      : Object.entries(d)
-          .filter(([, v]) => v !== null && v !== undefined && v !== "")
-          .map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)] as [string, string]);
-  return (
-    <div class={`confirm ${pending ? "is-pending" : `is-${b.status}`}`} role="group" aria-label={s.needsYou}>
-      <div class="confirm-head">
-        <Icon name={b.confirmKind === "network_access" ? "globe" : "alert"} size={18} />
-        <span>{pending ? s.needsYou : b.status === "approved" ? s.approved : b.status === "denied" ? s.denied : s.expired}</span>
-      </div>
-      <p class="confirm-summary">{b.summary || (b.confirmKind === "network_access" ? s.networkAccess : "")}</p>
-      {rows.length > 0 && (
-        <dl class="confirm-detail">
-          {rows.map(([k, v]) => (
-            <div key={k}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {pending && (
-        <div class="confirm-actions">
-          <button class="btn primary" disabled={busy !== null} onClick={() => void decide(true)}>
-            {s.approve}
-          </button>
-          <button class="btn" disabled={busy !== null} onClick={() => void decide(false)}>
-            {s.deny}
-          </button>
-        </div>
-      )}
-      {err && <p class="inline-error">{s.sendFailed}</p>}
     </div>
   );
 }

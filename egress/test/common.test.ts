@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { expandEnv, parseConfig } from "../src/common/config.ts";
 import { lead, Listener, migrate, channel } from "../src/common/db.ts";
+import { randomUUID } from "node:crypto";
+import { MIGRATIONS } from "../src/common/schema.ts";
 import { freshDb } from "./pg.ts";
 
 const base = {
@@ -56,6 +58,28 @@ test("db: migrations are idempotent, notify reaches a listener, one leader at a 
     await new Promise((r) => setTimeout(r, 200));
     assert.ok(b > 0, "the second replica takes over");
     await lb.stop();
+  } finally {
+    await t.drop();
+  }
+});
+
+test("schema: the no-confirmations migration leaves nothing pending or granted, and old rows readable", async () => {
+  const t = await freshDb("nocfm");
+  try {
+    const i = MIGRATIONS.findIndex((m) => m.includes("delete from allowed_hosts"));
+    assert.ok(i >= 0);
+    const conv = randomUUID();
+    const turn = randomUUID();
+    await t.db.query("insert into users (email) values ('a@x.org')");
+    await t.db.query("insert into conversations (id, owner, model) values ($1, 'a@x.org', 'm')", [conv]);
+    await t.db.query("insert into turns (id, conversation_id, status, token_hash, model) values ($1, $2, 'waiting', 'h', 'm')", [turn, conv]);
+    await t.db.query("insert into confirmations (id, conversation_id, turn_id, kind, summary, status) values ($1, $2, $3, 'tool', 's', 'pending'), ($4, $2, $3, 'tool', 's', 'approved')", [randomUUID(), conv, turn, randomUUID()]);
+    await t.db.query("insert into allowed_hosts (conversation_id, host, added_by) values ($1, 'data.gov.hk', 'a@x.org')", [conv]);
+    // what the migration does to an older version's data
+    await t.db.query(MIGRATIONS[i]!);
+    assert.deepEqual((await t.db.query("select status from confirmations order by status")).rows.map((r) => r.status), ["approved", "expired"]);
+    assert.equal((await t.db.query("select status from turns where id = $1", [turn])).rows[0].status, "running");
+    assert.equal((await t.db.query("select count(*)::int as n from allowed_hosts")).rows[0].n, 0);
   } finally {
     await t.drop();
   }

@@ -77,4 +77,14 @@ create table ops_events (id bigserial primary key, at timestamptz not null defau
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
 create index ops_events_kind_at on ops_events (kind, at);
 `,
+  // no confirmations and no per-conversation sandbox hosts any more (docs/CHAT.md: read-only tools, the automatic sandbox
+  // allowlist): nothing reads or writes confirmations or allowed_hosts from here on. The tables stay for their old rows
+  // (an older replica still running during the rollout reads them); nothing is left pending or granted.
+  `
+update confirmations set status = 'expired', decided_at = now() where status = 'pending';
+update turns set status = 'running' where status = 'waiting';
+delete from allowed_hosts;
+comment on table confirmations is 'unused since schema 6: no confirmations (old rows only)';
+comment on table allowed_hosts is 'unused since schema 6: the sandbox allowlist is automatic';
+`,
 ];

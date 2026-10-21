@@ -1,6 +1,6 @@
 // Mock of the web role's public API for developing and screenshotting the UI (docs/CHAT.md, "Public API").
 // Serves ../ui-dist with the SPA fallback. A sent message plays a canned turn: text, a web search, a bash command,
-// a confirmation that waits for Allow/Deny, a table and a produced file.
+// a sandbox download the egress allowlist refuses, a table and a produced file. Nothing ever asks the user anything.
 //   node dev/mock-server.mjs [port]     env MOCK_DENY=1 → every API call is 403 (the not-on-the-list page)
 //                                       env MOCK_LOCALE=en → the instance locale is English
 //                                       env MOCK_SEED=1 → two finished conversations to start with
@@ -36,7 +36,6 @@ if (process.env.MOCK_ONE_MODEL) {
 const convs = new Map();
 let eventId = 0;
 const subs = new Map(); // conv id -> Set<res>
-const pendingConfirm = new Map(); // confirmation id -> resolve
 
 function newConv(model, title = "") {
   const id = randomUUID();
@@ -103,15 +102,14 @@ async function playTurn(c, turn, prompt) {
   emit(c, turn, "tool_use", { id: "t3", name: "bash", input: { command: "python3 count.py coverage.csv > summary.xlsx", description: "按媒體統計報道數量" } });
   await sleep(900);
   emit(c, turn, "tool_result", { id: "t3", name: "bash", is_error: false, output: "wrote summary.xlsx (5 rows)" });
-  const cid = randomUUID();
-  emit(c, turn, "confirmation_request", { id: cid, kind: "network_access", summary: "允許工作環境連接 data.gov.hk？", detail: { host: "data.gov.hk", reason: "下載政府統計處的最新數據" } });
-  turn.status = "waiting";
-  const approved = await new Promise((resolve) => {
-    pendingConfirm.set(cid, resolve);
-    setTimeout(() => pendingConfirm.has(cid) && (pendingConfirm.delete(cid), resolve(null)), 15 * 60_000);
+  emit(c, turn, "tool_use", { id: "t4", name: "bash", input: { command: "curl -fsS https://files.example-share.net/coverage-2026.csv -o extra.csv", description: "下載額外數據" } });
+  await sleep(600);
+  emit(c, turn, "tool_result", {
+    id: "t4",
+    name: "bash",
+    is_error: true,
+    output: "curl: (56) CONNECT tunnel failed, response 403\negress: files.example-share.net is not on the sandbox's internet allowlist, and it cannot be enabled from the chat. The sandbox reaches package registries, code hosts and widely used public sites only. To read a web page, use the web_fetch and web_search tools instead of the sandbox.",
   });
-  emit(c, turn, "confirmation_resolved", { id: cid, status: approved === null ? "expired" : approved ? "approved" : "denied" });
-  turn.status = "running";
   emit(c, turn, "message_start", {});
   const reply = `\n\n以下是本星期的重點：\n\n| 媒體 | 篇數 | 主要角度 |\n|---|---:|---|\n| 明報 | 9 | 監管新措施 |\n| 經濟日報 | 8 | 銀行業績 |\n| 信報 | 7 | 保險業前景 |\n\n1. **金管局**公布新的跨境理財通安排，多份報章以頭版報道。\n2. 保險業界對新規反應正面，但有評論關注中小型公司的合規成本。\n\n統計表已存為 \`summary.xlsx\`，可以在下面下載。`;
   if (!(await streamText(c, turn, reply, 8))) return fin("cancelled");
@@ -134,6 +132,10 @@ function seed() {
   emit(a, t, "turn_started", {});
   emit(a, t, "tool_use", { id: "x", name: "mcp__tools__yyc_posts_search", input: { query: "金融服務", stream: "FSHK" } });
   emit(a, t, "tool_result", { id: "x", name: "mcp__tools__yyc_posts_search", output: "18 posts", is_error: false });
+  // what an older version stored: a confirmation and its answer (the UI shows nothing for them now)
+  const cid = randomUUID();
+  emit(a, t, "confirmation_request", { id: cid, kind: "network_access", summary: "允許沙盒連接 data.gov.hk？", detail: { host: "data.gov.hk", reason: "下載數據" } });
+  emit(a, t, "confirmation_resolved", { id: cid, status: "approved" });
   emit(a, t, "text_delta", { text: "本週共有 **18** 篇相關報道，以監管和銀行業績為主。" });
   emit(a, t, "turn_finished", { status: "done" });
   t.finishedAt = new Date().toISOString();
@@ -226,14 +228,6 @@ createServer(async (req, res) => {
     }
     if ((m = /^\/api\/turns\/([^/]+)\/cancel$/.exec(p))) {
       for (const c of convs.values()) for (const t of c.turns) if (t.id === m[1]) t.status = "cancelled";
-      return json(res, 204);
-    }
-    if ((m = /^\/api\/confirmations\/([^/]+)$/.exec(p))) {
-      const body = JSON.parse((await readBody(req)).toString());
-      const r = pendingConfirm.get(m[1]);
-      if (!r) return json(res, 404, { error: "no such confirmation" });
-      pendingConfirm.delete(m[1]);
-      r(!!body.approve);
       return json(res, 204);
     }
     return json(res, 404, { error: "no route" });

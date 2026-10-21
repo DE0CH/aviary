@@ -1,12 +1,11 @@
 // Turns a turn's event list (claw's NDJSON events plus the server's own) into what the reply shows: text, tool
-// steps, confirmations, notices. Pure, so the same function serves the history load and the live stream.
+// steps, notices. Pure, so the same function serves the history load and the live stream.
 import type { ChatEvent, Turn } from "./api.ts";
 import { budgetOf } from "./rules.ts";
 
 export type Block =
   | { kind: "text"; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output?: string; isError?: boolean; done: boolean }
-  | { kind: "confirm"; id: string; confirmKind: string; summary: string; detail: any; status: "pending" | "approved" | "denied" | "expired" }
   | { kind: "notice"; notice: "sandbox_reset" }
   | { kind: "error"; message: string };
 
@@ -38,7 +37,6 @@ export function viewTurn(turn: Turn): TurnView {
     sandboxStarting: false,
   };
   const tools = new Map<string, Extract<Block, { kind: "tool" }>>();
-  const confirms = new Map<string, Extract<Block, { kind: "confirm" }>>();
   let text: Extract<Block, { kind: "text" }> | null = null;
   const events = [...turn.events].sort((a, b) => a.seq - b.seq || a.id - b.id);
   for (const e of events) {
@@ -83,20 +81,8 @@ export function viewTurn(turn: Turn): TurnView {
         text = null;
         break;
       }
-      case "confirmation_request": {
-        text = null;
-        const b = { kind: "confirm" as const, id: String(d.id), confirmKind: String(d.kind ?? ""), summary: String(d.summary ?? ""), detail: d.detail ?? {}, status: "pending" as const };
-        confirms.set(b.id, b);
-        v.blocks.push(b);
-        if (v.status === "running") v.status = "waiting";
-        break;
-      }
-      case "confirmation_resolved": {
-        const b = confirms.get(String(d.id));
-        if (b) b.status = d.status;
-        if (v.status === "waiting") v.status = "running";
-        break;
-      }
+      // confirmation_request / confirmation_resolved: stored by older versions (nothing asks the user anything now);
+      // shown as nothing, like any other event type this view doesn't know
       case "sandbox":
         if (d.status === "starting") v.sandboxStarting = true;
         if (d.status === "ready") v.sandboxStarting = false;
@@ -126,10 +112,7 @@ export function viewTurn(turn: Turn): TurnView {
         break;
     }
   }
-  if (!isActive(v.status)) {
-    v.thinking = false;
-    for (const b of v.blocks) if (b.kind === "confirm" && b.status === "pending") b.status = "expired";
-  }
+  if (!isActive(v.status)) v.thinking = false;
   return v;
 }
 

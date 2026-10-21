@@ -1,4 +1,4 @@
-// Where a sandbox may connect: host allowlist matching, and refusal of every address that is not the public
+// Where a sandbox may connect (the host allowlist is allowlist.ts): refusal of every address that is not the public
 // internet (private, loopback, link-local, CGNAT, ULA, multicast, cluster ranges, extra CIDRs such as the node's own
 // /64). The check runs on the RESOLVED address and the connection goes to exactly that address, so a DNS answer that
 // changes between check and connect (rebinding) can't reach the cluster.
@@ -8,19 +8,6 @@ import { isIP } from "node:net";
 /** Lower-case, no trailing dot, no brackets. */
 export function normHost(h: string): string {
   return h.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-}
-
-/** `pypi.org` matches exactly; `.example.com` matches example.com and every name under it. */
-export function hostAllowed(host: string, entries: Iterable<string>): boolean {
-  const h = normHost(host);
-  for (const raw of entries) {
-    const e = normHost(raw);
-    if (!e) continue;
-    if (e.startsWith(".")) {
-      if (h === e.slice(1) || h.endsWith(e)) return true;
-    } else if (h === e) return true;
-  }
-  return false;
 }
 
 type Cidr = { v: 4 | 6; bits: bigint; prefix: number };

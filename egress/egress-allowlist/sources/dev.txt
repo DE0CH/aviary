@@ -1,0 +1,130 @@
+# Development set: package registries, code hosts, language toolchains, container registries, distro mirrors.
+# Merged from two lists made for AI coding sandboxes (domain names are facts; both pages are public documentation):
+#   [codex]  OpenAI Codex cloud, "Common dependencies" preset: https://developers.openai.com/codex/cloud/agent-internet
+#   [cc]     Claude Code on the web, "Default allowed domains" (Trusted): https://code.claude.com/docs/en/cloud-environments
+# plus the hosts `docker pull` really uses (traced 2026-10-21: token, manifest, blob redirects).
+# Syntax: `host` = exactly that name; `.domain` = the domain and every name under it.
+# Left out on purpose (anyone can upload to them, or they take data with a caller-supplied key):
+#   *.amazonaws.com, *.api.aws, *.r2.cloudflarestorage.com, *.googleapis.com/storage.googleapis.com, gist.github.com,
+#   *.datadoghq.com, api.honeycomb.io, api.anthropic.com/claude.ai (no model calls from the sandbox), accounts.google.com,
+#   portal.azure.com, dev.azure.com, and the codex catch-alls google.com, microsoft.com, azure.com (Drive, Forms,
+#   OneDrive, Apps Script live under them; the specific hosts below are listed instead).
+
+# --- version control [cc, codex]
+github.com
+www.github.com
+api.github.com
+codeload.github.com
+npm.pkg.github.com
+raw.githubusercontent.com
+objects.githubusercontent.com
+release-assets.githubusercontent.com
+avatars.githubusercontent.com
+pkg-npm.githubusercontent.com
+.gitlab.com
+.bitbucket.org
+.sourceforge.net
+.launchpad.net
+
+# --- container registries [cc, codex] + docker pull trace
+registry-1.docker.io
+auth.docker.io
+index.docker.io
+hub.docker.com
+www.docker.com
+download.docker.com
+production.cloudflare.docker.com
+production.cloudfront.docker.com
+docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com
+ghcr.io
+pkg-containers.githubusercontent.com
+.gcr.io
+.quay.io
+mcr.microsoft.com
+.data.mcr.microsoft.com
+public.ecr.aws
+registry.gitlab.com
+.k8s.io
+
+# --- JavaScript [cc, codex]
+.npmjs.org
+.npmjs.com
+.yarnpkg.com
+.jsr.io
+.nodejs.org
+.bower.io
+
+# --- Python [cc, codex]
+.pypi.org
+.pythonhosted.org
+pypi.python.org
+.pypa.io
+.anaconda.com
+.anaconda.org
+.continuum.io
+
+# --- Ruby, Rust, Go, JVM, others [cc, codex]
+.rubygems.org
+.ruby-lang.org
+.rubyforge.org
+.rubyonrails.org
+.rvm.io
+.crates.io
+.rustup.rs
+static.rust-lang.org
+www.rust-lang.org
+.golang.org
+.goproxy.io
+pkg.go.dev
+.maven.org
+repo.maven.apache.org
+maven.google.com
+jcenter.bintray.com
+.gradle.org
+.kotlinlang.org
+.spring.io
+.packagist.org
+.nuget.org
+.pub.dev
+.hex.pm
+.cpan.org
+.metacpan.org
+.cocoapods.org
+.haskell.org
+.swift.org
+.dot.net
+dotnet.microsoft.com
+packages.microsoft.com
+.visualstudio.com
+.java.com
+.java.net
+download.oracle.com
+yum.oracle.com
+www.oracle.com
+.eclipse.org
+.apache.org
+.hashicorp.com
+.json-schema.org
+json.schemastore.org
+www.schemastore.org
+.modelcontextprotocol.io
+binaries.prisma.sh
+pkg.stainless.com
+.packagecloud.io
+
+# --- Linux distributions [cc, codex]
+.debian.org
+.ubuntu.com
+.alpinelinux.org
+.archlinux.org
+.centos.org
+.fedoraproject.org
+apt.llvm.org
+.nixos.org
+
+# --- fonts, docs [cc]
+fonts.googleapis.com
+fonts.gstatic.com
+cloud.google.com
+developer.apple.com
+developer.android.com

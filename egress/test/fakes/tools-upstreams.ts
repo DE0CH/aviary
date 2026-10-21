@@ -1,5 +1,4 @@
-// Fakes for the tools role's tests: Exa, TikHub, the Wisers relay, an upstream MCP server and web's /internal/events,
-// all on one local HTTP server (routes by path prefix). Each records what it was asked.
+// Fakes for the tools role's tests: Exa, TikHub, the Wisers relay and an upstream MCP server, all on one local HTTP server (routes by path prefix). Each records what it was asked.
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -13,8 +12,6 @@ export interface Seen {
 export interface Fakes {
   url: string;
   seen: Seen[];
-  events: any[];
-  onEvent: (e: any) => void;
   exaHasText: boolean;
   relayRunsFor: number; // how many job polls the relay answers "running" before "ok"
   close(): Promise<void>;
@@ -28,7 +25,7 @@ const body = (req: IncomingMessage) =>
   });
 
 export async function startFakes(): Promise<Fakes> {
-  const f: Fakes = { url: "", seen: [], events: [], onEvent: () => {}, exaHasText: true, relayRunsFor: 1, close: async () => {} };
+  const f: Fakes = { url: "", seen: [], exaHasText: true, relayRunsFor: 1, close: async () => {} };
   let polls = 0;
   const server: Server = createServer(async (req, res) => {
     const raw = await body(req);
@@ -95,18 +92,12 @@ export async function startFakes(): Promise<Fakes> {
           tools: [
             { name: "posts_search", description: "Search the stream", inputSchema: { type: "object", properties: { query: { type: "string" } } }, annotations: { readOnlyHint: true } },
             { name: "Send-Mail", description: "Send", inputSchema: { type: "object", properties: { to: { type: "string" } } } },
+            { name: "stream_items", description: "New, read-only, not listed yet", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+            { name: "post_delete", description: "Listed by mistake, but marked destructive", inputSchema: { type: "object" }, annotations: { readOnlyHint: false, destructiveHint: true } },
           ],
         });
       if (m.method === "tools/call") return answer({ content: [{ type: "text", text: `called ${m.params.name} for ${req.headers["x-yyc-user"]}` }] });
       return answer({});
-    }
-    // ---- web /internal/events
-    if (u.pathname === "/web/internal/events") {
-      f.events.push(parsed);
-      res.writeHead(204);
-      res.end();
-      setImmediate(() => f.onEvent(parsed));
-      return;
     }
     json(404, { error: "no fake for " + u.pathname });
   });

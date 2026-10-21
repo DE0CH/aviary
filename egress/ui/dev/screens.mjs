@@ -48,25 +48,33 @@ for (const size of ["phone", "desktop"]) {
     await p.waitForSelector(".step");
     await p.waitForTimeout(300);
   });
-  await shoot("confirm", size, base + "/", async (p) => {
+  // a sandbox download the allowlist refuses: an ordinary failed step, nothing to approve
+  await shoot("sandbox-denied", size, base + "/", async (p) => {
     await send(p, "總結今日香港傳媒對金融服務業的主要報道");
-    await p.waitForSelector(".confirm.is-pending", { timeout: 20000 });
+    await p.waitForSelector(".step.is-error", { timeout: 20000 });
+    await p.click(".step.is-error .step-head");
     await p.waitForTimeout(200);
   });
   await shoot("done-expanded", size, base + "/", async (p) => {
     await send(p, "總結今日香港傳媒對金融服務業的主要報道");
-    await p.waitForSelector(".confirm.is-pending", { timeout: 20000 });
-    await p.click(".confirm .btn.primary");
     await p.waitForSelector(".file-chip.made", { timeout: 20000 });
     await p.click(".step-head >> nth=0");
     await p.waitForTimeout(200);
   });
   await shoot("done-dark", size, base + "/", async (p) => {
     await send(p, "總結今日香港傳媒對金融服務業的主要報道");
-    await p.waitForSelector(".confirm.is-pending", { timeout: 20000 });
-    await p.click(".confirm .btn.primary");
     await p.waitForSelector(".file-chip.made", { timeout: 20000 });
   }, { dark: true });
+  // a conversation an older version stored with a confirmation in it: nothing is shown for it
+  await shoot("legacy-confirmation", size, base + "/", async (p) => {
+    if (size === "phone") {
+      await p.click("button[aria-label='選單']");
+      await p.waitForTimeout(300);
+    }
+    await p.click(".item-main:has-text('本週金融服務報道摘要')");
+    await p.waitForSelector(".bubble");
+    await p.waitForTimeout(300);
+  });
 }
 await shoot("drawer", "phone", base + "/", async (p) => {
   await p.click("button[aria-label='選單']");
@@ -83,7 +91,7 @@ const s2 = await server(5202, { MOCK_LOCALE: "en", MOCK_SEED: "1", MOCK_SPEED: "
 for (const size of ["phone", "desktop"])
   await shoot("english", size, "http://127.0.0.1:5202/", async (p) => {
     await send(p, "Summarise today's coverage of financial services");
-    await p.waitForSelector(".confirm.is-pending", { timeout: 20000 });
+    await p.waitForSelector(".file-chip.made", { timeout: 20000 });
   });
 s2.kill();
 

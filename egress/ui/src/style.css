@@ -228,18 +228,6 @@ button { cursor: pointer; }
 .muted-note { margin: 0; color: var(--faint); font-size: 14px; }
 .inline-error { display: flex; gap: 6px; align-items: center; margin: 0; color: var(--danger); font-size: 14px; }
 
-/* confirmation: the one place the warm accent appears */
-.confirm { border: 1px solid var(--warn-line); background: var(--warn-soft); border-radius: var(--radius); padding: 12px 14px; margin: 6px 0; }
-.confirm-head { display: flex; align-items: center; gap: 8px; color: var(--warn); font-weight: 650; font-size: 14px; }
-.confirm-summary { margin: 6px 0 4px; font-size: 16px; }
-.confirm-detail { margin: 6px 0 0; display: grid; gap: 4px; font-size: 14px; }
-.confirm-detail div { display: flex; gap: 10px; }
-.confirm-detail dt { color: var(--muted); min-width: 56px; }
-.confirm-detail dd { margin: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: 13.5px; }
-.confirm-actions { display: flex; gap: 10px; margin-top: 12px; }
-.confirm:not(.is-pending) { background: var(--surface); border-color: var(--line); }
-.confirm:not(.is-pending) .confirm-head { color: var(--muted); }
-.confirm.is-approved .confirm-head { color: var(--accent); }
 .btn { padding: 9px 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-weight: 600; min-height: 42px; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn:disabled { opacity: .55; cursor: default; }

@@ -52,8 +52,6 @@ export function describeTool(name: string, input: any): [string, string] {
     case "grep_search":
     case "grep":
       return [s.grep_search, str(i.pattern)];
-    case "request_network_access":
-      return [s.request_network_access, str(i.host)];
   }
   if (n.startsWith("yyc_")) return [s.yyc, str(i.query) || str(i.stream) || str(i.profile)];
   return [s.other, n];
@@ -75,6 +73,5 @@ export function toolIcon(name: string): ToolIcon {
   if (n === "bash") return "terminal";
   if (/^(read|write|edit|glob|grep)/.test(n)) return "file";
   if (n.startsWith("yyc_")) return "data";
-  if (n === "request_network_access") return "globe";
   return "tool";
 }

@@ -24,7 +24,8 @@ appendFileSync(sessionPath, JSON.stringify({ prompt }) + "\n");
 const turnNo = readFileSync(sessionPath, "utf8").trim().split("\n").length;
 
 out({ type: "session", session_id: "s", path: sessionPath, model: args[args.indexOf("--model") + 1], cwd: process.cwd(), resumed: existsSync(sessionPath), permission_mode: "danger-full-access" });
-out({ type: "debug", args, cwd: process.cwd(), env, prompt });
+const systemPrompt = process.env.CLAW_SYSTEM_PROMPT_FILE ? readFileSync(process.env.CLAW_SYSTEM_PROMPT_FILE, "utf8") : "";
+out({ type: "debug", args, cwd: process.cwd(), env, prompt, systemPrompt });
 
 if (prompt.includes("FAIL")) {
   out({ type: "error", message: "the model refused" });

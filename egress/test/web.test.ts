@@ -14,7 +14,7 @@ import { S3BlobStore } from "../src/common/s3.ts";
 import type { WebDeps } from "../src/web/ctx.ts";
 import { janitorPass } from "../src/web/janitor.ts";
 import { startWeb, type WebServer } from "../src/web/main.ts";
-import { RESET_NOTE } from "../src/web/turns.ts";
+import { RESET_NOTE, SANDBOX_NETWORK_NOTE } from "../src/web/turns.ts";
 import { AUD, fakeAccess, TEAM } from "./fakes/access.ts";
 import { FakeK8s } from "./fakes/k8s.ts";
 import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
@@ -255,7 +255,10 @@ test("a full turn: upload, warm, bash in the sandbox, streaming, files back, tit
 
   const dbg = events.find((e) => e.type === "debug").data;
   assert.equal(dbg.env.CLAW_EVENT_STREAM, "1");
-  assert.equal(dbg.env.CLAW_SYSTEM_PROMPT_FILE, deps.config.systemPromptFile);
+  // the instance's prompt, then the runtime's note on the sandbox's internet access
+  assert.ok(dbg.systemPrompt.startsWith(readFileSync(deps.config.systemPromptFile, "utf8").trimEnd()), dbg.systemPrompt);
+  assert.ok(dbg.systemPrompt.endsWith(SANDBOX_NETWORK_NOTE));
+  assert.match(dbg.systemPrompt, /no one can enable a site from the chat/);
   assert.equal(dbg.env.ANTHROPIC_BASE_URL, `${deps.egressBase}/x/model`);
   assert.equal(dbg.env.CLAW_RESUME_SESSION, undefined);
   assert.ok(dbg.args.includes("danger-full-access"));
@@ -338,39 +341,23 @@ test("cancel, one turn at a time, and a failing turn", async () => {
   assert.match(failed.events.at(-1).data.error, /refused/);
 });
 
-test("confirmations: the tools role asks through /internal/events, only the owner answers", async () => {
+test("no confirmations: the endpoints are gone; a stored conversation with old confirmation events still loads", async () => {
   const conv = await newConversation();
-  const r = await call(A, "POST", `/api/conversations/${conv}/messages`, { text: "SLEEP" });
-  const [dbg] = (await streamUntil(A, conv, (e) => e.type === "debug")).filter((e) => e.type === "debug");
-  const token = dbg.data.env.ANTHROPIC_AUTH_TOKEN;
-  assert.equal((await fetch(`${base}/internal/events`, { method: "POST", headers: { authorization: "Bearer nope" }, body: "{}" })).status, 401);
-
+  const r = await runTurn(conv, "hello");
+  assert.equal(r.events.at(-1).data.status, "done");
+  const turnId = r.turnId;
   const id = crypto.randomUUID();
-  await pg.db.query("insert into confirmations (id, conversation_id, turn_id, kind, summary, status) values ($1, $2, $3, 'network', 'Allow pypi.example', 'pending')", [id, conv, r.json.turnId]);
-  const ev = await fetch(`${base}/internal/events`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ type: "confirmation_request", id, kind: "network", summary: "Allow pypi.example", detail: {} }),
-  });
-  assert.equal(ev.status, 201);
-  assert.equal((await pg.db.query("select status from turns where id = $1", [r.json.turnId])).rows[0].status, "waiting");
-  const pending = await call(A, "GET", `/api/conversations/${conv}`);
-  assert.equal(pending.json.pendingConfirmations[0].id, id);
-
-  const heard: string[] = [];
-  const unlisten = await deps.listener.listen(`confirm_${id.replace(/-/g, "")}`, (p) => p && heard.push(p));
-  assert.equal((await call(B, "POST", `/api/confirmations/${id}`, { approve: true })).status, 404);
-  assert.equal((await call(A, "POST", `/api/confirmations/${id}`, { approve: true })).status, 204);
-  assert.equal((await pg.db.query("select status from confirmations where id = $1", [id])).rows[0].status, "approved");
-  assert.equal((await call(A, "POST", `/api/confirmations/${id}`, { approve: false })).status, 409);
-  const resolved = await streamUntil(A, conv, (e) => e.type === "confirmation_resolved");
-  assert.deepEqual(resolved.at(-1).data, { id, status: "approved" });
-  for (let i = 0; i < 50 && !heard.length; i++) await new Promise((res) => setTimeout(res, 20));
-  assert.deepEqual(heard, ["approved"]);
-  await unlisten();
-  assert.equal((await pg.db.query("select status from turns where id = $1", [r.json.turnId])).rows[0].status, "running");
-  await call(A, "POST", `/api/turns/${r.json.turnId}/cancel`);
-  await streamUntil(A, conv, turnEnd(r.json.turnId));
+  // what an older version stored: a request and its answer
+  await pg.db.query("insert into events (conversation_id, turn_id, seq, type, data) values ($1, $2, 1000, 'confirmation_request', $3), ($1, $2, 1001, 'confirmation_resolved', $4)", [
+    conv, turnId, JSON.stringify({ id, kind: "network_access", summary: "Allow data.gov.hk?", detail: { host: "data.gov.hk", reason: "x" } }), JSON.stringify({ id, status: "approved" }),
+  ]);
+  const got = await call(A, "GET", `/api/conversations/${conv}`);
+  assert.equal(got.status, 200);
+  assert.equal(got.json.pendingConfirmations, undefined);
+  assert.ok(got.json.turns[0].events.some((e: any) => e.type === "confirmation_request"));
+  assert.equal((await call(A, "POST", `/api/confirmations/${id}`, { approve: true })).status, 404);
+  const internal = await fetch(`${base}/internal/events`, { method: "POST", headers: { authorization: "Bearer x", "content-type": "application/json" }, body: "{}" });
+  assert.notEqual(internal.status, 201);
 });
 
 test("sandbox release: idle release saves background output, the next turn is told about the reset, the pool frees idle sandboxes", async () => {
@@ -405,17 +392,14 @@ test("sandbox release: idle release saves background output, the next turn is to
   assert.deepEqual(live2.sort(), [c2, c3].sort());
 });
 
-test("janitor: orphan pods, turns of dead replicas, unanswered confirmations", async () => {
+test("janitor: orphan pods, turns of dead replicas", async () => {
   k8s.ghosts.set("sbx-orphan", { metadata: { name: "sbx-orphan", creationTimestamp: new Date(Date.now() - 600_000).toISOString() }, status: { phase: "Running" } });
   const conv = await newConversation();
   const turnId = crypto.randomUUID();
   await pg.db.query("insert into turns (id, conversation_id, status, token_hash, model, replica) values ($1, $2, 'running', $3, 'm', 'web_dead')", [turnId, conv, "h" + turnId]);
-  const cid = crypto.randomUUID();
-  await pg.db.query("insert into confirmations (id, conversation_id, turn_id, kind, summary, status, created_at) values ($1, $2, $3, 'x', 'y', 'pending', now() - interval '1 hour')", [cid, conv, turnId]);
   await janitorPass(deps, web.app.sandboxes);
   assert.equal(k8s.ghosts.has("sbx-orphan"), false);
   assert.equal((await pg.db.query("select status from turns where id = $1", [turnId])).rows[0].status, "error");
-  assert.equal((await pg.db.query("select status from confirmations where id = $1", [cid])).rows[0].status, "expired");
 });
 
 test("drain: not ready, no new turns, running turns finish or are cancelled", async () => {

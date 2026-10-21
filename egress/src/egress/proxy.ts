@@ -1,6 +1,6 @@
 // The egress server (docs/CHAT.md, "egress"): the forward proxy every sandbox must use (CONNECT and absolute-URI
-// HTTP, token identity, per-conversation allowlist, public addresses only), the package mirror and the
-// credential-injecting routes. Every request ends up in egress_log.
+// HTTP, token identity, the sandbox allowlist with threat-intel DNS, public addresses only, an upload cap per
+// connection), the package mirror and the credential-injecting routes. Every request ends up in egress_log.
 import { createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { connect as netConnect, type Socket } from "node:net";
@@ -15,11 +15,16 @@ import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetStatus } from "../common/b
 import { DiskCache } from "./cache.ts";
 import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { Identities, tokenFrom, type SandboxId } from "./identity.ts";
-import { AddressGuard, GuardError, hostAllowed, normHost } from "./netguard.ts";
+import { HostPolicy } from "./allowlist.ts";
+import { AddressGuard, GuardError, normHost } from "./netguard.ts";
+import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
 
 export interface EgressOptions {
   db: Db;
-  defaultAllowedHosts: string[];
+  /** Which hosts sandboxes may reach (allowlist.ts). */
+  policy: HostPolicy;
+  /** Bytes a sandbox may send through one tunnel or request (default 8 MiB); more cuts the connection. */
+  maxUploadBytes?: number;
   routes: EgressRoute[];
   cacheDir: string;
   cacheBytes: number;
@@ -27,6 +32,7 @@ export interface EgressOptions {
   selfHosts: string[];
   guard?: AddressGuard;
   allowedPorts?: number[];
+  /** Name resolution for sandbox connections (default: ThreatResolver, malware-blocking DNS); may throw DnsRefusal. */
   resolver?: (host: string) => Promise<string[]>;
   upstreams?: { pypi: string; pypiFiles: string; npm: string };
   /** Hosts whose plain-HTTP GETs are cached (apt). */
@@ -45,8 +51,11 @@ const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-au
 const CALLER_AUTH = new Set(["authorization", "x-api-key", "cookie", "host"]);
 const INDEX_MAX_AGE = 5 * 60_000;
 
-export const DENY_HELP =
-  "If the user's task needs this site, call the request_network_access tool with the host and the reason: the user is asked to allow it for this conversation.";
+/** What a sandbox (and so the agent) reads when a host is refused: plain, final, no one to ask. */
+export const denyText = (host: string): string =>
+  `egress: ${host} is not on the sandbox's internet allowlist, and it cannot be enabled from the chat. The sandbox reaches ` +
+  "package registries, code hosts and widely used public sites only. To read a web page, use the web_fetch and " +
+  "web_search tools instead of the sandbox.\n";
 
 export class Egress {
   readonly server: Server;
@@ -55,6 +64,8 @@ export class Egress {
   readonly ids: Identities;
   readonly #o: EgressOptions;
   readonly #guard: AddressGuard;
+  readonly #resolve: (host: string) => Promise<string[]>;
+  readonly #maxUp: number;
   readonly #ports: Set<number>;
   readonly #up: { pypi: string; pypiFiles: string; npm: string };
   readonly #self: Set<string>;
@@ -66,6 +77,9 @@ export class Egress {
   constructor(o: EgressOptions) {
     this.#o = o;
     this.#guard = o.guard ?? new AddressGuard();
+    const threat = o.resolver ? null : new ThreatResolver();
+    this.#resolve = o.resolver ?? ((h) => threat!.resolve(h));
+    this.#maxUp = o.maxUploadBytes ?? 8 * 1024 * 1024;
     this.#ports = new Set(o.allowedPorts ?? [80, 443]);
     this.#up = o.upstreams ?? { pypi: "https://pypi.org", pypiFiles: "https://files.pythonhosted.org", npm: "https://registry.npmjs.org" };
     // 127.0.0.1/localhost too: a hosted sandbox's proxy is its local end of the wire (sandbox/agent.mjs), so pip and
@@ -187,18 +201,23 @@ export class Egress {
       this.#deny(row, "deny:port", 403);
       return null;
     }
-    const extra = await this.ids.allowedHosts(sb.conversationId);
-    if (!hostAllowed(host, this.#o.defaultAllowedHosts) && !hostAllowed(host, extra)) {
-      deny(403, `egress: ${normHost(host)} is not on this conversation's list of allowed sites. ${DENY_HELP}\n`);
-      this.#deny(row, "deny:host", 403);
+    const verdict = this.#o.policy.check(host);
+    if (!verdict.allow) {
+      deny(403, denyText(normHost(host)));
+      this.#deny(row, verdict.reason, 403);
       return null;
     }
     try {
-      return { sb, addrs: await this.#guard.resolve(host, this.#o.resolver) };
+      return { sb, addrs: await this.#guard.resolve(host, this.#resolve) };
     } catch (e) {
-      const why = e instanceof GuardError ? e.message : `cannot resolve ${normHost(host)}`;
-      deny(403, `egress: ${why}; only public internet addresses can be reached.\n`);
-      this.#deny(row, "deny:address", 403);
+      if (e instanceof DnsRefusal) {
+        deny(403, `egress: ${e.message}; the sandbox cannot reach it.\n`);
+        this.#deny(row, e.reason, 403);
+      } else {
+        const why = e instanceof GuardError ? e.message : `cannot resolve ${normHost(host)}`;
+        deny(403, `egress: ${why}; only public internet addresses can be reached.\n`);
+        this.#deny(row, "deny:address", 403);
+      }
       return null;
     }
   }
@@ -238,9 +257,15 @@ export class Egress {
     let down = 0;
     client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     if (head.length) upstream.write(head);
+    let capped = false;
     client.on("data", (c: Buffer) => {
       up += c.length;
       this.counters.bytesUp += c.length;
+      if (up > this.#maxUp && !capped) {
+        capped = true;
+        this.counters.denied++;
+        client.destroy();
+      }
     });
     upstream.on("data", (c: Buffer) => {
       down += c.length;
@@ -254,7 +279,7 @@ export class Egress {
       done = true;
       client.destroy();
       upstream.destroy();
-      this.log.add({ ...row, status: 200, bytes_up: up, bytes_down: down, ms: Date.now() - t0 });
+      this.log.add({ ...row, ...(capped ? { decision: "deny:upload" } : {}), status: 200, bytes_up: up, bytes_down: down, ms: Date.now() - t0 });
     };
     upstream.on("close", finish);
     upstream.on("error", finish);
@@ -284,10 +309,21 @@ export class Egress {
     headers.host = u.host;
     let up = 0;
     let down = 0;
+    let capped = false;
+    let status: number | null = null;
     await new Promise<void>((resolve) => {
+      let finished = false;
+      // one log line per request, whichever way it ends
+      const finish = (extra: Partial<EgressRow> = {}) => {
+        if (finished) return;
+        finished = true;
+        this.log.add({ ...row, status, bytes_up: up, bytes_down: down, ms: Date.now() - t0, ...extra, ...(capped ? { decision: "deny:upload" } : {}) });
+        resolve();
+      };
       const out = httpRequest(
         { host: ok.addrs[0], port, method: req.method, path: u.pathname + u.search, headers, setHost: false },
         (ures) => {
+          status = ures.statusCode ?? null;
           res.writeHead(ures.statusCode ?? 502, stripHop(ures.headers));
           const w = cacheable && ures.statusCode === 200
             ? this.cache.writer({ url, status: 200, contentType: String(ures.headers["content-type"] || "application/octet-stream"), storedAt: Date.now() })
@@ -302,20 +338,25 @@ export class Egress {
           ures.pipe(res);
           res.on("close", () => {
             if (!ures.complete) w?.abort();
-            this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: up, bytes_down: down, ms: Date.now() - t0 });
-            resolve();
           });
         },
       );
+      res.on("close", () => finish());
       out.on("error", () => {
+        if (capped) return finish();
         if (!res.headersSent) text(res, 502, `egress: could not reach ${u.host}\n`);
         else res.destroy();
-        this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
-        resolve();
+        finish({ status: 502 });
       });
       req.on("data", (c: Buffer) => {
         up += c.length;
         this.counters.bytesUp += c.length;
+        if (up > this.#maxUp && !capped) {
+          capped = true;
+          this.counters.denied++;
+          out.destroy();
+          res.destroy();
+        }
       });
       req.pipe(out);
     });

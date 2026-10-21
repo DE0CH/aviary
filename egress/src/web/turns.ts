@@ -23,6 +23,19 @@ const KEEPALIVE_MS = 60_000;
 export const RESET_NOTE =
   "[System note: the sandbox was reset: files in the workspace are restored; installed packages and background processes from before are gone.]";
 
+/**
+ * Appended to the instance's system prompt on every turn: what the sandbox can reach (docs/CHAT.md, "The sandbox
+ * allowlist"). The runtime's fact, so it holds whatever the instance's prompt says.
+ */
+export const SANDBOX_NETWORK_NOTE = `## The sandbox's internet access
+The sandbox (bash) reaches only an automatic allowlist: package registries (pip, npm, apt), code hosts and container
+registries (GitHub, Docker Hub, ghcr.io), government and statistics sites, major news sites and other widely used
+public sites. Everything else is refused (HTTP 403 from the proxy), and no one can enable a site from the chat, so do
+not ask for it. Pastebins, file-sharing, form and webhook sites are always refused. To read a web page or search,
+use the web_fetch and web_search tools (they work for any public site); use the sandbox's internet only to install
+packages or download data files.
+`;
+
 interface Running {
   child: ChildProcess | null;
   cancelled: boolean;
@@ -168,6 +181,10 @@ export class TurnRunner {
         };
       }
       await writeFile(join(d.clawConfig, "settings.json"), JSON.stringify(settings, null, 2));
+      // the instance's system prompt plus the runtime's note on the sandbox's internet access
+      const promptFile = join(d.clawConfig, "system-prompt.md");
+      const instancePrompt = await readFile(abs(deps.config.systemPromptFile), "utf8");
+      await writeFile(promptFile, `${instancePrompt.trimEnd()}\n\n${SANDBOX_NETWORK_NOTE}`);
       const { rows: sess } = await db.query<{ content: string }>("select content from claw_sessions where conversation_id = $1", [conv]);
       const resumePath = join(d.sessions, `${conv}.jsonl`);
       if (sess[0]) await writeFile(resumePath, sess[0].content);
@@ -179,7 +196,7 @@ export class TurnRunner {
         HOME: d.base,
         LANG: "C.UTF-8",
         CLAW_EVENT_STREAM: "1",
-        CLAW_SYSTEM_PROMPT_FILE: abs(deps.config.systemPromptFile),
+        CLAW_SYSTEM_PROMPT_FILE: promptFile,
         CLAW_BASH_COMMAND: abs(deps.bashPath),
         CLAW_CONFIG_DIR: d.clawConfig,
         CLAW_CONFIG_HOME: d.clawConfig,
@@ -254,7 +271,7 @@ export class TurnRunner {
             lastMessageText = "";
             break;
           case "permission_request":
-            // danger-full-access asks nothing; anything that does ask is refused (outward actions confirm in tools)
+            // danger-full-access asks nothing; anything that does ask is refused (nobody is asked anything)
             child.stdin!.write(JSON.stringify({ type: "permission_response", request_id: data.request_id, allow: false, reason: "not allowed here" }) + "\n");
             break;
           case "tool_result":

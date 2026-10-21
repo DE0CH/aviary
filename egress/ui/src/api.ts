@@ -113,7 +113,6 @@ export const api = {
   send: (id: string, text: string, attachments: string[]) =>
     call<{ turnId: string }>("POST", `/api/conversations/${enc(id)}/messages`, { text, attachments }),
   cancel: (turnId: string) => call<void>("POST", `/api/turns/${enc(turnId)}/cancel`),
-  confirm: (id: string, approve: boolean) => call<void>("POST", `/api/confirmations/${enc(id)}`, { approve }),
   files: (id: string) => call<FileEntry[]>("GET", `/api/conversations/${enc(id)}/files`),
   fileUrl: (id: string, path: string) => `/api/conversations/${enc(id)}/files/${filePath(path)}`,
   streamUrl: (id: string, after: number) => `/api/conversations/${enc(id)}/stream?after=${after}`,

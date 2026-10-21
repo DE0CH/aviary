@@ -1,14 +1,12 @@
 // The tools role's HTTP side: POST /mcp (turn-token auth → the turn's owner), GET /healthz. Every tools/call is a row
-// in tool_calls. Tools named in config.tools.confirm ask the staff member first (confirm.ts).
+// in tool_calls. Only read-only tools exist here: the built-in ones and the upstream tools each upstream's `tools`
+// list names (upstream.ts); nothing asks for or waits on a confirmation.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { logError } from "../common/log.ts";
 import { bearerOf, turnForToken } from "../common/tokens.ts";
 import { BUILTIN } from "./builtin.ts";
-import { askUser } from "./confirm.ts";
-import { confirmText } from "./strings.ts";
 import { handleMessage, type McpHandlers } from "./mcp.ts";
 import type { Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
-import { text } from "./types.ts";
 import type { Upstream } from "./upstream.ts";
 
 const MAX_BODY = 2_000_000;
@@ -21,28 +19,11 @@ export function toolList(deps: Deps, upstreams: Upstream[]): ToolDef[] {
     web_fetch: true,
     news_search: !!t.wisers,
     social_search: !!t.tikhub,
-    request_network_access: true,
   };
   const own = BUILTIN.filter((d) => have[d.name]);
   const names = new Set(own.map((d) => d.name));
   const ups = upstreams.flatMap((u) => u.tools()).filter((d) => !names.has(d.name) && (names.add(d.name), true));
-  return [...own, ...ups].map((d) => (t.confirm.includes(d.name) ? withConfirmation(d) : d));
-}
-
-function summarise(args: Record<string, unknown>): string {
-  const s = JSON.stringify(args);
-  return s.length > 400 ? `${s.slice(0, 400)}…` : s;
-}
-
-function withConfirmation(d: ToolDef): ToolDef {
-  return {
-    ...d,
-    async run(args, ctx) {
-      const a = await askUser(ctx, "tool", confirmText(ctx.deps.config.product.locale).tool(d.title ?? d.name, summarise(args)), { tool: d.name, arguments: args });
-      if (a !== "approved") return text(a === "denied" ? "The user declined." : "No answer from the user.", true);
-      return d.run(args, ctx);
-    },
-  };
+  return [...own, ...ups];
 }
 
 export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: Server; drain(graceMs: number): Promise<void> } {
@@ -51,7 +32,7 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
   const handlers: McpHandlers = {
     serverName: "tools",
     serverVersion: "1",
-    instructions: "Search and reading tools for news and PR work. Tools that act outside need the user's confirmation; wait for it.",
+    instructions: "Read-only search and reading tools for news, PR and data analysis work. None of them sends, posts or changes anything outside.",
     tools: () => toolList(deps, upstreams),
     async call(tool, args, ctx) {
       const t0 = Date.now();
@@ -129,8 +110,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[]): { server: 
       active--;
     }
   });
-  // a confirmation may hold a request for 15 minutes: no idle cut-off on our side
-  server.requestTimeout = 0;
+  // an upstream call may take up to 2 minutes (its own timeout)
+  server.requestTimeout = 180_000;
   server.headersTimeout = 60_000;
   server.keepAliveTimeout = 65_000;
 

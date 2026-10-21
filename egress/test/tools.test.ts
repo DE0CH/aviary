@@ -1,5 +1,5 @@
 // The tools role end to end on the real local Postgres, with every outside service faked (test/fakes/tools-upstreams.ts):
-// auth by turn token, the MCP methods, each built-in tool, upstream proxying, confirmations, tool_calls logging, and the
+// auth by turn token, the MCP methods, each built-in tool, upstream proxying with its read-only allowlist, tool_calls logging, and the
 // stdio bridge claw uses.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -8,15 +8,12 @@ import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/common/config.ts";
-import { channel, Listener } from "../src/common/db.ts";
 import { newToken, sha256hex } from "../src/common/tokens.ts";
-import { normalHost } from "../src/tools/builtin.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
 import { createToolsServer, toolList } from "../src/tools/server.ts";
-import { toolsLocale } from "../src/tools/strings.ts";
 import type { Deps } from "../src/tools/types.ts";
-import { pickResponse, Upstream } from "../src/tools/upstream.ts";
+import { pickResponse, readOnlyAllowed, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
 import { freshDb } from "./pg.ts";
 
@@ -73,18 +70,14 @@ before(async () => {
       exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
       tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
       wisers: { url: `${fakes.url}/wisers`, accessClientIdEnv: "W_ID", accessClientSecretEnv: "W_SECRET" },
-      upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" } }],
-      confirm: ["yyc_send_mail"],
+      upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"] }],
     },
   });
   deps = {
     config,
     db: t.db,
-    listener: new Listener(t.url),
-    webUrl: `${fakes.url}/web`,
     env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up" },
     fetch: globalThis.fetch,
-    confirmTimeoutMs: 2000,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
   };
@@ -98,7 +91,6 @@ before(async () => {
 
 after(async () => {
   await close();
-  await deps.listener.close();
   await fakes.close();
   await t.drop();
 });
@@ -120,7 +112,7 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "request_network_access", "yyc_posts_search", "yyc_send_mail"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "yyc_posts_search"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names (claw's ask rules compare lowercased)");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
@@ -194,84 +186,29 @@ test("social_search: TikHub posts, fallback endpoint, platform check", async () 
   assert.equal(Number(rows[0].cost_usd), 0.001);
 });
 
-test("upstream MCP: tools proxied with the staff member's identity; a confirm-listed tool waits for approval", async () => {
+test("upstream MCP: listed read-only tools are proxied with the staff member's identity; everything else is hidden", async () => {
   const r = await call("yyc_posts_search", { query: "x" });
   assert.equal(textOf(r), `called posts_search for ${owner}`);
   const up = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/call").at(-1)!;
   assert.equal(up.headers.authorization, "Bearer up");
 
-  // approved
-  fakes.onEvent = async (e) => {
-    if (e.type !== "confirmation_request") return;
-    await t.db.query("update confirmations set status = 'approved', decided_at = now(), decided_by = $2 where id = $1", [e.id, owner]);
-    await t.db.query("select pg_notify($1, 'approved')", [channel("confirm", e.id)]);
-  };
-  const sent = await call("yyc_send_mail", { to: "x@y.com" });
-  assert.equal(textOf(sent), `called Send-Mail for ${owner}`);
-  const ev = fakes.events.filter((e) => e.type === "confirmation_request").at(-1);
-  assert.match(ev.summary, /x@y\.com/);
-  assert.equal(ev.summary, `yyc_send_mail: {"to":"x@y.com"}`);
-  assert.equal(ev.detail.tool, "yyc_send_mail");
-
-  // the card's summary follows the instance locale (product.locale)
-  deps.config.product.locale = "zh-HK";
-  try {
-    await call("yyc_send_mail", { to: "z@y.com" });
-  } finally {
-    deps.config.product.locale = "en";
-  }
-  const zh = fakes.events.filter((e) => e.type === "confirmation_request").at(-1);
-  assert.equal(zh.summary, '執行「yyc_send_mail」：{"to":"z@y.com"}');
-  const row = await t.db.query("select summary from confirmations where id = $1", [zh.id]);
-  assert.equal(row.rows[0].summary, zh.summary);
-
-  // denied
-  fakes.onEvent = async (e) => {
-    if (e.type !== "confirmation_request") return;
-    await t.db.query("update confirmations set status = 'denied' where id = $1", [e.id]);
-    await t.db.query("select pg_notify($1, 'denied')", [channel("confirm", e.id)]);
-  };
+  // not listed (Send-Mail, a new read-only tool) or listed but marked as writing (post_delete): never offered, never run
   const before = fakes.seen.filter((s) => s.body?.method === "tools/call").length;
-  const no = await call("yyc_send_mail", { to: "x@y.com" });
-  assert.equal(no.isError, true);
-  assert.equal(textOf(no), "The user declined.");
-  assert.equal(fakes.seen.filter((s) => s.body?.method === "tools/call").length, before, "never forwarded");
-  fakes.onEvent = () => {};
-});
-
-test("request_network_access: approve adds the host; no answer expires; defaults need no ask", async () => {
-  assert.match(textOf(await call("request_network_access", { host: "pypi.org", reason: "x" })), /already allowed/);
-  assert.match(textOf(await call("request_network_access", { host: "raw.githubusercontent.com", reason: "x" })), /already allowed/);
-  assert.equal((await call("request_network_access", { host: "10.0.0.1", reason: "x" })).isError, true);
-  assert.equal((await call("request_network_access", { host: "web.jarvis.svc.cluster.local", reason: "x" })).isError, true);
-
-  fakes.onEvent = async (e) => {
-    if (e.type !== "confirmation_request") return;
-    await t.db.query("update confirmations set status = 'approved' where id = $1", [e.id]);
-    await t.db.query("select pg_notify($1, 'approved')", [channel("confirm", e.id)]);
-  };
-  const ok = await call("request_network_access", { host: "https://data.gov.hk/en/path", reason: "下載數據" });
-  assert.match(textOf(ok), /allowed data\.gov\.hk/);
-  assert.equal(fakes.events.filter((e) => e.type === "confirmation_request").at(-1).summary, "Allow the sandbox to reach data.gov.hk?");
-  deps.config.product.locale = "zh-HK";
-  try {
-    assert.match(textOf(await call("request_network_access", { host: "data.example.hk", reason: "x" })), /allowed data\.example\.hk/);
-  } finally {
-    deps.config.product.locale = "en";
+  for (const name of ["yyc_send_mail", "yyc_stream_items", "yyc_post_delete"]) {
+    const res = await rpc("tools/call", { name, arguments: {} });
+    assert.equal(res.body.error.code, -32602, name);
+    assert.match(res.body.error.message, /unknown tool/);
   }
-  assert.equal(fakes.events.filter((e) => e.type === "confirmation_request").at(-1).summary, "允許沙盒連接 data.example.hk？");
-  const { rows } = await t.db.query("select host, added_by from allowed_hosts where conversation_id = $1", [conv]);
-  assert.deepEqual(rows.filter((r) => r.host === "data.gov.hk"), [{ host: "data.gov.hk", added_by: owner }]);
-  assert.match(textOf(await call("request_network_access", { host: "data.gov.hk", reason: "x" })), /already allowed/);
+  assert.equal(fakes.seen.filter((s) => s.body?.method === "tools/call").length, before, "never forwarded");
 
-  fakes.onEvent = () => {}; // nobody answers: expires after confirmTimeoutMs
-  const t0 = Date.now();
-  const exp = await call("request_network_access", { host: "example.com", reason: "x" });
-  assert.equal(textOf(exp), "No answer from the user.");
-  assert.ok(Date.now() - t0 >= 1900);
-  const c = await t.db.query("select status from confirmations where detail->>'host' = 'example.com'");
-  assert.equal(c.rows[0].status, "expired");
-  assert.ok(fakes.events.some((e) => e.type === "confirmation_resolved" && e.status === "expired"));
+  // default deny: an upstream without a `tools` list offers nothing
+  const bare = { prefix: "z", url: "http://x", headers: {} };
+  assert.equal(readOnlyAllowed(bare, { name: "posts_search", annotations: { readOnlyHint: true } }), false);
+  const listed = { ...bare, tools: ["a"] };
+  assert.equal(readOnlyAllowed(listed, { name: "a" }), true);
+  assert.equal(readOnlyAllowed(listed, { name: "a", annotations: { readOnlyHint: false } }), false);
+  assert.equal(readOnlyAllowed(listed, { name: "a", annotations: { destructiveHint: true } }), false);
+  assert.equal(readOnlyAllowed(listed, { name: "b", annotations: { readOnlyHint: true } }), false);
 });
 
 test("jarvis-mcp-bridge: Content-Length framing (claw's) and NDJSON, both ways", async () => {
@@ -320,22 +257,12 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   for (const a of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "100.64.0.1", "169.254.169.254", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "fd42::5"])
     assert.equal(isPrivateAddress(a), true, a);
   for (const a of ["8.8.8.8", "1.1.1.1", "2a01:4f8::1", "::ffff:8.8.8.8"]) assert.equal(isPrivateAddress(a), false, a);
-  assert.equal(normalHost("HTTPS://Data.Gov.HK:443/x?y"), "data.gov.hk");
-  assert.equal(normalHost("*.gov.hk"), ".gov.hk");
-  assert.equal(normalHost("localhost"), null);
-  assert.equal(normalHost("1.2.3.4"), null);
   assert.equal(iso(1792000000), "2026-10-14T17:46:40.000Z");
   assert.equal(iso("1792000000000"), "2026-10-14T17:46:40.000Z");
   assert.equal(iso("Wed Oct 15 10:00:00 +0800 2026"), "2026-10-15T02:00:00.000Z");
   assert.equal(iso("garbage"), null);
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
-  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [], confirm: [] } } }, []).map((d) => d.name), ["web_fetch", "request_network_access"]);
+  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch"]);
 });
 
-test("confirmation text locale: zh* → zh-HK, anything else → en", () => {
-  assert.equal(toolsLocale("zh-HK"), "zh-HK");
-  assert.equal(toolsLocale("zh-Hant-HK"), "zh-HK");
-  assert.equal(toolsLocale("en"), "en");
-  assert.equal(toolsLocale(undefined), "en");
-});

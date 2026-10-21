@@ -20,6 +20,11 @@ export interface UpstreamMcp {
   prefix: string;
   url: string;
   headers: Record<string, string>;
+  /**
+   * The upstream's tools (their own names, without the prefix) the model may use: read-only ones only. Default deny: a
+   * tool not named here, or one the upstream marks readOnlyHint false or destructiveHint true, is never offered.
+   */
+  tools?: string[];
 }
 
 /** sandbox.e2b: E2B's hosted sandboxes, built from chat/sandbox by the chat workflow. */
@@ -130,13 +135,23 @@ export interface ChatConfig {
     e2b?: E2bConfig;
     vm?: VmConfig;
   };
-  egress: { defaultAllowedHosts: string[]; routes: EgressRoute[]; cacheGiB: number };
+  egress: {
+    /** Hosts sandboxes may reach on top of the generated allowlist (docs/CHAT.md, "The sandbox allowlist"). */
+    defaultAllowedHosts: string[];
+    /** Hosts sandboxes may never reach; wins over every allow entry. */
+    denyHosts: string[];
+    /** Use the generated allowlist shipped with the image (chat/egress-allowlist/); false = defaultAllowedHosts only. */
+    generatedAllowlist: boolean;
+    /** Bytes a sandbox may send through one connection (default 8 MiB). */
+    maxUploadBytes: number;
+    routes: EgressRoute[];
+    cacheGiB: number;
+  };
   tools: {
     exa?: { keyEnv: string };
     tikhub?: { keyEnv: string };
     wisers?: { url: string; accessClientIdEnv: string; accessClientSecretEnv: string };
     upstreams: UpstreamMcp[];
-    confirm: string[];
   };
   s3: { endpoint: string; region: string; bucket: string; prefix: string };
   /** absent = no limit */
@@ -156,8 +171,8 @@ export function allowedModels(config: ChatConfig): string[] {
 
 const DEFAULTS = {
   sandbox: { provider: "kubernetes" as const, image: "", namespace: "jarvis-sandbox", runtimeClass: "gvisor", idleMinutes: 30, maxLifetimeHours: 8, maxActive: 6, cpu: "1", memory: "1Gi" },
-  egress: { defaultAllowedHosts: [] as string[], routes: [] as EgressRoute[], cacheGiB: 5 },
-  tools: { upstreams: [] as UpstreamMcp[], confirm: [] as string[] },
+  egress: { defaultAllowedHosts: [] as string[], denyHosts: [] as string[], generatedAllowlist: true, maxUploadBytes: 8 * 1024 * 1024, routes: [] as EgressRoute[], cacheGiB: 5 },
+  tools: { upstreams: [] as UpstreamMcp[] },
 };
 
 export function parseConfig(raw: unknown): ChatConfig {

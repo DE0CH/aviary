@@ -1,8 +1,7 @@
-// The tools server's own tools (docs/CHAT.md, "tools"). Descriptions are what the model reads: written for a Hong Kong
-// news / PR assistant, saying when to use each and what comes back.
-import { askUser } from "./confirm.ts";
+// The tools server's own tools (docs/CHAT.md, "tools"): all read-only (search and read; nothing that sends, posts or
+// changes anything outside). Descriptions are what the model reads: written for a Hong Kong news / PR assistant,
+// saying when to use each and what comes back.
 import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
-import { confirmText } from "./strings.ts";
 import { exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch } from "./providers.ts";
 import { int, str, text, ToolInputError, type ToolDef } from "./types.ts";
 
@@ -119,7 +118,7 @@ export const webFetch: ToolDef = {
       if (page.status >= 400) return text(`The page answered HTTP ${page.status}.${body ? `\n\n${cut(htmlToText(body).text).slice(0, 2000)}` : ""}`, true);
       if (args.raw_html || !(ct.includes("html") || ct.includes("xml"))) {
         if (!ct.startsWith("text/") && !ct.includes("json") && !ct.includes("xml") && !ct.includes("html"))
-          return text(`The URL is a ${ct || "binary"} file (${page.body.length} bytes), not a page. Download it in the sandbox with bash (curl) to work with it.`, true);
+          return text(`The URL is a ${ct || "binary"} file (${page.body.length} bytes), not a page. Download it in the sandbox with bash (curl) to work with it (the sandbox reaches widely used public sites only).`, true);
         return { content: [{ type: "text", text: `URL: ${page.url}\nContent-Type: ${ct}\n\n${cut(body)}` }], ...(costUsd !== undefined ? { costUsd } : {}) };
       }
       const t = htmlToText(body);
@@ -228,53 +227,4 @@ export const socialSearch: ToolDef = {
   },
 };
 
-/** A bare hostname from what the agent gave (URL, host:port, *.domain); null if it is not a public DNS name. */
-export function normalHost(h: string): string | null {
-  let s = h.trim().toLowerCase();
-  s = s.replace(/^[a-z]+:\/\//, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "").replace(/^\*\./, ".");
-  const bare = s.replace(/^\./, "");
-  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(bare) || /^\d+(\.\d+){3}$/.test(bare)) return null;
-  if (/(^|\.)(local|localhost|internal|cluster\.local|svc)$/.test(bare)) return null;
-  return s;
-}
-
-export const requestNetworkAccess: ToolDef = {
-  name: "request_network_access",
-  title: "Ask to reach a website from the sandbox",
-  description:
-    "The sandbox (where bash runs) can only reach package registries and a few code hosts. When a command needs another " +
-    "website (e.g. downloading a dataset or a file with curl), ask the user to allow that host for this conversation. " +
-    "The user sees the host and your reason and approves or declines; wait for the answer before retrying. Give a bare " +
-    "hostname (e.g. data.gov.hk); a leading dot (.gov.hk) asks for a whole domain. Not needed for web_search or " +
-    "web_fetch, which work without it.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      host: { type: "string", description: "Hostname, e.g. data.gov.hk (or .gov.hk for all its subdomains)." },
-      reason: { type: "string", description: "One sentence the user will read: why the sandbox needs it." },
-    },
-    required: ["host", "reason"],
-    additionalProperties: false,
-  },
-  annotations: { title: "Ask to reach a website", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  async run(args, ctx) {
-    const host = normalHost(str(args, "host", true));
-    const reason = str(args, "reason", true).slice(0, 300);
-    if (!host) throw new ToolInputError("host must be a public hostname like data.gov.hk");
-    const defaults = ctx.deps.config.egress.defaultAllowedHosts.map((x) => x.toLowerCase());
-    const covered = (list: string[]) => list.some((d) => d === host || (d.startsWith(".") && (host.endsWith(d) || host === d.slice(1))));
-    const { rows } = await ctx.deps.db.query<{ host: string }>("select host from allowed_hosts where conversation_id = $1", [ctx.turn.conversation_id]);
-    if (covered(defaults) || covered(rows.map((r) => r.host))) return text(`${host} is already allowed in this conversation.`);
-    const answer = await askUser(ctx, "network_access", confirmText(ctx.deps.config.product.locale).networkAccess(host), { host, reason });
-    if (answer === "approved") {
-      await ctx.deps.db.query(
-        "insert into allowed_hosts (conversation_id, host, added_by) values ($1, $2, $3) on conflict do nothing",
-        [ctx.turn.conversation_id, host, ctx.turn.owner],
-      );
-      return text(`The user allowed ${host}. The sandbox can reach it now (ports 80 and 443).`);
-    }
-    return text(answer === "denied" ? "The user declined." : "No answer from the user.", true);
-  },
-};
-
-export const BUILTIN: ToolDef[] = [webSearch, webFetch, newsSearch, socialSearch, requestNetworkAccess];
+export const BUILTIN: ToolDef[] = [webSearch, webFetch, newsSearch, socialSearch];

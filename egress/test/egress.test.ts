@@ -11,8 +11,11 @@ import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { sha256hex } from "../src/common/tokens.ts";
 import { Identities } from "../src/egress/identity.ts";
-import { AddressGuard, hostAllowed } from "../src/egress/netguard.ts";
-import { CostSniffer, DENY_HELP, Egress, FORCED_PROVIDER, forceZdr } from "../src/egress/proxy.ts";
+import { createSocket } from "node:dgram";
+import { HostPolicy, HostRules } from "../src/egress/allowlist.ts";
+import { AddressGuard } from "../src/egress/netguard.ts";
+import { CostSniffer, denyText, Egress, FORCED_PROVIDER, forceZdr } from "../src/egress/proxy.ts";
+import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { freshDb } from "./pg.ts";
 
 let t: Awaited<ReturnType<typeof freshDb>>;
@@ -34,7 +37,10 @@ let turnId = randomUUID();
 const RESOLVE: Record<string, string[]> = {
   "allowed.test": ["127.0.0.1"],
   "apt.test": ["127.0.0.1"],
-  "later.test": ["127.0.0.1"],
+  "www.ranked.test": ["127.0.0.1"],
+  "paste.ranked.test": ["127.0.0.1"],
+  "nope.ranked.test": ["127.0.0.1"],
+  "unknown.test": ["127.0.0.1"],
   "evil.test": ["10.0.0.5", "fd00::1"],
 };
 
@@ -106,14 +112,22 @@ before(async () => {
 
   egress = new Egress({
     db: t.db,
-    defaultAllowedHosts: ["allowed.test", "evil.test", ".apt.test"],
+    policy: new HostPolicy({
+      allow: ["allowed.test", "evil.test", ".apt.test", ".ranked.test", "malware.test"],
+      deny: [".paste.ranked.test"],
+      configDeny: ["nope.ranked.test"],
+    }),
+    maxUploadBytes: 256 * 1024,
     routes: [{ name: "model", upstream: `http://127.0.0.1:${upPort}/api`, auth: "turn", inject: { Authorization: "Bearer ${REAL_KEY}" } }],
     cacheDir: join(tmp, "cache"),
     cacheBytes: 50 * 1024 * 1024,
     selfHosts: ["egress.test"],
     guard: new AddressGuard([], ["127.0.0.1/32"]),
     allowedPorts: [80, 443, tlsPort, upPort],
-    resolver: async (h) => RESOLVE[h] ?? [],
+    resolver: async (h) => {
+      if (h === "malware.test") throw new DnsRefusal("deny:threat", "malware.test is blocked as a security threat (malware or phishing)");
+      return RESOLVE[h] ?? [];
+    },
     upstreams: { pypi: `http://127.0.0.1:${upPort}`, pypiFiles: `http://127.0.0.1:${upPort}/files`, npm: `http://127.0.0.1:${upPort}/npm` },
     aptHosts: ["apt.test"],
     env: { REAL_KEY: "sk-real" },
@@ -172,12 +186,65 @@ const rows = async () => {
   return (await t.db.query("select * from egress_log order by id")).rows;
 };
 
-test("netguard: host matching and address classes", () => {
-  assert.ok(hostAllowed("pypi.org", ["pypi.org"]));
-  assert.ok(!hostAllowed("evilpypi.org", ["pypi.org"]));
-  assert.ok(hostAllowed("a.b.example.com", [".example.com"]));
-  assert.ok(hostAllowed("example.com.", [".example.com"]));
-  assert.ok(!hostAllowed("badexample.com", [".example.com"]));
+test("allowlist: exact and suffix entries, most specific wins, an equal deny wins, config denyHosts wins", () => {
+  const r = new HostRules(["pypi.org", ".example.com", "*.wild.test"]);
+  assert.ok(r.match("pypi.org") > 0);
+  assert.equal(r.match("evilpypi.org"), 0);
+  assert.equal(r.match("www.pypi.org"), 0, "an exact entry does not cover subdomains");
+  assert.ok(r.match("a.b.example.com") > 0);
+  assert.ok(r.match("Example.COM.") > 0);
+  assert.equal(r.match("badexample.com"), 0);
+  assert.ok(r.match("x.wild.test") > 0);
+  const p = new HostPolicy({
+    allow: [".google.com", "raw.githubusercontent.com", ".gov.hk", ".tie.test"],
+    deny: [".drive.google.com", ".githubusercontent.com", ".tie.test"],
+    configDeny: [".gov.hk"],
+  });
+  assert.deepEqual(p.check("www.google.com"), { allow: true });
+  assert.deepEqual(p.check("drive.google.com"), { allow: false, reason: "deny:denylist" });
+  assert.deepEqual(p.check("raw.githubusercontent.com"), { allow: true }, "an exact allow beats a broader deny");
+  assert.deepEqual(p.check("evil.githubusercontent.com"), { allow: false, reason: "deny:denylist" });
+  assert.deepEqual(p.check("a.tie.test"), { allow: false, reason: "deny:denylist" }, "equally specific: deny wins");
+  assert.deepEqual(p.check("data.gov.hk"), { allow: false, reason: "deny:config" });
+  assert.deepEqual(p.check("unknown.example"), { allow: false, reason: "deny:host" });
+});
+
+test("allowlist: the generated lists shipped with the image", () => {
+  const p = HostPolicy.load({ defaultAllowedHosts: ["extra.example"], denyHosts: ["www.bbc.com"], generated: true });
+  assert.ok(p.allow.size > 40_000 && p.deny.size > 1000, `${p.allow.size} / ${p.deny.size}`);
+  assert.match(p.version, /^\d{4}-\d{2}-\d{2} [0-9a-f]{16}$/);
+  const allowed = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org", "github.com", "raw.githubusercontent.com",
+    "registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com", "ghcr.io", "pkg-containers.githubusercontent.com",
+    "www.scmp.com", "news.rthk.hk", "data.gov.hk", "www.censtatd.gov.hk", "www.info.gov.hk", "www.reuters.com", "extra.example"];
+  for (const h of allowed) assert.deepEqual(p.check(h), { allow: true }, h);
+  const denied = ["pastebin.com", "transfer.sh", "webhook.site", "drive.google.com", "docs.google.com", "mega.nz", "dropbox.com",
+    "foo.workers.dev", "x.ngrok-free.app", "s3.amazonaws.com", "bit.ly", "gist.github.com", "discord.com", "random-unknown-zz9q.com", "www.bbc.com"];
+  for (const h of denied) assert.equal(p.check(h).allow, false, h);
+  assert.equal(p.check("www.bbc.com").allow === false && (p.check("www.bbc.com") as { reason: string }).reason, "deny:config");
+  const off = HostPolicy.load({ defaultAllowedHosts: ["pypi.org"], denyHosts: [], generated: false });
+  assert.equal(off.check("github.com").allow, false);
+  assert.equal(off.check("pypi.org").allow, true);
+});
+
+test("threat DNS: 0.0.0.0 is a threat, NXDOMAIN is refused, a normal answer passes, answers are cached", async () => {
+  const dns = await fakeDns({ "ok.test": "1.2.3.4", "malware.test": "0.0.0.0" });
+  try {
+    const r = new ThreatResolver([`127.0.0.1:${dns.port}`], 500);
+    assert.deepEqual(await r.resolve("ok.test"), ["1.2.3.4"]);
+    await assert.rejects(r.resolve("malware.test"), (e: unknown) => e instanceof DnsRefusal && e.reason === "deny:threat");
+    await assert.rejects(r.resolve("nx.test"), (e: unknown) => e instanceof DnsRefusal && e.reason === "deny:nxdomain");
+    assert.deepEqual(await r.resolve("1.1.1.1"), ["1.1.1.1"]);
+    const before = dns.queries;
+    await r.resolve("ok.test");
+    assert.equal(dns.queries, before, "cached");
+  } finally {
+    dns.close();
+  }
+  const dead = new ThreatResolver(["127.0.0.1:9"], 200);
+  await assert.rejects(dead.resolve("ok.test"), (e: unknown) => e instanceof DnsRefusal && e.reason === "deny:dns", "fails closed");
+});
+
+test("netguard: address classes", () => {
   const g = new AddressGuard(["2a01:4f8:c015:24a1::/64"]);
   for (const ip of ["10.1.2.3", "127.0.0.1", "169.254.169.254", "100.64.0.1", "172.20.0.1", "192.168.1.1", "::1", "fd42::5", "fe80::1", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "2a01:4f8:c015:24a1::1", "0.0.0.0", "not-an-ip"])
     assert.ok(g.blocked(ip), ip);
@@ -189,7 +256,9 @@ test("CONNECT: identity, allowlist, ports and addresses are enforced", async () 
   assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic("wrong"))).status, 407);
   const denied = await connectVia(`other.test:${tlsPort}`, basic(sbToken));
   assert.equal(denied.status, 403);
-  assert.ok(denied.head.includes(DENY_HELP), denied.head);
+  assert.ok(denied.head.includes(denyText("other.test").trim()), denied.head);
+  assert.match(denied.head, /cannot be enabled from the chat/);
+  assert.doesNotMatch(denied.head, /request_network_access|ask the user|permission/i);
   assert.equal((await connectVia("allowed.test:22", basic(sbToken))).status, 403);
   const evil = await connectVia(`evil.test:${tlsPort}`, basic(sbToken));
   assert.equal(evil.status, 403);
@@ -219,13 +288,48 @@ test("CONNECT: an allowed host gets a TLS tunnel, and the call is logged with by
   assert.deepEqual(new Set(denials), new Set(["deny:auth", "deny:host", "deny:port", "deny:address"]));
 });
 
-test("a host the user allows for the conversation works on the next try", async () => {
-  assert.equal((await connectVia(`later.test:${tlsPort}`, basic(sbToken))).status, 403);
-  await t.db.query("insert into allowed_hosts (conversation_id, host, added_by) values ($1, 'later.test', 'a@x.org')", [conv]);
-  await new Promise((r) => setTimeout(r, 2100));
-  const ok = await connectVia(`later.test:${tlsPort}`, basic(sbToken));
+test("the sandbox allowlist through the proxy: suffix allow, deny list, config deny, threat DNS, all logged", async () => {
+  const ok = await connectVia(`www.ranked.test:${tlsPort}`, basic(sbToken));
   assert.equal(ok.status, 200);
   ok.sock.destroy();
+  const paste = await connectVia(`paste.ranked.test:${tlsPort}`, basic(sbToken));
+  assert.equal(paste.status, 403);
+  assert.match(paste.head, /not on the sandbox's internet allowlist/);
+  assert.equal((await connectVia(`nope.ranked.test:${tlsPort}`, basic(sbToken))).status, 403);
+  const mal = await connectVia(`malware.test:${tlsPort}`, basic(sbToken));
+  assert.equal(mal.status, 403);
+  assert.match(mal.head, /security threat/);
+  const h = await http(`http://unknown.test:${upPort}/plain`, { headers: { "proxy-authorization": basic(sbToken) } });
+  assert.equal(h.status, 403);
+  assert.match(h.body, /cannot be enabled from the chat/);
+  const r = await rows();
+  const decision = (host: string) => r.filter((x) => x.host === host).map((x) => x.decision);
+  assert.deepEqual(decision("paste.ranked.test"), ["deny:denylist"]);
+  assert.deepEqual(decision("nope.ranked.test"), ["deny:config"]);
+  assert.deepEqual(decision("malware.test"), ["deny:threat"]);
+  assert.deepEqual(decision("unknown.test"), ["deny:host"]);
+  assert.ok(r.filter((x) => x.decision.startsWith("deny:")).every((x) => x.conversation_id === conv || x.decision === "deny:auth"));
+});
+
+test("upload cap: a tunnel that sends more than maxUploadBytes is cut and logged deny:upload", async () => {
+  const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sbToken));
+  assert.equal(status, 200);
+  await new Promise<void>((resolve) => {
+    const c = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => {
+      const chunk = Buffer.alloc(64 * 1024, 120);
+      const pump = () => {
+        for (let i = 0; i < 8; i++) if (!c.destroyed) c.write(chunk);
+      };
+      pump();
+    });
+    c.on("data", () => {});
+    c.on("error", () => resolve());
+    c.on("close", () => resolve());
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  const cut = (await rows()).filter((x) => x.decision === "deny:upload");
+  assert.equal(cut.length, 1);
+  assert.ok(Number(cut[0].bytes_up) > 256 * 1024);
 });
 
 test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
@@ -434,7 +538,7 @@ test("CostSniffer reads the last cost in a stream split across chunks", () => {
 test("drain: stops accepting, waits for an open tunnel, then exits", async () => {
   const e2 = new Egress({
     db: t.db,
-    defaultAllowedHosts: ["allowed.test"],
+    policy: new HostPolicy({ allow: ["allowed.test"] }),
     routes: [],
     cacheDir: join(tmp, "cache2"),
     cacheBytes: 1024 * 1024,
@@ -461,3 +565,33 @@ test("drain: stops accepting, waits for an open tunnel, then exits", async () =>
   await d;
   assert.ok(Date.now() - t0 >= 350, "waited for the open tunnel up to the grace");
 });
+
+/** A UDP DNS server for A/AAAA questions: names in `a` answer that IPv4 address (AAAA: no data), others NXDOMAIN. */
+async function fakeDns(a: Record<string, string>): Promise<{ port: number; queries: number; close(): void }> {
+  const sock = createSocket("udp4");
+  const state = { port: 0, queries: 0, close: () => sock.close() };
+  sock.on("message", (q, from) => {
+    state.queries++;
+    let i = 12;
+    const labels: string[] = [];
+    while (q[i]) {
+      labels.push(q.subarray(i + 1, i + 1 + q[i]!).toString());
+      i += q[i]! + 1;
+    }
+    const qEnd = i + 5;
+    const qtype = q.readUInt16BE(i + 1);
+    const name = labels.join(".");
+    const ip = a[name];
+    const head = Buffer.from(q.subarray(0, 12));
+    head.writeUInt16BE(0x8180 | (ip ? 0 : 3), 2); // response, RD, RA; rcode 3 = NXDOMAIN
+    head.writeUInt16BE(1, 4);
+    const answer = ip && qtype === 1 ? Buffer.concat([Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4]), Buffer.from(ip.split(".").map(Number))]) : Buffer.alloc(0);
+    head.writeUInt16BE(answer.length ? 1 : 0, 6);
+    head.writeUInt16BE(0, 8);
+    head.writeUInt16BE(0, 10);
+    sock.send(Buffer.concat([head, q.subarray(12, qEnd), answer]), from.port, from.address);
+  });
+  await new Promise<void>((r) => sock.bind(0, "127.0.0.1", r));
+  state.port = sock.address().port;
+  return state;
+}

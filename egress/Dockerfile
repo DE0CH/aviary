@@ -25,6 +25,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY src ./src
+# the sandbox egress allowlist (generated, egress-allowlist/generate.py); the egress role reads it at start
+COPY egress-allowlist/allow.txt egress-allowlist/deny.txt ./egress-allowlist/
 COPY --from=ui /src/ui-dist /app/ui-dist
 COPY --from=claw /claw /usr/local/bin/claw
 RUN chmod 755 src/bin/* && mkdir -p /var/lib/jarvis/work /var/cache/jarvis-egress && chown -R 1000:1000 /var/lib/jarvis /var/cache/jarvis-egress

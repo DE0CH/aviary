@@ -10,6 +10,7 @@ import { allowedModels, loadConfig } from "../common/config.ts";
 import { connect } from "../common/db.ts";
 import { log } from "../common/log.ts";
 import { startPresence } from "../common/ops.ts";
+import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard } from "./netguard.ts";
 import { Egress } from "./proxy.ts";
 
@@ -21,9 +22,16 @@ export async function main(): Promise<void> {
   // provider "vm": sandboxes reach this proxy (and its mirror) at the egress VIP, which the hub translates to a pod
   const vip = config.sandbox.vm?.egressVip;
   if (vip && !selfHosts.includes(vip)) selfHosts.push(vip);
+  const policy = HostPolicy.load({
+    defaultAllowedHosts: config.egress.defaultAllowedHosts,
+    denyHosts: config.egress.denyHosts,
+    generated: config.egress.generatedAllowlist,
+  });
+  log("egress allowlist", { version: policy.version, allow: policy.allow.size, deny: policy.deny.size, configDeny: policy.configDeny.size });
   const egress = new Egress({
     db,
-    defaultAllowedHosts: config.egress.defaultAllowedHosts,
+    policy,
+    maxUploadBytes: config.egress.maxUploadBytes,
     routes: config.egress.routes,
     cacheDir: process.env.JARVIS_CACHE_DIR || "/var/cache/jarvis-egress",
     cacheBytes: Math.round(config.egress.cacheGiB * 1024 ** 3),

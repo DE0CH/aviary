@@ -1,5 +1,6 @@
 // Upstream MCP servers (config.tools.upstreams): their tools appear as <prefix>_<tool>, calls are forwarded with the
-// configured headers, ${USER_EMAIL} = the staff member the turn belongs to. The tool list is read at startup and every
+// configured headers, ${USER_EMAIL} = the staff member the turn belongs to. Only the read-only tools the upstream's
+// `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The tool list is read at startup and every
 // 10 minutes (a failed refresh keeps the last good list). Streamable HTTP client: JSON or SSE answers, a session id
 // when the server hands one out.
 import { expandEnv, type UpstreamMcp } from "../common/config.ts";
@@ -116,8 +117,10 @@ export class Upstream {
       cursor = r?.nextCursor;
       if (!cursor) break;
     }
-    this.#tools = tools.filter((t) => t && typeof t.name === "string");
-    log("upstream tools", { prefix: this.cfg.prefix, count: this.#tools.length });
+    const all = tools.filter((t) => t && typeof t.name === "string");
+    this.#tools = all.filter((t) => readOnlyAllowed(this.cfg, t));
+    const hidden = all.filter((t) => !this.#tools.includes(t)).map((t) => t.name);
+    log("upstream tools", { prefix: this.cfg.prefix, count: this.#tools.length, hidden });
   }
 
   tools(): ToolDef[] {
@@ -138,6 +141,12 @@ export class Upstream {
       },
     }));
   }
+}
+
+/** Is an upstream tool offered: named in the upstream's `tools` list and not marked as writing by the upstream. */
+export function readOnlyAllowed(cfg: UpstreamMcp, t: { name: string; annotations?: Annotations }): boolean {
+  if (!(cfg.tools ?? []).includes(t.name)) return false;
+  return t.annotations?.readOnlyHint !== false && t.annotations?.destructiveHint !== true;
 }
 
 /** Keep every upstream's list fresh: now, then every `everyMs`; a failure is logged and the old list stays. */

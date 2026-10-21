@@ -1,7 +1,7 @@
 // What every tool of the tools server is (docs/CHAT.md, "tools"): an MCP tool definition plus the function that runs it
 // for one turn. Results are MCP content; costUsd (when the provider reports one) goes into tool_calls.
 import type { ChatConfig } from "../common/config.ts";
-import type { Db, Listener } from "../common/db.ts";
+import type { Db } from "../common/db.ts";
 
 export interface TurnRef {
   id: string;
@@ -39,13 +39,8 @@ export interface ToolDef {
 export interface Deps {
   config: ChatConfig;
   db: Db;
-  listener: Listener;
-  /** Base URL of the web role inside the cluster (POST /internal/events). */
-  webUrl: string;
   env: Record<string, string | undefined>;
   fetch: typeof fetch;
-  /** How long a confirmation waits for the staff member (default 15 minutes). */
-  confirmTimeoutMs: number;
   /** Address check for web_fetch's direct path (tests reach local fakes through it). */
   resolve?: (host: string) => Promise<{ address: string; family: number }>;
   /** Ports web_fetch may reach (default 80, 443, 8080, 8443). */
