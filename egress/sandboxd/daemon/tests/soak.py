@@ -10,7 +10,7 @@ Runs two daemons (A on 127.0.0.1, B on 127.0.0.2) as root (mlockall), then:
 Usage: sudo -E python3 tests/soak.py BINARY [--seconds N] [--node ../src/main.ts]   (--node: run the same load
 against the Node sandboxd for comparison, RSS only)
 """
-import argparse, http.client, json, os, random, shutil, signal, socket, ssl, subprocess, sys, tempfile, threading, time
+import argparse, http.client, json, os, random, shutil, signal, socket, ssl, stat, subprocess, sys, tempfile, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAKE = os.path.join(HERE, "fake")
@@ -122,7 +122,7 @@ def functional(A, B, cl, intruder):
     check(h["sandboxd"]["memory"]["budget"] > 0 and h["peers"][0]["allowedIps"] == ["10.201.0.1/32"], "host: memory + peers")
     check(intruder.call(A.ip, "GET", "/v1/host") == (403, {"error": "not the controller"}), "403 for another client certificate")
     s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.200.0.11"))
-    check(s == 200 and r["name"] == "sbx-f1" and r["state"] == "running" and r["memory"] == 1 << 30, "create")
+    check(s == 200 and r["name"] == "sbx-f1" and r["state"] == "running" and r["memory"] == 1 << 30, f"create {s} {r}")
     check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.200.0.11"))[0] == 200, "create is idempotent")
     check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f2", "10.200.0.11"))[0] == 409, "ip in use: 409")
     bundle = json.load(open(f"{A.root}/var/lib/sbx/bundles/sbx-f1/config.json"))
@@ -142,6 +142,16 @@ def functional(A, B, cl, intruder):
     check(cl.call(A.ip, "POST", "/v1/sandboxes", raw="x" * (70 << 10))[0] == 413, "body too large: 413")
     # migration A -> B
     s, sp = cl.call(A.ip, "GET", "/v1/sandboxes/sbx-f1/spec")
+    # the scratch filesystem moves with it: files, hard links, mtimes, overlayfs whiteouts (0/0 character devices)
+    # and opaque directories (trusted.overlay.* xattrs), /tmp
+    sa, sb = f"{A.root}/var/lib/sbx/scratch/sbx-f1", f"{B.root}/var/lib/sbx/scratch/sbx-f1"
+    os.makedirs(f"{sa}/upper/etc/opq", exist_ok=True)
+    open(f"{sa}/upper/etc/new.conf", "w").write("x" * 5000)
+    os.link(f"{sa}/upper/etc/new.conf", f"{sa}/upper/etc/hard.conf")
+    os.utime(f"{sa}/upper/etc/new.conf", ns=(1_700_000_000_123_456_789, 1_700_000_000_123_456_789))
+    os.mknod(f"{sa}/upper/etc/gone", 0o600 | stat.S_IFCHR, os.makedev(0, 0))
+    os.setxattr(f"{sa}/upper/etc/opq", "trusted.overlay.opaque", b"y")
+    open(f"{sa}/tmp/t.txt", "w").write("tmp")
     s, rx = cl.call(B.ip, "POST", "/v1/sandboxes/sbx-f1/receive", sp)
     check(s == 200 and rx["address"] == B.ip and 7100 <= rx["port"] <= 7199, "receive")
     check(cl.call(A.ip, "POST", "/v1/sandboxes/sbx-f1/send", {"to": "10.9.9.9:1"})[0] == 400, "send to outside the overlay: 400")
@@ -149,6 +159,11 @@ def functional(A, B, cl, intruder):
     check(s == 200 and r["ms"] >= 0, "send")
     s, r = cl.call(B.ip, "GET", "/v1/sandboxes/sbx-f1/receive?wait=20000")
     check(s == 200 and r["state"] == "running" and r["stats"]["bytes"] > 0, f"receive result {r}")
+    st = os.stat(f"{sb}/upper/etc/new.conf"); g = os.stat(f"{sb}/upper/etc/gone")
+    check(open(f"{sb}/upper/etc/new.conf").read() == "x" * 5000 and st.st_mtime_ns == 1_700_000_000_123_456_789
+          and st.st_ino == os.stat(f"{sb}/upper/etc/hard.conf").st_ino and stat.S_ISCHR(g.st_mode) and g.st_rdev == 0
+          and os.getxattr(f"{sb}/upper/etc/opq", "trusted.overlay.opaque") == b"y"
+          and open(f"{sb}/tmp/t.txt").read() == "tmp" and not os.path.exists(sa), "scratch moved (files, links, times, whiteouts, xattrs)")
     check([x["name"] for x in cl.call(A.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == [], "gone from A")
     check([x["name"] for x in cl.call(B.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == ["sbx-f1"], "running on B")
     # a send that fails before the switch: 409, still there

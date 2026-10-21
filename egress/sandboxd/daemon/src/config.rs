@@ -471,7 +471,16 @@ impl Spec {
             w.kstr(k, v);
         }
         w.end();
-        w.kf64("cpu", self.cpu).ku64("memory", self.memory).kstr("cpuFeatures", self.cpu_features.as_str()).end();
+        w.kf64("cpu", self.cpu).ku64("memory", self.memory).kstr("cpuFeatures", self.cpu_features.as_str());
+        // the persistent folders: a migration's destination (GET spec → receive) and the state file need them, or
+        // the restored sandbox lacks /workspace and ~/.claude (runsc refuses the restore: "Mounts" differ)
+        if !self.workspace.is_empty() {
+            w.kstr("workspace", self.workspace.as_str());
+        }
+        if !self.user.is_empty() {
+            w.kstr("user", self.user.as_str());
+        }
+        w.end();
     }
 
     #[cfg(test)]
@@ -516,6 +525,12 @@ mod tests {
         let back = Spec::parse(j, "10.200.0.0/16").ok().unwrap();
         assert_eq!(back.env.as_str(), s.env.as_str());
         assert_eq!(back.memory, 2 << 30);
+        // the persistent folders survive the round trip (GET spec → a migration's receive; the state file)
+        let cc = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu","workspace":"c0ffee-1","user":"u-1"}"#;
+        let s2 = Spec::parse(cc, "10.200.0.0/16").ok().unwrap();
+        let mut out2 = [0u8; 4096];
+        let back2 = Spec::parse(s2.write_json(&mut out2).unwrap(), "10.200.0.0/16").ok().unwrap();
+        assert_eq!((back2.workspace.as_str(), back2.user.as_str()), ("c0ffee-1", "u-1"));
         let bad = |b: &[u8], m: &str| {
             let e = Spec::parse(b, "10.200.0.0/16").err().unwrap();
             assert_eq!(e.status, 400);

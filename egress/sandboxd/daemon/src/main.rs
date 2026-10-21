@@ -19,6 +19,7 @@ mod json;
 mod net;
 mod paths;
 mod proc;
+mod relay;
 mod runsc;
 mod sandboxes;
 mod server;
@@ -276,6 +277,9 @@ fn main() {
     if args.get(1).map(|s| s.as_str()) == Some("--version") {
         println!("sandboxd {} (rust)", env!("CARGO_PKG_VERSION"));
         return;
+    }
+    if args.get(1).map(|s| s.as_str()) == Some("migrate-relay") {
+        std::process::exit(relay::main(&args[2..]));
     }
     if args.get(1).map(|s| s.as_str()) == Some("budget") {
         let cfg = if let Some(p) = args.get(2) {

@@ -31,27 +31,33 @@ elif cmd in ("delete", "kill"):
     if cmd == "delete" and os.path.exists(path):
         os.remove(path)
 elif cmd == "checkpoint":
+    # the fork's pre-copy stream framing: magic, Pages records, End (pkg/sentry/state/precopy)
     to = opt("--migrate-to"); host, port = to.rsplit(":", 1)
     n = int(os.environ.get("FAKE_MIGRATE_BYTES", "1048576")); ms = int(os.environ.get("FAKE_MIGRATE_MS", "200"))
     if os.environ.get("FAKE_SEND_FAIL"):
         print("ErrPrecopyNotConverging", file=sys.stderr); sys.exit(1)
     s = socket.create_connection((host, int(port)), timeout=10)
-    chunk = b"x" * 65536; sent = 0; t0 = time.time()
+    s.sendall(b"gVprcp01")
+    chunk = b"x" * 65536; sent = 0
     while sent < n:
-        s.sendall(chunk[: min(len(chunk), n - sent)]); sent += min(len(chunk), n - sent)
+        k = min(len(chunk), n - sent)
+        s.sendall(b"\x01" + sent.to_bytes(8, "little") + k.to_bytes(8, "little") + chunk[:k]); sent += k
         time.sleep(ms / 1000 * min(len(chunk), n) / max(n, 1))
+    s.sendall(b"\x05")
     s.close()
-    os.remove(path)
+    open(path, "w").write("stopped")
 elif cmd == "restore":
     host, port = opt("--migrate-listen").rsplit(":", 1)
     json.load(open(os.path.join(opt("--bundle"), "config.json")))
     l = socket.socket(); l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); l.bind((host, int(port))); l.listen(1)
     l.settimeout(120)
-    c, peer = l.accept(); got = 0; t0 = time.time()
+    c, peer = l.accept(); got = 0; last = b""; t0 = time.time()
     while True:
         b = c.recv(65536)
         if not b: break
-        got += len(b)
+        got += len(b); last = b[-1:]
+    if last != b"\x05":
+        print("pre-copy stream ended before it was complete", file=sys.stderr); sys.exit(1)
     open(path, "w").write("running")
     print(json.dumps({"from": "%s:%d" % peer, "bytes": got, "rounds": 1, "total_ms": round((time.time() - t0) * 1000, 3)}))
 else:

@@ -22,7 +22,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get -qq update || apt-get -qq update
-apt-get -qq install -y jq nftables wireguard-tools zstd curl iproute2 ca-certificates logrotate >/dev/null
+apt-get -qq install -y jq nftables wireguard-tools zstd curl iproute2 ca-certificates logrotate rsync >/dev/null
 systemctl disable --now nftables.service >/dev/null 2>&1 || true   # sandboxd owns its tables; no flush at boot
 
 # the Node sandboxd's leftovers (sandboxd is a static Rust binary now)

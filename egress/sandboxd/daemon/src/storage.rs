@@ -1,7 +1,9 @@
 //! A sandbox's files on the host (docs/CLAUDE-CODE.md "Storage in the sandbox"):
 //! - scratch: a sparse 5 GiB ext4 file per sandbox, loop-mounted at /var/lib/sbx/scratch/<name>; it holds the root
 //!   overlay's upper layer (installs) and the sandbox's /tmp and Docker directory, so writes past 5 GiB fail with
-//!   ENOSPC and one sandbox can't fill the host's disk. Plain files: a migration copies them file by file.
+//!   ENOSPC and one sandbox can't fill the host's disk. Plain files: a migration copies them file by file with rsync
+//!   (`sync_scratch` on the source, `rsync --daemon` behind the destination's migrate-relay; docs/SANDBOX-VM.md
+//!   "Scratch on migration"): rounds while the sandbox runs, then a final delta while it is stopped.
 //! - root: Linux overlayfs, the image's rootfs (read-only, shared) under scratch/upper, at /var/lib/sbx/root/<name>;
 //!   runsc runs with --overlay2=none, so nothing of the root lives in gVisor's memory file.
 //! - persistent, on the host's JuiceFS mount (/var/lib/sbx/jfs, mounted by the host setup): `/workspace` is folder
@@ -12,6 +14,7 @@ use crate::path;
 use crate::paths::{self, P};
 use crate::proc::{quiet, run_env, sh};
 use crate::util::{Error, Res};
+use core::fmt::Write as _;
 
 pub const SCRATCH_BYTES: &str = "5G";
 const WORKSPACE_GIB: &str = "1";
@@ -61,6 +64,7 @@ pub fn setup(spec: &Spec) -> Res<P> {
     for d in ["/upper", "/work"] {
         crate::util::mkdir(paths::join(sd.as_str(), d).as_str(), 0o755)?;
     }
+    premake_upper(spec.image.as_str(), paths::join(sd.as_str(), "/upper").as_str())?;
     for d in ["/tmp", "/docker"] {
         let p = paths::join(sd.as_str(), d);
         crate::util::mkdir(p.as_str(), 0o755)?;
@@ -97,6 +101,134 @@ pub fn setup(spec: &Spec) -> Res<P> {
         workspace(spec.workspace.as_str())?;
     }
     Ok(root)
+}
+
+/// Directories on the way to the sandbox's bind mounts. They are made in the upper layer before the overlay is
+/// mounted (as the image has them: mode and owner), on every host the same way. Why: runsc looks these paths up
+/// while it creates a sandbox, and overlayfs caches what it found; a migration's destination creates the sandbox
+/// before the source's upper layer is copied in under the mounted overlay, and a directory cached as lower-only
+/// (pinned by the bind mount on it) would hide everything copied into its upper twin. With the upper directory
+/// there from the start, the overlay looks into it on every lookup.
+const MOUNT_PATHS: [&str; 8] =
+    ["/tmp", "/var", "/var/lib", "/var/lib/docker", "/workspace", "/home", "/home/sandbox", "/home/sandbox/.claude"];
+
+fn premake_upper(image: &str, upper: &str) -> Res<()> {
+    use std::os::unix::fs::MetadataExt;
+    for rel in MOUNT_PATHS {
+        let up = paths::join(upper, rel);
+        if std::fs::symlink_metadata(up.as_str()).is_ok() {
+            continue;
+        }
+        let lower = path!("/var/lib/sbx/images/{image}/rootfs{rel}");
+        let (mode, uid, gid) = match std::fs::symlink_metadata(lower.as_str()) {
+            Ok(m) if m.is_dir() => (m.mode() & 0o7777, m.uid(), m.gid()),
+            Ok(_) => continue, // not a directory in the image: leave it to the overlay
+            Err(_) => (0o755, 0, 0),
+        };
+        let mut b = [0u8; 512];
+        let c = crate::fixed::cstr(up.as_str(), &mut b).ok_or_else(|| Error::new(500, "path too long"))?;
+        unsafe {
+            if libc::mkdir(c.as_ptr(), 0o700) != 0 {
+                return Err(crate::util::at(up.as_str(), std::io::Error::last_os_error()));
+            }
+            libc::chown(c.as_ptr(), uid, gid);
+            libc::chmod(c.as_ptr(), mode);
+        }
+    }
+    Ok(())
+}
+
+/// The destination's rsync daemon configuration (module `scratch` = the sandbox's scratch filesystem), next to its
+/// bundle. Root on both ends, numeric ids, chroot: owners, modes, times, hard links, ACLs and xattrs (overlayfs'
+/// trusted.overlay.* on opaque directories) and devices (overlayfs' whiteouts are 0/0 character devices) arrive as
+/// they are on the source. Only overlay addresses may connect.
+pub fn rsyncd_conf(name: &str, host_cidr: &str, buf: &mut [u8]) -> Res<P> {
+    let conf = path!("/var/lib/sbx/bundles/{name}/rsyncd.conf");
+    let mut b = crate::fixed::Buf::new(buf);
+    let sd = scratch_dir(name);
+    let log = path!("/var/log/sbx/{name}.rsync.log");
+    let _ = write!(
+        b,
+        "use chroot = yes\nnumeric ids = yes\nuid = 0\ngid = 0\ntimeout = 300\nreverse lookup = no\n\
+         hosts allow = {host_cidr} 127.0.0.0/8\nlog file = {log}\n[scratch]\npath = {sd}\nread only = no\n\
+         list = no\nopen noatime = yes\n"
+    );
+    if b.full {
+        return Err(Error::new(500, "rsyncd.conf too long"));
+    }
+    let len = b.len;
+    crate::util::write_file_atomic(conf.as_str(), &buf[..len], 0o600)?;
+    Ok(conf)
+}
+
+/// One rsync round's figures (from `rsync --stats`).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct SyncStats {
+    pub files: u64,
+    pub bytes: u64,
+    pub deleted: u64,
+    pub ms: u64,
+}
+
+/// Copies the sandbox's scratch filesystem to the destination's relay (`to` = its overlay host:port). `last`: the
+/// final delta while the sandbox is stopped (any error fails it); before that, files changing or vanishing under
+/// rsync (exit 23/24) are expected and the next round picks them up. overlayfs' work directory is not copied.
+pub fn sync_scratch(name: &str, to: &str, last: bool, out: &mut [u8]) -> Res<SyncStats> {
+    let t0 = crate::util::mono_ms();
+    let sd = scratch_dir(name);
+    let mut src: P = P::new();
+    let _ = src.push(sd.as_str()) && src.push("/");
+    let mut url: crate::fixed::Str<120> = crate::fixed::Str::new();
+    if !(url.push("rsync://") && url.push(to) && url.push("/scratch/")) {
+        return Err(Error::new(500, "rsync url too long"));
+    }
+    let argv = [
+        "rsync",
+        "-aHAX",
+        "--numeric-ids",
+        "--delete",
+        "--exclude=/work/**",
+        "--exclude=/lost+found",
+        "--stats",
+        "--timeout=120",
+        "--contimeout=10",
+        src.as_str(),
+        url.as_str(),
+    ];
+    let o = crate::proc::run(&argv, out, 15 * 60_000)?;
+    let ok = o.code == 0 || (!last && (o.code == 23 || o.code == 24));
+    if !ok {
+        return Err(o.failure(&argv));
+    }
+    let mut st = parse_stats(o.out_str());
+    st.ms = crate::util::mono_ms() - t0;
+    Ok(st)
+}
+
+fn parse_stats(text: &str) -> SyncStats {
+    let num = |line: &str| -> u64 {
+        let v = line.split_once(':').map(|x| x.1).unwrap_or("");
+        let mut n = 0u64;
+        for c in v.trim_start().bytes() {
+            match c {
+                b'0'..=b'9' => n = n * 10 + (c - b'0') as u64,
+                b',' | b'.' => {}
+                _ => break,
+            }
+        }
+        n
+    };
+    let mut st = SyncStats::default();
+    for l in text.lines() {
+        if l.starts_with("Number of regular files transferred:") {
+            st.files = num(l);
+        } else if l.starts_with("Total transferred file size:") {
+            st.bytes = num(l);
+        } else if l.starts_with("Number of deleted files:") {
+            st.deleted = num(l);
+        }
+    }
+    st
 }
 
 /// The conversation's `/workspace`; a new one gets its quota (1 GiB, 1,000 files) at once.
@@ -163,4 +295,18 @@ pub fn teardown(name: &str) {
     quiet(&["umount", "-l", sd.as_str()]);
     quiet(&["rmdir", root.as_str(), sd.as_str()]);
     crate::util::remove_file(scratch_img(name).as_str());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rsync_stats() {
+        let t = "Number of files: 1,203 (reg: 1,000, dir: 200, dev: 3)\nNumber of created files: 10\n\
+                 Number of deleted files: 4 (reg: 4)\nNumber of regular files transferred: 1,042\n\
+                 Total file size: 123,456,789 bytes\nTotal transferred file size: 12,345,678 bytes\n";
+        assert_eq!(parse_stats(t), SyncStats { files: 1042, bytes: 12_345_678, deleted: 4, ms: 0 });
+        assert_eq!(parse_stats(""), SyncStats::default());
+    }
 }

@@ -11,7 +11,8 @@
 //!   POST   /v1/sandboxes/{name}/receive {spec}   migration target: prepare and listen; returns {port, address}
 //!   GET    /v1/sandboxes/{name}/receive?wait=ms  migration target: the receive's result
 //!   GET    /v1/sandboxes/{name}/spec       its spec
-//!   POST   /v1/sandboxes/{name}/send {to, downtimeMs?, maxRounds?, maxDowntimeMs?}   migration source
+//!   POST   /v1/sandboxes/{name}/send {to, downtimeMs?, maxRounds?, maxDowntimeMs?}   migration source (scratch
+//!                                          rounds, memory pre-copy, final scratch delta; returns {ms, scratch})
 //!
 //! Every handler writes its JSON answer into the worker's fixed `out` buffer.
 use crate::config::{Peer, Spec, parse_peer};
@@ -367,8 +368,8 @@ fn route(app: &App, req: &Req, w: &mut W, sc: &mut Scratch) -> Res<u16> {
             let downtime = clamp(get_num(o, "downtimeMs")?, 100.0, 10.0, 5000.0) as u64;
             let rounds = clamp(get_num(o, "maxRounds")?, 20.0, 1.0, 50.0) as u64;
             let max_downtime = clamp(get_num(o, "maxDowntimeMs")?, 0.0, 0.0, 60_000.0) as u64;
-            let ms = app.sbx.send(name, to.as_str(), downtime, rounds, max_downtime, sc)?;
-            w.obj().ku64("ms", ms).end();
+            let st = app.sbx.send(name, to.as_str(), downtime, rounds, max_downtime, sc)?;
+            st.write(w);
             return Ok(200);
         }
     }

@@ -21,6 +21,12 @@ pub const RECEIVING: u8 = 2;
 
 const PORT_MIN: u16 = 7100;
 const PORT_MAX: u16 = 7199;
+/// the restore listens on 127.0.0.1:<port + this>; the relay on <overlay address>:<port>
+const RESTORE_PORT_OFFSET: u16 = 1000;
+/// rsync rounds while the sandbox runs, before its memory is copied (stop early once a round copies little)
+const SCRATCH_LIVE_ROUNDS: usize = 3;
+const SCRATCH_SMALL_BYTES: u64 = 32 << 20;
+const SCRATCH_SMALL_FILES: u64 = 2000;
 
 #[derive(Clone, Copy)]
 pub struct Entry {
@@ -53,6 +59,8 @@ unsafe impl Zeroed for Slot {}
 pub struct Mig {
     name: Str<48>,
     pid: i32,
+    /// the migrate-relay child (relay.rs): owns the receive's port, takes the scratch copy and the stream
+    relay: i32,
     /// the restore child runs
     active: bool,
     /// a slot thread waits for pid
@@ -545,6 +553,7 @@ impl Sandboxes {
         {
             let m = self.migt();
             if let Some(x) = m.iter().find(|x| x.in_use && x.active && x.name.as_str() == name) {
+                proc::kill(x.relay);
                 proc::kill(x.pid);
             }
         }
@@ -563,8 +572,11 @@ impl Sandboxes {
     }
 
     /// Target side of a migration: same network (without the /32 route: traffic still goes to the source until the
-    /// restore is done) and bundle, then `runsc restore --migrate-listen` on the overlay address. Returns the port.
+    /// restore is done), bundle and storage (an empty scratch filesystem and the overlay on the same image), then
+    /// `runsc restore --migrate-listen` on 127.0.0.1:<port+1000> and the migrate-relay (relay.rs) on the overlay
+    /// address:<port>, which takes the source's scratch copy and passes the pre-copy stream on. Returns the port.
     pub fn receive(&self, spec: &Spec, sc: &mut Scratch) -> Res<(u16, &'static str)> {
+        let mut relay_pid = 0;
         let name = spec.name.as_str();
         let lk = self.lock(name)?;
         if self.get(name).is_some() {
@@ -585,6 +597,7 @@ impl Sandboxes {
             m[i] = Mig {
                 name: spec.name,
                 pid: 0,
+                relay: 0,
                 active: false,
                 assigned: false,
                 done: false,
@@ -597,6 +610,7 @@ impl Sandboxes {
         let r = (|| -> Res<(u16, i32)> {
             let port = self.free_port()?;
             let bundle = self.prepare(spec, false, sc)?;
+            let conf = crate::storage::rsyncd_conf(name, self.cfg.host_cidr.as_str(), sc.big)?;
             let dir = path!("/run/sbx/ckpt/in-{name}");
             quiet(&["rm", "-rf", dir.as_str()]);
             crate::util::mkdir(dir.as_str(), 0o700)?;
@@ -615,7 +629,9 @@ impl Sandboxes {
             let out = log_file(name, true)?;
             let err = log_file(name, false)?;
             let mut listen: Str<32> = Str::new();
-            let _ = write!(listen, "{}:{port}", self.cfg.wg_address);
+            let _ = write!(listen, "127.0.0.1:{}", port + RESTORE_PORT_OFFSET);
+            let mut relay_at: Str<32> = Str::new();
+            let _ = write!(relay_at, "{}:{port}", self.cfg.wg_address);
             let mut a = [""; 40];
             let argv = runsc::argv(
                 &mut a,
@@ -634,6 +650,21 @@ impl Sandboxes {
             )?;
             use std::os::fd::AsRawFd;
             let c = spawn(argv, &[], Io::Null, Io::Fd(out.as_raw_fd()), Io::Fd(err.as_raw_fd()))?;
+            let relay = spawn(
+                &["/proc/self/exe", "migrate-relay", relay_at.as_str(), listen.as_str(), conf.as_str(), "900"],
+                &[],
+                Io::Null,
+                Io::Fd(err.as_raw_fd()),
+                Io::Fd(err.as_raw_fd()),
+            );
+            match relay {
+                Ok(r) => relay_pid = r.pid,
+                Err(e) => {
+                    proc::kill(c.pid);
+                    proc::wait(c.pid, true);
+                    return Err(e);
+                }
+            }
             Ok((port, c.pid))
         })();
         let (port, pid) = match r {
@@ -647,6 +678,7 @@ impl Sandboxes {
         {
             let mut m = self.migt();
             m[mi].pid = pid;
+            m[mi].relay = relay_pid;
             m[mi].active = true;
             m[mi].assigned = true;
         }
@@ -654,7 +686,7 @@ impl Sandboxes {
         // listening?
         let until = mono_ms() + 30_000;
         while mono_ms() < until {
-            if listening(port) {
+            if listening(port) && listening(port + RESTORE_PORT_OFFSET) {
                 return Ok((port, self.cfg.wg_address.as_str()));
             }
             if !self.migt()[mi].active {
@@ -662,6 +694,7 @@ impl Sandboxes {
             }
             crate::util::sleep_ms(50);
         }
+        proc::kill(relay_pid);
         proc::kill(pid);
         drop(lk);
         Err(Error::new(500, "the restore did not start listening"))
@@ -670,14 +703,21 @@ impl Sandboxes {
     /// Slot thread `i`: waits for its restore child, then finishes the receive (route, stats, state) or cleans up.
     pub fn migration_thread(&self, i: usize, sc: &mut Scratch) -> ! {
         loop {
-            let (pid, name) = {
+            let (pid, relay, name) = {
                 let mut m = self.migt();
                 while !m[i].assigned {
                     m = self.mcv.wait(m).unwrap_or_else(|p| p.into_inner());
                 }
-                (m[i].pid, m[i].name)
+                (m[i].pid, m[i].relay, m[i].name)
             };
+            // the relay ends first: 0 = End delivered (the restore goes on), else the restore can't succeed (it may
+            // still wait for a stream that never comes)
+            let rc = if relay > 0 { proc::wait(relay, true).unwrap_or(-1) } else { 0 };
+            if rc != 0 {
+                proc::kill(pid);
+            }
             let code = proc::wait(pid, true).unwrap_or(-1);
+            let code = if rc != 0 && code == 0 { -1 } else { code };
             {
                 self.migt()[i].active = false;
             }
@@ -783,7 +823,7 @@ impl Sandboxes {
         rounds: u64,
         max_downtime_ms: u64,
         sc: &mut Scratch,
-    ) -> Res<u64> {
+    ) -> Res<SendStats> {
         {
             let mut n = self.sends.lock().unwrap_or_else(|p| p.into_inner());
             if *n >= self.cfg.limits.max_migrations {
@@ -804,13 +844,33 @@ impl Sandboxes {
         rounds: u64,
         max_downtime_ms: u64,
         sc: &mut Scratch,
-    ) -> Res<u64> {
+    ) -> Res<SendStats> {
         let lk = self.lock(name)?;
         let e = match self.get(name) {
             Some(e) if e.state == RUNNING => e,
             _ => return Err(err!(404, "{name} is not running here")),
         };
         let t0 = mono_ms();
+        let mut stats = SendStats::default();
+        // the scratch filesystem, while the sandbox runs (a failure here leaves it running, untouched)
+        for _ in 0..SCRATCH_LIVE_ROUNDS {
+            let st = crate::storage::sync_scratch(name, to, false, sc.small).map_err(|x| {
+                Log::error("sandbox send: scratch copy failed").s("sandbox", name).s("error", x.msg.as_str()).emit();
+                err!(
+                    409,
+                    "copying the scratch filesystem failed; the sandbox still runs here: {}",
+                    tail_chars(x.msg.as_str(), 300)
+                )
+            })?;
+            stats.live_rounds += 1;
+            stats.live.files += st.files;
+            stats.live.bytes += st.bytes;
+            stats.live.deleted += st.deleted;
+            stats.live.ms += st.ms;
+            if st.bytes < SCRATCH_SMALL_BYTES && st.files < SCRATCH_SMALL_FILES {
+                break;
+            }
+        }
         let (mut d, mut r, mut md): (Str<24>, Str<24>, Str<24>) = (Str::new(), Str::new(), Str::new());
         let _ = write!(d, "{downtime_ms}ms");
         let _ = write!(r, "{rounds}");
@@ -846,13 +906,57 @@ impl Sandboxes {
             if st.as_str() == "running" {
                 return Err(err!(409, "migration failed before the switch; the sandbox still runs here: {tail}"));
             }
+            notify_relay(to, crate::relay::FAIL);
             self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
             return Err(err!(502, "migration failed after the switch; the sandbox is lost: {tail}"));
         }
+        // The sandbox is stopped, its file data written to the host, its stream complete but for End, which the
+        // destination's relay holds back. Now the scratch's final delta, while runsc deletes the stopped container:
+        // its gofer closes the sandbox's files, so JuiceFS commits what was written to /workspace and ~/.claude
+        // (the destination mounts the same volume). Then SBXDONE: the relay passes End on and the restore starts.
+        let t1 = mono_ms();
+        let mut a = [""; 40];
+        let del = runsc::argv(&mut a, &["delete", "-force", name])
+            .and_then(|argv| spawn(argv, &[], Io::Null, Io::Null, Io::Null));
+        let fin = crate::storage::sync_scratch(name, to, true, sc.small);
+        if let Ok(c) = del {
+            proc::wait(c.pid, true);
+        }
+        let fin = match fin {
+            Ok(f) => f,
+            Err(x) => {
+                notify_relay(to, crate::relay::FAIL);
+                Log::error("sandbox send: final scratch copy failed")
+                    .s("sandbox", name)
+                    .s("error", x.msg.as_str())
+                    .emit();
+                self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
+                return Err(err!(
+                    502,
+                    "the final scratch copy failed after the switch; the sandbox is lost: {}",
+                    tail_chars(x.msg.as_str(), 300)
+                ));
+            }
+        };
+        stats.last = fin;
+        if !notify_relay(to, crate::relay::DONE) {
+            self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
+            return Err(err!(502, "the destination did not take the end of the migration; the sandbox is lost"));
+        }
+        stats.stopped_ms = mono_ms() - t1;
         self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
-        let ms = mono_ms() - t0;
-        Log::info("sandbox sent").s("sandbox", name).s("to", to).n("ms", ms).emit();
-        Ok(ms)
+        stats.ms = mono_ms() - t0;
+        let mut jb = [0u8; 512];
+        let mut buf = Buf::new(&mut jb);
+        stats.write(&mut W::new(&mut buf));
+        let jl = if buf.full { 0 } else { buf.len };
+        Log::info("sandbox sent")
+            .s("sandbox", name)
+            .s("to", to)
+            .n("ms", stats.ms)
+            .j("stats", if jl == 0 { b"null" } else { &jb[..jl] })
+            .emit();
+        Ok(stats)
     }
 
     /// Removes runsc containers that have no state (left by a crash between run and save).
@@ -906,6 +1010,51 @@ impl Sandboxes {
     fn receiving(&self, name: &str) -> bool {
         self.migt().iter().any(|x| x.in_use && !x.done && x.name.as_str() == name)
     }
+}
+
+/// What a send did (its answer, additive to the old `{ms}`).
+#[derive(Clone, Copy, Default)]
+pub struct SendStats {
+    pub ms: u64,
+    /// scratch rounds while the sandbox ran, and their sums
+    pub live_rounds: u64,
+    pub live: crate::storage::SyncStats,
+    /// the final scratch delta (sandbox stopped)
+    pub last: crate::storage::SyncStats,
+    /// from the end of the stream (sandbox stopped) to the destination's ack of SBXDONE: the time the scratch adds to
+    /// the pause (final delta, container delete, End to the restore)
+    pub stopped_ms: u64,
+}
+
+impl SendStats {
+    pub fn write(&self, w: &mut W) {
+        w.obj().ku64("ms", self.ms).key("scratch").obj();
+        w.ku64("liveRounds", self.live_rounds)
+            .ku64("liveFiles", self.live.files)
+            .ku64("liveBytes", self.live.bytes)
+            .ku64("liveMs", self.live.ms)
+            .ku64("finalFiles", self.last.files)
+            .ku64("finalBytes", self.last.bytes)
+            .ku64("finalDeleted", self.last.deleted)
+            .ku64("finalMs", self.last.ms)
+            .ku64("stoppedMs", self.stopped_ms);
+        w.end().end();
+    }
+}
+
+/// Sends SBXDONE/SBXFAIL to the destination's relay; true when it acknowledged (DONE: End is with the restore).
+fn notify_relay(to: &str, msg: &[u8; 8]) -> bool {
+    use std::io::{Read, Write};
+    let Ok(addr) = to.parse::<std::net::SocketAddr>() else { return false };
+    let Ok(mut c) = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) else {
+        return false;
+    };
+    let _ = c.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    if c.write_all(msg).is_err() {
+        return false;
+    }
+    let mut ok = [0u8; 2];
+    c.read_exact(&mut ok).is_ok() && &ok == b"OK"
 }
 
 fn tail_chars(s: &str, n: usize) -> &str {
