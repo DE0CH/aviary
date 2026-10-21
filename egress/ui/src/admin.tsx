@@ -568,6 +568,8 @@ function Monitor() {
         <Tile label="Errors 24 h" value={errs24 == null ? "–" : String(errs24)} tone={errs24 ? "warn" : ""} sub={d.health ? `PG ${d.health.postgres.ms} ms` : undefined} />
       </div>
       <div class="cols">
+        {/* Budget panel slot (shared model budget): a <Budget d={d} /> card goes first here, fed by a `budget` section
+            of the snapshot (web/monitor.ts #build) or its own admin API; any action needs a confirm and is logged. */}
         <Sandboxes d={d} />
         <Hosts d={d} />
         <Load d={d} />

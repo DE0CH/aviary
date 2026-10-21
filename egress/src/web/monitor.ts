@@ -143,6 +143,8 @@ export class Monitor {
       sandboxes.unowned = [...byName.values()];
       sandboxes.pool.capacity = stats.capacity;
     }
+    // new sections (e.g. the shared model budget) go into Promise.all above and here; the page renders each card
+    // from its own key and shows errors[<name>] when it failed
     return {
       at: new Date().toISOString(),
       tz,
