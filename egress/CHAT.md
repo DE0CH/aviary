@@ -15,9 +15,11 @@ Staff never see the name "Jarvis 3": the product name, logo and wording come fro
 | `egress` | The only way out of a sandbox; also the model gateway for claw. Token identity, per-conversation host allowlist, credential injection, logs every call, package cache | 2, rolling |
 | `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, upstream MCP tools, confirmations | 2, rolling |
 
-Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`): built as an E2B template for hosted
-sandboxes (`sandbox.provider: "e2b"`, the YYC instance), or started as gVisor pods (`runtimeClassName: gvisor`) in
-namespace `jarvis-sandbox` (`"kubernetes"`: tests, local runs, a self-hosted cluster). See "Sandbox providers".
+Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (runs `sandbox-agent`): run by our own sandbox hosts
+(`sandbox.provider: "vm"`, the YYC instance since 2026-10-21: gVisor on a Hetzner hub + AWS burst hosts with live
+migration), built as an E2B template for hosted sandboxes (`"e2b"`), or started as gVisor pods
+(`runtimeClassName: gvisor`) in namespace `jarvis-sandbox` (`"kubernetes"`: tests, local runs, a self-hosted
+cluster). See "Sandbox providers".
 
 ```
 browser ──Access──▶ web ──spawn per turn──▶ claw (cwd = conversation workdir, file tools confined there)
@@ -72,8 +74,31 @@ The sandbox manager (`chat/src/web/sandbox.ts`) owns the lifecycle above and the
 the agent (`waitReady` → `{url, headers}`, stored in `sandboxes.agent`), keeps alive, destroys and lists. jarvis-bash
 gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it works the same with either.
 
-- **`vm`** (designed and prototyped, not implemented): gVisor sandboxes on our own EC2 hosts, live-migrated
-  between them so the autoscaler can empty and release hosts. See docs/SANDBOX-VM.md.
+- **`vm`** (`sandbox-vm.ts`, `vm-clients.ts`; host agent `chat/sandboxd`; the YYC instance since 2026-10-21): gVisor
+  sandboxes (the DE0CH/gvisor fork) on our own hosts: one always-on Hetzner hub plus AWS EC2 burst hosts (at most
+  `aws.maxHosts`), live-migrated between them (pre-copy) so the scaler can drain AWS hosts back onto the hub and
+  terminate them. Full design, operations and measurements: docs/SANDBOX-VM.md.
+  - **Create:** the controller (web) places the sandbox (the hub while it has room, else the fullest AWS host with
+    room; none: the scaler starts one, `create` waits up to ~170 s, or answers "all sandbox hosts are full" at the
+    cap) and gives it a fixed /32 from `sandbox.vm.sandboxCidr` (`sandboxes.ip`; `sandboxes.host` = where it runs
+    now). sandboxd on that host (`POST /v1/sandboxes`, mutual TLS) starts it with the env (proxy and mirrors at
+    `http://sbx:<egress token>@<egressVip>:3128`, `JARVIS_EXEC_TOKEN`). The sandbox's first process is
+    `sbx-init.mjs` (root inside gVisor only, to start dockerd on the first `docker` command); the agent runs as uid
+    1000 with no capabilities and no_new_privs.
+  - **Ready:** `http://<ip>:7070/healthz` (no provider headers); the URL never changes, also across migrations.
+  - **keepAlive:** a no-op; the janitor releases (with the final save).
+  - **Egress:** sandboxes reach egress at `sandbox.vm.egressVip`, which the hub translates (DNAT only) to an egress
+    pod: egress sees the sandbox's own address, and egress only accepts a vm sandbox's token from that address. Each
+    egress pod announces `POD_IP` in `kv egress_pod:<pod>`; the scaler hands the live ones to the hub.
+  - **Janitor:** `list()` = every host's `GET /v1/sandboxes` (an unreachable host's rows count as present; the scaler
+    decides when a host is lost). `sandbox.vm.legacyProvider: "kubernetes"` during a switch: the previous provider's
+    sandboxes (rows without a host) stay listed and are removed through it once released.
+  - **Scaler** (web, Postgres leader lock 4242012, every 5 s): heartbeats (a host silent 30 s, the hub 120 s, loses
+    its sandboxes: rows `gone`, "host lost", reset note on the next turn), the hub's WireGuard peers and egress
+    targets, AWS hosts up (spare slots) and down (drain-back, one idle sandbox at a time, never during a turn; a move
+    across clouds only when the sandbox is idle and aborted, unchanged, if pre-copy wouldn't converge within
+    `migration.maxDowntimeMs`), empty AWS hosts terminated. Operator knobs live in table `vm_hosts`
+    (`max_sandboxes`, `status` `retiring`).
 - **`kubernetes`** (`sandbox-k8s.ts`): a gVisor pod per sandbox in `sandbox.namespace`, agent at `http://<pod IP>:7070`,
   the env (proxy, mirrors, `JARVIS_EXEC_TOKEN`) in the pod spec, the proxy `sandbox.egressProxyUrl` (default
   `http://egress.<ns>.svc.cluster.local:3128`). No provider timeout: `keepAlive` is a no-op. `create` retries for up
@@ -140,7 +165,14 @@ create table sandboxes (id uuid primary key, conversation_id uuid not null, pod 
   egress_token_hash text not null unique, exec_token text not null,   -- exec token: web<->agent only, never in Postgres logs
   status text not null check (status in ('starting','ready','releasing','gone')),
   created_at timestamptz not null default now(), last_active_at timestamptz not null default now(),
-  expires_at timestamptz not null, released_at timestamptz, release_reason text);
+  expires_at timestamptz not null, released_at timestamptz, release_reason text,
+  agent jsonb,                    -- {url, headers}: how to reach its agent (migration 2)
+  host text, ip text);            -- provider vm: the host it runs on now, its fixed /32 (migration 3)
+create table vm_hosts (name text primary key, kind text,   -- 'hub' | 'aws'   (provider vm, migration 3)
+  url text, wg_ip text, wg_public_key text, instance_id text, private_ip text,
+  status text,                    -- 'booting' | 'active' | 'draining' | 'retiring' | 'gone'
+  max_sandboxes int,              -- operator's cap (null: by memory/CPU)
+  mem_total bigint, mem_reserve bigint, cpus int, info jsonb, created_at, last_seen_at, empty_since, gone_at, gone_reason);
 create table allowed_hosts (conversation_id uuid not null, host text not null, added_by text not null,
   created_at timestamptz not null default now(), primary key (conversation_id, host));
 create table egress_log (id bigserial primary key, at timestamptz not null default now(), conversation_id uuid,
@@ -443,6 +475,9 @@ images and built the template, and push; Flux rolls the Deployments one pod at a
                       "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": "ai.yyc.deyaochen.com"}},
   // provider "kubernetes" instead: {"provider": "kubernetes", "image": "ghcr.io/de0ch/jarvis3-sandbox:<tag>",
   //   "namespace": "jarvis-sandbox", "runtimeClass": "gvisor", "cpu": "1", "memory": "1Gi", "egressProxyUrl"?: …}
+  // provider "vm" instead (docs/SANDBOX-VM.md "Config"): {"provider": "vm", "image": …, "cpu": "1", "memory": "1Gi",
+  //   "vm": {"hub": {"name", "url": "https://10.201.0.1:7443", "endpoint": "<hub IPv4>:51820"}, "cpuFeatures": "…",
+  //          "spareSlots": 1, "legacyProvider"?: "kubernetes", "aws"?: {"launchTemplate", "maxHosts": 3, …}}}
   "egress": {"defaultAllowedHosts": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org",
              "security.debian.org", "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"],
              "routes": [{"name": "model", "upstream": "https://openrouter.ai/api", "auth": "turn",
@@ -457,4 +492,6 @@ images and built the template, and push; Flux rolls the Deployments one pod at a
 ```
 
 Secrets come from the environment (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `OPENROUTER_API_KEY`
-(egress only), tool keys (tools only)). Each role gets only the Secret it needs.
+(egress only), tool keys (tools only); provider "vm", web only: `SBX_CA_CERT`, `SBX_CLIENT_CERT`, `SBX_CLIENT_KEY`,
+`SBX_HOST_CERT`, `SBX_HOST_KEY` (PEMs) and the scaler's least-privilege AWS key `SBX_AWS_ACCESS_KEY_ID`,
+`SBX_AWS_SECRET_ACCESS_KEY`). Each role gets only the Secret it needs.
