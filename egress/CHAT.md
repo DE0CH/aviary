@@ -186,6 +186,10 @@ create table confirmations (id uuid primary key, conversation_id uuid not null, 
   status text not null check (status in ('pending','approved','denied','expired')),
   created_at timestamptz not null default now(), decided_at timestamptz, decided_by text);
 create table kv (key text primary key, value jsonb not null);
+-- the admin monitor (migration 5): sandbox starts (kind 'sandbox_start': ok, ms = allocation latency from the first
+-- request incl. pool wait, detail {reason, error, provider, startMs}); kept 30 days by the janitor
+create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
+  ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
 ```
 
 Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after inserting events, and
@@ -381,7 +385,10 @@ event (tests only).
   `JARVIS_DRAIN_SECONDS` (default 1770), `JARVIS_UI_DIR`, `JARVIS_BRAND_DIR` (default `/etc/jarvis/brand`, served at
   `/brand/*`), `CLAW_PATH`. Config at `/etc/jarvis/config.json`, the system prompt file it names.
 - RBAC (provider `kubernetes` only): a ServiceAccount (token mounted) bound to a Role in the sandbox namespace with
-  `pods`: create, get, list, watch, delete and `pods/status`: get. Nothing else.
+  `pods`: create, get, list, watch, delete and `pods/status`: get. Read-only for the admin monitor (optional; what
+  is missing shows as a note on the page): in its own namespace `deployments` get/list (base Role `web-monitor`); the
+  instance may add `metrics.k8s.io` `pods` get/list in the sandbox namespace and a ClusterRole with `nodes`,
+  `metrics.k8s.io` `nodes` and `node.k8s.io` `runtimeclasses` get/list.
 - Provider `e2b`: `E2B_API_KEY` (from `web-env`) and any variable `sandbox.e2b.egressHeaders` names; outbound HTTPS to
   `api.e2b.app` and `*.e2b.app`.
 - Pod: `terminationGracePeriodSeconds: 1800`, readiness `GET /healthz`, a writable emptyDir at the work root; the image
@@ -419,7 +426,8 @@ event (tests only).
   file name
 - Errors: JSON `{error: "<message>"}` with the status; 401 = no valid Access token, 403 = signed in but not on
   `config.users` (the UI shows "not on the list"); 503 while draining (the UI retries)
-- Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`
+- Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`,
+  `GET /api/admin/monitor?tz=<IANA zone>` (the admin monitor's snapshot, below)
 - Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
   (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
   instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
@@ -428,9 +436,43 @@ event (tests only).
 
 Authorisation: Access JWT (team domain + audience from config) → email → must be in `config.users`
 (the instance's allowlist, the same list as the Access policy) → a `users` row is upserted. A user sees only their
-own conversations (others' ids answer 404); admins (`config.admins`) can read the usage/egress views, not others'
-chats. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
+own conversations (others' ids answer 404); admins (`config.admins`) can read the usage/egress views and the
+monitor, not others' chats; to anyone else every admin path (`/api/admin/*`, `/admin`, `/admin/*`, `/admin-*` bundle
+files) answers 404. A signed-in address that is not on the list gets a plain 403 page naming it (JSON 403 under `/api/`). Writes
 with an `Origin` other than `publicUrl` are refused.
+
+### Admin monitor (`/admin/monitor`, config `admins` only)
+
+A phone-friendly page (its own bundle `admin-<hash>.js|css` + `admin.html` from `chat/ui/src/admin.tsx`, so the
+staff bundle never contains it; the page may say "Jarvis 3") that polls `GET /api/admin/monitor` every 5 s while
+visible. Read-only: no actions. Code: `chat/src/web/monitor.ts` (one snapshot per replica cached 4 s; each section
+fails on its own into `errors`). It never shows message contents: conversation titles, owners, counts, timings.
+
+- **Sandboxes:** live rows (`starting`/`ready`/`releasing`) with conversation title, owner, provider + host, state,
+  age, idle time, CPU/memory use vs limit (the provider's `stats()`), last bash (`events` tool_use `bash`), resets
+  (earlier sandboxes of the conversation), pod restarts, vm migrations (count, last pause from `vm_events`); pool
+  live / `maxActive` (vm: the hosts' slots); 24 h starts with allocation p50/p95 and recent failures with their
+  reason (`ops_events`); release reasons.
+- **Hosts:** `SandboxProvider.stats()` (`provider.ts`: `ProviderStats` = hosts + sandboxes + capacity + notes):
+  `kubernetes` = sandbox pods + metrics-server, the nodes matching the RuntimeClass's nodeSelector or running
+  sandboxes (allocatable, use, Ready, kubelet); `vm` = the provider's own `VmStats` (hub + AWS hosts with load,
+  memory, slots, uptime, AWS cost so far, the scaler's settings, `vm_events` decisions and migrations), mapped by
+  `normalizeStats`; `e2b` = the list only.
+- **Load:** turns queued/running/waiting, claw processes and SSE streams (every web replica's presence), turns per
+  hour (24 h, errors marked), queue wait (`turn_started` − insert) and turn duration p50/p95, errors by kind (turn
+  errors, failed tool calls, model HTTP errors, sandbox start failures), active users now (5 min) and today (the
+  browser's time zone).
+- **Models & tools:** per model (the turn's model; title calls included) turns, input/output tokens (`turns.usage`)
+  and USD (`turns.cost_usd` = egress model cost) today and 7 days, egress model spend; tool calls 24 h by tool with
+  its service (Exa, Wisers, TikHub, `<prefix>-mcp`, web fetch), error rate, p50/p95, cost.
+- **Egress:** requests per minute (1 h), denied hosts with egress's deny reason (24 h), mirror hit rate
+  (`allow:cache`), per-pod cache counters, top talkers by sandbox (1 h).
+- **Health:** per role its replicas from presence (kv `presence:<role>:<replica>`, every 10 s: commit from
+  `JARVIS_COMMIT` = the image's build arg, start time, counters, its last 10 redacted error lines) and the
+  Deployment's ready/desired/image when readable; janitor (and vm scaler) leader from `pg_locks` + `application_name`
+  (`jarvis-<role>:<pod>`, set on every connection); Postgres round trip and connections by role; S3 reachability
+  (a HEAD, every 30 s); the latest error lines of all replicas. Error lines are redacted where they are recorded
+  (`redact` in `common/log.ts`: bearer/basic values, URL credentials, `token=`/`key=` values, long opaque strings).
 
 ## Deploying an instance
 
