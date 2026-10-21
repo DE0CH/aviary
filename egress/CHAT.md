@@ -248,8 +248,8 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    uncompressed body (`accept-encoding: identity`) so it can read the cost.
    The `model` route also refuses, before anything goes upstream: a body whose `model` is not one of config `models`
    or `titleModel` (400 `invalid_request_error`, `deny:model`), and every call once the shared budget is used up
-   (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; budget
-   read at most every 2 s; see "Budget").
+   (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; a model
+   call's `egress_log` row is written as soon as it ends and the budget is re-read at most every 0.5 s; see "Budget").
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
    `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
    public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
