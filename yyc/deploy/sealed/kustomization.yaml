@@ -1,0 +1,6 @@
+# SealedSecrets ONLY (seal with /infra/seal.py). Flux applies this folder as the fenced ServiceAccount
+# flux-system/sealed-secrets-applier (Kustomization in news-stream/deploy/clusters/hetzner/flux-sync.yaml), which can
+# create nothing but SealedSecrets: anything else here fails as Forbidden.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

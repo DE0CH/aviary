@@ -14,6 +14,8 @@ resources:
   # sandboxes in this cluster (provider kubernetes): namespace jarvis-sandbox, RuntimeClass gvisor, PriorityClass sandbox
   - sandbox.yaml
   - secrets/ghcr-pull-sandbox.sops.yaml
+  # the fenced SealedSecret applier may write SealedSecrets in jarvis and jarvis-sandbox (./sealed/, Kustomization yyc-ai-secrets)
+  - sealed-secrets-rbac.yaml
 # the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
 images:
   - name: jarvis3-chat
