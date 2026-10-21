@@ -192,6 +192,7 @@ pub fn host_rules(b: &mut Buf, cfg: &HostConfig, public_if: &str, private_if: Op
 /// gateway: the routing table for what comes in on wg0 (pods via the private network) and how its rule shows up
 pub const GATEWAY_TABLE: &str = "51822";
 const GATEWAY_RULE_MARK: &str = "iif wg0 lookup 51822";
+const GATEWAY_LOCAL_MARK: &str = "iif wg0 lookup main suppress_prefixlength 16";
 
 pub const MAX_TARGETS: usize = 64;
 pub const MAX_PEERS: usize = 32;
@@ -293,6 +294,11 @@ impl HostNet {
             let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
             if !rules.out_str().contains(GATEWAY_RULE_MARK) {
                 sh(&["ip", "rule", "add", "iif", "wg0", "lookup", GATEWAY_TABLE, "priority", "100"])?;
+            }
+            // ... except routes more specific than /16 in the main table, e.g. this node's own pod /24 on cni0 (an
+            // egress pod here must not go out to the private network and back)
+            if !rules.out_str().contains(GATEWAY_LOCAL_MARK) {
+                sh(&["ip", "rule", "add", "iif", "wg0", "lookup", "main", "suppress_prefixlength", "16", "priority", "99"])?;
             }
             st.private_if = Some(pif);
             load_targets(&mut st);
