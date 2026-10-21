@@ -235,6 +235,10 @@ Notifications: `pg_notify('conv_<uuid without dashes>', '<event id>')` after ins
    the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
    The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
    uncompressed body (`accept-encoding: identity`) so it can read the cost.
+   The `model` route also refuses, before anything goes upstream: a body whose `model` is not one of config `models`
+   or `titleModel` (400 `invalid_request_error`, `deny:model`), and every call once the shared budget is used up
+   (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; budget
+   read at most every 2 s; see "Budget").
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
    `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
    public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
@@ -340,7 +344,14 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 ### Turn runner (in `web`)
 
 1. `POST /api/conversations/:id/messages` → insert the user message and a `turns` row (`queued`), answer 202 with ids.
-   One running turn per conversation (409 otherwise).
+   One running turn per conversation (409 otherwise). The turn's model is the conversation's while config `models`
+   still offers it, else `defaultModel` (the conversation is moved to it: e.g. Opus conversations continue on Sonnet
+   after a switch to Sonnet only).
+   **Budget:** when the shared budget is used up the turn ends at once (`error` = the budget message, events
+   `turn_started` + `turn_finished {code: "budget", limitUsd, ownerName}`): no sandbox, no claw, no model call. A
+   running turn whose model call egress refuses for the budget (claw: `error {message: "api returned 402 …
+   (budget_exceeded): …"}`) is stored with that `error` event rewritten to `{code: "budget", message, limitUsd,
+   ownerName}` and ends `error` with the budget message; its text so far stays.
 2. The receiving replica runs it: reconcile the local workdir `/var/lib/jarvis/work/<conv>` with `files` (download
    from S3 what differs), write `claw_sessions.content` to `<sessions dir>/<conv>.jsonl`, ensure the sandbox, then
    spawn `claw --model <model> --permission-mode danger-full-access --allowedTools <list> --output-format json
@@ -372,7 +383,8 @@ Each is `{id, turnId, seq, type, data, createdAt}`; the list of types is in "Pub
 `turn_started {turnId, model}`; `sandbox {status: starting|ready|reset|unavailable, message?}`; `files {changed:
 [path]}` (what the turn stored); `title {title}`; `confirmation_resolved {id, status}` on approve/deny (and, as a
 backstop for a tools pod that died, on expiry after 20 minutes; `tools` posts the expiry itself at 15);
-`turn_finished {turnId, status: done|error|cancelled, error, costUsd}`. claw's `result` is stored as it comes
+`turn_finished {turnId, status: done|error|cancelled, error, costUsd}` (plus `code: "budget", limitUsd, ownerName`
+when the budget stopped it: the UI words that in its own locale). claw's `result` is stored as it comes
 (`usage`, `estimated_cost`, `message`, …); its `session` line is not stored (a server path). `tool_result.output` is
 capped at 20 000 characters (`truncated: true`). The fake claw in `chat/test/fakes/claw.mjs` also emits a `debug`
 event (tests only).
@@ -427,7 +439,10 @@ event (tests only).
 - Errors: JSON `{error: "<message>"}` with the status; 401 = no valid Access token, 403 = signed in but not on
   `config.users` (the UI shows "not on the list"); 503 while draining (the UI retries)
 - Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`,
-  `GET /api/admin/monitor?tz=<IANA zone>` (the admin monitor's snapshot, below)
+  `GET /api/admin/monitor?tz=<IANA zone>` (the admin monitor's snapshot, below), `GET /api/admin/budget` →
+  `{budget: {limitUsd, since, ownerName, spentUsd, remainingUsd, exhausted, source: config|override, override}|null,
+  config, audit: [{at, actor, action, before, after}]}`, `POST /api/admin/budget` `{action: "reset"}` (spend from
+  now) | `{action: "set", limitUsd}` | `{action: "clear"}` (back to config) → the same shape
 - Static: the UI build (`chat/ui-dist`, `npm run build` in `chat/ui`) at `/` with the SPA fallback for `/c/<id>`
   (`index.html` never cached, hashed `app-*.js|css` immutable); `/brand/logo.svg` and `/brand/logo.png` from the
   instance (the UI falls back to the product name's initials); `/manifest.webmanifest` with `name`/`short_name`
@@ -445,7 +460,8 @@ with an `Origin` other than `publicUrl` are refused.
 
 A phone-friendly page (its own bundle `admin-<hash>.js|css` + `admin.html` from `chat/ui/src/admin.tsx`, so the
 staff bundle never contains it; the page may say "Jarvis 3") that polls `GET /api/admin/monitor` every 5 s while
-visible. Read-only: no actions. Code: `chat/src/web/monitor.ts` (one snapshot per replica cached 4 s; each section
+visible. Read-only except the **Budget** panel (its own `GET/POST /api/admin/budget`: spent / limit, remaining, where
+the limit comes from, reset / set limit / back to config with a confirm, the last changes). Code: `chat/src/web/monitor.ts` (one snapshot per replica cached 4 s; each section
 fails on its own into `errors`). It never shows message contents: conversation titles, owners, counts, timings.
 
 - **Sandboxes:** live rows (`starting`/`ready`/`releasing`) with conversation title, owner, provider + host, state,
@@ -529,9 +545,26 @@ images and built the template, and push; Flux rolls the Deployments one pod at a
             "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"}}],
             "confirm": []},
-  "s3": {"endpoint": "...", "region": "...", "bucket": "...", "prefix": "jarvis/"}
+  "s3": {"endpoint": "...", "region": "...", "bucket": "...", "prefix": "jarvis/"},
+  "budget": {"limitUsd": 30, "since": "2026-10-21T12:00:00Z", "ownerName": "Deyao"}
 }
 ```
+
+**Models:** `models` is what staff may pick (the UI shows no picker when there is one), `defaultModel` one of them,
+`titleModel` the title call's. The API refuses any other id (`POST`/`PATCH` conversations: 400) and so does egress
+(the `model` route).
+
+**Budget** (`budget`, optional; absent = no limit; code `chat/src/common/budget.ts`): one limit for everyone, admins
+included. Spend = `sum(egress_log.cost_usd)` of kind `model` (every model call: turns and titles) with `at >= since`.
+Spent ≥ `limitUsd` = used up: no turn starts and egress refuses model calls (see "Turn runner", "egress"). A call
+already in flight when the limit is crossed completes, so the spend can end above the limit by about one model call
+per running turn (cents to a few dimes). Message (`product.locale`; the UI uses its own locale):
+zh-HK「<ownerName> 設定了 <limit> 美元的使用上限，目前已用完。」, English "<ownerName> has set a USD <limit> budget
+limit and it has now been used up." (no `ownerName`: 管理員 / The administrator). There is no automatic reset.
+To reset or raise: edit `budget` (`since` = now resets the spend to 0; a bigger `limitUsd` raises it) and roll out the
+config, or use the admin monitor's Budget panel: its override (kv `budget:override`, an audit row in `ops_events`
+kind `budget` per change) wins as long as config `budget` is what it was when the override was made; editing
+config `budget` afterwards takes over again.
 
 Secrets come from the environment (`DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `OPENROUTER_API_KEY`
 (egress only), tool keys (tools only); provider "vm", web only: `SBX_CA_CERT`, `SBX_CLIENT_CERT`, `SBX_CLIENT_KEY`,
