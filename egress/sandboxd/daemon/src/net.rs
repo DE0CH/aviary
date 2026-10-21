@@ -298,7 +298,19 @@ impl HostNet {
             // ... except routes more specific than /16 in the main table, e.g. this node's own pod /24 on cni0 (an
             // egress pod here must not go out to the private network and back)
             if !rules.out_str().contains(GATEWAY_LOCAL_MARK) {
-                sh(&["ip", "rule", "add", "iif", "wg0", "lookup", "main", "suppress_prefixlength", "16", "priority", "99"])?;
+                sh(&[
+                    "ip",
+                    "rule",
+                    "add",
+                    "iif",
+                    "wg0",
+                    "lookup",
+                    "main",
+                    "suppress_prefixlength",
+                    "16",
+                    "priority",
+                    "99",
+                ])?;
             }
             st.private_if = Some(pif);
             load_targets(&mut st);
