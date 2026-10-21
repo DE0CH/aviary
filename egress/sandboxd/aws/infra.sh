@@ -15,7 +15,7 @@
 #                                  tag app=yyc-ai-sandbox), tags at launch, TerminateInstances of app=yyc-ai-sandbox
 #                                  instances, DescribeInstances. Prints nothing secret; `infra.sh iam-key` makes an
 #                                  access key and writes it to a file given as $KEY_OUT (mode 600), never to stdout.
-#   infra.sh prune-amis            deregisters all but the newest 2 sandbox AMIs (and their snapshots)
+#   infra.sh prune-amis            deregisters all but the newest sandbox AMI (and their snapshots)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 aws() { "$here/../proto/aws.sh" "$@"; }
@@ -116,7 +116,7 @@ iam-key)
   echo "access key written to $KEY_OUT"
   ;;
 prune-amis)
-  aws ec2 describe-images --owners self --filters Name=tag:app,Values=yyc-ai-sandbox --query 'sort_by(Images,&CreationDate)[].[ImageId,BlockDeviceMappings[0].Ebs.SnapshotId]' --output text | head -n -2 |
+  aws ec2 describe-images --owners self --filters Name=tag:app,Values=yyc-ai-sandbox --query 'sort_by(Images,&CreationDate)[].[ImageId,BlockDeviceMappings[0].Ebs.SnapshotId]' --output text | head -n -1 |
     while read -r ami snap; do aws ec2 deregister-image --image-id "$ami"; aws ec2 delete-snapshot --snapshot-id "$snap"; echo "deleted $ami $snap"; done
   ;;
 *) sed -n '2,25p' "$0"; exit 2 ;;
