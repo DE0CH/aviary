@@ -484,6 +484,7 @@ export class Egress {
     let forcedBody: Buffer | null = null;
     if (isModel && req.method !== "GET" && req.method !== "HEAD") {
       const raw = await readBody(req, MODEL_BODY_MAX);
+      row.model = raw === null ? null : requestedModel(raw);
       const refusal = raw === null ? null : await this.#modelRefusal(raw);
       if (refusal) {
         text(res, refusal.status, JSON.stringify({ type: "error", error: { type: refusal.type, message: refusal.message } }), { "content-type": "application/json" });
@@ -594,6 +595,16 @@ export class Egress {
 }
 
 const MODEL_BODY_MAX = 64 * 1024 * 1024;
+
+/** The "model" of a model request body (logged in egress_log.model), null when there is none. */
+export function requestedModel(raw: Buffer): string | null {
+  try {
+    const m = (JSON.parse(raw.toString("utf8")) as { model?: unknown })?.model;
+    return typeof m === "string" && m ? m.slice(0, 200) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** OpenRouter provider options every model request carries (docs: guides/features/zdr "Per-Request ZDR Enforcement",
  * guides/routing/provider-selection): only Zero Data Retention endpoints, none that collect data. Set over whatever the

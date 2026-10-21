@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import { BudgetGate } from "../common/budget.ts";
 import { allowedModels, loadConfig } from "../common/config.ts";
-import { connect } from "../common/db.ts";
+import { connect, migrate } from "../common/db.ts";
 import { log } from "../common/log.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard } from "./netguard.ts";
@@ -16,6 +16,8 @@ import { Egress } from "./proxy.ts";
 export async function main(): Promise<void> {
   const config = loadConfig();
   const db = connect();
+  // the log's columns may be newer than web's last migration (egress and web roll out side by side)
+  await migrate(db);
   const ns = process.env.POD_NAMESPACE || "jarvis";
   const selfHosts = (process.env.EGRESS_SELF_HOSTS || `egress,egress.${ns},egress.${ns}.svc,egress.${ns}.svc.cluster.local`).split(",").map((s) => s.trim()).filter(Boolean);
   // provider "vm": sandboxes reach this proxy (and its mirror) at the egress VIP, which the hub translates to a pod

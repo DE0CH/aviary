@@ -17,9 +17,11 @@ export interface EgressRow {
   bytes_down?: number | null;
   ms?: number | null;
   cost_usd?: number | null;
+  /** kind model: the model the request asked for */
+  model?: string | null;
 }
 
-const COLS = ["conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd"] as const;
+const COLS = ["conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model"] as const;
 
 export class EgressLog {
   readonly #db: Db;

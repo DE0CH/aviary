@@ -1,11 +1,14 @@
-// The web role's HTTP surface (docs/CHAT.md, "Control plane"): `/healthz` and the CloudCLI UI pods' calls
-// under /internal/cc/*. Nothing here is public: the instance's hostname routes to the UI (DE0CH/claudecodeui), and a
+// The web role's HTTP surface (docs/CHAT.md, "Control plane"): `/healthz`, the CloudCLI UI pods' calls under
+// /internal/cc/* and the operator page under /internal/ops/* (the UI router forwards /ops/* there for config `admins`).
+// Nothing here is public: the instance's hostname routes to the UI (DE0CH/claudecodeui), and a
 // NetworkPolicy admits only the UI pods to web.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { logError } from "../common/log.ts";
 import { sha256hex } from "../common/tokens.ts";
 import type { WebDeps } from "./ctx.ts";
 import { bad, HttpError, notFound, readJson, sendJson } from "./http.ts";
+import { OPS_PAGE } from "./ops-page.ts";
+import { OpsSnapshot } from "./ops.ts";
 import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -17,10 +20,12 @@ export class WebApp {
   draining = false;
   /** Calls being answered now (a sandbox start takes up to 3 minutes): the drain waits for them. */
   active = 0;
+  readonly ops: OpsSnapshot;
 
   constructor(deps: WebDeps, sandboxes: SandboxManager) {
     this.deps = deps;
     this.sandboxes = sandboxes;
+    this.ops = new OpsSnapshot(deps);
   }
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -30,6 +35,7 @@ export class WebApp {
         const ok = !this.draining && (await this.deps.db.query("select 1").then(() => true, () => false));
         return sendJson(res, ok ? 200 : 503, { ok, draining: this.draining });
       }
+      if (path === "/internal/ops" || path.startsWith("/internal/ops/")) return await this.#ops(req, res, path);
       if (!path.startsWith("/internal/cc/")) throw notFound();
       this.active++;
       try {
@@ -53,9 +59,7 @@ export class WebApp {
    * {owner, conversation?}` (the user is typing; #warm).
    */
   async #claudeCodeInternal(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
-    const want = process.env.JARVIS_CC_TOKEN || "";
-    const given = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ""))?.[1] ?? "";
-    if (!want || sha256hex(given) !== sha256hex(want)) throw new HttpError(401, "unauthorized");
+    checkCcToken(req);
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const b = await readJson(req);
     if (path === "/internal/cc/warm") return this.#warm(res, b);
@@ -105,9 +109,46 @@ export class WebApp {
     return sendJson(res, 200, { ok: true, hinted });
   }
 
+  /**
+   * The operator page (docs/CHAT.md, "Operator page"), read-only: `GET /internal/ops/` the page, `GET
+   * /internal/ops/snapshot?tz=<zone>` its data (ops.ts). The UI router forwards an Access-verified admin's /ops/* here
+   * with the shared bearer token and `X-Jarvis-User`; both are checked here too (the token, and that the user is in
+   * config `admins`), so a ui pod that forwarded anyone else is still refused.
+   */
+  async #ops(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    checkCcToken(req);
+    const user = String(req.headers["x-jarvis-user"] || "").trim().toLowerCase();
+    if (!user || !this.deps.config.admins.includes(user)) throw new HttpError(403, "operator page: admins only");
+    if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
+    if (path === "/internal/ops" || path === "/internal/ops/") {
+      const body = Buffer.from(OPS_PAGE);
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": body.length,
+        "cache-control": "no-store",
+        "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+      });
+      return void res.end(req.method === "HEAD" ? undefined : body);
+    }
+    if (path === "/internal/ops/snapshot") {
+      const tz = new URL(req.url || "/", "http://x").searchParams.get("tz") || "";
+      return sendJson(res, 200, await this.ops.get(tz));
+    }
+    throw notFound();
+  }
+
   /** Waits (at most `ms`) for the calls being answered to finish. */
   async drain(ms: number): Promise<void> {
     const end = Date.now() + ms;
     while (this.active > 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 200));
   }
+}
+
+/** The UI pods' shared bearer token (JARVIS_CC_TOKEN); throws 401 without it. */
+function checkCcToken(req: IncomingMessage): void {
+  const want = process.env.JARVIS_CC_TOKEN || "";
+  const given = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ""))?.[1] ?? "";
+  if (!want || sha256hex(given) !== sha256hex(want)) throw new HttpError(401, "unauthorized");
 }

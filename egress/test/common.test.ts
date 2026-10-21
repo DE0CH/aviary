@@ -60,7 +60,7 @@ test("schema: the old chat UI's tables stay with their rows, marked unused", asy
     const conv = randomUUID();
     await t.db.query("insert into users (email) values ('a@x.org')");
     await t.db.query("insert into conversations (id, owner, model) values ($1, 'a@x.org', 'm')", [conv]);
-    await t.db.query(MIGRATIONS.at(-1)!);
+    await t.db.query(MIGRATIONS[9]!); // schema 10 (applied again: it only comments)
     assert.equal((await t.db.query("select count(*)::int as n from conversations")).rows[0].n, 1);
     const { rows } = await t.db.query("select obj_description('turns'::regclass) as c");
     assert.match(rows[0].c, /unused since schema 10/);

@@ -119,4 +119,7 @@ comment on table shares is 'unused since schema 10: the old chat UI is retired (
 comment on table blobs is 'unused since schema 10: the old chat UI is retired (old rows only)';
 comment on table blob_grants is 'unused since schema 10: the old chat UI is retired (old rows only)';
 `,
+  // the operator page's spend per model (docs/CHAT.md, "Operator page"): the model a model call asked for (its request
+  // body's "model"); null for calls before this column and for other kinds
+  `alter table egress_log add column model text;`,
 ];

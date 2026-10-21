@@ -395,6 +395,8 @@ test("model route: sandbox token in, real key injected, caller auth dropped, cos
   const models = (await rows()).filter((x) => x.kind === "model" && x.decision === "allow");
   assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042]);
   assert.ok(models.every((x) => x.sandbox_id === sandboxId && x.conversation_id === conv));
+  // the model each call asked for (the operator page's spend per model); none in the body: null
+  assert.deepEqual(models.map((x) => x.model), ["claude-x", null]);
   assert.equal((await http("/x/nope/v1")).status, 404);
 });
 
