@@ -9,8 +9,8 @@
 //   also started as soon as someone types in a conversation without a sandbox while no host has a free slot (kv
 //   `sandbox_demand:<email>`, from POST /api/typing), so it is up by the time a bash command asks for a sandbox.
 // - Each sandbox gets a fixed /32 from sandboxCidr (sandboxes.ip) that follows it; sandboxes.host is where it runs.
-// - Packing (packing.ts): each pass plans a placement that uses fewer hosts past their minimum lifetime and live-migrates
-//   one sandbox toward it (during a turn only with migration.duringTurns). A move across clouds also needs the sandbox
+// - Packing (packing.ts): each pass plans a placement on the fewest hosts and, when it uses strictly fewer than now,
+//   live-migrates one sandbox toward it (during a turn only with migration.duringTurns). A move across clouds also needs the sandbox
 //   to be idle (CPU) and is aborted, sandbox untouched, if pre-copy wouldn't converge within migration.maxDowntimeMs
 //   (the gVisor fork's --migrate-max-downtime). A `retiring` host (the operator's) has its sandboxes moved off.
 // - An AWS host is terminated as soon as no sandbox is on it and it is older than vm.minHostLifetimeSeconds (default
@@ -564,7 +564,7 @@ export class VmController {
       }
     }
 
-    // packing: fewer hosts past their minimum lifetime (packing.ts); a host it empties goes by the rule above
+    // packing: all sandboxes on the fewest hosts (packing.ts); a host it empties goes by the release rule above
     const active = hosts.filter((h) => h.status === "active" && this.#fresh(h));
     const { rows: live } = await this.#d.db.query<{ id: string; conversation_id: string; pod: string; created_at: Date; host: string }>(
       "select id, conversation_id, pod, created_at, host from sandboxes where status = 'ready' and host = any($1::text[])",
@@ -580,7 +580,7 @@ export class VmController {
     );
     const movedAt = new Map(moved.map((m) => [m.id, new Date(m.at).getTime()]));
     const moves = planPacking(
-      active.map((h) => ({ name: h.name, slots: this.slots(h), paid: h.kind === "hub" || this.#paid(h), open: !this.underPressure(h) })),
+      active.map((h) => ({ name: h.name, slots: this.slots(h), open: !this.underPressure(h) })),
       live.map((r) => ({ id: r.id, host: r.host, size: sizeOf(r), movedAt: movedAt.get(r.id) ?? 0 })),
     );
     for (const m of moves) {
@@ -594,7 +594,7 @@ export class VmController {
     }
   }
 
-  /** Still within its minimum lifetime (from launch): already paid for, and not released yet even when empty. */
+  /** Still within its minimum lifetime (from launch): not released yet even when empty (the only use of host age). */
   #paid(h: HostRow): boolean {
     return Date.now() - new Date(h.created_at).getTime() < this.vm.minHostLifetimeSeconds * 1000;
   }

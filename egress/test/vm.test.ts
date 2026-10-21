@@ -234,12 +234,13 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   assert.equal(await hostOf(b.id), awsName);
   await ready(b.id);
 
-  // the hub has room again, but the AWS host is within its minimum lifetime (paid for): nothing moves
+  // the hub has room again and takes a new sandbox: packing moves the AWS host's one there (fewest hosts; a move that
+  // wouldn't converge leaves it where it was first)
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
-  await ctl.pass();
-  assert.equal(await hostOf(b.id), awsName);
-  // past it: packing moves its sandbox to the hub (a move that wouldn't converge leaves it where it was first)
-  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [awsName]);
+  const c = await newRow();
+  await p.create(c, "tok-c");
+  assert.equal(await hostOf(c.id), "hub");
+  await ready(c.id);
   sbx.refuseSend = true;
   await ctl.pass();
   assert.equal(await hostOf(b.id), awsName);
@@ -249,13 +250,17 @@ test("placement, burst to AWS, drain-back by live migration, termination", async
   assert.ok(sbx.hosts.get(HUB)!.specs.has(b.pod));
   const { rows: pack } = await db.query("select data from vm_events where kind = 'pack' and sandbox_id = $1", [b.id]);
   assert.ok(pack.length >= 1, "the packing decision is recorded");
+  // empty but within its minimum lifetime: kept
+  await ctl.pass();
+  assert.equal((await hostRow(awsName)).status, "active");
+  await db.query("update vm_hosts set created_at = now() - interval '16 minutes' where name = $1", [awsName]);
   // empty and past its minimum lifetime: terminated
   await ctl.pass();
   assert.equal((await hostRow(awsName)).status, "gone");
   assert.deepEqual(ec2.terminated, [ec2.launched[0]!.id]);
 
   // list() and destroy() follow the sandbox to where it is now
-  assert.deepEqual((await p.list()).map((x) => x.name).sort(), [a.pod, b.pod].sort());
+  assert.deepEqual((await p.list()).map((x) => x.name).sort(), [a.pod, b.pod, c.pod].sort());
   await p.destroy(b.pod);
   assert.ok(!sbx.hosts.get(HUB)!.specs.has(b.pod));
 });
