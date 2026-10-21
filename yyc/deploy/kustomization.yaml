@@ -46,17 +46,6 @@ patches:
   - target: {kind: Deployment, name: "web|egress|tools|cloudflared"}
     patch: |-
       - {op: replace, path: /spec/strategy/rollingUpdate, value: {maxSurge: 0, maxUnavailable: 1}}
-  # egress (the sandboxes' and the model calls' way out to the web) and tools never run on hel1: many sites refuse that
-  # node's IPv4 egress (WARP colo HEL; news-stream/deploy/cluster/README.md "Nodes"; news-stream/tests/test_rollouts.py)
-  - target: {kind: Deployment, name: "egress|tools"}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/affinity
-        value:
-          nodeAffinity:
-            requiredDuringSchedulingIgnoredDuringExecution:
-              nodeSelectorTerms:
-                - matchExpressions: [{key: topology.kubernetes.io/region, operator: NotIn, values: [hel1]}]
   - target: {kind: Deployment}
     patch: |-
       - op: add
