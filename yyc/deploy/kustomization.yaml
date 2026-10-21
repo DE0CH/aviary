@@ -16,11 +16,17 @@ resources:
   - monitor.yaml
   # the JuiceFS volume yyc-ai for the Claude Code UI: the CSI driver (kube-system) and the static PV + PVC jarvis/jfs
   - juicefs.yaml
+  # the Claude Code UI (CloudCLI fork + router; README "Claude Code UI"): Deployment ui, Services, network policies
+  - ui.yaml
 # the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
     newTag: 2156d8a32607
+  # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
+  - name: yyc-ai-ui
+    newName: ghcr.io/de0ch/yyc-ai-ui
+    newTag: a684b2ebd5b5
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
