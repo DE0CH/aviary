@@ -38,7 +38,8 @@ export async function main(): Promise<void> {
     selfHosts,
     guard: new AddressGuard((process.env.EGRESS_BLOCK_CIDRS || "").split(",").map((s) => s.trim())),
     models: allowedModels(config),
-    budget: ((g) => () => g.status())(new BudgetGate(db, config.budget)),
+    // re-read at most every 0.5 s (both egress pods see each other's model costs that soon)
+    budget: ((g) => () => g.status())(new BudgetGate(db, config.budget, 500)),
     locale: config.product.locale,
   });
   const port = await egress.listen(Number(process.env.PORT || 3128));

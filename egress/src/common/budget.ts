@@ -4,9 +4,10 @@
 // `budget` is what it was when the override was made: editing config.json takes over again. Every override change is
 // an audit row (ops_events kind 'budget').
 //
-// Checked before a turn starts (web) and before every model call (egress /x/model). A call already in flight when the
-// limit is crossed completes, so the spend can end a little above the limit (one model call's cost at most per running
-// turn).
+// Checked before a turn starts (web) and before every model call (egress /x/model; its model rows are written at once
+// and the budget re-read at most every 0.5 s). A call already in flight when the limit is crossed completes, so the
+// spend can end a little above the limit (about one model call's cost per running turn, rarely two when calls follow
+// each other within half a second).
 import type { BudgetConfig } from "./config.ts";
 import { tx, type Db } from "./db.ts";
 

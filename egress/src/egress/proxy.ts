@@ -533,6 +533,8 @@ export class Egress {
         res.on("close", () => {
           if (!ures.complete) ures.destroy();
           this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
+          // a model call's cost counts toward the budget at once (the turn's next call is usually < 1 s away)
+          if (route.name === "model") void this.log.flush();
           resolve();
         });
       });
