@@ -39,7 +39,7 @@ State: Postgres (sandboxes, vm hosts and events, egress_log, tool_calls, kv); /w
 ## Control plane (`web`, `/internal/cc/*`)
 
 Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and authenticated by the shared bearer token
-`JARVIS_CC_TOKEN` (401 otherwise); POST with a JSON body; `conversation` must be a uuid (400).
+`JARVIS_CC_TOKEN` (401 otherwise); POST with a JSON body; `conversation` must be a uuid (400; optional only on `warm`).
 
 - `POST /internal/cc/sandbox {owner, conversation}` → `{id, url, token, headers, reset}`: the conversation's live
   sandbox, made if there is none, for `owner` (403 unless in config `users`). `url` + `headers` reach its agent,
@@ -49,6 +49,10 @@ Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and a
 - `POST /internal/cc/touch {conversation}`: it is in use; its idle time starts again. The UI touches every minute
   while Claude Code runs in it.
 - `POST /internal/cc/release {conversation}`: the conversation was deleted; its sandbox goes at once.
+- `POST /internal/cc/warm {owner, conversation?}` → `{ok, hinted}`: `owner` is typing (`conversation` absent for a
+  new chat; 403 unless in `users`). Nothing is made and no idle time is reset; when the conversation has no live
+  sandbox it records kv `sandbox_demand:<owner>`, which the vm scaler counts for 2 minutes and starts an AWS host
+  for when no host has a free slot (docs/CLAUDE-CODE.md, "Warming").
 - `GET /healthz` → `{ok, draining}` (503 while draining or without Postgres): the readiness and liveness probe.
 - **Drain** (SIGTERM): readiness 503, 5 s for the Service to drop the endpoint, then the calls in flight are answered
   (up to `JARVIS_DRAIN_SECONDS`, 300, < the 330 s grace period); the janitor and scaler locks pass to the other
