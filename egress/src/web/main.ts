@@ -58,7 +58,7 @@ export async function startWeb(deps: WebDeps, port: number, opts: { janitorMs?: 
   };
 }
 
-function inCluster(): K8sClient | undefined {
+export function inCluster(): K8sClient | undefined {
   try {
     return process.env.KUBERNETES_SERVICE_HOST ? K8sClient.inCluster() : undefined;
   } catch {
@@ -66,7 +66,7 @@ function inCluster(): K8sClient | undefined {
   }
 }
 
-function sandboxProvider(config: ChatConfig, namespace: string, db: Db): SandboxProvider {
+export function sandboxProvider(config: ChatConfig, namespace: string, db: Db): SandboxProvider {
   if (config.sandbox.provider === "vm") {
     const vm = config.sandbox.vm!;
     const pem = (name: string) => requireEnv(name).replace(/\\n/g, "\n");
