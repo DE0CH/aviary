@@ -22,6 +22,9 @@ import { FakeK8s } from "./fakes/k8s.ts";
 import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
 import { fakeS3 } from "./fakes/s3.ts";
 import { freshDb } from "./pg.ts";
+import { png } from "./fakes/png.ts";
+
+const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 const A = "alice@example.org";
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -87,6 +90,29 @@ async function fakeUpstream() {
       seen.model.push({ headers: req.headers, body });
       const last = body.messages.at(-1);
       const hasResult = Array.isArray(last?.content) && last.content.some((b: any) => b.type === "tool_result");
+      const said = JSON.stringify(body.messages.filter((m: any) => m.role === "user").at(-1) ?? {});
+      const text = (t: string) =>
+        sse(res, [
+          start("msg_t"),
+          ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }],
+          ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } }],
+          ["content_block_stop", { type: "content_block_stop", index: 0 }],
+          ["message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 6 } }],
+          ["message_stop", { type: "message_stop" }],
+        ]);
+      // images: an attached photo is answered at once; IMG-READ first looks at chart.png with read_file
+      if (/IMG-ATTACHED/.test(said)) return text("A grey square.");
+      if (/IMG-READ/.test(said) && !hasResult) {
+        return sse(res, [
+          start("msg_r"),
+          ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_img", name: "read_file", input: {} } }],
+          ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify({ path: "uploads/chart.png" }) } }],
+          ["content_block_stop", { type: "content_block_stop", index: 0 }],
+          ["message_delta", { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 12 } }],
+          ["message_stop", { type: "message_stop" }],
+        ]);
+      }
+      if (hasResult && last.content.some((b: any) => b.tool_use_id === "toolu_img")) return text("The chart is grey.");
       if (!hasResult) {
         return sse(res, [
           start("msg_1"),
@@ -183,8 +209,9 @@ after(async () => {
 
 async function call(method: string, path: string, body?: unknown) {
   const h: Record<string, string> = { "cf-access-jwt-assertion": await access.token(A) };
-  if (body !== undefined) h["content-type"] = "application/json";
-  const r = await fetch(base + path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+  const raw = body instanceof Uint8Array;
+  if (body !== undefined) h["content-type"] = raw ? "application/octet-stream" : "application/json";
+  const r = await fetch(base + path, { method, headers: h, body: body === undefined ? undefined : raw ? body : JSON.stringify(body) });
   const text = await r.text();
   let json: any = null;
   try {
@@ -301,4 +328,48 @@ test("jarvis-mcp-bridge: Content-Length framing in and out", async () => {
   assert.equal(byId[1].result.serverInfo.name, "fake-tools");
   assert.equal(byId.two.result.tools[0].name, "web_search");
   assert.equal(await new Promise((r) => child.on("close", r)), 0);
+});
+
+test("the real claw sees images: an attached photo goes with the message, read_file shows a sandbox-made chart, sessions keep references", async () => {
+  const c = await call("POST", "/api/conversations", {});
+  const conv = c.json.id;
+  const photo = png(40, 30);
+  const up = await call("POST", `/api/conversations/${conv}/files?name=photo.png`, photo);
+  assert.equal(up.status, 201, up.text);
+  const n0 = upstream.seen.model.length;
+  const m = await call("POST", `/api/conversations/${conv}/messages`, { text: "IMG-ATTACHED what is this?", attachments: ["uploads/photo.png"] });
+  const turn = await waitTurn(m.json.turnId);
+  assert.equal(turn.status, "done", turn.error);
+  const req = upstream.seen.model[n0]!.body;
+  const content = req.messages.at(-1).content;
+  assert.ok(Array.isArray(content), JSON.stringify(content).slice(0, 500));
+  const img = content.findIndex((b: any) => b.type === "image");
+  const txt = content.findIndex((b: any) => b.type === "text" && /IMG-ATTACHED/.test(b.text));
+  assert.ok(img >= 0 && img < txt, "the image comes before the text");
+  assert.equal(content[img].source.type, "base64");
+  assert.equal(content[img].source.media_type, "image/png");
+  assert.equal(Buffer.from(content[img].source.data, "base64").equals(photo), true, "a small PNG is sent unchanged");
+  const { rows: sess } = await pg.db.query("select content from claw_sessions where conversation_id = $1", [conv]);
+  assert.ok(sess[0].content.includes("uploads/photo.png") && sess[0].content.includes(sha(photo)), "a reference in the session");
+  assert.ok(!sess[0].content.includes(content[img].source.data.slice(0, 40)), "no base64 in the session");
+
+  // the sandbox draws a chart (a PNG written under /work), the model reads it: an image in the tool result, a thumbnail
+  const chart = png(64, 64);
+  // (as the sandbox's files arrive: in the workdir and in `files`; an upload is the same to claw)
+  assert.equal((await call("POST", `/api/conversations/${conv}/files?name=chart.png`, chart)).status, 201);
+  const n1 = upstream.seen.model.length;
+  const m2 = await call("POST", `/api/conversations/${conv}/messages`, { text: "IMG-READ describe the chart", attachments: [] });
+  const turn2 = await waitTurn(m2.json.turnId);
+  assert.equal(turn2.status, "done", turn2.error);
+  const after = upstream.seen.model.slice(n1);
+  const result = after.at(-1)!.body.messages.at(-1).content.find((b: any) => b.type === "tool_result");
+  assert.ok(Array.isArray(result.content) && result.content.some((b: any) => b.type === "image" && b.source.media_type === "image/png"), JSON.stringify(result).slice(0, 600));
+  // the earlier attached photo is still in the history (rehydrated from the workdir)
+  assert.match(JSON.stringify(after[0]!.body.messages[0]), /"type":"image"/);
+  const { rows: evs } = await pg.db.query("select data from events where turn_id = $1 and type = 'tool_result'", [m2.json.turnId]);
+  const images = evs[0].data.images;
+  assert.equal(images[0].path, "uploads/chart.png");
+  assert.equal(images[0].sha256, sha(chart));
+  const thumb = await call("GET", `/api/conversations/${conv}/files/uploads/chart.png?v=${sha(chart)}&preview=1`);
+  assert.equal(thumb.status, 200);
 });

@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 FROM node:22-trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tini \
-    # images for the model (claw CLAW_IMAGES: a PDF page and HEIC photos to PNG) and PDF previews on file cards
-    poppler-utils libheif-examples \
+    # images for the model (claw CLAW_IMAGES: a PDF page, HEIC photos and SVG to PNG) and PDF previews on file cards
+    poppler-utils libheif-examples librsvg2-bin \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./

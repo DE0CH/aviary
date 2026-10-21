@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { deflateSync } from "node:zlib";
 import { truncate } from "node:fs/promises";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +26,7 @@ import { FakeK8s } from "./fakes/k8s.ts";
 import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
 import { fakeS3 } from "./fakes/s3.ts";
 import { freshDb } from "./pg.ts";
+import { png } from "./fakes/png.ts";
 
 const A = "alice@example.org";
 const B = "bob@example.org";
@@ -665,35 +665,6 @@ test("budget: a used-up budget refuses the turn before claw runs; a running turn
 });
 
 const sha = (b: string | Uint8Array) => createHash("sha256").update(b).digest("hex");
-
-/** A tiny valid PNG (w x h, one colour). */
-function png(w = 2, h = 2): Buffer {
-  const crcTable = Array.from({ length: 256 }, (_, n) => {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    return c >>> 0;
-  });
-  const crc = (b: Buffer) => {
-    let c = 0xffffffff;
-    for (const x of b) c = crcTable[(c ^ x) & 0xff]! ^ (c >>> 8);
-    return (c ^ 0xffffffff) >>> 0;
-  };
-  const chunk = (type: string, data: Buffer) => {
-    const t = Buffer.concat([Buffer.from(type), data]);
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(data.length);
-    const c = Buffer.alloc(4);
-    c.writeUInt32BE(crc(t));
-    return Buffer.concat([len, t, c]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0);
-  ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  const raw = Buffer.concat(Array.from({ length: h }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 0x80)])));
-  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
-}
 
 const MINI_PDF = "%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n";
 
