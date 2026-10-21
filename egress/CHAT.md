@@ -58,6 +58,37 @@ Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and a
   (up to `JARVIS_DRAIN_SECONDS`, 300, < the 330 s grace period); the janitor and scaler locks pass to the other
   replica.
 
+## Operator page (`web`, `/internal/ops/*`; `chat/src/web/ops.ts`, `ops-page.ts`)
+
+A read-only page for config `admins` (English: it is for the operator), at `<publicUrl>/ops/`. The UI's router
+(DE0CH/claudecodeui `jarvis/router.mjs`) verifies the Access token as for any request, then forwards `GET /ops/*` to
+web's `/internal/ops/*` with the bearer token and `X-Jarvis-User` only when that email is in `admins` (anyone else:
+403, nothing forwarded; no CloudCLI process is involved). Web checks both again (401 without the token, 403 unless
+`X-Jarvis-User` is an admin, 405 for anything but GET/HEAD). So access = Cloudflare Access (the staff app) + the
+router's `admins` check + web's own check, and web stays cluster-only.
+
+- `GET /internal/ops/` the page (self-contained HTML, strict CSP; polls `snapshot` every 10 s while visible; stacked
+  cards on a phone, columns on a wide screen).
+- `GET /internal/ops/snapshot?tz=<IANA zone>` → JSON (cached 4 s per zone; "today"/"this month" start at that zone's
+  midnight, default Asia/Hong_Kong). Each section is computed on its own (8 s timeout); a failed one is `null` with its
+  message in `errors.<section>`:
+  - `sandboxes`: live rows (conversation, owner, host, status, age, last active, migrations), starts in 24 h (count,
+    failures, p50/p95 from `ops_events`), releases in 24 h by reason;
+  - `hosts`: `vm_hosts` live, plus the latest 8 gone in 24 h (`gone24h` counts them all): kind, gateway, status,
+    retiring, instance, launch time, last seen / answering, sandboxes on it / slots, memory, load, gone reason;
+  - `scaler`: the vm scaler's plan (need, demand, waiting, available, pending, slots per host) and the
+    `sandbox_demand:*` hints (counted within 2 min, or expired);
+  - `events`: the latest 60 `vm_events` with the sandbox's owner;
+  - `budget`: `budgetStatus` (limit, since, spent, left) and model spend today / this month / since the budget, in
+    total, per owner (`egress_log.sandbox_id` → `sandboxes.owner`; old chat UI calls: their conversation's owner) and
+    per model (`egress_log.model`, recorded since migration 11; older calls show as "(not recorded)");
+  - `egress`: 24 h of model/route errors by status and decision (402 `deny:budget`, 503, …), blocked hosts (deny
+    reason, count), the latest 30 refusals and errors;
+  - `people`: per config user (and former users with sandboxes): conversations counted from their sandboxes (a
+    conversation gets one at its first message): total, started today, last 7 days, live now, deleted, last active.
+
+No message contents: owners, ids, hosts, counts, costs and timings only.
+
 ## Sandbox lifecycle
 
 - **Made when the UI first runs Claude Code** in a conversation (`/internal/cc/sandbox`), at most one live sandbox per
