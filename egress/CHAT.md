@@ -171,7 +171,8 @@ create table turns (id uuid primary key, conversation_id uuid not null reference
   status text not null check (status in ('queued','running','waiting','done','error','cancelled')),
   token_hash text not null unique,            -- sha256 hex of the per-turn token (egress /x/model + tools MCP)
   replica text, model text not null, started_at timestamptz not null default now(), finished_at timestamptz,
-  error text, usage jsonb, cost_usd numeric);
+  error text, usage jsonb, cost_usd numeric,
+  presented jsonb);  -- migration 7: the files the turn shows, [{path, caption?, sha256, size}]; null = before present_files
 create table events (id bigserial primary key, conversation_id uuid not null, turn_id uuid not null,
   seq int not null, type text not null, data jsonb not null, created_at timestamptz not null default now(),
   unique (turn_id, seq));
@@ -421,6 +422,8 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 | `CLAW_CONFIG_DIR` | the only config dir read (settings, `mcpServers`); nothing is read from the workdir |
 | `CLAW_SESSIONS_DIR` | where managed sessions live (instead of `<cwd>/.claw/sessions/…`), no workspace-root check |
 | `CLAW_PROMPT_CACHE=1` | `cache_control: ephemeral` on the system prompt, the tool list and the last user message (Anthropic format) |
+| `CLAW_IMAGES=1` | images reach the model: `read_file` on png/jpeg/webp/gif returns the image (heic/svg/bmp/tiff and a PDF page, `page`, converted to PNG), at most 1568 px on the long edge and 5 MB, at most 20 per run (then a text note); the session stores a reference (workdir path, sha256, media type), the bytes are read from the workdir for each request; `tool_result` events carry `images: [{path, sha256, media_type, width, height, page?}]` |
+| `CLAW_PROMPT_IMAGES` | JSON array of workdir paths attached to the prompt's user message as images (same rules) |
 
 ### Turn runner (in `web`)
 
@@ -438,11 +441,14 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
    spawn `claw --model <model> --permission-mode danger-full-access --allowedTools <list> --output-format json
    prompt <text>` with `CLAW_EVENT_STREAM=1`, `CLAW_RESUME_SESSION=<path>` (when a session exists), and the env above.
    The MCP config (in `CLAW_CONFIG_DIR/settings.json`) lists one stdio server `tools` = `jarvis-mcp-bridge` (stdio ↔
-   HTTP, token from env).
+   HTTP, token from env, `JARVIS_WORKDIR` = the workdir). Also `CLAW_IMAGES=1` and, when the message has image
+   attachments (png, jpeg, gif, webp, heic, heif, bmp, tiff, svg; at most 20), `CLAW_PROMPT_IMAGES` (see "Presented
+   files and images"). The system prompt file = the instance's prompt + `SANDBOX_NETWORK_NOTE` + `FILES_NOTE`.
 3. Each NDJSON event → `events` (+ `pg_notify`). Text deltas are batched (≤ 250 ms) into one `text_delta` event.
 4. End: save the session file to `claw_sessions`, upload changed workdir files to S3 (`files/<conv>/<sha256>`) and
-   upsert `files` (source `agent`), insert the assistant message (final text), set the turn `done` with usage and
-   cost. Title: after the first turn, a short title from the model (Haiku-class, via egress) if the user did not set one.
+   upsert `files` (source `agent`), settle the presented files (each at the version the turn left, gone ones dropped;
+   a new `files_presented` event when that changed the list), insert the assistant message (final text), set the
+   turn `done` with usage and cost. Title: after the first turn, a short title from the model (Haiku-class, via egress) if the user did not set one.
 5. Cancel: `POST /api/turns/:id/cancel` → SIGTERM to claw (then SIGKILL after 5 s) on whichever replica runs it
    (each replica LISTENs on `cancel_<replica>`).
 6. **Drain:** on SIGTERM a replica stops being ready (readiness 503), refuses new turns (another replica takes them:
@@ -458,11 +464,45 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
    restarted"), releases idle/expired sandboxes, ends stuck starts, deletes
    sandbox pods without a live row and marks rows whose pod vanished.
 
+### Presented files and images (Deyao, 2026-10-21)
+
+- **Staff see only what the agent presents.** Under an answer the UI shows download cards for exactly the files of
+  that turn's `presented` list, in its order (png/jpeg/gif/webp with an inline preview, a PDF with its first page),
+  each linked at its version (`?v=<sha256>`, so a later turn changing the path doesn't change an earlier card). There
+  is no file browser and no automatic list of changed files; staff uploads show in their own messages (images as
+  thumbnails). The workdir is stored and synced as before; the agent keeps using every file.
+- **`present_files({files: [{path, caption?}]})`** (tools role, read-only, `chat/src/tools/present.ts`): 1–20 paths
+  relative to the workdir (`/work/x` and `./x` accepted). The tools role can't see the workdir, so `jarvis-mcp-bridge`
+  (on the replica running the turn, `JARVIS_WORKDIR`) checks each path before forwarding and puts what it found in the
+  call's `params._meta["jarvis/files"]` (`{path, size, sha256}` or `{error}`): a regular file inside the workdir, no
+  symlink, not under an excluded folder (`node_modules/`, `.jobs/`, …), at most 50 MB. One bad path refuses the whole
+  call with every problem named. A good call merges into `turns.presented` (row lock) and appends `files_presented`.
+  Merging (`chat/src/common/presented.ts`): a path given again replaces its entry at the new place, and the same
+  contents under another path (a copy) are shown once, as the latest; at the end of the turn each entry takes the
+  version the turn left (the latest wins). The agent is told (`FILES_NOTE`): "When you finish, call present_files with
+  the deliverables only (reports, charts, data the user asked for) — never scripts, fonts or intermediate files."
+- **The duplicate PDF (2026-10-21):** the old UI listed every agent file changed during a turn by its file name; the
+  agent built `build/<name>.pdf` and then `cp` it to the workdir root, so two paths with the same name and contents
+  showed as two identical cards. Fixed both by showing only presented files and by the copy rule above.
+- **Old conversations:** a turn with `presented` null (run before migration 7, or by an older replica during the
+  rollout) shows, as before, the agent files whose last change falls between its start and 15 s after its end
+  (`legacyPresented` in `app.ts`, computed when the conversation is read), with copies shown once. Nothing is lost:
+  reports made before stay downloadable from their answer. A new turn that presents nothing shows no cards.
+- **Images to the model** (claw `CLAW_IMAGES`, above): `read_file` on an image or a PDF page shows it to the model;
+  staff-uploaded images in a message go with it (`CLAW_PROMPT_IMAGES`). Sandbox-made images need nothing extra: files
+  written under `/work` are in the workdir after each bash command. The tool step of a viewed image shows a thumbnail:
+  the runner puts that file's bytes in the bucket under its sha256 as soon as the `tool_result` arrives
+  (`?v=<sha>&preview=1` then loads mid-turn). OpenRouter passes Anthropic `image` blocks (user and `tool_result`)
+  through with ZDR forced (checked 2026-10-21, `anthropic/claude-sonnet-5.5`). The web image has `poppler-utils` and
+  `libheif-examples` for the conversions.
+
 ### Events (what the UI renders; `GET …/stream` and `turns[].events`)
 
 Each is `{id, turnId, seq, type, data, createdAt}`; the list of types is in "Public API" below. What `web` itself adds:
 `turn_started {turnId, model}`; `sandbox {status: starting|ready|reset|unavailable, message?}`; `files {changed:
-[path]}` (what the turn stored); `title {title}`;
+[path]}` (what the turn stored; kept for the record, the UI never lists it); `files_presented {files: [{path,
+caption?, sha256, size}]}` (the whole list so far, from present_files and once more at the end when the versions
+changed; the last one wins); `title {title}`;
 `turn_finished {turnId, status: done|error|cancelled, error, costUsd}` (plus `code: "budget", limitUsd, ownerName`
 when the budget stopped it: the UI words that in its own locale). claw's `result` is stored as it comes
 (`usage`, `estimated_cost`, `message`, …); its `session` line is not stored (a server path). `tool_result.output` is
@@ -496,7 +536,8 @@ events: they still load, and the UI shows nothing for them (like any event type 
 - `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title?, model?}` → 204 (the
   model applies from the next turn); `DELETE` (soft) → 204
 - `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments: [path],
-  createdAt}], turns: [{id, status, model, startedAt, finishedAt, error, costUsd, events: [event]}],
+  createdAt}], turns: [{id, status, model, startedAt, finishedAt, error, costUsd, presented: [{path, caption?, sha256,
+  size}], events: [event]}],
   pendingConfirmations: [{id, turnId, kind, summary, detail, status}], lastEventId}` (oldest first; stream from
   `lastEventId` to continue)
 - `POST /api/typing` `{conversationId?}` → 204 (keeps that conversation's sandbox, or signals the scaler; makes nothing)
@@ -508,13 +549,16 @@ events: they still load, and the UI shows nothing for them (like any event type 
 - Event types: claw's (`session`, `message_start`, `text_delta{text}`, `thinking_delta`, `tool_use{id,name,input}`,
   `tool_result{id,name,output,is_error}`, `message_stop`, `result{usage, estimated_cost, …}`, `error{message}`) and
   the server's: `turn_started{turnId}`, `turn_finished{turnId, status, error?}`,
-  `sandbox{status: starting|ready|reset|unavailable}`, `title{title}`, `files{changed}`. MCP tools are named `mcp__tools__<tool>`.
+  `sandbox{status: starting|ready|reset|unavailable}`, `title{title}`, `files{changed}`, `files_presented{files}`. MCP tools
+  are named `mcp__tools__<tool>`.
 - `POST /api/turns/:id/cancel` → 204
 - `POST /api/conversations/:id/files?name=<file name>` (raw body, `content-type` = the file's, ≤ 100 MB) → 201
   `{path, size}` (under `uploads/`, ` (2)` added before the extension when the name is taken)
-- `GET /api/conversations/:id/files` → `[{path, size, source: "upload"|"agent", updatedAt}]`;
+- `GET /api/conversations/:id/files` → `[{path, size, source: "upload"|"agent", updatedAt}]` (the UI doesn't list it);
   `GET /api/conversations/:id/files/<path>` (each segment URL-encoded) → the bytes, `content-disposition` with the
-  file name
+  file name; `?v=<sha256>` = that version (immutable, cached a day); `?inline=1` = `inline` for png/jpeg/gif/webp
+  (never svg); `?preview=1` = an image itself or a PDF page as a PNG ≤ 480 px wide (`&page=N`, poppler's `pdftoppm`
+  in the image; 404 when there is none)
 - Errors: JSON `{error: "<message>"}` with the status; 401 = no valid Access token, 403 = signed in but not on
   `config.users` (the UI shows "not on the list"); 503 while draining (the UI retries)
 - Admin only: `GET /api/admin/usage?from&to` (per user: turns, model cost, tool calls, egress), `GET /api/admin/egress`,
