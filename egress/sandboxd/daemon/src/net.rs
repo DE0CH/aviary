@@ -158,6 +158,15 @@ pub fn host_rules(b: &mut Buf, cfg: &HostConfig, public_if: &str, private_if: Op
     }
     if cfg.gateway {
         let (vip, api, img) = (cfg.egress_vip.as_str(), cfg.api_port, cfg.image_port);
+        // a k3s node masquerades every non-pod source going to a pod (flannel's FLANNEL-POSTRTG): what comes in on wg0
+        // keeps the sandbox's own address (egress admits a sandbox's token only from it; its NetworkPolicy only
+        // 10.200.0.0/16). An identity SNAT, earlier than iptables' nat (priority srcnat), binds the connection's NAT
+        // so the later masquerade never applies; such packets leave over the private network (policy route, init).
+        let sbx = cfg.sandbox_cidr.as_str();
+        let _ = write!(
+            b,
+            "\n  chain keep_source {{\n    type nat hook postrouting priority srcnat - 10; policy accept;\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}\n  }}"
+        );
         let _ = write!(
             b,
             "\n  chain forward {{\n    type filter hook forward priority 0; policy accept;\n    iifname \"wg0\" ip daddr {vip} drop\n    iifname \"wg0\" oifname \"{public_if}\" drop\n    iifname \"{public_if}\" oifname \"wg0\" drop\n  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    iifname \"wg0\" tcp dport {{ {api}, {img} }} accept\n    iifname \"wg0\" icmp type echo-request accept\n    iifname \"wg0\" ct state established,related accept\n    iifname \"wg0\" drop\n    tcp dport {{ {api}, {img} }} iifname \"{public_if}\" drop\n  }}\n}}\n"
@@ -179,6 +188,10 @@ pub fn host_rules(b: &mut Buf, cfg: &HostConfig, public_if: &str, private_if: Op
         cfg.api_port, cfg.image_port
     );
 }
+
+/// gateway: the routing table for what comes in on wg0 (pods via the private network) and how its rule shows up
+pub const GATEWAY_TABLE: &str = "51822";
+const GATEWAY_RULE_MARK: &str = "iif wg0 lookup 51822";
 
 pub const MAX_TARGETS: usize = 64;
 pub const MAX_PEERS: usize = 32;
@@ -271,6 +284,15 @@ impl HostNet {
             match src {
                 Some(src) => sh(&["ip", "route", "replace", cfg.sandbox_cidr.as_str(), "dev", "wg0", "src", src])?,
                 None => sh(&["ip", "route", "replace", cfg.sandbox_cidr.as_str(), "dev", "wg0"])?,
+            }
+            // what comes in on wg0 (sandboxes, to egress pods) goes to pods over the private network, as from the old
+            // hub, not through flannel's WireGuard (its peers drop a source outside the node's pod range)
+            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            sh(&["ip", "route", "replace", pods, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
+            let mut out3 = [0u8; 4096];
+            let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
+            if !rules.out_str().contains(GATEWAY_RULE_MARK) {
+                sh(&["ip", "rule", "add", "iif", "wg0", "lookup", GATEWAY_TABLE, "priority", "100"])?;
             }
             st.private_if = Some(pif);
             load_targets(&mut st);
@@ -625,6 +647,11 @@ mod tests {
         );
         assert!(g.contains("    iifname \"wg0\" drop\n"));
         assert!(!g.contains("    iifname \"eth0\" drop\n") && !g.contains("    oifname \"eth0\" drop\n"));
+        // the sandbox's own address survives the k3s node's masquerade (identity SNAT before iptables' nat)
+        assert!(g.contains("type nat hook postrouting priority srcnat - 10"));
+        assert!(g.contains(
+            "iifname \"wg0\" ip saddr 10.200.0.0/16 snat ip prefix to ip saddr map { 10.200.0.0/16 : 10.200.0.0/16 }"
+        ));
         assert!(
             HostConfig::parse(
                 br#"{"name":"g","role":"burst","gateway":true,"wgAddress":"10.201.0.1","hub":{"publicKey":"k"}}"#
