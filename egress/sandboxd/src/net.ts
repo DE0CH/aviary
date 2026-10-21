@@ -12,11 +12,24 @@
 // Per host: wg0 (the overlay), the hub's translation of the egress VIP to egress pods (DNAT only, never SNAT: egress
 // sees the sandbox's own address and the connection survives a move because the hub, which holds the translation,
 // is on every path), and forwarding only between the overlay, the private network and sandboxes.
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import type { HostConfig, PeerSpec } from "./config.ts";
 import { run, sh } from "./util.ts";
 
 export const GW_MAC = "ee:ee:ee:ee:ee:ee";
+
+/** nft -f with a file (Ubuntu 24.04's nft refuses a pipe on stdin: "Not a regular file") */
+export async function nftApply(rules: string): Promise<void> {
+  mkdirSync("/run/sbx", { recursive: true });
+  const f = `/run/sbx/.nft-${randomBytes(6).toString("hex")}`;
+  writeFileSync(f, rules, { mode: 0o600 });
+  try {
+    await run("nft", ["-f", f], { check: true });
+  } finally {
+    rmSync(f, { force: true });
+  }
+}
 
 const h12 = (name: string) => createHash("sha256").update(name).digest("hex").slice(0, 12);
 /** host side of the veth (<= 15 chars) */
@@ -62,7 +75,7 @@ export async function addSandboxNet(cfg: HostConfig, name: string, ip: string, r
   await sh("ip", "-n", name, "route", "add", "169.254.1.1", "dev", "eth0", "scope", "link");
   await sh("ip", "-n", name, "route", "add", "default", "via", "169.254.1.1", "dev", "eth0");
   await sh("sysctl", "-qw", `net.ipv4.conf.${v}.proxy_arp=1`, `net.ipv4.conf.${v}.rp_filter=0`, `net.ipv4.neigh.${v}.proxy_delay=0`, `net.ipv6.conf.${v}.disable_ipv6=1`);
-  await run("nft", ["-f", "-"], { input: sandboxRules(name, ip, cfg), check: true });
+  await nftApply(sandboxRules(name, ip, cfg));
   if (route) await routeSandbox(name, ip);
 }
 
@@ -156,7 +169,7 @@ export class HostNet {
   }
 
   async applyHostRules(): Promise<void> {
-    await run("nft", ["-f", "-"], { input: hostRules(this.cfg, this.publicIf, this.privateIf, this.egressTargets), check: true });
+    await nftApply(hostRules(this.cfg, this.publicIf, this.privateIf, this.egressTargets));
   }
 
   /** hub: the egress pods' addresses (from the controller); new connections to the VIP go to one of them */

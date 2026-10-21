@@ -73,7 +73,10 @@ export async function janitorPass(deps: WebDeps, sandboxes: SandboxManager): Pro
 
   // sandboxes at the provider without a live row, and live rows whose sandbox is gone
   const pods = await deps.sandboxProvider.list();
-  const { rows: live } = await db.query<{ id: string; pod: string; status: string; created_at: Date }>("select id, pod, status, created_at from sandboxes where status <> 'gone'");
+  const { rows: all } = await db.query<{ id: string; pod: string; status: string; created_at: Date; host: string | null }>("select id, pod, status, created_at, host from sandboxes where status <> 'gone'");
+  // only rows of the configured provider: during a switch to "vm" an older replica must not take the new provider's
+  // sandboxes for vanished (and the vm provider lists the previous provider's own, sandbox.vm.legacyProvider)
+  const live = deps.sandboxProvider.kind === "vm" ? all : all.filter((r) => !r.host);
   const livePods = new Set(live.map((r) => r.pod));
   for (const p of pods) {
     const age = Number.isNaN(p.createdAt) ? Infinity : Date.now() - p.createdAt;

@@ -305,3 +305,30 @@ test("VmController.pick: the hub first, then the fullest AWS host", () => {
   assert.equal(pick([{ host: h("hub", "hub"), used: 3, free: 0 }, { host: h("a", "aws"), used: 1, free: 6 }, { host: h("b", "aws"), used: 5, free: 2 }]), "b");
   assert.equal(pick([{ host: h("hub", "hub"), used: 3, free: 0 }]), undefined);
 });
+
+test("switching from kubernetes: the previous provider's sandboxes stay listed and are removed through it", async () => {
+  await db.query("update sandboxes set status = 'gone'");
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub");
+  const removed: string[] = [];
+  const legacy = {
+    kind: "kubernetes" as const,
+    create: async () => ({ name: "" }),
+    waitReady: async () => ({ url: "", headers: {} }),
+    keepAlive: async () => {},
+    destroy: async (n: string) => void removed.push(n),
+    list: async () => [{ name: "sbx-oldpod", createdAt: Date.now() - 3600_000 }],
+  };
+  const p = new VmProvider({ db, config: config(), sandboxd: sbx, ec2: null, hostTls: null }, legacy);
+  await p.controller.pass();
+  const old = await newRow();
+  await db.query("update sandboxes set pod = 'sbx-oldpod', status = 'ready' where id = $1", [old.id]); // no host: kubernetes
+  const fresh = await newRow();
+  await p.create(fresh, "t");
+  assert.deepEqual((await p.list()).map((x) => x.name).sort(), ["sbx-oldpod", fresh.pod].sort());
+  await p.destroy("sbx-oldpod");
+  assert.deepEqual(removed, ["sbx-oldpod"]);
+  await p.destroy(fresh.pod);
+  assert.deepEqual(removed, ["sbx-oldpod"]);
+  assert.ok(!sbx.hosts.get(HUB)!.specs.has(fresh.pod));
+});

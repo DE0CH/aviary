@@ -63,7 +63,8 @@ function sandboxProvider(config: ChatConfig, namespace: string, db: Db): Sandbox
     const aws = vm.aws;
     const ec2 = aws ? new Ec2Client({ accessKeyId: requireEnv(aws.accessKeyIdEnv), secretAccessKey: requireEnv(aws.secretAccessKeyEnv), region: aws.region }) : null;
     const hostTls = aws ? { ca: pem(vm.tls.caEnv), cert: pem(vm.tls.hostCertEnv), key: pem(vm.tls.hostKeyEnv) } : null;
-    return new VmProvider({ db, config, sandboxd, ec2, hostTls });
+    const legacy = vm.legacyProvider === "kubernetes" ? new KubernetesProvider({ k8s: K8sClient.inCluster(), config, egressNamespace: namespace }) : null;
+    return new VmProvider({ db, config, sandboxd, ec2, hostTls }, legacy);
   }
   if (config.sandbox.provider === "e2b") {
     const e = config.sandbox.e2b!;

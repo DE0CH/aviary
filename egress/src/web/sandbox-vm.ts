@@ -532,10 +532,17 @@ export class VmProvider implements SandboxProvider {
   readonly kind = "vm" as const;
   readonly controller: VmController;
   readonly #d: VmDeps;
+  /**
+   * The provider sandboxes came from before the switch to "vm" (sandbox.vm.legacyProvider): its sandboxes (rows
+   * without a host) keep running until the janitor releases them (idle or max lifetime, with the final save of
+   * their files), are listed for the janitor and removed through it. New sandboxes always come from the hosts.
+   */
+  readonly #legacy: SandboxProvider | null;
 
-  constructor(d: VmDeps) {
+  constructor(d: VmDeps, legacy: SandboxProvider | null = null) {
     this.#d = d;
     this.controller = new VmController(d);
+    this.#legacy = legacy;
   }
 
   async create(row: SandboxRow, egressToken: string): Promise<{ name: string }> {
@@ -591,7 +598,8 @@ export class VmProvider implements SandboxProvider {
   async keepAlive(): Promise<void> {}
 
   async destroy(name: string): Promise<void> {
-    const { rows } = await this.#d.db.query<{ id: string }>("select id from sandboxes where pod = $1", [name]);
+    const { rows } = await this.#d.db.query<{ id: string; host: string | null }>("select id, host from sandboxes where pod = $1", [name]);
+    if (this.#legacy && (rows[0] ? !rows[0].host : !(await this.#onHosts(name)))) return this.#legacy.destroy(name);
     const del = async (host: string | null) => {
       const hosts = (await this.controller.hosts()).filter((h) => !host || h.name === host);
       await Promise.all(hosts.map((h) => this.#d.sandboxd.call(h.url, "DELETE", `/v1/sandboxes/${name}`, undefined, 60_000)));
@@ -604,9 +612,13 @@ export class VmProvider implements SandboxProvider {
     });
   }
 
-  async list(): Promise<ListedSandbox[]> {
+  async #onHosts(name: string): Promise<boolean> {
+    return (await this.list(false)).some((s) => s.name === name);
+  }
+
+  async list(withLegacy = true): Promise<ListedSandbox[]> {
     const hosts = await this.controller.hosts();
-    const out: ListedSandbox[] = [];
+    const out: ListedSandbox[] = withLegacy && this.#legacy ? await this.#legacy.list() : [];
     await Promise.all(
       hosts.map(async (h) => {
         try {

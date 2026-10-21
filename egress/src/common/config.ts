@@ -66,6 +66,11 @@ export interface VmConfig {
    * across clouds
    */
   migration: { downtimeMs: number; maxRounds: number; maxDowntimeMs: number; idleCpu: number };
+  /**
+   * The provider sandboxes came from before the switch ("kubernetes"): its sandboxes keep running until released
+   * (with their files saved); remove once none is left.
+   */
+  legacyProvider?: "kubernetes";
   /** AWS burst hosts; absent = the hub only */
   aws?: {
     region: string;

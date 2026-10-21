@@ -27,6 +27,7 @@ export function run(cmd: string, args: string[], o: { input?: string; check?: bo
       if (o.check && r.code !== 0) reject(new Error(`${cmd} ${args.join(" ")}: exit ${r.code}: ${(stderr || stdout).trim().slice(0, 500)}`));
       else resolve(r);
     });
+    p.stdin!.on("error", () => {}); // a command that exits without reading its input (EPIPE)
     p.stdin!.end(o.input ?? "");
   });
 }

@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LaunchOnlyFromTheSandboxTemplate",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:eu-central-1:ACCOUNT:instance/*",
+      "Condition": {
+        "ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:eu-central-1:ACCOUNT:launch-template/LT_ID"},
+        "Bool": {"ec2:IsLaunchTemplateResource": "true"},
+        "StringEquals": {"aws:RequestTag/app": "yyc-ai-sandbox", "ec2:InstanceType": "m7i.xlarge"}
+      }
+    },
+    {
+      "Sid": "TheTemplatesOtherResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:eu-central-1:ACCOUNT:volume/*",
+        "arn:aws:ec2:eu-central-1:ACCOUNT:network-interface/*",
+        "arn:aws:ec2:eu-central-1:ACCOUNT:subnet/*",
+        "arn:aws:ec2:eu-central-1:ACCOUNT:security-group/*",
+        "arn:aws:ec2:eu-central-1::image/*",
+        "arn:aws:ec2:eu-central-1:ACCOUNT:launch-template/LT_ID"
+      ],
+      "Condition": {"ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:eu-central-1:ACCOUNT:launch-template/LT_ID"}}
+    },
+    {
+      "Sid": "TagOnlyAtLaunch",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": ["arn:aws:ec2:eu-central-1:ACCOUNT:instance/*", "arn:aws:ec2:eu-central-1:ACCOUNT:volume/*"],
+      "Condition": {"StringEquals": {"ec2:CreateAction": "RunInstances"}}
+    },
+    {
+      "Sid": "TerminateOnlySandboxHosts",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:eu-central-1:ACCOUNT:instance/*",
+      "Condition": {"StringEquals": {"ec2:ResourceTag/app": "yyc-ai-sandbox"}}
+    },
+    {
+      "Sid": "Read",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeInstances",
+      "Resource": "*"
+    }
+  ]
+}
