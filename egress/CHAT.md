@@ -422,8 +422,8 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
 | `CLAW_CONFIG_DIR` | the only config dir read (settings, `mcpServers`); nothing is read from the workdir |
 | `CLAW_SESSIONS_DIR` | where managed sessions live (instead of `<cwd>/.claw/sessions/…`), no workspace-root check |
 | `CLAW_PROMPT_CACHE=1` | `cache_control: ephemeral` on the system prompt, the tool list and the last user message (Anthropic format) |
-| `CLAW_IMAGES=1` | images reach the model: `read_file` on png/jpeg/webp/gif returns the image (heic/svg/bmp/tiff and a PDF page, `page`, converted to PNG), at most 1568 px on the long edge and 5 MB, at most 20 per run (then a text note); the session stores a reference (workdir path, sha256, media type), the bytes are read from the workdir for each request; `tool_result` events carry `images: [{path, sha256, media_type, width, height, page?}]` |
-| `CLAW_PROMPT_IMAGES` | JSON array of workdir paths attached to the prompt's user message as images (same rules) |
+| `CLAW_IMAGES=1` | images reach the model: `read_file` on png/jpeg/webp/gif returns the image (heic/svg/bmp/tiff and a PDF page, `page`, converted to PNG), at most 1568 px on the long edge and 5 MB, at most 20 per run (then a text note); the session stores a reference (workdir path, sha256, media type), the bytes are read from the workdir for each request; `tool_result` events carry `images: [{path, sha256, media_type, width, height, page?}]`; at most 40 images per request (older ones become a text note); a file changed since it was viewed becomes a note too |
+| `CLAW_PROMPT_IMAGES` | JSON array of workdir paths attached to the prompt's user message as images, before its text (same rules; one `prompt_images` event) |
 
 ### Turn runner (in `web`)
 
@@ -493,8 +493,8 @@ into the workdir (the agent can read it) but never stored in the bucket. Code: `
   written under `/work` are in the workdir after each bash command. The tool step of a viewed image shows a thumbnail:
   the runner puts that file's bytes in the bucket under its sha256 as soon as the `tool_result` arrives
   (`?v=<sha>&preview=1` then loads mid-turn). OpenRouter passes Anthropic `image` blocks (user and `tool_result`)
-  through with ZDR forced (checked 2026-10-21, `anthropic/claude-sonnet-5.5`). The web image has `poppler-utils` and
-  `libheif-examples` for the conversions.
+  through with ZDR forced (checked 2026-10-21, `anthropic/claude-sonnet-5.5`). The web image has `poppler-utils`,
+  `libheif-examples` and `librsvg2-bin` for the conversions.
 
 ### Events (what the UI renders; `GET …/stream` and `turns[].events`)
 
