@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer } from "node:https";
 import type { TLSSocket } from "node:tls";
-import { cpus } from "node:os";
+import { cpus, loadavg, uptime } from "node:os";
 import { loadHostConfig, validateSpec, type HostConfig, type PeerSpec } from "./config.ts";
 import { ensureImage, haveImage, imageTarStream, listImages } from "./images.ts";
 import { HostNet } from "./net.ts";
@@ -96,6 +96,8 @@ export async function startSandboxd(cfg: HostConfig): Promise<void> {
         memAvailable: mem.available,
         reserveMemory: cfg.reserveMemory,
         cpus: cpus().length,
+        loadAvg: loadavg(),
+        uptimeS: Math.round(uptime()),
         cpuFeatures: features,
         runsc: version,
         gvisorRelease: release,

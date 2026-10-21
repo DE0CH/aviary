@@ -332,3 +332,25 @@ test("switching from kubernetes: the previous provider's sandboxes stay listed a
   assert.deepEqual(removed, ["sbx-oldpod"]);
   assert.ok(!sbx.hosts.get(HUB)!.specs.has(fresh.pod));
 });
+
+test("stats(): hosts with their sandboxes, AWS cost so far, the scaler's decisions and migrations", async () => {
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub");
+  const p = new VmProvider({ db, config: config(), sandboxd: sbx, ec2: null, hostTls: null });
+  await p.controller.pass();
+  const st = await p.stats();
+  assert.equal(st.provider, "vm");
+  const hub = st.hosts.find((h) => h.name === "hub")!;
+  assert.equal(hub.kind, "hub");
+  assert.equal(hub.costUsd, null);
+  assert.ok(hub.slots >= 1);
+  // the earlier tests launched, drained, migrated and terminated AWS hosts
+  assert.ok(st.events.some((e) => e.kind === "launch"));
+  assert.ok(st.events.some((e) => e.kind === "drain"));
+  assert.ok(st.events.some((e) => e.kind === "terminate"));
+  assert.ok(st.events.some((e) => e.kind === "migration-skipped"));
+  const m = st.migrations[0]!;
+  assert.equal(m.to, "hub");
+  assert.equal(m.pauseMs, 1);
+  assert.ok(st.awsCostLast30dUsd >= 0);
+});

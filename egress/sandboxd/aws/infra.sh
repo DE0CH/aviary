@@ -68,8 +68,11 @@ ami)
   tar -C "$here/.." -cf - host src | ssh "${o[@]}" "ubuntu@$ip" "tar -xf - -C sbx"
   # the registry login exists only for the pull, in a file the setup deletes; it never reaches the AMI
   printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 -w0)" | ssh "${o[@]}" "ubuntu@$ip" "umask 077; cat > /tmp/ghcr.json"
-  ssh "${o[@]}" "ubuntu@$ip" "sudo REGISTRY_AUTH_FILE=/tmp/ghcr.json bash sbx/host/setup.sh burst $IMAGE; rm -f /tmp/ghcr.json; sudo rm -rf /home/ubuntu/sbx /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys; sudo sync" >&2
-  digest=$(ssh "${o[@]}" "ubuntu@$ip" "ls /var/lib/sbx/images | grep -E '^[0-9a-f]{64}$' | head -1" 2>/dev/null || true)
+  ssh "${o[@]}" "ubuntu@$ip" "sudo REGISTRY_AUTH_FILE=/tmp/ghcr.json bash sbx/host/setup.sh burst $IMAGE; rm -f /tmp/ghcr.json" >&2
+  digest=$(ssh "${o[@]}" "ubuntu@$ip" "sudo ls /var/lib/sbx/images | grep -E '^[0-9a-f]{64}$' | head -1")
+  [ -n "$digest" ] || { echo "no image on the builder" >&2; exit 1; }
+  # no way in afterwards: the build key goes, and instances from this AMI get no key pair
+  ssh "${o[@]}" "ubuntu@$ip" "sudo rm -rf /home/ubuntu/sbx /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys; sudo sync" >&2
   aws ec2 stop-instances --instance-ids "$iid" >/dev/null
   aws ec2 wait instance-stopped --instance-ids "$iid"
   ami=$(aws ec2 create-image --instance-id "$iid" --name "yyc-ai-sandbox-host-$(date -u +%Y%m%d-%H%M)" \

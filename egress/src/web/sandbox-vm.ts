@@ -47,7 +47,18 @@ export interface HostRow {
   mem_total: string | number | null;
   mem_reserve: string | number | null;
   cpus: number | null;
-  info: { sandboxes?: HostSandbox[]; cpuFeatures?: string; images?: string[]; bootId?: string; gvisorRelease?: string } | null;
+  info: {
+    sandboxes?: HostSandbox[];
+    cpuFeatures?: string;
+    images?: string[];
+    bootId?: string;
+    gvisorRelease?: string;
+    memAvailable?: number;
+    loadAvg?: number[] | null;
+    uptimeS?: number | null;
+    peers?: number;
+    egressTargets?: string[];
+  } | null;
   created_at: Date;
   last_seen_at: Date | null;
   empty_since: Date | null;
@@ -110,6 +121,13 @@ export class VmController {
 
   constructor(d: VmDeps) {
     this.#d = d;
+  }
+
+  /** Records what the scaler/controller did (vm_events: the admin monitor's "recent decisions" and migrations). */
+  async event(kind: string, host: string | null, sandboxId: string | null, data: Record<string, unknown> = {}): Promise<void> {
+    await this.#d.db
+      .query("insert into vm_events (kind, host, sandbox_id, data) values ($1, $2, $3, $4)", [kind, host, sandboxId, JSON.stringify(data)])
+      .catch((e) => logError("vm: event", e));
   }
 
   get vm(): VmConfig {
@@ -247,10 +265,12 @@ export class VmController {
         });
         await c.query("update vm_hosts set instance_id = $2, private_ip = $3 where name = $1", [name, inst.id, inst.privateIp || null]);
         log("vm: AWS host launched", { host: name, instance: inst.id, reason });
+        void this.event("launch", name, null, { instance: inst.id, reason, transient });
         return "launched";
       } catch (e) {
         await c.query("update vm_hosts set status = 'gone', gone_at = now(), gone_reason = $2 where name = $1", [name, `launch failed: ${(e as Error).message}`.slice(0, 500)]);
         logError("vm: AWS launch failed", e, { host: name });
+        void this.event("launch-failed", name, null, { reason, error: (e as Error).message.slice(0, 300) });
         return "full";
       }
     });
@@ -261,6 +281,7 @@ export class VmController {
     if (h.instance_id && this.#d.ec2) await this.#d.ec2.terminate([h.instance_id]);
     await this.#d.db.query("update vm_hosts set status = 'gone', gone_at = now(), gone_reason = $2 where name = $1 and status <> 'gone'", [h.name, reason]);
     log("vm: host gone", { host: h.name, instance: h.instance_id, reason });
+    await this.event("terminate", h.name, null, { instance: h.instance_id, reason, upMs: Date.now() - new Date(h.created_at).getTime() });
   }
 
   async #hostLost(h: HostRow, reason: string): Promise<void> {
@@ -269,6 +290,7 @@ export class VmController {
       [h.name],
     );
     logError("vm: host lost", reason, { host: h.name, sandboxes: rows.length });
+    await this.event("host-lost", h.name, null, { reason, sandboxes: rows.length });
     if (h.kind === "aws") await this.#terminate(h, `lost: ${reason}`);
   }
 
@@ -330,6 +352,7 @@ export class VmController {
           // not moved: it still runs on the source
           await sd.call(to.url, "DELETE", `/v1/sandboxes/${s.pod}`).catch(() => {});
           log("vm: migration not done, sandbox unchanged", { sandbox: sandboxId, from: from.name, to: to.name, error: e.message });
+          void this.event("migration-skipped", from.name, sandboxId, { to: to.name, reason, error: e.message.slice(0, 300), ms: Date.now() - t0 });
           return false;
         }
       }
@@ -337,7 +360,11 @@ export class VmController {
       if (res.state === "running") {
         await c.query("update sandboxes set host = $2 where id = $1", [sandboxId, to.name]);
         await this.pushPeersWith(c).catch((e) => logError("vm: peers after migration", e));
-        log("vm: sandbox migrated", { sandbox: sandboxId, from: from.name, to: to.name, reason, ms: Date.now() - t0, final_ms: res.stats?.final_ms, restore_ms: res.stats?.restore_ms, rounds: res.stats?.rounds, bytes: res.stats?.bytes });
+        const m = { from: from.name, to: to.name, reason, ms: Date.now() - t0, final_ms: res.stats?.final_ms, restore_ms: res.stats?.restore_ms, rounds: res.stats?.rounds, bytes: res.stats?.bytes,
+          // the sandbox is stopped for the last copy and the restore (plus the route switch, a few ms)
+          pause_ms: res.stats ? Math.round((Number(res.stats.final_ms) || 0) + (Number(res.stats.restore_ms) || 0)) : null };
+        log("vm: sandbox migrated", { sandbox: sandboxId, ...m });
+        void this.event("migration", to.name, sandboxId, m);
         return true;
       }
       // did the source keep it?
@@ -345,10 +372,12 @@ export class VmController {
       await sd.call(to.url, "DELETE", `/v1/sandboxes/${s.pod}`).catch(() => {});
       if (still) {
         logError("vm: migration failed, sandbox still on the source", sendError ?? res.error, { sandbox: sandboxId });
+        void this.event("migration-failed", from.name, sandboxId, { to: to.name, kept: true, error: String((sendError as Error)?.message ?? res.error).slice(0, 300) });
         return false;
       }
       await c.query("update sandboxes set status = 'gone', released_at = now(), release_reason = 'migration failed' where id = $1", [sandboxId]);
       logError("vm: migration lost the sandbox", sendError ?? res.error, { sandbox: sandboxId, from: from.name, to: to.name });
+      void this.event("migration-failed", from.name, sandboxId, { to: to.name, kept: false, error: String((sendError as Error)?.message ?? res.error).slice(0, 300) });
       return false;
     });
   }
@@ -405,12 +434,14 @@ export class VmController {
               info.reserveMemory,
               info.cpus,
               info.wgPublicKey,
-              JSON.stringify({ sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease }),
+              JSON.stringify({ sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
+                memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets }),
               missing.length ? "retiring" : status,
             ],
           );
           if (h.status === "booting") {
             log("vm: AWS host active", { host: h.name, bootMs: Date.now() - new Date(h.created_at).getTime() });
+            void this.event("active", h.name, null, { bootMs: Date.now() - new Date(h.created_at).getTime() });
             // warm the current image there now rather than at the first sandbox
             void this.imageDigest().then((digest) => this.#d.sandboxd.call(h.url, "POST", "/v1/images", { digest }, 15 * 60_000)).catch((e) => logError("vm: image warm-up", e, { host: h.name }));
           }
@@ -460,6 +491,7 @@ export class VmController {
       if (draining[0]) {
         await this.#d.db.query("update vm_hosts set status = 'active' where name = $1 and status = 'draining'", [draining[0].name]);
         log("vm: drain cancelled, capacity needed", { host: draining[0].name });
+        await this.event("drain-cancelled", draining[0].name, null, { free });
         return;
       }
       await this.launch(`spare slots ${free} < ${this.vm.spareSlots}`).catch((e) => logError("vm: launch", e));
@@ -486,6 +518,7 @@ export class VmController {
         if (n > 0 && n <= elsewhere - this.vm.spareSlots) {
           await this.#d.db.query("update vm_hosts set status = 'draining' where name = $1 and status = 'active'", [h.name]);
           log("vm: draining AWS host", { host: h.name, sandboxes: n, freeElsewhere: elsewhere });
+          await this.event("drain", h.name, null, { sandboxes: n, freeElsewhere: elsewhere });
           return;
         }
         break;
@@ -597,6 +630,11 @@ export class VmProvider implements SandboxProvider {
 
   async keepAlive(): Promise<void> {}
 
+  /** The admin monitor's view (hosts, their sandboxes, AWS cost so far, scaler decisions, migrations). */
+  stats(): Promise<VmStats> {
+    return vmStats(this.#d.db, this.controller);
+  }
+
   async destroy(name: string): Promise<void> {
     const { rows } = await this.#d.db.query<{ id: string; host: string | null }>("select id, host from sandboxes where pod = $1", [name]);
     if (this.#legacy && (rows[0] ? !rows[0].host : !(await this.#onHosts(name)))) return this.#legacy.destroy(name);
@@ -633,6 +671,110 @@ export class VmProvider implements SandboxProvider {
     );
     return out;
   }
+}
+
+/** On-demand price of an AWS burst host (m7i.xlarge, eu-central-1) plus its public IPv4 and 40 GB gp3, USD/hour. */
+export const AWS_HOST_USD_PER_HOUR = 0.2415 + 0.005 + (40 * 0.0952) / 730;
+
+export interface VmStats {
+  provider: "vm";
+  at: string;
+  scaler: { spareSlots: number; maxAwsHosts: number; freeSlots: number; memoryPerSandbox: number; cpuPerSandbox: number; lastPassAt: string | null };
+  hosts: {
+    name: string;
+    kind: "hub" | "aws";
+    status: HostRow["status"];
+    instanceId: string | null;
+    cpus: number | null;
+    memTotal: number | null;
+    memAvailable: number | null;
+    loadAvg: number[] | null;
+    slots: number;
+    used: number;
+    maxSandboxes: number | null;
+    lastSeenAt: string | null;
+    upSince: string;
+    upHours: number;
+    costUsd: number | null;
+    gvisorRelease: string | null;
+    sandboxes: { name: string; id: string | null; conversationId: string | null; ip: string; state: string; cpuUsage: number; memoryCurrent: number; memoryLimit: number; busy: boolean }[];
+  }[];
+  awsCostLast30dUsd: number;
+  events: { at: string; kind: string; host: string | null; sandboxId: string | null; data: Record<string, unknown> }[];
+  migrations: { at: string; sandboxId: string | null; from: string; to: string; ms: number; pauseMs: number | null; finalMs: number | null; restoreMs: number | null; rounds: number | null; bytes: number | null }[];
+}
+
+/** Everything the admin monitor shows for provider vm (hosts, their sandboxes, AWS cost so far, scaler decisions). */
+export async function vmStats(db: Db, ctl: VmController): Promise<VmStats> {
+  const { rows: hosts } = await db.query<HostRow & { gone_at: Date | null }>(
+    "select * from vm_hosts where status <> 'gone' or gone_at > now() - interval '30 days' order by kind desc, created_at",
+  );
+  const { rows: sbx } = await db.query<{ id: string; pod: string; conversation_id: string; host: string; busy: boolean }>(
+    `select s.id, s.pod, s.conversation_id, s.host, exists (select 1 from turns t where t.conversation_id = s.conversation_id
+       and t.status in ('queued','running','waiting')) as busy from sandboxes s where s.status <> 'gone' and s.host is not null`,
+  );
+  const byPod = new Map(sbx.map((r) => [r.pod, r]));
+  const used = new Map<string, number>();
+  for (const r of sbx) used.set(r.host, (used.get(r.host) ?? 0) + 1);
+  const hours = (h: { created_at: Date; gone_at: Date | null }, since = 0) =>
+    Math.max(0, ((h.gone_at ? new Date(h.gone_at).getTime() : Date.now()) - Math.max(new Date(h.created_at).getTime(), since)) / 3_600_000);
+  const monthAgo = Date.now() - 30 * 86_400_000;
+  const live = hosts.filter((h) => h.status !== "gone");
+  const { rows: ev } = await db.query<{ at: Date; kind: string; host: string | null; sandbox_id: string | null; data: any }>(
+    "select at, kind, host, sandbox_id, data from vm_events order by id desc limit 100",
+  );
+  const { rows: last } = await db.query<{ at: Date }>("select max(last_seen_at) as at from vm_hosts where status <> 'gone'");
+  return {
+    provider: "vm",
+    at: new Date().toISOString(),
+    scaler: {
+      spareSlots: ctl.vm.spareSlots,
+      maxAwsHosts: ctl.vm.aws?.maxHosts ?? 0,
+      freeSlots: live.filter((h) => h.status === "active").reduce((a, h) => a + Math.max(0, ctl.slots(h) - (used.get(h.name) ?? 0)), 0),
+      memoryPerSandbox: ctl.memBytes,
+      cpuPerSandbox: ctl.cpuCores,
+      lastPassAt: last[0]?.at ? new Date(last[0].at).toISOString() : null,
+    },
+    hosts: live.map((h) => ({
+      name: h.name,
+      kind: h.kind,
+      status: h.status,
+      instanceId: h.instance_id,
+      cpus: h.cpus,
+      memTotal: h.mem_total == null ? null : Number(h.mem_total),
+      memAvailable: h.info?.memAvailable ?? null,
+      loadAvg: h.info?.loadAvg ?? null,
+      slots: ctl.slots(h),
+      used: used.get(h.name) ?? 0,
+      maxSandboxes: h.max_sandboxes,
+      lastSeenAt: h.last_seen_at ? new Date(h.last_seen_at).toISOString() : null,
+      upSince: new Date(h.created_at).toISOString(),
+      upHours: Math.round(hours(h) * 100) / 100,
+      costUsd: h.kind === "aws" ? Math.round(hours(h) * AWS_HOST_USD_PER_HOUR * 100) / 100 : null,
+      gvisorRelease: h.info?.gvisorRelease ?? null,
+      sandboxes: (h.info?.sandboxes ?? []).map((s) => {
+        const r = byPod.get(s.name);
+        return { name: s.name, id: r?.id ?? null, conversationId: r?.conversation_id ?? null, ip: s.ip, state: s.state, cpuUsage: s.cpuUsage, memoryCurrent: s.memoryCurrent, memoryLimit: s.memory, busy: !!r?.busy };
+      }),
+    })),
+    awsCostLast30dUsd: Math.round(hosts.filter((h) => h.kind === "aws" && h.instance_id).reduce((a, h) => a + hours(h, monthAgo), 0) * AWS_HOST_USD_PER_HOUR * 100) / 100,
+    events: ev.map((e) => ({ at: new Date(e.at).toISOString(), kind: e.kind, host: e.host, sandboxId: e.sandbox_id, data: e.data })),
+    migrations: ev
+      .filter((e) => e.kind === "migration")
+      .slice(0, 20)
+      .map((e) => ({
+        at: new Date(e.at).toISOString(),
+        sandboxId: e.sandbox_id,
+        from: e.data.from,
+        to: e.data.to,
+        ms: e.data.ms,
+        pauseMs: e.data.pause_ms ?? null,
+        finalMs: e.data.final_ms ?? null,
+        restoreMs: e.data.restore_ms ?? null,
+        rounds: e.data.rounds ?? null,
+        bytes: e.data.bytes ?? null,
+      })),
+  };
 }
 
 export function startVmScaler(dbUrl: string, ctl: VmController, intervalMs = 5000): { stop(): Promise<void> } {

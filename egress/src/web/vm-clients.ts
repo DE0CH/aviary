@@ -29,6 +29,8 @@ export interface HostInfo {
   memAvailable: number;
   reserveMemory: number;
   cpus: number;
+  loadAvg?: number[];
+  uptimeS?: number;
   cpuFeatures: string;
   runsc: string;
   gvisorRelease: string;

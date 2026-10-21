@@ -65,4 +65,10 @@ create table vm_hosts (name text primary key, kind text not null check (kind in 
   gone_at timestamptz, gone_reason text);
 create unique index vm_hosts_wg_ip_live on vm_hosts (wg_ip) where status <> 'gone';
 `,
+  // provider "vm": what the scaler decided and did (launches, drains, migrations with their pause, terminations)
+  `
+create table vm_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
+  host text, sandbox_id uuid, data jsonb not null default '{}');
+create index vm_events_at on vm_events (at);
+`,
 ];

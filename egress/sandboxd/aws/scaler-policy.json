@@ -30,7 +30,7 @@
       "Sid": "TagOnlyAtLaunch",
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
-      "Resource": ["arn:aws:ec2:eu-central-1:ACCOUNT:instance/*", "arn:aws:ec2:eu-central-1:ACCOUNT:volume/*"],
+      "Resource": ["arn:aws:ec2:eu-central-1:ACCOUNT:instance/*", "arn:aws:ec2:eu-central-1:ACCOUNT:volume/*", "arn:aws:ec2:eu-central-1:ACCOUNT:network-interface/*"],
       "Condition": {"StringEquals": {"ec2:CreateAction": "RunInstances"}}
     },
     {
