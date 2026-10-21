@@ -308,8 +308,9 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   allowed domain (user-content platforms where anyone gets a subdomain: `.workers.dev`, `.github.io`,
   `.herokuapp.com`, …). Upload to a place that takes it without an account of its own is the main exfiltration
   path a prompt-injected command could use, so these are refused even though they are popular.
-- **Size and version (2026-10-21):** allow 48,933 entries (105 dev + 78 YYC curated, ranked 48,856 kept of 50,000;
-  1,144 dropped by category), deny 14,659. Each file's header carries `# version: <date> <digest>` and the sources;
+- **Size and version (2026-10-21):** allow 48,664 entries (105 dev + 78 YYC curated; ranked: 48,856 kept of 50,000
+  after 1,144 dropped by category, less the 269 the deny list names exactly, e.g. `.pastebin.com`, `.amazonaws.com`,
+  CDN/platform domains such as `.akamaized.net`, `.azurewebsites.net`), deny 14,653. Each file's header carries `# version: <date> <digest>` and the sources;
   egress logs the version at start.
 - **Refresh:** workflow `egress-allowlist` (Mondays) runs `generate.py`, commits to main only when an entry changed,
   and dispatches the `chat` workflow so the images carry the new lists; an instance takes them with its next jarvis3
