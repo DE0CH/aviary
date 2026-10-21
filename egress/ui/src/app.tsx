@@ -504,14 +504,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
         {loadError ? (
           <div class="center-note">{s.loadFailed}</div>
         ) : empty && !convId ? (
-          <Empty
-            me={p.me}
-            onPick={(ex) => {
-              setText(ex);
-              textarea.current?.focus();
-              typing();
-            }}
-          />
+          <Empty me={p.me} />
         ) : (
           <div class="thread">
             {timeline.map((item) =>
@@ -555,20 +548,13 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
   );
 }
 
-function Empty({ me, onPick }: { me: Me; onPick: (s: string) => void }) {
+function Empty({ me }: { me: Me }) {
   const s = t();
   return (
     <div class="empty">
       <Logo me={me} />
       <h2>{s.emptyTitle}</h2>
       <p>{s.emptyLead}</p>
-      <ul class="examples">
-        {s.examples.map((ex) => (
-          <li key={ex}>
-            <button onClick={() => onPick(ex)}>{ex}</button>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
