@@ -36,7 +36,7 @@ export function summary(c: ChatConfig, commit: string): string {
     own ? "- Disk: writes outside the workspace (installs, /tmp is in memory) are capped at 5 GiB; processes at 4096." : "- Disk: the sandbox's own disk; keep installs small.",
     "- One command runs at most 10 minutes (default 2); use the bash tool's background mode for longer jobs (output in .jobs/<id>.log).",
     `- The sandbox is released after ${c.sandbox.idleMinutes} idle minutes or ${c.sandbox.maxLifetimeHours} h at most: files in /work are kept, installed packages and processes are not (reinstall after a reset).`,
-    "- Files written under /work are in your workspace right after each bash command: read_file on an image you made (e.g. a matplotlib chart saved as /work/chart.png) shows it to you; present_files shows deliverables to the user.",
+    "- Files written under /work are in your workspace right after each bash command: read_file on an image you made (e.g. a matplotlib chart saved as /work/chart.png) shows it to you; mcp__tools__present_files shows deliverables to the user.",
     "",
     "## Installing software (lasts while the sandbox lives)",
     "- Python: `pip install x` (a virtualenv at /opt/py, first on PATH; no sudo needed). `uv` works too after installing it.",

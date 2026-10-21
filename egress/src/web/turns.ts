@@ -48,8 +48,9 @@ packages or download data files.
  */
 export const FILES_NOTE = `## Showing files and seeing images
 The user sees none of the workspace's files unless you present them. When you finish, call present_files with the
-deliverables only (reports, charts, data the user asked for) — never scripts, fonts or intermediate files. Don't paste
-paths or download links for them in your answer.
+deliverables only (reports, charts, data the user asked for) — never scripts, fonts or intermediate files. Its tool
+name is mcp__tools__present_files (there is no tool called just "present_files"); pass \`files\` as a list, e.g.
+[{"path": "report.pdf", "caption": "…"}]. Don't paste paths or download links for them in your answer.
 You can see images: read_file on a PNG, JPEG, WebP or GIF shows it to you (HEIC, SVG, BMP and TIFF are converted, and
 read_file on a PDF shows one page as an image: \`page\`, default 1). Files a bash command writes under /work in the
 sandbox are in the workspace right after that command, so to check a chart you made, save it (e.g. matplotlib
