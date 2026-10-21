@@ -24,6 +24,9 @@ export function App() {
   const [blocked, setBlocked] = useState<"denied" | "failed" | null>(null);
   const [, setLoc] = useState<Locale>(locale());
   const [list, setList] = useState<ConversationSummary[]>([]);
+  // Whether the user had earlier conversations when the page loaded (null until the first list arrives): the
+  // greeting's "welcome back" phrases are only for them.
+  const [returning, setReturning] = useState<boolean | null>(null);
   const [current, setCurrent] = useState<string | null>(routeId());
   // a shared conversation (/s/<id>): read-only, with "continue conversation"
   const [shareId, setShareId] = useState<string | null>(shareRoute());
@@ -49,7 +52,13 @@ export function App() {
   }, []);
 
   const refreshList = useCallback(() => {
-    api.conversations().then(setList).catch(() => {});
+    api
+      .conversations()
+      .then((l) => {
+        setList(l);
+        setReturning((r) => r ?? l.some((c) => c.id !== routeId()));
+      })
+      .catch(() => setReturning((r) => r ?? false));
   }, []);
   useEffect(() => {
     if (!me) return;
@@ -137,6 +146,7 @@ export function App() {
           <ChatView
             key={viewKey}
             me={me}
+            returning={returning}
             id={current}
             onCreated={(id) => {
               history.replaceState(null, "", `/c/${id}`);
@@ -313,7 +323,7 @@ interface Attachment {
   error?: boolean;
 }
 
-function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => void; onActivity: () => void; onTitle: (id: string, title: string) => void }) {
+function ChatView(p: { me: Me; returning: boolean | null; id: string | null; onCreated: (id: string) => void; onActivity: () => void; onTitle: (id: string, title: string) => void }) {
   const s = t();
   const [convId, setConvId] = useState<string | null>(p.id);
   const [conv, setConv] = useState<Conversation | null>(null);
@@ -505,7 +515,7 @@ function ChatView(p: { me: Me; id: string | null; onCreated: (id: string) => voi
         {loadError ? (
           <div class="center-note">{s.loadFailed}</div>
         ) : empty && !convId ? (
-          <Empty me={p.me} />
+          <Empty me={p.me} returning={p.returning} />
         ) : (
           <div class="thread">
             {timeline.map((item) =>
@@ -578,11 +588,12 @@ export function timelineOf(messages: Message[], views: TurnView[]): TimelineItem
   return out;
 }
 
-function Empty({ me }: { me: Me }) {
+// Until the conversation list says whether the user is returning, the heading stays blank (no greeting swap).
+function Empty({ me, returning }: { me: Me; returning: boolean | null }) {
   return (
     <div class="empty">
       <Logo me={me} />
-      <h2>{greeting(locale(), new Date(), greetingDraw, me.firstName)}</h2>
+      <h2>{returning === null ? "\u00a0" : greeting(locale(), new Date(), greetingDraw, me.firstName, returning)}</h2>
     </div>
   );
 }

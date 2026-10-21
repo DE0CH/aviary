@@ -1,32 +1,53 @@
 // The empty new-conversation screen's greeting (Deyao, 2026-10-21: playful, by time of day, like claude.ai's).
-// The phrases are NOT made up here: each is taken from a published list (short common phrases; both sources are
-// CC BY-SA, attribution below and in docs/CHAT.md):
-//   zh-HK: Wikivoyage, "Cantonese phrasebook" (Basics) https://en.wikivoyage.org/wiki/Cantonese_phrasebook
-//            早晨 (good morning), 你好 (hello), 食飽未？ (colloquial "how are you", lit. "have you eaten?"),
-//            晚安 (good night), 早抖 (colloquial good night; written 早唞 in Hong Kong, Wiktionary
-//            https://en.wiktionary.org/wiki/早唞 "variant form of 早敨": "good night; have a good night")
-//          Wiktionary 午安 https://en.wiktionary.org/wiki/午安 ("good afternoon", Cantonese ng5 on1) and
-//          晚上好 https://en.wiktionary.org/wiki/晚上好 ("good evening", Cantonese maan5 soeng6 hou2)
-//   en:    Wiktionary, "Category:English greetings" https://en.wiktionary.org/wiki/Category:English_greetings
-// Time slots (Hong Kong time) follow CantoneseClass101's "How do you greet someone at different times of the day in
-// Cantonese" (早晨 in the morning, 午安 from noon to about 6 pm, then the evening ones).
+// The phrase set is the one Deyao approved on 2026-10-21:
+//   en:    the English phrases come from Wiktionary, "Category:English greetings" (CC BY-SA)
+//          https://en.wiktionary.org/wiki/Category:English_greetings
+//   zh-HK: the Cantonese versions were translated by Claude in the session and approved by Deyao (2026-10-21).
+// Each locale picks only from its own lists; the two locales' lists run in parallel (same slots, same order).
 // Same as i18n.ts Locale (not imported: the server tests load this file without the DOM types).
 type Locale = "zh-HK" | "en";
 
 export type Slot = "morning" | "afternoon" | "evening" | "night";
 
-export const GREETINGS: Record<Locale, Record<Slot, readonly string[]>> = {
+interface Phrases {
+  /** Only in that time slot. */
+  slots: Record<Slot, readonly string[]>;
+  /** In every slot's pool. */
+  anytime: readonly string[];
+  /** In the morning and afternoon pools. */
+  daytime: readonly string[];
+  /** Only for a user who has earlier conversations. */
+  returning: readonly string[];
+}
+
+export const GREETINGS: Record<Locale, Phrases> = {
   "zh-HK": {
-    morning: ["早晨", "你好"],
-    afternoon: ["午安", "你好", "食飽未？"],
-    evening: ["晚上好", "你好", "食飽未？"],
-    night: ["早唞", "晚安"],
+    slots: {
+      morning: ["早晨", "早呀", "早晨！今日精神嗎？"],
+      afternoon: ["下晝好", "食咗飯未呀？"],
+      evening: ["夜晚好", "食咗飯未呀？"],
+      night: ["夜喇，仲未瞓？", "早唞"],
+    },
+    anytime: [
+      "你好呀", "你好", "哈囉", "嗨", "喂，你好", "哈囉哈囉", "嘿", "你好嗎？", "點呀？", "近排點呀？", "一切順利嗎？",
+      "最近過成點？", "有咩新嘢？", "而家發生緊咩事？",
+    ],
+    daytime: ["今日打得掂嗎？"],
+    returning: ["又見面喇", "歡迎返嚟"],
   },
   en: {
-    morning: ["Good morning", "Morning", "Top of the morning"],
-    afternoon: ["Good afternoon", "Hello there", "How's it going?"],
-    evening: ["Good evening", "Hey there", "How's everything?"],
-    night: ["Hello again", "Hi there", "Hey there"],
+    slots: {
+      morning: ["Good morning", "Morning", "Top of the morning"],
+      afternoon: ["Good afternoon", "How's it going?"],
+      evening: ["Good evening", "How's everything?"],
+      night: ["Hello again", "Hi there"],
+    },
+    anytime: [
+      "Good day", "Hello", "Hi", "Hey", "Hello there", "Hiya", "Hey there", "How are you?", "How are you doing?",
+      "How's it going?", "How's everything?", "How's life?", "What's new?", "What's going on?",
+    ],
+    daytime: ["How goes the battle?"],
+    returning: ["Hello again", "Welcome"],
   },
 };
 
@@ -39,14 +60,26 @@ export function slotAt(d: Date): Slot {
   return "night";
 }
 
-/** One of the slot's phrases (r in [0, 1): random per page load), with the first name if the identity gave one:
- * "Good morning, Deyao" / "早晨，Deyao"; a question keeps its mark at the end ("食飽未，Deyao？"). */
-export function greeting(loc: Locale, d: Date, r: number, name?: string | null): string {
-  const list = GREETINGS[loc][slotAt(d)];
+/** The phrases a slot draws from: its own, the any-time ones, the daytime ones (morning, afternoon) and, for a
+ * user with earlier conversations, the returning ones. */
+export function pool(loc: Locale, slot: Slot, returning = false): string[] {
+  const p = GREETINGS[loc];
+  return [
+    ...p.slots[slot],
+    ...p.anytime,
+    ...(slot === "morning" || slot === "afternoon" ? p.daytime : []),
+    ...(returning ? p.returning : []),
+  ];
+}
+
+/** One phrase of the slot's pool (r in [0, 1): random per page load), with the first name if the identity gave one:
+ * "Good morning, Deyao" / 「早晨，Deyao」; a question keeps its mark at the end (「點呀，Tai Man？」). */
+export function greeting(loc: Locale, d: Date, r: number, name?: string | null, returning = false): string {
+  const list = pool(loc, slotAt(d), returning);
   let g = list[Math.min(list.length - 1, Math.floor(r * list.length))]!;
   const n = name?.trim();
   if (!n) return g;
-  const end = /[？?！!]$/.exec(g)?.[0] ?? "";
+  const end = /[？?]$/.exec(g)?.[0] ?? "";
   if (end) g = g.slice(0, -1);
   return loc === "en" ? `${g}, ${n}${end}` : `${g}，${n}${end}`;
 }
