@@ -56,23 +56,33 @@ State: Postgres (conversations, messages, events, claw session files, file metad
 
 ## Sandbox lifecycle (design "B")
 
-- **Warm on typing:** the UI calls `POST /api/conversations/:id/warm` (debounced, at most every 30 s) when the staff
-  member types; `web` makes sure the conversation has a live sandbox (creates the pod if none). A new conversation
-  warms on its first keystroke too (the UI creates the conversation row first).
+- **Made at the first bash command, never ahead of it.** jarvis-bash asks the turn runner for the conversation's
+  sandbox (`POST /sandbox` on the replica's unix socket, with the turn's token); the sandbox manager makes one if
+  there is none (a sandbox starts in well under a second once a host is up), and the workspace files are pushed into
+  it before the command runs. A turn that never runs bash never gets a sandbox; typing makes none either. There is at
+  most one live sandbox per conversation (unique index `sandboxes_one_live`).
+- **Typing only readies a host:** the UI calls `POST /api/typing` (debounced, at most every 30 s, with the open
+  conversation's id if any). If that conversation has a live sandbox it is kept active; otherwise it is a signal
+  (kv `sandbox_demand:<email>`, counted for 2 minutes) on which the vm scaler starts an AWS host at once when no host
+  has a free slot (docs/SANDBOX-VM.md). No conversation row is made for typing.
 - **Kept while active:** installs, caches and background processes carry over between turns.
-- **Released** after `sandbox.idleMinutes` (default 30) with no turn and no warm call, and always at
+- **Released** after `sandbox.idleMinutes` (default 30) with no turn and no typing, and always at
   `sandbox.maxLifetimeHours` (default 8). Before deleting the pod the janitor pulls the sandbox's changed files and
   saves them (files are also synced after every bash command, so this only catches what background processes wrote).
-- **Reset notice:** when a turn starts on a fresh sandbox and the conversation had an earlier one, the turn's prompt
-  gets a line: `[System note: the sandbox was reset: files in the workspace are restored; installed packages and
-  background processes from before are gone.]`
+- **Also released:** at once when the conversation is deleted (`DELETE`; the janitor catches a replica that died
+  first), and by the janitor when its conversation never had a turn 5 minutes after it was made (a leftover; nothing
+  makes such a sandbox any more). The janitor also removes sandboxes a provider lists without a live row, and marks
+  rows whose sandbox the provider no longer has.
+- **Reset notice:** when the first bash command of a conversation lands in a fresh sandbox and the conversation had
+  an earlier one, that command's output starts with a line: `[System note: the sandbox was reset: files in the
+  workspace are restored; installed packages and background processes from before are gone.]`
 - **No secrets in a sandbox.** Its env has only `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/`https_proxy`
   `=http://sbx:<egress token>@egress.<ns>.svc.cluster.local:3128`, `NO_PROXY=` (empty), the pip/npm mirror settings
   and its exec token. NetworkPolicy: egress only to the `egress` pods (3128) and cluster DNS; ingress only from `web`
   pods on 7070.
 - Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"), ephemeral storage 5Gi;
   at most `sandbox.maxActive` (default 6) live sandboxes per instance; over the limit the least recently active idle
-  one is released first; if none is idle, the warm/turn waits up to 60 s, then the bash tool reports
+  one is released first; if none is idle, the bash command waits up to 60 s, then reports
   "the sandbox pool is full, try again in a minute".
 
 ## Sandbox providers (`sandbox.provider`)
@@ -130,7 +140,7 @@ gets the URL and headers (`JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_HEADERS`), so it
     `/wire` (`wss://<egress host>/wire`, through the Cloudflare tunnel); egress feeds it into its own proxy server, so
     CONNECT, plain HTTP, the mirror, the allowlist, the address checks and the log are the same as on 3128. E2B checks
     the allow-list by TLS SNI (443) and Host (80), and lets its DNS server (8.8.8.8) through.
-  - **Lifetime:** E2B kills a sandbox at its timeout. On every warm, every turn and every minute of a running turn
+  - **Lifetime:** E2B kills a sandbox at its timeout. On every typing signal, every turn and every minute of a running turn
     (at most every 30 s per sandbox) the manager sets it (`POST /sandboxes/{id}/timeout`) to the idle release + 5
     minutes, capped at the hard maximum + 5 minutes, so the janitor's release (with the final save) always comes
     first, and a sandbox whose web replicas died still ends. Release = `DELETE /sandboxes/{id}`.
@@ -386,14 +396,17 @@ The workspace is `/work` (owned by uid 1000, the agent and commands run as uid 1
 claw (fork patch) runs `$CLAW_BASH_COMMAND` with the bash tool input JSON on stdin
 (`{command, timeout, description, run_in_background}`) and cwd = workdir, and expects JSON on stdout:
 `{stdout, stderr, exit_code, interrupted, background_task_id?}` (non-zero exit of the helper = tool error with its
-stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_URL`, `JARVIS_SANDBOX_TOKEN`, `JARVIS_SYNC_STATE`
-(a JSON file outside the workdir with the last-synced manifest and the `/changes` cursor) from the turn runner. Each
-call: push files that changed in the workdir since the manifest (`PUT /files`), `POST /exec`, then pull
-`/changes` into the workdir and update the manifest. A turn without a sandbox gets no `JARVIS_SANDBOX_URL`; the
-helper then fails with a plain sentence (`The sandbox is not available for this message (<reason>). Try again in a
-minute.`, the reason from `JARVIS_SANDBOX_UNAVAILABLE`: the pool-full text or "it could not be started"), never an
-internal name, since the model passes it on to staff. It also needs `JARVIS_SANDBOX_ID`: a different id than the one in
-the state file (a new sandbox) resets the manifest and cursor, so the whole workdir is pushed again. A full `/changes`
+stderr). The helper (in the `web` image) gets `JARVIS_SANDBOX_SOCKET` (the replica's unix socket, mode 600 in the work
+root), `JARVIS_TURN_TOKEN` and `JARVIS_SYNC_STATE` (a JSON file outside the workdir with the last-synced manifest and
+the `/changes` cursor) from the turn runner. Each call first asks the socket for the sandbox (`POST /sandbox`, bearer
+= the turn token; only a turn running on that replica is accepted) → `{id, url, token, headers, reset}` (made now if
+the conversation has none: `sandbox` events `starting`/`ready`, and `reset` → the reset notice above the output) or
+`{unavailable: <reason>}`; then: push files that changed in the workdir since the manifest (`PUT /files`),
+`POST /exec`, pull `/changes` into the workdir and update the manifest. Without a sandbox the helper fails with a
+plain sentence (`The sandbox is not available for this message (<reason>). Try again in a minute.`, the reason the
+pool-full text or "it could not be started"), never an internal name, since the model passes it on to staff. A
+different sandbox id than the one in the state file (a new sandbox) resets the manifest and cursor, so the whole
+workdir is pushed again. A full `/changes`
 answer (`X-Full: 1`) is the complete list: files the manifest has and the answer lacks (and didn't skip) are deleted
 locally. Background commands answer `Started in the background … output goes to .jobs/<id>.log`; `.jobs/` is pulled
 into the workdir (the agent can read it) but never stored in the bucket. Code: `chat/src/web/bash.ts`.
@@ -478,14 +491,14 @@ events: they still load, and the UI shows nothing for them (like any event type 
 
 - `GET /api/me` → `{email, name, isAdmin, product: {name, logoUrl, locale}, models: [{id, label}], defaultModel}`
 - `GET /api/conversations` → newest first `[{id, title, model, updatedAt, running}]`; conversations without any
-  message are left out (the UI creates a conversation on the first keystroke of a new chat, to warm its sandbox)
+  message are left out
 - `POST /api/conversations` `{model?}` → `{id}`; `PATCH /api/conversations/:id` `{title?, model?}` → 204 (the
   model applies from the next turn); `DELETE` (soft) → 204
 - `GET /api/conversations/:id` → `{id, title, model, messages: [{id, role, content, turnId, attachments: [path],
   createdAt}], turns: [{id, status, model, startedAt, finishedAt, error, costUsd, events: [event]}],
   pendingConfirmations: [{id, turnId, kind, summary, detail, status}], lastEventId}` (oldest first; stream from
   `lastEventId` to continue)
-- `POST /api/conversations/:id/warm` → 204
+- `POST /api/typing` `{conversationId?}` → 204 (keeps that conversation's sandbox, or signals the scaler; makes nothing)
 - `POST /api/conversations/:id/messages` `{text, attachments: [path]}` → 202 `{turnId}`; 409 while a turn is going;
   503 while this replica drains (retry)
 - `GET /api/conversations/:id/stream?after=<event id>` → SSE of events with an id greater than `after` (or the
@@ -529,7 +542,7 @@ visible. Read-only except the **Budget** panel (its own `GET/POST /api/admin/bud
 the limit comes from, reset / set limit / back to config with a confirm, the last changes). Code: `chat/src/web/monitor.ts` (one snapshot per replica cached 4 s; each section
 fails on its own into `errors`). It never shows message contents: conversation titles, owners, counts, timings.
 
-- **Sandboxes:** live rows (`starting`/`ready`/`releasing`) with conversation title, owner, provider + host, state,
+- **Sandboxes:** live rows (`starting`/`ready`/`releasing`) with conversation title, owner, conversation id (link `/c/<id>`, opens for its owner) and its number of turns (0 or "conversation deleted" is flagged: an orphan), provider + host, state,
   age, idle time, CPU/memory use vs limit (the provider's `stats()`), last bash (`events` tool_use `bash`), resets
   (earlier sandboxes of the conversation), pod restarts, vm migrations (count, last pause from `vm_events`); pool
   live / `maxActive` (vm: the hosts' slots); 24 h starts with allocation p50/p95 and recent failures with their
