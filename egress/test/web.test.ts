@@ -17,7 +17,7 @@ import { S3BlobStore } from "../src/common/s3.ts";
 import type { WebDeps } from "../src/web/ctx.ts";
 import { janitorPass } from "../src/web/janitor.ts";
 import { startWeb, type WebServer } from "../src/web/main.ts";
-import { FILES_NOTE, imageAttachments, MAX_PROMPT_IMAGES, RESET_NOTE, SANDBOX_NETWORK_NOTE } from "../src/web/turns.ts";
+import { FILES_NOTE, imageAttachments, MAX_PROMPT_IMAGES, RESET_NOTE, SANDBOX_NETWORK_NOTE, sandboxInstallNote } from "../src/web/turns.ts";
 import { createToolsServer } from "../src/tools/server.ts";
 import { legacyPresented } from "../src/web/app.ts";
 import { mergePresented } from "../src/common/presented.ts";
@@ -298,6 +298,8 @@ test("a full turn: upload, typing, a lazy sandbox at the first bash, streaming, 
   assert.match(dbg.systemPrompt, /call present_files with the\ndeliverables only \(reports, charts, data the user asked for\) — never scripts, fonts or intermediate files/);
   assert.equal(dbg.env.CLAW_IMAGES, "1");
   assert.equal(dbg.env.CLAW_PROMPT_IMAGES, undefined, "a CSV is not an image");
+  // between them, how to install software (the test config's provider is kubernetes: no apt)
+  assert.ok(dbg.systemPrompt.includes(`${SANDBOX_NETWORK_NOTE}\n${sandboxInstallNote("kubernetes", false)}\n${FILES_NOTE}`), dbg.systemPrompt);
   assert.match(dbg.systemPrompt, /no one can enable a site from the chat/);
   assert.equal(dbg.env.ANTHROPIC_BASE_URL, `${deps.egressBase}/x/model`);
   assert.equal(dbg.env.CLAW_RESUME_SESSION, undefined);

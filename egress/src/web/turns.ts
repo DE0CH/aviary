@@ -60,6 +60,24 @@ savefig to /work/chart.png) and read_file it. Images the user attached to their 
 export const PROMPT_IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|svg)$/i;
 export const MAX_PROMPT_IMAGES = 20;
 
+/**
+ * Appended after SANDBOX_NETWORK_NOTE: how to install software in the sandbox (docs/CHAT.md, "Sandbox lifecycle";
+ * docs/SANDBOX-VM.md, "Installing packages"). System packages only where the provider gives root inside the sandbox
+ * (our own gVisor hosts); a hint to sandbox_environment when the tools server offers it.
+ */
+export function sandboxInstallNote(provider: string, hasEnvTool: boolean): string {
+  const apt =
+    provider === "vm"
+      ? "- System packages: `sudo apt-get install -y <pkg>` (passwordless sudo; root exists only inside the sandbox; the\n  package lists are fetched on the first install).\n"
+      : "- System packages (apt) cannot be installed in this sandbox (no root).\n";
+  return `## Installing software in the sandbox
+You may install what a task needs; installs last while the sandbox lives (it is reset after a long idle time, then
+reinstall them):
+${apt}- Python packages: \`pip install <pkg>\` (a virtualenv, no sudo). Node packages: \`npm install -g <pkg>\`.
+- Other tools: installers into ~/.local/bin (on PATH), e.g. \`curl -LsSf https://astral.sh/uv/install.sh | sh\`.
+${hasEnvTool ? "Call sandbox_environment to see how the sandbox is set up (preinstalled packages, limits, Docker, network).\n" : ""}`;
+}
+
 interface Running {
   child: ChildProcess | null;
   cancelled: boolean;
@@ -252,10 +270,11 @@ export class TurnRunner {
         };
       }
       await writeFile(join(d.clawConfig, "settings.json"), JSON.stringify(settings, null, 2));
-      // the instance's system prompt plus the runtime's note on the sandbox's internet access
+      // the instance's system prompt plus the runtime's notes on the sandbox's internet access and installing software
       const promptFile = join(d.clawConfig, "system-prompt.md");
       const instancePrompt = await readFile(abs(deps.config.systemPromptFile), "utf8");
-      await writeFile(promptFile, `${instancePrompt.trimEnd()}\n\n${SANDBOX_NETWORK_NOTE}\n${FILES_NOTE}`);
+      const installNote = sandboxInstallNote(deps.config.sandbox.provider, toolNames.includes("sandbox_environment"));
+      await writeFile(promptFile, `${instancePrompt.trimEnd()}\n\n${SANDBOX_NETWORK_NOTE}\n${installNote}\n${FILES_NOTE}`);
       const { rows: sess } = await db.query<{ content: string }>("select content from claw_sessions where conversation_id = $1", [conv]);
       const resumePath = join(d.sessions, `${conv}.jsonl`);
       if (sess[0]) await writeFile(resumePath, sess[0].content);

@@ -3,4 +3,5 @@ ui/node_modules
 ui-dist
 test
 sandbox
+!sandbox/Dockerfile
 *.log

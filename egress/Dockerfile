@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && echo "$CLAW_SHA256  /claw" | sha256sum -c - \
  && chmod 755 /claw
 
+# sandbox_environment's package list (src/tools/sandbox-env.ts): the chat workflow replaces this stage with the build
+# context `sandbox-env`, a directory holding packages.txt copied out of the sandbox image built from the same commit
+FROM node:22-trixie-slim AS sandbox-env
+RUN echo '# not recorded in this build' > /packages.txt
+
 FROM node:22-trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tini \
@@ -31,6 +36,9 @@ COPY src ./src
 COPY egress-allowlist/allow.txt egress-allowlist/deny.txt ./egress-allowlist/
 COPY --from=ui /src/ui-dist /app/ui-dist
 COPY --from=claw /claw /usr/local/bin/claw
+# the sandbox image's Dockerfile and package list, for sandbox_environment
+COPY sandbox/Dockerfile ./sandbox-env/Dockerfile
+COPY --from=sandbox-env /packages.txt ./sandbox-env/packages.txt
 RUN chmod 755 src/bin/* && mkdir -p /var/lib/jarvis/work /var/cache/jarvis-egress && chown -R 1000:1000 /var/lib/jarvis /var/cache/jarvis-egress
 
 ARG CHAT_COMMIT=unknown

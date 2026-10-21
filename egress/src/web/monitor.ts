@@ -38,6 +38,7 @@ export function toolService(tool: string, upstreamPrefixes: string[]): string {
   if (t === "web_fetch") return "web fetch";
   if (t === "news_search") return "Wisers";
   if (t === "social_search") return "TikHub";
+  if (t === "sandbox_environment") return "sandbox";
   const p = upstreamPrefixes.find((x) => t.startsWith(`${x}_`));
   return p ? `${p}-mcp` : "other";
 }

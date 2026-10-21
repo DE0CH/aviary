@@ -6,6 +6,9 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
+import { copyFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/common/config.ts";
 import { newToken, sha256hex } from "../src/common/tokens.ts";
@@ -26,6 +29,10 @@ const owner = "staff@yyc.hk";
 let conv = "";
 let turnId = "";
 let token = "";
+// sandbox_environment's build-time files: the real Dockerfile and a small package list
+const envDir = mkdtempSync(join(tmpdir(), "sbxenv-"));
+copyFileSync(fileURLToPath(new URL("../sandbox/Dockerfile", import.meta.url)), join(envDir, "Dockerfile"));
+writeFileSync(join(envDir, "packages.txt"), "# apt (dpkg-query)\nffmpeg-is-not-here 0\njq 1.7.1-6\n# pip (/opt/py)\npandas==2.3.3\n# npm (global, /usr/local)\nnpm 10.9.4\n");
 
 async function newTurn(status = "running"): Promise<{ id: string; token: string }> {
   const id = randomUUID();
@@ -80,6 +87,7 @@ before(async () => {
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
+    sandboxEnvDir: envDir,
   };
   const ups = config.tools.upstreams.map((u) => new Upstream(u, deps));
   for (const u of ups) await u.refresh("admin@yyc.hk");
@@ -112,7 +120,7 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "present_files", "yyc_posts_search"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "sandbox_environment", "present_files", "yyc_posts_search"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names (claw's ask rules compare lowercased)");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
@@ -253,6 +261,37 @@ test("jarvis-mcp-bridge: Content-Length framing (claw's) and NDJSON, both ways",
   assert.deepEqual(JSON.parse(lines.trim()), { jsonrpc: "2.0", id: 9, result: {} });
 });
 
+test("sandbox_environment: summary from the config, the Dockerfile and the package list from the build, no secrets", async () => {
+  const sum = await call("sandbox_environment", {});
+  assert.notEqual(sum.isError, true);
+  const t0 = textOf(sum);
+  assert.match(t0, /Image: img/);
+  assert.match(t0, /CPU 1 core\(s\), memory 1Gi/);
+  assert.match(t0, /pip install/);
+  assert.match(t0, /npm install -g/);
+  assert.match(t0, /web_fetch/);
+  // provider kubernetes (the default): no apt, no Docker
+  assert.match(t0, /\(apt\) can't be installed/);
+  assert.match(t0, /Docker\n- Not available/);
+  assert.doesNotMatch(t0, /Dockerfile it is built|FROM node/);
+  const vm = (await import("../src/tools/sandbox-env.ts")).summary({ ...deps.config, sandbox: { ...deps.config.sandbox, provider: "vm" } }, "abc");
+  assert.match(vm, /sudo apt-get install -y x/);
+  assert.match(vm, /`docker` works/);
+  assert.match(vm, /capped at 5 GiB/);
+  const df = textOf(await call("sandbox_environment", { section: "dockerfile" }));
+  assert.match(df, /FROM node:22-trixie-slim/);
+  assert.match(df, /sudoers/);
+  const pk = textOf(await call("sandbox_environment", { section: "packages", match: "PANDAS" }));
+  assert.match(pk, /pandas==2\.3\.3/);
+  assert.doesNotMatch(pk, /jq 1/);
+  assert.match(textOf(await call("sandbox_environment", { match: "nothing-like-it" })), /No preinstalled package matches/);
+  const all = textOf(await call("sandbox_environment", { section: "all" }));
+  for (const secret of ["exa-key", "tik-key", "csecret", token]) assert.ok(!all.includes(secret), "no secrets");
+  assert.equal((await call("sandbox_environment", { section: "nope" })).isError, true);
+  const { rows } = await t.db.query("select ok from tool_calls where tool = 'sandbox_environment' order by id desc limit 1");
+  assert.equal(rows[0].ok, false);
+});
+
 test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () => {
   for (const a of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "100.64.0.1", "169.254.169.254", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1", "fd42::5"])
     assert.equal(isPrivateAddress(a), true, a);
@@ -263,7 +302,7 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("garbage"), null);
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
-  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch", "present_files"]);
+  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch", "sandbox_environment", "present_files"]);
 });
 
 

@@ -4,7 +4,9 @@
 // Flags are identical for every sandbox on every host (a migration restores with the source's configuration):
 // systrap (no KVM), gVisor's own network stack (connections are in the saved state), the root overlay's upper layer
 // per sandbox (capped), no host sockets or FIFOs, raw/packet sockets inside the sandbox's netstack (Docker needs them;
-// the host's nft lock still decides what leaves).
+// the host's nft lock still decides what leaves), and set-user-ID binaries honoured inside the sandbox (sudo for
+// `apt-get install`, docs/SANDBOX-VM.md "Installing packages"; a uid inside gVisor is the sentry's, never a host uid,
+// and gVisor saves the setting in the sandbox's kernel state, so a migration keeps the source's).
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { SandboxSpec } from "./config.ts";
 import { run, type RunResult } from "./util.ts";
@@ -25,13 +27,17 @@ export const RUNSC_FLAGS = [
   "--host-fifo=none",
   "--net-raw",
   "--allow-packet-socket-write",
+  "--allow-suid",
 ];
 
 export function runsc(args: string[], o: { timeoutMs?: number; input?: string } = {}): Promise<RunResult> {
   return run(process.env.SBX_RUNSC || "runsc", [...RUNSC_FLAGS, ...args], o);
 }
 
-/** The capabilities a sandbox's root has INSIDE gVisor (for dockerd); the agent drops all of them (sbx-init.mjs). */
+/**
+ * The capabilities a sandbox's root has INSIDE gVisor (dockerd, and sudo for package installs); the agent runs as
+ * uid 1000 with none of them, and gets them back only through sudo (sbx-init.mjs).
+ */
 const DOCKER_CAPS = [
   "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER", "CAP_FSETID", "CAP_KILL", "CAP_SETGID", "CAP_SETUID", "CAP_SETPCAP",
   "CAP_NET_BIND_SERVICE", "CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_SYS_CHROOT", "CAP_MKNOD", "CAP_AUDIT_WRITE", "CAP_SETFCAP",
@@ -51,7 +57,7 @@ export function bundleSpec(spec: SandboxSpec, imageEnv: string[]): object {
     ociVersion: "1.0.0",
     annotations: spec.cpuFeatures ? { "dev.gvisor.internal.cpufeatures": spec.cpuFeatures } : {},
     process: {
-      // root inside gVisor only for sbx-init (dockerd on demand); the agent runs as uid 1000 with no capabilities
+      // root inside gVisor for sbx-init (dockerd on demand); the agent runs as uid 1000 with no capabilities (sudo inside)
       user: { uid: 0, gid: 0 },
       cwd: "/work",
       args: ["/usr/bin/tini", "--", "node", "/opt/agent/sbx-init.mjs"],

@@ -11,7 +11,7 @@ import { freeAddress, hubPeers, parseBytes, VmController, VmProvider, type HostR
 import { DEMAND_WINDOW_S, noteSandboxDemand, type SandboxRow } from "../src/web/sandbox.ts";
 import { parseInstances, SandboxdError, wgKeyPair, type Ec2Api, type Ec2Instance, type HostInfo, type SandboxdApi } from "../src/web/vm-clients.ts";
 import { sandboxRules, hostRules } from "../sandboxd/src/net.ts";
-import { bundleSpec } from "../sandboxd/src/runsc.ts";
+import { bundleSpec, RUNSC_FLAGS } from "../sandboxd/src/runsc.ts";
 import { validateSpec, type HostConfig } from "../sandboxd/src/config.ts";
 import { freshDb } from "./pg.ts";
 
@@ -194,6 +194,14 @@ test("sandboxd: nft lock, bundle and spec checks", () => {
   assert.ok(b.process.env.includes("JARVIS_EXEC_TOKEN=e"));
   assert.equal(b.linux.resources.memory.limit, 2 * GiB);
   assert.ok(!b.mounts.some((m: any) => m.type === "bind"), "no host mounts");
+  // package installs (docs/SANDBOX-VM.md "Installing packages"): sudo works inside (setuid honoured, the init's
+  // capabilities exist only inside gVisor and are not dropped from the bounding set by the spec), host isolation stays
+  assert.ok(RUNSC_FLAGS.includes("--allow-suid"));
+  for (const f of ["--host-uds=none", "--host-fifo=none", "--network=sandbox", "--overlay2=root:self,size=5g"]) assert.ok(RUNSC_FLAGS.includes(f), f);
+  assert.equal(b.process.noNewPrivileges, undefined);
+  assert.ok(b.process.capabilities.bounding.includes("CAP_SETUID") && b.process.capabilities.bounding.includes("CAP_CHOWN"));
+  assert.ok(!b.process.capabilities.bounding.includes("CAP_SYS_MODULE") && !b.process.capabilities.bounding.includes("CAP_SYS_RAWIO"));
+  assert.ok(!b.linux.namespaces.some((n: any) => n.type === "network" && !n.path), "the host-prepared netns (nft lock) only");
   assert.equal(b.linux.namespaces.find((n: any) => n.type === "network").path, "/var/run/netns/sbx-abc");
   assert.throws(() => validateSpec({ ...spec, ip: "10.0.0.5" }, cfg), /sandbox range/);
   assert.throws(() => validateSpec({ ...spec, name: "../x" }, cfg), /bad name/);

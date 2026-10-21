@@ -35,6 +35,8 @@ export function describeTool(name: string, input: any): [string, string] {
       return [s.social_search, [str(i.platform), str(i.query)].filter(Boolean).join(" · ")];
     case "web_fetch":
       return [s.web_fetch, host(str(i.url))];
+    case "sandbox_environment":
+      return [s.sandbox_environment, str(i.match) || (str(i.section) === "summary" ? "" : str(i.section))];
     case "bash":
       return [s.bash, firstLine(str(i.description) || str(i.command))];
     case "read_file":

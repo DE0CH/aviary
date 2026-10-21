@@ -45,6 +45,8 @@ export interface Deps {
   resolve?: (host: string) => Promise<{ address: string; family: number }>;
   /** Ports web_fetch may reach (default 80, 443, 8080, 8443). */
   fetchPorts?: string[] | "any";
+  /** Where sandbox_environment reads the sandbox image's Dockerfile and package list (default /app/sandbox-env). */
+  sandboxEnvDir?: string;
 }
 
 export interface ToolCtx {
