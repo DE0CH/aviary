@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# A stand-in for runsc in sandboxd's tests: containers are files in $SBX_FAKE/containers; checkpoint --migrate-to
+# streams $FAKE_MIGRATE_BYTES over $FAKE_MIGRATE_MS to the target, whose restore --migrate-listen receives it.
+import json, os, socket, sys, time
+root = os.path.join(os.environ["SBX_FAKE"], "containers")
+os.makedirs(root, exist_ok=True)
+a = sys.argv[1:]
+while a and a[0].startswith("--") and a[0] != "--version":
+    a = a[2:] if a[0] == "--root" else a[1:]
+cmd, rest = (a[0], a[1:]) if a else ("", [])
+def opt(name, default=None):
+    return rest[rest.index(name) + 1] if name in rest else default
+cid = rest[-1] if rest else ""
+path = os.path.join(root, cid)
+if cmd == "--version":
+    print("runsc version fake\nspec: 1.1.0")
+elif cmd == "cpu-features":
+    print("fpu,sse2,avx")
+elif cmd == "state":
+    if not os.path.exists(path):
+        print("container does not exist", file=sys.stderr); sys.exit(1)
+    print(json.dumps({"id": cid, "status": open(path).read().strip(), "pid": 1}))
+elif cmd == "list":
+    print(json.dumps([{"id": c, "status": "running", "annotations": {}} for c in sorted(os.listdir(root))]))
+elif cmd == "run":
+    json.load(open(os.path.join(opt("--bundle"), "config.json")))
+    if os.environ.get("FAKE_RUN_FAIL"):
+        print("run failed", file=sys.stderr); sys.exit(1)
+    open(path, "w").write("running")
+elif cmd in ("delete", "kill"):
+    if cmd == "delete" and os.path.exists(path):
+        os.remove(path)
+elif cmd == "checkpoint":
+    to = opt("--migrate-to"); host, port = to.rsplit(":", 1)
+    n = int(os.environ.get("FAKE_MIGRATE_BYTES", "1048576")); ms = int(os.environ.get("FAKE_MIGRATE_MS", "200"))
+    if os.environ.get("FAKE_SEND_FAIL"):
+        print("ErrPrecopyNotConverging", file=sys.stderr); sys.exit(1)
+    s = socket.create_connection((host, int(port)), timeout=10)
+    chunk = b"x" * 65536; sent = 0; t0 = time.time()
+    while sent < n:
+        s.sendall(chunk[: min(len(chunk), n - sent)]); sent += min(len(chunk), n - sent)
+        time.sleep(ms / 1000 * min(len(chunk), n) / max(n, 1))
+    s.close()
+    os.remove(path)
+elif cmd == "restore":
+    host, port = opt("--migrate-listen").rsplit(":", 1)
+    json.load(open(os.path.join(opt("--bundle"), "config.json")))
+    l = socket.socket(); l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); l.bind((host, int(port))); l.listen(1)
+    l.settimeout(120)
+    c, peer = l.accept(); got = 0; t0 = time.time()
+    while True:
+        b = c.recv(65536)
+        if not b: break
+        got += len(b)
+    open(path, "w").write("running")
+    print(json.dumps({"from": "%s:%d" % peer, "bytes": got, "rounds": 1, "total_ms": round((time.time() - t0) * 1000, 3)}))
+else:
+    print("fake runsc: unknown " + " ".join(sys.argv[1:]), file=sys.stderr); sys.exit(2)

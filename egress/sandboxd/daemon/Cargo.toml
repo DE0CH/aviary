@@ -1,0 +1,28 @@
+[package]
+name = "sandboxd"
+version = "0.2.0"
+edition = "2024"
+description = "Host agent of sandbox provider \"vm\" (docs/SANDBOX-VM.md) with a fixed memory budget (docs/SANDBOXD-MEMORY.md)"
+license = "MIT"
+publish = false
+
+[dependencies]
+# TLS 1.3 with client certificates (Apache-2.0/ISC/MIT); ring for crypto (Apache-2.0 AND ISC)
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+# raw syscalls: fork/exec, poll, mmap, mlockall, cgroups (MIT/Apache-2.0)
+libc = { version = "0.2.191", default-features = false }
+# the free-list heap inside each fixed arena (MIT/Apache-2.0)
+linked_list_allocator = { version = "0.10.6", default-features = false }
+ring = { version = "0.17", default-features = false }
+
+[features]
+# test builds: an endpoint-free audit of allocations outside TLS (docs/SANDBOXD-MEMORY.md "Proof")
+audit = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "unwind"   # a bug in one request is caught (catch_unwind) and answered 500
+strip = true
+debug = false

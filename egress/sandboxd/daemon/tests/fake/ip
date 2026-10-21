@@ -1,0 +1,7 @@
+#!/bin/bash
+# ip stand-in for sandboxd's tests
+case "$*" in
+  "-o route show default") echo "default via 10.9.9.1 dev eth0 proto static" ;;
+  "-o route get "*) echo "10.0.0.1 dev enp7s0 src 10.0.0.7" ;;
+  *) : ;;
+esac
