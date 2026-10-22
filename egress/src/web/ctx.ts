@@ -2,6 +2,7 @@
 // sandbox agents) through the same shape.
 import type { ChatConfig } from "../common/config.ts";
 import type { Db } from "../common/db.ts";
+import type { ClusterReader } from "./k8s.ts";
 import type { SandboxProvider } from "./provider.ts";
 
 export interface WebDeps {
@@ -14,4 +15,6 @@ export interface WebDeps {
   namespace: string;
   /** Seconds a stopping replica waits for the calls it is answering (a sandbox start takes up to 3 minutes). */
   drainSeconds: number;
+  /** Reads this namespace's Deployments and pods for the operator page's service health (absent outside a cluster). */
+  cluster?: ClusterReader | null;
 }

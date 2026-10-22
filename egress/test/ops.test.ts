@@ -6,7 +6,8 @@ import { after, before, test } from "node:test";
 import { parseConfig } from "../src/common/config.ts";
 import type { WebDeps } from "../src/web/ctx.ts";
 import { startWeb, type WebServer } from "../src/web/main.ts";
-import { OpsSnapshot, safeZone } from "../src/web/ops.ts";
+import { healthOf, OpsSnapshot, safeZone } from "../src/web/ops.ts";
+import type { ClusterReader } from "../src/web/k8s.ts";
 import { noteSandboxDemand } from "../src/web/sandbox.ts";
 import { KubernetesProvider } from "../src/web/sandbox-k8s.ts";
 import { VmProvider } from "../src/web/sandbox-vm.ts";
@@ -89,11 +90,33 @@ test("safeZone keeps zone names and refuses anything else", () => {
   assert.equal(safeZone(""), "Asia/Hong_Kong");
 });
 
-test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, spend per person and model, egress errors, conversations", async () => {
+// the service's Deployments as the Kubernetes API reports them: web fine, egress rolling, tools with one pod down, no ui
+const ready = (name: string, app: string, ok: boolean, restarts = 0) => ({
+  metadata: { name, labels: { app }, creationTimestamp: new Date(Date.now() - 600_000).toISOString() },
+  spec: { nodeName: "yyc-pool-small-worker1" },
+  status: { phase: "Running", conditions: [{ type: "Ready", status: ok ? "True" : "False" }], containerStatuses: [{ restartCount: restarts, state: ok ? { running: {} } : { waiting: { reason: "CrashLoopBackOff" } } }] },
+});
+const cluster: ClusterReader = {
+  async listDeployments(ns) {
+    assert.equal(ns, "jarvis");
+    return [
+      { metadata: { name: "web", generation: 3 }, spec: { replicas: 2 }, status: { observedGeneration: 3, replicas: 2, readyReplicas: 2, updatedReplicas: 2 } },
+      { metadata: { name: "egress", generation: 5 }, spec: { replicas: 2 }, status: { observedGeneration: 5, replicas: 3, readyReplicas: 2, updatedReplicas: 1 } },
+      { metadata: { name: "tools", generation: 1 }, spec: { replicas: 2 }, status: { observedGeneration: 1, replicas: 2, readyReplicas: 1, updatedReplicas: 2 } },
+      { metadata: { name: "cloudflared", generation: 1 }, spec: { replicas: 2 }, status: { observedGeneration: 1, replicas: 2, readyReplicas: 2, updatedReplicas: 2 } },
+    ];
+  },
+  async listPods(ns, sel) {
+    assert.match(sel, /^app in \(web,egress,tools,ui,cloudflared\)$/);
+    return [ready("web-a-1", "web", true), ready("web-a-2", "web", true), ready("tools-b-1", "tools", true), ready("tools-b-2", "tools", false, 4)] as any;
+  },
+};
+
+test("the snapshot: now (service, hosts, sandboxes, scaler, budget, recent errors, health) and history (hosts gone, events, starts and releases, spend per day/person/model, egress errors, conversations)", async () => {
   const db = pg.db;
   const config = parseConfig(raw(true));
   const provider = new VmProvider({ db, config, sandboxd: {} as any, ec2: null, hostTls: null });
-  const ops = new OpsSnapshot({ config, db, dbUrl: pg.url, sandboxProvider: provider, namespace: "jarvis", drainSeconds: 5 });
+  const ops = new OpsSnapshot({ config, db, dbUrl: pg.url, sandboxProvider: provider, namespace: "jarvis", drainSeconds: 5, cluster });
   await db.query(
     `insert into vm_hosts (name, kind, url, wg_ip, status, cpus, mem_total, mem_reserve, instance_id, last_seen_at, info) values
        ('gw', 'hub', 'https://10.201.0.1:7443', '10.201.0.1', 'active', null, null, null, null, now(), '{"gateway": true}'),
@@ -114,6 +137,11 @@ test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, 
   await sbx(sb2, conv2, B, "gone", "aws-1", "deleted");
   await sbx(sb3, conv3, B, "gone", "aws-2", "idle");
   await db.query("insert into vm_events (kind, host, sandbox_id, data) values ('launch', 'aws-1', null, '{\"reason\": \"scaler\"}'), ('migration', 'aws-1', $1, '{\"pause_ms\": 120}')", [sb1]);
+  await db.query(
+    `insert into ops_events (kind, ok, ms, sandbox_id, conversation_id, host, detail) values
+       ('sandbox_start', true, 4200, $1, $2, 'aws-1', '{}'), ('sandbox_start', false, 900, null, $3, null, '{"reason": "pool full"}')`,
+    [sb1, conv1, conv3],
+  );
   await noteSandboxDemand(db, B);
   await db.query(
     `insert into egress_log (kind, host, status, decision, cost_usd, sandbox_id, conversation_id, model, at) values
@@ -143,9 +171,11 @@ test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, 
   assert.equal(host("aws-1").reachable, true);
   assert.equal(host("aws-2").retiring, true);
   assert.equal(host("aws-2").reachable, false);
-  assert.equal(host("aws-0").status, "gone");
-  assert.equal(host("aws-0").goneReason, "empty");
-  assert.equal(d.hosts.gone24h, 1);
+  // a gone host is history only
+  assert.equal(host("aws-0"), undefined);
+  assert.equal(d.hostsGone.count24h, 1);
+  assert.equal(d.hostsGone.list[0].name, "aws-0");
+  assert.equal(d.hostsGone.list[0].goneReason, "empty");
   // scaler
   assert.equal(d.scaler.plan.demand, 1);
   assert.equal(d.scaler.hints[0].who, B);
@@ -153,6 +183,45 @@ test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, 
   // events (newest first) with the sandbox's owner
   assert.equal(d.events[0].kind, "migration");
   assert.equal(d.events[0].owner, A);
+  // service: per role, with pods; ui has no Deployment here
+  const role = (n: string) => d.service.deployments.find((x: any) => x.name === n);
+  assert.equal(d.service.available, true);
+  assert.deepEqual(d.service.deployments.map((x: any) => x.name), ["web", "egress", "tools", "ui", "cloudflared"]);
+  assert.equal(role("web").state, "ok");
+  assert.equal(role("web").pods.length, 2);
+  assert.equal(role("egress").state, "warming");
+  assert.equal(role("tools").state, "problem");
+  assert.equal(role("tools").pods.find((p: any) => !p.ready).phase, "CrashLoopBackOff");
+  assert.equal(role("tools").pods.find((p: any) => !p.ready).restarts, 4);
+  assert.equal(role("ui").missing, true);
+  // sandbox starts and releases, newest first, with timings
+  assert.equal(d.starts.summary.n, 2);
+  assert.equal(d.starts.summary.failed, 1);
+  const startOk = d.starts.list.find((x: any) => x.what === "start" && x.ok);
+  assert.equal(startOk.ms, 4200);
+  assert.equal(startOk.owner, A);
+  const startBad = d.starts.list.find((x: any) => x.what === "start" && !x.ok);
+  assert.equal(startBad.reason, "pool full");
+  assert.equal(startBad.owner, B, "a failed start's person comes from its conversation");
+  assert.equal(d.starts.list.filter((x: any) => x.what === "release").length, 2);
+  for (let i = 1; i < d.starts.list.length; i++) assert.ok(d.starts.list[i - 1].at >= d.starts.list[i].at, "newest first");
+  // errors of the last 15 minutes: the failed start and the 402
+  assert.equal(d.recent.failedStarts, 1);
+  assert.equal(d.recent.modelErrors, 1);
+  assert.equal(d.recent.blocked, 1);
+  assert.ok(d.recent.list.some((x: any) => x.what === "sandbox start failed"));
+  // the verdict: problems first (tools, ui, the unreachable retiring host is warming, recent errors)
+  assert.equal(d.health.state, "problem");
+  const texts = d.health.findings.map((x: any) => `${x.level} ${x.text}`);
+  assert.ok(texts.includes("problem tools: 1 of 2 pods ready"), texts.join(" | "));
+  assert.ok(texts.includes("problem ui: no Deployment"));
+  assert.ok(texts.some((x: string) => x.startsWith("warming egress: rolling out")));
+  assert.ok(texts.some((x: string) => x.startsWith("warming Host aws-2 retiring")));
+  assert.ok(texts.some((x: string) => x.startsWith("problem 1 sandbox start failed")));
+  assert.equal(d.health.findings[0].level, "problem");
+  // spend per day (Hong Kong days in the page; UTC here)
+  assert.equal(d.budget.byDay.length >= 1, true);
+  assert.equal(Math.round(d.budget.byDay.reduce((a: number, x: any) => a + x.usd, 0) * 100) / 100, 9.85);
   // budget: the 3-hour-old call is before `since`
   assert.equal(d.budget.status.spentUsd, 0.85);
   assert.equal(d.budget.status.limitUsd, 30);
@@ -173,4 +242,28 @@ test("the snapshot: sandboxes, hosts with slots, scaler plan and hints, events, 
   assert.equal(p(B).total, 2);
   assert.equal(p(B).deleted, 1);
   assert.equal(p("carol@example.org").total, 0);
+});
+
+test("health: all fine, warming, watch, problem", () => {
+  const at = new Date().toISOString();
+  const svc = (state: string) => ({ available: true, deployments: [{ name: "web", state, desired: 2, ready: 2, updated: 2 }] });
+  const gw = { name: "gw", gateway: true, reachable: true, status: "active", launchedAt: at, lastSeenAt: at };
+  assert.deepEqual(healthOf({ at, errors: {}, service: svc("ok"), hosts: { list: [gw] }, sandboxes: { list: [] } }), { state: "ok", findings: [] });
+  const booting = { name: "aws-9", status: "booting", reachable: false, launchedAt: new Date(Date.now() - 30_000).toISOString() };
+  assert.equal(healthOf({ at, errors: {}, service: svc("ok"), hosts: { list: [gw, booting] } }).state, "warming");
+  const slow = { ...booting, launchedAt: new Date(Date.now() - 600_000).toISOString() };
+  assert.equal(healthOf({ at, errors: {}, hosts: { list: [gw, slow] } }).state, "problem");
+  assert.equal(healthOf({ at, errors: {}, budget: { status: { spentUsd: 85, limitUsd: 100, exhausted: false } } }).state, "watch");
+  assert.equal(healthOf({ at, errors: {}, budget: { status: { spentUsd: 100, limitUsd: 100, exhausted: true } } }).state, "problem");
+  assert.equal(healthOf({ at, errors: {}, hosts: { list: [{ ...gw, reachable: false }] } }).findings[0]?.about, "gateway");
+  assert.equal(healthOf({ at, errors: { egress: "timeout" } }).state, "problem");
+  assert.equal(healthOf({ at, errors: {}, sandboxes: { list: [{ status: "starting", ageS: 20, owner: "a@b" }] } }).state, "warming");
+});
+
+test("the page keeps now and history apart", async () => {
+  const html = await (await get("/internal/ops/", as(A))).text();
+  assert.match(html, /id="now"/);
+  assert.match(html, /id="history"/);
+  assert.match(html, /History \(log\)/);
+  assert.match(html, /Asia\/Hong_Kong/);
 });

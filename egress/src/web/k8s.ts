@@ -8,7 +8,26 @@ import { request as httpsRequest } from "node:https";
 export interface Pod {
   metadata: { name: string; labels?: Record<string, string>; creationTimestamp?: string; deletionTimestamp?: string };
   spec?: unknown;
-  status?: { phase?: string; podIP?: string; reason?: string; message?: string; containerStatuses?: { restartCount?: number; state?: Record<string, { reason?: string }> }[] };
+  status?: {
+    phase?: string;
+    podIP?: string;
+    reason?: string;
+    message?: string;
+    conditions?: { type: string; status: string }[];
+    containerStatuses?: { restartCount?: number; state?: Record<string, { reason?: string }> }[];
+  };
+}
+
+export interface Deployment {
+  metadata: { name: string; generation?: number };
+  spec?: { replicas?: number };
+  status?: { observedGeneration?: number; replicas?: number; readyReplicas?: number; updatedReplicas?: number; availableReplicas?: number; unavailableReplicas?: number };
+}
+
+/** What the operator page reads about its own namespace (Role web-ops-read in deploy/chat/web.yaml). */
+export interface ClusterReader {
+  listDeployments(ns: string): Promise<Deployment[]>;
+  listPods(ns: string, labelSelector: string): Promise<Pod[]>;
 }
 
 export interface K8sApi {
@@ -20,7 +39,7 @@ export interface K8sApi {
 
 const SA = "/var/run/secrets/kubernetes.io/serviceaccount";
 
-export class K8sClient implements K8sApi {
+export class K8sClient implements K8sApi, ClusterReader {
   readonly #base: URL;
   readonly #token: () => string;
   readonly #ca: Buffer | undefined;
@@ -88,5 +107,10 @@ export class K8sClient implements K8sApi {
     const r = await this.#req("GET", `/api/v1/namespaces/${ns}/pods?labelSelector=${encodeURIComponent(labelSelector)}`);
     if (r.status >= 300) throw new Error(`k8s list pods: ${r.status} ${r.json?.message ?? ""}`);
     return (r.json?.items ?? []) as Pod[];
+  }
+  async listDeployments(ns: string): Promise<Deployment[]> {
+    const r = await this.#req("GET", `/apis/apps/v1/namespaces/${ns}/deployments`);
+    if (r.status >= 300) throw new Error(`k8s list deployments: ${r.status} ${r.json?.message ?? ""}`);
+    return (r.json?.items ?? []) as Deployment[];
   }
 }

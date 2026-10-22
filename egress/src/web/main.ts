@@ -82,6 +82,7 @@ export async function main(): Promise<void> {
     sandboxProvider: sandboxProvider(config, namespace, db),
     namespace,
     drainSeconds: Number(process.env.JARVIS_DRAIN_SECONDS || 300),
+    cluster: process.env.KUBERNETES_SERVICE_HOST ? K8sClient.inCluster() : null,
   };
   const web = await startWeb(deps, Number(process.env.PORT || 8080));
   log("web listening", { port: web.port });
