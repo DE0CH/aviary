@@ -41,10 +41,10 @@ State: Postgres (sandboxes, vm hosts and events, egress_log, tool_calls, kv); /w
 Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and authenticated by the shared bearer token
 `JARVIS_CC_TOKEN` (401 otherwise); POST with a JSON body; `conversation` must be a uuid (400; optional only on `warm`).
 
-- `POST /internal/cc/sandbox {owner, conversation}` → `{id, url, token, headers, reset}`: the conversation's live
+- `POST /internal/cc/sandbox {owner, conversation}` → `{id, url, token, headers}`: the conversation's live
   sandbox, made if there is none, for `owner` (403 unless in config `users`). `url` + `headers` reach its agent,
-  `token` is the agent's exec token. `reset: true` when the conversation had a different sandbox before (kv
-  `cc_sandbox:<conversation>` remembers the last id): its installs and processes are gone, `/workspace` is not.
+  `token` is the agent's exec token. A new sandbox after a release is not announced to the model: the managed
+  CLAUDE.md already says that only `/workspace` and the conversation carry over.
   Concurrent calls in one replica share one start; a start takes up to 3 minutes (a host booting).
 - `POST /internal/cc/touch {conversation}`: it is in use; its idle time starts again. The UI touches every minute
   while Claude Code runs in it.
@@ -212,7 +212,7 @@ create table tool_calls (id bigserial primary key, at timestamptz not null defau
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
   -- kind 'sandbox_start': ok, ms = start latency incl. pool wait, detail {reason, error, provider, startMs}; 30 days
-create table kv (key text primary key, value jsonb not null);  -- cc_sandbox:<conv>, egress_pod:<pod>, sandbox_demand:<email>
+create table kv (key text primary key, value jsonb not null);  -- egress_pod:<pod>, sandbox_demand:<email>
 ```
 
 The old chat UI's tables (`users`, `conversations`, `messages`, `turns`, `events`, `claw_sessions`, `files`,
