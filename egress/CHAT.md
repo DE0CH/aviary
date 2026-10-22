@@ -67,23 +67,39 @@ web's `/internal/ops/*` with the bearer token and `X-Jarvis-User` only when that
 `X-Jarvis-User` is an admin, 405 for anything but GET/HEAD). So access = Cloudflare Access (the staff app) + the
 router's `admins` check + web's own check, and web stays cluster-only.
 
-- `GET /internal/ops/` the page (self-contained HTML, strict CSP; polls `snapshot` every 10 s while visible; stacked
-  cards on a phone, columns on a wide screen).
+- `GET /internal/ops/` the page (self-contained HTML, strict CSP; polls `snapshot` every 10 s while visible). It keeps
+  two halves apart: **Now** (is everything fine) and **History** (a log, newest first, Hong Kong time). A phone shows
+  them as tabs (`#now`, `#history`), a screen 1100 px or wider side by side. The header's pill is the verdict.
 - `GET /internal/ops/snapshot?tz=<IANA zone>` → JSON (cached 4 s per zone; "today"/"this month" start at that zone's
-  midnight, default Asia/Hong_Kong). Each section is computed on its own (8 s timeout); a failed one is `null` with its
-  message in `errors.<section>`:
-  - `sandboxes`: live rows (conversation, owner, host, status, age, last active, migrations), starts in 24 h (count,
-    failures, p50/p95 from `ops_events`), releases in 24 h by reason;
-  - `hosts`: `vm_hosts` live, plus the latest 8 gone in 24 h (`gone24h` counts them all): kind, gateway, status,
-    retiring, instance, launch time, last seen / answering, sandboxes on it / slots, memory, load, gone reason;
-  - `scaler`: the vm scaler's plan (need, demand, waiting, available, pending, slots per host) and the
-    `sandbox_demand:*` hints (counted within 2 min, or expired);
+  midnight, default Asia/Hong_Kong; the page asks for Asia/Hong_Kong). Each section is computed on its own (8 s
+  timeout); a failed one is `null` with its message in `errors.<section>`.
+  Now:
+  - `health`: `{state, findings}`, state `ok` / `warming` (a host booting or retiring, a sandbox starting, a role
+    rolling out) / `watch` (budget at 80 % or more) / `problem` (a role with fewer Ready pods than wanted, the gateway or
+    a host not answering, a host booting over 5 min, a sandbox starting over 3 min, the budget used up, failed sandbox
+    starts / model or route errors / host errors in the last 15 min, a section that could not be read);
+  - `service`: the Deployments web, egress, tools, ui, cloudflared (desired, Ready, updated, rolling) and their pods
+    (Ready, phase or waiting reason, restarts, age, node), read from the Kubernetes API with Role `web-ops-read`
+    (`deploy/chat/web.yaml`); the instance adds a NetworkPolicy letting web reach the API server (YYC:
+    `yyc-ai/deploy/ops.yaml`). `available: false` outside a cluster;
+  - `hosts`: `vm_hosts` that exist (not gone): kind, gateway, status, instance, launch time, last seen / answering,
+    sandboxes on it / slots, cap, memory, load, gVisor release;
+  - `sandboxes`: live rows (conversation, owner, host, status, age, last active, migrations);
+  - `scaler`: the vm scaler's plan (need, demand, waiting, available, pending, want, slots per host) and the
+    `sandbox_demand:*` hints counted now (typed within 2 min);
+  - `budget.status` and `budget.total`: `budgetStatus` (limit, since, spent, left), spend today and this month;
+  - `recent`: the last 15 minutes: failed sandbox starts, model/route errors, host errors (`vm_events` kinds with
+    fail/lost or an `error`), blocked requests (counted only), and the latest 20 of them.
+  History:
+  - `starts`: sandbox starts (`ops_events`: took how long, failed why) and releases (`sandboxes.released_at`: lived how
+    long, why) over 24 h, newest first, with the summary (count, failures, p50/p95) and releases by reason;
   - `events`: the latest 60 `vm_events` with the sandbox's owner;
-  - `budget`: `budgetStatus` (limit, since, spent, left) and model spend today / this month / since the budget, in
-    total, per owner (`egress_log.sandbox_id` → `sandboxes.owner`; old chat UI calls: their conversation's owner) and
-    per model (`egress_log.model`, recorded since migration 11; older calls show as "(not recorded)");
+  - `hostsGone`: hosts gone in 24 h (latest 30; `count24h` counts them all) with reason and lifetime;
   - `egress`: 24 h of model/route errors by status and decision (402 `deny:budget`, 503, …), blocked hosts (deny
     reason, count), the latest 30 refusals and errors;
+  - `budget.byDay` (14 days, days in the asked zone), `budget.byUser` (`egress_log.sandbox_id` → `sandboxes.owner`;
+    old chat UI calls: their conversation's owner), `budget.byModel` (`egress_log.model`, recorded since migration 11;
+    older calls show as "(not recorded)"): today / this month / since the budget;
   - `people`: per config user (and former users with sandboxes): conversations counted from their sandboxes (a
     conversation gets one at its first message): total, started today, last 7 days, live now, deleted, last active.
 
