@@ -122,4 +122,7 @@ comment on table blob_grants is 'unused since schema 10: the old chat UI is reti
   // the operator page's spend per model (docs/CHAT.md, "Operator page"): the model a model call asked for (its request
   // body's "model"); null for calls before this column and for other kinds
   `alter table egress_log add column model text;`,
+  // the UI no longer prepends a note after a sandbox release, so web no longer remembers each conversation's last
+  // sandbox id (it existed only for that note)
+  `delete from kv where key like 'cc_sandbox:%';`,
 ];

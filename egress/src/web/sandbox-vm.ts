@@ -16,7 +16,7 @@
 // - An AWS host is terminated as soon as no sandbox is on it and it is older than vm.minHostLifetimeSeconds (default
 //   15 min, from launch); nothing else keeps or ends it.
 // - A host that stops answering for 30 s (the hub: 120 s) loses its sandboxes: their rows go `gone` ("host lost"),
-//   the next /internal/cc/sandbox makes a new one (`reset`). AWS hosts are then terminated.
+//   the next /internal/cc/sandbox makes a new one. AWS hosts are then terminated.
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
 import type { ChatConfig, VmConfig } from "../common/config.ts";

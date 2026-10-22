@@ -131,11 +131,11 @@ test("/internal/cc/*: the shared token only, POST only, a uuid conversation, ins
   assert.equal((await fetch(`${base}/healthz`)).status, 200);
 });
 
-test("a sandbox per conversation: made once, the owner's ~/.claude key, Claude Code runs through /proc, reset after a release", async () => {
+test("a sandbox per conversation: made once, the owner's ~/.claude key, Claude Code runs through /proc, a new one after a release", async () => {
   const conv = randomUUID();
   const first = await cc("/internal/cc/sandbox", { owner: A.toUpperCase(), conversation: conv });
   assert.equal(first.status, 200, first.text);
-  assert.equal(first.json.reset, false);
+  assert.equal("reset" in first.json, false);
   const row = (await pg.db.query("select * from sandboxes where id = $1", [first.json.id])).rows[0];
   assert.equal(row.owner, A);
   assert.equal(row.user_key, userKey(A));
@@ -143,7 +143,6 @@ test("a sandbox per conversation: made once, the owner's ~/.claude key, Claude C
   // the same sandbox while it lives
   const again = await cc("/internal/cc/sandbox", { owner: A, conversation: conv });
   assert.equal(again.json.id, first.json.id);
-  assert.equal(again.json.reset, false);
 
   // the UI runs a process in it: stdin in, stdout and the exit status out
   const ws = k8s.workOf(row.pod);
@@ -156,14 +155,13 @@ test("a sandbox per conversation: made once, the owner's ~/.claude key, Claude C
   assert.equal((await cc("/internal/cc/touch", { conversation: conv })).status, 200);
   assert.ok(Date.now() - new Date((await pg.db.query("select last_active_at from sandboxes where id = $1", [row.id])).rows[0].last_active_at).getTime() < 60_000);
 
-  // idle: released by the janitor; the next call makes a new one and says so
+  // idle: released by the janitor; the next call makes a new one
   await pg.db.query("update sandboxes set last_active_at = now() - interval '2 hours' where id = $1", [row.id]);
   await janitorPass(deps, web.app.sandboxes);
   assert.deepEqual((await pg.db.query("select status, release_reason from sandboxes where id = $1", [row.id])).rows[0], { status: "gone", release_reason: "idle" });
   assert.equal(k8s.pods.has(row.pod), false, "the pod is deleted");
   const next = await cc("/internal/cc/sandbox", { owner: A, conversation: conv });
   assert.notEqual(next.json.id, first.json.id);
-  assert.equal(next.json.reset, true);
 
   // release (the conversation was deleted): gone at once
   assert.equal((await cc("/internal/cc/release", { conversation: conv })).status, 200);

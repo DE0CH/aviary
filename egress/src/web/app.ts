@@ -53,8 +53,8 @@ export class WebApp {
 
   /**
    * The CloudCLI UI pods' calls (docs/CLAUDE-CODE.md), cluster-only (NetworkPolicy) and with the shared bearer token
-   * JARVIS_CC_TOKEN: `POST /internal/cc/sandbox {owner, conversation}` → the conversation's sandbox (made if needed;
-   * `reset` when it replaced an earlier one), `POST /internal/cc/touch {conversation}` (it is in use: its idle time
+   * JARVIS_CC_TOKEN: `POST /internal/cc/sandbox {owner, conversation}` → the conversation's sandbox (made if needed),
+   * `POST /internal/cc/touch {conversation}` (it is in use: its idle time
    * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted), `POST /internal/cc/warm
    * {owner, conversation?}` (the user is typing; #warm).
    */
@@ -69,14 +69,7 @@ export class WebApp {
       const owner = String(b.owner || "").trim().toLowerCase();
       if (!this.deps.config.users.includes(owner)) throw new HttpError(403, "not a user of this instance");
       const sb = await this.sandboxes.ensure(conv, owner);
-      // reset: this conversation had a different sandbox before (its installs and processes are gone)
-      const key = `cc_sandbox:${conv}`;
-      const { rows: seen } = await this.deps.db.query<{ value: string }>("select value from kv where key = $1", [key]);
-      const reset = !!seen[0] && seen[0].value !== sb.id;
-      if (!seen[0] || reset) {
-        await this.deps.db.query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [key, JSON.stringify(sb.id)]);
-      }
-      return sendJson(res, 200, { id: sb.id, url: sb.url, token: sb.execToken, headers: sb.headers, reset });
+      return sendJson(res, 200, { id: sb.id, url: sb.url, token: sb.execToken, headers: sb.headers });
     }
     if (path === "/internal/cc/touch") {
       await this.sandboxes.touch(conv);
