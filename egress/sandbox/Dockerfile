@@ -47,7 +47,7 @@ RUN set -e; d=/usr/share/fonts/truetype/noto-hk; mkdir -p $d; cd /tmp \
       fonttools varLib.instancer -q --update-name-table -o $d/Noto${f}HK-Bold.ttf $lower.ttf wght=700; done \
  && rm -f sans.ttf serif.ttf && fc-cache -f \
  && echo 'import sbx_reportlab_cjk' > /opt/py/lib/python3.13/site-packages/sbx-reportlab-cjk.pth \
- && /opt/py/bin/python -I -c "from reportlab.pdfbase import pdfmetrics; from reportlab.pdfbase.ttfonts import TTFont; from reportlab.pdfgen.canvas import Canvas; import io, pymupdf; pdfmetrics.registerFont(TTFont('cjk', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', subfontIndex=2)); pdfmetrics.registerFont(TTFont('cjkb', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc')); b = io.BytesIO(); c = Canvas(b); c.setFont('cjk', 14); c.drawString(72, 720, '繁體中文檔案測試'); c.setFont('cjkb', 14); c.drawString(72, 690, '香港特區政府'); c.save(); d = pymupdf.open(stream=b.getvalue()); t = d[0].get_text(); assert '繁體中文檔案測試' in t and '香港特區政府' in t, t; assert {f[3].split('+')[-1] for f in d[0].get_fonts()} == {'NotoSansHK-Regular', 'NotoSerifHK-Bold'}, d[0].get_fonts()" \
+ && /opt/py/bin/python -I -c "from reportlab.pdfbase import pdfmetrics; from reportlab.pdfbase.ttfonts import TTFont; from reportlab.pdfgen.canvas import Canvas; import io, pymupdf; pdfmetrics.registerFont(TTFont('cjk', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', subfontIndex=2)); pdfmetrics.registerFont(TTFont('cjkb', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc')); b = io.BytesIO(); c = Canvas(b); c.setFont('cjk', 14); c.drawString(72, 720, '繁體中文檔案測試'); c.setFont('cjkb', 14); c.drawString(72, 690, '香港特區政府'); c.save(); d = pymupdf.open(stream=b.getvalue()); t = d[0].get_text(); assert '繁體中文檔案測試' in t and '香港特區政府' in t, t; assert {f[3].split('+')[-1] for f in d[0].get_fonts()} >= {'NotoSansHK-Regular', 'NotoSerifHK-Bold'}, d[0].get_fonts()" \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
 
@@ -94,6 +94,9 @@ RUN mkdir -p /home/sandbox/.claude /work /workspace /opt/agent \
  && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
  && usermod -d /home/sandbox node
 COPY agent.mjs sbx-init.mjs /opt/agent/
+# The image's own setup, readable inside the sandbox so Claude can see exactly what is installed and how (an instance's
+# system prompt points at it): this Dockerfile and the files it installs.
+COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py /opt/image-setup/
 
 ENV HOME=/home/sandbox \
     PORT=7070 \
