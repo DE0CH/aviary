@@ -9,7 +9,8 @@ FROM node:22-trixie-slim
 # Noto CJK fonts (OpenType/CFF, which reportlab can't use: with it Claude fell back to installing other fonts). Live
 # PDF chats (2026-10-21/22) installed exactly these at run time on every new sandbox. PyMuPDF (Claude checks its
 # PDFs with it) stays on 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB compressed). reportlab is
-# there only because Claude probes for it first (4 of 4 PDF chats) and then pip-installs it (2 of them).
+# there because Claude probes for it first (4 of 4 PDF chats) and then pip-installs it (2 of them); it reads only
+# TrueType, so it gets its own fonts (below).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates tini bash curl wget git jq unzip zip xz-utils file less procps sudo \
@@ -27,6 +28,26 @@ RUN python3 -m venv /opt/py \
       beautifulsoup4 lxml requests httpx Pillow markdown tabulate python-dateutil chardet opencc-python-reimplemented \
       weasyprint 'pymupdf<2' reportlab \
  && /opt/py/bin/python -c "import weasyprint, pymupdf; d = pymupdf.open(stream=weasyprint.HTML(string='<html lang=zh-HK><p style=\"font-family:Noto Sans CJK HK\">繁體中文檔案測試</p>').write_pdf()); assert '繁體中文檔案測試' in d[0].get_text(), d[0].get_text(); assert any('CJK' in f[3] for f in d[0].get_fonts()), d[0].get_fonts()" \
+ && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
+ && chown -R 1000:1000 /opt/py
+
+# Chinese for reportlab: it can't read the Noto CJK .ttc (CFF outlines: "postscript outlines are not supported", live
+# chat 2026-10-22), so the image also has TrueType Noto Sans HK and Noto Serif HK, Regular and Bold (static instances of
+# Google Fonts' variable files, pinned by commit and sha256; +34 MB). Claude takes its font path from fc-list, which
+# lists the .ttc files, so sbx_reportlab_cjk (reportlab-cjk.py) has TTFont() use these for a Noto CJK file.
+ARG GOOGLE_FONTS=45e3d5269e4a17d823f6d84470bc084dc5ae46f6
+COPY reportlab-cjk.py /opt/py/lib/python3.13/site-packages/sbx_reportlab_cjk.py
+RUN set -e; d=/usr/share/fonts/truetype/noto-hk; mkdir -p $d; cd /tmp \
+ && curl -fsSL -o sans.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notosanshk/NotoSansHK%5Bwght%5D.ttf" \
+ && curl -fsSL -o serif.ttf "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/notoserifhk/NotoSerifHK%5Bwght%5D.ttf" \
+ && printf '%s  %s\n' 76098ee78ec234cd4f8c950742b3f766fea2f8b43d5180d901048f4fc86c6849 sans.ttf \
+      66108860e321aa413e7cb346448b4a418b779d94ae392accb32d163c024ae661 serif.ttf | sha256sum -c - \
+ && for f in Sans Serif; do lower=$(echo $f | tr A-Z a-z); \
+      fonttools varLib.instancer -q --update-name-table -o $d/Noto${f}HK-Regular.ttf $lower.ttf wght=400; \
+      fonttools varLib.instancer -q --update-name-table -o $d/Noto${f}HK-Bold.ttf $lower.ttf wght=700; done \
+ && rm -f sans.ttf serif.ttf && fc-cache -f \
+ && echo 'import sbx_reportlab_cjk' > /opt/py/lib/python3.13/site-packages/sbx-reportlab-cjk.pth \
+ && /opt/py/bin/python -I -c "from reportlab.pdfbase import pdfmetrics; from reportlab.pdfbase.ttfonts import TTFont; from reportlab.pdfgen.canvas import Canvas; import io, pymupdf; pdfmetrics.registerFont(TTFont('cjk', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', subfontIndex=2)); pdfmetrics.registerFont(TTFont('cjkb', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc')); b = io.BytesIO(); c = Canvas(b); c.setFont('cjk', 14); c.drawString(72, 720, '繁體中文檔案測試'); c.setFont('cjkb', 14); c.drawString(72, 690, '香港特區政府'); c.save(); d = pymupdf.open(stream=b.getvalue()); t = d[0].get_text(); assert '繁體中文檔案測試' in t and '香港特區政府' in t, t; assert {f[3].split('+')[-1] for f in d[0].get_fonts()} == {'NotoSansHK-Regular', 'NotoSerifHK-Bold'}, d[0].get_fonts()" \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
 
