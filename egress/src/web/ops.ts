@@ -29,6 +29,8 @@ const HOST_BOOT_SLOW_S = 300;
 const SANDBOX_START_SLOW_S = 180;
 /** the budget is worth a look from this share on */
 const BUDGET_WATCH = 0.8;
+/** not an error: an MCP client's optional GET stream that the tools server turns down with 405 (MCP streamable HTTP) */
+const NOT_NOISE = "not (kind = 'inject' and status = 405)";
 
 type Row = Record<string, any>;
 export type Level = "ok" | "warming" | "watch" | "problem";
@@ -338,7 +340,7 @@ export class OpsSnapshot {
     const [{ rows: c }, { rows: list }] = await Promise.all([
       db.query(
         `select (select count(*) from ops_events where kind = 'sandbox_start' and not ok and at > ${win})::int as "failedStarts",
-                (select count(*) from egress_log where at > ${win} and kind in ('model', 'inject') and (status >= 400 or decision like 'deny%'))::int as "modelErrors",
+                (select count(*) from egress_log where at > ${win} and kind in ('model', 'inject') and (status >= 400 or decision like 'deny%') and ${NOT_NOISE})::int as "modelErrors",
                 (select count(*) from vm_events where at > ${win} and (kind like '%fail%' or kind like '%lost%' or data ? 'error'))::int as "hostErrors",
                 (select count(*) from egress_log where at > ${win} and kind not in ('model', 'inject') and decision like 'deny%')::int as "blocked"`,
       ),
@@ -349,7 +351,7 @@ export class OpsSnapshot {
          union all
          (select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail, s.owner
             from egress_log e left join sandboxes s on s.id = e.sandbox_id
-           where e.at > ${win} and e.kind in ('model', 'inject') and (e.status >= 400 or e.decision like 'deny%'))
+           where e.at > ${win} and e.kind in ('model', 'inject') and (e.status >= 400 or e.decision like 'deny%') and ${NOT_NOISE.replace(/\b(kind|status)\b/g, "e.$1")})
          union all
          (select v.at, v.kind as what, coalesce(v.host, '') || coalesce(' ' || (v.data->>'error'), '') as detail, s.owner
             from vm_events v left join sandboxes s on s.id = v.sandbox_id
