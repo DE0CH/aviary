@@ -4,12 +4,16 @@
 # (docs/SANDBOX-VM.md, "Installing packages"), so `apt-get install` works there.
 FROM node:22-trixie-slim
 
-# tools for news and PR work: documents, PDFs, spreadsheets, charts, CJK fonts for rendering Chinese text
+# tools for news and PR work: documents, PDFs, spreadsheets, charts, CJK fonts for rendering Chinese text.
+# PDFs: WeasyPrint (HTML/CSS -> PDF) is the one toolchain; it needs Pango + HarfBuzz's subsetter, and it embeds the
+# Noto CJK fonts (OpenType/CFF, which reportlab can't use: with it Claude fell back to installing other fonts). Live
+# PDF chats (2026-10-21/22) installed exactly these at run time on every new sandbox.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates tini bash curl wget git jq unzip zip xz-utils file less procps sudo \
       python3 python3-venv python3-pip \
       poppler-utils pandoc fonts-noto-cjk fonts-noto-core fontconfig \
+      libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
 
 # A virtualenv owned by the sandbox user, first on PATH: `pip install x` works without root or
@@ -19,6 +23,8 @@ RUN python3 -m venv /opt/py \
  && /opt/py/bin/pip install --no-cache-dir \
       pandas openpyxl xlsxwriter python-docx python-pptx matplotlib pypdf pdfplumber \
       beautifulsoup4 lxml requests httpx Pillow markdown tabulate python-dateutil chardet opencc-python-reimplemented \
+      weasyprint pymupdf \
+ && /opt/py/bin/python -c "import weasyprint, pymupdf; d = pymupdf.open(stream=weasyprint.HTML(string='<html lang=zh-HK><p style=\"font-family:Noto Sans CJK HK\">繁體中文檔案測試</p>').write_pdf()); assert '繁體中文檔案測試' in d[0].get_text(), d[0].get_text(); assert any('CJK' in f[3] for f in d[0].get_fonts()), d[0].get_fonts()" \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
 
