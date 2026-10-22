@@ -9,7 +9,7 @@ FROM node:22-trixie-slim
 # Noto CJK fonts (OpenType/CFF, which reportlab can't use: with it Claude fell back to installing other fonts). Live
 # PDF chats (2026-10-21/22) installed exactly these at run time on every new sandbox. PyMuPDF (Claude checks its
 # PDFs with it) stays on 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB compressed). reportlab is
-# there only because Claude probes for it first and otherwise pip-installs it (seen in 4 of 4 PDF chats).
+# there only because Claude probes for it first (4 of 4 PDF chats) and then pip-installs it (2 of them).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates tini bash curl wget git jq unzip zip xz-utils file less procps sudo \
