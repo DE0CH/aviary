@@ -8,7 +8,8 @@ FROM node:22-trixie-slim
 # PDFs: WeasyPrint (HTML/CSS -> PDF) is the one toolchain; it needs Pango + HarfBuzz's subsetter, and it embeds the
 # Noto CJK fonts (OpenType/CFF, which reportlab can't use: with it Claude fell back to installing other fonts). Live
 # PDF chats (2026-10-21/22) installed exactly these at run time on every new sandbox. PyMuPDF (Claude checks its
-# PDFs with it) stays on 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB compressed).
+# PDFs with it) stays on 1.x: 2.0 pulls onnxruntime, networkx and pymupdf4llm (+100 MB compressed). reportlab is
+# there only because Claude probes for it first and otherwise pip-installs it (seen in 4 of 4 PDF chats).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates tini bash curl wget git jq unzip zip xz-utils file less procps sudo \
@@ -24,7 +25,7 @@ RUN python3 -m venv /opt/py \
  && /opt/py/bin/pip install --no-cache-dir \
       pandas openpyxl xlsxwriter python-docx python-pptx matplotlib pypdf pdfplumber \
       beautifulsoup4 lxml requests httpx Pillow markdown tabulate python-dateutil chardet opencc-python-reimplemented \
-      weasyprint 'pymupdf<2' \
+      weasyprint 'pymupdf<2' reportlab \
  && /opt/py/bin/python -c "import weasyprint, pymupdf; d = pymupdf.open(stream=weasyprint.HTML(string='<html lang=zh-HK><p style=\"font-family:Noto Sans CJK HK\">繁體中文檔案測試</p>').write_pdf()); assert '繁體中文檔案測試' in d[0].get_text(), d[0].get_text(); assert any('CJK' in f[3] for f in d[0].get_fonts()), d[0].get_fonts()" \
  && find /opt/py -name '__pycache__' -prune -exec rm -rf {} + \
  && chown -R 1000:1000 /opt/py
