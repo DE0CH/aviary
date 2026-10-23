@@ -48,21 +48,6 @@ patches:
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 64Mi}
       - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 64Mi}
-  # the yyc-ai tunnel's twin on YYC's own Cloudflare account (news-stream/deploy/cloudflare), for the switch: both
-  # connectors run until ai.yyc.deyaochen.com points at the YYC account, then the old one goes (clean cut)
-  - target: {kind: Deployment, name: cloudflared}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/-
-        value:
-          name: cloudflared-yyc
-          image: cloudflare/cloudflared:2026.10.0
-          args: [tunnel, --no-autoupdate, --edge-ip-version, auto, --metrics, "0.0.0.0:2001", --grace-period, 3m, run]
-          env: [{name: TUNNEL_TOKEN, valueFrom: {secretKeyRef: {name: tunnel, key: token_yyc}}}]
-          readinessProbe: {httpGet: {path: /ready, port: 2001}, periodSeconds: 5}
-          livenessProbe: {httpGet: {path: /ready, port: 2001}, initialDelaySeconds: 30, periodSeconds: 20, failureThreshold: 6}
-          resources: {requests: {cpu: 20m, memory: 64Mi}, limits: {memory: 64Mi}}
-          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
   - target: {kind: Deployment}
     patch: |-
       - op: add
