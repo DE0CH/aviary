@@ -1,6 +1,6 @@
 # The Paseo UI
 
-The browser UI of this fork (YYC AI, and a Jarvis 4 session's `cloudcli` harness) is the Paseo web app
+The browser UI of this fork (YYC AI, and a Jarvis 4 session's `cloudcli` harness) and the YYC AI iOS app are the Paseo app
 (getpaseo/paseo, Apache-2.0), copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not
 kept in sync with upstream (Deyao, 2026-10-26): change it as this fork's own code. CloudCLI's server and state stay
 as they were; the app reaches them through a bridge that speaks Paseo's protocol.
@@ -18,8 +18,8 @@ CloudCLI server, one process per person (unchanged)
    └─ sessionsService, chatRunRegistry, the provider runtime, Postgres, the sandbox (as before)
 ```
 
-The iOS app and the Jarvis 4 Chat app keep talking CloudCLI's own `/ws` and REST; the bridge adds a path, it does not
-change one.
+The Jarvis 4 Chat app (DE0CH/pwa-shell-ios) keeps talking CloudCLI's own `/ws` and REST; the bridge adds a path, it
+does not change one.
 
 ## How the app sees CloudCLI
 
@@ -71,6 +71,27 @@ arrives.
   (`screens/workspace/conversation-menu-items.tsx`).
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
+
+## The iOS app
+
+The same `paseo/packages/app`, built natively as YYC AI (`dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used
+to ship; it no longer builds yyc-ai). What differs from the web build:
+
+- **Server**: the build secret `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). The repo is
+  public, so the address appears nowhere in it or in CI logs.
+- **Sign-in**: Cloudflare Access before anything connects (`yyc/access-gate.tsx`). The router's
+  `/api/jarvis/app-signin` hands the Access token back on the app's scheme; it is kept in the Keychain
+  (`yyc/access-token.ts`) and sent as `cf-access-token` and the `CF_Authorization` cookie on REST and the socket
+  (`runtime/websocket-factory.ts`). An expired token sends the app back to the sign-in screen.
+- **Files**: downloaded into the app and handed to the share sheet (`yyc/open-file.ts`).
+- **Not there**: push notifications, the camera.
+- **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI app's 1.0); the build number is the CI
+  run.
+
+`.github/workflows/yyc-ios.yml` builds it on a GitHub macOS runner on every push touching `paseo/` (`paseo/ios/`:
+prebuild, a simulator launch to the sign-in screen with Maestro, an unsigned archive signed at export with the App
+Store Connect key) and uploads to TestFlight. Its secrets: `YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+`ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first exercised on TestFlight.
 
 ## Build and run
 
