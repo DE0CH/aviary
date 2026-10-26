@@ -199,7 +199,7 @@ function SessionsScreenContent() {
             </Button>
           ) : (
             <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
-              Back
+              {t("common.back")}
             </Button>
           )}
         </View>
