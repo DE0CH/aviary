@@ -9,6 +9,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import { saveAccessToken } from "@/yyc/access-token";
+import { isWeb } from "@/constants/platform";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
@@ -457,9 +459,16 @@ function SidebarFooter({
   );
 }
 
-/** Ends the Cloudflare Access session; Access shows its sign-in again (to switch account, or leave). */
+/**
+ * Ends the Cloudflare Access session; Access shows its sign-in again (to switch account, or leave). The iOS app
+ * forgets its token and shows its sign-in screen (yyc/access-gate.tsx).
+ */
 function signOut(): void {
-  if (typeof window !== "undefined") window.location.assign("/cdn-cgi/access/logout");
+  if (isWeb) {
+    window.location.assign("/cdn-cgi/access/logout");
+    return;
+  }
+  void saveAccessToken(null);
 }
 
 function SidebarUsageIcon({ label }: { label: string }) {

@@ -1,0 +1,9 @@
+# The app starts on its sign-in screen (no Access token on a fresh install): the YYC AI title and the button.
+appId: dev.de0ch.yycai
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "登入|Sign in"
+    timeout: 60000
+- assertVisible: "YYC AI"
+- takeScreenshot: sign-in

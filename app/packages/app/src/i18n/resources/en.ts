@@ -3176,6 +3176,12 @@ export const en = {
       daysLeft_one: "Deleted for good in {{count}} day",
       daysLeft_other: "Deleted for good in {{count}} days",
     },
+    signIn: {
+      title: "YYC AI",
+      button: "Sign in",
+      failed: "Signing in did not finish. Try again.",
+      notConfigured: "This build does not know its server.",
+    },
     share: {
       title: "Share",
       description: "Colleagues signed in to YYC AI can view this conversation (read only).",

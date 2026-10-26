@@ -67,31 +67,16 @@ function resolveSecretFile(params) {
   return undefined;
 }
 
+// YYC AI (docs/paseo-ui.md): the iOS app is "YYC AI" (dev.de0ch.yycai, the TestFlight app the SwiftUI client
+// shipped as before), and the URL scheme the router's sign-in returns to is the bundle id.
 const variants = {
   production: {
-    // YYC AI's staff UI (docs/paseo-ui.md); the server writes the instance's own product name into the page
     name: "YYC AI",
-    packageId: "sh.paseo",
-    googleServicesFile: resolveSecretFile({
-      envKey: "GOOGLE_SERVICES_FILE_PROD",
-      fallbackRelativePath: "./.secrets/google-services.prod.json",
-    }),
-    googleServiceInfoPlist: resolveSecretFile({
-      envKey: "GOOGLE_SERVICE_INFO_PLIST_PROD",
-      fallbackRelativePath: "./.secrets/GoogleService-Info.prod.plist",
-    }),
+    packageId: "dev.de0ch.yycai",
   },
   development: {
-    name: "Paseo Debug",
-    packageId: "sh.paseo.debug",
-    googleServicesFile: resolveSecretFile({
-      envKey: "GOOGLE_SERVICES_FILE_DEBUG",
-      fallbackRelativePath: "./.secrets/google-services.debug.json",
-    }),
-    googleServiceInfoPlist: resolveSecretFile({
-      envKey: "GOOGLE_SERVICE_INFO_PLIST_DEBUG",
-      fallbackRelativePath: "./.secrets/GoogleService-Info.debug.plist",
-    }),
+    name: "YYC AI Debug",
+    packageId: "dev.de0ch.yycai.debug",
   },
 };
 
@@ -104,8 +89,8 @@ export default {
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
-    scheme: "paseo",
+    icon: "./assets/images/yyc-icon.png",
+    scheme: variant.packageId,
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -115,9 +100,6 @@ export default {
         ITSAppUsesNonExemptEncryption: false,
       },
       bundleIdentifier: variant.packageId,
-      ...(variant.googleServiceInfoPlist
-        ? { googleServicesFile: variant.googleServiceInfoPlist }
-        : {}),
       buildNumber: nativeReleaseVersion.iosBuildNumber,
     },
     android: {
@@ -133,7 +115,6 @@ export default {
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
       versionCode: nativeReleaseVersion.androidVersionCode,
-      ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
       output: "single",
@@ -147,12 +128,12 @@ export default {
       withPasteInput,
       withAndroidScroll,
       [withAndroidAsyncStorageSize, 64],
-      ...buildProfile.cameraPlugins,
+      // No QR pairing and no push (one server, no APNs key): no camera or notifications plugin
       withAndroidOptionalCamera,
       [
         "expo-splash-screen",
         {
-          image: "./assets/images/splash-icon.png",
+          image: "./assets/images/yyc-splash.png",
           imageWidth: 200,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
@@ -161,7 +142,6 @@ export default {
           },
         },
       ],
-      ...buildProfile.notificationPlugins,
       "expo-audio",
       [
         "expo-gradle-jvmargs",
@@ -191,16 +171,14 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      // The YYC AI server (yyc/site.ts): a build secret, not in this public repo
+      yycSite: process.env.YYC_SITE,
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
       watchdogBuild: isWatchdogBuild,
       diagnosticRevision: process.env.PASEO_DIAGNOSTIC_REVISION,
       diagnosticBuildTime: process.env.PASEO_DIAGNOSTIC_BUILD_TIME,
       router: {},
-      eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
-      },
     },
-    owner: "getpaseo",
   },
 };

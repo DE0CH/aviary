@@ -1,9 +1,11 @@
 import React, { useCallback } from "react";
-import { Image, Linking, Pressable, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Download, FileText } from "lucide-react-native";
 import { apiUrl } from "@/yyc/api";
+import { openServerFile, serverImageSource } from "@/yyc/open-file";
+import { useToast } from "@/contexts/toast-api-context";
 import type { Theme } from "@/styles/theme";
 
 /** One file Claude sent with SendUserFile (the bridge puts these on the tool call's metadata). */
@@ -48,7 +50,10 @@ function fileUrl(sessionId: string, file: SentFile, inline: boolean): string {
 export function openConversationFile(sessionId: string, relativePath: string): void {
   const path = relativePath.replace(/^\/workspace\//, "").replace(/^\.\//, "");
   const query = `path=${encodeURIComponent(path)}&inline=1`;
-  void Linking.openURL(apiUrl(`/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?${query}`));
+  void openServerFile(
+    apiUrl(`/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?${query}`),
+    path.split("/").pop() ?? path,
+  ).catch(() => undefined);
 }
 
 /**
@@ -87,9 +92,12 @@ function SentFileCard({
   urlFor: (file: SentFile, inline: boolean) => string;
 }) {
   const { t } = useTranslation();
+  const toast = useToast();
   const open = useCallback(() => {
-    void Linking.openURL(urlFor(file, false));
-  }, [file, urlFor]);
+    void openServerFile(urlFor(file, false), file.name).catch((error) =>
+      toast.error(error instanceof Error ? error.message : String(error)),
+    );
+  }, [file, toast, urlFor]);
   return (
     <Pressable
       onPress={open}
@@ -100,7 +108,7 @@ function SentFileCard({
     >
       {file.isImage ? (
         <Image
-          source={{ uri: urlFor(file, true) }}
+          source={serverImageSource(urlFor(file, true))}
           style={styles.preview}
           resizeMode="cover"
           accessibilityIgnoresInvertColors

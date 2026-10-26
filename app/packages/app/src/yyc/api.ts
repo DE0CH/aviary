@@ -1,12 +1,16 @@
 /**
  * CloudCLI's own REST API, for the YYC features Paseo's protocol has no message for (sharing, uploads, warming).
  * The page is served by the CloudCLI server it talks to, so requests are same-origin and carry the Cloudflare
- * Access cookie. In development the app runs on Metro's port and EXPO_PUBLIC_LOCAL_DAEMON names the server.
+ * Access cookie. The iOS app sends its Access token (yyc/access-token.ts) to the configured site (yyc/site.ts). In
+ * development the app runs on Metro's port and EXPO_PUBLIC_LOCAL_DAEMON names the server.
  */
+import { accessHeaders } from "@/yyc/access-token";
+import { siteOrigin } from "@/yyc/site";
+
 function apiBase(): string {
   const dev = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim();
   if (dev) return `http://${dev}`;
-  return typeof window === "undefined" ? "" : window.location.origin;
+  return siteOrigin() ?? "";
 }
 
 export class ApiError extends Error {
@@ -28,7 +32,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(apiUrl(path), {
     credentials: "include",
     ...init,
-    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    headers: { "content-type": "application/json", ...accessHeaders(), ...(init.headers ?? {}) },
   });
   const text = await response.text();
   let body: unknown = null;
@@ -55,5 +59,6 @@ export function sessionIdOfAgent(agentId: string | null): string | null {
 }
 
 export function absoluteUrl(path: string): string {
-  return typeof window === "undefined" ? path : new URL(path, window.location.origin).toString();
+  const origin = siteOrigin();
+  return origin ? new URL(path, origin).toString() : path;
 }

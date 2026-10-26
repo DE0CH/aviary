@@ -1,3 +1,4 @@
+import { siteOrigin } from "@/yyc/site";
 import { mountSandboxStatusHandler } from "@/yyc/sandbox-status";
 import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
@@ -1552,7 +1553,11 @@ export function readInitialDaemonConnectionHint(input?: {
   isWebRuntime?: boolean;
 }): InitialDaemonConnectionHint | null {
   const isWebRuntime = input?.isWebRuntime ?? isWeb;
-  if (!isWebRuntime || typeof globalThis === "undefined") {
+  if (!isWebRuntime) {
+    // The iOS app's one host: the YYC AI site it was built for (yyc/site.ts)
+    return readConfiguredSiteConnectionHint();
+  }
+  if (typeof globalThis === "undefined") {
     return null;
   }
   const result = InitialDaemonConnectionHintSchema.safeParse(
@@ -1560,6 +1565,14 @@ export function readInitialDaemonConnectionHint(input?: {
   );
   if (result.success) return result.data;
   return readPageOriginConnectionHint();
+}
+
+function readConfiguredSiteConnectionHint(): InitialDaemonConnectionHint | null {
+  const origin = siteOrigin();
+  if (!origin) return null;
+  const url = new URL(origin);
+  const useTls = url.protocol === "https:";
+  return { listen: `${url.hostname}:${url.port || (useTls ? "443" : "80")}`, useTls };
 }
 
 /**

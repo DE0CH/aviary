@@ -3013,6 +3013,12 @@ export const zhHK: TranslationResources = {
       daysLeft_one: "{{count}} 日後永久刪除",
       daysLeft_other: "{{count}} 日後永久刪除",
     },
+    signIn: {
+      title: "YYC AI",
+      button: "登入",
+      failed: "未能完成登入，請再試。",
+      notConfigured: "此版本未設定伺服器。",
+    },
     share: {
       title: "分享",
       description: "已登入 YYC AI 的同事可以查看這段對話（只讀）",

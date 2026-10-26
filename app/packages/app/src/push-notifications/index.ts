@@ -5,5 +5,5 @@ export function startPushNotifications(_input: StartPushNotificationsInput): () 
 }
 
 export async function revokePushNotifications(_input: RevokePushNotificationsInput): Promise<void> {
-  // Push notifications are native-only.
+  // CloudCLI's server sends no push notifications (docs/paseo-ui.md): no permission prompt, no token.
 }

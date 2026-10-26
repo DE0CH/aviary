@@ -7,6 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { queryClient } from "@/data/query-client";
 import { I18nProvider } from "@/i18n/provider";
 import { RootErrorBoundary } from "@/components/root-error-boundary";
+import { AccessGate } from "@/yyc/access-gate";
 
 // Keep Expo's platform filtering, route root, and lazy import configuration.
 const { ctx: context } = require("expo-router/_ctx") as {
@@ -32,10 +33,12 @@ export function RootRouter({ context: routes }: Pick<ComponentProps<typeof ExpoR
           <RootErrorBoundary key={generation} onReload={reload}>
             <Head.Provider>
               {/* Recreate the router at a safe destination before a failed route can mount. */}
-              <ExpoRoot
-                context={routes}
-                location={generation === 0 ? undefined : "/new"}
-              />
+              <AccessGate>
+                <ExpoRoot
+                  context={routes}
+                  location={generation === 0 ? undefined : "/new"}
+                />
+              </AccessGate>
             </Head.Provider>
           </RootErrorBoundary>
         </SafeAreaProvider>

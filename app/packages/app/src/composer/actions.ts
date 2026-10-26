@@ -1,4 +1,5 @@
 import { apiUrl } from "@/yyc/api";
+import { accessHeaders } from "@/yyc/access-token";
 import type { UploadedFileAttachment } from "@getpaseo/protocol/messages";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
@@ -135,6 +136,7 @@ async function uploadToCloudCli(file: {
   const response = await fetch(apiUrl("/api/assets/files"), {
     method: "POST",
     credentials: "include",
+    headers: accessHeaders(),
     body: form,
   });
   const body = (await response.json().catch(() => null)) as {
