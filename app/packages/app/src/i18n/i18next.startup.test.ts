@@ -64,16 +64,7 @@ describe("bundled translation startup", () => {
     });
   });
 
-  it.each([
-    ["ar", "يلغي"],
-    ["es", "Cancelar"],
-    ["fr", "Annuler"],
-    ["ja", "キャンセル"],
-    ["ko", "취소"],
-    ["pt-BR", "Cancelar"],
-    ["ru", "Отмена"],
-    ["zh-CN", "取消"],
-  ])("loads %s synchronously on selection and reuses it", (locale, cancel) => {
+  it.each([["zh-HK", "取消"]])("loads %s synchronously on selection and reuses it", (locale, cancel) => {
     const result = runStartupProbe(`
       i18n.addResource("en", "translation", "startupProbeOnlyInEnglish", "English fallback");
       i18n.changeLanguage(${JSON.stringify(locale)});

@@ -13,10 +13,10 @@ describe("ensureI18nLanguageForRender", () => {
       },
     };
 
-    ensureI18nLanguageForRender("zh-CN", i18n);
+    ensureI18nLanguageForRender("zh-HK", i18n);
 
-    expect(i18n.language).toBe("zh-CN");
-    expect(calls).toEqual(["zh-CN"]);
+    expect(i18n.language).toBe("zh-HK");
+    expect(calls).toEqual(["zh-HK"]);
   });
 
   it("does not call changeLanguage when the current language already matches", () => {

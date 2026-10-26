@@ -408,7 +408,7 @@ describe("combined model selector data", () => {
   });
 
   it("uses the active app language for utility labels", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     try {
       const providers = buildSelectableProviderSelectorProviders([
         snapshotEntry({
@@ -423,7 +423,7 @@ describe("combined model selector data", () => {
         }),
       ]);
 
-      expect(getAllModelLabels(providers)).toContain("默认");
+      expect(getAllModelLabels(providers)).toContain("預設");
       expect(providers[1]?.modelSelection).toEqual({
         kind: "error",
         message: "不可用",

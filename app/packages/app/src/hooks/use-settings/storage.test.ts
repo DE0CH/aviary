@@ -501,13 +501,13 @@ describe("loadAppSettingsFromStorage", () => {
   it("loads a persisted explicit language", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ language: "zh-CN" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ language: "zh-HK" }),
       }),
     });
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.language).toBe("zh-CN");
+    expect(result.language).toBe("zh-HK");
   });
 
   it("drops an unknown persisted language back to system", async () => {

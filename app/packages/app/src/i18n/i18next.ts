@@ -2,14 +2,14 @@ import { createInstance, type BackendModule } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
 import { en as paseoEn } from "./resources/en";
-import { zhHK as paseoZhHK } from "./resources/zh-HK";
 import { enOverrides, withOverrides, zhHKOverrides } from "./resources/yyc";
 
+// Paseo's text with YYC AI's wording on top (resources/yyc.ts)
 const en = withOverrides(paseoEn, enOverrides);
-const zhHK = withOverrides(paseoZhHK, zhHKOverrides);
 
-// Both shipped locales are bundled and loaded up front. Synchronous reads preserve the language
-// provider's contract: translations are ready before it renders children.
+// A literal require keeps zh-HK bundled for offline use, while evaluating its resource module only
+// when selected. Synchronous reads preserve the language provider's contract: translations are
+// ready before it renders children.
 const bundledTranslations: BackendModule = {
   type: "backend",
   init() {},
@@ -19,7 +19,7 @@ const bundledTranslations: BackendModule = {
         callback(null, en);
         return;
       case "zh-HK":
-        callback(null, zhHK);
+        callback(null, withOverrides(require("./resources/zh-HK").zhHK, zhHKOverrides));
         return;
       default:
         callback(null, undefined);
@@ -36,11 +36,10 @@ observeI18nInit(
     .init({
       compatibilityJSON: "v4",
       fallbackLng: "en",
-      lng: "zh-HK",
+      lng: "en",
       partialBundledLanguages: true,
       resources: {
         en: { translation: en },
-        "zh-HK": { translation: zhHK },
       },
       interpolation: {
         escapeValue: false,

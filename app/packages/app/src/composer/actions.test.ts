@@ -1042,51 +1042,54 @@ describe("findForgeItemByOption / isAttachmentSelectedForForgeItem", () => {
 });
 
 describe("file upload preparation", () => {
-  it("waits for file bytes and daemon acknowledgement before returning the attachment", async () => {
+  it("posts the file to CloudCLI's upload route once its bytes are read", async () => {
     let resolveRead!: (bytes: Uint8Array) => void;
     const read = new Promise<Uint8Array>((resolve) => {
       resolveRead = resolve;
     });
-    let acknowledge!: (result: Awaited<ReturnType<ComposerSendClient["uploadFile"]>>) => void;
-    const response = new Promise<Awaited<ReturnType<ComposerSendClient["uploadFile"]>>>(
-      (resolve) => {
-        acknowledge = resolve;
-      },
-    );
-    const sent: string[] = [];
-    const upload = uploadFileAttachments({
-      client: {
-        sendAgentMessage: async () => {},
-        uploadFile: async (file) => {
-          sent.push(file.fileName);
-          expect(file.bytes).toEqual(new Uint8Array([1, 2]));
-          return response;
+    const requests: Array<{ url: string; name: string | undefined }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const body = init?.body as FormData;
+      const file = body.get("files") as File;
+      requests.push({ url: String(url), name: file?.name });
+      return new Response(
+        JSON.stringify({
+          attachments: [
+            { path: "/assets/1-sample.bin", name: "sample.bin", size: 2, mimeType: "application/octet-stream" },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    try {
+      const upload = uploadFileAttachments({
+        client: { sendAgentMessage: async () => {}, uploadFile: async () => ({}) as never },
+        files: [
+          { fileName: "sample.bin", mimeType: "application/octet-stream", readBytes: () => read },
+        ],
+      });
+      expect(requests).toEqual([]);
+      resolveRead(new Uint8Array([1, 2]));
+      await expect(upload).resolves.toEqual([
+        {
+          kind: "file",
+          attachment: {
+            type: "uploaded_file",
+            id: "/assets/1-sample.bin",
+            fileName: "sample.bin",
+            mimeType: "application/octet-stream",
+            size: 2,
+            path: "/assets/1-sample.bin",
+          },
         },
-      },
-      files: [
-        { fileName: "sample.bin", mimeType: "application/octet-stream", readBytes: () => read },
-      ],
-    });
-    let completed = false;
-    void upload.then(() => {
-      completed = true;
-      return undefined;
-    });
-    expect(sent).toEqual([]);
-    resolveRead(new Uint8Array([1, 2]));
-    await Promise.resolve();
-    expect(sent).toEqual(["sample.bin"]);
-    expect(completed).toBe(false);
-    const file = {
-      type: "uploaded_file" as const,
-      id: "file-1",
-      fileName: "sample.bin",
-      mimeType: "application/octet-stream",
-      size: 2,
-      path: "/uploads/sample.bin",
-    };
-    acknowledge({ requestId: "req-1", file, error: null });
-    await expect(upload).resolves.toEqual([{ kind: "file", attachment: file }]);
+      ]);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toMatch(/\/api\/assets\/files$/);
+      expect(requests[0]?.name).toBe("sample.bin");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it.each(["unreadable", "oversized"])(

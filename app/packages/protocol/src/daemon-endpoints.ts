@@ -281,7 +281,9 @@ export function extractHostPortFromWebSocketUrl(wsUrl: string): string {
   if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
     throw new Error("Invalid WebSocket URL protocol");
   }
-  if (parsed.pathname.replace(/\/+$/, "") !== DAEMON_WEBSOCKET_PATH) {
+  // The daemon's own path, or a relay's /ws
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname !== DAEMON_WEBSOCKET_PATH && pathname !== "/ws") {
     throw new Error(`Invalid WebSocket URL (expected ${DAEMON_WEBSOCKET_PATH} path)`);
   }
 
