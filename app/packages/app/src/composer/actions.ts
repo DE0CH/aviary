@@ -1,3 +1,5 @@
+import { apiUrl } from "@/yyc/api";
+import type { UploadedFileAttachment } from "@getpaseo/protocol/messages";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
@@ -123,6 +125,34 @@ export async function pickAndPersistImages(input: {
   );
 }
 
+async function uploadToCloudCli(file: {
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}): Promise<UploadedFileAttachment> {
+  const form = new FormData();
+  form.append("files", new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: file.mimeType }), file.fileName);
+  const response = await fetch(apiUrl("/api/assets/files"), {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  const body = (await response.json().catch(() => null)) as {
+    attachments?: Array<{ path: string; name: string; size: number; mimeType: string }>;
+    error?: string;
+  } | null;
+  const stored = body?.attachments?.[0];
+  if (!response.ok || !stored) throw new Error(body?.error ?? "Upload failed.");
+  return {
+    type: "uploaded_file",
+    id: stored.path,
+    fileName: stored.name,
+    mimeType: stored.mimeType,
+    size: stored.size,
+    path: stored.path,
+  };
+}
+
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
@@ -144,12 +174,9 @@ export async function uploadFileAttachments(input: {
     });
   }
 
+  // Files go to CloudCLI's upload route, which keeps them for the turn that sends them (docs/paseo-ui.md)
   for (const file of prepared) {
-    const response = await input.client.uploadFile(file);
-    if (response.error || !response.file) {
-      throw new Error(response.error ?? "Upload failed.");
-    }
-    result.push({ kind: "file", attachment: response.file });
+    result.push({ kind: "file", attachment: await uploadToCloudCli(file) });
   }
 
   return result;

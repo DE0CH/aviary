@@ -1,3 +1,4 @@
+import { warmSandbox } from "@/yyc/warm";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1319,7 +1320,14 @@ function ComposerContentImpl({
     () => textSource.getSnapshot().trim().length > 0,
     () => textSource.getSnapshot().trim().length > 0,
   );
-  const setUserInput = onChangeText;
+  // Typing warms a sandbox host for the conversation (docs/paseo-ui.md)
+  const setUserInput = useCallback(
+    (text: string) => {
+      onChangeText(text);
+      if (text.trim()) warmSandbox(agentId);
+    },
+    [agentId, onChangeText],
+  );
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
     selectedAttachments,

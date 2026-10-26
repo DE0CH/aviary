@@ -1,3 +1,4 @@
+import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards } from "@/yyc/sent-files";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -459,15 +460,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         view: "files",
       });
     });
+    // A file the reply names is downloaded from the conversation's workspace through CloudCLI (the server checks
+    // the path); there is no file viewer or explorer here (docs/paseo-ui.md).
+    const downloadInlineFile = useStableEvent((location: WorkspaceFileLocation) => {
+      openConversationFile(agentId, location.path);
+    });
+    const ignoreInlineDirectory = useStableEvent((_directoryPath: string) => {});
     const inlinePathOpener = useMemo(
       () =>
         createInlinePathOpener({
           workspaceRoot,
-          client,
-          openFile: openInlineFile,
-          openDirectory: openInlineDirectory,
+          client: null,
+          openFile: downloadInlineFile,
+          openDirectory: ignoreInlineDirectory,
         }),
-      [workspaceRoot, client, openInlineFile, openInlineDirectory],
+      [workspaceRoot, downloadInlineFile, ignoreInlineDirectory],
     );
     useEffect(() => {
       if (!isActive) inlinePathOpener.cancel();
@@ -814,6 +821,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (payload.source === "agent") {
           const data = payload.data;
 
+          if (data.name === "SendUserFile") {
+            return (
+              <SentFilesCards
+                sessionId={agentId}
+                files={readSentFiles(data.metadata)}
+                caption={readSendUserFileCaption(data.detail)}
+              />
+            );
+          }
+
           if (
             data.name === "speak" &&
             data.detail.type === "unknown" &&
@@ -859,7 +876,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, resolvedServerId, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [agentId, context.cwd, resolvedServerId, setInlineDetailsExpanded, handleToolCallOpenFile],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -999,8 +1016,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
-            onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
+            // CloudCLI's server has no fork of a conversation from a point (docs/paseo-ui.md)
+            onForkAssistantTurn={undefined}
+            onForkInFlightTurn={undefined}
           />
         ) : null,
       [

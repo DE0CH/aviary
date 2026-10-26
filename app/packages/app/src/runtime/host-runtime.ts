@@ -1,3 +1,4 @@
+import { mountSandboxStatusHandler } from "@/yyc/sandbox-status";
 import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
@@ -688,11 +689,16 @@ function createDefaultDeps(
     },
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
-      const unmountServerData = mountServerDataPushRouter({
+      const unmountServerDataPush = mountServerDataPushRouter({
         client,
         queryClient,
         serverId: host.serverId,
       });
+      const unmountSandboxStatus = mountSandboxStatusHandler(client, host.serverId);
+      const unmountServerData = () => {
+        unmountServerDataPush();
+        unmountSandboxStatus();
+      };
       if (!browserAutomationCapabilities) {
         return unmountServerData;
       }
@@ -1552,7 +1558,23 @@ export function readInitialDaemonConnectionHint(input?: {
   const result = InitialDaemonConnectionHintSchema.safeParse(
     Reflect.get(globalThis, INITIAL_DAEMON_CONNECTION_HINT_GLOBAL_KEY),
   );
-  return result.success ? result.data : null;
+  if (result.success) return result.data;
+  return readPageOriginConnectionHint();
+}
+
+/**
+ * The CloudCLI server that serves this page is the only host (docs/paseo-ui.md): connect back to the page's
+ * own origin, whatever name and port the proxies in front of it use.
+ */
+function readPageOriginConnectionHint(): InitialDaemonConnectionHint | null {
+  // Development: the page is Metro's, the server is EXPO_PUBLIC_LOCAL_DAEMON
+  if (readConfiguredLocalDaemonOverride()) return null;
+  const location = (globalThis as { location?: Location }).location;
+  if (!location?.hostname) return null;
+  const useTls = location.protocol === "https:";
+  const port = location.port || (useTls ? "443" : "80");
+  const host = location.hostname.includes(":") ? `[${location.hostname}]` : location.hostname;
+  return { listen: `${host}:${port}`, useTls };
 }
 
 function readConfiguredLocalDaemonOverride(): string | null {

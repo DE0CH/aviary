@@ -1,3 +1,5 @@
+import { greeting, greetingLocale, GREETING_DRAW } from "@/yyc/greeting";
+import { useFirstName } from "@/yyc/first-name";
 import type {
   CreateAgentRequestOptions,
   CreateWorkspaceRequestOptions,
@@ -9,7 +11,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
-import { Text, View } from "react-native";
+import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -174,6 +176,8 @@ interface NewWorkspaceScreenProps {
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
 // no draft to persist, so the composer's attachment and draft seams are inert.
+const YYC_LOGO = require("../../assets/images/yyc-logo.png");
+
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
 function noopClearDraft() {}
@@ -1635,14 +1639,27 @@ function NewWorkspaceLayout({
   children: ReactNode;
 }) {
   // CloudCLI's server has one project, one host and one model: no setup fields and no session
-  // import, only the greeting and the composer (docs/paseo-ui.md). Compact keeps the composer low,
-  // where the thumb is.
-  const setupFields = isCompact ? (
-    <View style={styles.compactSetupSpace} pointerEvents="none" />
-  ) : (
+  // import, only YYC's logo, the time-of-day greeting and the composer (docs/paseo-ui.md). Compact
+  // keeps the composer low, where the thumb is.
+  const { i18n } = useTranslation();
+  const firstName = useFirstName();
+  const greetingText =
+    firstName === undefined
+      ? "\u00a0"
+      : greeting(greetingLocale(i18n.language), new Date(), GREETING_DRAW, firstName);
+  const welcome = (
     <View style={styles.composerTitleContainer} pointerEvents="none">
-      <Text style={styles.composerTitle}>{title}</Text>
+      <Image source={YYC_LOGO} style={styles.brandLogo} accessibilityIgnoresInvertColors />
+      <Text style={styles.composerTitle}>{greetingText ?? title}</Text>
     </View>
+  );
+  const setupFields = isCompact ? (
+    <>
+      <View style={styles.compactSetupSpace} pointerEvents="none" />
+      {welcome}
+    </>
+  ) : (
+    welcome
   );
   return (
     <>
@@ -1675,6 +1692,12 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[8],
     paddingLeft: theme.spacing[6],
     paddingRight: theme.spacing[4],
+  },
+  brandLogo: {
+    width: 48,
+    height: 48,
+    borderRadius: 13,
+    marginBottom: theme.spacing[4],
   },
   composerTitle: {
     fontSize: theme.fontSize["2xl"],

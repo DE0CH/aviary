@@ -49,6 +49,8 @@ interface WorkspaceHoverCardProps {
   disabled?: boolean;
 }
 
+const SHOW_WORKSPACE_HOVER_CARD: boolean = false;
+
 export function WorkspaceHoverCard({
   workspace,
   prHint,
@@ -59,7 +61,9 @@ export function WorkspaceHoverCard({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
 
-  if (isCompact) {
+  // A conversation has no host, folder, branch or scripts to show: the row's title is all there is
+  // (docs/paseo-ui.md).
+  if (isCompact || SHOW_WORKSPACE_HOVER_CARD === false) {
     return children;
   }
 

@@ -6949,7 +6949,18 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
   }),
 });
 
+// YYC AI (docs/paseo-ui.md): the conversation's sandbox is being made (a host may be booting); the app shows
+// a "preparing the workspace" chip until `ready`.
+export const YycSandboxStatusMessageSchema = z.object({
+  type: z.literal("yyc.sandbox_status"),
+  payload: z.object({
+    agentId: z.string(),
+    state: z.enum(["preparing", "ready"]),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  YycSandboxStatusMessageSchema,
   HostsListResponseSchema,
   HostsChangedSchema,
   HostsAddResponseSchema,

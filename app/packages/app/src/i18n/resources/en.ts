@@ -3150,6 +3150,13 @@ export const en = {
       share: "Share",
       delete: "Delete",
     },
+    files: {
+      download: "Download {{name}}",
+    },
+    preparing: {
+      title: "Preparing the workspace…",
+      slow: "This can take a minute or two.",
+    },
     share: {
       title: "Share",
       description: "Colleagues signed in to YYC AI can view this conversation (read only).",

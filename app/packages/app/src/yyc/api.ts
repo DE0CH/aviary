@@ -19,8 +19,13 @@ export class ApiError extends Error {
   }
 }
 
+/** A CloudCLI URL the page can link to or load directly (downloads, previews). */
+export function apiUrl(path: string): string {
+  return `${apiBase()}${path}`;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, {
+  const response = await fetch(apiUrl(path), {
     credentials: "include",
     ...init,
     headers: { "content-type": "application/json", ...(init.headers ?? {}) },
@@ -42,6 +47,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 /** The CloudCLI session id behind a Paseo workspace id (the bridge names workspaces `wks_<session id>`). */
 export function sessionIdOfWorkspace(workspaceId: string | null): string | null {
   return workspaceId?.startsWith("wks_") ? workspaceId.slice(4) : null;
+}
+
+/** A composer's agent id as a CloudCLI session id; drafts of a new chat have none yet. */
+export function sessionIdOfAgent(agentId: string | null): string | null {
+  return agentId && /^[0-9a-f-]{36}$/i.test(agentId) ? agentId : null;
 }
 
 export function absoluteUrl(path: string): string {

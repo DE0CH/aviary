@@ -2987,6 +2987,13 @@ export const zhHK: TranslationResources = {
       share: "分享",
       delete: "刪除",
     },
+    files: {
+      download: "下載 {{name}}",
+    },
+    preparing: {
+      title: "正在準備工作環境…",
+      slow: "可能需要一至兩分鐘，請稍候。",
+    },
     share: {
       title: "分享",
       description: "已登入 YYC AI 的同事可以查看這段對話（只讀）",

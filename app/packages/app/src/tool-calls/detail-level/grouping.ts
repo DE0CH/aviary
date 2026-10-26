@@ -67,7 +67,9 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
     return false;
   }
   const descriptor = describeToolCall(item);
-  return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
+  const name = descriptor.name.trim().toLowerCase();
+  // SendUserFile's cards are what the reply hands over (docs/paseo-ui.md): never folded into a group
+  return descriptor.detail.type !== "plan" && name !== "speak" && name !== "senduserfile";
 }
 
 function createRun(calls: readonly ToolCallItem[], isSealed: boolean): ToolCallRun {

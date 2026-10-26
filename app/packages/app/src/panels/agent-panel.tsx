@@ -1,3 +1,4 @@
+import { SandboxPreparingChip } from "@/yyc/sandbox-chip";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -1585,6 +1586,7 @@ function ActiveAgentComposer({
 
   return (
     <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
+      <SandboxPreparingChip serverId={serverId} agentId={agentId} />
       <Composer
         agentId={agentId}
         serverId={serverId}

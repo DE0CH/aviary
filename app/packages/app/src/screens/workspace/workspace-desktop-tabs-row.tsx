@@ -958,7 +958,12 @@ function TabChip({
   );
 }
 
-export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
+/** A conversation is one agent in one pane: no tab row anywhere (docs/paseo-ui.md). */
+export function WorkspaceDesktopTabsRow(_props: WorkspaceDesktopTabsRowProps) {
+  return null;
+}
+
+export function PaseoWorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   const [presentations, setPresentations] = useState(
     () => new Map<string, WorkspaceTabPresentation>(),
   );
