@@ -1,6 +1,5 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidOptionalCamera = require("./plugins/with-android-optional-camera");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
@@ -81,7 +80,10 @@ const variants = {
 };
 
 const variant = variants[appVariant] ?? variants.production;
-const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
+// YYC AI's own version: the TestFlight app dev.de0ch.yycai shipped 1.0 from the SwiftUI app before this one
+// (docs/paseo-ui.md), and a version below it reads as a downgrade. The web build keeps Paseo's package version.
+const YYC_APP_VERSION = "1.1.0";
+const nativeReleaseVersion = getNativeReleaseVersion(YYC_APP_VERSION);
 
 export default {
   expo: {
