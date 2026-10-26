@@ -3145,6 +3145,7 @@ export const en = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    signOut: "Sign out",
     menu: {
       rename: "Rename",
       share: "Share",
@@ -3166,6 +3167,14 @@ export const en = {
       title: "Can't reach YYC AI",
       body: "Check your connection, then try again.",
       retry: "Try again",
+    },
+    deleted: {
+      restore: "Restore",
+      deleteForGood: "Delete permanently",
+      confirmTitle: "Delete permanently?",
+      confirmMessage: "\"{{title}}\" and its files will be deleted. This cannot be undone.",
+      daysLeft_one: "Deleted for good in {{count}} day",
+      daysLeft_other: "Deleted for good in {{count}} days",
     },
     share: {
       title: "Share",

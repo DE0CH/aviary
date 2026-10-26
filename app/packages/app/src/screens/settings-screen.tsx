@@ -225,8 +225,17 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
+// The settings a conversation app has (docs/paseo-ui.md): language and send behaviour, theme, chat display.
+// Hosts, terminals, editors, files, diagnostics and the rest belong to a developer's machine.
+/** One host, configured on the server: no host settings group. */
+const SHOW_HOST_SETTINGS: boolean = false;
+
+const YYC_SECTION_IDS: ReadonlySet<SettingsSectionSlug> = new Set(["general", "appearance", "chat"]);
+
 function isSectionAvailable(item: SidebarSectionItem, isDesktopApp: boolean): boolean {
-  return (!item.desktopOnly || isDesktopApp) && (!item.webOnly || isWeb);
+  return (
+    YYC_SECTION_IDS.has(item.id) && (!item.desktopOnly || isDesktopApp) && (!item.webOnly || isWeb)
+  );
 }
 
 interface HostSectionItem {
@@ -983,7 +992,7 @@ function SettingsSidebar({
           />
         ))}
       </SidebarGroup>
-      {hasHosts ? (
+      {!SHOW_HOST_SETTINGS ? null : hasHosts ? (
         <SidebarGroup label={t("settings.groups.host")}>
           <HostPicker
             activeServerId={activeHostServerId}

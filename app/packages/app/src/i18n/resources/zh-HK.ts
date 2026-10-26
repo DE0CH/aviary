@@ -2982,6 +2982,7 @@ export const zhHK: TranslationResources = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    signOut: "登出",
     menu: {
       rename: "重新命名",
       share: "分享",
@@ -3003,6 +3004,14 @@ export const zhHK: TranslationResources = {
       title: "暫時未能連接 YYC AI",
       body: "請檢查網絡連線，然後再試。",
       retry: "再試",
+    },
+    deleted: {
+      restore: "還原",
+      deleteForGood: "永久刪除",
+      confirmTitle: "永久刪除？",
+      confirmMessage: "「{{title}}」及其檔案將被刪除，無法復原。",
+      daysLeft_one: "{{count}} 日後永久刪除",
+      daysLeft_other: "{{count}} 日後永久刪除",
     },
     share: {
       title: "分享",

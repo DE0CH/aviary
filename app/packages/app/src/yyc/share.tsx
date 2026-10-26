@@ -6,7 +6,7 @@ import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-moda
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/contexts/toast-api-context";
 import { copyText } from "@/plugins/react-native/clipboard";
-import { absoluteUrl, api, ApiError, sessionIdOfWorkspace } from "@/yyc/api";
+import { absoluteUrl, api, ApiError } from "@/yyc/api";
 
 interface ShareLink {
   id: string;
@@ -18,16 +18,7 @@ interface ShareLink {
  * 「分享」 (DE0CH/claudecodeui docs/paseo-ui.md, jarvis-shares.routes.ts): every copy freezes the conversation into a
  * new staff-only read-only link; the sheet lists the live links, each copyable and revocable.
  */
-export function useShareConversation(input: { serverId: string | null; workspaceId: string | null }) {
-  const sessionId = sessionIdOfWorkspace(input.workspaceId);
-  const [visible, setVisible] = useState(false);
-  const open = useCallback(() => setVisible(true), []);
-  const close = useCallback(() => setVisible(false), []);
-  const sheet = sessionId ? <ShareSheet visible={visible} sessionId={sessionId} onClose={close} /> : null;
-  return { open, sheet };
-}
-
-function ShareSheet({ visible, sessionId, onClose }: { visible: boolean; sessionId: string; onClose: () => void }) {
+export function ShareSheet({ visible, sessionId, onClose }: { visible: boolean; sessionId: string; onClose: () => void }) {
   const { t } = useTranslation();
   const toast = useToast();
   const [links, setLinks] = useState<ShareLink[] | null>(null);

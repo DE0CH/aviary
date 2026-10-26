@@ -21,7 +21,7 @@ export const enOverrides: TranslationOverrides = {
   },
   sidebar: {
     actions: { newWorkspace: "New chat" },
-    workspace: { actions: { newWorkspace: "New chat" } },
+    workspace: { actions: { newWorkspace: "New chat", archive: "Delete", archiving: "Deleting…" } },
     sections: { sessions: "Recently deleted" },
   },
   sessions: {
@@ -46,7 +46,7 @@ export const zhHKOverrides: TranslationOverrides = {
   },
   sidebar: {
     actions: { newWorkspace: "新對話" },
-    workspace: { actions: { newWorkspace: "新對話" } },
+    workspace: { actions: { newWorkspace: "新對話", archive: "刪除", archiving: "正在刪除…" } },
     sections: { sessions: "最近刪除" },
   },
   sessions: {

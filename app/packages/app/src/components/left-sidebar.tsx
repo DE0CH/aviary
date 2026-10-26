@@ -3,6 +3,7 @@ import {
   CircleGauge,
   FolderPlus,
   GitBranch,
+  LogOut,
   Server,
   Settings,
   type LucideIcon,
@@ -425,8 +426,9 @@ function SidebarFooter({
   handleOpenHostSettings: (serverId: string) => void;
   onBeforeNavigate?: () => void;
 }) {
-  const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
+  const { t } = useTranslation();
+  const signOutLabel = t("conversation.signOut");
 
   // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
   return (
@@ -434,8 +436,14 @@ function SidebarFooter({
       <View style={styles.footerContainer} testID="sidebar-footer">
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
-          {/* One server, one project, no plugins: only Settings is left on this line. */}
+          {/* One server, one project, no plugins: sign out and Settings are all this line has. */}
           <View style={styles.footerSpacer} />
+          <FooterIconButton
+            onPress={signOut}
+            testID="sidebar-sign-out"
+            label={signOutLabel}
+            icon={LogOut}
+          />
           <FooterIconButton
             onPress={handleSettings}
             testID="sidebar-settings"
@@ -447,6 +455,11 @@ function SidebarFooter({
       </View>
     </UsageSidebarRoot>
   );
+}
+
+/** Ends the Cloudflare Access session; Access shows its sign-in again (to switch account, or leave). */
+function signOut(): void {
+  if (typeof window !== "undefined") window.location.assign("/cdn-cgi/access/logout");
 }
 
 function SidebarUsageIcon({ label }: { label: string }) {

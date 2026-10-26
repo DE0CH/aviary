@@ -1,5 +1,5 @@
 import { greeting, greetingLocale, GREETING_DRAW } from "@/yyc/greeting";
-import { useFirstName } from "@/yyc/first-name";
+import { useFirstName } from "@/yyc/me";
 import type {
   CreateAgentRequestOptions,
   CreateWorkspaceRequestOptions,

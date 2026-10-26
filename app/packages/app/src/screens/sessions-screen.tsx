@@ -9,7 +9,7 @@ import type { TFunction } from "i18next";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { AgentList } from "@/components/agent-list";
+import { RecentlyDeletedList } from "@/yyc/recently-deleted-list";
 import { SearchField } from "@/components/ui/search-field";
 import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
@@ -202,22 +202,10 @@ function SessionsScreenContent() {
               Back
             </Button>
           )}
-          <Button variant="ghost" leftIcon={Import} onPress={importSession.open}>
-            {t("importSession.title")}
-          </Button>
         </View>
       ) : null}
       {!isInitialLoad && !showLoadError && agents.length > 0 ? (
-        <AgentList
-          agents={agents}
-          showCheckoutInfo={false}
-          isRefreshing={isManualRefresh}
-          onRefresh={handleRefresh}
-          listFooterComponent={listFooterComponent}
-          showAttentionIndicator={false}
-          showHostColumn
-          search={isSearching ? search : undefined}
-        />
+        <RecentlyDeletedList agents={agents} onChanged={handleRefresh} />
       ) : null}
       {importSession.sheet}
     </View>

@@ -1,3 +1,4 @@
+import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -875,7 +876,10 @@ function RootProviders({ children }: { children: ReactNode }) {
           <KeyboardShiftProvider>
             <ToastProvider>
               <PortalProvider>
-                <BottomSheetModalProvider>{children}</BottomSheetModalProvider>
+                <BottomSheetModalProvider>
+                  {children}
+                  <ConversationDialogsHost />
+                </BottomSheetModalProvider>
               </PortalProvider>
             </ToastProvider>
           </KeyboardShiftProvider>

@@ -11,7 +11,9 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Share2,
   Tag,
+  Trash2,
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
@@ -34,6 +36,8 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Shortcut } from "@/components/ui/shortcut";
+import { openConversationDialog } from "@/yyc/conversation-dialogs";
+import { useSharingAvailable } from "@/yyc/me";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
 import {
@@ -60,6 +64,8 @@ const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ThemedTag = withUnistyles(Tag);
+const ThemedShare = withUnistyles(Share2);
+const ThemedTrash = withUnistyles(Trash2);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
@@ -67,7 +73,9 @@ const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
 const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
-const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
+// "Archive" is delete here (to Recently deleted)
+const archiveLeadingIcon = <ThemedTrash size={14} uniProps={foregroundMutedColorMapping} />;
+const shareLeadingIcon = <ThemedShare size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 
@@ -146,6 +154,7 @@ function SidebarWorkspaceMenuItems({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
+  const sharing = useSharingAvailable();
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -155,28 +164,10 @@ function SidebarWorkspaceMenuItems({
     [],
   );
 
+  // A conversation's menu: rename, share, delete (docs/paseo-ui.md). No paths, branches, read state, pins,
+  // labels or folders to act on.
   return (
     <>
-      {onCopyPath ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-copy-path-${workspaceKey}`}
-          leading={copyLeadingIcon}
-          onSelect={onCopyPath}
-        >
-          {t("sidebar.workspace.actions.copyPath")}
-        </WorkspaceMenuItem>
-      ) : null}
-      {onCopyBranchName ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-copy-branch-name-${workspaceKey}`}
-          leading={copyLeadingIcon}
-          onSelect={onCopyBranchName}
-        >
-          {t("sidebar.workspace.actions.copyBranchName")}
-        </WorkspaceMenuItem>
-      ) : null}
       {onRename ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -187,50 +178,16 @@ function SidebarWorkspaceMenuItems({
           {t("sidebar.workspace.actions.rename")}
         </WorkspaceMenuItem>
       ) : null}
-      {onMarkAsRead ? (
+      {sharing && serverId && workspaceId ? (
         <WorkspaceMenuItem
           surface={surface}
-          testID={`sidebar-workspace-menu-mark-as-read-${workspaceKey}`}
-          leading={markAsReadLeadingIcon}
-          onSelect={onMarkAsRead}
+          testID={`sidebar-workspace-menu-share-${workspaceKey}`}
+          leading={shareLeadingIcon}
+          onSelect={() => openConversationDialog({ kind: "share", serverId, workspaceId })}
         >
-          Mark as read
+          {t("conversation.menu.share")}
         </WorkspaceMenuItem>
       ) : null}
-      {onMarkAsUnread ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-mark-as-unread-${workspaceKey}`}
-          leading={markAsUnreadLeadingIcon}
-          onSelect={onMarkAsUnread}
-        >
-          Mark as unread
-        </WorkspaceMenuItem>
-      ) : null}
-      {onTogglePin ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-pin-${workspaceKey}`}
-          leading={isPinned ? unpinLeadingIcon : pinLeadingIcon}
-          onSelect={onTogglePin}
-        >
-          {isPinned ? t("sidebar.workspace.actions.unpin") : t("sidebar.workspace.actions.pin")}
-        </WorkspaceMenuItem>
-      ) : null}
-      {serverId && workspaceId ? (
-        <DropdownMenuSubTrigger
-          id={WORKSPACE_LABEL_PAGE_ID}
-          leading={labelLeading}
-          testID={`sidebar-workspace-menu-labels-${workspaceKey}`}
-        >
-          {t("workspaceLabels.title")}
-        </DropdownMenuSubTrigger>
-      ) : null}
-      <OpenInFileManagerMenuItem
-        surface={surface}
-        path={openInFileManagerPath}
-        testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
-      />
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
