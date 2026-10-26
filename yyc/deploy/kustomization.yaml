@@ -27,7 +27,7 @@ images:
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
-    newTag: f3f56c112a9d
+    newTag: a93e3e695bd1
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
