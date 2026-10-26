@@ -48,6 +48,14 @@ function summarizeTurn(
   return { messageCount, tools: summarizeToolCalls(calls) };
 }
 
+function isSentFileCall(item: StreamItem): boolean {
+  return (
+    item.kind === "tool_call" &&
+    item.payload.source === "agent" &&
+    item.payload.data.name === "SendUserFile"
+  );
+}
+
 function hasWork(summary: TurnSummary): boolean {
   return summary.messageCount > 0 || Object.values(summary.tools).some((count) => count > 0);
 }
@@ -81,7 +89,10 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
-    const folded = tail.slice(runStart, replyIndex);
+    // Files Claude sent stay in the chat under the reply when the turn folds (docs/paseo-ui.md)
+    const before = tail.slice(runStart, replyIndex);
+    const pinned = before.filter(isSentFileCall);
+    const folded = pinned.length > 0 ? before.filter((item) => !isSentFileCall(item)) : before;
     const summary = summarizeTurn(folded, input.getGroupedCalls);
     if (!hasWork(summary)) {
       output.push(...tail.slice(runStart, runEnd));
@@ -95,6 +106,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     }
     if (expanded) output.push(...folded);
     output.push(...tail.slice(replyIndex, runEnd));
+    output.push(...pinned);
   };
 
   for (let index = 0; index < tail.length; index += 1) {

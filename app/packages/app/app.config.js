@@ -69,7 +69,8 @@ function resolveSecretFile(params) {
 
 const variants = {
   production: {
-    name: "Paseo",
+    // YYC AI's staff UI (docs/paseo-ui.md); the server writes the instance's own product name into the page
+    name: "YYC AI",
     packageId: "sh.paseo",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
@@ -136,7 +137,7 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
+      favicon: "./assets/images/yyc-favicon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],

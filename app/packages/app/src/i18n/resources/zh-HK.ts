@@ -2027,7 +2027,7 @@ export const zhHK: TranslationResources = {
       one: "呼叫了 Paseo {{count}} 次",
       other: "呼叫了 Paseo {{count}} 次",
     },
-    and: "並",
+    and: "及",
   },
   renameModal: {
     rename: "重新命名",
@@ -2993,6 +2993,16 @@ export const zhHK: TranslationResources = {
     preparing: {
       title: "正在準備工作環境…",
       slow: "可能需要一至兩分鐘，請稍候。",
+    },
+    shared: {
+      byline: "{{name}} 分享的對話（只讀）",
+      continue: "繼續對話",
+      gone: "此連結已失效。",
+    },
+    offline: {
+      title: "暫時未能連接 YYC AI",
+      body: "請檢查網絡連線，然後再試。",
+      retry: "再試",
     },
     share: {
       title: "分享",

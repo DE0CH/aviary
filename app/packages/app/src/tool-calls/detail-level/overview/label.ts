@@ -6,6 +6,12 @@ function joinSummaryParts(parts: string[], conjunction: string): string {
   if (parts.length === 0) {
     return "";
   }
+  // Chinese runs the parts together with 、 and the conjunction, without spaces: 運行了 1 個命令及使用了 1 個其他工具
+  if (/[\u3400-\u9fff]/.test(conjunction)) {
+    return parts.length === 1
+      ? parts[0]!
+      : `${parts.slice(0, -1).join("、")}${conjunction}${parts.at(-1)}`;
+  }
   let joined = parts[0] ?? "";
   if (parts.length === 2) {
     joined = `${parts[0]} ${conjunction} ${parts[1]}`;

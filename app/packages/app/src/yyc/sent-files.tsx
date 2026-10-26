@@ -59,27 +59,37 @@ export function SentFilesCards({
   sessionId,
   files,
   caption,
+  urlFor,
 }: {
   sessionId: string;
   files: SentFile[];
   caption?: string | null;
+  /** Where a file is read from; the conversation's own files by default (a shared page reads through the share). */
+  urlFor?: (file: SentFile, inline: boolean) => string;
 }) {
   if (files.length === 0) return null;
+  const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(sessionId, file, inline));
   return (
     <View style={styles.container} testID="sent-files">
       {caption ? <Text style={styles.caption}>{caption}</Text> : null}
       {files.map((file) => (
-        <SentFileCard key={file.path} sessionId={sessionId} file={file} />
+        <SentFileCard key={file.path} file={file} urlFor={resolveUrl} />
       ))}
     </View>
   );
 }
 
-function SentFileCard({ sessionId, file }: { sessionId: string; file: SentFile }) {
+function SentFileCard({
+  file,
+  urlFor,
+}: {
+  file: SentFile;
+  urlFor: (file: SentFile, inline: boolean) => string;
+}) {
   const { t } = useTranslation();
   const open = useCallback(() => {
-    void Linking.openURL(fileUrl(sessionId, file, false));
-  }, [file, sessionId]);
+    void Linking.openURL(urlFor(file, false));
+  }, [file, urlFor]);
   return (
     <Pressable
       onPress={open}
@@ -90,7 +100,7 @@ function SentFileCard({ sessionId, file }: { sessionId: string; file: SentFile }
     >
       {file.isImage ? (
         <Image
-          source={{ uri: fileUrl(sessionId, file, true) }}
+          source={{ uri: urlFor(file, true) }}
           style={styles.preview}
           resizeMode="cover"
           accessibilityIgnoresInvertColors

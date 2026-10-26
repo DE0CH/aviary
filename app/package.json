@@ -38,7 +38,8 @@
     "build:client": "npm run build --workspace=@getpaseo/client",
     "build:app-deps": "npm run build:highlight && npm run build:client && npm run build:plugin && npm run build --workspace=@getpaseo/expo-two-way-audio",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "build:web": "npm run build:app-deps && cd packages/app && expo export --platform web"
+    "build:web": "npm run build:app-deps && cd packages/app && expo export --platform web --max-workers 3",
+    "dev:web": "npm run build:app-deps && cd packages/app && expo start --web"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

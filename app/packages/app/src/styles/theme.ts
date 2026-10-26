@@ -333,8 +333,9 @@ const lightSemanticColors = buildLightSemanticColors({
   foregroundExtraMuted: "#a1a1aa",
   border: "#e4e4e7",
   borderAccent: "#ececf1",
-  accent: "#20744A",
-  accentBright: "#239956",
+  // YYC's teal (its logo) in place of Paseo's green (docs/paseo-ui.md)
+  accent: "#0A7F95",
+  accentBright: "#0A8FA8",
   accentForeground: "#ffffff",
   primary: "#18181b",
   primaryForeground: "#fafafa",
@@ -469,8 +470,8 @@ const paseoDarkColors = buildDarkSemanticColors({
   foregroundExtraMuted: "#717574",
   border: "#252B2A",
   borderAccent: "#2F3534",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#0A7F95",
+  accentBright: "#5CC6D8",
   destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
   terminalBlack: "#141716",
   terminalBrightBlack: "#434645",
@@ -635,7 +636,9 @@ export const OPACITY = {
 export const DEFAULT_UI_FONT_STACK: string = Platform.select({
   ios: "system-ui",
   default: "normal",
-  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  // Latin from the system UI font; Chinese from each platform's Traditional (Hong Kong) face, not a Simplified or
+  // Japanese fallback (docs/paseo-ui.md)
+  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang HK', 'Noto Sans HK', 'Microsoft JhengHei', 'Noto Sans TC', sans-serif",
 });
 
 export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
@@ -730,8 +733,8 @@ const pureBlackDarkColors = buildDarkSemanticColors({
   foregroundExtraMuted: "#71717a",
   border: "#1c1c1c",
   borderAccent: "#242424",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
+  accent: "#0A7F95",
+  accentBright: "#5CC6D8",
   destructive: "#c44a4a",
   terminalBlack: "#595959",
   terminalBrightBlack: "#8a8a8a",

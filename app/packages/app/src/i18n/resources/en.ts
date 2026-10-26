@@ -3157,6 +3157,16 @@ export const en = {
       title: "Preparing the workspace…",
       slow: "This can take a minute or two.",
     },
+    shared: {
+      byline: "Shared by {{name}} (read only)",
+      continue: "Continue the conversation",
+      gone: "This link is no longer available.",
+    },
+    offline: {
+      title: "Can't reach YYC AI",
+      body: "Check your connection, then try again.",
+      retry: "Try again",
+    },
     share: {
       title: "Share",
       description: "Colleagues signed in to YYC AI can view this conversation (read only).",
