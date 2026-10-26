@@ -8,6 +8,12 @@ export CI=1
 
 npm run build:app-deps
 
+# react-native-enriched-markdown compiles the codegen output it ships (ios/generated), which this nightly built before
+# its spec gained code.fontScale; its own iOS sources use that field. Regenerate it from the spec.
+rn="$(dirname "$(node -p "require.resolve('react-native/package.json', { paths: ['packages/app'] })")")"
+(cd packages/app/node_modules/react-native-enriched-markdown \
+  && node "$rn/scripts/generate-codegen-artifacts.js" -p . -t ios -s library)
+
 cd packages/app
 npx expo prebuild --platform ios --no-install --clean
 plist="$(ls ios/*/Info.plist | grep -v Pods | head -1)"
