@@ -67,7 +67,7 @@ arrives.
   `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
-  `first-name.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`), the conversation menu
+  `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`), the conversation menu
   (`screens/workspace/conversation-menu-items.tsx`).
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
