@@ -7,7 +7,6 @@ export CI=1
 : "${YYC_SITE:?YYC_SITE (the YYC AI server) is required}"
 
 npm run build:app-deps
-npm run build:terminal-webview --workspace=@getpaseo/app
 
 cd packages/app
 npx expo prebuild --platform ios --no-install --clean
