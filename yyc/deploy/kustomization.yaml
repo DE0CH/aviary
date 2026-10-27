@@ -19,6 +19,8 @@ resources:
   - ui.yaml
   # the operator page reads pod health from the API server (web-to-apiserver NetworkPolicy)
   - ops.yaml
+  # egress to YYC's Postgres (namespace db) for every pod
+  - db.yaml
 # the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
 images:
   - name: jarvis3-chat
