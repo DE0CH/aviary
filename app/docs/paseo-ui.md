@@ -62,7 +62,8 @@ arrives.
   chat (`utils/host-routes.ts` `buildOpenProjectRoute`), no tab row (`WorkspaceDesktopTabsRow` renders nothing), no
   project/host/mode pickers, explorer, editor, scripts, hover card or fork button; the composer has no voice,
   autocomplete or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
-  (`provider-selection/resolve-agent-form.ts`).
+  (`provider-selection/resolve-agent-form.ts`); where the model chip was, it shows the model's name read-only with an
+  (i) saying the admin sets it (`yyc/model-label.tsx`, from config `models`' label for `defaultModel`).
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
