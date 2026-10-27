@@ -9,6 +9,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { accessHeaders, accessToken, loadAccessToken, saveAccessToken, subscribeAccessToken } from "@/yyc/access-token";
 import { appScheme, siteOrigin } from "@/yyc/site";
+import { isSignedOutPage, SignedOutShell } from "@/yyc/signed-out-shell";
 
 const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
@@ -30,9 +31,16 @@ async function tokenWorks(): Promise<boolean> {
 /**
  * The iOS app signs in through Cloudflare Access before anything connects (docs/paseo-ui.md): the router's
  * /api/jarvis/app-signin opens Access's login in the system sign-in sheet (Google or an emailed code) and hands the
- * token back on the app's scheme. The web build is behind Access already and renders the app directly.
+ * token back on the app's scheme. The web build renders the app directly when the server served it signed in; a page the
+ * server marked signed out shows the interface with the chat disabled and 「登入」 (signed-out-shell.tsx), and nothing
+ * below it (the host runtime, the socket) starts.
  */
 export function AccessGate({ children }: { children: ReactNode }) {
+  if (isWeb && isSignedOutPage()) return <SignedOutShell />;
+  return <NativeAccessGate>{children}</NativeAccessGate>;
+}
+
+function NativeAccessGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>(isWeb ? "signed-in" : "checking");
 
   useEffect(() => {

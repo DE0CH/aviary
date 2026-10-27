@@ -3180,6 +3180,17 @@ export const en = {
       daysLeft_one: "Deleted for good in {{count}} day",
       daysLeft_other: "Deleted for good in {{count}} days",
     },
+    signedOut: {
+      signIn: "Sign in",
+      greeting: "How can I help?",
+      lead: "Sign in to use YYC AI.",
+      placeholder: "Sign in to start a conversation",
+      newChat: "New chat",
+      recentlyDeleted: "Recently deleted",
+      search: "Search",
+      conversations: "Conversations",
+      sidebarNote: "Your conversations appear here once you have signed in.",
+    },
     signIn: {
       title: "YYC AI",
       button: "Sign in",

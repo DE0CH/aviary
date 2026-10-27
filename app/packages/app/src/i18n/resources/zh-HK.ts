@@ -3017,6 +3017,17 @@ export const zhHK: TranslationResources = {
       daysLeft_one: "{{count}} 日後永久刪除",
       daysLeft_other: "{{count}} 日後永久刪除",
     },
+    signedOut: {
+      signIn: "登入",
+      greeting: "有什麼可以幫你？",
+      lead: "登入後即可使用 YYC AI。",
+      placeholder: "登入後即可開始對話",
+      newChat: "新對話",
+      recentlyDeleted: "最近刪除",
+      search: "搜尋",
+      conversations: "對話",
+      sidebarNote: "登入後，你的對話會在這裏顯示。",
+    },
     signIn: {
       title: "YYC AI",
       button: "登入",
