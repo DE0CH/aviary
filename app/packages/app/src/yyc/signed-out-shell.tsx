@@ -67,7 +67,7 @@ export function SignedOutShell() {
           <Image source={YYC_LOGO} style={styles.logo} accessibilityIgnoresInvertColors />
           <Text style={styles.greeting}>{t("conversation.signedOut.greeting")}</Text>
           <Text style={styles.lead}>{t("conversation.signedOut.lead")}</Text>
-          <View style={styles.composer} aria-disabled>
+          <View style={styles.composer}>
             <TextInput
               editable={false}
               placeholder={t("conversation.signedOut.placeholder")}
