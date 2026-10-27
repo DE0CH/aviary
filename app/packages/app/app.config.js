@@ -121,7 +121,7 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/yyc-favicon.png",
+      favicon: "./assets/images/favicon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],

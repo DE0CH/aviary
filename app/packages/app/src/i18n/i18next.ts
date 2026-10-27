@@ -2,10 +2,10 @@ import { createInstance, type BackendModule } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
 import { en as paseoEn } from "./resources/en";
-import { enOverrides, withOverrides, zhHKOverrides } from "./resources/yyc";
+import { enOverrides, withOverrides, withYycBrand, zhHKOverrides } from "./resources/yyc";
 
-// Paseo's text with YYC AI's wording on top (resources/yyc.ts)
-const en = withOverrides(paseoEn, enOverrides);
+// Paseo's text with YYC AI's wording on top and its name throughout (resources/yyc.ts)
+const en = withYycBrand(withOverrides(paseoEn, enOverrides));
 
 // A literal require keeps zh-HK bundled for offline use, while evaluating its resource module only
 // when selected. Synchronous reads preserve the language provider's contract: translations are
@@ -19,7 +19,7 @@ const bundledTranslations: BackendModule = {
         callback(null, en);
         return;
       case "zh-HK":
-        callback(null, withOverrides(require("./resources/zh-HK").zhHK, zhHKOverrides));
+        callback(null, withYycBrand(withOverrides(require("./resources/zh-HK").zhHK, zhHKOverrides)));
         return;
       default:
         callback(null, undefined);

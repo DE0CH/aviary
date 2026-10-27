@@ -71,3 +71,11 @@ export function withOverrides<T>(base: T, overrides: TranslationOverrides): T {
   }
   return merged as T;
 }
+
+/** Every remaining mention of Paseo in the text names the product staff use instead. */
+export function withYycBrand<T>(value: T): T {
+  if (typeof value === "string") return value.replaceAll("Paseo", "YYC AI") as T;
+  if (Array.isArray(value)) return value.map(withYycBrand) as T;
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withYycBrand(item)])) as T;
+}

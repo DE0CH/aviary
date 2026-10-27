@@ -10,8 +10,7 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { openExternalUrl } from "@/utils/open-external-url";
-import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
+import { Copy, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import Svg, {
   ClipPath,
@@ -41,20 +40,9 @@ interface StartupSplashScreenProps {
   };
 }
 
-const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
-const DOCS_URL = "https://paseo.sh/docs";
-
 const LOGO_SIZE = 96;
 const SHEEN_WIDTH = 220;
 const SHIMMER_DURATION_MS = 1800;
-
-function openGithubIssue(): void {
-  void openExternalUrl(GITHUB_ISSUE_URL);
-}
-
-function openDocs(): void {
-  void openExternalUrl(DOCS_URL);
-}
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
@@ -273,14 +261,6 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     () => <Copy size={16} color={theme.colors.foreground} />,
     [theme.colors.foreground],
   );
-  const warningIcon = useMemo(
-    () => <TriangleAlert size={16} color={theme.colors.foreground} />,
-    [theme.colors.foreground],
-  );
-  const bookIcon = useMemo(
-    () => <BookOpen size={16} color={theme.colors.foreground} />,
-    [theme.colors.foreground],
-  );
   const retryIcon = useMemo(
     () => <RotateCw size={16} color={theme.colors.palette.white} />,
     [theme.colors.palette.white],
@@ -332,12 +312,6 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           <View style={styles.actionRow}>
             <Button variant="secondary" leftIcon={copyIcon} onPress={handleCopyLogs}>
               Copy logs
-            </Button>
-            <Button variant="outline" leftIcon={warningIcon} onPress={openGithubIssue}>
-              Open GitHub issue
-            </Button>
-            <Button variant="outline" leftIcon={bookIcon} onPress={openDocs}>
-              Docs
             </Button>
             <Button variant="default" leftIcon={retryIcon} onPress={bootstrapState.retry}>
               Retry

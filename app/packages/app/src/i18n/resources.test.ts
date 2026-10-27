@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en } from "./resources/en";
 import { zhHK } from "./resources/zh-HK";
+import { enOverrides, withOverrides, withYycBrand, zhHKOverrides } from "./resources/yyc";
 
 function flattenKeys(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null) {
@@ -751,5 +752,18 @@ describe("translation resources", () => {
     expect(en.startup.logs.loading).toBe("Loading daemon logs...");
     expect(en.startup.logs.unavailable).toBe("No daemon logs available.");
     expect(en.startup.logs.loadFailed).toBe("Unable to load daemon logs: {{message}}");
+  });
+});
+
+describe("YYC AI branding", () => {
+  it("names YYC AI, never Paseo, in every string staff can see", () => {
+    for (const resources of [
+      withYycBrand(withOverrides(en, enOverrides)),
+      withYycBrand(withOverrides(zhHK, zhHKOverrides)),
+    ]) {
+      const mentions = Object.entries(flattenStrings(resources)).filter(([, text]) => text.includes("Paseo"));
+      expect(mentions).toEqual([]);
+    }
+    expect(withYycBrand(en).onboarding.title).toBe("Welcome to YYC AI");
   });
 });
