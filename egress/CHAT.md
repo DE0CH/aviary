@@ -376,7 +376,11 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
   `news_search` `tools.wisers`, `social_search` `tools.tikhub`; `web_fetch` without Exa reads pages directly).
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
-  ports other than 80/443/8080/8443. `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
+  ports other than 80/443/8080/8443. With `tools.capture` (`{url, tokenEnv, name}`: the instance's own page capture,
+  POST `{url}` with that bearer → `kind` cache / capture / none), `web_fetch` asks it first: a `cache` or `capture`
+  answer is returned with its source on the first line ("Source: YYC's stored copy (captured …)" / "YYC's capture,
+  read just now") and `structuredContent.via` `own-cache` / `own-capture`; `none`, an error or `original: true` reads
+  the page as before (Exa, then directly). YYC: its news monitor (news-stream webfetch.py). `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
   every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the sandbox's owner on calls).
 - Env: `PORT` (8080), `JARVIS_DRAIN_MS` (150 s: an upstream call, up to 2 minutes, finishes before the pod stops;
