@@ -63,7 +63,7 @@ patches:
       apiVersion: apps/v1
       kind: Deployment
       metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-27-postgres"}}}}
+      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-27-postgres-2"}}}}
   # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
   # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
   - target: {kind: Deployment, name: web}
