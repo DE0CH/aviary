@@ -1,6 +1,6 @@
 # Jarvis 3 chat runtime
 
-The server side of a staff AI chat instance (YYC AI, `ai.yyc.deyaochen.com`): **Claude Code runs in a sandbox per
+The server side of a staff AI chat instance (YYC AI, `ai.yyc-internal.com`): **Claude Code runs in a sandbox per
 conversation**, and the staff UI is a fork of CloudCLI (DE0CH/claudecodeui) that the instance deploys itself. The
 design and why: docs/CLAUDE-CODE.md. This runtime provides the sandboxes and everything between them and the outside:
 the code is in `chat/`, its Kustomize base in `deploy/chat/`. An instance pins a commit of this repo and supplies its
@@ -453,7 +453,7 @@ administrator). There is no automatic reset. To reset or raise: edit `budget` in
 ```json
 {
   "product": {"name": "YYC AI", "locale": "zh-HK"},
-  "publicUrl": "https://ai.yyc.deyaochen.com",
+  "publicUrl": "https://ai.yyc-internal.com",
   "access": {"teamDomain": "de0ch.cloudflareaccess.com", "audience": "<aud tag>"},
   "users": ["chendeyao000@gmail.com"], "admins": ["chendeyao000@gmail.com"],
   "models": [{"id": "anthropic/claude-sonnet-5.5", "label": "Sonnet 5.5"}],
@@ -467,7 +467,7 @@ administrator). There is no automatic reset. To reset or raise: edit `budget` in
   // provider "kubernetes" instead: {"provider": "kubernetes", "image": …, "namespace": "jarvis-sandbox",
   //   "runtimeClass": "gvisor", "cpu": "1", "memory": "1Gi", "egressProxyUrl"?: …}
   // provider "e2b" instead: {"provider": "e2b", "e2b": {"template": "jarvis3-sandbox:<tag>",
-  //   "egressUrl": "wss://egress.ai.yyc.deyaochen.com/wire", "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": …}}
+  //   "egressUrl": "wss://egress.ai.yyc-internal.com/wire", "egressHeaders": {}, "apiKeyEnv": "E2B_API_KEY", "instance": …}}
   // the sandbox allowlist ("The sandbox allowlist"): the generated lists (generatedAllowlist, default true) plus
   // defaultAllowedHosts; denyHosts wins over everything; maxUploadBytes per tunnel/request (default 8 MiB)
   "egress": {"defaultAllowedHosts": [], "denyHosts": [], "generatedAllowlist": true, "maxUploadBytes": 8388608,
