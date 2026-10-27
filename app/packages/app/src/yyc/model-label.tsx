@@ -68,6 +68,9 @@ export function YycModelLabel() {
 
 const styles = StyleSheet.create((theme) => ({
   row: {
+    // the composer's left group aligns its children to the bottom, which put this one line of text below the centre of
+    // the attach button (+) beside it (Deyao, 2026-10-27): centred on the button instead
+    alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
