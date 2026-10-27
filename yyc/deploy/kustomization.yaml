@@ -71,7 +71,7 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/envFrom
         value: [{secretRef: {name: sandbox-vm, optional: true}}]
-  # provider e2b: the sandboxes' wire passes Access on egress.ai.yyc.deyaochen.com with service token
+  # provider e2b: the sandboxes' wire passes Access on egress.ai.yyc-internal.com with service token
   # yyc-ai-sandbox-wire (config sandbox.e2b.egressHeaders); optional until web-env has them
   - target: {kind: Deployment, name: web}
     patch: |-
