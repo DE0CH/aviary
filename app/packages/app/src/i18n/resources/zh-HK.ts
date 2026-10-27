@@ -2991,6 +2991,10 @@ export const zhHK: TranslationResources = {
     files: {
       download: "下載 {{name}}",
     },
+    model: {
+      infoLabel: "關於模型",
+      info: "模型由管理員設定，暫時未能在這裏自行更換。",
+    },
     preparing: {
       title: "正在準備工作環境…",
       slow: "可能需要一至兩分鐘，請稍候。",

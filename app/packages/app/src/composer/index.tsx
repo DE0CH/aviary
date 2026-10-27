@@ -118,6 +118,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { YycModelLabel } from "@/yyc/model-label";
 import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -297,10 +298,12 @@ interface RenderLeftContentArgs {
   focusInput: () => void;
   isCompactLayout: boolean;
   showAgentControls: boolean;
+  showModelLabel: boolean;
 }
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
+  if (args.showModelLabel) return <YycModelLabel />;
   if (!args.showAgentControls) return null;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
     return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;
@@ -2240,8 +2243,9 @@ function ComposerContentImpl({
         focusInput,
         isCompactLayout,
         showAgentControls: mode.showAgentControls,
+        showModelLabel: mode.showModelLabel,
       }),
-    [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
+    [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, mode.showModelLabel, serverId],
   );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {

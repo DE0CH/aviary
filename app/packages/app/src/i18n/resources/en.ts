@@ -3154,6 +3154,10 @@ export const en = {
     files: {
       download: "Download {{name}}",
     },
+    model: {
+      infoLabel: "About the model",
+      info: "Your admin sets the model. Choosing one here isn't available yet.",
+    },
     preparing: {
       title: "Preparing the workspace…",
       slow: "This can take a minute or two.",

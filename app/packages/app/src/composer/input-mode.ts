@@ -16,6 +16,8 @@ export interface ComposerInputModePresentation {
   showVoice: boolean;
   showAutocomplete: boolean;
   showAgentControls: boolean;
+  /** YYC AI: the model's name, read-only, where the model chip would be (yyc/model-label.tsx). */
+  showModelLabel: boolean;
   /** Argv is read character by character, so it gets the terminal's own font. */
   isMonospace: boolean;
   /** i18n key for the text input's accessible name. */
@@ -30,6 +32,7 @@ const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentat
     showVoice: false,
     showAutocomplete: false,
     showAgentControls: false,
+    showModelLabel: true,
     isMonospace: false,
     accessibilityLabelKey: "composer.input.accessibilityLabel",
   },
@@ -38,6 +41,7 @@ const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentat
     showVoice: false,
     showAutocomplete: false,
     showAgentControls: false,
+    showModelLabel: false,
     isMonospace: true,
     accessibilityLabelKey: "composer.input.terminalAccessibilityLabel",
   },
