@@ -27,6 +27,9 @@ xcrun simctl boot "$UDID"
 xcrun simctl bootstatus "$UDID" -b
 xcrun simctl install "$UDID" "$APP"
 
+# A fresh simulator on a CI runner can take minutes before Maestro's XCTest driver answers (run 40441925550 timed out
+# on the default while the system app was still starting).
+export MAESTRO_DRIVER_STARTUP_TIMEOUT=180000
 status=0
 maestro --device "$UDID" test --test-output-dir "$OUT/sign-in" "$HERE/maestro/sign-in-screen.yaml" || status=$?
 xcrun simctl io "$UDID" screenshot "$OUT/final.png" || true
