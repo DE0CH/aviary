@@ -68,13 +68,14 @@ before(async () => {
       exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
       tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
       wisers: { url: `${fakes.url}/wisers`, accessClientIdEnv: "W_ID", accessClientSecretEnv: "W_SECRET" },
+      capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
       upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"] }],
     },
   });
   deps = {
     config,
     db: t.db,
-    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up" },
+    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up", CAP: "cap-token" },
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
@@ -138,6 +139,24 @@ test("web_search: Exa results as text, cost logged in tool_calls", async () => {
   const bad = await call("web_search", { query: "x", since: "yesterday" });
   assert.equal(bad.isError, true);
   assert.match(textOf(bad), /YYYY-MM-DD/);
+});
+
+test("web_fetch: the instance's own copy or capture first, labelled; original: true, none and a failure read the page", async () => {
+  const cached = await call("web_fetch", { url: "https://news.example/known-article" });
+  assert.match(textOf(cached), /^Source: YYC's stored copy \(captured 2026-10-27 10:00\)/);
+  assert.match(textOf(cached), /存檔全文/);
+  assert.match(textOf(cached), /YYC's page for it: https:\/\/yyc\.example\/item\/7/);
+  assert.equal((cached as any).structuredContent.via, "own-cache");
+  const captured = await call("web_fetch", { url: "https://news.example/known-site/x" });
+  assert.match(textOf(captured), /^Source: YYC's capture, read just now/);
+  assert.equal((captured as any).structuredContent.via, "own-capture");
+  // asked for as it is: the page itself (Exa here), no label
+  const orig = await call("web_fetch", { url: "https://news.example/known-article", original: true });
+  assert.match(textOf(orig), /全文內容/);
+  assert.doesNotMatch(textOf(orig), /^Source:/);
+  // not ours, or the capture down: read as before
+  assert.match(textOf(await call("web_fetch", { url: "https://other.example/a" })), /全文內容/);
+  assert.match(textOf(await call("web_fetch", { url: "https://news.example/capture-down" })), /全文內容/);
 });
 
 test("web_fetch: Exa text first, then the page itself; private addresses refused", async () => {

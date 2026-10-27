@@ -54,6 +54,16 @@ export async function startFakes(): Promise<Fakes> {
       if (!f.exaHasText) return json(200, { results: [], statuses: [{ id: parsed.urls[0], status: "error", error: { httpStatusCode: 403 } }], costDollars: { total: 0.001 } });
       return json(200, { results: [{ title: "Page", url: parsed.urls[0], text: "全文內容 ".repeat(10) }], costDollars: { total: 0.001 } });
     }
+    // ---- the instance's own capture (config tools.capture): a known article is its stored copy, a known site a
+    // capture, anything else none
+    if (u.pathname === "/capture") {
+      if (req.headers.authorization !== "Bearer cap-token") return json(403, { error: "forbidden" });
+      const target = String(parsed?.url ?? "");
+      if (target.includes("known-article")) return json(200, { kind: "cache", url: target, title: "已存文章", text: "存檔全文 ".repeat(10), source: "香港電台", captured_at: "2026-10-27T10:00:00+08:00", dashboard_url: "https://yyc.example/item/7" });
+      if (target.includes("known-site")) return json(200, { kind: "capture", url: target, title: "新讀文章", text: "即時擷取 ".repeat(10), source: "明報", captured_at: "2026-10-27T15:00:00+08:00" });
+      if (target.includes("capture-down")) return json(502, { error: "down" });
+      return json(200, { kind: "none", why: "no source reads this site" });
+    }
     // ---- TikHub
     if (u.pathname.startsWith("/tikhub/api/v1/")) {
       if (req.headers.authorization !== "Bearer tik-key") return json(401, { code: 401 });

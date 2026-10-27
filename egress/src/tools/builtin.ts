@@ -3,7 +3,7 @@
 // saying when to use each and what comes back.
 import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
 import { exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch } from "./providers.ts";
-import { int, str, text, ToolInputError, type ToolDef } from "./types.ts";
+import { int, str, text, ToolInputError, type Deps, type ToolDef } from "./types.ts";
 
 const DATE = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
 const isDate = (s: string) => !s || /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -62,6 +62,59 @@ export const webSearch: ToolDef = {
   },
 };
 
+interface OwnCapture {
+  kind: string;
+  url?: string;
+  title?: string;
+  text?: string;
+  author?: string;
+  source?: string;
+  published?: string;
+  captured_at?: string;
+  excerpt?: boolean;
+  dashboard_url?: string;
+}
+
+/** The instance's own capture of a page (config tools.capture): its stored copy, a capture now, or kind "none". */
+async function ownCapture(deps: Deps, cfg: { url: string; tokenEnv: string }, url: string): Promise<OwnCapture> {
+  const token = deps.env[cfg.tokenEnv];
+  if (!token) throw new Error(`${cfg.tokenEnv} is not set`);
+  const r = await deps.fetch(cfg.url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!r.ok) throw new Error(`capture answered HTTP ${r.status}`);
+  return (await r.json()) as OwnCapture;
+}
+
+/** web_fetch's answer from the instance's own copy or capture: labelled as such on its first line and in structuredContent. */
+function ownCaptureResult(c: OwnCapture, name: string, url: string, cut: (s: string) => string) {
+  const when = String(c.captured_at ?? "").slice(0, 16).replace("T", " ");
+  const how = c.kind === "cache" ? `${name}'s stored copy (captured ${when})` : `${name}'s capture, read just now`;
+  const head = [
+    `Source: ${how}. Ask with original: true for the page as it is.`,
+    c.title ? `Title: ${c.title}` : "",
+    `URL: ${c.url ?? url}`,
+    c.source ? `Outlet: ${c.source}` : "",
+    c.author ? `By: ${c.author}` : "",
+    c.published ? `Published: ${String(c.published).slice(0, 10)}` : "",
+    c.excerpt ? "Only the page's free excerpt (paywalled)." : "",
+    c.dashboard_url ? `${name}'s page for it: ${c.dashboard_url}` : "",
+  ].filter(Boolean).join("\n");
+  return {
+    content: [{ type: "text" as const, text: `${head}\n\n${cut(String(c.text ?? ""))}` }],
+    structuredContent: {
+      via: c.kind === "cache" ? "own-cache" : "own-capture",
+      by: name,
+      url: c.url ?? url,
+      ...(c.dashboard_url ? { dashboard_url: c.dashboard_url } : {}),
+      ...(c.captured_at ? { captured_at: c.captured_at } : {}),
+    },
+  };
+}
+
 export const webFetch: ToolDef = {
   name: "web_fetch",
   title: "Read a web page",
@@ -70,7 +123,8 @@ export const webFetch: ToolDef = {
     "web_search or when the user gives a link. Long pages are cut at `max_chars` (default 20000); ask again with a " +
     "larger value if the part you need is missing. `fresh: true` reads the live page instead of a cached copy (for pages " +
     "that change, e.g. a live blog). `raw_html: true` returns the HTML itself (tables, structured data). Paywalled " +
-    "pages may give only their excerpt.",
+    "pages may give only their excerpt. Where the organisation captures a site itself, the text comes from its own copy " +
+    "or capture and the answer's first line says so; `original: true` reads the page as it is instead.",
   inputSchema: {
     type: "object",
     properties: {
@@ -78,6 +132,7 @@ export const webFetch: ToolDef = {
       max_chars: { type: "integer", minimum: 1000, maximum: 200000, default: 20000 },
       fresh: { type: "boolean", default: false },
       raw_html: { type: "boolean", default: false },
+      original: { type: "boolean", default: false, description: "Read the page as it is, not the organisation's own copy or capture." },
     },
     required: ["url"],
     additionalProperties: false,
@@ -95,6 +150,11 @@ export const webFetch: ToolDef = {
     const max = int(args, "max_chars", 20000, 1000, 200000);
     const cut = (s: string) => (s.length > max ? `${s.slice(0, max)}\n\n[… cut at ${max} characters of ${s.length}; ask with a larger max_chars for more]` : s);
     let costUsd: number | undefined;
+    const own = ctx.deps.config.tools.capture;
+    if (own && !args.raw_html && args.original !== true) {
+      const c = await ownCapture(ctx.deps, own, u.toString()).catch(() => null);  // unreachable or failed: read the page as before
+      if (c && (c.kind === "cache" || c.kind === "capture")) return ownCaptureResult(c, own.name, u.toString(), cut);
+    }
     if (!args.raw_html && ctx.deps.config.tools.exa) {
       try {
         const p = await exaContents(ctx.deps, u.toString(), args.fresh === true);

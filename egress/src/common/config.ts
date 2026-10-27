@@ -184,6 +184,12 @@ export interface ChatConfig {
     exa?: { keyEnv: string };
     tikhub?: { keyEnv: string };
     wisers?: { url: string; accessClientIdEnv: string; accessClientSecretEnv: string };
+    /**
+     * The instance's own page capture, asked first by web_fetch (unless the model asks for the page `original`): POST
+     * {url} with Bearer $<tokenEnv> → {kind: "cache"|"capture"|"none", url, title, text, author, source, published,
+     * captured_at, excerpt, dashboard_url}. YYC: its news monitor's copy of an article, or its capture of a site it reads.
+     */
+    capture?: { url: string; tokenEnv: string; name: string };
     upstreams: UpstreamMcp[];
   };
   /** absent = no limit */
