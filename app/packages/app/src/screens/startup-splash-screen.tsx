@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
-  useAnimatedStyle,
+  useAnimatedProps,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -13,7 +13,21 @@ import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { YycLogo } from "@/components/icons/yyc-logo";
+import Svg, {
+  ClipPath,
+  Defs,
+  G,
+  LinearGradient as SvgLinearGradient,
+  Polygon,
+  Rect,
+  Stop,
+} from "react-native-svg";
+import {
+  YYC_LOGO_FACES,
+  YYC_LOGO_VIEWBOX,
+  YycLogo,
+  YycLogoFaces,
+} from "@/components/icons/yyc-logo";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -31,7 +45,8 @@ const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const DOCS_URL = "https://paseo.sh/docs";
 
 const LOGO_SIZE = 96;
-const PULSE_DURATION_MS = 900;
+const SHEEN_WIDTH = 220;
+const SHIMMER_DURATION_MS = 1800;
 
 function openGithubIssue(): void {
   void openExternalUrl(GITHUB_ISSUE_URL);
@@ -41,27 +56,52 @@ function openDocs(): void {
   void openExternalUrl(DOCS_URL);
 }
 
-// YYC's colour logo, gently pulsing while the app starts (Paseo's shimmer masked its own one-colour mark).
+const AnimatedRect = Animated.createAnimatedComponent(Rect);
+
+// YYC's colour logo with Paseo's shimmer: a light band sweeps across, drawn inside the logo's SVG and clipped to its
+// faces, so nothing shows outside the logo.
 function LogoShimmer() {
-  const opacity = useSharedValue(1);
+  const sheenX = useSharedValue(-SHEEN_WIDTH);
 
   useEffect(() => {
-    opacity.value = withRepeat(
-      withTiming(0.55, { duration: PULSE_DURATION_MS, easing: Easing.inOut(Easing.ease) }),
+    sheenX.value = -SHEEN_WIDTH;
+    sheenX.value = withRepeat(
+      withTiming(512, { duration: SHIMMER_DURATION_MS, easing: Easing.linear }),
       -1,
-      true,
+      false,
     );
     return () => {
-      cancelAnimation(opacity);
+      cancelAnimation(sheenX);
     };
-  }, [opacity]);
+  }, [sheenX]);
 
-  const pulseStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const sheenProps = useAnimatedProps(() => ({ x: sheenX.value }));
 
   return (
-    <Animated.View style={pulseStyle}>
-      <YycLogo size={LOGO_SIZE} />
-    </Animated.View>
+    <Svg width={LOGO_SIZE} height={LOGO_SIZE} viewBox={YYC_LOGO_VIEWBOX}>
+      <Defs>
+        <ClipPath id="yycSplashFaces">
+          {YYC_LOGO_FACES.map((face) => (
+            <Polygon key={face.fill} points={face.points} />
+          ))}
+        </ClipPath>
+        <SvgLinearGradient id="yycSplashSheen" x1="0" y1="0" x2="1" y2="0">
+          <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
+          <Stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.55" />
+          <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+        </SvgLinearGradient>
+      </Defs>
+      <YycLogoFaces />
+      <G clipPath="url(#yycSplashFaces)">
+        <AnimatedRect
+          animatedProps={sheenProps}
+          y={0}
+          width={SHEEN_WIDTH}
+          height={512}
+          fill="url(#yycSplashSheen)"
+        />
+      </G>
+    </Svg>
   );
 }
 
