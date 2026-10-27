@@ -6,7 +6,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=fc200c331cb1dd6d066a8dae8ee59683bd42df40
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2ce8326ef23c74fead58aa8d140b1b4c49e28b9d
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -25,11 +25,11 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: fc200c331cb1
+    newTag: 2ce8326ef23c
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
-    newTag: 8876947704b6
+    newTag: 5c82a2812aae
 configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
@@ -57,13 +57,13 @@ patches:
         value: [{name: ghcr-pull}]
   # the Secrets' revision: a resealed Secret reaches running pods only through a new pod template, so bump this with
   # every change to a Secret they read (a kubectl rollout restart is undone by Flux). 2026-10-27: the databases moved
-  # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs)
+  # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env
   - target: {kind: Deployment, name: "web|egress|tools|ui"}
     patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-27-postgres-3"}}}}
+      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-27-webfetch-1"}}}}
   # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
   # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
   - target: {kind: Deployment, name: web}
