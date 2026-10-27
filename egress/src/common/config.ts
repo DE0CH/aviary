@@ -122,10 +122,23 @@ export interface BudgetConfig {
   ownerName?: string;
 }
 
+/**
+ * A person of this instance: an email in `users`, or one at a domain listed there as "@domain" (e.g. "@yyc.hk": everyone
+ * with a company address, signing in with Access's emailed code). Access checks the same list.
+ */
+export function isUser(config: Pick<ChatConfig, "users">, email: string | null | undefined): boolean {
+  const e = String(email ?? "").trim().toLowerCase();
+  if (!e || e.startsWith("@")) return false;
+  if (config.users.includes(e)) return true;
+  const at = e.lastIndexOf("@");
+  return at > 0 && config.users.includes(e.slice(at));
+}
+
 export interface ChatConfig {
   product: { name: string; locale: string; logo?: string };
   publicUrl: string;
   access: { teamDomain: string; audience: string };
+  /** emails, or "@domain" for everyone at that email domain (isUser) */
   users: string[];
   admins: string[];
   models: ModelEntry[];

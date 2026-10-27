@@ -9,6 +9,7 @@
 // Sources: Postgres (sandboxes, vm_hosts, vm_events, kv demand hints, egress_log, ops_events) and, with provider vm,
 // the scaler's own plan. Never returns message contents: owners, conversation ids, hosts, counts, costs and timings.
 import type { Db } from "../common/db.ts";
+import { isUser } from "../common/config.ts";
 import { budgetStatus } from "../common/budget.ts";
 import type { WebDeps } from "./ctx.ts";
 import type { Pod } from "./k8s.ts";
@@ -494,9 +495,11 @@ export class OpsSnapshot {
       [day],
     );
     const by = new Map(rows.map((r) => [r.owner, r]));
-    const users = this.#deps.config.users;
+    // the listed people (a "@domain" entry has no one to list until someone at it has a conversation), then anyone else
+    // with conversations: someone at a listed domain, or a former user
+    const users = this.#deps.config.users.filter((u) => !u.startsWith("@"));
     const out = users.map((u) => by.get(u) ?? { owner: u, total: 0, today: 0, last7d: 0, live: 0, deleted: 0, lastActiveAt: null });
-    for (const r of rows) if (!users.includes(r.owner)) out.push({ ...r, former: true });
+    for (const r of rows) if (!users.includes(r.owner)) out.push(isUser(this.#deps.config, r.owner) ? r : { ...r, former: true });
     return out
       .map((r) => ({ ...r, lastActiveAt: iso(r.lastActiveAt) }))
       .sort((a, b) => (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""));

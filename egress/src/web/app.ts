@@ -3,6 +3,7 @@
 // Nothing here is public: the instance's hostname routes to the UI (DE0CH/claudecodeui), and a
 // NetworkPolicy admits only the UI pods to web.
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isUser } from "../common/config.ts";
 import { logError } from "../common/log.ts";
 import { sha256hex } from "../common/tokens.ts";
 import type { WebDeps } from "./ctx.ts";
@@ -67,7 +68,7 @@ export class WebApp {
     if (!UUID_RE.test(conv)) throw bad("conversation must be a uuid");
     if (path === "/internal/cc/sandbox") {
       const owner = String(b.owner || "").trim().toLowerCase();
-      if (!this.deps.config.users.includes(owner)) throw new HttpError(403, "not a user of this instance");
+      if (!isUser(this.deps.config, owner)) throw new HttpError(403, "not a user of this instance");
       const sb = await this.sandboxes.ensure(conv, owner);
       return sendJson(res, 200, { id: sb.id, url: sb.url, token: sb.execToken, headers: sb.headers });
     }
@@ -91,7 +92,7 @@ export class WebApp {
    */
   async #warm(res: ServerResponse, b: Record<string, unknown>): Promise<void> {
     const owner = String(b.owner || "").trim().toLowerCase();
-    if (!this.deps.config.users.includes(owner)) throw new HttpError(403, "not a user of this instance");
+    if (!isUser(this.deps.config, owner)) throw new HttpError(403, "not a user of this instance");
     const conv = b.conversation == null || b.conversation === "" ? null : String(b.conversation);
     if (conv !== null && !UUID_RE.test(conv)) throw bad("conversation must be a uuid");
     const { rows } = conv

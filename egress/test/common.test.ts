@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expandEnv, parseConfig, reasoningPlan } from "../src/common/config.ts";
+import { expandEnv, isUser, parseConfig, reasoningPlan } from "../src/common/config.ts";
 import { lead, migrate } from "../src/common/db.ts";
 import { randomUUID } from "node:crypto";
 import { MIGRATIONS } from "../src/common/schema.ts";
@@ -17,6 +17,17 @@ const base = {
   systemPromptFile: "/etc/jarvis/system-prompt.md",
   sandbox: { image: "img" },
 };
+
+test("isUser: listed emails, and everyone at a \"@domain\" entry, only them", () => {
+  const c = parseConfig({ ...base, users: ["A@Example.org", "@YYC.hk"] });
+  assert.ok(isUser(c, "a@example.org"));
+  assert.ok(isUser(c, "Staff@yyc.HK"));
+  assert.ok(!isUser(c, "someone@notyyc.hk"));
+  assert.ok(!isUser(c, "x@sub.yyc.hk"));
+  assert.ok(!isUser(c, "yyc.hk@evil.test"));
+  assert.ok(!isUser(c, "@yyc.hk"));
+  assert.ok(!isUser(c, ""));
+});
 
 test("config: defaults, lower-cased users, validation", () => {
   const c = parseConfig(base);
