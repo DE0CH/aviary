@@ -1,4 +1,4 @@
-# YYC AI (ai.yyc.deyaochen.com): Claude Code in a sandbox per conversation behind the CloudCLI fork's UI, on the
+# YYC AI (ai.yyc-internal.com): Claude Code in a sandbox per conversation behind the CloudCLI fork's UI, on the
 # Jarvis 3 chat runtime (DE0CH/jarvis3, docs/CHAT.md, docs/CLAUDE-CODE.md). See
 # ../README.md. The cluster's Flux applies this folder (Kustomization `yyc-ai`, path ./yyc-ai/deploy). Its Secrets are
 # SealedSecrets in ./sealed/, applied by the fenced Kustomization `yyc-ai-secrets` (infra/seal.py, infra/secrets.txt).
