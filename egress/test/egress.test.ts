@@ -426,6 +426,22 @@ test("forceZdr: provider options merged over the caller's, non-objects refused",
   assert.deepEqual(FORCED_PROVIDER, { zdr: true, data_collection: "deny" });
 });
 
+test("forceZdr: the model's thinking level, by whether the request carries tools", () => {
+  const plan = { "deepseek/deepseek-v4.1-flash-1017": { withTools: "high" as const, withoutTools: "none" as const } };
+  const run = (body: object) => JSON.parse(forceZdr(Buffer.from(JSON.stringify(body)), plan)!.toString());
+  const chat = run({ model: "deepseek/deepseek-v4.1-flash-1017", tools: [{ name: "Bash" }], thinking: { type: "enabled", budget_tokens: 9 } });
+  assert.deepEqual(chat.reasoning, { effort: "high" });
+  assert.deepEqual(chat.thinking, { type: "enabled", budget_tokens: 9 });
+  const title = run({ model: "deepseek/deepseek-v4.1-flash-1017", reasoning: { effort: "max" } });
+  assert.deepEqual(title.thinking, { type: "disabled" });
+  assert.equal(title.reasoning, undefined);
+  // bare ids match, other models pass as sent
+  assert.deepEqual(run({ model: "deepseek-v4.1-flash-1017", tools: [{ name: "x" }] }).reasoning, { effort: "high" });
+  const other = run({ model: "anthropic/claude-sonnet-5.5", tools: [{ name: "x" }] });
+  assert.equal(other.reasoning, undefined);
+  assert.equal(other.thinking, undefined);
+});
+
 test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket per connection", async () => {
   // the real sandbox agent in JARVIS_INIT mode, as E2B's template starts it, then configured by POST /init
   const { spawn } = await import("node:child_process");

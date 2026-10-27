@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expandEnv, parseConfig } from "../src/common/config.ts";
+import { expandEnv, parseConfig, reasoningPlan } from "../src/common/config.ts";
 import { lead, migrate } from "../src/common/db.ts";
 import { randomUUID } from "node:crypto";
 import { MIGRATIONS } from "../src/common/schema.ts";
@@ -26,6 +26,15 @@ test("config: defaults, lower-cased users, validation", () => {
   assert.equal(c.titleModel, "anthropic/claude-opus-5.5");
   assert.throws(() => parseConfig({ ...base, defaultModel: "x" }), /defaultModel/);
   assert.throws(() => parseConfig({ ...base, users: [] }), /users/);
+});
+
+test("config: thinking levels per model become egress's reasoning plan", () => {
+  const ds = "deepseek/deepseek-v4.1-flash-1017";
+  const c = parseConfig({ ...base, models: [{ id: ds, label: "DeepSeek", reasoning: "high" }], defaultModel: ds, titleModel: ds, titleReasoning: "none" });
+  assert.deepEqual(reasoningPlan(c), { [ds]: { withTools: "high", withoutTools: "none" } });
+  assert.deepEqual(reasoningPlan(parseConfig(base)), {});
+  assert.throws(() => parseConfig({ ...base, models: [{ id: "anthropic/claude-opus-5.5", label: "Opus", reasoning: "lots" }] }), /reasoning/);
+  assert.throws(() => parseConfig({ ...base, titleReasoning: "lots" }), /titleReasoning/);
 });
 
 test("expandEnv refuses unset variables", () => {

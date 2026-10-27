@@ -9,7 +9,7 @@ import { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
 import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
 import type { Db } from "../common/db.ts";
-import { expandEnv, type EgressRoute } from "../common/config.ts";
+import { expandEnv, type EgressRoute, type ReasoningPlan } from "../common/config.ts";
 import { logError } from "../common/log.ts";
 import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetStatus } from "../common/budget.ts";
 import { DiskCache } from "./cache.ts";
@@ -41,6 +41,8 @@ export interface EgressOptions {
   identities?: Identities;
   /** The model route's allowed model ids (config models + titleModel); absent = any. */
   models?: string[];
+  /** Thinking per model (common/config.ts reasoningPlan); absent = requests pass as sent. */
+  reasoning?: ReasoningPlan;
   /** The shared budget (common/budget.ts); a model call is refused once it is used up. */
   budget?: () => Promise<BudgetStatus | null>;
   /** product.locale: the language of the budget message */
@@ -490,7 +492,7 @@ export class Egress {
         text(res, refusal.status, JSON.stringify({ type: "error", error: { type: refusal.type, message: refusal.message } }), { "content-type": "application/json" });
         return this.#deny(row, refusal.decision, refusal.status);
       }
-      const forced = raw === null ? null : forceZdr(raw);
+      const forced = raw === null ? null : forceZdr(raw, this.#o.reasoning);
       if (forced === null) {
         text(res, 400, '{"type":"error","error":{"type":"invalid_request_error","message":"egress: a model request body must be a JSON object"}}', { "content-type": "application/json" });
         return this.#deny(row, "deny:body", 400);
@@ -611,8 +613,9 @@ export function requestedModel(raw: Buffer): string | null {
  * caller sent, so `zdr: false` or `data_collection: "allow"` in a request can't loosen it. */
 export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" } as const;
 
-/** The request body with FORCED_PROVIDER merged into `provider`; null when the body is not a JSON object. */
-export function forceZdr(raw: Buffer): Buffer | null {
+/** The request body with FORCED_PROVIDER merged into `provider` and the model's thinking level from `plan` applied;
+ * null when the body is not a JSON object. */
+export function forceZdr(raw: Buffer, plan?: ReasoningPlan): Buffer | null {
   let body: unknown;
   try {
     body = JSON.parse(raw.toString("utf8"));
@@ -623,7 +626,26 @@ export function forceZdr(raw: Buffer): Buffer | null {
   const b = body as Record<string, unknown>;
   const p = b.provider && typeof b.provider === "object" && !Array.isArray(b.provider) ? (b.provider as Record<string, unknown>) : {};
   b.provider = { ...p, ...FORCED_PROVIDER };
+  applyReasoning(b, plan);
   return Buffer.from(JSON.stringify(b));
+}
+
+/** Sets thinking on a model request: chat turns carry tools, titles and Claude Code's quick calls don't. On
+ * OpenRouter's Messages API only Anthropic's `thinking: {type: "disabled"}` turns a reasoning model's thinking off
+ * (`reasoning.effort: "none"` is ignored there), so "none" is sent that way and any other level as `reasoning.effort`. */
+function applyReasoning(b: Record<string, unknown>, plan: ReasoningPlan | undefined): void {
+  if (!plan || typeof b.model !== "string") return;
+  const model = b.model;
+  const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
+  const entry = plan[model] ?? Object.entries(plan).find(([id]) => bare(id) === model)?.[1];
+  const effort = Array.isArray(b.tools) && b.tools.length ? entry?.withTools : entry?.withoutTools;
+  if (!effort) return;
+  if (effort === "none") {
+    b.thinking = { type: "disabled" };
+    delete b.reasoning;
+  } else {
+    b.reasoning = { effort };
+  }
 }
 
 /** The whole request body, or null when it exceeds max bytes. */

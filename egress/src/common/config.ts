@@ -3,9 +3,15 @@
 // string in the config may name one as ${VAR} (expanded where it is used, never at load: expandEnv()).
 import { readFileSync } from "node:fs";
 
+/** OpenRouter's reasoning levels; "none" turns thinking off. */
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "max";
+const REASONING_EFFORTS: ReadonlySet<string> = new Set(["none", "low", "medium", "high", "max"]);
+
 export interface ModelEntry {
   id: string;
   label: string;
+  /** Thinking level for this model's chat turns (requests that carry tools); absent = the model's own default. */
+  reasoning?: ReasoningEffort;
 }
 
 export interface EgressRoute {
@@ -125,6 +131,8 @@ export interface ChatConfig {
   models: ModelEntry[];
   defaultModel: string;
   titleModel: string;
+  /** Thinking level for the title model's tool-less calls (titles, Claude Code's quick calls); absent = its default. */
+  titleReasoning?: ReasoningEffort;
   systemPromptFile: string;
   sandbox: {
     /** Where sandboxes run (docs/CHAT.md, "Sandbox providers"). */
@@ -167,6 +175,16 @@ export interface ChatConfig {
   };
   /** absent = no limit */
   budget?: BudgetConfig;
+}
+
+/** How egress sets thinking per model: `withTools` for chat turns, `withoutTools` for tool-less calls. */
+export type ReasoningPlan = Record<string, { withTools?: ReasoningEffort; withoutTools?: ReasoningEffort }>;
+
+export function reasoningPlan(config: ChatConfig): ReasoningPlan {
+  const plan: ReasoningPlan = {};
+  for (const m of config.models) if (m.reasoning) plan[m.id] = { ...plan[m.id], withTools: m.reasoning };
+  if (config.titleReasoning) plan[config.titleModel] = { ...plan[config.titleModel], withoutTools: config.titleReasoning };
+  return plan;
 }
 
 /** Every model id this instance may call (egress refuses the rest): the offered models and the title model. */
@@ -249,6 +267,10 @@ export function parseConfig(raw: unknown): ChatConfig {
   if (!Array.isArray(c.users) || !c.users.length) throw new Error("config: users must list at least one email");
   if (!Array.isArray(c.models) || !c.models.length) throw new Error("config: models must not be empty");
   if (!c.models.some((m: ModelEntry) => m.id === c.defaultModel)) throw new Error("config: defaultModel must be one of models");
+  for (const m of c.models as ModelEntry[]) {
+    if (m.reasoning !== undefined && !REASONING_EFFORTS.has(m.reasoning)) throw new Error(`config: models[${m.id}].reasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
+  }
+  if (c.titleReasoning !== undefined && !REASONING_EFFORTS.has(c.titleReasoning)) throw new Error(`config: titleReasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
   let budget: BudgetConfig | undefined;
   if (c.budget != null) {
     const b = c.budget;
@@ -267,6 +289,7 @@ export function parseConfig(raw: unknown): ChatConfig {
     models: c.models,
     defaultModel: c.defaultModel,
     titleModel: c.titleModel ?? c.defaultModel,
+    ...(c.titleReasoning ? { titleReasoning: c.titleReasoning } : {}),
     systemPromptFile: c.systemPromptFile,
     sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b, vm },
     egress: { ...DEFAULTS.egress, ...c.egress },

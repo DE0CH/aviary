@@ -6,7 +6,7 @@
 // (extra refused ranges, e.g. the node's own /64), and every variable a route's inject names (OPENROUTER_API_KEY).
 import { createServer } from "node:http";
 import { BudgetGate } from "../common/budget.ts";
-import { allowedModels, loadConfig } from "../common/config.ts";
+import { allowedModels, loadConfig, reasoningPlan } from "../common/config.ts";
 import { connect, migrate } from "../common/db.ts";
 import { log } from "../common/log.ts";
 import { HostPolicy } from "./allowlist.ts";
@@ -39,6 +39,7 @@ export async function main(): Promise<void> {
     selfHosts,
     guard: new AddressGuard((process.env.EGRESS_BLOCK_CIDRS || "").split(",").map((s) => s.trim())),
     models: allowedModels(config),
+    reasoning: reasoningPlan(config),
     // re-read at most every 0.5 s (both egress pods see each other's model costs that soon)
     budget: ((g) => () => g.status())(new BudgetGate(db, config.budget, 500)),
     locale: config.product.locale,
