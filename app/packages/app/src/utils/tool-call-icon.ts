@@ -12,7 +12,7 @@ import {
 } from "lucide-react-native";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import { PaseoLogo } from "@/components/icons/paseo-logo";
+import { YycLogo } from "@/components/icons/yyc-logo";
 import { resolveToolCallIconName, type ToolCallIcon } from "./tool-call-icon-name";
 
 export type ToolCallIconComponent = ComponentType<{ size?: number; color?: string }>;
@@ -27,7 +27,7 @@ const ICON_COMPONENTS: Record<ToolCallIcon, ToolCallIconComponent> = {
   sparkles: Sparkles,
   brain: Brain,
   mic_vocal: MicVocal,
-  paseo: PaseoLogo,
+  paseo: YycLogo,
 };
 
 export function componentForToolCallIcon(name: ToolCallIcon): ToolCallIconComponent {
