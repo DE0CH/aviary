@@ -55,6 +55,13 @@ arrives.
 - **Connection**: the page connects back to its own origin (`runtime/host-runtime.ts`
   `readPageOriginConnectionHint`) on `/paseo-ws` (`protocol/src/daemon-endpoints.ts`); no host setup, no pairing. When
   the server cannot be reached, `app/welcome.tsx` says so and offers a retry.
+- **Signed out (web)**: only `/api`, `/paseo-ws`, `/ws`, `/ops` (and `/__jarvis`) are behind Cloudflare Access; the
+  router (`jarvis/router.mjs`, "Signed out") serves a visitor without a valid Access token the built app from `dist/`
+  and nothing else, its `index.html` marked `<meta name="yyc-signed-out" content="1">`. `yyc/access-gate.tsx` then
+  renders `yyc/signed-out-shell.tsx` instead of the app: the new-chat layout with the composer disabled and 「登入」
+  buttons, with no host runtime, socket or API call. 「登入」 opens `/api/jarvis/signin?next=<page>` (behind Access:
+  Access's login, then the router's 302 back to the page, now signed in). The Access app's paths, cloudflared's
+  access-required rule and the router's `SIGNED_IN_PATHS` are one list (DE0CH/YYC tofu `access.tf` `staff_ai_paths`).
 - **Language**: zh-HK (generated from Paseo's zh-CN with OpenCC, HK vocabulary) and English only; any Chinese or
   unknown system locale gets zh-HK. YYC's own wording is an override layer, `i18n/resources/yyc.ts`; new strings of
   this fork live under `conversation.*` in `en.ts`/`zh-HK.ts`.
