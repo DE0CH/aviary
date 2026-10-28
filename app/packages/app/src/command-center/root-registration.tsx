@@ -8,6 +8,7 @@ import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-fo
 import { buildSessionsRoute, buildSettingsRoute } from "@/utils/host-routes";
 import type { CommandCenterContribution, CommandCenterIconProps } from "./contributions";
 import { useCommandCenterActions } from "./provider";
+import { useViewAsReadOnly } from "@/yyc/view-as";
 
 const ThemedPlus = withUnistyles(Plus, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedTrash = withUnistyles(Trash2, (theme) => ({ color: theme.colors.foregroundMuted }));
@@ -38,6 +39,8 @@ export function CommandCenterRootActions() {
   const { t } = useTranslation();
   const settingsRoute = useMemo<Href>(() => buildSettingsRoute(), []);
   const sessionsRoute = useMemo<Href>(() => buildSessionsRoute(), []);
+  // a read-only view-as tab offers no new conversation (yyc/view-as.ts)
+  const viewAsReadOnly = useViewAsReadOnly();
   const actions = useMemo<CommandCenterContribution[]>(
     () => [
       {
@@ -96,7 +99,11 @@ export function CommandCenterRootActions() {
     ],
     [keyboardActionDispatcher, sessionsRoute, settingsRoute, t],
   );
+  const offered = useMemo(
+    () => (viewAsReadOnly ? actions.filter((action) => action.id !== "new-workspace") : actions),
+    [actions, viewAsReadOnly],
+  );
 
-  useCommandCenterActions({ sourceId: "root", enabled: true, actions });
+  useCommandCenterActions({ sourceId: "root", enabled: true, actions: offered });
   return null;
 }

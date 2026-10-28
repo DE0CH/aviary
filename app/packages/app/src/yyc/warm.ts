@@ -4,11 +4,14 @@
  * early. At most one signal per conversation every 30 s (a new chat counts as one conversation). Fire and forget.
  */
 import { api, sessionIdOfAgent } from "@/yyc/api";
+import { viewAsReadOnly } from "@/yyc/view-as";
 
 const WARM_INTERVAL_MS = 30_000;
 const lastSent = new Map<string, number>();
 
 export function warmSandbox(agentId: string | null): void {
+  // a read-only view-as tab sends nothing, so it starts no host either
+  if (viewAsReadOnly()) return;
   const sessionId = sessionIdOfAgent(agentId);
   const key = sessionId ?? "";
   const now = Date.now();

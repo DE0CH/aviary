@@ -36,6 +36,8 @@ interface SidebarHeaderRowProps {
    */
   trailing?: ReactNode;
   rowRef?: Ref<View>;
+  /** Shown dimmed and does nothing (a read-only view-as tab's 新對話, yyc/view-as.ts). */
+  disabled?: boolean;
 }
 
 export function SidebarHeaderRow({
@@ -50,6 +52,7 @@ export function SidebarHeaderRow({
   shortcutKeys = null,
   trailing,
   rowRef,
+  disabled = false,
 }: SidebarHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
@@ -58,7 +61,7 @@ export function SidebarHeaderRow({
   const [isPressed, setIsPressed] = useState(false);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
-  const isHighlighted = isHovered || isActive;
+  const isHighlighted = !disabled && (isHovered || isActive);
 
   const isListRow = variant === "compact";
 
@@ -69,7 +72,11 @@ export function SidebarHeaderRow({
   }
 
   return (
-    <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
+    <View
+      ref={rowRef}
+      collapsable={false}
+      style={[getContainerStyle(variant), disabled && styles.containerDisabled]}
+    >
       <View
         style={[
           styles.row,
@@ -85,12 +92,13 @@ export function SidebarHeaderRow({
           onPress={onPress}
           onPressIn={handlePressIn}
           onPressOut={handlePressOut}
+          disabled={disabled}
           testID={testID}
           nativeID={nativeID}
           accessible
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel ?? label}
-          accessibilityState={isActive ? SELECTED_STATE : undefined}
+          accessibilityState={disabled ? DISABLED_STATE : isActive ? SELECTED_STATE : undefined}
           aria-selected={isActive}
           style={[styles.button, isListRow && styles.buttonList]}
         >
@@ -119,6 +127,7 @@ export function SidebarHeaderRow({
             onPress={onPress}
             onPressIn={handlePressIn}
             onPressOut={handlePressOut}
+            disabled={disabled}
             accessible={false}
             focusable={false}
             style={styles.trailing}
@@ -132,8 +141,12 @@ export function SidebarHeaderRow({
 }
 
 const SELECTED_STATE = { selected: true } as const;
+const DISABLED_STATE = { disabled: true } as const;
 
 const styles = StyleSheet.create((theme) => ({
+  containerDisabled: {
+    opacity: 0.45,
+  },
   container: {
     height: {
       xs: HEADER_INNER_HEIGHT_MOBILE,

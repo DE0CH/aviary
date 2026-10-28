@@ -8,6 +8,7 @@ import { useHosts } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
+import { viewAsReadOnly } from "@/yyc/view-as";
 
 const WORKSPACE_NEW_ACTIONS: readonly KeyboardActionId[] = ["workspace.new"];
 
@@ -27,6 +28,8 @@ export function useGlobalNewWorkspaceAction() {
     if (hosts.length === 0) {
       return false;
     }
+    // a read-only view-as tab starts no conversation (yyc/view-as.ts)
+    if (viewAsReadOnly()) return true;
     router.navigate(
       (serverId
         ? buildNewWorkspaceRoute(

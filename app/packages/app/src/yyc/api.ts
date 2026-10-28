@@ -6,6 +6,7 @@
  */
 import { accessHeaders } from "@/yyc/access-token";
 import { siteOrigin } from "@/yyc/site";
+import { withViewAs } from "@/yyc/view-as";
 
 function apiBase(): string {
   const dev = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim();
@@ -23,9 +24,9 @@ export class ApiError extends Error {
   }
 }
 
-/** A CloudCLI URL the page can link to or load directly (downloads, previews). */
+/** A CloudCLI URL the page can link to or load directly (downloads, previews); a view-as tab's token added (view-as.ts). */
 export function apiUrl(path: string): string {
-  return `${apiBase()}${path}`;
+  return withViewAs(`${apiBase()}${path}`);
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {

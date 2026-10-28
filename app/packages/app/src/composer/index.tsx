@@ -165,6 +165,8 @@ import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
+import { useViewAsReadOnly, viewAsReadOnly } from "@/yyc/view-as";
+import { ViewAsBox } from "@/yyc/view-as-box";
 import {
   appendWorkspaceFileAttachment,
   getWorkspaceFileAttachmentKey,
@@ -1671,6 +1673,7 @@ function ComposerContentImpl({
       outgoingAttachments: ComposerAttachment[],
       forceSend?: boolean,
     ) => {
+      if (viewAsReadOnly()) return;
       const result = await submitAgentInput({
         message: outgoingMessage,
         attachments: outgoingAttachments,
@@ -1993,6 +1996,8 @@ function ComposerContentImpl({
         commands: pluginClientSlashCommands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
+      // a read-only view-as tab sends nothing, queued or not (yyc/view-as.ts)
+      if (viewAsReadOnly()) return;
       queueMessage(payload.text, outgoingAttachments);
     },
     [
@@ -2400,8 +2405,11 @@ function ComposerContentImpl({
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
+  const isViewAsReadOnly = useViewAsReadOnly();
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && isForgeResolving);
+    isSubmitLoadingVisible ||
+    (waitForForgeAutoAttachOnSubmit && isForgeResolving) ||
+    isViewAsReadOnly;
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2452,6 +2460,7 @@ function ComposerContentImpl({
         {/* Input area */}
         <View style={inputAreaContainerStyle}>
           <View style={inputAreaContentStyle}>
+            {isFullscreen ? null : <ViewAsBox />}
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}
 
