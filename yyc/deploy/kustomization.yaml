@@ -61,13 +61,13 @@ patches:
   # the Secrets' revision: a resealed Secret reaches running pods only through a new pod template, so bump this with
   # every change to a Secret they read (a kubectl rollout restart is undone by Flux). 2026-10-27: the databases moved
   # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env;
-  # 2026-10-28: ANYAPI_API_KEY in tools-env; JARVIS_SENT_FILES_TOKEN in egress-env and ui-env
+  # 2026-10-28: ANYAPI_API_KEY in tools-env; JARVIS_SENT_FILES_TOKEN in egress-env and ui-env (bumped twice: the first roll started before the controller had decrypted the new Secrets)
   - target: {kind: Deployment, name: "web|egress|tools|ui"}
     patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-28-sentfiles-1"}}}}
+      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-28-sentfiles-2"}}}}
   # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
   # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
   - target: {kind: Deployment, name: web}
