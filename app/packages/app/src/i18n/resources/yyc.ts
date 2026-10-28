@@ -15,6 +15,7 @@ export const enOverrides: TranslationOverrides = {
       fallback: "Message YYC AI",
     },
     input: {
+      accessibilityLabel: "Message",
       interruptAgent: "Stop",
       sendAndInterrupt: "Send",
       sendAndSteer: "Send",
@@ -26,6 +27,10 @@ export const enOverrides: TranslationOverrides = {
   agentStream: { empty: "Send a message to start" },
   agentPanel: {
     states: {
+      notFound: "This conversation can't be found",
+      failedToLoad: "Couldn't load the conversation",
+      reconnecting: "Reconnecting…",
+      timelineSyncFailed: "Couldn't refresh the conversation.",
       archivingTitle: "Deleting the conversation…",
       archivingSubtitle: "Deleting the conversation…",
     },
@@ -118,6 +123,7 @@ export const zhHKOverrides: TranslationOverrides = {
       noHostSelected: "未有連線",
     },
     input: {
+      accessibilityLabel: "輸入訊息",
       interruptAgent: "停止",
       sendAndInterrupt: "傳送",
       sendAndSteer: "傳送",
@@ -128,6 +134,10 @@ export const zhHKOverrides: TranslationOverrides = {
   agentStream: { empty: "輸入訊息開始對話" },
   agentPanel: {
     states: {
+      notFound: "找不到此對話",
+      failedToLoad: "未能載入對話",
+      reconnecting: "正在重新連線…",
+      timelineSyncFailed: "未能更新對話。",
       archivingTitle: "正在刪除對話…",
       archivingSubtitle: "正在刪除對話…",
     },

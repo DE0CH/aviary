@@ -16,6 +16,7 @@ import {
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import {
+  EXPLORER_ENABLED,
   isExplorerSidebarOpen,
   openExplorerSidebarView,
   resolveExplorerSidebarPresentation,
@@ -36,12 +37,34 @@ beforeEach(() => {
   });
 });
 
-describe("Explorer sidebar", () => {
+describe("Explorer sidebar presentation", () => {
   it("selects the Explorer shell from the form factor", () => {
     expect(resolveExplorerSidebarPresentation({ isCompact: true })).toBe("overlay");
     expect(resolveExplorerSidebarPresentation({ isCompact: false })).toBe("dock");
   });
+});
 
+// YYC AI has no explorer (docs/paseo-ui.md): while EXPLORER_ENABLED is false nothing opens it.
+describe.runIf(!EXPLORER_ENABLED)("Explorer sidebar while disabled", () => {
+  it.each([true, false])("opening a view does nothing (compact: %s)", (isCompact) => {
+    openExplorerSidebarView({ isCompact, workspaceKey: WORKSPACE_KEY, view: "changes" });
+
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+    expect(isExplorerSidebarOpen({ isCompact, workspaceKey: WORKSPACE_KEY })).toBe(false);
+  });
+
+  it.each([true, false])("toggling never opens it (compact: %s)", (isCompact) => {
+    const input = { isCompact, workspaceKey: WORKSPACE_KEY };
+    toggleExplorerSidebar(input);
+
+    expect(isExplorerSidebarOpen(input)).toBe(false);
+    expect(usePanelStore.getState().mobilePanel.target).not.toBe("file-explorer");
+  });
+});
+
+// The upstream behaviour, kept for when the explorer is switched back on.
+describe.runIf(EXPLORER_ENABLED)("Explorer sidebar", () => {
   it("uses the same Explorer pane inside the compact overlay", () => {
     openExplorerSidebarView({
       isCompact: true,

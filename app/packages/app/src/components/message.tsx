@@ -1270,9 +1270,9 @@ interface NotificationProps {
 }
 
 const notificationStylesheet = StyleSheet.create((theme) => ({
-  // The tool card's and the sent-file card's radius.
+  // The sent-file card's radius (yyc/sent-files.tsx), which is the attachment pill's.
   container: {
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.md,
     overflow: "hidden",
   },
   containerSpacing: {

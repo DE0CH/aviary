@@ -22,6 +22,7 @@ import {
   openWorkspaceChanges,
   openWorkspacePullRequest,
 } from "@/workspace-tabs/open-supporting-view";
+import { EXPLORER_ENABLED } from "@/workspace-tabs/explorer-sidebar";
 
 const WORKSPACE_KEY = "server-1:workspace-1";
 
@@ -48,7 +49,8 @@ beforeEach(() => {
   });
 });
 
-describe("openWorkspaceChanges", () => {
+// The upstream Changes behaviour, kept for when the explorer is switched back on.
+describe.runIf(EXPLORER_ENABLED)("openWorkspaceChanges", () => {
   it("opens Changes in the compact Explorer", () => {
     useWorkspaceLayoutStore.getState().setLayoutMode("compact");
     openWorkspaceChanges({
@@ -62,7 +64,7 @@ describe("openWorkspaceChanges", () => {
   });
 });
 
-describe("openComposerChanges", () => {
+describe.runIf(EXPLORER_ENABLED)("openComposerChanges", () => {
   const input = {
     isCompact: false,
     supportsPaneSplits: true,
@@ -118,6 +120,25 @@ describe("openComposerChanges", () => {
 
     expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
     expect(activeExplorerKind()).toBe("changes_tree");
+  });
+});
+
+// YYC AI has no explorer (docs/paseo-ui.md): Changes never opens it while EXPLORER_ENABLED is false.
+describe.runIf(!EXPLORER_ENABLED)("Changes while the explorer is disabled", () => {
+  it.each([true, false])("does not open the explorer (compact: %s)", (isCompact) => {
+    openComposerChanges({
+      isCompact,
+      supportsPaneSplits: true,
+      workspaceKey: WORKSPACE_KEY,
+      preferences: DEFAULT_APP_SETTINGS.openInSidePane,
+    });
+
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+    const state = useWorkspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+    const paneId = selectExplorerSidebarPaneId(state, WORKSPACE_KEY);
+    const pane = layout && paneId ? findPaneById(layout.root, paneId) : null;
+    expect(pane && !pane.hidden).toBeFalsy();
   });
 });
 

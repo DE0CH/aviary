@@ -50,6 +50,7 @@ import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
+import { SettingsCard, SettingsRow } from "@/components/settings";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { OpenLocationSection } from "@/screens/settings/open-location/open-location-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
@@ -125,7 +126,6 @@ import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/consta
 import {
   density,
   densityIconBox,
-  densityIconSize,
   SIDEBAR_ROW_LINE_HEIGHT,
 } from "@/styles/density";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
@@ -353,12 +353,11 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
     : settings.language;
   return (
     <SettingsSection title={t("settings.general.title")}>
-      <View style={settingsStyles.card}>
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>{t("settings.general.language.label")}</Text>
-            <Text style={settingsStyles.rowHint}>{t("settings.general.language.description")}</Text>
-          </View>
+      <SettingsCard>
+        <SettingsRow
+          label={t("settings.general.language.label")}
+          hint={t("settings.general.language.description")}
+        >
           <DropdownMenu>
             <DropdownTrigger accessibilityRole="button" accessibilityLabel={selectedLanguageLabel}>
               {selectedLanguageLabel}
@@ -375,8 +374,8 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-        </View>
-      </View>
+        </SettingsRow>
+      </SettingsCard>
     </SettingsSection>
   );
 }
@@ -829,7 +828,7 @@ function HostPicker({
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       sidebarStyles.pickerTrigger,
       hovered && sidebarStyles.pickerTriggerHovered,
-      pressed && sidebarStyles.itemPressed,
+      pressed && sidebarStyles.pickerTriggerPressed,
     ],
     [],
   );
@@ -1521,10 +1520,6 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
-  // The workspace rows' pressed fill.
-  itemPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
   // The sidebar row geometry (SidebarHeaderRow variant="compact").
   pickerTrigger: {
     flexDirection: "row",
@@ -1538,6 +1533,9 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   },
   pickerTriggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  pickerTriggerPressed: {
+    backgroundColor: theme.colors.surface2,
   },
   pickerTriggerLabel: {
     flex: 1,

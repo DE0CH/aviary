@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { DensityIcon } from "@/components/ui/density-icon";
-import { Shortcut } from "@/components/ui/shortcut";
+import { Shortcut, SHOW_SHORTCUT_HINTS } from "@/components/ui/shortcut";
 import { density, densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
@@ -63,7 +63,8 @@ export function SidebarHeaderRow({
   const isListRow = variant === "compact";
 
   let right = trailing ?? null;
-  if (right === null && shortcutKeys && isHovered) {
+  // No hint slot at all while hints are off: an empty trailing slot would still take 8 px on hover.
+  if (right === null && SHOW_SHORTCUT_HINTS && shortcutKeys && isHovered) {
     right = <Shortcut chord={shortcutKeys} />;
   }
 
