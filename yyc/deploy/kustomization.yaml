@@ -6,7 +6,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2acd77f235098a77dc6df79c9c77765e5cfa299f
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=c202e07dfc87232b11388bafe15c13e95af0ad56
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -25,7 +25,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 2acd77f23509
+    newTag: c202e07dfc87
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
@@ -59,13 +59,14 @@ patches:
         value: [{name: ghcr-pull}]
   # the Secrets' revision: a resealed Secret reaches running pods only through a new pod template, so bump this with
   # every change to a Secret they read (a kubectl rollout restart is undone by Flux). 2026-10-27: the databases moved
-  # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env
+  # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env;
+  # 2026-10-28: ANYAPI_API_KEY in tools-env
   - target: {kind: Deployment, name: "web|egress|tools|ui"}
     patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-27-webfetch-1"}}}}
+      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-28-anyapi-1"}}}}
   # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
   # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
   - target: {kind: Deployment, name: web}
