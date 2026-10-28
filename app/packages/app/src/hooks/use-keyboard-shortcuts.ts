@@ -11,6 +11,7 @@ import {
   type KeyboardShortcutInput,
   resolveKeyboardShortcut,
   buildEffectiveBindings,
+  chatAppBindings,
   getWorkspaceIndexJumpModifierKey,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
@@ -64,7 +65,7 @@ export function useKeyboardShortcuts({
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
-  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const bindings = useMemo(() => chatAppBindings(buildEffectiveBindings(overrides)), [overrides]);
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";

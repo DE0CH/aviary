@@ -198,11 +198,8 @@ function useBuiltInRows(open: boolean): {
               kind: "workspace",
               id: `workspace:${host.serverId}:${workspace.id}`,
               title: workspace.title ?? workspace.name,
-              subtitle: joinSubtitleParts([
-                showHost ? host.serverName : null,
-                project.projectName,
-                workspace.currentBranch,
-              ]),
+              // A conversation needs no subtitle: there is one project, named after the product, and no branch.
+              subtitle: joinSubtitleParts([showHost ? host.serverName : null]),
               serverId: host.serverId,
               workspaceId: workspace.id,
               project: workspaceProject,
@@ -239,6 +236,8 @@ function useBuiltInRows(open: boolean): {
   }, [agents, iconDataByProjectViewKey, open, projects, showHost, t]);
 }
 
+const SEARCH_FILES: boolean = false;
+
 function useBuiltInSections(open: boolean, query: string): CommandCenterResultSection[] {
   const { t } = useTranslation();
   const rows = useBuiltInRows(open);
@@ -253,13 +252,7 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
         title: t("shell.commandCenter.workspaces"),
         results: filterAndRankWorkspaces(rows.workspaces, query),
       },
-      {
-        id: "agents",
-        band: PINNED_SECTION_BAND,
-        rank: 3,
-        title: t("shell.commandCenter.agents"),
-        results: filterAndRankBuiltInResults(rows.agents, query, agentSearchFields),
-      },
+      // Each conversation is both a workspace and an agent (docs/paseo-ui.md): list it once, as a conversation.
     ];
   }, [open, query, rows, t]);
 }
@@ -302,7 +295,8 @@ function useCommandCenterState(
     error: fileSearchError,
     openFile,
   } = useWorkspaceFileSearch({
-    enabled: open && (scope === "files" || Boolean(query.trim())),
+    // A conversation's files are not searched from here (docs/paseo-ui.md).
+    enabled: SEARCH_FILES && open && (scope === "files" || Boolean(query.trim())),
     query,
   });
   const fileSections = useMemo<CommandCenterResultSection[]>(() => {
@@ -1033,7 +1027,7 @@ const styles = StyleSheet.create((theme) => ({
     maxHeight: "80%",
     borderWidth: 1,
     borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.xl,
     overflow: "hidden",
     backgroundColor: theme.colors.surface0,
     ...theme.shadow.lg,
@@ -1099,14 +1093,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
   },
   rowMain: {
     flex: 1,
     minWidth: 0,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
   },
   textContent: { flex: 1, minWidth: 0 },
   title: {

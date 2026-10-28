@@ -279,6 +279,8 @@ export const zhHK: TranslationResources = {
     },
   },
   sessions: {
+    loadFailed: "無法載入會話",
+    emptyForHost: "此主機沒有會話",
     title: "歷史",
     empty: "還沒有會話",
     noMatches: "沒有匹配的會話",
@@ -2982,6 +2984,7 @@ export const zhHK: TranslationResources = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    emptyList: "你的對話會在這裏顯示。",
     signOut: "登出",
     menu: {
       rename: "重新命名",
@@ -3000,6 +3003,9 @@ export const zhHK: TranslationResources = {
       slow: "可能需要一至兩分鐘，請稍候。",
     },
     shared: {
+      loadFailed: "未能開啟此對話。",
+      continueFailed: "未能繼續對話，請再試。",
+      back: "返回對話",
       byline: "{{name}} 分享的對話（只讀）",
       continue: "繼續對話",
       gone: "此連結已失效。",

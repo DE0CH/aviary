@@ -45,7 +45,7 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Shortcut } from "@/components/ui/shortcut";
+import { Shortcut, SHOW_SHORTCUT_HINTS } from "@/components/ui/shortcut";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -612,7 +612,9 @@ function FocusHint({
   label: string;
 }) {
   const { isActiveComposer } = useComposerKeyboardScope();
-  if (!isActiveComposer || !visible || !focusInputKeys || !label.trim()) return null;
+  if (!SHOW_SHORTCUT_HINTS || !isActiveComposer || !visible || !focusInputKeys || !label.trim()) {
+    return null;
+  }
   return (
     <Text style={styles.focusHintText} pointerEvents="none">
       {label}

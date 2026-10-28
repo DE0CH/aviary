@@ -8,12 +8,9 @@ import {
   CircleCheck,
   Copy,
   MoreVertical,
-  Pencil,
   Pin,
   PinOff,
-  Share2,
   Tag,
-  Trash2,
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
@@ -26,6 +23,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -33,9 +31,15 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Shortcut } from "@/components/ui/shortcut";
+import {
+  CONVERSATION_MENU_WIDTH,
+  DELETE_ICON,
+  RENAME_ICON,
+  SHARE_ICON,
+} from "@/screens/workspace/conversation-menu-items";
 import { openConversationDialog } from "@/yyc/conversation-dialogs";
 import { useSharingAvailable } from "@/yyc/me";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
@@ -59,23 +63,16 @@ const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
 const ThemedCircle = withUnistyles(Circle);
-const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
 const ThemedPinOff = withUnistyles(PinOff);
 const ThemedTag = withUnistyles(Tag);
-const ThemedShare = withUnistyles(Share2);
-const ThemedTrash = withUnistyles(Trash2);
 
 const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapping} />;
-const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
 const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
-// "Archive" is delete here (to Recently deleted)
-const archiveLeadingIcon = <ThemedTrash size={14} uniProps={foregroundMutedColorMapping} />;
-const shareLeadingIcon = <ThemedShare size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 
@@ -148,17 +145,12 @@ function SidebarWorkspaceMenuItems({
   archiveLabel,
   archiveStatus,
   archivePendingLabel,
-  archiveShortcutKeys,
   isPinned,
   onTogglePin,
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
   const sharing = useSharingAvailable();
-  const archiveTrailing = useMemo(
-    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
-    [archiveShortcutKeys],
-  );
   const labelLeading = useMemo(
     () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
     [],
@@ -172,7 +164,7 @@ function SidebarWorkspaceMenuItems({
         <WorkspaceMenuItem
           surface={surface}
           testID={`sidebar-workspace-menu-rename-${workspaceKey}`}
-          leading={renameLeadingIcon}
+          leading={RENAME_ICON}
           onSelect={onRename}
         >
           {t("sidebar.workspace.actions.rename")}
@@ -182,18 +174,25 @@ function SidebarWorkspaceMenuItems({
         <WorkspaceMenuItem
           surface={surface}
           testID={`sidebar-workspace-menu-share-${workspaceKey}`}
-          leading={shareLeadingIcon}
+          leading={SHARE_ICON}
           onSelect={() => openConversationDialog({ kind: "share", serverId, workspaceId })}
         >
           {t("conversation.menu.share")}
         </WorkspaceMenuItem>
       ) : null}
+      {onArchive && (onRename || sharing) ? (
+        surface === "context" ? (
+          <ContextMenuSeparator />
+        ) : (
+          <DropdownMenuSeparator />
+        )
+      ) : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
           testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
-          leading={archiveLeadingIcon}
-          trailing={archiveTrailing}
+          leading={DELETE_ICON}
+          destructive
           status={archiveStatus}
           pendingLabel={archivePendingLabel}
           onSelect={onArchive}
@@ -246,7 +245,7 @@ export function SidebarWorkspaceMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        width={260}
+        width={CONVERSATION_MENU_WIDTH}
         pages={pages}
         sheetTitle={t("sidebar.workspace.actions.menu")}
       >
@@ -360,7 +359,7 @@ export function SidebarWorkspaceContextMenu({
       </ContextMenuTrigger>
       <ContextMenuContent
         align="start"
-        width={260}
+        width={CONVERSATION_MENU_WIDTH}
         testID={`sidebar-workspace-context-menu-${workspaceKey}`}
         pages={pages}
       >

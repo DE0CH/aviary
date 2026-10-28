@@ -1,7 +1,7 @@
 import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
+import { EXPLORER_ENABLED, useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
 import { ComposerEditingSessionsProvider } from "@/composer/editing-session";
 import { SheetHostScope } from "@/components/ui/isolated-bottom-sheet-modal";
 import "@/styles/unistyles";
@@ -451,7 +451,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
           {themedSidebarChrome}
         </WindowChromeRegion>
       ) : null}
-      <WorkspaceExplorerOpenGesture enabled={chromeEnabled && isCompactLayout}>
+      <WorkspaceExplorerOpenGesture enabled={EXPLORER_ENABLED && chromeEnabled && isCompactLayout}>
         <WindowChromeRegion
           corners={isCompactLayout && chromeEnabled ? "both" : appChromeLayout.contentCorners}
         >

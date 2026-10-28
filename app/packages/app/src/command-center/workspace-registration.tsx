@@ -328,10 +328,16 @@ export function useWorkspaceCommandCenterActions(): void {
 
   useCommandCenterActions({
     sourceId: "workspace",
-    enabled: Boolean(serverId && cwd),
+    enabled: SHOW_WORKSPACE_COMMANDS && Boolean(serverId && cwd),
     actions,
   });
 }
+
+/**
+ * Paseo's workspace commands (new agent or terminal, files, panes, tabs, copy path, the explorer) belong to a
+ * developer's machine; a conversation's own actions are in its ⋯ menu (docs/paseo-ui.md).
+ */
+const SHOW_WORKSPACE_COMMANDS: boolean = false;
 
 export function CommandCenterWorkspaceActions() {
   useWorkspaceCommandCenterActions();

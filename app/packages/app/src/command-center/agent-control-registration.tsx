@@ -80,6 +80,8 @@ function buildModeContributionSource(
   };
 }
 
+const SHOW_AGENT_CONTROL_COMMANDS: boolean = false;
+
 export function useAgentControlCommandCenterActions(input: {
   sourceId: string;
   enabled: boolean;
@@ -152,7 +154,8 @@ export function useAgentControlCommandCenterActions(input: {
 
   useCommandCenterActions({
     sourceId: input.sourceId,
-    enabled: input.enabled,
+    // The composer picks the one provider and model by itself (docs/paseo-ui.md): no model/mode commands.
+    enabled: SHOW_AGENT_CONTROL_COMMANDS && input.enabled,
     actions,
   });
 }

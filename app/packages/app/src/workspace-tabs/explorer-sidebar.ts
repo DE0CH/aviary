@@ -14,6 +14,12 @@ const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
   pr: { kind: "pull_request" },
 };
 
+/**
+ * The explorer (a conversation's sandbox files and changes) belongs to a developer's machine (docs/paseo-ui.md): no
+ * gesture, shortcut, command or stored layout opens it.
+ */
+export const EXPLORER_ENABLED: boolean = false;
+
 export interface ExplorerSidebarQuery {
   isCompact: boolean;
   workspaceKey: string | null;
@@ -32,7 +38,7 @@ export function resolveExplorerSidebarPresentation(
 export function openExplorerSidebarView(
   input: ExplorerSidebarQuery & { view: ExplorerSidebarView },
 ): void {
-  if (!input.workspaceKey) return;
+  if (!EXPLORER_ENABLED || !input.workspaceKey) return;
   const store = useWorkspaceLayoutStore.getState();
   const paneId = showExplorerSidebar(input);
   store.openTab({
@@ -44,6 +50,7 @@ export function openExplorerSidebarView(
 }
 
 export function showExplorerSidebar(input: ExplorerSidebarQuery): string | null {
+  if (!EXPLORER_ENABLED) return null;
   if (input.isCompact) {
     usePanelStore.getState().showMobileFileExplorer();
   }
@@ -85,10 +92,12 @@ export function useIsExplorerSidebarOpen(input: ExplorerSidebarQuery): boolean {
   const paneOpen = useWorkspaceLayoutStore((state) =>
     input.workspaceKey ? selectIsExplorerSidebarVisible(state, input.workspaceKey) : false,
   );
+  if (!EXPLORER_ENABLED) return false;
   return input.isCompact ? compactOpen : paneOpen;
 }
 
 export function isExplorerSidebarOpen(input: ExplorerSidebarQuery): boolean {
+  if (!EXPLORER_ENABLED) return false;
   if (input.isCompact) {
     return selectIsCompactFileExplorerOpen(usePanelStore.getState());
   }

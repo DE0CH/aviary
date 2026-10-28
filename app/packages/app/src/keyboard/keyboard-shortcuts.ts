@@ -1208,6 +1208,27 @@ function parseBinding(binding: ShortcutBinding): ParsedShortcutBinding {
 export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
   SHORTCUT_BINDINGS.map(parseBinding);
 
+/**
+ * The shortcuts a chat app has (docs/paseo-ui.md): new chat, search, settings, the sidebar, stopping a reply and the
+ * composer's own keys. Terminals, panes, tabs, the explorer, workspace jumps (and their Alt badges), deleting by chord
+ * and the shortcuts dialog belong to a developer's machine: the app's key handler never binds them. Paseo's own
+ * binding table above stays whole, so its tests keep describing it.
+ */
+const CHAT_APP_SHORTCUT_ACTIONS: ReadonlySet<string> = new Set([
+  "agent.interrupt",
+  "command-center.toggle",
+  "message-input.action",
+  "settings.toggle",
+  "sidebar.toggle.left",
+  "workspace.new",
+]);
+
+export function chatAppBindings(
+  bindings: readonly ParsedShortcutBinding[],
+): ParsedShortcutBinding[] {
+  return bindings.filter((binding) => CHAT_APP_SHORTCUT_ACTIONS.has(binding.action));
+}
+
 export type ShortcutOverrides = Record<string, string | null>;
 
 /** Keep number-group actions bound to all nine indices when recording a new modifier. */

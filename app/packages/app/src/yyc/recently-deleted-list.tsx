@@ -7,6 +7,7 @@ import { useToast } from "@/contexts/toast-api-context";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 
 const RETENTION_DAYS = 30;
 
@@ -96,11 +97,11 @@ function RecentlyDeletedRow({ agent, onChanged }: { agent: AggregatedAgent; onCh
 const styles = StyleSheet.create((theme) => ({
   list: {
     width: "100%",
-    maxWidth: 820,
+    // The chat column's width, which follows the content-width setting.
+    maxWidth: theme.contentMaxWidth,
     alignSelf: "center",
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
-    gap: theme.spacing[1],
   },
   row: {
     flexDirection: "row",
@@ -117,9 +118,11 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+    lineHeight: SIDEBAR_ROW_LINE_HEIGHT,
   },
   meta: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    lineHeight: 16,
   },
 }));

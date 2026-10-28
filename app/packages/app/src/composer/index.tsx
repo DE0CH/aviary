@@ -119,7 +119,7 @@ import {
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { YycModelLabel } from "@/yyc/model-label";
-import { resolveActiveSendBehavior } from "./input/state";
+import { resolveActiveSendBehavior, type SendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -174,6 +174,13 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+
+/**
+ * CloudCLI refuses a message while a reply runs (server/modules/paseo/paseo-connection.ts), so there is no steering
+ * or interrupting by sending: a message typed during a reply waits in the composer's queue and goes when the reply
+ * ends. Not a setting (docs/paseo-ui.md).
+ */
+const CHAT_SEND_BEHAVIOR: SendBehavior = "queue";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -756,7 +763,9 @@ function ImageAttachmentPill({
 interface GithubAttachmentPillProps {
   attachment: Extract<
     ComposerAttachment,
-    { kind: "forge_change_request" | "forge_issue" | "github_pr" | "github_issue" }
+    {
+      kind: "forge_change_request" | "forge_issue" | "github_pr" | "github_issue";
+    }
   >;
   index: number;
   disabled: boolean;
@@ -1557,14 +1566,9 @@ function ComposerContentImpl({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await sendAgentMessageRef.current(
-        agentIdRef.current,
-        text,
-        submitAttachments,
-        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
-      );
+      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments, "interrupt");
     },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
+    [cwd, onMessageSent, t],
   );
 
   useEffect(() => {
@@ -1602,7 +1606,7 @@ function ComposerContentImpl({
       });
       onAttentionPromptSend?.();
     };
-  }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -1625,10 +1629,7 @@ function ComposerContentImpl({
     }
     return false;
   });
-  const activeSendBehavior = resolveActiveSendBehavior(
-    appSettings.sendBehavior,
-    hasPendingPermission,
-  );
+  const activeSendBehavior = resolveActiveSendBehavior(CHAT_SEND_BEHAVIOR, hasPendingPermission);
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -2188,8 +2189,9 @@ function ComposerContentImpl({
         },
       });
     }
-    items.push(
-      {
+    // GitHub issues / pull requests only where the server searches a forge; CloudCLI never does (docs/paseo-ui.md).
+    if (supportsForgeSearch) {
+      items.push({
         id: "github",
         label: t("composer.attachments.addIssueOrPr", {
           context: forgePresentation.changeRequestContext,
@@ -2198,17 +2200,16 @@ function ComposerContentImpl({
         onSelect: () => {
           setIsGithubPickerOpen(true);
         },
+      });
+    }
+    items.push(...pluginAttachments.menuItems, {
+      id: "file",
+      label: t("composer.attachments.addFile"),
+      icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+      onSelect: () => {
+        void handlePickFile();
       },
-      ...pluginAttachments.menuItems,
-      {
-        id: "file",
-        label: t("composer.attachments.addFile"),
-        icon: <ThemedPaperclip size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
-        onSelect: () => {
-          void handlePickFile();
-        },
-      },
-    );
+    });
     return items;
   }, [
     forgePresentation,
@@ -2216,6 +2217,7 @@ function ComposerContentImpl({
     handlePickFile,
     handlePickImage,
     pluginAttachments.menuItems,
+    supportsForgeSearch,
     t,
   ]);
 
@@ -2521,26 +2523,28 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
-              <Combobox
-                options={githubSearchOptions}
-                value=""
-                onSelect={noop}
-                keepOpenOnSelect
-                searchable
-                searchPlaceholder={t("composer.github.searchPlaceholder", {
-                  context: forgePresentation.changeRequestContext,
-                })}
-                title={t("composer.github.title", {
-                  context: forgePresentation.changeRequestContext,
-                })}
-                open={isGithubPickerOpen}
-                onOpenChange={handleGithubPickerOpenChange}
-                onSearchQueryChange={setGithubSearchQuery}
-                desktopPlacement="top-start"
-                anchorRef={attachButtonRef}
-                emptyText={githubEmptyText}
-                renderOption={renderGithubPickerOption}
-              />
+              {supportsForgeSearch ? (
+                <Combobox
+                  options={githubSearchOptions}
+                  value=""
+                  onSelect={noop}
+                  keepOpenOnSelect
+                  searchable
+                  searchPlaceholder={t("composer.github.searchPlaceholder", {
+                    context: forgePresentation.changeRequestContext,
+                  })}
+                  title={t("composer.github.title", {
+                    context: forgePresentation.changeRequestContext,
+                  })}
+                  open={isGithubPickerOpen}
+                  onOpenChange={handleGithubPickerOpenChange}
+                  onSearchQueryChange={setGithubSearchQuery}
+                  desktopPlacement="top-start"
+                  anchorRef={attachButtonRef}
+                  emptyText={githubEmptyText}
+                  renderOption={renderGithubPickerOption}
+                />
+              ) : null}
               {pluginAttachments.picker}
             </ComposerAutocompleteBinding>
           </View>

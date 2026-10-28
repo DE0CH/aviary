@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Animated, View, type StyleProp, type ViewStyle } from "react-native";
+import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { projectIconRadius } from "@/components/project-icon-view";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
+import { density, densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 
-const PROJECT_ICON_SIZE = 16;
-
-const SECTION_OPACITIES: readonly number[] = [1, 0.7, 0.4];
-const SECTION_KEYS = SECTION_OPACITIES.map((_, i) => `skeleton-section-${i}`);
-const ROW_KEYS_BY_SECTION: readonly (readonly string[])[] = SECTION_OPACITIES.map((_, sIdx) =>
-  [0, 1, 2].map((r) => `skeleton-row-${sIdx}-${r}`),
-);
+// The placeholder draws the list it stands for (sidebar-workspace-list.tsx): the 「對話」 header, then conversation
+// rows with the same height, inset and status slot, so nothing moves when the list arrives.
+const ROW_OPACITIES: readonly number[] = [1, 0.85, 0.7, 0.55, 0.4];
+const ROW_KEYS = ROW_OPACITIES.map((_, i) => `skeleton-row-${i}`);
+const TITLE_WIDTHS = ["70%", "55%", "80%", "60%", "45%"] as const;
 
 function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
   const opacity = pulse.interpolate({
@@ -22,41 +22,23 @@ function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StylePr
   return <Animated.View style={pulseStyle} />;
 }
 
-function SkeletonSection({
-  pulse,
-  sectionOpacity,
-  sectionIdx,
-}: {
-  pulse: Animated.Value;
-  sectionOpacity: number;
-  sectionIdx: number;
-}) {
-  const sectionStyle = useMemo(
-    () => [styles.section, { opacity: sectionOpacity }],
-    [sectionOpacity],
-  );
+function SkeletonRow({ pulse, index }: { pulse: Animated.Value; index: number }) {
+  const rowStyle = useMemo(() => [styles.row, { opacity: ROW_OPACITIES[index] }], [index]);
+  const titleStyle = useMemo(() => [styles.rowTitle, { width: TITLE_WIDTHS[index] }], [index]);
   return (
-    <View style={sectionStyle}>
-      <View style={styles.sectionHeader}>
-        <SkeletonPulse pulse={pulse} style={styles.chevron} />
-        <SkeletonPulse pulse={pulse} style={styles.projectIcon} />
-        <SkeletonPulse pulse={pulse} style={styles.sectionTitle} />
+    <View style={rowStyle}>
+      <View style={styles.statusSlot}>
+        <SkeletonPulse pulse={pulse} style={styles.rowDot} />
       </View>
-
-      <View style={styles.rows}>
-        {ROW_KEYS_BY_SECTION[sectionIdx]?.map((key) => (
-          <View key={key} style={styles.row}>
-            <SkeletonPulse pulse={pulse} style={styles.rowDot} />
-            <SkeletonPulse pulse={pulse} style={styles.rowTitle} />
-            <SkeletonPulse pulse={pulse} style={styles.rowBadge} />
-          </View>
-        ))}
+      <View style={styles.titleLine}>
+        <SkeletonPulse pulse={pulse} style={titleStyle} />
       </View>
     </View>
   );
 }
 
 export function SidebarAgentListSkeleton() {
+  const { t } = useTranslation();
   const pulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -81,83 +63,52 @@ export function SidebarAgentListSkeleton() {
 
   return (
     <View style={styles.container}>
-      {SECTION_OPACITIES.map((sectionOpacity, sectionIdx) => (
-        <SkeletonSection
-          key={SECTION_KEYS[sectionIdx]}
-          pulse={pulse}
-          sectionOpacity={sectionOpacity}
-          sectionIdx={sectionIdx}
-        />
+      <SidebarSectionHeader title={t("sidebar.sections.conversations")} />
+      {ROW_KEYS.map((key, index) => (
+        <SkeletonRow key={key} pulse={pulse} index={index} />
       ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // The list's content padding (sidebar-workspace-list.tsx listContent).
   container: {
     flex: 1,
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[4],
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: 2,
   },
-  section: {
-    marginHorizontal: theme.spacing[2],
-    marginBottom: theme.spacing[2],
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    marginTop: theme.spacing[2],
-    marginBottom: theme.spacing[2],
-  },
-  chevron: {
-    width: 14,
-    height: 14,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  projectIcon: {
-    width: PROJECT_ICON_SIZE,
-    height: PROJECT_ICON_SIZE,
-    // Matches the real icon it stands in for, so the skeleton doesn't change shape on load.
-    borderRadius: projectIconRadius(PROJECT_ICON_SIZE),
-    backgroundColor: theme.colors.surface2,
-  },
-  sectionTitle: {
-    width: "45%",
-    height: 12,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  rows: {
-    gap: theme.spacing[1],
-  },
+  // A conversation row (sidebar-workspace-list.tsx workspaceRow).
   row: {
+    minHeight: density.rowHeight,
+    marginBottom: theme.spacing[0.5],
+    paddingVertical: theme.spacing[2],
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[3],
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    marginLeft: theme.spacing[1],
+  },
+  statusSlot: {
+    width: densityIconBox("md"),
+    height: SIDEBAR_ROW_LINE_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
   },
   rowDot: {
-    width: 8,
-    height: 8,
+    width: 6,
+    height: 6,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface2,
   },
-  rowTitle: {
+  titleLine: {
     flex: 1,
+    height: SIDEBAR_ROW_LINE_HEIGHT,
+    justifyContent: "center",
+  },
+  rowTitle: {
     height: 12,
     borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface2,
-  },
-  rowBadge: {
-    width: 40,
-    height: 20,
-    borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
   },
 }));

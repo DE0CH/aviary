@@ -99,7 +99,6 @@ import {
 } from "@/workspace/file-open";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useForkAgent } from "@/hooks/use-fork-agent";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -378,7 +377,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
     );
     const streamHead = providedStreamHead ?? sessionStreamHead;
-    const forkAgent = useForkAgent({ serverId: resolvedServerId, toast, readOnly });
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
@@ -488,31 +486,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
       handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
-    });
-
-    const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
-      async ({ target, boundary }) => {
-        await forkAgent({
-          agentId,
-          agent: context,
-          workspaceId: context.workspaceId,
-          target,
-          boundary,
-        });
-      },
-    );
-
-    // The in-flight turn forks with no boundary at all: `selectForkContextRows`
-    // projects the whole timeline when neither boundary field is given, so the
-    // fork carries everything up to now, including the response still streaming
-    // in front of the user.
-    const handleForkInFlightTurn: InFlightTurnForkHandler = useStableEvent(async (target) => {
-      await forkAgent({
-        agentId,
-        agent: context,
-        workspaceId: context.workspaceId,
-        target,
-      });
     });
 
     // Freeze stream presentation while this tab slot is hidden to prevent offscreen
@@ -827,6 +800,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 sessionId={agentId}
                 files={readSentFiles(data.metadata)}
                 caption={readSendUserFileCaption(data.detail)}
+                isLastInSequence={isLastInSequence}
               />
             );
           }
@@ -981,13 +955,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           turnIndent: getTurnIndent(layoutItem),
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
-          onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          // CloudCLI's server has no fork of a conversation from a point (docs/paseo-ui.md)
+          onForkAssistantTurn: undefined,
         });
       },
       [
         getTurnIndent,
-        handleForkAssistantTurn,
-        readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
@@ -1022,9 +995,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         ) : null,
       [
-        handleForkAssistantTurn,
-        handleForkInFlightTurn,
-        readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,

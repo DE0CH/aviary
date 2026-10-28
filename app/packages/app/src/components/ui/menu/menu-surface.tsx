@@ -355,8 +355,11 @@ function MenuSheetSurface({
   const { value: surfaceValue } = useSubAnchors();
   const safeAreaInsets = useSafeAreaInsets();
 
+  // The sheet's sides: 4 here + the item's 4 margin + 8 padding + 1 border put the labels at 17 px, about the 16 px
+  // rail the sidebar, the chat and the dialog sheets use on a phone.
   const sheetScrollContentStyle = useMemo(
     () => ({
+      paddingHorizontal: SPACING[1],
       paddingBottom: getMenuSheetBottomPadding({
         safeAreaBottom: safeAreaInsets.bottom,
         breathingRoom: SPACING[1],
@@ -470,11 +473,12 @@ function MenuSheetHeader({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // The title on the rows' label rail: an item's 4 margin + 8 padding + 1 border.
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: theme.spacing[1] + theme.spacing[2] + theme.borderWidth[1],
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[3],
   },

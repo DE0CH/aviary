@@ -55,7 +55,6 @@ import { OpenLocationSection } from "@/screens/settings/open-location/open-locat
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
 import { ChatSection } from "@/screens/settings/chat/chat-section";
 import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
-import { SendingSection } from "@/screens/settings/general/sending-section";
 import {
   useAppSettings,
   useSettings,
@@ -123,7 +122,12 @@ import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { SETTINGS_DESKTOP_SIDEBAR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
-import { densityIconBox, densityIconSize } from "@/styles/density";
+import {
+  density,
+  densityIconBox,
+  densityIconSize,
+  SIDEBAR_ROW_LINE_HEIGHT,
+} from "@/styles/density";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
   type EnableBuiltInDaemonOption,
@@ -225,7 +229,8 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
-// The settings a conversation app has (docs/paseo-ui.md): language and send behaviour, theme, chat display.
+// The settings a conversation app has (docs/paseo-ui.md): language, theme and text sizes, chat display. Sending
+// while a reply runs always queues (composer/index.tsx CHAT_SEND_BEHAVIOR).
 // Hosts, terminals, editors, files, diagnostics and the rest belong to a developer's machine.
 /** One host, configured on the server: no host settings group. */
 const SHOW_HOST_SETTINGS: boolean = false;
@@ -294,29 +299,6 @@ function renderHostSettingsContent(
 // ---------------------------------------------------------------------------
 // Trigger + sidebar style helpers
 // ---------------------------------------------------------------------------
-
-function sidebarItemStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    sidebarStyles.item,
-    Boolean(hovered) && sidebarStyles.itemHovered,
-    pressed && sidebarStyles.itemPressed,
-  ];
-}
-
-function selectedSidebarItemStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    sidebarStyles.item,
-    Boolean(hovered) && sidebarStyles.itemHovered,
-    sidebarStyles.itemSelected,
-    pressed && sidebarStyles.itemPressed,
-  ];
-}
 
 function getActiveLocale(language: string | undefined): SupportedLocale {
   const parsed = parseAppLanguage(language);
@@ -756,41 +738,27 @@ interface SidebarSectionButtonProps {
   onSelect: (section: SettingsSectionSlug) => void;
 }
 
-// Lighter than lucide's default 2px stroke so the nav reads quieter than the content.
-const SIDEBAR_ICON_STROKE_WIDTH = 1.5;
-
+// Each item is the main sidebar's own row (新對話 / 最近刪除 / 搜尋), so the settings list has the same height, inset,
+// icon and label as the sidebar and its conversation list.
 function SidebarSectionButton({
   itemId,
   label,
-  icon: IconComponent,
+  icon,
   isSelected,
   onSelect,
 }: SidebarSectionButtonProps) {
-  const { theme, rt } = useUnistyles();
   const handlePress = useCallback(() => {
     onSelect(itemId);
   }, [onSelect, itemId]);
-  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
-  const labelStyle = useMemo(
-    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
-    [isSelected, theme.colors.foreground],
-  );
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={accessibilityState}
+    <SidebarHeaderRow
+      variant="compact"
+      icon={icon}
+      label={label}
+      isActive={isSelected}
       onPress={handlePress}
-      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
-    >
-      <IconComponent
-        size={densityIconSize(rt, "md")}
-        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-        strokeWidth={SIDEBAR_ICON_STROKE_WIDTH}
-      />
-      <Text style={labelStyle} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
+      testID={`settings-section-${itemId}`}
+    />
   );
 }
 
@@ -805,36 +773,22 @@ interface SidebarHostSectionButtonProps {
 function SidebarHostSectionButton({
   itemId,
   label,
-  icon: IconComponent,
+  icon,
   isSelected,
   onSelect,
 }: SidebarHostSectionButtonProps) {
-  const { theme, rt } = useUnistyles();
   const handlePress = useCallback(() => {
     onSelect(itemId);
   }, [onSelect, itemId]);
-  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
-  const labelStyle = useMemo(
-    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
-    [isSelected, theme.colors.foreground],
-  );
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={accessibilityState}
+    <SidebarHeaderRow
+      variant="compact"
+      icon={icon}
+      label={label}
+      isActive={isSelected}
       onPress={handlePress}
       testID={`settings-host-section-${itemId}`}
-      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
-    >
-      <IconComponent
-        size={densityIconSize(rt, "md")}
-        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-        strokeWidth={SIDEBAR_ICON_STROKE_WIDTH}
-      />
-      <Text style={labelStyle} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
+    />
   );
 }
 
@@ -921,12 +875,12 @@ function HostPicker({
   );
 }
 
-/** A labelled group of sidebar rows. On compact layouts the rows sit together in one island. */
+/** A group of sidebar rows, laid out like the main sidebar's header group (left-sidebar.tsx sidebarHeaderGroup). */
 function SidebarGroup({ label, children }: { label?: string; children: ReactNode }) {
   return (
     <View style={sidebarStyles.group}>
       {label ? <Text style={sidebarStyles.groupLabel}>{label}</Text> : null}
-      <View style={sidebarStyles.island}>{children}</View>
+      {children}
     </View>
   );
 }
@@ -980,7 +934,7 @@ function SettingsSidebar({
 
   const sidebarBody = (
     <>
-      <SidebarGroup label={t("settings.groups.app")}>
+      <SidebarGroup>
         {items.map((item) => (
           <SidebarSectionButton
             key={item.id}
@@ -1014,39 +968,21 @@ function SettingsSidebar({
         </SidebarGroup>
       ) : (
         <SidebarGroup>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.addHost")}
+          <SidebarHeaderRow
+            variant="compact"
+            icon={Plus}
+            label={t("settings.addHost")}
             onPress={onAddHost}
             testID="settings-add-host"
-            style={sidebarItemStyle}
-          >
-            <Plus
-              size={densityIconSize(rt, "md")}
-              color={theme.colors.foregroundMuted}
-              strokeWidth={SIDEBAR_ICON_STROKE_WIDTH}
-            />
-            <Text style={sidebarStyles.label} numberOfLines={1}>
-              {t("settings.addHost")}
-            </Text>
-          </Pressable>
+          />
           {enableBuiltInDaemonOption.visible ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t("settings.enableBuiltInDaemon")}
+            <SidebarHeaderRow
+              variant="compact"
+              icon={Server}
+              label={t("settings.enableBuiltInDaemon")}
               onPress={enableBuiltInDaemonOption.onPress}
               testID="settings-enable-built-in-daemon"
-              style={sidebarItemStyle}
-            >
-              <Server
-                size={densityIconSize(rt, "md")}
-                color={theme.colors.foregroundMuted}
-                strokeWidth={SIDEBAR_ICON_STROKE_WIDTH}
-              />
-              <Text style={sidebarStyles.label} numberOfLines={1}>
-                {t("settings.enableBuiltInDaemon")}
-              </Text>
-            </Pressable>
+            />
           ) : null}
         </SidebarGroup>
       )}
@@ -1357,7 +1293,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return (
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
-              <SendingSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>
           );
@@ -1570,62 +1505,36 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   mobileContainer: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
   },
-  // Compact values draw each group as an island of tiles; desktop keeps a plain list.
+  // The main sidebar's header group: rows inset by their own container (8 + 8), 2 px apart.
   group: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    gap: { xs: theme.spacing[1], md: theme.spacing[0.5] },
+    paddingTop: theme.spacing[2],
+    gap: 2,
   },
+  // The sidebar's section header (sidebar-section-header.tsx): 12 px muted text on the 16 px rail.
   groupLabel: {
-    fontSize: theme.fontSize.base,
+    minHeight: density.rowHeight,
+    lineHeight: density.rowHeight,
+    paddingHorizontal: theme.spacing[4],
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundExtraMuted,
-    paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[2] },
-    paddingVertical: theme.spacing[1],
-  },
-  island: {
-    gap: { xs: 2, md: theme.spacing[0.5] },
-    borderRadius: { xs: theme.borderRadius["2xl"], md: 0 },
-    overflow: "hidden",
-  },
-  item: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: { xs: theme.spacing[3], md: theme.spacing[2] },
-    minHeight: { xs: 52, md: 28 },
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[2] },
-    borderRadius: { xs: 0, md: theme.borderRadius.lg },
-    backgroundColor: { xs: theme.colors.surface1, md: "transparent" },
-  },
-  itemHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  itemSelected: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
+    color: theme.colors.foregroundMuted,
   },
   // The workspace rows' pressed fill.
   itemPressed: {
     backgroundColor: theme.colors.surface2,
   },
-  label: {
-    fontSize: { xs: theme.fontSize.lg, md: theme.fontSize.base },
-    color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.normal,
-    flex: 1,
-  },
+  // The sidebar row geometry (SidebarHeaderRow variant="compact").
   pickerTrigger: {
     flexDirection: "row",
     alignItems: "center",
-    gap: { xs: theme.spacing[3], md: theme.spacing[2] },
-    minHeight: { xs: 52, md: 28 },
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[2] },
-    borderRadius: { xs: 0, md: theme.borderRadius.lg },
-    backgroundColor: { xs: theme.colors.surface1, md: "transparent" },
+    gap: theme.spacing[2],
+    minHeight: density.rowHeight,
+    marginHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.lg,
   },
   pickerTriggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
@@ -1633,7 +1542,8 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   pickerTriggerLabel: {
     flex: 1,
     minWidth: 0,
-    fontSize: { xs: theme.fontSize.lg, md: theme.fontSize.base },
+    fontSize: theme.fontSize.base,
+    lineHeight: SIDEBAR_ROW_LINE_HEIGHT,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.normal,
   },

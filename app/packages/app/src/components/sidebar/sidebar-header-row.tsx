@@ -4,7 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { Shortcut } from "@/components/ui/shortcut";
-import { density, densityIconBox } from "@/styles/density";
+import { density, densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 type SidebarHeaderRowVariant = "header" | "compact" | "inline";
@@ -22,8 +22,8 @@ interface SidebarHeaderRowProps {
   /**
    * "header" (default): a sidebar-height row with its own bottom separator —
    * the lone header at the top of a sidebar (settings "Back to workspace").
-   * "compact": a row with no separator, for entries that
-   * sit in a header group whose wrapper owns the single divider.
+   * "compact": a sidebar list row with no separator (the items at the top of the sidebar, the settings list): the
+   * same height, inset and label as a conversation row.
    * "inline": a full-width row with no inset, for a row inside a padded container such as the
    * sidebar footer.
    */
@@ -59,7 +59,8 @@ export function SidebarHeaderRow({
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
   const isHighlighted = isHovered || isActive;
-  const iconSize = variant === "header" ? "md" : "sm";
+
+  const isListRow = variant === "compact";
 
   let right = trailing ?? null;
   if (right === null && shortcutKeys && isHovered) {
@@ -69,7 +70,13 @@ export function SidebarHeaderRow({
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
       <View
-        style={[styles.row, isHighlighted && styles.rowHighlighted, isPressed && styles.rowPressed]}
+        style={[
+          styles.row,
+          isListRow && styles.rowList,
+          isHighlighted && styles.rowHighlighted,
+          isActive && styles.rowActive,
+          isPressed && styles.rowPressed,
+        ]}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
@@ -84,18 +91,27 @@ export function SidebarHeaderRow({
           accessibilityLabel={accessibilityLabel ?? label}
           accessibilityState={isActive ? SELECTED_STATE : undefined}
           aria-selected={isActive}
-          style={styles.button}
+          style={[styles.button, isListRow && styles.buttonList]}
         >
-          {icon ? (
-            <DensityIcon
-              icon={icon}
-              size={iconSize}
-              color={isHighlighted ? "foreground" : "foregroundMuted"}
-            />
-          ) : (
-            <View style={variant === "header" ? styles.iconSpacer : styles.iconSpacerCompact} />
-          )}
-          <Text style={[styles.label, isHighlighted && styles.labelHighlighted]}>{label}</Text>
+          {/* An sm glyph in an md slot: the slot is a conversation row's status slot, so labels share one rail. */}
+          <View style={styles.iconSlot}>
+            {icon ? (
+              <DensityIcon
+                icon={icon}
+                size="sm"
+                color={isHighlighted ? "foreground" : "foregroundMuted"}
+              />
+            ) : null}
+          </View>
+          <Text
+            style={[
+              styles.label,
+              isListRow && styles.labelList,
+              isHighlighted && styles.labelHighlighted,
+            ]}
+          >
+            {label}
+          </Text>
         </Pressable>
         {right === null ? null : (
           <Pressable
@@ -141,13 +157,20 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    // Same row geometry as the settings sidebar items. Shorter than the header
-    // strip so the hover highlight clears the strip's bottom separator.
+    // Shorter than the header strip so the hover highlight clears the strip's bottom separator.
     minHeight: density.tightRowHeight,
     borderRadius: theme.borderRadius.lg,
   },
+  // A sidebar list row: the conversation rows' geometry (sidebar-workspace-list.tsx workspaceRow).
+  rowList: {
+    minHeight: density.rowHeight,
+  },
   rowHighlighted: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  // A selected conversation row's fill.
+  rowActive: {
+    backgroundColor: theme.colors.surfaceSidebarSelected,
   },
   // The workspace rows' pressed fill.
   rowPressed: {
@@ -161,17 +184,28 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     minHeight: density.tightRowHeight,
     paddingVertical: theme.spacing[1],
-    // Match the project rows' inner padding so the icons align on one vertical
-    // edge with the list below.
+    // The conversation rows' inner padding, so the icons align on one vertical edge with the list below.
     paddingHorizontal: theme.spacing[2],
   },
-  iconSpacer: { width: densityIconBox("md"), height: densityIconBox("md") },
-  iconSpacerCompact: { width: densityIconBox("sm"), height: densityIconBox("sm") },
+  buttonList: {
+    minHeight: density.rowHeight,
+    paddingVertical: theme.spacing[2],
+  },
+  iconSlot: {
+    width: densityIconBox("md"),
+    height: densityIconBox("md"),
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   label: {
     flexShrink: 1,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
+  },
+  labelList: {
+    lineHeight: SIDEBAR_ROW_LINE_HEIGHT,
   },
   labelHighlighted: {
     color: theme.colors.foreground,

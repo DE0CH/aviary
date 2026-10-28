@@ -14,9 +14,13 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedShare = withUnistyles(Share2);
 const ThemedTrash = withUnistyles(Trash2);
 
-const RENAME_ICON = <ThemedPencil size={16} uniProps={mutedColorMapping} />;
-const SHARE_ICON = <ThemedShare size={16} uniProps={mutedColorMapping} />;
-const DELETE_ICON = <ThemedTrash size={16} uniProps={destructiveColorMapping} />;
+// One set for both copies of the conversation menu (this header ⋯ and the sidebar row's ⋯ / right-click), sized to
+// the menu item's 16 px leading slot.
+export const RENAME_ICON = <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+export const SHARE_ICON = <ThemedShare size={16} uniProps={mutedColorMapping} />;
+export const DELETE_ICON = <ThemedTrash size={16} uniProps={destructiveColorMapping} />;
+/** Both copies of the menu are this wide on desktop (a phone opens a sheet). */
+export const CONVERSATION_MENU_WIDTH = 220;
 
 /**
  * The conversation's own actions in the header's ⋯ menu (docs/paseo-ui.md): rename, share and delete (to Recently

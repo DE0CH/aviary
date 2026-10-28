@@ -559,7 +559,6 @@ function MobileSidebar({
         onPress={closeSidebar}
         testID="sidebar-close"
         nativeID="sidebar-close"
-        style={styles.mobileCloseButton}
       />
     ),
     [labels.closeSidebar, closeSidebar],
@@ -582,10 +581,11 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
+        {/* The close X on its own strip, so all three rows below are full width like the conversation rows. */}
+        <View style={styles.mobileCloseStrip}>{closeButton}</View>
         <SidebarNavRows
-          style={styles.sidebarHeaderGroup}
+          style={[styles.sidebarHeaderGroup, styles.sidebarHeaderGroupBelowChrome]}
           onBeforeNavigate={closeSidebar}
-          firstRowTrailing={closeButton}
         />
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -850,8 +850,12 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  mobileCloseButton: {
-    marginRight: theme.spacing[2],
+  mobileCloseStrip: {
+    minHeight: density.tightRowHeight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: theme.spacing[2],
   },
   desktopSidebarBorder: {
     borderRightWidth: 1,

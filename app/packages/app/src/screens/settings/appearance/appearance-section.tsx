@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
+import { SettingsCard, SettingsRow } from "@/components/settings";
 import { useContributedThemes } from "@/appearance/provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -153,6 +154,17 @@ function PluginThemeMenuItem({ option, selected, onSelect }: PluginThemeMenuItem
   );
 }
 
+/**
+ * Code fonts, the syntax theme with its diff preview, the CSS font stack field, the brand/terminal theme variants
+ * (Zinc, Midnight, Claude, Ghostty…) and plugin themes are for developers; staff get 淺色 / 深色 / 系統, the text sizes
+ * and the content width (docs/paseo-ui.md). Code blocks in replies keep the stored defaults.
+ */
+const SHOW_DEVELOPER_APPEARANCE: boolean = false;
+
+const MENU_THEME_OPTIONS = SHOW_DEVELOPER_APPEARANCE
+  ? THEME_OPTIONS
+  : THEME_OPTIONS.filter((option) => option.group === "primary");
+
 interface ThemeRowProps {
   value: AppSettings["theme"];
   pluginThemes: PluginThemeOption[];
@@ -184,10 +196,7 @@ function ThemeRow({
     [builtInValue, selectedPluginTheme],
   );
   return (
-    <View style={settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.theme.title")}</Text>
-      </View>
+    <SettingsRow label={t("settings.appearance.theme.title")}>
       <DropdownMenu>
         <DropdownTrigger
           accessibilityLabel={t("settings.appearance.theme.accessibilityLabel", {
@@ -198,8 +207,8 @@ function ThemeRow({
           {selectedLabel}
         </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200} scrollable>
-          {THEME_OPTIONS.map((option, index) => {
-            const previousOption = THEME_OPTIONS[index - 1];
+          {MENU_THEME_OPTIONS.map((option, index) => {
+            const previousOption = MENU_THEME_OPTIONS[index - 1];
             return (
               <Fragment key={option.name}>
                 {previousOption && previousOption.group !== option.group ? (
@@ -213,8 +222,8 @@ function ThemeRow({
               </Fragment>
             );
           })}
-          {pluginThemes.length > 0 ? <DropdownMenuSeparator /> : null}
-          {pluginThemes.map((option) => (
+          {SHOW_DEVELOPER_APPEARANCE && pluginThemes.length > 0 ? <DropdownMenuSeparator /> : null}
+          {(SHOW_DEVELOPER_APPEARANCE ? pluginThemes : []).map((option) => (
             <PluginThemeMenuItem
               key={option.id}
               option={option}
@@ -224,7 +233,7 @@ function ThemeRow({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-    </View>
+    </SettingsRow>
   );
 }
 
@@ -298,7 +307,6 @@ interface FontSizeRowProps {
   hint: string;
   accessibilityLabel: string;
   draft: string;
-  withBorder?: boolean;
   onChangeDraft: (value: string) => void;
   onCommit: () => void;
 }
@@ -308,16 +316,11 @@ function FontSizeRow({
   hint,
   accessibilityLabel,
   draft,
-  withBorder = true,
   onChangeDraft,
   onCommit,
 }: FontSizeRowProps) {
   return (
-    <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{title}</Text>
-        <Text style={settingsStyles.rowHint}>{hint}</Text>
-      </View>
+    <SettingsRow label={title} hint={hint}>
       <View style={styles.sizeField}>
         <TextInput
           initialValue={draft}
@@ -332,7 +335,7 @@ function FontSizeRow({
         />
         <Text style={styles.unit}>px</Text>
       </View>
-    </View>
+    </SettingsRow>
   );
 }
 
@@ -369,13 +372,10 @@ function ContentWidthRow({ value, onChange }: ContentWidthRowProps) {
   }, [onChange]);
 
   return (
-    <View style={settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.layout.contentWidth")}</Text>
-        <Text style={settingsStyles.rowHint}>
-          {t("settings.appearance.layout.contentWidthHint")}
-        </Text>
-      </View>
+    <SettingsRow
+      label={t("settings.appearance.layout.contentWidth")}
+      hint={t("settings.appearance.layout.contentWidthHint")}
+    >
       <View style={styles.sizeField}>
         {value === null ? null : (
           <Button
@@ -400,7 +400,7 @@ function ContentWidthRow({ value, onChange }: ContentWidthRowProps) {
         />
         <Text style={styles.unit}>px</Text>
       </View>
-    </View>
+    </SettingsRow>
   );
 }
 
@@ -483,7 +483,7 @@ export function AppearanceSection() {
     selected: selectedPluginTheme,
     select: selectPluginTheme,
   } = useContributedThemes();
-  const showInterfaceFontFamilyRow = !isNative;
+  const showInterfaceFontFamilyRow = SHOW_DEVELOPER_APPEARANCE && !isNative;
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
 
@@ -627,7 +627,7 @@ export function AppearanceSection() {
   return (
     <View>
       <SettingsSection title={t("settings.appearance.theme.title")}>
-        <View style={settingsStyles.card}>
+        <SettingsCard>
           <ThemeRow
             value={settings.theme}
             pluginThemes={pluginThemes}
@@ -635,10 +635,10 @@ export function AppearanceSection() {
             onChange={handleThemeChange}
             onSelectPluginTheme={handlePluginThemeChange}
           />
-        </View>
+        </SettingsCard>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>
-        <View style={settingsStyles.card}>
+        <SettingsCard>
           {showInterfaceFontFamilyRow ? (
             <FontFamilyRow
               title={t("settings.appearance.fonts.interfaceFont")}
@@ -657,7 +657,6 @@ export function AppearanceSection() {
             hint={t("settings.appearance.fonts.interfaceSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
             draft={uiBaseSizeDraft}
-            withBorder={showInterfaceFontFamilyRow}
             onChangeDraft={handleUiBaseSizeChange}
             onCommit={commitUiBaseSize}
           />
@@ -669,43 +668,49 @@ export function AppearanceSection() {
             onChangeDraft={handleContentSizeChange}
             onCommit={commitContentSize}
           />
-          <FontFamilyRow
-            title={t("settings.appearance.fonts.codeFont")}
-            hint={t("settings.appearance.fonts.codeFontHint")}
-            accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
-            placeholder={monoFontPlaceholder}
-            value={settings.monoFontFamily}
-            draft={monoFontDraft}
-            withBorder
-            onChangeDraft={setMonoFontDraft}
-            onCommit={commitMonoFontFamily}
-          />
-          <FontSizeRow
-            title={t("settings.appearance.fonts.codeSize")}
-            hint={t("settings.appearance.fonts.codeSizeHint")}
-            accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
-            draft={codeSizeDraft}
-            onChangeDraft={handleCodeSizeChange}
-            onCommit={commitCodeSize}
-          />
-        </View>
+          {SHOW_DEVELOPER_APPEARANCE ? (
+            <>
+              <FontFamilyRow
+                title={t("settings.appearance.fonts.codeFont")}
+                hint={t("settings.appearance.fonts.codeFontHint")}
+                accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
+                placeholder={monoFontPlaceholder}
+                value={settings.monoFontFamily}
+                draft={monoFontDraft}
+                withBorder
+                onChangeDraft={setMonoFontDraft}
+                onCommit={commitMonoFontFamily}
+              />
+              <FontSizeRow
+                title={t("settings.appearance.fonts.codeSize")}
+                hint={t("settings.appearance.fonts.codeSizeHint")}
+                accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
+                draft={codeSizeDraft}
+                onChangeDraft={handleCodeSizeChange}
+                onCommit={commitCodeSize}
+              />
+            </>
+          ) : null}
+        </SettingsCard>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.layout.title")}>
-        <View style={settingsStyles.card}>
+        <SettingsCard>
           <ContentWidthRow
             value={settings.contentMaxWidth}
             onChange={handleContentMaxWidthChange}
           />
-        </View>
+        </SettingsCard>
       </SettingsSection>
-      <SettingsSection title={t("settings.appearance.syntax.title")}>
-        <View style={settingsStyles.card}>
-          <SyntaxRow value={settings.syntaxTheme} onChange={handleSyntaxThemeChange} />
-        </View>
-        <View style={styles.preview}>
-          <AppearancePreview overrides={previewOverrides} />
-        </View>
-      </SettingsSection>
+      {SHOW_DEVELOPER_APPEARANCE ? (
+        <SettingsSection title={t("settings.appearance.syntax.title")}>
+          <View style={settingsStyles.card}>
+            <SyntaxRow value={settings.syntaxTheme} onChange={handleSyntaxThemeChange} />
+          </View>
+          <View style={styles.preview}>
+            <AppearancePreview overrides={previewOverrides} />
+          </View>
+        </SettingsSection>
+      ) : null}
     </View>
   );
 }
@@ -750,28 +755,30 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // The DropdownTrigger's chrome (control-geometry sm): 32 tall, borderAccent, no fill.
   sizeInput: {
     width: 64,
-    minHeight: 36,
-    paddingVertical: theme.spacing[2],
+    height: 32,
+    paddingVertical: 0,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
+    borderColor: theme.colors.borderAccent,
+    backgroundColor: "transparent",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     textAlign: "right",
   },
+  // The DropdownTrigger's chrome (control-geometry sm): 32 tall, borderAccent, no fill.
   widthInput: {
     width: 80,
-    minHeight: 36,
-    paddingVertical: theme.spacing[2],
+    height: 32,
+    paddingVertical: 0,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
+    borderColor: theme.colors.borderAccent,
+    backgroundColor: "transparent",
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     textAlign: "right",

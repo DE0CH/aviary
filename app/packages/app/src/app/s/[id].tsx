@@ -11,6 +11,7 @@ import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { api, ApiError, apiUrl } from "@/yyc/api";
 import { SentFilesCards, type SentFile } from "@/yyc/sent-files";
 import type { Theme } from "@/styles/theme";
+import { BackHeader } from "@/components/headers/back-header";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -85,13 +86,18 @@ export default function SharedConversationRoute() {
   const [view, setView] = useState<ShareView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [continuing, setContinuing] = useState(false);
+  const [continueError, setContinueError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
     api<ShareView>(`/api/jarvis/shares/${encodeURIComponent(id)}`)
       .then(setView)
       .catch((e) =>
-        setError(e instanceof ApiError && e.status === 404 ? t("conversation.shared.gone") : String(e)),
+        setError(
+          e instanceof ApiError && e.status === 404
+            ? t("conversation.shared.gone")
+            : t("conversation.shared.loadFailed"),
+        ),
       );
   }, [id, t]);
 
@@ -105,16 +111,20 @@ export default function SharedConversationRoute() {
       });
       const serverId = hosts[0]?.serverId;
       router.replace(serverId ? buildHostWorkspaceRoute(serverId, `wks_${body.sessionId}`) : "/");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch {
+      setContinueError(t("conversation.shared.continueFailed"));
       setContinuing(false);
     }
-  }, [hosts, id]);
+  }, [hosts, id, t]);
+  const goToChats = useCallback(() => router.replace("/new"), []);
 
   if (error) {
     return (
       <View style={styles.center}>
-        <Text style={styles.muted}>{error}</Text>
+        <Text style={styles.errorText}>{error}</Text>
+        <Button variant="secondary" size="sm" onPress={goToChats}>
+          {t("conversation.shared.back")}
+        </Button>
       </View>
     );
   }
@@ -128,18 +138,19 @@ export default function SharedConversationRoute() {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
-            {view.title}
-          </Text>
-          <Text style={styles.muted}>{t("conversation.shared.byline", { name: view.ownerName })}</Text>
-        </View>
-        <Button variant="default" size="sm" onPress={() => void handleContinue()} disabled={continuing}>
-          {t("conversation.shared.continue")}
-        </Button>
-      </View>
+      {/* The app's own header (back to the conversations), as on 最近刪除 and 設定. */}
+      <BackHeader
+        title={view.title}
+        onBack={goToChats}
+        rightContent={
+          <Button variant="default" size="sm" onPress={() => void handleContinue()} disabled={continuing}>
+            {t("conversation.shared.continue")}
+          </Button>
+        }
+      />
       <ScrollView contentContainerStyle={styles.column}>
+        <Text style={styles.muted}>{t("conversation.shared.byline", { name: view.ownerName })}</Text>
+        {continueError ? <Text style={styles.errorText}>{continueError}</Text> : null}
         {rows.map((row) => {
           if (row.kind === "user") {
             return (
@@ -191,52 +202,45 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     backgroundColor: theme.colors.surface0,
     padding: theme.spacing[6],
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: theme.spacing[4],
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  headerText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
   },
   muted: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
+  errorText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  // The chat column (agent-stream view.tsx, strategy-web.tsx) and its messages (components/message.tsx).
   column: {
     width: "100%",
-    maxWidth: 820,
+    maxWidth: theme.contentMaxWidth,
     alignSelf: "center",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[6],
-    gap: theme.spacing[4],
+    paddingHorizontal: { xs: theme.spacing[4], md: theme.spacing[6] },
+    paddingVertical: theme.spacing[4],
   },
   userRow: {
     alignItems: "flex-end",
+    marginTop: theme.spacing[4],
+    marginBottom: theme.spacing[4],
   },
   userBubble: {
-    maxWidth: "85%",
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.xl,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    flexShrink: 1,
+    backgroundColor: theme.colors.surface3,
+    borderRadius: theme.borderRadius["2xl"],
+    borderTopRightRadius: theme.borderRadius.sm,
+    padding: theme.spacing[4],
   },
   userText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.content,
+    lineHeight: Math.round(theme.fontSize.content * 1.4),
   },
   assistant: {
     width: "100%",
+    paddingVertical: theme.spacing[3],
   },
 }));

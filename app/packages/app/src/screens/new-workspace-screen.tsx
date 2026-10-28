@@ -119,6 +119,7 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
+import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -1688,15 +1689,15 @@ const styles = StyleSheet.create((theme) => ({
   compactSetupSpace: {
     flex: 1,
   },
+  // On the composer box's edge (composer/index.tsx inputAreaContainer paddingHorizontal 16).
   composerTitleContainer: {
     marginBottom: theme.spacing[8],
-    paddingLeft: theme.spacing[6],
-    paddingRight: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
   },
   brandLogo: {
-    width: 48,
-    height: 48,
-    borderRadius: 13,
+    width: YYC_HERO_LOGO_SIZE,
+    height: YYC_HERO_LOGO_SIZE,
+    borderRadius: theme.borderRadius.xl,
     marginBottom: theme.spacing[4],
   },
   composerTitle: {
@@ -1708,5 +1709,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.destructive,
     lineHeight: 20,
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
   },
 }));

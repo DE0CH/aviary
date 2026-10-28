@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import { Info } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/yyc/api";
+import { isWeb } from "@/constants/platform";
+import { ICON_SIZE } from "@/styles/theme";
 
 interface ModelsResponse {
   data?: { models?: { OPTIONS?: Array<{ value?: unknown; label?: unknown }>; DEFAULT?: unknown } };
@@ -56,7 +58,7 @@ export function YycModelLabel() {
       </Text>
       <Tooltip delayDuration={150} enabledOnDesktop enabledOnMobile>
         <TooltipTrigger accessibilityRole="button" accessibilityLabel={t("conversation.model.infoLabel")} hitSlop={8}>
-          <ThemedInfo size={14} uniProps={infoColor} />
+          <ThemedInfo size={isWeb ? ICON_SIZE.sm : ICON_SIZE.md} uniProps={infoColor} />
         </TooltipTrigger>
         <TooltipContent side="top">
           <Text style={styles.tooltipText}>{t("conversation.model.info")}</Text>
@@ -75,12 +77,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
+    // The composer's control size (composer/input/presentation.tsx CONTROL_SIZE).
+    minHeight: 28,
     minWidth: 0,
     flexShrink: 1,
   },
+  // The model chip it replaces (composer/agent-controls/control.tsx toolbarValue).
   label: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
     flexShrink: 1,
   },
   tooltipText: {

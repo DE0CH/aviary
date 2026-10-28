@@ -317,15 +317,12 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
   },
+  // The reply's line height (markdown/styles.ts) on every platform, so a question and its answer read alike.
   text: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
-    ...(isWeb
-      ? {
-          lineHeight: Math.round(theme.fontSize.content * 1.4),
-          overflowWrap: "anywhere" as const,
-        }
-      : {}),
+    lineHeight: Math.round(theme.fontSize.content * 1.4),
+    ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -1273,8 +1270,9 @@ interface NotificationProps {
 }
 
 const notificationStylesheet = StyleSheet.create((theme) => ({
+  // The tool card's and the sent-file card's radius.
   container: {
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
   },
   containerSpacing: {
@@ -1291,7 +1289,7 @@ const notificationStylesheet = StyleSheet.create((theme) => ({
   },
   content: {
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: 10,
+    paddingVertical: theme.spacing[2],
   },
   row: {
     flexDirection: "row",

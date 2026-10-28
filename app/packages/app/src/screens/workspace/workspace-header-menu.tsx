@@ -32,7 +32,10 @@ import {
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
 import { usePluginWorkspaceMenu } from "@/plugins";
-import { ConversationMenuItems } from "@/screens/workspace/conversation-menu-items";
+import {
+  CONVERSATION_MENU_WIDTH,
+  ConversationMenuItems,
+} from "@/screens/workspace/conversation-menu-items";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -120,7 +123,7 @@ export function WorkspaceHeaderMenuDesktop(props: WorkspaceHeaderWorkspaceAction
       >
         <WorkspaceHeaderMenuTriggerIcon />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
+      <DropdownMenuContent align="start" width={CONVERSATION_MENU_WIDTH} testID="workspace-header-menu">
         <WorkspaceHeaderWorkspaceActionItems {...props} />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -226,7 +229,7 @@ export function WorkspaceHeaderMenuMobile({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        width={220}
+        width={CONVERSATION_MENU_WIDTH}
         testID="workspace-header-menu"
         pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}

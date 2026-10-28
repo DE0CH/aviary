@@ -30,6 +30,13 @@ export const density = {
   blockGap: byLayout(12, 16),
 };
 
+/**
+ * The line height of a sidebar row's label. Every sidebar list shares one row geometry: the items at the top of the
+ * sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the settings list are `density.rowHeight` tall with
+ * `theme.spacing[2]` vertical padding, an 8 px inset and a 14 px label on this line height.
+ */
+export const SIDEBAR_ROW_LINE_HEIGHT = 20;
+
 /** Resolves a density value for a prop, which Unistyles cannot resolve on its own. */
 export function resolveDensity<T>(rt: { breakpoint?: string }, value: { xs: T; md: T }): T {
   return isCompactBreakpoint(rt.breakpoint) ? value.xs : value.md;

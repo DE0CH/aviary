@@ -276,6 +276,8 @@ export const en = {
     },
   },
   sessions: {
+    loadFailed: "Could not load sessions",
+    emptyForHost: "No sessions for this host",
     title: "History",
     empty: "No sessions yet",
     noMatches: "No sessions match",
@@ -3145,6 +3147,7 @@ export const en = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    emptyList: "Your conversations will show here.",
     signOut: "Sign out",
     menu: {
       rename: "Rename",
@@ -3163,6 +3166,9 @@ export const en = {
       slow: "This can take a minute or two.",
     },
     shared: {
+      loadFailed: "Couldn't open this conversation.",
+      continueFailed: "Couldn't continue the conversation. Try again.",
+      back: "Back to conversations",
       byline: "Shared by {{name}} (read only)",
       continue: "Continue the conversation",
       gone: "This link is no longer available.",

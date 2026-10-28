@@ -67,6 +67,7 @@ import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
+  EXPLORER_ENABLED,
   isExplorerSidebarOpen,
   openExplorerSidebarView,
   toggleExplorerSidebar,
@@ -3548,6 +3549,7 @@ function WorkspaceScreenContent({
     [],
   );
   const sharedExplorer = useMemo(() => {
+    if (!EXPLORER_ENABLED) return null;
     if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return null;
     const explorerPane = findPaneById(workspaceLayout.root, explorerSidebarPaneId);
     if (!explorerPane) return null;

@@ -16,7 +16,7 @@ import {
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
 import { useAppSettings } from "@/hooks/use-settings";
-import { densityIconBox } from "@/styles/density";
+import { densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -454,7 +454,7 @@ export function SidebarWorkspaceTrailingActionOverlay({
 }
 
 // The status dot centres on the title's first line, so both share its line height.
-const TITLE_LINE_HEIGHT = 20;
+const TITLE_LINE_HEIGHT = SIDEBAR_ROW_LINE_HEIGHT;
 
 const styles = StyleSheet.create((theme) => ({
   workspaceRowContent: {

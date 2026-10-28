@@ -34,6 +34,8 @@ export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/ada
 // sheet body. Rows whose leading icon should line up with the header must
 // match this padding.
 export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
+// On a phone the sheet's sides sit on the 16 px rail the sidebar, the chat and the menu sheets use.
+const SHEET_COMPACT_PADDING_SCALE = 4;
 
 // The header's close button grows outward from its glyph, so the glyph's
 // trailing rail is the content inset plus this padding. Rows whose trailing
@@ -101,7 +103,10 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.surface2,
   },
   headerRow: {
-    paddingHorizontal: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingHorizontal: {
+      xs: theme.spacing[SHEET_COMPACT_PADDING_SCALE],
+      md: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    },
     paddingVertical: theme.spacing[4],
     flexDirection: "row",
     alignItems: "center",
@@ -136,7 +141,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingHorizontal: {
+      xs: theme.spacing[SHEET_COMPACT_PADDING_SCALE],
+      md: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    },
     paddingBottom: theme.spacing[3],
   },
   // Inline variants for InlineHeaderView inside the desktop Combobox popover.
@@ -191,7 +199,11 @@ const styles = StyleSheet.create((theme) => ({
   // The sheet's content inset — one definition for every presentation, always
   // applied through <SheetContent />.
   sheetContent: {
-    padding: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingVertical: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingHorizontal: {
+      xs: theme.spacing[SHEET_COMPACT_PADDING_SCALE],
+      md: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    },
     gap: theme.spacing[4],
   },
   contentGrow: {
@@ -210,7 +222,10 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   footer: {
-    paddingHorizontal: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    paddingHorizontal: {
+      xs: theme.spacing[SHEET_COMPACT_PADDING_SCALE],
+      md: theme.spacing[SHEET_HORIZONTAL_PADDING_SCALE],
+    },
     paddingVertical: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.surface2,

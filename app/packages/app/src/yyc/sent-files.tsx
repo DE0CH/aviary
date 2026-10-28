@@ -65,17 +65,26 @@ export function SentFilesCards({
   files,
   caption,
   urlFor,
+  isLastInSequence,
 }: {
   sessionId: string;
   files: SentFile[];
   caption?: string | null;
+  /** In a chat stream: spaced like a tool row (4 below, 16 after the last of a run). Unset on a shared page. */
+  isLastInSequence?: boolean;
   /** Where a file is read from; the conversation's own files by default (a shared page reads through the share). */
   urlFor?: (file: SentFile, inline: boolean) => string;
 }) {
   if (files.length === 0) return null;
   const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(sessionId, file, inline));
   return (
-    <View style={styles.container} testID="sent-files">
+    <View
+      style={[
+        styles.container,
+        isLastInSequence === undefined ? null : isLastInSequence ? styles.lastInSequence : styles.inSequence,
+      ]}
+      testID="sent-files"
+    >
       {caption ? <Text style={styles.caption}>{caption}</Text> : null}
       {files.map((file) => (
         <SentFileCard key={file.path} file={file} urlFor={resolveUrl} />
@@ -115,7 +124,9 @@ function SentFileCard({
         />
       ) : null}
       <View style={styles.row}>
-        <ThemedFile size={16} uniProps={mutedColorMapping} />
+        <View style={styles.iconSlot}>
+          <ThemedFile size={16} uniProps={mutedColorMapping} />
+        </View>
         <View style={styles.text}>
           <Text style={styles.name} numberOfLines={1}>
             {file.name}
@@ -134,14 +145,26 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: theme.spacing[2],
     maxWidth: 420,
   },
+  // A tool row's spacing (message.tsx expandableBadgeStylesheet).
+  inSequence: {
+    marginTop: 0,
+    marginBottom: theme.spacing[1],
+  },
+  lastInSequence: {
+    marginTop: 0,
+    marginBottom: theme.spacing[4],
+  },
+  // The reply's own text (markdown/styles.ts paragraphs).
   caption: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.content,
+    lineHeight: Math.round(theme.fontSize.content * 1.4),
   },
+  // The user's attachment pill's frame (components/attachment-pill.tsx).
   card: {
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.lg,
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface1,
     overflow: "hidden",
   },
@@ -156,9 +179,14 @@ const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
+    minHeight: 48,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  iconSlot: {
+    width: 18,
+    alignItems: "center",
   },
   text: {
     flex: 1,

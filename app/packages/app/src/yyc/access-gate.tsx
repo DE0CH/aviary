@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AppState, Image, Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
@@ -10,6 +10,11 @@ import { isWeb } from "@/constants/platform";
 import { accessHeaders, accessToken, loadAccessToken, saveAccessToken, subscribeAccessToken } from "@/yyc/access-token";
 import { appScheme, siteOrigin } from "@/yyc/site";
 import { isSignedOutPage, SignedOutShell } from "@/yyc/signed-out-shell";
+import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
+import type { Theme } from "@/styles/theme";
+
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const accentColorMapping = (theme: Theme) => ({ color: theme.colors.accent });
 
 const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
@@ -84,7 +89,7 @@ function NativeAccessGate({ children }: { children: ReactNode }) {
   if (state === "checking") {
     return (
       <View style={styles.screen}>
-        <LoadingSpinner size="small" color="#0A7F95" />
+        <ThemedLoadingSpinner size="small" uniProps={accentColorMapping} />
       </View>
     );
   }
@@ -148,15 +153,16 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[6],
     backgroundColor: theme.colors.surface0,
   },
+  // The new-chat screen's logo and greeting (new-workspace-screen.tsx), so sign-in leads into the same screen.
   logo: {
-    width: 64,
-    height: 64,
-    borderRadius: 17,
+    width: YYC_HERO_LOGO_SIZE,
+    height: YYC_HERO_LOGO_SIZE,
+    borderRadius: theme.borderRadius.xl,
   },
   title: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xl,
-    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize["2xl"],
+    fontWeight: theme.fontWeight.normal,
   },
   error: {
     color: theme.colors.destructive,

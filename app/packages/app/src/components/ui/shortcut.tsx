@@ -6,6 +6,9 @@ import { normalizeDisplayChord } from "@/components/ui/normalize-display-chord";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
+/** Key-chord hints (badges, tooltips, the composer's focus hint) are hidden: staff are not keyboard power users. */
+export const SHOW_SHORTCUT_HINTS: boolean = false;
+
 export function Shortcut({
   keys,
   chord,
@@ -25,7 +28,8 @@ export function Shortcut({
   const textCombinedStyle = useMemo(() => [styles.text, textStyle], [textStyle]);
   const sequenceStyle = useMemo(() => [styles.sequence, style], [style]);
 
-  if (!shortcutsAvailable) {
+  // Staff are not keyboard power users: no key-chord hints anywhere (docs/paseo-ui.md). The keys still work.
+  if (!SHOW_SHORTCUT_HINTS || !shortcutsAvailable) {
     return null;
   }
 
