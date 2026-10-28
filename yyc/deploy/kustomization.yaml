@@ -17,7 +17,8 @@ resources:
   - juicefs.yaml
   # the Claude Code UI (CloudCLI fork + router; README "Claude Code UI"): Deployment ui, Services, network policies
   - ui.yaml
-  # the operator page reads pod health from the API server (web-to-apiserver NetworkPolicy)
+  # the operator page reads pod health from the API server (web-to-apiserver NetworkPolicy); the news stream's live
+  # dashboard reads the operator snapshot (web-from-news-monitor)
   - ops.yaml
   # egress to YYC's Postgres (namespace db) for every pod
   - db.yaml
