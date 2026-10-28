@@ -16,7 +16,7 @@ import type { PendingPermission } from "@/types/shared";
 import { hydrateStreamState, type StreamItem } from "@/types/stream";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { api, ApiError, apiUrl } from "@/yyc/api";
-import { ConversationFilesContext } from "@/yyc/sent-files";
+import { ConversationFilesContext, fileQuery } from "@/yyc/sent-files";
 import type { Theme } from "@/styles/theme";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -101,10 +101,8 @@ export default function SharedConversationRoute() {
     [serverId, view],
   );
   const fileUrl = useCallback(
-    (relativePath: string, inline: boolean) =>
-      apiUrl(
-        `/api/jarvis/shares/${encodeURIComponent(id)}/files/raw?path=${encodeURIComponent(relativePath)}${inline ? "&inline=1" : ""}`,
-      ),
+    (relativePath: string, inline: boolean, sent?: string) =>
+      apiUrl(`/api/jarvis/shares/${encodeURIComponent(id)}/files/raw?${fileQuery(relativePath, inline, sent)}`),
     [id],
   );
 

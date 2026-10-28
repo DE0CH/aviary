@@ -15,6 +15,8 @@ export interface SentFile {
   size: number | null;
   mediaType: string | null;
   isImage: boolean;
+  /** The SendUserFile call it came with: the download reads the file as that send kept it. */
+  sent?: string;
 }
 
 /** The caption Claude gave the files (SendUserFile's `caption` input), if any. */
@@ -40,14 +42,20 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Where a conversation's files are read from: the URL of a path relative to its /workspace. */
-export type ConversationFileUrl = (relativePath: string, inline: boolean) => string;
+/**
+ * Where a conversation's files are read from: the URL of a path relative to its /workspace; with `sent` (a
+ * SendUserFile call's id), the file as that send kept it.
+ */
+export type ConversationFileUrl = (relativePath: string, inline: boolean, sent?: string) => string;
+
+/** The query string of a file URL: path, inline, sent. */
+export function fileQuery(relativePath: string, inline: boolean, sent?: string): string {
+  return `path=${encodeURIComponent(relativePath)}${inline ? "&inline=1" : ""}${sent ? `&sent=${encodeURIComponent(sent)}` : ""}`;
+}
 
 function sessionFileUrl(sessionId: string): ConversationFileUrl {
-  return (relativePath, inline) =>
-    apiUrl(
-      `/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?path=${encodeURIComponent(relativePath)}${inline ? "&inline=1" : ""}`,
-    );
+  return (relativePath, inline, sent) =>
+    apiUrl(`/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?${fileQuery(relativePath, inline, sent)}`);
 }
 
 /**
@@ -90,7 +98,7 @@ export function SentFilesCards({
 }) {
   const fileUrl = useConversationFileUrl(sessionId);
   if (files.length === 0) return null;
-  const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(file.path, inline));
+  const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(file.path, inline, file.sent));
   return (
     <View
       style={[
