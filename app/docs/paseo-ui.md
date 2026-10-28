@@ -102,6 +102,12 @@ arrives.
   rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
   own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
   (`screens/workspace/conversation-menu-items.tsx`).
+- **Sent files keep their version** (Deyao, 2026-10-28): each file card carries its SendUserFile call's id
+  (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, which reads
+  the copy-on-write snapshot the router made before the send (`/jfs/sent/<conversation>/<id>/…`; router.mjs "Sent
+  files", DE0CH/jarvis3 docs/CLAUDE-CODE.md "Sent files"), so a later rewrite or delete in /workspace doesn't change
+  or break it. Cards from before snapshots, and paths named in replies, read the live file. Shares, 「繼續對話」 and forks
+  carry the snapshots; deleting a conversation removes them (`jarvis-clone.ts` clones with `juicefs clone`).
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
 
