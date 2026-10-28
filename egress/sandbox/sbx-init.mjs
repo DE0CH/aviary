@@ -24,9 +24,14 @@ const DIR = "/run/sbx-docker";
 const SOCK = `${DIR}/start.sock`;
 const DOCKER_SOCK = "/var/run/docker.sock";
 
-// Claude Code's managed instructions and MCP servers (docs/CLAUDE-CODE.md): the controller passes them base64-encoded
-// in JARVIS_CLAUDE_MD and JARVIS_CLAUDE_MCP; they are written root-owned, mode 644, and removed from the environment
-for (const [key, file] of [["JARVIS_CLAUDE_MD", "/etc/claude-code/CLAUDE.md"], ["JARVIS_CLAUDE_MCP", "/etc/claude-code/managed-mcp.json"]]) {
+// Claude Code's managed instructions, MCP servers and settings (its hooks; docs/CLAUDE-CODE.md): the controller passes
+// them base64-encoded in JARVIS_CLAUDE_MD, JARVIS_CLAUDE_MCP and JARVIS_CLAUDE_SETTINGS; they are written root-owned,
+// mode 644, and removed from the environment
+for (const [key, file] of [
+  ["JARVIS_CLAUDE_MD", "/etc/claude-code/CLAUDE.md"],
+  ["JARVIS_CLAUDE_MCP", "/etc/claude-code/managed-mcp.json"],
+  ["JARVIS_CLAUDE_SETTINGS", "/etc/claude-code/managed-settings.json"],
+]) {
   const v = process.env[key];
   delete process.env[key];
   if (!v) continue;

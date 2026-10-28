@@ -57,5 +57,26 @@ export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egre
     CLAUDE_CODE_ATTACHMENTS_BY_PATH: "1",
     JARVIS_CLAUDE_MD: Buffer.from(await managedClaudeMd(config)).toString("base64"),
     JARVIS_CLAUDE_MCP: Buffer.from(JSON.stringify(mcp)).toString("base64"),
+    ...sentFileSnapshots(config, egressBase),
+  };
+}
+
+/** The egress route that keeps sent files (docs/CLAUDE-CODE.md, "Sent files"): instances without one send by path only. */
+export const SENT_FILES_ROUTE = "sent-files";
+
+/**
+ * Copy-on-write snapshots of sent files: Claude Code's managed PreToolUse hook on SendUserFile (sandbox
+ * send-file-hook.mjs) asks the UI, through egress's `sent-files` route, to keep each file before it is sent.
+ */
+function sentFileSnapshots(config: ChatConfig, egressBase: string): Record<string, string> {
+  if (!config.egress.routes.some((r) => r.name === SENT_FILES_ROUTE)) return {};
+  const settings = {
+    hooks: {
+      PreToolUse: [{ matcher: "SendUserFile", hooks: [{ type: "command", command: "node /opt/agent/send-file-hook.mjs", timeout: 60 }] }],
+    },
+  };
+  return {
+    JARVIS_SENT_FILES_URL: `${egressBase}/x/${SENT_FILES_ROUTE}/snapshot`,
+    JARVIS_CLAUDE_SETTINGS: Buffer.from(JSON.stringify(settings)).toString("base64"),
   };
 }

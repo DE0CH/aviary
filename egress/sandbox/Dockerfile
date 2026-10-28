@@ -93,7 +93,7 @@ RUN ln -s apt-get /usr/local/bin/apt \
 RUN mkdir -p /home/sandbox/.claude /work /workspace /opt/agent \
  && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
  && usermod -d /home/sandbox node
-COPY agent.mjs sbx-init.mjs /opt/agent/
+COPY agent.mjs sbx-init.mjs send-file-hook.mjs /opt/agent/
 # The image's own setup, readable inside the sandbox so Claude can see exactly what is installed and how (an instance's
 # system prompt points at it): this Dockerfile and the files it installs.
 COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py /opt/image-setup/

@@ -98,3 +98,55 @@ test("Claude Code in a sandbox: egress for the model and tools, SendUserFile on,
   assert.equal(mcp.mcpServers.yyc.url, "http://10.201.1.1:3128/x/tools/mcp");
   assert.match(Buffer.from(env.JARVIS_CLAUDE_MD!, "base64").toString(), /# Your computer/);
 });
+
+test("sent-file snapshots: a sent-files route turns on the SendUserFile hook; the hook asks it and blocks on a failure", async () => {
+  const off = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null" }), "http://10.201.1.1:3128", "tok");
+  assert.equal(off.JARVIS_CLAUDE_SETTINGS, undefined, "no route: no hook");
+  assert.equal(off.JARVIS_SENT_FILES_URL, undefined);
+  const routes = [{ name: "sent-files", upstream: "http://ui:8080/__jarvis/sent-files", identity: true, inject: {} }];
+  const on = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", egress: { routes } }), "http://10.201.1.1:3128", "tok");
+  assert.equal(on.JARVIS_SENT_FILES_URL, "http://10.201.1.1:3128/x/sent-files/snapshot");
+  const settings = JSON.parse(Buffer.from(on.JARVIS_CLAUDE_SETTINGS!, "base64").toString());
+  assert.deepEqual(settings.hooks.PreToolUse[0].matcher, "SendUserFile");
+  assert.equal(settings.hooks.PreToolUse[0].hooks[0].command, "node /opt/agent/send-file-hook.mjs");
+
+  // the hook itself, against a fake UI: relative paths resolved against cwd, the egress token sent, 200 = go on,
+  // anything else = exit 2 with the reason on stderr
+  const { createServer } = await import("node:http");
+  const { spawn } = await import("node:child_process");
+  const seen: any[] = [];
+  let status = 200;
+  const srv = createServer((req, res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      seen.push({ auth: req.headers.authorization, body: JSON.parse(b) });
+      res.writeHead(status).end(status === 200 ? "{}" : "disk full");
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  const port = (srv.address() as import("node:net").AddressInfo).port;
+  const hook = (input: object) =>
+    new Promise<{ status: number | null; stderr: string }>((resolve) => {
+      const p = spawn(process.execPath, [new URL("../sandbox/send-file-hook.mjs", import.meta.url).pathname], {
+        env: { PATH: process.env.PATH!, JARVIS_SENT_FILES_URL: `http://127.0.0.1:${port}/x/sent-files/snapshot`, ANTHROPIC_AUTH_TOKEN: "egress-tok" },
+      });
+      let stderr = "";
+      p.stderr.on("data", (c) => (stderr += c));
+      p.on("close", (code) => resolve({ status: code, stderr }));
+      p.stdin.end(JSON.stringify(input));
+    });
+  try {
+    const send = { tool_name: "SendUserFile", tool_use_id: "toolu_1", cwd: "/workspace", tool_input: { files: ["out/report.pdf", "/workspace/chart.png"] } };
+    assert.equal((await hook(send)).status, 0);
+    assert.deepEqual(seen[0], { auth: "Bearer egress-tok", body: { toolUseId: "toolu_1", files: ["/workspace/out/report.pdf", "/workspace/chart.png"] } });
+    status = 507;
+    const failed = await hook(send);
+    assert.equal(failed.status, 2, "a failed snapshot blocks the send");
+    assert.match(failed.stderr, /could not be saved for the user \(HTTP 507: disk full\)/);
+    assert.equal((await hook({ tool_name: "Bash", tool_input: {} })).status, 0, "other tools pass untouched");
+    assert.equal(seen.length, 2);
+  } finally {
+    srv.close();
+  }
+});

@@ -52,6 +52,8 @@ export interface EgressOptions {
 
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]);
 const CALLER_AUTH = new Set(["authorization", "x-api-key", "cookie", "host"]);
+/** Identity headers only egress sets (route `identity`); a caller's own copies never pass. */
+const IDENTITY = new Set(["x-jarvis-conversation", "x-jarvis-sandbox"]);
 const INDEX_MAX_AGE = 5 * 60_000;
 
 /** What a sandbox (and so the agent) reads when a host is refused: plain, final, no one to ask. */
@@ -518,7 +520,11 @@ export class Egress {
         }
       }
       const passed = route.keepAuth ? new Set([...CALLER_AUTH].filter((h) => h !== "authorization")) : CALLER_AUTH;
-      const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, passed), ...injected, host: up.host, "accept-encoding": "identity" };
+      const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, new Set([...passed, ...IDENTITY])), ...injected, host: up.host, "accept-encoding": "identity" };
+      if (route.identity) {
+        headers["x-jarvis-conversation"] = sb.conversationId ?? "";
+        headers["x-jarvis-sandbox"] = sb.sandboxId;
+      }
       if (typeof forcedBody === "object" && forcedBody) {
         delete headers["transfer-encoding"];
         headers["content-length"] = String(forcedBody.length);

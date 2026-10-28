@@ -24,6 +24,10 @@ export interface EgressRoute {
   /** pass the caller's Authorization on (an upstream that identifies the sandbox by its own egress token: our tools
    * role's MCP endpoint for Claude Code, docs/CLAUDE-CODE.md); otherwise caller credentials never go upstream */
   keepAuth?: boolean;
+  /** send the caller's identity as egress verified it: `X-Jarvis-Conversation` (the sandbox's conversation id) and
+   * `X-Jarvis-Sandbox` (its id), replacing any the caller sent (an upstream that acts on the conversation's files: the
+   * UI's sent-file snapshots, docs/CLAUDE-CODE.md "Sent files") */
+  identity?: boolean;
   inject: Record<string, string>;
   allowPaths?: string[];
 }

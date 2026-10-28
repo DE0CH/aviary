@@ -89,6 +89,10 @@ before(async () => {
         setTimeout(() => res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2,"cost":0.0042}}\n\n'), 20);
         return;
       }
+      if (p === "/sent/snapshot") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ conversation: req.headers["x-jarvis-conversation"] ?? null, sandbox: req.headers["x-jarvis-sandbox"] ?? null, auth: req.headers.authorization ?? null }));
+      }
       if (p === "/api/v1/messages") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
@@ -113,7 +117,10 @@ before(async () => {
       configDeny: ["nope.ranked.test"],
     }),
     maxUploadBytes: 256 * 1024,
-    routes: [{ name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" } }],
+    routes: [
+      { name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
+      { name: "sent-files", upstream: `http://127.0.0.1:${upPort}/sent`, identity: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
+    ],
     cacheDir: join(tmp, "cache"),
     cacheBytes: 50 * 1024 * 1024,
     selfHosts: ["egress.test"],
@@ -416,6 +423,22 @@ test("model route: zero data retention is forced into every request body, whatev
   }
   const refused = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:body");
   assert.equal(refused.length, 4);
+});
+
+test("identity route: the conversation and sandbox egress verified, never the caller's own copies", async () => {
+  const r = await http("/x/sent-files/snapshot", {
+    method: "POST",
+    headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json", "x-jarvis-conversation": "someone-elses", "x-jarvis-sandbox": "forged" },
+    body: "{}",
+  });
+  assert.equal(r.status, 200);
+  const got = JSON.parse(r.body);
+  assert.equal(got.conversation, conv);
+  assert.equal(got.sandbox, sandboxId);
+  assert.equal(got.auth, "Bearer sk-real", "the route's own credential, not the sandbox token");
+  // the model route gets no identity headers, and a caller's copies are dropped there too
+  const m = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "x-jarvis-conversation": "forged" }, body: JSON.stringify({ model: "claude-x" }) });
+  assert.equal(m.status, 200);
 });
 
 test("model route: a body of many MB passes rewritten, one too large is refused before it is read", async () => {
