@@ -1,10 +1,10 @@
 // Cheap operational records: `ops_events` rows for things the other tables don't keep (sandbox start latency and
-// failures; provider vm keeps its own in vm_events), read with SQL (docs/RUNBOOK.md). Never put a secret, a token or a
-// staff message into one.
+// failures; provider vm keeps its own in vm_events; an admin viewing the app as someone, docs/CHAT.md "View as"), read
+// with SQL (docs/RUNBOOK.md). Never put a secret, a token or a staff message into one.
 import type { Db } from "./db.ts";
 import { logError } from "./log.ts";
 
-export type OpsKind = "sandbox_start";
+export type OpsKind = "sandbox_start" | "view_as";
 
 export interface OpsFields {
   ok?: boolean | null;

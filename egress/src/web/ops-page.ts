@@ -2,8 +2,9 @@
 // polls ./snapshot every 10 s. Two halves, never mixed: NOW (is everything fine: the verdict and its reasons, the
 // service's pods, the gateway, hosts that exist, live sandboxes, the scaler, the budget, errors of the last 15 minutes)
 // and HISTORY (a log, newest first: sandbox starts and releases, host and sandbox events, hosts gone, egress errors over
-// 24 h, spend per day/person/model, conversations per staff member). Phones get the two as tabs, wide screens side by
-// side. English (an operator page), proper nouns as recorded, times in Hong Kong time. Stacked rows, no tables.
+// 24 h, spend per day/person/model, conversations per staff member with a 「View as」 button each, the view-as log).
+// Phones get the two as tabs, wide screens side by side. 「View as」 is a form POST to the UI router's
+// /api/jarvis/view-as in a new tab (docs/CHAT.md "View as"). English (an operator page), proper nouns as recorded, times in Hong Kong time. Stacked rows, no tables.
 // The script sits in a template literal: no dollar-brace, and backslashes doubled.
 export const OPS_PAGE = `<!doctype html>
 <html lang="en">
@@ -76,6 +77,9 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .err{color:var(--bad);font-size:12.5px;margin-top:6px}
 .bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}
 code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+form.va{margin:0 0 0 auto}
+form.va button{font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+form.va button:hover{border-color:var(--fg)}
 </style>
 </head>
 <body class="tab-now">
@@ -266,10 +270,18 @@ function renderHistory(d){
     return '<div class="row"><span class="main"><code>' + esc(m.model) + '</code></span><span class="r">' + usd(m.today) + " · " + usd(m.month) + " · " + usd(m.sinceBudget) + "</span>" + f("calls this month", m.callsMonth) + "</div>";
   }, "No model calls this month."), null));
 
-  // people
+  // people, each with View as (opens YYC AI as that person in a new tab; the router allows it for admins only)
   out.push(card("Conversations per staff member", "counted from sandboxes (first message); most recent first", rows(d.people, function(u){
-    return '<div class="row"><span class="main">' + who(u.owner) + (u.former ? ' <span class="chip">not a user now</span>' : "") + "</span>" + f("total", u.total) + f("today", u.today) + f("7 days", u.last7d) + f("open now", u.live) + f("deleted", u.deleted) + f("last active", u.lastActiveAt ? when(u.lastActiveAt) : "never") + "</div>";
+    var va = u.former ? "" : '<form class="va" method="post" action="/api/jarvis/view-as" target="_blank"><input type="hidden" name="user" value="' + esc(u.owner) + '"><button type="submit" title="Open YYC AI as this person in a new tab (read-only; recorded below)">View as</button></form>';
+    return '<div class="row"><span class="main">' + who(u.owner) + (u.former ? ' <span class="chip">not a user now</span>' : "") + "</span>" + f("total", u.total) + f("today", u.today) + f("7 days", u.last7d) + f("open now", u.live) + f("deleted", u.deleted) + f("last active", u.lastActiveAt ? when(u.lastActiveAt) : "never") + va + "</div>";
   }, "No users."), E.people));
+
+  // view as: each view and everything sent as someone (staff are not told)
+  var VA = {start: "started viewing", message: "sent a message as", conversation: "started a conversation as"};
+  out.push(card("View as", "admins viewing YYC AI as someone, and what they sent as them; latest 100", rows(d.viewAs, function(x){
+    return '<div class="row">' + t(x.at) + '<span class="main' + (x.event === "start" ? "" : " warmc") + '">' + who(x.admin) + " " + esc(VA[x.event] || x.event) + " " + who(x.user) + "</span>" +
+      (x.conversationId ? f("conversation", "<code>" + short(x.conversationId) + "</code>") : "") + (x.chars != null ? f("length", x.chars + " chars") : "") + (x.session ? f("view", "<code>" + short(x.session) + "</code>") : "") + "</div>";
+  }, "Nobody has viewed as anyone."), E["view as"]));
   return out.join("");
 }
 

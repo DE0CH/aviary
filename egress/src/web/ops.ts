@@ -5,7 +5,8 @@
 //   the hosts that exist, live sandboxes, the scaler's plan and warm hints, the budget, errors of the last 15 minutes,
 //   and `health`, a verdict over all of it (ok / warming / watch / problem, with the reasons);
 // - history: hosts gone, vm_events, sandbox starts and releases with timings, egress errors over 24 h, spend per
-//   day/person/model, conversations per staff member.
+//   day/person/model, conversations per staff member (each with 「View as」), and view-as sessions with every message
+//   and conversation an admin sent as someone (docs/CHAT.md "View as").
 // Sources: Postgres (sandboxes, vm_hosts, vm_events, kv demand hints, egress_log, ops_events) and, with provider vm,
 // the scaler's own plan. Never returns message contents: owners, conversation ids, hosts, counts, costs and timings.
 import type { Db } from "../common/db.ts";
@@ -154,7 +155,7 @@ export class OpsSnapshot {
       const { rows } = await db.query<{ d: Date; m: Date }>("select date_trunc('day', now()) as d, date_trunc('month', now()) as m");
       ({ d: day, m: month } = rows[0]!);
     }
-    const [service, sandboxes, hosts, scaler, recent, budget, hostsGone, events, starts, egress, people] = await Promise.all([
+    const [service, sandboxes, hosts, scaler, recent, budget, hostsGone, events, starts, egress, people, viewAs] = await Promise.all([
       section("service", () => this.#service()),
       section("sandboxes", () => this.#sandboxes()),
       section("hosts", () => this.#hosts()),
@@ -166,6 +167,7 @@ export class OpsSnapshot {
       section("sandbox starts", () => this.#starts()),
       section("egress", () => this.#egress()),
       section("people", () => this.#people(day)),
+      section("view as", () => this.#viewAs()),
     ]);
     const cfg = this.#deps.config;
     const d: Row = {
@@ -191,6 +193,7 @@ export class OpsSnapshot {
       starts,
       egress,
       people,
+      viewAs,
       errors,
     };
     d.health = healthOf(d);
@@ -473,6 +476,16 @@ export class OpsSnapshot {
       recent: recent.map((r) => ({ ...r, at: iso(r.at) })),
       deniedHosts: denied.map((r) => ({ ...r, lastAt: iso(r.lastAt) })),
     };
+  }
+
+  /** History: view-as sessions and what was sent as someone (ops_events kind view_as), newest first, the latest 100. */
+  async #viewAs(): Promise<Row[]> {
+    const { rows } = await this.#deps.db.query(
+      `select at, conversation_id as "conversationId", detail->>'event' as event, detail->>'admin' as admin,
+              detail->>'user' as "user", detail->>'session' as session, (detail->>'chars')::int as chars
+         from ops_events where kind = 'view_as' order by id desc limit 100`,
+    );
+    return rows.map((r) => ({ ...r, at: iso(r.at) }));
   }
 
   /**

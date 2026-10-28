@@ -57,13 +57,15 @@ export class WebApp {
    * JARVIS_CC_TOKEN: `POST /internal/cc/sandbox {owner, conversation}` → the conversation's sandbox (made if needed),
    * `POST /internal/cc/touch {conversation}` (it is in use: its idle time
    * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted), `POST /internal/cc/warm
-   * {owner, conversation?}` (the user is typing; #warm).
+   * {owner, conversation?}` (the user is typing; #warm), `POST /internal/cc/view-as {…}` (an admin viewing as someone;
+   * #viewAs).
    */
   async #claudeCodeInternal(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     checkCcToken(req);
     if (req.method !== "POST") throw new HttpError(405, "method not allowed");
     const b = await readJson(req);
     if (path === "/internal/cc/warm") return this.#warm(res, b);
+    if (path === "/internal/cc/view-as") return this.#viewAs(res, b);
     const conv = String(b.conversation || "");
     if (!UUID_RE.test(conv)) throw bad("conversation must be a uuid");
     if (path === "/internal/cc/sandbox") {
@@ -101,6 +103,33 @@ export class WebApp {
     const hinted = !rows.length && !this.draining;
     if (hinted) await noteSandboxDemand(this.deps.db, owner);
     return sendJson(res, 200, { ok: true, hinted });
+  }
+
+  /**
+   * View as (docs/CHAT.md, "View as"): the UI router records an admin starting to view the app as a staff member
+   * (`event` start), and that person's CloudCLI process records each message (`message`) and new conversation
+   * (`conversation`) the admin sends as them, before sending it; nothing is sent unless this answers 200. Rows are
+   * ops_events kind view_as, kept for good, shown in the operator page's History. `admin` must be in config `admins`
+   * and `user` a user, checked here too. Never the message itself: its length only.
+   */
+  async #viewAs(res: ServerResponse, b: Record<string, unknown>): Promise<void> {
+    const admin = String(b.admin || "").trim().toLowerCase();
+    const user = String(b.user || "").trim().toLowerCase();
+    const event = String(b.event || "");
+    if (!this.deps.config.admins.includes(admin)) throw new HttpError(403, "view as: admins only");
+    if (!isUser(this.deps.config, user)) throw new HttpError(403, "not a user of this instance");
+    if (!["start", "message", "conversation"].includes(event)) throw bad("event must be start, message or conversation");
+    const conv = b.conversation == null || b.conversation === "" ? null : String(b.conversation).toLowerCase();
+    if (conv !== null && !UUID_RE.test(conv)) throw bad("conversation must be a uuid");
+    if (event !== "start" && conv === null) throw bad("a send names its conversation");
+    const session = String(b.session || "").slice(0, 64);
+    const chars = Number.isInteger(b.chars) && (b.chars as number) >= 0 ? (b.chars as number) : null;
+    // awaited and allowed to fail: the caller must not go on unless this is recorded (opsEvent never throws)
+    await this.deps.db.query("insert into ops_events (kind, ok, conversation_id, detail) values ('view_as', true, $1, $2)", [
+      conv,
+      JSON.stringify({ admin, user, event, session, ...(chars === null ? {} : { chars }) }),
+    ]);
+    return sendJson(res, 200, { ok: true });
   }
 
   /**

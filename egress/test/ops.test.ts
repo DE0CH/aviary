@@ -269,3 +269,27 @@ test("the page keeps now and history apart", async () => {
   assert.match(html, /History \(log\)/);
   assert.match(html, /Asia\/Hong_Kong/);
 });
+
+test("view as: the UI's records (start, message, conversation) need the token, an admin and a user; History lists them; the page has the button", async () => {
+  const post = (body: Record<string, unknown>, token = CC_TOKEN) =>
+    fetch(base + "/internal/cc/view-as", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const conv = randomUUID();
+  assert.equal((await post({ event: "start", admin: A, user: B, session: "v1" }, "wrong")).status, 401);
+  assert.equal((await post({ event: "start", admin: B, user: A, session: "v1" })).status, 403, "not an admin");
+  assert.equal((await post({ event: "start", admin: A, user: "mallory@example.org", session: "v1" })).status, 403, "not a user");
+  assert.equal((await post({ event: "delete", admin: A, user: B, session: "v1" })).status, 400);
+  assert.equal((await post({ event: "message", admin: A, user: B, session: "v1" })).status, 400, "a send names its conversation");
+  assert.equal((await post({ event: "message", admin: A, user: B, session: "v1", conversation: "x" })).status, 400);
+  assert.equal((await post({ event: "start", admin: " Alice@Example.org ", user: B, session: "v1" })).status, 200);
+  assert.equal((await post({ event: "conversation", admin: A, user: B, session: "v1", conversation: conv, chars: 8 })).status, 200);
+  assert.equal((await post({ event: "message", admin: A, user: B, session: "v1", conversation: conv, chars: 5 })).status, 200);
+  // a zone no earlier test asked for: the snapshot is cached 4 s per zone
+  const d = (await (await get("/internal/ops/snapshot?tz=Europe/London", as(A))).json()) as any;
+  assert.deepEqual(
+    d.viewAs.slice(0, 3).map((x: any) => [x.event, x.admin, x.user, x.conversationId, x.chars, x.session]),
+    [["message", A, B, conv, 5, "v1"], ["conversation", A, B, conv, 8, "v1"], ["start", A, B, null, null, "v1"]],
+  );
+  const html = await (await get("/internal/ops/", as(A))).text();
+  assert.match(html, /action="\/api\/jarvis\/view-as" target="_blank"/);
+  assert.match(html, /"View as"/);
+});
