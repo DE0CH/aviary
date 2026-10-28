@@ -10,6 +10,10 @@ import { BackHeader } from "@/components/headers/back-header";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
+import {
+  createPaneFocusContextValue,
+  PaneFocusProvider,
+} from "@/panels/pane-context";
 import { useHosts } from "@/runtime/host-runtime";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import type { PendingPermission } from "@/types/shared";
@@ -20,7 +24,9 @@ import { ConversationFilesContext, fileQuery } from "@/yyc/sent-files";
 import type { Theme } from "@/styles/theme";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const mutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 /** One row of a conversation's timeline, as the bridge builds it (server/modules/paseo/paseo-timeline.ts). */
 interface ShareTimelineRow {
@@ -45,7 +51,17 @@ interface ShareView {
 
 const EMPTY_ITEMS: StreamItem[] = [];
 const NO_PERMISSIONS = new Map<string, PendingPermission>();
-const FINISHED: TurnPresentation = { isActive: false, isCancelling: false, startedAt: null, turnId: null };
+const FINISHED: TurnPresentation = {
+  isActive: false,
+  isCancelling: false,
+  startedAt: null,
+  turnId: null,
+};
+// The page is one focused pane (the chat view's find bar, ChatFind, reads it)
+const FOCUSED = createPaneFocusContextValue({
+  isWorkspaceFocused: true,
+  isPaneFocused: true,
+});
 
 /** The rows as the chat's stream items, through the same reducer a conversation's history goes through
  * (timeline/session-stream-reducers.ts processTimelineResponse). */
@@ -62,7 +78,7 @@ function shareStreamItems(view: ShareView): StreamItem[] {
       timestamp: new Date(row.timestamp),
       timelineCursor: { epoch, seq: row.seqEnd },
     })),
-    { source: "canonical" },
+    { source: "canonical" }
   );
 }
 
@@ -89,31 +105,53 @@ export default function SharedConversationRoute() {
         setError(
           e instanceof ApiError && e.status === 404
             ? t("conversation.shared.gone")
-            : t("conversation.shared.loadFailed"),
-        ),
+            : t("conversation.shared.loadFailed")
+        )
       );
   }, [id, t]);
 
-  const streamItems = useMemo(() => (view ? shareStreamItems(view) : EMPTY_ITEMS), [view]);
+  const streamItems = useMemo(
+    () => (view ? shareStreamItems(view) : EMPTY_ITEMS),
+    [view]
+  );
   const serverId = hosts[0]?.serverId ?? "";
   const context = useMemo<AgentScreenAgent>(
-    () => ({ serverId, id: view ? `share-${view.id}` : "share", provider: "claude", status: "idle", cwd: "/workspace" }),
-    [serverId, view],
+    () => ({
+      serverId,
+      id: view ? `share-${view.id}` : "share",
+      provider: "claude",
+      status: "idle",
+      cwd: "/workspace",
+    }),
+    [serverId, view]
   );
   const fileUrl = useCallback(
     (relativePath: string, inline: boolean, sent?: string) =>
-      apiUrl(`/api/jarvis/shares/${encodeURIComponent(id)}/files/raw?${fileQuery(relativePath, inline, sent)}`),
-    [id],
+      apiUrl(
+        `/api/jarvis/shares/${encodeURIComponent(id)}/files/raw?${fileQuery(
+          relativePath,
+          inline,
+          sent
+        )}`
+      ),
+    [id]
   );
 
   const handleContinue = useCallback(async () => {
     setContinuing(true);
     try {
-      const body = await api<{ sessionId: string }>(`/api/jarvis/shares/${encodeURIComponent(id)}/continue`, {
-        method: "POST",
-      });
+      const body = await api<{ sessionId: string }>(
+        `/api/jarvis/shares/${encodeURIComponent(id)}/continue`,
+        {
+          method: "POST",
+        }
+      );
       const serverId = hosts[0]?.serverId;
-      router.replace(serverId ? buildHostWorkspaceRoute(serverId, `wks_${body.sessionId}`) : "/");
+      router.replace(
+        serverId
+          ? buildHostWorkspaceRoute(serverId, `wks_${body.sessionId}`)
+          : "/"
+      );
     } catch {
       setContinueError(t("conversation.shared.continueFailed"));
       setContinuing(false);
@@ -146,28 +184,39 @@ export default function SharedConversationRoute() {
         title={view.title}
         onBack={goToChats}
         rightContent={
-          <Button variant="default" size="sm" onPress={() => void handleContinue()} disabled={continuing}>
+          <Button
+            variant="default"
+            size="sm"
+            onPress={() => void handleContinue()}
+            disabled={continuing}
+          >
             {t("conversation.shared.continue")}
           </Button>
         }
       />
       <View style={styles.byline}>
-        <Text style={styles.muted}>{t("conversation.shared.byline", { name: view.ownerName })}</Text>
-        {continueError ? <Text style={styles.errorText}>{continueError}</Text> : null}
+        <Text style={styles.muted}>
+          {t("conversation.shared.byline", { name: view.ownerName })}
+        </Text>
+        {continueError ? (
+          <Text style={styles.errorText}>{continueError}</Text>
+        ) : null}
       </View>
       <View style={styles.stream}>
-        <ConversationFilesContext.Provider value={fileUrl}>
-          <AgentStreamView
-            agentId={context.id}
-            serverId={serverId}
-            context={context}
-            streamItems={streamItems}
-            turnPresentation={FINISHED}
-            pendingPermissions={NO_PERMISSIONS}
-            isAuthoritativeHistoryReady
-            readOnly
-          />
-        </ConversationFilesContext.Provider>
+        <PaneFocusProvider value={FOCUSED}>
+          <ConversationFilesContext.Provider value={fileUrl}>
+            <AgentStreamView
+              agentId={context.id}
+              serverId={serverId}
+              context={context}
+              streamItems={streamItems}
+              turnPresentation={FINISHED}
+              pendingPermissions={NO_PERMISSIONS}
+              isAuthoritativeHistoryReady
+              readOnly
+            />
+          </ConversationFilesContext.Provider>
+        </PaneFocusProvider>
       </View>
     </View>
   );
