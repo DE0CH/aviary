@@ -108,6 +108,17 @@ arrives.
   files", DE0CH/jarvis3 docs/CLAUDE-CODE.md "Sent files"), so a later rewrite or delete in /workspace doesn't change
   or break it. Cards from before snapshots, and paths named in replies, read the live file. Shares, 「繼續對話」 and forks
   carry the snapshots; deleting a conversation removes them (`jarvis-clone.ts` clones with `juicefs clone`).
+- **View as** (Deyao, 2026-10-28; router.mjs "View as", DE0CH/jarvis3 docs/CHAT.md "View as"): the operator page's
+  「View as」 opens the app in a new tab at `/#jarvis-view-as=<token>`. `yyc/view-as.ts` keeps the token in that tab's
+  sessionStorage (the admin's other tabs stay themselves) and adds it as `?jarvis_view_as=` to every `apiUrl` (REST,
+  file links) and the web socket (`runtime/websocket-factory.web.ts`); the router serves the person's own process as
+  them, so the list, conversations, files and shares are theirs. The tab is read-only: the composer's send (button,
+  Enter, queue) and the new-conversation entries (sidebar 新對話 dimmed, the palette item, the shortcut) do nothing, and
+  typing warms nothing. `yyc/view-as-box.tsx` above the composer is the one box only the admin sees (English, "Visible
+  only to you"): whose view it is, and the override switch (off on every load; the box turns red while on) that lets
+  the admin send and start conversations as the person. The bridge (`paseo-connection.ts`, viewer from the router's
+  `X-Jarvis-Viewer`) records each such send in Ops History before sending (`server/modules/jarvis/jarvis-view-as.ts`;
+  no record, no send) and refuses renames, deletes and restores on that socket. The messages look like the person's own.
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
 
