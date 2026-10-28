@@ -183,6 +183,11 @@ export interface ChatConfig {
   tools: {
     exa?: { keyEnv: string };
     tikhub?: { keyEnv: string };
+    /**
+     * AnyAPI (getanyapi.com): one key for its catalog of read-only scraping and data APIs (Facebook, LinkedIn, Google,
+     * commerce, …); the anyapi_* tools. `denySkus`: catalog ids never run here (default none: the catalog only reads).
+     */
+    anyapi?: { keyEnv: string; baseUrl?: string; denySkus?: string[] };
     wisers?: { url: string; accessClientIdEnv: string; accessClientSecretEnv: string };
     /**
      * The instance's own page capture, asked first by web_fetch (unless the model asks for the page `original`): POST

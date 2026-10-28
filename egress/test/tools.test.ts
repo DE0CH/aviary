@@ -67,6 +67,7 @@ before(async () => {
     tools: {
       exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
       tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
+      anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
       wisers: { url: `${fakes.url}/wisers`, accessClientIdEnv: "W_ID", accessClientSecretEnv: "W_SECRET" },
       capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
       upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"] }],
@@ -75,7 +76,7 @@ before(async () => {
   deps = {
     config,
     db: t.db,
-    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up", CAP: "cap-token" },
+    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", ANY_KEY: "any-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up", CAP: "cap-token" },
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
@@ -113,7 +114,7 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "yyc_posts_search"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
@@ -193,6 +194,39 @@ test("news_search: through the relay with the service token, polling a running j
   const failed = await call("news_search", { query: "fail" });
   assert.equal(failed.isError, true);
   assert.match(textOf(failed), /Wisers 沒有回應.*quota may have been used: maybe/);
+});
+
+test("anyapi: find an API, read its input, run it (cost logged), re-read the result free; refusals", async () => {
+  const found = textOf(await call("anyapi_search", { query: "facebook page posts" }));
+  assert.match(found, /facebook\.profile_posts — Facebook Profile Posts/);
+  assert.match(found, /up to USD 0\.0012 per request \(up to USD 0\.0067 when it fails over/);
+  const described = textOf(await call("anyapi_describe", { api: "facebook.profile_posts" }));
+  assert.match(described, /"inputSchema"/);
+  assert.doesNotMatch(described, /lanes|latency/, "source lanes and latency are left out");
+  const ran = await call("anyapi_run", { api: "facebook.profile_posts", input: { url: "https://facebook.com/hkgov" }, max_items: 2 });
+  assert.equal(ran.isError, undefined);
+  assert.match(textOf(ran), /Cost: USD 0\.0012/);
+  assert.match(textOf(ran), /result_id: res_123/);
+  assert.equal((textOf(ran).match(/帖文/g) ?? []).length, 2, "max_items reached AnyAPI");
+  const run = fakes.seen.findLast((x) => x.path.startsWith("/anyapi/v1/run/"))!;
+  assert.equal(run.path, "/anyapi/v1/run/facebook.profile_posts?max_items=2");
+  assert.deepEqual(run.body, { url: "https://facebook.com/hkgov" });
+  const { rows } = await t.db.query("select cost_usd, ok from tool_calls where tool = 'anyapi_run' order by id desc limit 1");
+  assert.deepEqual(rows[0], { cost_usd: "0.0012", ok: true });
+  const again = await call("anyapi_result", { result_id: "res_123", fields: "text" });
+  assert.match(textOf(again), /re-read, free/);
+  assert.doesNotMatch(textOf(again), /Cost:/, "a re-read costs nothing and is not counted again");
+  assert.equal((await t.db.query("select cost_usd from tool_calls where tool = 'anyapi_result' order by id desc limit 1")).rows[0].cost_usd, null);
+  // refusals: a bad id, a denied API, AnyAPI's own input error, an empty balance
+  assert.equal((await call("anyapi_run", { api: "../v1/balance", input: {} })).isError, true);
+  assert.match(textOf(await call("anyapi_run", { api: "facebook.marketplace", input: {} })), /not offered here/);
+  assert.match(textOf(await call("anyapi_run", { api: "facebook.profile_posts", input: {} })), /input\.url is required/);
+  fakes.anyapiBroke = true;
+  try {
+    assert.match(textOf(await call("anyapi_search", { query: "x" })), /balance has run out/);
+  } finally {
+    fakes.anyapiBroke = false;
+  }
 });
 
 test("social_search: TikHub posts, fallback endpoint, platform check", async () => {

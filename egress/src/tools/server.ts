@@ -19,6 +19,10 @@ export function toolList(deps: Deps, upstreams: Upstream[]): ToolDef[] {
     web_fetch: true,
     news_search: !!t.wisers,
     social_search: !!t.tikhub,
+    anyapi_search: !!t.anyapi,
+    anyapi_describe: !!t.anyapi,
+    anyapi_run: !!t.anyapi,
+    anyapi_result: !!t.anyapi,
   };
   const own = BUILTIN.filter((d) => have[d.name]);
   const names = new Set(own.map((d) => d.name));

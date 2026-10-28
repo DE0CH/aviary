@@ -1,4 +1,4 @@
-// Fakes for the tools role's tests: Exa, TikHub, the Wisers relay and an upstream MCP server, all on one local HTTP server (routes by path prefix). Each records what it was asked.
+// Fakes for the tools role's tests: Exa, TikHub, AnyAPI, the Wisers relay and an upstream MCP server, all on one local HTTP server (routes by path prefix). Each records what it was asked.
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -14,6 +14,7 @@ export interface Fakes {
   seen: Seen[];
   exaHasText: boolean;
   relayRunsFor: number; // how many job polls the relay answers "running" before "ok"
+  anyapiBroke: boolean; // AnyAPI answers 402 insufficient_balance
   close(): Promise<void>;
 }
 
@@ -25,7 +26,7 @@ const body = (req: IncomingMessage) =>
   });
 
 export async function startFakes(): Promise<Fakes> {
-  const f: Fakes = { url: "", seen: [], exaHasText: true, relayRunsFor: 1, close: async () => {} };
+  const f: Fakes = { url: "", seen: [], exaHasText: true, relayRunsFor: 1, anyapiBroke: false, close: async () => {} };
   let polls = 0;
   const server: Server = createServer(async (req, res) => {
     const raw = await body(req);
@@ -63,6 +64,32 @@ export async function startFakes(): Promise<Fakes> {
       if (target.includes("known-site")) return json(200, { kind: "capture", url: target, title: "新讀文章", text: "即時擷取 ".repeat(10), source: "明報", captured_at: "2026-10-27T15:00:00+08:00" });
       if (target.includes("capture-down")) return json(502, { error: "down" });
       return json(200, { kind: "none", why: "no source reads this site" });
+    }
+    // ---- AnyAPI (shapes from its OpenAPI document)
+    if (u.pathname.startsWith("/anyapi/")) {
+      if (req.headers.authorization !== "Bearer any-key") return json(401, { error: "invalid API key", code: "unauthorized" });
+      if (f.anyapiBroke) return json(402, { error: "this API key is paused because your balance ran out; it resumes when you add funds", code: "insufficient_balance" });
+      const p = u.pathname.slice("/anyapi".length);
+      if (p === "/catalog/search") {
+        return json(200, {
+          ranking: "semantic",
+          total: 2,
+          results: [
+            { slug: "facebook.profile_posts", name: "Facebook Profile Posts", description: "List a Facebook page's recent posts.", pricing: { from: { model: "flat", unit: "request", maxUsd: 0.0012 }, failoverMaxUsd: 0.0067 } },
+            { slug: "facebook.search_posts", name: "Facebook Post Search", description: "Search public posts.", pricing: { from: { model: "flat", unit: "request", maxUsd: 0.03 } } },
+          ],
+        });
+      }
+      if (p === "/v1/apis/facebook.profile_posts") {
+        return json(200, { id: "facebook.profile_posts", name: "Facebook Profile Posts", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }, lanes: [{ source: "x" }], latency: { p50: 3 } });
+      }
+      if (p === "/v1/run/facebook.profile_posts" && req.method === "POST") {
+        if (!parsed?.url) return json(400, { error: "input.url is required", code: "invalid_input" });
+        const items = Array.from({ length: 3 }, (_, i) => ({ text: `帖文 ${i}`, url: `https://facebook.com/p/${i}` }));
+        return json(200, { costUsd: 0.0012, resultId: "res_123", items: 3, output: { found: true, data: { posts: u.searchParams.get("max_items") ? items.slice(0, Number(u.searchParams.get("max_items"))) : items } } });
+      }
+      if (p === "/v1/results/res_123") return json(200, { costUsd: 0.0012, items: 3, output: { found: true, data: { posts: [{ text: "帖文 0" }] } } });
+      return json(404, { error: "unknown API", code: "not_found" });
     }
     // ---- TikHub
     if (u.pathname.startsWith("/tikhub/api/v1/")) {

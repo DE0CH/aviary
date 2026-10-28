@@ -358,6 +358,114 @@ export async function tikhubSearch(deps: Deps, platform: string, keyword: string
   throw lastErr ?? new Error("TikHub failed");
 }
 
+// ---- AnyAPI ---------------------------------------------------------------------------------------------------------
+// REST (api.getanyapi.com, OpenAPI at /openapi.json): GET /catalog/search, GET /v1/apis/{sku}, POST /v1/run/{sku},
+// GET /v1/results/{id} (a paid result re-read free for about 15 minutes). Every run reports its own costUsd.
+
+/** A catalog id: platform.action (e.g. facebook.search_posts). */
+export const ANYAPI_SKU = /^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_.-]*$/;
+
+function anyapiBase(deps: Deps): string {
+  return (deps.config.tools.anyapi?.baseUrl ?? "https://api.getanyapi.com").replace(/\/$/, "");
+}
+
+/** AnyAPI's refusals in words the model can pass on (its JSON error body: {error, code}). */
+async function anyapiCall<T>(deps: Deps, path: string, init: RequestInit, timeoutMs: number): Promise<T> {
+  const k = key(deps, deps.config.tools.anyapi?.keyEnv, "AnyAPI");
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await deps.fetch(anyapiBase(deps) + path, {
+      ...init,
+      headers: { authorization: `Bearer ${k}`, accept: "application/json", "user-agent": "yyc-ai/1", ...(init.body ? { "content-type": "application/json" } : {}) },
+      signal: ac.signal,
+    });
+    const body = await r.text();
+    let j: unknown;
+    try {
+      j = JSON.parse(body);
+    } catch {
+      throw new Error(`AnyAPI answered HTTP ${r.status} with something that is not JSON: ${body.slice(0, 200)}`);
+    }
+    if (!r.ok) {
+      const e = j as { error?: unknown; code?: unknown; message?: unknown };
+      const code = String(e.code ?? "");
+      if (r.status === 402 || code === "insufficient_balance") {
+        throw new Error("AnyAPI's balance has run out, so its APIs can't be used until it is topped up (the admin has to add funds).");
+      }
+      throw new Error(`AnyAPI answered HTTP ${r.status}${code ? ` (${code})` : ""}: ${String(e.error ?? e.message ?? body).slice(0, 400)}`);
+    }
+    return j as T;
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw new Error(`AnyAPI did not answer within ${Math.round(timeoutMs / 1000)} s`);
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export interface AnyapiCatalogHit {
+  id?: string;
+  sku?: string;
+  slug?: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  platform?: string;
+  price?: unknown;
+  pricing?: unknown;
+  priceUsd?: unknown;
+}
+
+export async function anyapiSearch(deps: Deps, q: { query: string; platform?: string; category?: string; limit: number }): Promise<{ results: AnyapiCatalogHit[]; total: number }> {
+  const u = new URLSearchParams({ q: q.query, limit: String(q.limit) });
+  if (q.platform) u.set("platform", q.platform);
+  if (q.category) u.set("category", q.category);
+  const r = await anyapiCall<{ results?: AnyapiCatalogHit[]; total?: number }>(deps, `/catalog/search?${u}`, { method: "GET" }, 30_000);
+  return { results: r.results ?? [], total: r.total ?? (r.results ?? []).length };
+}
+
+export async function anyapiDescribe(deps: Deps, sku: string): Promise<Record<string, unknown>> {
+  return await anyapiCall<Record<string, unknown>>(deps, `/v1/apis/${encodeURIComponent(sku)}`, { method: "GET" }, 30_000);
+}
+
+export interface AnyapiRun {
+  output?: unknown;
+  costUsd?: number;
+  resultId?: string;
+  items?: number;
+  hint?: string;
+  error?: unknown;
+  message?: unknown;
+}
+
+/** Shaping AnyAPI applies to a result (its fields / max_items / summary / jq query parameters). */
+export interface AnyapiShape {
+  fields?: string;
+  maxItems?: number;
+  summary?: boolean;
+  jq?: string;
+}
+
+function shapeQuery(s: AnyapiShape): string {
+  const u = new URLSearchParams();
+  if (s.fields) u.set("fields", s.fields);
+  if (s.maxItems) u.set("max_items", String(s.maxItems));
+  if (s.summary) u.set("summary", "true");
+  if (s.jq) u.set("jq", s.jq);
+  const q = u.toString();
+  return q ? `?${q}` : "";
+}
+
+export async function anyapiRun(deps: Deps, sku: string, input: Record<string, unknown>, shape: AnyapiShape): Promise<AnyapiRun> {
+  // AnyAPI's published latency for slow scrapes reaches about a minute; it fails over between sources by itself
+  return await anyapiCall<AnyapiRun>(deps, `/v1/run/${encodeURIComponent(sku)}${shapeQuery(shape)}`, { method: "POST", body: JSON.stringify(input) }, 120_000);
+}
+
+export async function anyapiResult(deps: Deps, id: string, shape: AnyapiShape): Promise<AnyapiRun> {
+  return await anyapiCall<AnyapiRun>(deps, `/v1/results/${encodeURIComponent(id)}${shapeQuery(shape)}`, { method: "GET" }, 30_000);
+}
+
 // ---- Wisers (through the YYC relay) ---------------------------------------------------------------------------------
 
 export interface WisersArgs {

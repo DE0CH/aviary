@@ -2,8 +2,8 @@
 // changes anything outside). Descriptions are what the model reads: written for a Hong Kong news / PR assistant,
 // saying when to use each and what comes back.
 import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
-import { exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch } from "./providers.ts";
-import { int, str, text, ToolInputError, type Deps, type ToolDef } from "./types.ts";
+import { ANYAPI_SKU, anyapiDescribe, anyapiResult, anyapiRun, anyapiSearch, exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch, type AnyapiRun, type AnyapiShape } from "./providers.ts";
+import { int, str, text, ToolInputError, type Deps, type ToolDef, type ToolResult } from "./types.ts";
 
 const DATE = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
 const isDate = (s: string) => !s || /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -24,7 +24,8 @@ export const webSearch: ToolDef = {
     "event. Works in Traditional/Simplified Chinese and English; for Hong Kong topics search in Chinese too (e.g. 「李家超 施政報告」). " +
     "Narrow with `since`/`until` (YYYY-MM-DD) for recent news and `include_domains` (e.g. info.gov.hk, rthk.hk, " +
     "hk01.com, mingpao.com). Follow up with web_fetch to read a result in full. For Hong Kong print/newspaper archives " +
-    "use news_search (Wisers); for 小紅書/抖音/微博/X/Threads posts use social_search.",
+    "use news_search (Wisers); for 小紅書/抖音/微博/X/Threads posts use social_search; for Facebook, LinkedIn and other " +
+    "platforms' data use anyapi_search then anyapi_run.",
   inputSchema: {
     type: "object",
     properties: {
@@ -287,4 +288,167 @@ export const socialSearch: ToolDef = {
   },
 };
 
-export const BUILTIN: ToolDef[] = [webSearch, webFetch, newsSearch, socialSearch];
+// ---- AnyAPI: its whole catalog of read-only data APIs, found with anyapi_search and run with anyapi_run ------------
+
+/** The most result text one call hands the model; past it the model narrows with fields / max_items / jq. */
+const ANYAPI_TEXT_MAX = 40_000;
+
+const SHAPE_PROPS = {
+  fields: { type: "string", description: "Keep only these output fields, comma-separated (e.g. text,url,authorName,createdUtc)." },
+  max_items: { type: "integer", minimum: 1, maximum: 500, description: "Keep at most this many result rows." },
+  summary: { type: "boolean", description: "Return a compact summary of the result instead of every row." },
+  jq: { type: "string", description: "A jq expression to reshape the output (e.g. [.data.items[] | {url, text}])." },
+};
+
+function shapeOf(args: Record<string, unknown>): AnyapiShape {
+  const fields = str(args, "fields");
+  const jq = str(args, "jq");
+  return {
+    ...(fields ? { fields } : {}),
+    ...(args.max_items !== undefined ? { maxItems: int(args, "max_items", 50, 1, 500) } : {}),
+    ...(args.summary === true ? { summary: true } : {}),
+    ...(jq ? { jq } : {}),
+  };
+}
+
+/** AnyAPI's static pricing ({from: {maxUsd, unit}, failoverMaxUsd}) in a line. */
+function priceText(p: unknown): string {
+  if (p === undefined || p === null) return "";
+  if (typeof p !== "object") return String(p);
+  const o = p as { from?: { maxUsd?: number; unit?: string; maxPer1kUsd?: number; model?: string }; failoverMaxUsd?: number };
+  if (!o.from || typeof o.from.maxUsd !== "number") return JSON.stringify(p);
+  const unit = o.from.unit ?? "request";
+  return `up to USD ${o.from.maxUsd} per ${unit}${typeof o.failoverMaxUsd === "number" ? ` (up to USD ${o.failoverMaxUsd} when it fails over to a backup source)` : ""}`;
+}
+
+function skuOf(args: Record<string, unknown>, deps: Deps): string {
+  const sku = str(args, "api", true).trim().toLowerCase();
+  if (!ANYAPI_SKU.test(sku)) throw new ToolInputError("api is a catalog id like facebook.search_posts (find one with anyapi_search)");
+  if ((deps.config.tools.anyapi?.denySkus ?? []).includes(sku)) throw new ToolInputError(`${sku} is not offered here`);
+  return sku;
+}
+
+function runText(r: AnyapiRun, how: string): ToolResult {
+  const body = JSON.stringify(r.output ?? null, null, 1);
+  const cut = body.length > ANYAPI_TEXT_MAX;
+  const head = [
+    how,
+    r.costUsd !== undefined ? `Cost: USD ${r.costUsd}.` : "",
+    typeof r.items === "number" ? `Rows: ${r.items}.` : "",
+    r.resultId ? `result_id: ${r.resultId} (anyapi_result re-reads or reshapes it free for about 15 minutes).` : "",
+    r.hint ? `Hint: ${r.hint}` : "",
+    cut ? `The output is ${body.length} characters; showing the first ${ANYAPI_TEXT_MAX}. Narrow it with fields, max_items or jq (anyapi_result does that free with the result_id).` : "",
+  ].filter(Boolean).join("\n");
+  return { content: [{ type: "text", text: `${head}\n\n${cut ? body.slice(0, ANYAPI_TEXT_MAX) : body}` }], ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
+}
+
+export const anyapiSearchTool: ToolDef = {
+  name: "anyapi_search",
+  title: "Find a data API (AnyAPI)",
+  description:
+    "Search AnyAPI's catalog of about 470 read-only data APIs for one that gets what you need, then run it with anyapi_run. " +
+    "It covers what the other tools don't: Facebook (search posts or pages, a page's or profile's posts, a post's comments, " +
+    "group posts, events, ads library), LinkedIn (company and people pages, posts), Instagram, TikTok, YouTube, X, Reddit, " +
+    "Threads, Bluesky, Douyin, 小紅書 and 微博 (profiles, posts, comments, followers, video transcripts), Google (web, news, " +
+    "images, Maps, Scholar), app stores, Amazon and other shops, job postings, company data, and any web page as Markdown. " +
+    "Describe the task in plain words (e.g. \"facebook page posts\", \"youtube video transcript\"); results list each API's " +
+    "id, what it does and its price per call. Searching is free.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "What you want to get, in plain words." },
+      platform: { type: "string", description: "Only APIs for this platform (e.g. facebook, linkedin, google)." },
+      limit: { type: "integer", minimum: 1, maximum: 30, default: 10 },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  annotations: { title: "Find a data API (AnyAPI)", readOnlyHint: true, openWorldHint: true },
+  async run(args, ctx) {
+    const r = await anyapiSearch(ctx.deps, { query: str(args, "query", true), platform: str(args, "platform") || undefined, limit: int(args, "limit", 10, 1, 30) });
+    const deny = new Set(ctx.deps.config.tools.anyapi?.denySkus ?? []);
+    const hits = r.results.filter((h) => !deny.has(String(h.id ?? h.sku ?? h.slug ?? "")));
+    if (!hits.length) return text("No matching API. Try other words, or a wider description of the data.");
+    const lines = hits.map((h, i) => {
+      const id = h.id ?? h.sku ?? h.slug ?? "?";
+      const price = priceText(h.pricing ?? h.price ?? h.priceUsd);
+      return [`${i + 1}. ${id}${h.name ? ` — ${h.name}` : ""}`, h.description ? `   ${String(h.description).slice(0, 300)}` : "", price ? `   Price: ${price}` : ""].filter(Boolean).join("\n");
+    });
+    return { content: [{ type: "text", text: `${r.total} matching APIs; showing ${hits.length}. Read one's input with anyapi_describe before running it.\n\n${lines.join("\n\n")}` }] };
+  },
+};
+
+export const anyapiDescribeTool: ToolDef = {
+  name: "anyapi_describe",
+  title: "Read a data API's input (AnyAPI)",
+  description:
+    "Get one AnyAPI API's full contract: its input fields (the JSON Schema anyapi_run's `input` must match exactly; unknown " +
+    "fields are refused), what it returns, and its price per call. Free.",
+  inputSchema: {
+    type: "object",
+    properties: { api: { type: "string", description: "The catalog id, e.g. facebook.profile_posts." } },
+    required: ["api"],
+    additionalProperties: false,
+  },
+  annotations: { title: "Read a data API's input (AnyAPI)", readOnlyHint: true, openWorldHint: true },
+  async run(args, ctx) {
+    const d = await anyapiDescribe(ctx.deps, skuOf(args, ctx.deps));
+    // the contract the model needs; AnyAPI's source lanes, latency windows and the like are left out
+    const keep = ["id", "slug", "name", "description", "howItWorks", "heavy", "pricing", "inputSchema", "outputSchema"];
+    const body = JSON.stringify(Object.fromEntries(keep.filter((k) => d[k] !== undefined).map((k) => [k, d[k]])), null, 1);
+    return text(body.length > ANYAPI_TEXT_MAX ? body.slice(0, ANYAPI_TEXT_MAX) : body);
+  },
+};
+
+export const anyapiRunTool: ToolDef = {
+  name: "anyapi_run",
+  title: "Get data with an API (AnyAPI)",
+  description:
+    "Run one AnyAPI API (found with anyapi_search, input read with anyapi_describe) and get its data as JSON: e.g. " +
+    "facebook.search_posts {query}, facebook.profile_posts {url}, facebook.post_comments {url}, linkedin.company_posts, " +
+    "youtube.transcript. It only reads public data; nothing is posted or changed anywhere. Each run is a paid call (the " +
+    "price anyapi_describe shows), so run what the task needs rather than every variant. Use fields / max_items / jq to " +
+    "keep big results small; the result_id it returns lets anyapi_result reshape the same result again for free.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      api: { type: "string", description: "The catalog id, e.g. facebook.search_posts." },
+      input: { type: "object", description: "The API's input, exactly as its schema (anyapi_describe) says." },
+      ...SHAPE_PROPS,
+    },
+    required: ["api", "input"],
+    additionalProperties: false,
+  },
+  annotations: { title: "Get data with an API (AnyAPI)", readOnlyHint: true, openWorldHint: true },
+  async run(args, ctx) {
+    const sku = skuOf(args, ctx.deps);
+    const input = args.input;
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new ToolInputError("input is a JSON object (the API's input fields)");
+    const r = await anyapiRun(ctx.deps, sku, input as Record<string, unknown>, shapeOf(args));
+    return runText(r, `AnyAPI ${sku}.`);
+  },
+};
+
+export const anyapiResultTool: ToolDef = {
+  name: "anyapi_result",
+  title: "Re-read an AnyAPI result",
+  description:
+    "Read a result anyapi_run returned again, free, for about 15 minutes after the run, optionally reshaped with fields / " +
+    "max_items / summary / jq (e.g. to see the rows a long result left out, or just the fields you need).",
+  inputSchema: {
+    type: "object",
+    properties: { result_id: { type: "string", description: "The result_id anyapi_run gave." }, ...SHAPE_PROPS },
+    required: ["result_id"],
+    additionalProperties: false,
+  },
+  annotations: { title: "Re-read an AnyAPI result", readOnlyHint: true, openWorldHint: true },
+  async run(args, ctx) {
+    const id = str(args, "result_id", true).trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new ToolInputError("result_id is the id anyapi_run returned");
+    const r = await anyapiResult(ctx.deps, id, shapeOf(args));
+    const { costUsd: _original, ...free } = r;
+    return runText(free, "AnyAPI result (re-read, free).");
+  },
+};
+
+export const BUILTIN: ToolDef[] = [webSearch, webFetch, newsSearch, socialSearch, anyapiSearchTool, anyapiDescribeTool, anyapiRunTool, anyapiResultTool];
