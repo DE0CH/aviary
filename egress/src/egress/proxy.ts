@@ -18,6 +18,7 @@ import { Identities, tokenFrom, type SandboxId } from "./identity.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard, GuardError, normHost } from "./netguard.ts";
 import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
+import { BodyBudget, forceZdr, type ModelBody } from "./modelbody.ts";
 
 export interface EgressOptions {
   db: Db;
@@ -73,6 +74,7 @@ export class Egress {
   readonly #self: Set<string>;
   readonly #apt: Set<string>;
   readonly #sockets = new Set<Duplex>();
+  readonly #bodies: BodyBudget;
   readonly counters = { requests: 0, denied: 0, tunnels: 0, bytesUp: 0, bytesDown: 0 };
   draining = false;
 
@@ -82,6 +84,7 @@ export class Egress {
     const threat = o.resolver ? null : new ThreatResolver();
     this.#resolve = o.resolver ?? ((h) => threat!.resolve(h));
     this.#maxUp = o.maxUploadBytes ?? 8 * 1024 * 1024;
+    this.#bodies = new BodyBudget(MODEL_BODY_MAX);
     this.#ports = new Set(o.allowedPorts ?? [80, 443]);
     this.#up = o.upstreams ?? { pypi: "https://pypi.org", pypiFiles: "https://files.pythonhosted.org", npm: "https://registry.npmjs.org" };
     // 127.0.0.1/localhost too: a hosted sandbox's proxy is its local end of the wire (sandbox/agent.mjs), so pip and
@@ -482,82 +485,97 @@ export class Egress {
       return this.log.add({ ...row, status: 500, decision: "deny:config" });
     }
     // The model route (OpenRouter) gets zero data retention forced into every request body: no config, caller or
-    // conversation can route a model call to an endpoint that retains or collects prompts.
-    let forcedBody: Buffer | null = null;
-    if (isModel && req.method !== "GET" && req.method !== "HEAD") {
-      const raw = await readBody(req, MODEL_BODY_MAX);
-      row.model = raw === null ? null : requestedModel(raw);
-      const refusal = raw === null ? null : await this.#modelRefusal(raw);
-      if (refusal) {
-        text(res, refusal.status, JSON.stringify({ type: "error", error: { type: refusal.type, message: refusal.message } }), { "content-type": "application/json" });
-        return this.#deny(row, refusal.decision, refusal.status);
+    // conversation can route a model call to an endpoint that retains or collects prompts. The body is held in memory
+    // for that (once, about its own size: modelbody.ts), within the #bodies budget, so large conversations queue
+    // instead of taking egress past its memory limit.
+    let forcedBody: ModelBody | "too-large" | "invalid" | null = null;
+    let release: (() => void) | null = null;
+    try {
+      if (isModel && req.method !== "GET" && req.method !== "HEAD") {
+        const declared = declaredLength(req);
+        if (declared !== null && declared > MODEL_BODY_MAX) {
+          text(res, 413, JSON.stringify({ type: "error", error: { type: "request_too_large", message: `egress: a model request body is limited to ${MODEL_BODY_MAX} bytes` } }), { "content-type": "application/json", connection: "close" });
+          return this.#deny(row, "deny:upload", 413);
+        }
+        release = await this.#bodies.take(declared ?? MODEL_BODY_MAX);
+        // forcedBody is the one reference to the body: it is dropped once the body is sent (below), before the budget
+        // is given back, while the response may stream for minutes
+        forcedBody = await readModelBody(req, this.#o.reasoning);
+        if (forcedBody === "too-large") {
+          text(res, 413, JSON.stringify({ type: "error", error: { type: "request_too_large", message: `egress: a model request body is limited to ${MODEL_BODY_MAX} bytes` } }), { "content-type": "application/json" });
+          return this.#deny(row, "deny:upload", 413);
+        }
+        if (forcedBody === "invalid") {
+          text(res, 400, '{"type":"error","error":{"type":"invalid_request_error","message":"egress: a model request body must be a JSON object"}}', { "content-type": "application/json" });
+          return this.#deny(row, "deny:body", 400);
+        }
+        const model = forcedBody.model;
+        row.model = typeof model === "string" && model ? model.slice(0, 200) : null;
+        const refusal = await this.#modelRefusal(model);
+        if (refusal) {
+          text(res, refusal.status, JSON.stringify({ type: "error", error: { type: refusal.type, message: refusal.message } }), { "content-type": "application/json" });
+          return this.#deny(row, refusal.decision, refusal.status);
+        }
       }
-      const forced = raw === null ? null : forceZdr(raw, this.#o.reasoning);
-      if (forced === null) {
-        text(res, 400, '{"type":"error","error":{"type":"invalid_request_error","message":"egress: a model request body must be a JSON object"}}', { "content-type": "application/json" });
-        return this.#deny(row, "deny:body", 400);
+      const passed = route.keepAuth ? new Set([...CALLER_AUTH].filter((h) => h !== "authorization")) : CALLER_AUTH;
+      const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, passed), ...injected, host: up.host, "accept-encoding": "identity" };
+      if (typeof forcedBody === "object" && forcedBody) {
+        delete headers["transfer-encoding"];
+        headers["content-length"] = String(forcedBody.length);
+        headers["content-type"] = "application/json";
       }
-      forcedBody = forced;
-    }
-    const passed = route.keepAuth ? new Set([...CALLER_AUTH].filter((h) => h !== "authorization")) : CALLER_AUTH;
-    const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, passed), ...injected, host: up.host, "accept-encoding": "identity" };
-    if (forcedBody) {
-      delete headers["transfer-encoding"];
-      headers["content-length"] = String(forcedBody.length);
-      headers["content-type"] = "application/json";
-    }
-    const basePath = up.pathname.replace(/\/$/, "");
-    const target = `${basePath}${rest}${m[3] ?? ""}`;
-    const sniff = new CostSniffer();
-    let bytesUp = 0;
-    let bytesDown = 0;
-    await new Promise<void>((resolve) => {
-      const mk = up.protocol === "https:" ? httpsRequest : httpRequest;
-      const out = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path: target, headers }, (ures) => {
-        sniff.contentType = String(ures.headers["content-type"] || "");
-        res.writeHead(ures.statusCode ?? 502, stripHop(ures.headers));
-        res.flushHeaders();
-        ures.on("data", (c: Buffer) => {
-          bytesDown += c.length;
-          sniff.push(c);
-          res.write(c);
+      const basePath = up.pathname.replace(/\/$/, "");
+      const target = `${basePath}${rest}${m[3] ?? ""}`;
+      const sniff = new CostSniffer();
+      let bytesUp = 0;
+      let bytesDown = 0;
+      await new Promise<void>((resolve) => {
+        const mk = up.protocol === "https:" ? httpsRequest : httpRequest;
+        const out = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path: target, headers }, (ures) => {
+          sniff.contentType = String(ures.headers["content-type"] || "");
+          res.writeHead(ures.statusCode ?? 502, stripHop(ures.headers));
+          res.flushHeaders();
+          ures.on("data", (c: Buffer) => {
+            bytesDown += c.length;
+            sniff.push(c);
+            res.write(c);
+          });
+          ures.on("end", () => res.end());
+          ures.on("error", () => res.destroy());
+          res.on("close", () => {
+            if (!ures.complete) ures.destroy();
+            this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
+            // a model call's cost counts toward the budget at once (Claude Code's next call is usually < 1 s away)
+            if (isModel) void this.log.flush();
+            resolve();
+          });
         });
-        ures.on("end", () => res.end());
-        ures.on("error", () => res.destroy());
-        res.on("close", () => {
-          if (!ures.complete) ures.destroy();
-          this.log.add({ ...row, status: ures.statusCode ?? null, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: sniff.cost() });
-          // a model call's cost counts toward the budget at once (Claude Code's next call is usually < 1 s away)
-          if (isModel) void this.log.flush();
+        out.on("error", (e) => {
+          logError("egress route upstream", e, { route: route.name });
+          if (!res.headersSent) text(res, 502, `egress: route ${route.name} upstream unreachable\n`);
+          else res.destroy();
+          this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
           resolve();
         });
+        if (typeof forcedBody === "object" && forcedBody) {
+          bytesUp = forcedBody.length;
+          for (const part of forcedBody.parts) out.write(part);
+          forcedBody = null;
+          out.on("finish", () => release?.());
+          out.end();
+        } else {
+          req.on("data", (c: Buffer) => (bytesUp += c.length));
+          req.pipe(out);
+        }
       });
-      out.on("error", (e) => {
-        logError("egress route upstream", e, { route: route.name });
-        if (!res.headersSent) text(res, 502, `egress: route ${route.name} upstream unreachable\n`);
-        else res.destroy();
-        this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
-        resolve();
-      });
-      if (forcedBody) {
-        bytesUp = forcedBody.length;
-        out.end(forcedBody);
-      } else {
-        req.on("data", (c: Buffer) => (bytesUp += c.length));
-        req.pipe(out);
-      }
-    });
+    } finally {
+      release?.();
+    }
   }
 
   /** A model call this instance doesn't make: a model outside config `models`/`titleModel`, or the budget is used up. */
-  async #modelRefusal(raw: Buffer): Promise<{ status: number; type: string; message: string; decision: string } | null> {
+  async #modelRefusal(model: unknown): Promise<{ status: number; type: string; message: string; decision: string } | null> {
     if (this.#o.models?.length) {
-      let model: unknown;
-      try {
-        model = (JSON.parse(raw.toString("utf8")) as { model?: unknown })?.model;
-      } catch {
-        model = undefined;
-      }
       // a client may send the id without its provider prefix ("claude-sonnet-5.5" for "anthropic/claude-sonnet-5.5")
       const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
       const ok = typeof model === "string" && this.#o.models.some((m) => m === model || bare(m) === model);
@@ -596,68 +614,45 @@ export class Egress {
   }
 }
 
+/** The largest model request body, and the bytes of model request bodies egress holds at once: a request waits until
+ * its body fits (one without a Content-Length counts as the largest). */
 const MODEL_BODY_MAX = 64 * 1024 * 1024;
 
-/** The "model" of a model request body (logged in egress_log.model), null when there is none. */
-export function requestedModel(raw: Buffer): string | null {
-  try {
-    const m = (JSON.parse(raw.toString("utf8")) as { model?: unknown })?.model;
-    return typeof m === "string" && m ? m.slice(0, 200) : null;
-  } catch {
-    return null;
-  }
+/** A model request's body read and rewritten (modelbody.ts), in a frame of its own so that nothing but the result
+ * keeps the raw bytes alive. */
+async function readModelBody(req: IncomingMessage, plan: ReasoningPlan | undefined): Promise<ModelBody | "too-large" | "invalid"> {
+  const raw = await readBody(req, MODEL_BODY_MAX);
+  if (raw === null) return "too-large";
+  return forceZdr(raw, plan) ?? "invalid";
 }
 
-/** OpenRouter provider options every model request carries (docs: guides/features/zdr "Per-Request ZDR Enforcement",
- * guides/routing/provider-selection): only Zero Data Retention endpoints, none that collect data. Set over whatever the
- * caller sent, so `zdr: false` or `data_collection: "allow"` in a request can't loosen it. */
-export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" } as const;
-
-/** The request body with FORCED_PROVIDER merged into `provider` and the model's thinking level from `plan` applied;
- * null when the body is not a JSON object. */
-export function forceZdr(raw: Buffer, plan?: ReasoningPlan): Buffer | null {
-  let body: unknown;
-  try {
-    body = JSON.parse(raw.toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
-  const b = body as Record<string, unknown>;
-  const p = b.provider && typeof b.provider === "object" && !Array.isArray(b.provider) ? (b.provider as Record<string, unknown>) : {};
-  b.provider = { ...p, ...FORCED_PROVIDER };
-  applyReasoning(b, plan);
-  return Buffer.from(JSON.stringify(b));
+/** The request's Content-Length, or null when it has none (chunked). */
+function declaredLength(req: IncomingMessage): number | null {
+  const v = req.headers["content-length"];
+  if (v === undefined) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
-/** Sets thinking on a model request: chat turns carry tools, titles and Claude Code's quick calls don't. On
- * OpenRouter's Messages API only Anthropic's `thinking: {type: "disabled"}` turns a reasoning model's thinking off
- * (`reasoning.effort: "none"` is ignored there), so "none" is sent that way and any other level as `reasoning.effort`. */
-function applyReasoning(b: Record<string, unknown>, plan: ReasoningPlan | undefined): void {
-  if (!plan || typeof b.model !== "string") return;
-  const model = b.model;
-  const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
-  const entry = plan[model] ?? Object.entries(plan).find(([id]) => bare(id) === model)?.[1];
-  const effort = Array.isArray(b.tools) && b.tools.length ? entry?.withTools : entry?.withoutTools;
-  if (!effort) return;
-  if (effort === "none") {
-    b.thinking = { type: "disabled" };
-    delete b.reasoning;
-  } else {
-    b.reasoning = { effort };
-  }
-}
-
-/** The whole request body, or null when it exceeds max bytes. */
+/** The whole request body, or null when it exceeds max bytes; read into one Buffer of the declared length when there is
+ * one (no copy of the chunks). Rejects when the client goes away first. */
 function readBody(req: IncomingMessage, max: number): Promise<Buffer | null> {
   return new Promise((resolve, reject) => {
+    if (req.destroyed) return reject(new Error("egress: the client closed the request"));
+    const declared = declaredLength(req);
+    const fixed = declared !== null && declared <= max ? Buffer.allocUnsafe(declared) : null;
     const parts: Buffer[] = [];
     let n = 0;
     req.on("data", (c: Buffer) => {
+      if (fixed) {
+        if (n + c.length <= fixed.length) c.copy(fixed, n);
+      } else if (n + c.length <= max) parts.push(c);
       n += c.length;
-      if (n <= max) parts.push(c);
     });
-    req.on("end", () => resolve(n > max ? null : Buffer.concat(parts)));
+    req.on("end", () => resolve(n > max || (fixed !== null && n !== fixed.length) ? null : (fixed ?? Buffer.concat(parts))));
+    req.on("close", () => {
+      if (!req.complete) reject(new Error("egress: the client closed the request"));
+    });
     req.on("error", reject);
   });
 }

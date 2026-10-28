@@ -14,7 +14,7 @@ import { Identities } from "../src/egress/identity.ts";
 import { createSocket } from "node:dgram";
 import { HostPolicy, HostRules } from "../src/egress/allowlist.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress, FORCED_PROVIDER, forceZdr } from "../src/egress/proxy.ts";
+import { CostSniffer, denyText, Egress } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { freshDb } from "./pg.ts";
 
@@ -418,28 +418,31 @@ test("model route: zero data retention is forced into every request body, whatev
   assert.equal(refused.length, 4);
 });
 
-test("forceZdr: provider options merged over the caller's, non-objects refused", () => {
-  assert.equal(forceZdr(Buffer.from("[]")), null);
-  assert.equal(forceZdr(Buffer.from("{")), null);
-  const out = JSON.parse(forceZdr(Buffer.from('{"model":"m","provider":{"zdr":false,"only":["x"]}}'))!.toString());
-  assert.deepEqual(out, { model: "m", provider: { zdr: true, data_collection: "deny", only: ["x"] } });
-  assert.deepEqual(FORCED_PROVIDER, { zdr: true, data_collection: "deny" });
-});
-
-test("forceZdr: the model's thinking level, by whether the request carries tools", () => {
-  const plan = { "deepseek/deepseek-v4.1-flash-1017": { withTools: "high" as const, withoutTools: "none" as const } };
-  const run = (body: object) => JSON.parse(forceZdr(Buffer.from(JSON.stringify(body)), plan)!.toString());
-  const chat = run({ model: "deepseek/deepseek-v4.1-flash-1017", tools: [{ name: "Bash" }], thinking: { type: "enabled", budget_tokens: 9 } });
-  assert.deepEqual(chat.reasoning, { effort: "high" });
-  assert.deepEqual(chat.thinking, { type: "enabled", budget_tokens: 9 });
-  const title = run({ model: "deepseek/deepseek-v4.1-flash-1017", reasoning: { effort: "max" } });
-  assert.deepEqual(title.thinking, { type: "disabled" });
-  assert.equal(title.reasoning, undefined);
-  // bare ids match, other models pass as sent
-  assert.deepEqual(run({ model: "deepseek-v4.1-flash-1017", tools: [{ name: "x" }] }).reasoning, { effort: "high" });
-  const other = run({ model: "anthropic/claude-sonnet-5.5", tools: [{ name: "x" }] });
-  assert.equal(other.reasoning, undefined);
-  assert.equal(other.thinking, undefined);
+test("model route: a body of many MB passes rewritten, one too large is refused before it is read", async () => {
+  // a Claude Code turn that has read page images: the conversation's base64 is resent on every call
+  const image = "A".repeat(12 * 1024 * 1024);
+  const body = JSON.stringify({ model: "claude-x", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: image } }] }], provider: { zdr: false } });
+  const send = () => http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json" }, body });
+  const rs = await Promise.all([send(), send(), send()]);
+  for (const r of rs) {
+    assert.equal(r.status, 200);
+    const echo = JSON.parse(r.body).echo;
+    assert.deepEqual(echo.provider, { zdr: true, data_collection: "deny" });
+    assert.equal(echo.messages[0].content[0].source.data.length, image.length);
+  }
+  // past the 64 MiB limit by its Content-Length: 413 at once, nothing read or sent upstream
+  const head = await new Promise<string>((resolve, reject) => {
+    const s = netConnect(port, "127.0.0.1");
+    let buf = "";
+    s.on("error", reject);
+    s.on("data", (d) => (buf += d.toString("latin1")));
+    s.on("close", () => resolve(buf));
+    s.write(`POST /x/claude/v1/messages HTTP/1.1\r\nHost: egress.test\r\nAuthorization: Bearer ${sbToken}\r\nContent-Type: application/json\r\nContent-Length: ${70 * 1024 * 1024}\r\n\r\n{"model":`);
+  });
+  assert.match(head, /^HTTP\/1\.1 413 /);
+  assert.match(head, /limited to 67108864 bytes/);
+  const big = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:upload");
+  assert.equal(big.length, 1);
 });
 
 test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket per connection", async () => {
