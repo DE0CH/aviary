@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { createContext, useCallback, useContext } from "react";
 import { Image, Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -40,20 +40,33 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function fileUrl(sessionId: string, file: SentFile, inline: boolean): string {
-  const query = `path=${encodeURIComponent(file.path)}${inline ? "&inline=1" : ""}`;
-  return apiUrl(`/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?${query}`);
+/** Where a conversation's files are read from: the URL of a path relative to its /workspace. */
+export type ConversationFileUrl = (relativePath: string, inline: boolean) => string;
+
+function sessionFileUrl(sessionId: string): ConversationFileUrl {
+  return (relativePath, inline) =>
+    apiUrl(
+      `/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?path=${encodeURIComponent(relativePath)}${inline ? "&inline=1" : ""}`,
+    );
+}
+
+/**
+ * Overrides where the chat view's files come from (the conversation's own files when unset): a shared page renders the
+ * same chat view and reads its files through the share.
+ */
+export const ConversationFilesContext = createContext<ConversationFileUrl | null>(null);
+
+/** The file URLs of the conversation the chat view shows. */
+export function useConversationFileUrl(sessionId: string): ConversationFileUrl {
+  const override = useContext(ConversationFilesContext);
+  return override ?? sessionFileUrl(sessionId);
 }
 
 /** Opens a file of the conversation's workspace (a path the reply names): images and PDFs in a tab, the rest
  * downloaded. */
-export function openConversationFile(sessionId: string, relativePath: string): void {
+export function openConversationFile(fileUrl: ConversationFileUrl, relativePath: string): void {
   const path = relativePath.replace(/^\/workspace\//, "").replace(/^\.\//, "");
-  const query = `path=${encodeURIComponent(path)}&inline=1`;
-  void openServerFile(
-    apiUrl(`/api/jarvis/sessions/${encodeURIComponent(sessionId)}/files/raw?${query}`),
-    path.split("/").pop() ?? path,
-  ).catch(() => undefined);
+  void openServerFile(fileUrl(path, true), path.split("/").pop() ?? path).catch(() => undefined);
 }
 
 /**
@@ -75,8 +88,9 @@ export function SentFilesCards({
   /** Where a file is read from; the conversation's own files by default (a shared page reads through the share). */
   urlFor?: (file: SentFile, inline: boolean) => string;
 }) {
+  const fileUrl = useConversationFileUrl(sessionId);
   if (files.length === 0) return null;
-  const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(sessionId, file, inline));
+  const resolveUrl = urlFor ?? ((file: SentFile, inline: boolean) => fileUrl(file.path, inline));
   return (
     <View
       style={[

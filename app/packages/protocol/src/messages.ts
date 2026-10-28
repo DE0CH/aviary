@@ -710,6 +710,20 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    // YYC: what the user attached, so history shows it as the message did when sent (agent-types.ts)
+    images: z.array(z.object({ url: z.string(), mimeType: z.string() })).optional(),
+    attachments: z
+      .array(
+        z.object({
+          type: z.literal("uploaded_file"),
+          id: z.string(),
+          fileName: z.string(),
+          mimeType: z.string(),
+          size: z.number().int().nonnegative(),
+          path: z.string(),
+        }),
+      )
+      .optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),

@@ -1,4 +1,4 @@
-import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards } from "@/yyc/sent-files";
+import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -460,8 +460,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     });
     // A file the reply names is downloaded from the conversation's workspace through CloudCLI (the server checks
     // the path); there is no file viewer or explorer here (docs/paseo-ui.md).
+    const conversationFileUrl = useConversationFileUrl(agentId);
     const downloadInlineFile = useStableEvent((location: WorkspaceFileLocation) => {
-      openConversationFile(agentId, location.path);
+      openConversationFile(conversationFileUrl, location.path);
     });
     const ignoreInlineDirectory = useStableEvent((_directoryPath: string) => {});
     const inlinePathOpener = useMemo(

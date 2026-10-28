@@ -103,7 +103,10 @@ export async function encodeAttachmentsForSend(
   const encoded = await Promise.all(
     attachments.map(async (attachment) => {
       try {
-        const data = await store.encodeBase64({ attachment });
+        const data =
+          attachment.storageType === "remote-url"
+            ? await remoteBase64(attachment.storageKey)
+            : await store.encodeBase64({ attachment });
         return {
           data,
           mimeType: attachment.mimeType,
@@ -124,7 +127,18 @@ export async function encodeAttachmentsForSend(
   return valid.length > 0 ? valid : undefined;
 }
 
+/** The base64 of a remote-url attachment: a data: URL's own payload, else the fetched bytes. */
+async function remoteBase64(url: string): Promise<string> {
+  const comma = url.startsWith("data:") ? url.indexOf(",") : -1;
+  if (comma >= 0) return url.slice(comma + 1);
+  const bytes = new Uint8Array(await (await fetch(url, { credentials: "include" })).arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 export async function resolveAttachmentPreviewUrl(attachment: AttachmentMetadata): Promise<string> {
+  if (attachment.storageType === "remote-url") return attachment.storageKey;
   const store = await getAttachmentStore();
   return await store.resolvePreviewUrl({ attachment });
 }
@@ -133,6 +147,7 @@ export async function releaseAttachmentPreviewUrl(input: {
   attachment: AttachmentMetadata;
   url: string;
 }): Promise<void> {
+  if (input.attachment.storageType === "remote-url") return;
   const store = await getAttachmentStore();
   if (!store.releasePreviewUrl) {
     return;
@@ -149,6 +164,7 @@ export async function deleteAttachments(
   const store = await getAttachmentStore();
   await Promise.all(
     attachments.map(async (attachment) => {
+      if (attachment.storageType === "remote-url") return;
       try {
         await store.delete({ attachment });
       } catch (error) {

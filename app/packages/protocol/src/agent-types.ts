@@ -373,7 +373,22 @@ export interface AgentTaskItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      /** YYC: the user's attached images (data: URLs from the transcript) and files (paths under /workspace). */
+      images?: Array<{ url: string; mimeType: string }>;
+      attachments?: Array<{
+        type: "uploaded_file";
+        id: string;
+        fileName: string;
+        mimeType: string;
+        size: number;
+        path: string;
+      }>;
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

@@ -256,8 +256,11 @@ function produceUserMessage(
     throw new Error("User message upsert matched a non-user row");
   }
   const presentation = presentationPolicy === "incoming" ? incoming : existing;
+  const other = presentation === incoming ? existing : incoming;
   const merged = createUserMessage({
     ...presentation,
+    images: presentation.images ?? other.images,
+    attachments: presentation.attachments ?? other.attachments,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
@@ -889,6 +892,21 @@ export function handoffCreatedAgentUserMessageToStream(params: {
   });
 }
 
+/** A timeline user_message's images (YYC: URLs from the history) as attachments the user bubble can show. */
+function timelineUserImages(
+  images: ReadonlyArray<{ url: string; mimeType: string }> | undefined,
+  timestamp: Date,
+): UserMessageImageAttachment[] | undefined {
+  if (!images?.length) return undefined;
+  return images.map((image, index) => ({
+    id: `remote:${timestamp.getTime()}:${index}:${image.url.length}:${image.url.slice(-24)}`,
+    mimeType: image.mimeType,
+    storageType: "remote-url",
+    storageKey: image.url,
+    createdAt: timestamp.getTime(),
+  }));
+}
+
 function appendUserMessage(
   state: StreamItem[],
   text: string,
@@ -898,9 +916,11 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  images?: UserMessageImageAttachment[],
+  attachments?: AgentAttachment[],
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent) {
+  if (!hasContent && !images?.length && !attachments?.length) {
     return state;
   }
 
@@ -913,6 +933,8 @@ function appendUserMessage(
     turnId,
     text: chunk,
     timestamp,
+    images,
+    attachments,
   });
   return upsertUserMessage(state, nextItem);
 }
@@ -1521,6 +1543,8 @@ function reduceTimelineEvent(
           item.clientMessageId,
           timelineCursor,
           event.turnId,
+          timelineUserImages(item.images, timestamp),
+          item.attachments,
         ),
       );
     case "assistant_message":
