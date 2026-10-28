@@ -45,6 +45,13 @@ patches:
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 256Mi}
       - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 256Mi}
+  # egress injects JARVIS_SENT_FILES_TOKEN on its sent-files route (config.json egress.routes; the UI router's
+  # sent-file snapshots, DE0CH/jarvis3 docs/CLAUDE-CODE.md "Sent files")
+  - target: {kind: Deployment, name: egress}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: JARVIS_SENT_FILES_TOKEN, valueFrom: {secretKeyRef: {name: egress-env, key: JARVIS_SENT_FILES_TOKEN}}}
   - target: {kind: Deployment, name: tools}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
