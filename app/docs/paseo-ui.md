@@ -71,6 +71,23 @@ arrives.
   autocomplete or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
   (`provider-selection/resolve-agent-form.ts`); where the model chip was, it shows the model's name read-only with an
   (i) saying the admin sets it (`yyc/model-label.tsx`, from config `models`' label for `defaultModel`).
+- **Developer controls hidden** (staff are not developers; each is a constant or a server_info feature, so the
+  upstream code path stays): the composer's 「新增 issue 或 PR」 GitHub picker (only with `features.forgeSearch`, which
+  CloudCLI never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
+  `EXPLORER_ENABLED`: no swipe, shortcut or stored layout opens it); every key-chord hint, including the composer's
+  「⌘L 聚焦」 and the Alt number badges (`components/ui/shortcut.tsx` `SHOW_SHORTCUT_HINTS`); the key handler binds only
+  new chat, search, settings, the sidebar, stop and the composer's keys (`keyboard/keyboard-shortcuts.ts`
+  `chatAppBindings`). 搜尋 is a conversation search: the palette offers 新對話, 最近刪除 and 設定, lists each
+  conversation once and searches no files (`command-center/root-registration.tsx`, `SHOW_WORKSPACE_COMMANDS`,
+  `SHOW_AGENT_CONTROL_COMMANDS`, `SEARCH_FILES`). Settings: 一般 is the language only, sending during a reply always
+  queues (CloudCLI refuses a message while a reply runs; `composer/index.tsx` `CHAT_SEND_BEHAVIOR`); 外觀 is 淺色 /
+  深色 / 系統, the two text sizes and the content width (`SHOW_DEVELOPER_APPEARANCE`: no code fonts, syntax theme, diff
+  preview, CSS font stack, brand or plugin themes).
+- **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
+  settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
+  `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
+  `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. Signed-out shell, share
+  page, 最近刪除 and the loading skeleton take the same values as the screens they stand for.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
