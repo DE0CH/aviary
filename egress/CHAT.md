@@ -372,7 +372,7 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - Every call → `tool_calls`.
 - **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
-  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), plus the **listed** tools of each configured upstream
+  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
   MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
   `X-YYC-User: <owner email>`).
 - **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
@@ -381,8 +381,18 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   marks `readOnlyHint: false` or `destructiveHint: true`. An upstream without a `tools` list offers nothing. Hidden
   tools are not in `tools/list` and `tools/call` answers "unknown tool" for them; each refresh logs the hidden names
   (`upstream tools … hidden`). Anything that sends mail, posts or mutates (e.g. a `send_mail`) must never be listed.
+- **AnyAPI** (`tools.anyapi`: `{keyEnv, baseUrl?, denySkus?}`; getanyapi.com, about 470 read-only scraping and data
+  APIs behind one key: Facebook, LinkedIn, Instagram, TikTok, YouTube, X, Reddit, Google, shops, jobs, company data,
+  any page as Markdown): `anyapi_search` (its catalog search, free), `anyapi_describe` (one API's input/output schema
+  and price, free), `anyapi_run` (POST /v1/run/<id> with the model's input, optionally shaped by `fields`/`max_items`/
+  `summary`/`jq`; the response's `costUsd` goes into `tool_calls.cost_usd`; up to 120 s), `anyapi_result` (re-read or
+  reshape a run's `resultId` free for about 15 minutes). Built in rather than relayed from AnyAPI's own MCP server:
+  that server marks `run_api` destructive (it spends money), which the upstream rule above hides, and its
+  `report_bug`/`send_feedback` send things to AnyAPI. Every catalog API only reads; `denySkus` keeps an id out
+  anyway. HTTP 402 / `insufficient_balance` is answered "AnyAPI's balance has run out … the admin has to add funds".
 - A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
-  `news_search` `tools.wisers`, `social_search` `tools.tikhub`; `web_fetch` without Exa reads pages directly).
+  `news_search` `tools.wisers`, `social_search` `tools.tikhub`, the `anyapi_*` tools `tools.anyapi`; `web_fetch`
+  without Exa reads pages directly).
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
   ports other than 80/443/8080/8443. With `tools.capture` (`{url, tokenEnv, name}`: the instance's own page capture,
   POST `{url}` with that bearer → `kind` cache / capture / none), `web_fetch` asks it first: a `cache` or `capture`
