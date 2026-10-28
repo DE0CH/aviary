@@ -277,8 +277,8 @@ nothing (schema 10 comments them "unused"); dropping them is a decision for Deya
    own address). The YYC instance has two. `claude` (`model: true`) → `https://openrouter.ai/api`: Claude Code's
    model calls (`ANTHROPIC_BASE_URL=http://<egress>:3128/x/claude`, `ANTHROPIC_AUTH_TOKEN` = the egress token);
    injects `Authorization: Bearer $OPENROUTER_API_KEY`, forces zero data retention into every request body (`provider.zdr: true`, `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is
-   not a JSON object is refused with 400, `deny:body`; no config turns this off: `forceZdr` in
-   `chat/src/egress/proxy.ts`), streams responses through, logs `cost_usd` from
+   not one valid JSON object (RFC 8259, UTF-8) is refused with 400, `deny:body`; no config turns this off: `forceZdr`
+   in `chat/src/egress/modelbody.ts`, called from `proxy.ts`), streams responses through, logs `cost_usd` from
    the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
    The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
    uncompressed body (`accept-encoding: identity`) so it can read the cost.
@@ -286,6 +286,14 @@ nothing (schema 10 comments them "unused"); dropping them is a decision for Deya
    or `titleModel` (400 `invalid_request_error`, `deny:model`), and every call once the shared budget is used up
    (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; a model
    call's `egress_log` row is written as soon as it ends and the budget is re-read at most every 0.5 s; see "Budget").
+   **Memory:** a Claude Code request carries the whole conversation, base64 images included (an agent that reads
+   page images reaches several MB per call). The body is read once into one Buffer and rewritten without parsing it
+   into objects: a strict byte scanner validates it and finds the top-level members, and the request goes upstream
+   as slices of that Buffer plus the rewritten members (`provider`, `reasoning`/`thinking`), so a call costs about
+   its own size (measured: 0.3 MiB extra for a 7.3 MiB body; parsing and re-serialising it took 95 MiB and once took
+   egress past a 128 MiB limit, 2026-10-28). At most 64 MiB of model bodies are held at once: a call waits its turn
+   until its body fits (one without a Content-Length counts as 64 MiB); a body over 64 MiB is refused with 413
+   `request_too_large`, `deny:upload`, before it is read.
    `tools` (`keepAuth: true`, `allowPaths: ["/mcp"]`) → `http://tools.<ns>.svc:8080`: Claude Code's MCP server
    (`/x/tools/mcp`); the caller's `Authorization` (its egress token) goes on, so the tools role knows the sandbox.
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
