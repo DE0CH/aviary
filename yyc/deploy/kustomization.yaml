@@ -6,7 +6,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2ce8326ef23c74fead58aa8d140b1b4c49e28b9d
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=2acd77f235098a77dc6df79c9c77765e5cfa299f
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -25,7 +25,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 2ce8326ef23c
+    newTag: 2acd77f23509
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
@@ -37,12 +37,14 @@ configMapGenerator:
 # GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
 patches:
   # memory request = limit at about 2-4x the measured peak (2026-10-20, memory.peak since start: web 66 Mi, tools 60,
-  # egress 45, cloudflared 19; web gets more room for real chats). The apps nodes are cx23s (2.7 GiB allocatable).
+  # cloudflared 19; web gets more room for real chats). The apps nodes are cx23s (2.7 GiB allocatable). egress keeps
+  # the base's 256Mi: about 60 Mi idle plus up to 64 MiB of model request bodies held at once (jarvis3 docs/CHAT.md
+  # "Memory"); at 128Mi a 7 MB conversation got both egress pods OOM-killed (2026-10-28).
   - target: {kind: Deployment, name: web}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 256Mi}
       - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 256Mi}
-  - target: {kind: Deployment, name: "tools|egress"}
+  - target: {kind: Deployment, name: tools}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
       - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 128Mi}
