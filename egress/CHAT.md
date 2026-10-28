@@ -53,6 +53,10 @@ Cluster-only (the instance's NetworkPolicy admits its UI pods to web:8080) and a
   new chat; 403 unless in `users`). Nothing is made and no idle time is reset; when the conversation has no live
   sandbox it records kv `sandbox_demand:<owner>`, which the vm scaler counts for 2 minutes and starts an AWS host
   for when no host has a free slot (docs/CLAUDE-CODE.md, "Warming").
+- `POST /internal/cc/view-as {event, admin, user, session, conversation?, chars?}` → `{ok}`: one record of "View as"
+  (below): `event` `start` (from the UI router), `message` or `conversation` (from the person's CloudCLI process, before
+  it sends; `conversation` required). 403 unless `admin` is in `admins` and `user` in `users`. The caller goes on only
+  after a 200.
 - `GET /healthz` → `{ok, draining}` (503 while draining or without Postgres): the readiness and liveness probe.
 - **Drain** (SIGTERM): readiness 503, 5 s for the Service to drop the endpoint, then the calls in flight are answered
   (up to `JARVIS_DRAIN_SECONDS`, 300, < the 330 s grace period); the janitor and scaler locks pass to the other
@@ -102,8 +106,31 @@ router's `admins` check + web's own check, and web stays cluster-only.
     older calls show as "(not recorded)"): today / this month / since the budget;
   - `people`: per config user (and former users with sandboxes): conversations counted from their sandboxes (a
     conversation gets one at its first message): total, started today, last 7 days, live now, deleted, last active.
+    The page gives each current user a 「View as」 button (below);
+  - `viewAs`: the latest 100 view-as records (`ops_events` kind `view_as`, kept for good): when, which admin, as whom,
+    started viewing / sent a message (its length) / started a conversation, the conversation and the view's id.
 
 No message contents: owners, ids, hosts, counts, costs and timings only.
+
+## View as (Deyao, 2026-10-28)
+
+An admin sees YYC AI exactly as a staff member does (their conversation list, conversations, files, shares), in a tab
+of its own, and can send as them only through a marked override. Staff are not told; every view and every send is in
+the operator page's History (`viewAs`, above), and only there.
+
+- **Start**: the page's 「View as」 is a form POST (new tab) to the UI router's `/api/jarvis/view-as` (`user`). The
+  router (DE0CH/claudecodeui `jarvis/router.mjs` "View as") accepts it only from an Access-verified admin and the same
+  origin, records `start` here (nothing opens if that fails), and answers 303 to `/#jarvis-view-as=<token>`: an HMAC
+  token (key derived from `JARVIS_CC_TOKEN`, 12 h) naming the admin, the person and the view.
+- **Enforcement** (router, every request and socket): a token counts only when the request's own Access identity is
+  that admin and still in `admins`, and the person is still a user; any other request carrying a token is 403, so a
+  non-admin can never become anyone. The request then goes to the person's own CloudCLI process as them, with
+  `X-Jarvis-Viewer` (set only by the router). While viewing: GET anything; POST only warming and uploads; WebSocket
+  only the Paseo bridge, which records each `message` and `conversation` here before sending it (nothing is sent
+  without the record) and refuses renames, deletes and restores.
+- **The tab** (the Paseo app, `yyc/view-as.ts`): keeps the token in that tab only and sends it on every call; the send
+  button and the new-conversation buttons are disabled; one box only the admin sees, in English, holds the override
+  (off on every load; red while on). Messages sent with it look exactly like the person's own.
 
 ## Sandbox lifecycle
 
