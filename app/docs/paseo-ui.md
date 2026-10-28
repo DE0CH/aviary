@@ -37,11 +37,17 @@ does not change one.
 | `send_agent_message_request`, `workspace.create.request` | `chat.send` (a new session first for a create) |
 | `cancel_agent_request` | `chat.abort` |
 | `yyc.sandbox_status` (added to the protocol) | the run's `status` frames with `jarvisSandbox` |
+| timeline `user_message` `images` / `attachments` (added to the protocol) | the history's user images (data: URLs from the transcript) and files (`<files_input>`, paths under /workspace/uploads) |
 
 Everything a developer machine has (git, terminals, scripts, plugins, worktrees, providers, voice) answers empty or
 `rpc_error`, and the server_info features leave it out. Add a feature by answering its messages in
 `paseo-connection.ts` and checking the replies against `WSOutboundMessageSchema` (below): the app validates every
 frame and drops one that does not parse, usually with "Response validation failed for …".
+
+User attachments: a `user_message` row carries the images (`{url, mimeType}`, data: URLs) and files (`uploaded_file`
+attachments, paths relative to /workspace) the user sent, from the history and on the row a send puts on the timeline, so
+a reopened chat shows them as the message did when sent. The app keeps such images as `remote-url` attachments
+(`attachments/types.ts`: the URL is the storage key, nothing is stored locally).
 
 Timelines: the first fetch of a conversation reads its whole history (sessionsService.fetchHistory) into rows; live
 events from the hub's chat socket are appended after that, deduplicated by message id. The user's own message goes on
@@ -92,7 +98,9 @@ arrives.
   `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
-  `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`), the conversation menu
+  `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`: the server sends the snapshot as timeline
+  rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
+  own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
   (`screens/workspace/conversation-menu-items.tsx`).
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
