@@ -294,6 +294,9 @@ nothing (schema 10 comments them "unused"); dropping them is a decision for Deya
    egress past a 128 MiB limit, 2026-10-28). At most 64 MiB of model bodies are held at once: a call waits its turn
    until its body fits (one without a Content-Length counts as 64 MiB); a body over 64 MiB is refused with 413
    `request_too_large`, `deny:upload`, before it is read.
+   A route with `identity: true` also gets `X-Jarvis-Conversation` and `X-Jarvis-Sandbox` as egress verified them
+   (callers' own copies of these headers are dropped on every route): YYC's `sent-files` route to the UI router's
+   sent-file snapshots (docs/CLAUDE-CODE.md "Sent files").
    `tools` (`keepAuth: true`, `allowPaths: ["/mcp"]`) → `http://tools.<ns>.svc:8080`: Claude Code's MCP server
    (`/x/tools/mcp`); the caller's `Authorization` (its egress token) goes on, so the tools role knows the sandbox.
 4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
