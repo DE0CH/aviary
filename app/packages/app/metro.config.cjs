@@ -6,6 +6,7 @@ const { resolveLucideFile } = require("./babel/lucide-per-icon.js");
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
+const enrichedMarkdownKatexLoader = path.resolve(appSrcRoot, "markdown-runtime/enriched-markdown-katex.ts");
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
@@ -81,6 +82,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // babel/lucide-per-icon.js imports icon files the package's exports map does not list
   const lucideFile = resolveLucideFile(moduleName);
   if (lucideFile) return { type: "sourceFile", filePath: lucideFile };
+  // KaTeX as its own chunk instead of the markdown package's synchronous require (docs/paseo-ui.md "Loading")
+  if (
+    platform === "web" &&
+    moduleName === "./katex.js" &&
+    /react-native-enriched-markdown[\\/]lib[\\/]module[\\/]web[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: enrichedMarkdownKatexLoader };
+  }
   if (
     isWatchdogBuild &&
     platform === "android" &&
