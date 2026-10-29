@@ -402,8 +402,8 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - Every call → `tool_calls`.
 - **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
-  `web_fetch`, `news_search` (Wisers), `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
-  MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, service token +
+  `web_fetch`, `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
+  MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, whose `wisers_*` tools are YYC's WiseSearch, service token +
   `X-YYC-User: <owner email>`).
 - **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
   tools (their own names, without the prefix) that may be offered: search/get/list-style tools only. A tool not on
@@ -421,7 +421,7 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   `report_bug`/`send_feedback` send things to AnyAPI. Every catalog API only reads; `denySkus` keeps an id out
   anyway. HTTP 402 / `insufficient_balance` is answered "AnyAPI's balance has run out … the admin has to add funds".
 - A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
-  `news_search` `tools.wisers`, `social_search` `tools.tikhub`, the `anyapi_*` tools `tools.anyapi`; `web_fetch`
+  `social_search` `tools.tikhub`, the `anyapi_*` tools `tools.anyapi`; `web_fetch`
   without Exa reads pages directly).
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
   ports other than 80/443/8080/8443. With `tools.capture` (`{url, tokenEnv, name}`: the instance's own page capture,
@@ -524,7 +524,6 @@ administrator). There is no automatic reset. To reset or raise: edit `budget` in
                         {"name": "tools", "upstream": "http://tools.jarvis.svc.cluster.local:8080", "keepAuth": true,
                          "inject": {}, "allowPaths": ["/mcp"]}], "cacheGiB": 5},
   "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
-            "wisers": {"url": "https://yyc.deyaochen.com/app/wisers/api", "accessClientIdEnv": "WISERS_ACCESS_CLIENT_ID", "accessClientSecretEnv": "WISERS_ACCESS_CLIENT_SECRET"},
             "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
                            // read-only tools to offer (default deny; "tools" above): the upstream's own names
