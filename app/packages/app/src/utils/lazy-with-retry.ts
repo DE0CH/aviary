@@ -1,28 +1,32 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 
-// A chunk fetch can fail on a flaky connection, or after a deploy replaced the build the page came from. Three tries
-// with backoff, then one reload of the page (at most once in a row: a chunk that loads clears the mark, so a chunk that
-// is really gone cannot loop); after that the error reaches the area's ChunkErrorBoundary (docs/paseo-ui.md "Loading").
+// A chunk fetch can fail on a flaky connection, or after a deploy replaced the build the page came from. A failed
+// fetch is tried three times with backoff, then the page reloads, at most once in ten minutes for the whole tab (the
+// mark is never cleared by a later success, so a chunk that keeps failing beside chunks that load cannot loop); after
+// that the error reaches the area's ChunkErrorBoundary (docs/paseo-ui.md "Loading"). An error the chunk throws while it
+// evaluates is a bug, not a fetch: no retry and no reload, it goes straight to the boundary.
 const RETRY_DELAYS_MS = [500, 1_500];
 const RELOAD_KEY = "yyc-chunk-reload";
+const RELOAD_AGAIN_AFTER_MS = 10 * 60_000;
+
+/** A chunk that could not be fetched (Expo's AsyncRequireError on web), as opposed to one that threw. */
+export function isChunkLoadError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AsyncRequireError" || error.name === "ChunkLoadError") return true;
+  return /^Loading (module|chunk) .* failed|Failed to fetch dynamically imported module/.test(
+    error.message,
+  );
+}
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function clearReloadMark(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage?.removeItem(RELOAD_KEY);
-  } catch {
-    // storage may be blocked; the mark then was never set either
-  }
-}
-
 function reloadOnce(): boolean {
   if (typeof window === "undefined" || typeof window.location?.reload !== "function") return false;
   try {
-    if (window.sessionStorage.getItem(RELOAD_KEY)) return false;
+    const last = Number(window.sessionStorage.getItem(RELOAD_KEY));
+    if (last && Date.now() - last < RELOAD_AGAIN_AFTER_MS) return false;
     window.sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
   } catch {
     return false;
@@ -31,7 +35,10 @@ function reloadOnce(): boolean {
   return true;
 }
 
-/** Runs `load` up to three times; on the last failure reloads the page once, else rethrows. */
+/**
+ * Runs `load`; a failed fetch is tried up to three times, then the page reloads (at most once in ten minutes), else
+ * the error is rethrown. Any other error is rethrown at once.
+ */
 export async function loadWithRetry<T>(
   load: () => Promise<T>,
   options: { delaysMs?: readonly number[]; reload?: () => boolean } = {},
@@ -39,10 +46,9 @@ export async function loadWithRetry<T>(
   const delays = options.delaysMs ?? RETRY_DELAYS_MS;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const value = await load();
-      clearReloadMark();
-      return value;
+      return await load();
     } catch (error) {
+      if (!isChunkLoadError(error)) throw error;
       if (attempt < delays.length) {
         await wait(delays[attempt]);
         continue;
