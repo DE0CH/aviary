@@ -34,16 +34,15 @@ describe("loading stages", () => {
     stages.__private__.reset();
   });
 
-  it("fetches the reply and conversation chunks after the validator, then the sidebar, then the hosts", async () => {
+  it("fetches the reply chunk after the validator, then the sidebar, then the conversation page, then the hosts", async () => {
     stages.startLoadingStages();
     await Promise.resolve();
     expect(stages.hasReachedStage(1)).toBe(false);
     expect(chunks.order).toEqual([]);
     validator.resolve();
     await stages.waitForStage(2);
-    await stages.loadSidebarChunk();
-    expect(chunks.order).toEqual(["reply", "workspace", "sidebar"]);
     await vi.waitFor(() => expect(stages.hasReachedStage(3)).toBe(true));
+    expect(chunks.order).toEqual(["reply", "sidebar", "workspace"]);
   });
 
   it("holds a merely rendered lazy area until its stage", async () => {
@@ -63,7 +62,7 @@ describe("reply display (send waits for it)", () => {
     stages.__private__.reset();
   });
 
-  it("is ready only once the reply chunk and the highlighter have arrived, before the conversation page", async () => {
+  it("is ready only once the reply chunk and the highlighter have arrived, before the list", async () => {
     expect(stages.isReplyDisplayReady()).toBe(false);
     stages.startLoadingStages();
     validator.resolve();

@@ -9,8 +9,9 @@ import { isChunkLoadError, loadWithRetry } from "@/utils/lazy-with-retry";
 // conversation list; everything else only when used. Each stage's import() starts when the one before it has
 // arrived, so a later chunk never takes bandwidth from an earlier one:
 // - stage 1, the reply display (the reply chunk and the code highlighter): once the server-message validator (the
-//   connection's own chunk) has arrived or failed; then the conversation page's chunk (loading/workspace-chunk.ts);
-// - stage 2, the sidebar chunk: once stage 1 has settled;
+//   connection's own chunk) has arrived or failed;
+// - stage 2, the sidebar chunk: once stage 1 has settled; then the conversation page's chunk
+//   (loading/workspace-chunk.ts), which a send or a conversation route fetches at once anyway;
 // - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
 // Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
 // fetches the reply and conversation chunks at once, opening the phone drawer the sidebar, and a conversation page
@@ -95,7 +96,7 @@ export function loadReplyChunk(): Promise<typeof import("./reply-chunk")> {
   return replyChunk;
 }
 
-/** The conversation page (the workspace screen). Starts the fetch now (a conversation page, a send, stage 1). */
+/** The conversation page (the workspace screen). Starts the fetch now (a conversation page, a send, stage 2). */
 export function loadWorkspaceChunk(): Promise<typeof import("./workspace-chunk")> {
   if (!workspaceChunk) {
     markChunk("workspace");
@@ -257,12 +258,15 @@ export function startLoadingStages(): void {
   void settle(loadWSOutboundValidator())
     .then(() => {
       reach(1);
-      // The reply display first, on its own (every send waits for it), then the conversation page
-      return settle(loadReplyDisplay()).then(() => settle(loadWorkspaceChunk()));
+      // The reply display first, on its own (every send waits for it)
+      return settle(loadReplyDisplay());
     })
     .finally(() => {
       reach(2);
-      void settle(loadSidebarChunk()).finally(() => onIdle(() => reach(3)));
+      // Then the list; the conversation page after it (a send or a conversation route fetches it at once)
+      void settle(loadSidebarChunk())
+        .then(() => settle(loadWorkspaceChunk()))
+        .finally(() => onIdle(() => reach(3)));
     });
 }
 
