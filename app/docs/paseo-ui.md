@@ -253,8 +253,13 @@ measuring; test on a throttled connection. So:
 - **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
   colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
   (`loading/zod-locales.ts`); gesture handler's legacy Hammer.js web implementation, never enabled, resolves to a stub
-  on web (`loading/gesture-handler-hammer.js`, `metro.config.cjs`); the new-chat screen has no setup form (it was
-  never drawn).
+  on web (`loading/gesture-handler-hammer.js`, `metro.config.cjs`), and so does Reanimated's development-only
+  worklets version check (`loading/reanimated-worklets-version.js`, which kept semver in the entry);
+  react-native-web's older `@react-native/normalize-colors` resolves to the app's one; no Buffer polyfill on web
+  (base64 and UTF-8 through `utils/bytes.ts`; the Buffer-based TextEncoder/TextDecoder fallback is
+  `polyfills/text-codec-fallback.native.ts`); the plugin requirements check (semver) comes with the plugin evaluator's
+  chunk; the desktop browser automation handler and the released-host usage icons are fetched when used; the new-chat
+  screen has no setup form (it was never drawn).
 - **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
   from the moment the client module loads; a connect waits for it only while it is still on its way, at most the
   connect timeout (a failed fetch is forgotten, so the next attempt fetches again)
@@ -263,12 +268,13 @@ measuring; test on a throttled connection. So:
   `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
 - **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
   checks the entry (at most 1,100 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
-- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,141 KB; 1,241 KB with both
+- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,119 KB; 1,141 KB with Buffer,
+  semver, the desktop browser automation handler and the usage icons; 1,241 KB with both
   languages, the composer's pickers and overlays, the host sheets and the gesture handler's Hammer.js; 1,512 KB before
   the conversation page, the plugin evaluator, the agent controls and the rest left it, 2,273 KB with `__common`,
   3,102 KB before the stages); with it the page's language (zh-HK 31 KB or en 26 KB) and the validator 278 KB; then
-  the reply chunk 344 KB with the highlighter 15 KB (send turns on), the conversation chunk 230 KB, the sidebar
-  159 KB, the hosts 103 KB; a grammar per language when code first shows (the loader 10 KB once, then 1-50 KB each;
+  the reply chunk 344 KB with the highlighter 15 KB (send turns on), the conversation chunk 232 KB, the sidebar
+  158 KB, the hosts 102 KB; a grammar per language when code first shows (the loader 10 KB once, then 1-50 KB each;
   Swift/Dart/C#/Nix 154 KB). Lazy chunks carry their own copies of modules the entry no longer holds (the sidebar grew
   from 88 KB). Not yet under the 1,100 KB budget: what remains is the app shell (expo-router with React Navigation,
   react-native-web, react-dom, Reanimated with its layout animations, gesture handler, bottom sheet, keyboard
@@ -277,8 +283,10 @@ measuring; test on a throttled connection. So:
   (`EXPO_UNSTABLE_TREE_SHAKING` with `EXPO_UNSTABLE_METRO_OPTIMIZE_GRAPH`) is untried: its export ran out of memory
   in an 8 GB session.
   Timings, cold, Chrome's Slow 4G, desktop, the page served locally through `brotli-proxy.mjs` with no server behind it
-  (so no connection; 140ed041 -> now): the early box takes keys at 1.2 s in both, the entry 8.1 -> 7.5 s, the
-  validator 10.7 -> 10.3 s, the reply display (send on, once connected) 14.5 -> 12.9 s. Earlier, signed in through a
+  (so no connection; 140ed041 -> 9e7c6bf6 -> now): the early box takes keys at 0.6-1.2 s in all three, the entry 8.1 ->
+  7.5 -> 7.45 s, the validator 10.7 -> 10.3 -> 10.2 s, the reply chunk requested as the validator lands and the reply
+  display (send on, once connected) 14.5 -> 12.9 -> 12.9 s, the conversation chunk 14.8 s, the sidebar 16.3 s, the
+  hosts 17.5 s (phone the same within 0.1 s). Earlier, signed in through a
   test router (140ed041): typable 0.65 s, composer 11.6 s, send 12.6 s, reply chunk 15.0 s, list 16.5 s.
 - Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
   `brotli-proxy.mjs`.
