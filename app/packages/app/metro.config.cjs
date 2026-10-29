@@ -8,6 +8,8 @@ const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const enrichedMarkdownKatexLoader = path.resolve(appSrcRoot, "markdown-runtime/enriched-markdown-katex.ts");
 const zodLocalesShim = path.resolve(appSrcRoot, "loading/zod-locales.ts");
+const normalizeColors = require.resolve("@react-native/normalize-colors", { paths: [projectRoot] });
+const reanimatedWorkletsVersionStub = path.resolve(appSrcRoot, "loading/reanimated-worklets-version.js");
 const gestureHandlerHammerStub = path.resolve(appSrcRoot, "loading/gesture-handler-hammer.js");
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
@@ -99,6 +101,18 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     /[\\/]zod[\\/]v4[\\/](classic|core)[\\/]/.test(context.originModulePath)
   ) {
     return { type: "sourceFile", filePath: zodLocalesShim };
+  }
+  // react-native-web's own older copy of @react-native/normalize-colors: the app's newer one parses the same colours
+  if (
+    platform === "web" &&
+    moduleName === "@react-native/normalize-colors" &&
+    /[\\/]react-native-web[\\/]dist[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: normalizeColors };
+  }
+  // Reanimated's development-only worklets version check (it brings semver) is a stub on web
+  if (platform === "web" && moduleName === "react-native-reanimated/scripts/validate-worklets-version") {
+    return { type: "sourceFile", filePath: reanimatedWorkletsVersionStub };
   }
   // Gesture handler's legacy Hammer.js web implementation (and Hammer.js) is never enabled; a stub stands in
   if (

@@ -1,4 +1,4 @@
-import { Buffer } from "buffer";
+import { base64ToBytes } from "@/utils/bytes";
 import type { AudioEngine } from "./audio-engine-types";
 
 /** RPC-friendly file input. No browser Blob, URL, or platform knowledge is needed. */
@@ -20,7 +20,7 @@ export function createPlayAudio(engine: Pick<AudioEngine, "play">, signal: Abort
     ) {
       throw new Error("Audio must have an audio MIME type, such as audio/wav");
     }
-    const bytes = Uint8Array.from(Buffer.from(source.base64, "base64"));
+    const bytes = base64ToBytes(source.base64);
     const [mediaType, ...parameters] = source.mimeType.split(";");
     const type = [mediaType.trim().toLowerCase(), ...parameters].join(";");
     if (mediaType.trim().toLowerCase() === "audio/pcm") {

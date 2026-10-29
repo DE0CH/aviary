@@ -5,7 +5,6 @@ import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
 import type { InstalledPlugin } from "./types";
@@ -91,7 +90,13 @@ export class PluginRegistry {
       let installation: InstalledPlugin | undefined;
       try {
         if (!entry.clientBundle) return [];
-        assertPluginCompatibility({ ...entry, version: this.dependencies.version, runtime: "app" });
+        if (!evaluator) throw new Error("The plugin evaluator has not loaded");
+        // The compatibility check (semver) travels in the evaluator's chunk
+        evaluator.assertPluginCompatibility({
+          ...entry,
+          version: this.dependencies.version,
+          runtime: "app",
+        });
         const existing = preserved.find(
           (plugin) => plugin.id === entry.id && plugin.clientBundle === entry.clientBundle,
         );

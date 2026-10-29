@@ -1,7 +1,7 @@
 import type { AttachmentMetadata } from "@/attachments/types";
 import { fileUriToPath } from "@/attachments/utils";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
-import { Buffer } from "buffer";
+import { base64ToBytes } from "@/utils/bytes";
 
 export interface DesktopFileReader {
   readFileBase64(storageKey: string): Promise<string>;
@@ -73,5 +73,5 @@ export function createDesktopPreviewUrlResolver(deps: {
 }
 
 function base64ToUint8Array(base64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(base64, "base64"));
+  return base64ToBytes(base64);
 }

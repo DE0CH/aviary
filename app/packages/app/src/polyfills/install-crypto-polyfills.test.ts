@@ -4,6 +4,7 @@ import {
   type CryptoPolyfillSources,
   type CryptoPolyfillTarget,
 } from "./install-crypto-polyfills";
+import { installTextCodecFallback as installNativeTextCodecFallback } from "./text-codec-fallback.native";
 
 interface RecordingFillRandomValues {
   fill: CryptoPolyfillSources["expoGetRandomValues"];
@@ -63,11 +64,10 @@ describe("installCryptoPolyfills", () => {
     expect(expo.calls).toBe(1);
   });
 
-  it("installs Buffer-backed TextEncoder and TextDecoder when missing", () => {
-    const expo = recordingFillFromBytes(TEST_BYTES);
+  it("installs Buffer-backed TextEncoder and TextDecoder when missing (native)", () => {
     const target: CryptoPolyfillTarget = {};
 
-    installCryptoPolyfills(target, { expoGetRandomValues: expo.fill });
+    installNativeTextCodecFallback(target);
 
     expect(typeof target.TextEncoder).toBe("function");
     expect(typeof target.TextDecoder).toBe("function");

@@ -72,7 +72,6 @@ import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
 } from "@/data/push-router";
-import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -703,11 +702,21 @@ function createDefaultDeps(
       if (!browserAutomationCapabilities) {
         return unmountServerData;
       }
-      const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
-        serverId: host.serverId,
-      });
+      // Only the desktop app has a browser host; its automation handler is a chunk fetched here
+      let unmounted = false;
+      let unmountBrowserAutomation: (() => void) | null = null;
+      void import("@/desktop/browser/automation/handler").then(
+        ({ mountBrowserAutomationDaemonClientHandler }) => {
+          if (unmounted) return;
+          unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
+            serverId: host.serverId,
+          });
+        },
+        (error: unknown) => console.warn("Failed to load the browser automation handler", error),
+      );
       return () => {
-        unmountBrowserAutomation();
+        unmounted = true;
+        unmountBrowserAutomation?.();
         unmountServerData();
       };
     },

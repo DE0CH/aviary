@@ -1,4 +1,4 @@
-import { Buffer } from "buffer";
+import { base64ToBytes, bytesToBase64 } from "@/utils/bytes";
 import type { AgentStreamEventPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import type { DaemonServerInfo } from "@/stores/session-store";
@@ -14,7 +14,7 @@ let thinkingCue: Promise<ThinkingCue> | null = null;
 function loadThinkingCue(): Promise<ThinkingCue> {
   thinkingCue ??= import("@/utils/thinking-tone.native-pcm").then(
     (tone) => {
-      const pcm16 = Uint8Array.from(Buffer.from(tone.THINKING_TONE_NATIVE_PCM_BASE64, "base64"));
+      const pcm16 = base64ToBytes(tone.THINKING_TONE_NATIVE_PCM_BASE64);
       return {
         source: {
           size: pcm16.byteLength,
@@ -285,7 +285,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
   }
 
   function decodeAudioChunk(base64: string): Uint8Array {
-    return Buffer.from(base64, "base64");
+    return base64ToBytes(base64);
   }
 
   function toPlaybackSource(
@@ -525,7 +525,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         return;
       }
 
-      const base64 = Buffer.from(chunk).toString("base64");
+      const base64 = bytesToBase64(chunk);
 
       void activeSession.adapter.sendVoiceAudioChunk(base64, PCM_MIME_TYPE).catch((error) => {
         console.error(`[VoiceRuntime#${instanceId}] Failed to send audio chunk:`, error);

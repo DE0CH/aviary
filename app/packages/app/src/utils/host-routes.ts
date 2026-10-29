@@ -1,4 +1,4 @@
-import { Buffer } from "buffer";
+import { base64ToUtf8, utf8ToBase64 } from "@/utils/bytes";
 import { buildAgentDeepLinkRoute } from "@getpaseo/protocol/agent-deep-link";
 
 type NullableString = string | null | undefined;
@@ -50,8 +50,7 @@ function decodeSegment(value: string): string {
 }
 
 function toBase64UrlNoPad(input: string): string {
-  return Buffer.from(input, "utf8")
-    .toString("base64")
+  return utf8ToBase64(input)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
@@ -71,7 +70,7 @@ function decodeBase64UrlNoPadUtf8(input: string): string | null {
 
   let decoded: string;
   try {
-    decoded = Buffer.from(padded, "base64").toString("utf8");
+    decoded = base64ToUtf8(padded);
   } catch {
     return null;
   }

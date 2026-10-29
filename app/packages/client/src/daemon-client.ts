@@ -6,7 +6,6 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
-import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -5726,8 +5725,12 @@ export class DaemonClient {
     if (features?.usageSources !== true) {
       if (options?.agentId !== undefined)
         return { requestId: this.createRequestId(options.requestId), reports: [] };
-      // Released hosts serve a five-minute cache and have no forceRefresh option.
-      const payload = await this.listProviderUsage({ requestId: options?.requestId });
+      // Released hosts serve a five-minute cache and have no forceRefresh option. Their icon copies are a chunk
+      // of their own, fetched only for such a host (docs/paseo-ui.md "Loading").
+      const [payload, { legacyUsageIcon }] = await Promise.all([
+        this.listProviderUsage({ requestId: options?.requestId }),
+        import("./legacy-usage-icons.js"),
+      ]);
       return {
         requestId: payload.requestId,
         reports: payload.providers

@@ -1,5 +1,5 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
-import { Buffer } from "buffer";
+import { base64ToBytes } from "@/utils/bytes";
 import { AppState } from "react-native";
 import { observeOpenWorkspaceAgentIds } from "@/stores/workspace-layout-store";
 import { useQueryClient } from "@tanstack/react-query";
@@ -70,7 +70,7 @@ interface BufferedAudioChunk {
 }
 
 function decodeBase64Chunk(base64: string): Uint8Array {
-  return Buffer.from(base64, "base64");
+  return base64ToBytes(base64);
 }
 
 function buildAudioPlaybackSource(chunks: BufferedAudioChunk[]): AudioPlaybackSource {

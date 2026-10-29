@@ -13,6 +13,8 @@ import * as ReactNative from "react-native";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
+// The registry checks each plugin's requirements through this chunk, so semver stays out of the entry
+export { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { type PluginCleanup } from "@getpaseo/plugin";
 import {
   type PluginClientContext,

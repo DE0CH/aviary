@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Buffer } from "buffer";
+import { utf8ByteLength } from "@/utils/bytes";
 import {
   normalizeAgentModelCatalog,
   type ProviderSnapshotEntry,
@@ -100,7 +100,7 @@ function bodyKey(serverId: string, hash: string): string {
 }
 
 function storedBytes(key: string, value: string): number {
-  return Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8");
+  return utf8ByteLength(key) + utf8ByteLength(value);
 }
 
 const CacheKeySchema = z.tuple([z.string(), z.enum(["cwd", "hash"]), z.string().nullable()]);
