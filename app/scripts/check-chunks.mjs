@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Prints every web chunk of a build with its raw, gzip -9 and brotli q4 size, and checks the loading budgets
 // (docs/paseo-ui.md "Loading"): the entry chunk (what the page waits for before the app's message box) and the
-// reply chunk (the reply's display). With --strict a budget miss, or a chunk Metro split out for modules two lazy
-// chunks share (__common), fails. Usage: node scripts/check-chunks.mjs [dist] [--strict]
+// reply chunk (the reply's display). With --strict a budget miss, or an eager chunk Expo split out for modules two
+// lazy chunks share (__common; paseo/patches/@expo+metro-config keeps it from being made), fails.
+// Usage: node scripts/check-chunks.mjs [dist] [--strict]
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
@@ -11,7 +12,7 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const dist = path.resolve(args.find((arg) => !arg.startsWith('--')) ?? 'dist');
 const dir = path.join(dist, '_expo', 'static', 'js', 'web');
-const BUDGET_KB = { entry: 1250, 'reply-chunk': 450 };
+const BUDGET_KB = { entry: 1100, 'reply-chunk': 450 };
 
 const html = readFileSync(path.join(dist, 'index.html'), 'utf8');
 const entryFiles = new Set([...html.matchAll(/_expo\/static\/js\/web\/([^"']+\.js)/g)].map((m) => m[1]));

@@ -37,6 +37,12 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // Web export: no eager __common chunk; async chunks keep their own copies of shared modules
+  // (docs/paseo-ui.md "Loading"). Local, no upstream change; re-check when Expo's chunk splitting changes.
+  {
+    nodeModulesPath: "node_modules/@expo/metro-config",
+    patchPrefix: "@expo+metro-config+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
