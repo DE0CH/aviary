@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import { isChunkLoadError } from "@/utils/lazy-with-retry";
 
 /**
  * What a lazy area shows while its chunk is on the way: an empty area of the app's own background. It carries
@@ -10,22 +11,30 @@ export function LoadingFrame({ style }: { style?: StyleProp<ViewStyle> }) {
   return <View dataSet={{ yycLoading: "" }} style={[{ flex: 1 }, style]} />;
 }
 
-/** Keeps a lazy area's failed chunk from taking the rest of the app down with it. */
+/**
+ * Keeps a lazy area's chunk that could not be fetched from taking the rest of the app down with it. Any other error
+ * (a render bug below it) goes on up to RootErrorBoundary, which shows it with a Reload button.
+ */
 export class ChunkErrorBoundary extends Component<
   { name: string; fallback?: ReactNode; children: ReactNode },
-  { failed: boolean }
+  { error: unknown }
 > {
-  state = { failed: false };
+  state: { error: unknown } = { error: null };
 
-  static getDerivedStateFromError(): { failed: boolean } {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown): { error: unknown } {
+    return { error: error ?? new Error("unknown render error") };
   }
 
   componentDidCatch(error: unknown): void {
-    console.error(`[Loading] The ${this.props.name} chunk failed to load`, error);
+    if (isChunkLoadError(error)) {
+      console.error(`[Loading] The ${this.props.name} chunk failed to load`, error);
+    }
   }
 
   render(): ReactNode {
-    return this.state.failed ? (this.props.fallback ?? null) : this.props.children;
+    const { error } = this.state;
+    if (error === null) return this.props.children;
+    if (!isChunkLoadError(error)) throw error;
+    return this.props.fallback ?? null;
   }
 }
