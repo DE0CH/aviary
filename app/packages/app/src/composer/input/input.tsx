@@ -1452,6 +1452,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // was typed before the app arrived. Runs before the hydrated text is applied above, so the merge reads the stored
     // draft from the replacement and marks it applied.
     const handleDefaultSendActionRef = useRef<() => void>(() => undefined);
+    const submitBlockedRef = useRef(true);
     const isHydratedReplacement = textReplacement.kind === "hydrated";
     const hydratedReplacementRef = useRef(textReplacement);
     hydratedReplacementRef.current = textReplacement;
@@ -1473,7 +1474,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           focusIntentRef.current = true;
           textInputRef.current?.focus();
         },
-        submit: () => handleDefaultSendActionRef.current(),
+        submit: () => {
+          if (!submitBlockedRef.current) handleDefaultSendActionRef.current();
+        },
       });
       // Once per hydrated draft; the callbacks read refs
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1736,6 +1739,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       });
     }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
     handleDefaultSendActionRef.current = handleDefaultSendAction;
+    // The early box's send (Enter on a tablet) obeys the same gate as the keyboard's and the button's
+    submitBlockedRef.current = Boolean(isSubmitDisabled || isSubmitLoading || disabled);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({

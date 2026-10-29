@@ -2,8 +2,10 @@
 export interface EarlyInputTarget {
   element: HTMLElement | null;
   getText: () => string;
-  replaceText: (text: string, selection: { start: number; end: number }) => void;
+  /** Without a selection it only sets the text (no caret move, no focus). */
+  replaceText: (text: string, selection?: { start: number; end: number }) => void;
   focus: () => void;
+  /** Sends as the app's send button would, or does nothing while send is off. */
   submit: () => void;
 }
 

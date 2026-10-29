@@ -17,11 +17,14 @@ interface EarlyTake {
 
 interface EarlyInputApi {
   take(path: string): EarlyTake | null;
+  /** The live box's text without taking it (null once the box is gone). */
+  peek(): EarlyTake | null;
   release(reason: string): void;
   ready(handoff: {
     element: HTMLElement | null;
     adopt: (focus?: boolean) => void;
     submit: () => void;
+    preview: () => void;
   }): void;
   state(): { active: boolean; composing: boolean; focused: boolean };
   whenIdle(run: () => void): void;
@@ -49,18 +52,27 @@ export function mergeEarlyText(
   taken: EarlyTake,
 ): { text: string; selection: { start: number; end: number } } | null {
   if (taken.text === taken.base) return null;
-  if (stored === taken.base || stored === "") {
+  if (stored === taken.base || stored === "" || stored === taken.text) {
     return { text: taken.text, selection: { start: taken.selStart, end: taken.selEnd } };
+  }
+  // Already merged once (a phone's preview kept in the draft, then a reload): not twice
+  if (stored.endsWith(`\n${taken.text}`)) {
+    return { text: stored, selection: { start: stored.length, end: stored.length } };
   }
   const text = `${stored}\n${taken.text}`;
   return { text, selection: { start: text.length, end: text.length } };
 }
 
-function adoptNow(target: EarlyInputTarget, focus: boolean, focusIfTaken = true): void {
+function adoptNow(
+  target: EarlyInputTarget,
+  focus: boolean,
+  focusIfTaken = true,
+  stored?: string,
+): void {
   const api = early();
   if (!api) return;
   const taken = api.take(window.location.pathname);
-  const merged = taken ? mergeEarlyText(target.getText(), taken) : null;
+  const merged = taken ? mergeEarlyText(stored ?? target.getText(), taken) : null;
   if (merged) target.replaceText(merged.text, merged.selection);
   if (focus || (merged && focusIfTaken)) target.focus();
   api.release("adopted");
@@ -68,8 +80,9 @@ function adoptNow(target: EarlyInputTarget, focus: boolean, focusIfTaken = true)
 
 /**
  * Called by a focused message box once its draft has loaded. Desktop takes the text over at once. On a phone whose
- * keyboard is up in the early box, the swap waits for the next tap or key (only then may a script move the keyboard
- * to the real box), a tap anywhere else or a blur; until then the early box sits over the real one. Returns a
+ * keyboard is up in the early box, the swap waits for the next typed character (only then may a script move the
+ * keyboard to the real box), a tap anywhere else or a blur; until then the early box sits over the real one, and the
+ * real box already holds a copy of the text (no focus), so the app's own send button shows beside it. Returns a
  * cleanup for an unmount before that, which drops the box and keeps its text for this page.
  */
 export function adoptEarlyInput(target: EarlyInputTarget): (() => void) | void {
@@ -84,11 +97,18 @@ export function adoptEarlyInput(target: EarlyInputTarget): (() => void) | void {
     const { focused } = api.state();
     if (focused && !hasFinePointer()) {
       handed = true;
+      // The draft as it was stored, before any preview: the merge always starts from it
+      const stored = target.getText();
       api.ready({
         element: target.element,
         // A tap elsewhere or a blur hands over without focus (no keyboard pulled back up)
-        adopt: (focus = true) => adoptNow(target, focus, focus),
+        adopt: (focus = true) => adoptNow(target, focus, focus, stored),
         submit: target.submit,
+        preview: () => {
+          const live = api.peek();
+          const merged = live ? mergeEarlyText(stored, live) : null;
+          target.replaceText(merged ? merged.text : stored);
+        },
       });
       return;
     }

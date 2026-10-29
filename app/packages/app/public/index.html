@@ -203,6 +203,13 @@
           /(^|[#&])jarvis-view-as=/.test(location.hash) || !!read("sessionStorage", "yyc.view-as") ||
           !!w.paseoDesktop || !COMPOSER.test(path);
         var active = false, composing = false, readied = false, handoff = null, timer = 0, observer = null;
+        // Adoptions waiting for an IME composition to end; release() runs them too, so none is stranded
+        var pending = [];
+        function runPending() {
+          var runs = pending;
+          pending = [];
+          for (var i = 0; i < runs.length; i++) setTimeout(runs[i], 0);
+        }
         function compact() { return w.innerWidth < 600; }
         function release(reason) {
           if (!active) return;
@@ -215,31 +222,44 @@
           d.removeEventListener("touchstart", anyTouch, true);
           layer.remove();
           mark("yyc:early-released:" + reason);
+          runPending();
         }
         function take(p) {
           var taken = null;
+          var m = json(read("sessionStorage", MIRROR)), here = norm(p);
+          var mine = !!m && typeof m.text === "string" && m.path === here;
           if (active) {
             taken = { text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "" };
-          } else {
-            var m = json(read("sessionStorage", MIRROR)), here = norm(p);
-            if (m && typeof m.text === "string" && (m.path === here || (here === "/new" && Date.now() - m.t < 60000))) {
-              taken = { text: m.text, selStart: m.selStart, selEnd: m.selEnd, base: m.base || "" };
-            }
+          } else if (mine || (m && typeof m.text === "string" && here === "/new" && Date.now() - m.t < 60000)) {
+            taken = { text: m.text, selStart: m.selStart, selEnd: m.selEnd, base: m.base || "" };
           }
-          setMirror(null);
+          // Only text that was handed over leaves the copy; another page's text stays for its own page
+          if ((active && mine) || (!active && taken)) setMirror(null);
           return taken;
         }
         w.__yycEarly = {
           take: take,
           release: release,
-          ready: function (next) { readied = true; handoff = next; layer.className = "on ready over"; place(); },
+          peek: function () {
+            return active ? { text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "" } : null;
+          },
+          ready: function (next) {
+            readied = true; handoff = next; layer.className = "on ready over"; preview(); place();
+          },
           state: function () { return { active: active, composing: composing, focused: active && d.activeElement === box }; },
           whenIdle: function (run) {
-            if (!composing) return run();
-            box.addEventListener("compositionend", function () { setTimeout(run, 0); }, { once: true });
+            if (!composing || !active) return run();
+            pending.push(run);
+            clearTimeout(timer); timer = 0;
           }
         };
         if (skip) { layer.remove(); return; }
+        // Text typed here before a refresh (or a chunk reload) that never reached the app: back in the box
+        var kept = json(read("sessionStorage", MIRROR));
+        if (kept && typeof kept.text === "string" && kept.path === path && kept.text) {
+          box.value = kept.text;
+          try { box.setSelectionRange(kept.selStart, kept.selEnd); } catch (e) {}
+        }
         var settings = json(read("localStorage", "@paseo:app-settings")) || json(read("localStorage", "@paseo:settings")) || {};
         if (settings.theme === "light") html.classList.add("yyc-light");
         else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
@@ -268,11 +288,19 @@
           s.left = lastRect.left + "px"; s.top = lastRect.top + "px";
           s.width = lastRect.width + "px"; s.height = lastRect.height + "px";
         }
+        // Never removed mid-composition, nor while an adoption waits for one to end (compositionend calls watch)
+        function settled() { return !composing && !pending.length && !root.querySelector("#boot,[data-yyc-loading]"); }
         function watch() {
           place();
           if (readied) return clearTimeout(timer);
-          if (root.querySelector("#boot,[data-yyc-loading]")) { clearTimeout(timer); timer = 0; return; }
-          if (!timer) timer = setTimeout(function () { release("timeout"); }, 1500);
+          if (!settled()) { clearTimeout(timer); timer = 0; return; }
+          if (!timer) timer = setTimeout(function () { timer = 0; if (!readied && settled()) release("timeout"); }, 1500);
+        }
+        // While a phone waits to swap, the app's own box holds a copy of the text (no focus), so its send button shows
+        function preview() {
+          if (!handoff || !handoff.preview) return;
+          handoff.preview();
+          if (w.requestAnimationFrame) w.requestAnimationFrame(place);
         }
         function swap(submit, focus) {
           if (!handoff) return false;
@@ -285,18 +313,25 @@
         // A phone's first tap anywhere else (the app's send button, the list, a menu) hands the text over first, in
         // the capture phase, so that tap already acts on the app's own box; the keyboard is not pulled back
         function anyTouch(e) { if (readied && !composing && e.target !== box) swap(false, false); }
+        // A phone swaps once a typed character has landed in this box (so the text taken includes it), never from
+        // keydown: Android keyboards send keydown (229) before the character and before compositionstart
         box.addEventListener("input", function () {
           setMirror({ text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "", path: norm(location.pathname), t: Date.now() });
+          if (!readied) return;
+          if (composing) preview();
+          else swap(false);
         });
-        box.addEventListener("compositionstart", function () { composing = true; });
-        box.addEventListener("compositionend", function () { composing = false; });
+        box.addEventListener("compositionstart", function () { composing = true; clearTimeout(timer); timer = 0; });
+        box.addEventListener("compositionend", function () {
+          composing = false;
+          runPending();
+          setTimeout(function () { if (readied && !composing) swap(false); else if (active) watch(); }, 0);
+        });
         box.addEventListener("keydown", function (e) {
           if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing && !compact()) {
             e.preventDefault();
             if (readied) swap(true);
-            return;
           }
-          if (readied && !e.isComposing && !composing) swap(false);
         });
         box.addEventListener("touchend", function () { if (readied && !composing) swap(false); });
         // Leaving the box (keyboard dismissed, focus moved) hands the text over too: the box never outlives its focus
