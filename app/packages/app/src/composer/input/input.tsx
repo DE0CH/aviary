@@ -66,7 +66,7 @@ import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
-import { loadChunksForSend } from "@/loading/stages";
+import { isReplyDisplayReady, loadChunksForSend } from "@/loading/stages";
 import { adoptEarlyInput } from "@/yyc/early-input";
 import {
   EditingTextInput,
@@ -1684,6 +1684,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
+      // Nothing goes out, and the text stays, before its reply can render (the composer's send is off until then)
+      if (!isReplyDisplayReady()) return;
       // A reply is coming: its display and the conversation page jump the loading queue (loading/stages.ts)
       loadChunksForSend();
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;

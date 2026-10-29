@@ -1,3 +1,4 @@
+import { isReplyDisplayReady, useReplyDisplayReady } from "@/loading/stages";
 import { warmSandbox } from "@/yyc/warm";
 import {
   useComposerEditingSession,
@@ -1684,7 +1685,8 @@ function ComposerContentImpl({
       outgoingAttachments: ComposerAttachment[],
       forceSend?: boolean,
     ) => {
-      if (viewAsReadOnly()) return;
+      // nothing goes out before its reply can render (the send button is off until then; this covers other paths)
+      if (viewAsReadOnly() || !isReplyDisplayReady()) return;
       const result = await submitAgentInput({
         message: outgoingMessage,
         attachments: outgoingAttachments,
@@ -2417,9 +2419,13 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isViewAsReadOnly = useViewAsReadOnly();
+  // Send waits for the reply display (Deyao, 2026-10-29; loading/stages.ts): nothing goes out before its reply can
+  // render. Every composer (new chat, conversation, setup) and so the early box's Enter, which goes through this gate.
+  const replyDisplayReady = useReplyDisplayReady();
   const isSubmitDisabled =
     isSubmitLoadingVisible ||
     isSubmitUnavailable ||
+    !replyDisplayReady ||
     (waitForForgeAutoAttachOnSubmit && isForgeResolving) ||
     isViewAsReadOnly;
 

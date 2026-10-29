@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
 import { loadHighlighter } from "@/utils/highlight-grammars";
@@ -7,14 +7,16 @@ import { loadHighlighter } from "@/utils/highlight-grammars";
 // connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
 // conversation list; everything else only when used. Each stage's import() starts when the one before it has
 // arrived, so a later chunk never takes bandwidth from an earlier one:
-// - stage 1, the reply chunk and the conversation page's chunk (loading/workspace-chunk.ts): once the server-message
-//   validator (the connection's own chunk) has arrived or failed;
+// - stage 1, the reply display (the reply chunk and the code highlighter): once the server-message validator (the
+//   connection's own chunk) has arrived or failed; then the conversation page's chunk (loading/workspace-chunk.ts);
 // - stage 2, the sidebar chunk: once stage 1 has settled;
 // - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
 // Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
 // fetches the reply and conversation chunks at once, opening the phone drawer the sidebar, and a conversation page
 // fetches its own chunk as it renders (it holds that page's message box). Native has every module in one bundle, so
 // every stage is reached from the start.
+// Send waits for the reply display (Deyao, 2026-10-29): every composer's send stays off until the reply chunk and the
+// highlighter have arrived (useReplyDisplayReady), so nothing goes out before its reply can render.
 export type LoadingStage = 0 | 1 | 2 | 3;
 
 let reached: LoadingStage = isWeb ? 0 : 3;
@@ -104,6 +106,55 @@ export function loadWorkspaceChunk(): Promise<typeof import("./workspace-chunk")
   return workspaceChunk;
 }
 
+// Native has every module in its one bundle; unit tests never run the stages (app/_layout.tsx)
+let replyDisplayReady = !isWeb || process.env.NODE_ENV === "test";
+let replyDisplay: Promise<void> | null = null;
+let replyDisplayFailures = 0;
+const replyDisplayListeners = new Set<() => void>();
+
+/**
+ * The reply's display, everything a reply needs to render: the reply chunk (timeline, markdown, the KaTeX and Mermaid
+ * loaders) and the code highlighter. A failed fetch rejects and is tried again by itself (1 s, 2 s, 4 s ... at most
+ * 30 s apart) until it arrives, since every send waits for it.
+ */
+export function loadReplyDisplay(): Promise<void> {
+  if (replyDisplayReady) return Promise.resolve();
+  replyDisplay ??= Promise.all([loadReplyChunk(), loadHighlighter()]).then(
+    () => {
+      replyDisplayReady = true;
+      replyDisplayFailures = 0;
+      for (const listener of replyDisplayListeners) listener();
+    },
+    (error: unknown) => {
+      replyDisplay = null;
+      replyDisplayFailures += 1;
+      const delay = Math.min(30_000, 1000 * 2 ** (replyDisplayFailures - 1));
+      setTimeout(() => void loadReplyDisplay().catch(() => undefined), delay);
+      throw error;
+    },
+  );
+  return replyDisplay;
+}
+
+export function isReplyDisplayReady(): boolean {
+  return replyDisplayReady;
+}
+
+function subscribeReplyDisplay(listener: () => void): () => void {
+  replyDisplayListeners.add(listener);
+  return () => replyDisplayListeners.delete(listener);
+}
+
+/** Whether a reply can render now; a composer's send stays off until it can (docs/paseo-ui.md "Loading"). */
+export function useReplyDisplayReady(): boolean {
+  const ready = useSyncExternalStore(subscribeReplyDisplay, isReplyDisplayReady, isReplyDisplayReady);
+  useEffect(() => {
+    // Normally stage 1 starts it; this only covers a composer on a page whose stages never started
+    if (!ready) void waitForStage(1).then(loadReplyDisplay).catch(() => undefined);
+  }, [ready]);
+  return ready;
+}
+
 /** A message is being sent: the reply's display and the conversation page jump the loading queue. */
 export function loadChunksForSend(): void {
   void loadReplyChunk();
@@ -167,8 +218,8 @@ export function startLoadingStages(): void {
   void settle(loadWSOutboundValidator())
     .then(() => {
       reach(1);
-      // The highlighter is part of reply display: it arrives with the reply chunk, before the sidebar
-      return settle(Promise.all([loadReplyChunk(), loadWorkspaceChunk(), loadHighlighter()]));
+      // The reply display first, on its own (every send waits for it), then the conversation page
+      return settle(loadReplyDisplay()).then(() => settle(loadWorkspaceChunk()));
     })
     .finally(() => {
       reach(2);
@@ -183,6 +234,9 @@ export const __private__ = {
     replyChunk = null;
     workspaceChunk = null;
     sidebarChunk = null;
+    replyDisplayReady = !isWeb;
+    replyDisplay = null;
+    replyDisplayFailures = 0;
     stageWaiters.clear();
   },
   reach,

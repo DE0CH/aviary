@@ -57,3 +57,36 @@ describe("loading stages", () => {
     await vi.waitFor(() => expect(resolved).toBe(true));
   });
 });
+
+describe("reply display (send waits for it)", () => {
+  beforeEach(() => {
+    stages.__private__.reset();
+  });
+
+  it("is ready only once the reply chunk and the highlighter have arrived, before the conversation page", async () => {
+    expect(stages.isReplyDisplayReady()).toBe(false);
+    stages.startLoadingStages();
+    validator.resolve();
+    await stages.waitForStage(1);
+    await vi.waitFor(() => expect(stages.isReplyDisplayReady()).toBe(true));
+    await stages.waitForStage(2);
+  });
+
+  it("tries a failed fetch again by itself", async () => {
+    vi.useFakeTimers();
+    try {
+      const highlight = await import("@/utils/highlight-grammars");
+      const spy = vi
+        .spyOn(highlight, "loadHighlighter")
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValue({} as never);
+      await expect(stages.loadReplyDisplay()).rejects.toThrow("offline");
+      expect(stages.isReplyDisplayReady()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stages.isReplyDisplayReady()).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
