@@ -143,28 +143,46 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   first focused composer whose draft has loaded takes the live text and selection in one layout effect (after an IME
   composition ends) and the box goes. A stored draft is never overwritten (the early text goes after it on a new line).
   On a phone with the keyboard up the swap waits for the next tap or key (a script may only move the keyboard inside
-  one), with the box over the real one. Enter sends only on wide layouts, and nothing is sent before the app is ready.
+  one), with the box over the real one: a tap on the box itself moves the keyboard over; a first tap anywhere else (the
+  send button, the list, a menu; caught in the capture phase, before it acts) or the box losing focus hands the text over
+  without the keyboard; a composer that unmounts after that point drops the box, its text kept for its own page only.
+  Enter sends only on wide layouts, and nothing is sent before the app is ready.
   The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
   `yyc/early-input-routes.ts`, equal to the page's, and a test classifies every route file: a new route file must be
   placed there), on the welcome, signed-out and share screens, and 1.5 s after the app shows something other than the
-  connecting frame or a loading area (`data-yyc-loading`). Its text then stays in sessionStorage for that page, or
+  connecting frame or a loading area (`data-yyc-loading`, a lazy main area; the sidebar's placeholder is not one, the
+  box never sits there). Its text then stays in sessionStorage for that page, or
   `/new` within 60 s. Skipped when signed out, in view-as tabs and in the desktop build.
 - **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
   bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1, the reply
   chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer), starts once the
   server-message validator has arrived (4 s at the latest); stage 2, the sidebar chunk (`loading/sidebar-chunk.ts`),
-  once stage 1 has settled; stage 3 (hosts) at idle. A lazy area that is merely rendered waits for its stage
+  once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`, mounted by `app/_layout.tsx`:
+  the command center and its actions, the dialogs and sheets that open from a store, the download toast, the sidebar
+  callouts, the legacy skills migration). A lazy area that is merely rendered waits for its stage
   (`agent-stream/lazy-view.tsx`, `components/markdown/lazy-renderer.tsx`, `components/lazy-left-sidebar.tsx`, each with
   its own Suspense, so the composer beside the timeline is there at once); a send fetches the reply chunk at once,
   opening the phone drawer the sidebar. Native has one bundle and starts at stage 3.
 - **Chunks fetched only when used** (Metro splits every `import()` into its own file; `utils/lazy-with-retry.ts` tries
-  three times, then reloads the page once per tab; `ChunkErrorBoundary` keeps a failure local): the settings, schedules,
-  sessions and open-project screens (`screens/lazy-screens.tsx`), the pull request view, the built-in file views
+  three times, each a new fetch (`loading/stages.ts` forgets a failed import), then reloads the page, at most once in a
+  row (a chunk that loads clears the mark); `ChunkErrorBoundary` keeps a failure local; `components/lazy-area.tsx`
+  wraps a component as `lazyArea`, or `lazySheet` for one fetched when first visible): the settings, schedules, sessions,
+  open-project and QR-scan screens (`screens/lazy-screens.tsx`), the diff panels (`panels/diff-panel-views.tsx`), the
+  file tree, the file-type icons (`components/material-file-icon.tsx`), the catalog providers' icons
+  (`components/provider-catalog-icons.ts`), the import-session sheet, the agent profile editor and its settings section,
+  the context window details with the usage cards, the image viewer (`components/lazy-attachment-lightbox.tsx`), the
+  voice mode's thinking tone (`voice/voice-runtime.ts`), the pull request view, the built-in file views
   (Markdown preview, source, images), the Mermaid + KaTeX diagram runtime (`fence/mermaid/iframe-runtime.web.tsx`), the
   terminal (`panels/terminal-panel.tsx`), KaTeX for inline math (`markdown-runtime/enriched-markdown-katex.ts`, aliased in
   `metro.config.cjs`; the renderer has math off), the relay's end-to-end encryption (`client/src/daemon-client.ts`,
-  only for an encrypted relay connection), and the full Lucide set (`plugins/icons.ts`, the first time a plugin names
-  an icon).
+  only for an encrypted relay connection, fetched before the old transport is disposed), and the full Lucide set
+  (`plugins/icons.ts`, the first time a plugin names an icon; a plugin's icon name is checked only for its shape, so a
+  plugin is accepted the same before and after the set arrives).
+- **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
+  `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
+  each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The cost is bytes
+  in lazy chunks: the code highlighter and CodeMirror are in the reply chunk, the settings screen and the source view.
+  Native has no chunks and is unaffected.
 - **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
   colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
   (`loading/zod-locales.ts`).
@@ -174,13 +192,15 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
 - **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
   `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
 - **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
-  checks the entry (at most 1,250 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
-- **Where it stands** (brotli q4): the page loads `index` (1,785 KB) and Expo's `__common` (487 KB: modules the lazy
-  chunks share, which Expo loads up front), 2,273 KB in all (3,102 KB before the stages); the reply chunk 267 KB, the
-  sidebar 62 KB, the validator 278 KB. Cold, Chrome's Slow 4G, desktop: the early box takes keys at 0.6-0.7 s (phone at
-  4x CPU 0.75 s), the entry has arrived at 13.9 s, then the validator, the reply chunk (16.7-18.8 s), the sidebar
-  (18.9-19.8 s); Fast 4G: box 0.2 s, entry 2.3 s, sidebar 3.9 s. Not yet under the 1,250 KB budget: `__common` should
-  move into a lazy chunk.
+  checks the entry (at most 1,100 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
+- **Where it stands** (brotli q4): the page loads one script, `index` (1,512 KB; 2,273 KB with `__common` before it was
+  turned off, 3,102 KB before the stages); then the validator 278 KB, the reply chunk 746 KB (the highlighter's grammars
+  and CodeMirror, which `__common` used to carry, are most of it), the sidebar 88 KB, the hosts 66 KB. Not yet under the
+  1,100 KB budget: what remains is the app shell (expo-router, react-native-web, react-dom, Reanimated, gesture handler,
+  bottom sheet, keyboard controller, unistyles: about half), both languages' text (`i18n/resources`, read synchronously
+  before the first render), the protocol and zod, the composer, and the workspace screen with its tabs row and header.
+  Earlier timings (2,273 KB): cold, Chrome's Slow 4G, desktop: the early box takes keys at 0.6-0.7 s, the entry at
+  13.9 s; Fast 4G: box 0.2 s, entry 2.3 s, sidebar 3.9 s.
 - Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
   `brotli-proxy.mjs`.
 
