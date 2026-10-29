@@ -183,6 +183,7 @@ describe("resolveStartupRoute", () => {
     startupBlocker: { kind: "none" as const },
     hostRegistryStatus: "ready" as const,
     hosts: [],
+    hasGivenUpWaitingForHost: true,
   };
 
   it("renders non-index routes instead of making an index startup decision", () => {
@@ -332,6 +333,24 @@ describe("resolveStartupRoute", () => {
         hosts: [{ serverId: "server-next" }],
       }),
     ).toEqual({ kind: "redirect", href: "/open-project" });
+  });
+
+  it("waits on a host route with no saved host until the boot probe answers or gives up", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        route: { kind: "host", serverId: "server-first-visit" },
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toEqual({ kind: "splash" });
+    expect(
+      resolveStartupRoute({
+        ...baseHostInput,
+        route: { kind: "host", serverId: "server-first-visit" },
+        hosts: [{ serverId: "server-first-visit" }],
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toEqual({ kind: "render" });
   });
 
   it("shows welcome from a host route only after the registry proves no hosts exist", () => {

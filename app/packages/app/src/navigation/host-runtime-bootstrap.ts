@@ -121,6 +121,7 @@ export interface ResolveIndexStartupRouteInput extends ResolveStartupRouteBaseIn
 
 export interface ResolveHostStartupRouteInput extends ResolveStartupRouteBaseInput {
   route: HostStartupRouteTarget;
+  hasGivenUpWaitingForHost: boolean;
 }
 
 export type ResolveStartupRouteInput = ResolveIndexStartupRouteInput | ResolveHostStartupRouteInput;
@@ -222,6 +223,13 @@ function resolveReadyHostStartupRoute(input: ResolveHostStartupRouteInput): Star
   const fallbackServerId = input.hosts[0]?.serverId ?? null;
   if (fallbackServerId) {
     return { kind: "redirect", href: buildOpenProjectRoute() };
+  }
+
+  // No saved host yet: a browser opening a deep link for the first time has an empty registry
+  // until the boot probe (the page's own server) answers. Wait for it, as the index route does,
+  // so the link opens instead of falling to the welcome screen.
+  if (!input.hasGivenUpWaitingForHost) {
+    return { kind: "splash" };
   }
 
   return { kind: "redirect", href: WELCOME_ROUTE };

@@ -3,6 +3,7 @@ import { useHostRuntimeBootstrapState } from "@/app/_layout";
 import { HostRouteProvider } from "@/navigation/host-route-context";
 import { resolveStartupRoute } from "@/navigation/host-runtime-bootstrap";
 import { ThemedStack } from "@/navigation/themed-stack";
+import { StartupSplashScreen } from "@/screens/startup-splash-screen";
 import { useHostRegistryStatus, useHosts } from "@/runtime/host-runtime";
 
 const HOST_STACK_SCREEN_OPTIONS = {
@@ -29,10 +30,14 @@ function KnownHostRoute() {
     startupBlocker: bootstrapState.startupBlocker,
     hostRegistryStatus,
     hosts,
+    hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
 
   if (startupRoute.kind === "redirect") {
     return <Redirect href={startupRoute.href} />;
+  }
+  if (startupRoute.kind === "splash") {
+    return <StartupSplashScreen />;
   }
 
   const stack = (
