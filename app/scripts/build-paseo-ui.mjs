@@ -25,3 +25,7 @@ const html = readFileSync(indexPath, 'utf8')
   .replace(/<link rel="stylesheet" href="([^"]+\.css)">/g, '<link rel="stylesheet" href="$1" media="print" onload="this.media=\'all\'">');
 writeFileSync(indexPath, html);
 console.log('Paseo UI copied to dist/');
+// Chunk sizes and the loading budgets (docs/paseo-ui.md "Loading")
+spawnSync(process.execPath, [path.join(root, 'scripts', 'check-chunks.mjs'), path.join(root, 'dist')], {
+  stdio: 'inherit',
+});
