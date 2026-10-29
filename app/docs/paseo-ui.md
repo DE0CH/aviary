@@ -183,14 +183,20 @@ measuring; test on a throttled connection. So:
   comes back in the box after a refresh of the same page. Skipped when signed out, in view-as tabs and in the desktop
   build.
 - **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
-  bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1 starts once the
+  bootstrap and the stages start when the entry runs (`index.ts`, with `runtime/host-runtime-start.ts`; never on a
+  signed-out page), and the page's language arrives meanwhile as its own chunk (`i18n/translations.web.ts`: the
+  saved language, read before the first render as the early box does, `i18n/initial-locale.ts`; zh-HK 31 KB, en 26 KB;
+  no English fallback, every key is in both, `resources.test.ts`; another language is fetched when chosen and the
+  page keeps the current one until it lands); React renders once it has (the frame and the early box are there and
+  typable until then; native has both languages in its bundle). Stage 1 starts once the
   server-message validator has arrived or failed: first the reply's display alone (the reply chunk,
   `loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx`, the markdown renderer and the KaTeX and Mermaid
   loaders, with the code highlighter beside it), which turns send on, then the conversation page's chunk
   (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and git actions); stage 2, the
   sidebar chunk (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
   mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
-  (YYC's conversation rename/share/delete too; their store is `yyc/conversation-dialog-store.ts`), the download toast,
+  (the host chooser, `hosts/host-chooser-modal.tsx`, whose store is `hosts/host-chooser.tsx`, and the host
+  confirmation; YYC's conversation rename/share/delete, their store `yyc/conversation-dialog-store.ts`), the download toast,
   the sidebar callouts, the legacy skills migration). The entry keeps the new-chat screen (the landing page) and its
   composer. A lazy area that is merely rendered waits for its stage
   (`agent-stream/lazy-view.tsx`, `components/markdown/lazy-renderer.tsx`, `components/lazy-left-sidebar.tsx`, each with
@@ -219,19 +225,25 @@ measuring; test on a throttled connection. So:
   the set arrives; a failed fetch is forgotten and the next draw fetches again), the model browser's view
   (`components/lazy-model-browser.tsx`; its hook is `components/model-browser-state.tsx`), the composer's agent
   controls (`composer/agent-controls/lazy.tsx`; YYC's composer never draws them) and context window meter (drawn into
-  its fixed 28 px slot), the plugin evaluator with its UI kit (`plugins/registry.ts` `loadPluginEvaluator`, fetched by
+  its fixed 28 px slot), its pull request / issue picker (`composer/forge-picker.tsx`), the dictation and voice
+  overlays (drawn over the input, so nothing moves), the plugin attachment picker's Combobox, the plugin evaluator with its UI kit (`plugins/registry.ts` `loadPluginEvaluator`, fetched by
   `plugins/catalog-sync.tsx` only for a catalog with client bundles) and a plugin's own screen (its route). Forge icons
   come from `git/forges/brands.ts`, not the PR-pane view modules. A split pane that has never been shown mounts
   nothing (`components/split-container.tsx`), so the hidden explorer's diff views are not fetched.
 - **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
   `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
-  each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The cost is bytes
-  in lazy chunks, so a module several lazy areas use is reached through one `import()` of its own instead (the code
-  highlighter below). Native has no chunks and is unaffected.
+  each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The same patch
+  drops from a lazy chunk the modules that every chunk importing it has surely defined by then (its own or its
+  importers' ancestors'; an import from the entry leaves only what the entry holds), so a chunk fetched from another
+  lazy chunk carries only what is new (the diff panels 80 KB inside the conversation page, the grammars below). The
+  cost is bytes in sibling lazy chunks, so a module several lazy areas use is reached through one `import()` of its
+  own instead (the code highlighter below). Native has no chunks and is unaffected.
 - **Code highlighting loads per language** (`utils/highlight-grammars.ts`): the highlighter (`@getpaseo/highlight`,
   about 15 KB) is one chunk shared by the reply's code blocks and tool calls, the settings preview and the source
   view, fetched the first time any code renders; each language family's grammar is its own chunk
-  (`packages/highlight/src/grammars/`, `loadGrammarForFile`), fetched when code in that language first renders
+  (`packages/highlight/src/grammars/`, `loadGrammarForFile`), fetched through the grammar loader
+  (`packages/highlight/src/grammar-families.ts`, 10 KB, its own chunk with the Lezer runtime every grammar uses, so
+  a grammar's chunk is the grammar alone) when code in that language first renders
   (`useGrammarReady` re-renders the block; a failed fetch is retried with backoff while code still waits). Until then
   the code shows plain, in the same font and lines (token styles are colours only; a Read's line-number gutter is
   there from the first frame, also for languages with no grammar), so nothing moves. Swift, Dart, C# and Nix are CodeMirror languages and share one chunk
@@ -240,7 +252,9 @@ measuring; test on a throttled connection. So:
   copy it into that chunk.
 - **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
   colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
-  (`loading/zod-locales.ts`).
+  (`loading/zod-locales.ts`); gesture handler's legacy Hammer.js web implementation, never enabled, resolves to a stub
+  on web (`loading/gesture-handler-hammer.js`, `metro.config.cjs`); the new-chat screen has no setup form (it was
+  never drawn).
 - **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
   from the moment the client module loads; a connect waits for it only while it is still on its way, at most the
   connect timeout (a failed fetch is forgotten, so the next attempt fetches again)
@@ -249,17 +263,23 @@ measuring; test on a throttled connection. So:
   `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
 - **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
   checks the entry (at most 1,100 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
-- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,241 KB; 1,512 KB before the
-  conversation page, the plugin evaluator, the agent controls and the rest left it, 2,273 KB with `__common`, 3,102 KB
-  before the stages); then the validator 278 KB, the reply chunk 345 KB and the conversation chunk 215 KB, the
-  sidebar 140 KB, the hosts 80 KB; the highlighter 15 KB and a grammar per language (22-71 KB; Swift/Dart/C#/Nix
-  175 KB) when code first shows. Lazy chunks carry their own copies of modules the entry no longer holds (the sidebar
-  grew from 88 KB). Not yet under the 1,100 KB budget: what remains is the app shell (expo-router,
-  react-native-web, react-dom, Reanimated, gesture handler, bottom sheet, keyboard controller, unistyles: about
-  half), both languages' text (`i18n/resources`, about 55 KB, read synchronously before the first render), the
-  protocol and zod, the host runtime and the new-chat screen with its composer.
-  Earlier timings (2,273 KB): cold, Chrome's Slow 4G, desktop: the early box takes keys at 0.6-0.7 s, the entry at
-  13.9 s; Fast 4G: box 0.2 s, entry 2.3 s, sidebar 3.9 s.
+- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,141 KB; 1,241 KB with both
+  languages, the composer's pickers and overlays, the host sheets and the gesture handler's Hammer.js; 1,512 KB before
+  the conversation page, the plugin evaluator, the agent controls and the rest left it, 2,273 KB with `__common`,
+  3,102 KB before the stages); with it the page's language (zh-HK 31 KB or en 26 KB) and the validator 278 KB; then
+  the reply chunk 344 KB with the highlighter 15 KB (send turns on), the conversation chunk 230 KB, the sidebar
+  159 KB, the hosts 103 KB; a grammar per language when code first shows (the loader 10 KB once, then 1-50 KB each;
+  Swift/Dart/C#/Nix 154 KB). Lazy chunks carry their own copies of modules the entry no longer holds (the sidebar grew
+  from 88 KB). Not yet under the 1,100 KB budget: what remains is the app shell (expo-router with React Navigation,
+  react-native-web, react-dom, Reanimated with its layout animations, gesture handler, bottom sheet, keyboard
+  controller, unistyles: about half), the protocol and zod, the host runtime, its stores and the new-chat screen with
+  its composer (its attach menu, autocomplete and dictation hooks). Expo's tree shaking
+  (`EXPO_UNSTABLE_TREE_SHAKING` with `EXPO_UNSTABLE_METRO_OPTIMIZE_GRAPH`) is untried: its export ran out of memory
+  in an 8 GB session.
+  Timings, cold, Chrome's Slow 4G, desktop, the page served locally through `brotli-proxy.mjs` with no server behind it
+  (so no connection; 140ed041 -> now): the early box takes keys at 1.2 s in both, the entry 8.1 -> 7.5 s, the
+  validator 10.7 -> 10.3 s, the reply display (send on, once connected) 14.5 -> 12.9 s. Earlier, signed in through a
+  test router (140ed041): typable 0.65 s, composer 11.6 s, send 12.6 s, reply chunk 15.0 s, list 16.5 s.
 - Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
   `brotli-proxy.mjs`.
 
