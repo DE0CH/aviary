@@ -28,6 +28,19 @@ describe("loadWithRetry", () => {
     expect(settled).toBe("pending");
   });
 
+  it("clears the reload mark after a load succeeds, so a later failure may reload again", async () => {
+    const storage = new Map<string, string>([["yyc-chunk-reload", "1"]]);
+    vi.stubGlobal("window", {
+      sessionStorage: { removeItem: (key: string) => storage.delete(key) },
+    });
+    try {
+      await loadWithRetry(vi.fn().mockResolvedValue("chunk"), { delaysMs: [0, 0] });
+      expect(storage.has("yyc-chunk-reload")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("rethrows when the page was already reloaded once", async () => {
     const load = vi.fn().mockRejectedValue(new Error("gone"));
     await expect(loadWithRetry(load, { delaysMs: [0, 0], reload: () => false })).rejects.toThrow(

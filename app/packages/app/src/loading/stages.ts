@@ -82,7 +82,11 @@ let sidebarChunk: Promise<typeof import("./sidebar-chunk")> | null = null;
 export function loadReplyChunk(): Promise<typeof import("./reply-chunk")> {
   if (!replyChunk) {
     markChunk("reply");
-    replyChunk = import("./reply-chunk");
+    // A failed fetch is forgotten, so a retry fetches again
+    replyChunk = import("./reply-chunk").catch((error: unknown) => {
+      replyChunk = null;
+      throw error;
+    });
   }
   return replyChunk;
 }
@@ -96,7 +100,10 @@ export function loadReplyChunkInTurn(): Promise<typeof import("./reply-chunk")> 
 export function loadSidebarChunk(): Promise<typeof import("./sidebar-chunk")> {
   if (!sidebarChunk) {
     markChunk("sidebar");
-    sidebarChunk = import("./sidebar-chunk");
+    sidebarChunk = import("./sidebar-chunk").catch((error: unknown) => {
+      sidebarChunk = null;
+      throw error;
+    });
   }
   return sidebarChunk;
 }

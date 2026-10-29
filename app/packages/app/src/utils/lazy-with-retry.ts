@@ -1,13 +1,22 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 
 // A chunk fetch can fail on a flaky connection, or after a deploy replaced the build the page came from. Three tries
-// with backoff, then one reload of the page (once per tab, so a chunk that is really gone cannot loop); after that the
-// error reaches the area's ChunkErrorBoundary (docs/paseo-ui.md "Loading").
+// with backoff, then one reload of the page (at most once in a row: a chunk that loads clears the mark, so a chunk that
+// is really gone cannot loop); after that the error reaches the area's ChunkErrorBoundary (docs/paseo-ui.md "Loading").
 const RETRY_DELAYS_MS = [500, 1_500];
 const RELOAD_KEY = "yyc-chunk-reload";
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clearReloadMark(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.removeItem(RELOAD_KEY);
+  } catch {
+    // storage may be blocked; the mark then was never set either
+  }
 }
 
 function reloadOnce(): boolean {
@@ -30,7 +39,9 @@ export async function loadWithRetry<T>(
   const delays = options.delaysMs ?? RETRY_DELAYS_MS;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await load();
+      const value = await load();
+      clearReloadMark();
+      return value;
     } catch (error) {
       if (attempt < delays.length) {
         await wait(delays[attempt]);
