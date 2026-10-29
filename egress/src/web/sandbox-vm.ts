@@ -68,6 +68,8 @@ export interface HostRow {
     peers?: number;
     egressTargets?: string[];
     jfsMounted?: boolean | null;
+    /** since when an active host has reported its JuiceFS mount missing (ISO), null while it is there */
+    jfsUnmountedSince?: string | null;
   } | null;
   created_at: Date;
   last_seen_at: Date | null;
@@ -550,7 +552,24 @@ export class VmController {
           const missing = info.gateway ? [] : this.vm.cpuFeatures.split(",").filter((f) => f && !info.cpuFeatures.split(",").includes(f));
           // a new host is active once sandboxd answers and its JuiceFS mount is there: after a cold boot sbx-jfs reaches
           // the metadata store only over sandboxd's WireGuard, so the mount comes a few seconds after the first answer
-          const status = h.status === "booting" && info.jfsMounted !== false ? "active" : h.status;
+          let status = h.status === "booting" && info.jfsMounted !== false ? "active" : h.status;
+          // an active host whose mount went away (a juicefs crash: sbx-jfs remounts within seconds) takes no new sandbox
+          // (placeable()); one that stays without it past HUB_DEAD_MS (it can't remount) retires, so its sandboxes move to
+          // hosts that have their /workspace and ~/.claude
+          const jfsDown = h.status === "active" && info.jfsMounted === false;
+          const jfsUnmountedSince = jfsDown ? (h.info?.jfsUnmountedSince ?? new Date().toISOString()) : null;
+          if (jfsDown && h.info?.jfsMounted !== false) {
+            logError("vm: JuiceFS not mounted on an active host", "sbx-jfs remounting", { host: h.name });
+            void this.event("jfs-unmounted", h.name, null, {});
+          } else if (h.status === "active" && info.jfsMounted === true && h.info?.jfsMounted === false) {
+            log("vm: JuiceFS mounted again", { host: h.name, downMs: Date.now() - new Date(h.info.jfsUnmountedSince ?? Date.now()).getTime() });
+            void this.event("jfs-mounted", h.name, null, {});
+          }
+          if (jfsDown && h.kind === "aws" && Date.now() - new Date(jfsUnmountedSince!).getTime() > HUB_DEAD_MS) {
+            logError("vm: JuiceFS not remounted; retiring the host", `since ${jfsUnmountedSince}`, { host: h.name });
+            void this.event("jfs-retire", h.name, null, { since: jfsUnmountedSince });
+            status = "retiring";
+          }
           if (missing.length && h.status !== "retiring") {
             logError("vm: host lacks CPU features of the pool; not used", missing.join(","), { host: h.name });
           }
@@ -565,7 +584,7 @@ export class VmController {
               info.wgPublicKey,
               JSON.stringify({ gateway: !!info.gateway, publicIpv6: info.publicIpv6 ?? null, wgPort: info.wgPort ?? null, sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
                 memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets,
-                jfsMounted: info.jfsMounted ?? null }),
+                jfsMounted: info.jfsMounted ?? null, jfsUnmountedSince }),
               missing.length ? "retiring" : status,
             ],
           );

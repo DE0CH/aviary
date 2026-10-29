@@ -407,7 +407,7 @@ test("a host that stops answering loses its sandboxes and is terminated", async 
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
 });
 
-test("a new AWS host stays booting until its JuiceFS mount is there; an active host without it takes no sandbox", async () => {
+test("a new AWS host stays booting until its JuiceFS mount is there; an active host without it takes no sandbox and retires if it stays so", async () => {
   await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
   await db.query("update sandboxes set status = 'gone'");
   const sbx = new FakeSandboxd();
@@ -447,6 +447,25 @@ test("a new AWS host stays booting until its JuiceFS mount is there; an active h
   assert.equal(row.status, "active");
   assert.equal(ctl.placeable(row), false);
   assert.equal(await hostOf(s.id), aws);
+  const events = async (kind: string) => Number((await db.query<{ n: string }>("select count(*) as n from vm_events where kind = $1 and host = $2", [kind, aws])).rows[0]!.n);
+  assert.ok(row.info?.jfsUnmountedSince);
+  await ctl.pass();
+  assert.equal(await events("jfs-unmounted"), 1, "recorded once, on the transition");
+  assert.equal((await hostRow(aws)).info?.jfsUnmountedSince, row.info?.jfsUnmountedSince, "kept while it stays unmounted");
+  // remounted: placeable again, the gap cleared
+  fake.info.jfsMounted = true;
+  await ctl.pass();
+  assert.equal(await events("jfs-mounted"), 1);
+  assert.equal((await hostRow(aws)).info?.jfsUnmountedSince, null);
+  assert.equal(ctl.placeable(await hostRow(aws)), true);
+  // unmounted for longer than HUB_DEAD_MS (it can't remount): the host retires, so its sandboxes move off
+  fake.info.jfsMounted = false;
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "active");
+  await db.query("update vm_hosts set info = jsonb_set(info::jsonb, '{jfsUnmountedSince}', to_jsonb(now() - interval '3 minutes')) where name = $1", [aws]);
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "retiring");
+  assert.equal(await events("jfs-retire"), 1);
   // a booting host that never mounts is given up after the boot timeout
   fake.info.jfsMounted = true;
   await ctl.pass();

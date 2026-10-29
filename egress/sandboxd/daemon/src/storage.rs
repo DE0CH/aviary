@@ -41,16 +41,49 @@ pub fn claude_dir(user: &str) -> P {
     path!("/var/lib/sbx/jfs/users/{user}/claude")
 }
 
-pub fn is_mount(dir: &str) -> bool {
+fn is_mount(dir: &str) -> bool {
     quiet(&["mountpoint", "-q", dir]) == 0
+}
+
+/// Is a JuiceFS mount at /var/lib/sbx/jfs, from /proc/self/mountinfo: reads nothing on the FUSE mount itself, so a
+/// wedged juicefs can't hang the caller (GET /v1/host, which the scaler times out after 5 s and then loses the host).
+pub fn jfs_mount_listed() -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open("/proc/self/mountinfo") else { return false };
+    let mut buf = [0u8; 4096];
+    let mut carry = 0usize;
+    while let Ok(k) = file.read(&mut buf[carry..]) {
+        if k == 0 {
+            break;
+        }
+        let end = carry + k;
+        let mut start = 0;
+        while let Some(nl) = buf[start..end].iter().position(|c| *c == b'\n') {
+            if is_jfs_line(core::str::from_utf8(&buf[start..start + nl]).unwrap_or("")) {
+                return true;
+            }
+            start += nl + 1;
+        }
+        buf.copy_within(start..end, 0);
+        carry = end - start;
+        if carry == buf.len() {
+            carry = 0;
+        }
+    }
+    false
+}
+
+/// A mountinfo line for the JuiceFS mount: "id parent maj:min root MOUNTPOINT opts [optional...] - FSTYPE src opts".
+fn is_jfs_line(l: &str) -> bool {
+    l.split(' ').nth(4) == Some(jfs_root().as_str())
+        && l.split(" - ").nth(1).is_some_and(|t| t.starts_with("fuse.juicefs "))
 }
 
 /// Is the host's JuiceFS mount there, waiting up to 30 s for it: sbx-jfs.service remounts within seconds after a
 /// juicefs crash (Restart=always), and a sandbox started in that gap should wait rather than fail.
 fn jfs_mounted() -> bool {
-    let root = jfs_root();
     for i in 0..60 {
-        if is_mount(root.as_str()) {
+        if jfs_mount_listed() {
             return true;
         }
         if i < 59 {
@@ -332,5 +365,16 @@ mod tests {
                  Total file size: 123,456,789 bytes\nTotal transferred file size: 12,345,678 bytes\n";
         assert_eq!(parse_stats(t), SyncStats { files: 1042, bytes: 12_345_678, deleted: 4, ms: 0 });
         assert_eq!(parse_stats(""), SyncStats::default());
+    }
+
+    #[test]
+    fn jfs_mountinfo_line() {
+        assert!(is_jfs_line(
+            "512 29 0:52 / /var/lib/sbx/jfs rw,relatime shared:280 - fuse.juicefs JuiceFS:sbx rw,user_id=0,group_id=0"
+        ));
+        assert!(!is_jfs_line("29 1 259:1 / / rw,relatime shared:1 - ext4 /dev/root rw,discard"));
+        assert!(!is_jfs_line("530 29 0:60 / /var/lib/sbx/jfs/x rw shared:9 - fuse.juicefs JuiceFS:sbx rw"));
+        assert!(!is_jfs_line("531 29 7:3 / /var/lib/sbx/jfs rw shared:9 - ext4 /dev/loop3 rw"));
+        assert!(!is_jfs_line(""));
     }
 }

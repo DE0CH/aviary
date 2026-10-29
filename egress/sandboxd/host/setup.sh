@@ -70,8 +70,10 @@ Type=simple
 EnvironmentFile=/etc/sbx/juicefs.env
 ExecStartPre=/bin/mkdir -p /var/lib/sbx/jfs /var/cache/sbx-jfs
 # sandboxd makes wg0 and its routes within a second or two of starting; a connect before them would go out the VPC's
-# default route and hang until the TCP timeout (~2 min). Up to 30 s, then mount anyway (a host without wg0 routes).
-ExecStartPre=/bin/sh -c 'for i in $(seq 60); do [ -n "$(ip route show dev wg0 2>/dev/null)" ] && exit 0; sleep 0.5; done; exit 0'
+# default route and hang until the TCP timeout (~2 min). The wait is for a route sandboxd itself adds (a burst host's
+# control_cidr, the hub's sandbox_cidr), not the kernel's connected route, which appears at `link up` before the route
+# to the control network. Up to 30 s, then mount anyway (a host without wg0 routes).
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do ip route show dev wg0 2>/dev/null | grep -qv "proto kernel" && exit 0; sleep 0.5; done; exit 0'
 ExecStart=/bin/sh -c 'exec /usr/local/bin/juicefs mount --no-usage-report --cache-dir /var/cache/sbx-jfs --cache-size 4096 --open-cache 0 "$META_URL" /var/lib/sbx/jfs'
 # started = mounted. No sandbox goes to a host before its mount is there: sandboxd reports it (GET /v1/host
 # jfsMounted), the scaler keeps the host booting (and an active one out of placement) while it is false, and a
