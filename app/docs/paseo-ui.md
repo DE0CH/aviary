@@ -134,8 +134,17 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   message box; compact below 600px; light and dark from `styles/theme.ts`; the logo inline SVG) in plain HTML, painted
   before any script arrives. React replaces it on its first render; while the app is still connecting,
   `screens/startup-splash-screen.tsx` draws the same frame again (from `window.__yycBootFrame`, saved by the page;
-  marked `data-yyc-loading`), so the page goes frame -> app without the logo screen. Keep it in step when the frame's
-  layout changes. On conversation pages the frame's box sits at the bottom (`html.yyc-conv`).
+  marked `data-yyc-loading`; inside the app's main column, beside its sidebar, without the frame's own sidebar), so
+  the page goes frame -> app without the logo screen. Keep it in step when the layout changes.
+- **The message box is always at the bottom** (Deyao, 2026-10-29: "so it doesn't shift"): on every page and screen
+  size the composer sits at the bottom of the main column, 16 px from the edges, at most 820 px wide, 116 px tall
+  (104 px below 720px), as in a conversation. The new-chat screen (`screens/new-workspace-screen.tsx`, the dock never
+  centred) and the signed-out screen (`yyc/signed-out-shell.tsx`, whose 「登入」 overhangs a 28 px row) put the
+  logo and greeting just above it (the greeting a set 28 px line, `yyc/hero.ts`); the frame draws the same rows
+  (signed out, `html.yyc-out`, its second line too; conversation pages, `html.yyc-conv`, the box alone) and the
+  sidebar at the saved width or closed (`panel-state`). Measured at 1440x900, 390x844, 700 and 650 wide: frame,
+  early box and app box within 1 px; the logo too. A conversation that is still loading (`agent-loading` in
+  `panels/agent-panel.tsx`) is a loading area, so the early box stays until the composer is there.
 - **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
   send button over the frame's message box, typable before any script (font, line height and padding from
   `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
