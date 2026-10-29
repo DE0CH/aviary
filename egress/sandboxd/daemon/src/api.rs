@@ -22,7 +22,7 @@ use crate::net::{self, HostNet, MAX_PEERS, MAX_TARGETS};
 use crate::sandboxes::{Sandboxes, Scratch};
 use crate::server::{self, Conn, IoErr, ReadErr, Req, Stream, Tls, error_body, respond};
 use crate::util::{Error, Log, Res, in_cidr, read_small};
-use crate::{alloc, err, images};
+use crate::{alloc, err, images, storage};
 use core::fmt::Write as _;
 use rustls::ServerConfig;
 use std::net::{TcpListener, TcpStream};
@@ -471,6 +471,14 @@ fn host(app: &App, w: &mut W, sc: &mut Scratch) -> Res<()> {
     });
     w.end_arr();
     w.kstr("bootId", f.boot_id.as_str()).kstr("startedAt", f.started_at.as_str());
+    // whether the JuiceFS mount is there (null on a host without one: the gateway): the scaler keeps a host that
+    // lacks it out of placement (after a cold boot sbx-jfs needs sandboxd's WireGuard to reach the metadata store)
+    w.key("jfsMounted");
+    if std::fs::metadata("/etc/sbx/juicefs.env").is_ok() {
+        w.bool(storage::is_mount(storage::jfs_root().as_str()));
+    } else {
+        w.null();
+    }
     w.key("sandboxes");
     app.sbx.write_list(w);
     // new: sandboxd's own memory (docs/SANDBOXD-MEMORY.md)

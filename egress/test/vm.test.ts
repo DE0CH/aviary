@@ -407,6 +407,70 @@ test("a host that stops answering loses its sandboxes and is terminated", async 
   await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
 });
 
+test("a new AWS host stays booting until its JuiceFS mount is there; an active host without it takes no sandbox", async () => {
+  await db.query("update vm_hosts set status = 'gone' where kind = 'aws'");
+  await db.query("update sandboxes set status = 'gone'");
+  const sbx = new FakeSandboxd();
+  sbx.addHost(HUB, "hub", 8, "hub");
+  sbx.hosts.get(HUB)!.info.jfsMounted = null; // the gateway: no JuiceFS, counts as having it
+  const ec2 = new FakeEc2(sbx);
+  const p = new VmProvider({ db, config: config(), sandboxd: sbx, ec2, hostTls: { ca: "", cert: "", key: "" } });
+  const ctl = p.controller;
+  await db.query("update vm_hosts set max_sandboxes = 0 where name = 'hub'");
+  await ctl.pass();
+  assert.equal(ec2.launched.length, 1);
+  const aws = ec2.launched[0]!.userData.host.name as string;
+  const fake = [...sbx.hosts.values()].find((h) => h.info.name === aws)!;
+  // sandboxd answers (wg0 up) but sbx-jfs has not mounted yet: still booting, not placeable, no second host
+  fake.info.jfsMounted = false;
+  const activeEvents = async () => Number((await db.query<{ n: string }>("select count(*) as n from vm_events where kind = 'active' and host = $1", [aws])).rows[0]!.n);
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "booting");
+  assert.equal((await hostRow(aws)).info?.jfsMounted, false);
+  assert.equal(ctl.placeable(await hostRow(aws)), false);
+  assert.equal(ec2.launched.length, 1, "its slots still count as pending");
+  assert.equal(await activeEvents(), 0);
+  // mounted: active, the transition recorded once
+  fake.info.jfsMounted = true;
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "active");
+  assert.equal(ctl.placeable(await hostRow(aws)), true);
+  await ctl.pass();
+  assert.equal(await activeEvents(), 1);
+  const s = await newRow();
+  await p.create(s, "t");
+  assert.equal(await hostOf(s.id), aws);
+  // juicefs crashed (sbx-jfs remounts it): the host stays active, keeps its sandbox, takes no new one
+  fake.info.jfsMounted = false;
+  await ctl.pass();
+  const row = await hostRow(aws);
+  assert.equal(row.status, "active");
+  assert.equal(ctl.placeable(row), false);
+  assert.equal(await hostOf(s.id), aws);
+  // a booting host that never mounts is given up after the boot timeout
+  fake.info.jfsMounted = true;
+  await ctl.pass();
+  await db.query("update vm_hosts set status = 'booting', created_at = now() - interval '9 minutes' where name = $1", [aws]);
+  fake.info.jfsMounted = false;
+  await ctl.pass();
+  assert.equal((await hostRow(aws)).status, "gone");
+  assert.ok(ec2.terminated.includes(ec2.launched[0]!.id));
+  await db.query("update vm_hosts set max_sandboxes = null where name = 'hub'");
+});
+
+test("placeable: active, answering, and not reporting its JuiceFS mount missing (older sandboxd: as before)", () => {
+  const ctl = new VmProvider({ db, config: config(), sandboxd: new FakeSandboxd(), ec2: null, hostTls: null }).controller;
+  const h = (status: HostRow["status"], info: HostRow["info"], seen = new Date()) => ({ name: "a", kind: "aws", status, info, last_seen_at: seen }) as unknown as HostRow;
+  assert.equal(ctl.placeable(h("active", { jfsMounted: true })), true);
+  assert.equal(ctl.placeable(h("active", { jfsMounted: null })), true, "no JuiceFS on the host (the gateway)");
+  assert.equal(ctl.placeable(h("active", {})), true, "a sandboxd that doesn't report it");
+  assert.equal(ctl.placeable(h("active", null)), true);
+  assert.equal(ctl.placeable(h("active", { jfsMounted: false })), false);
+  assert.equal(ctl.placeable(h("booting", { jfsMounted: true })), false);
+  assert.equal(ctl.placeable(h("draining", { jfsMounted: true })), false);
+  assert.equal(ctl.placeable(h("active", { jfsMounted: true }, new Date(Date.now() - 3600_000))), false, "not answering");
+});
+
 test("VmController.pick: the hub first, then the fullest AWS host", () => {
   const h = (name: string, kind: "hub" | "aws") => ({ name, kind }) as HostRow;
   const pick = (s: { host: HostRow; used: number; free: number }[]) => VmController.pick(s)?.host.name;

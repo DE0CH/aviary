@@ -67,6 +67,7 @@ export interface HostRow {
     uptimeS?: number | null;
     peers?: number;
     egressTargets?: string[];
+    jfsMounted?: boolean | null;
   } | null;
   created_at: Date;
   last_seen_at: Date | null;
@@ -229,9 +230,17 @@ export class VmController {
     return typeof avail === "number" && avail < this.vm.minAvailableMemory;
   }
 
-  /** Placeable hosts (active, answering) with their use. */
+  /**
+   * May a new sandbox go there: active, answering, and its JuiceFS mount there (a juicefs crash: sbx-jfs remounts
+   * within seconds). A host whose sandboxd doesn't report the mount (null, absent) counts as having it.
+   */
+  placeable(h: HostRow): boolean {
+    return h.status === "active" && this.#fresh(h) && h.info?.jfsMounted !== false;
+  }
+
+  /** Placeable hosts with their use. */
   async #slots(c: Db | pg.PoolClient): Promise<Slot[]> {
-    const hosts = (await this.hosts(c)).filter((h) => h.status === "active" && this.#fresh(h));
+    const hosts = (await this.hosts(c)).filter((h) => this.placeable(h));
     const { rows } = await c.query<{ host: string; n: string }>("select host, count(*) as n from sandboxes where status <> 'gone' and host is not null group by host");
     const used = new Map(rows.map((r) => [r.host, Number(r.n)]));
     return hosts.map((h) => {
@@ -539,7 +548,9 @@ export class VmController {
           const info = await this.#d.sandboxd.host(h.url, 5000);
           this.#lastInfo.set(h.name, info);
           const missing = info.gateway ? [] : this.vm.cpuFeatures.split(",").filter((f) => f && !info.cpuFeatures.split(",").includes(f));
-          const status = h.status === "booting" ? "active" : h.status;
+          // a new host is active once sandboxd answers and its JuiceFS mount is there: after a cold boot sbx-jfs reaches
+          // the metadata store only over sandboxd's WireGuard, so the mount comes a few seconds after the first answer
+          const status = h.status === "booting" && info.jfsMounted !== false ? "active" : h.status;
           if (missing.length && h.status !== "retiring") {
             logError("vm: host lacks CPU features of the pool; not used", missing.join(","), { host: h.name });
           }
@@ -553,11 +564,14 @@ export class VmController {
               info.cpus,
               info.wgPublicKey,
               JSON.stringify({ gateway: !!info.gateway, publicIpv6: info.publicIpv6 ?? null, wgPort: info.wgPort ?? null, sandboxes: info.sandboxes, cpuFeatures: info.cpuFeatures, images: info.images, bootId: info.bootId, gvisorRelease: info.gvisorRelease,
-                memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets }),
+                memAvailable: info.memAvailable, loadAvg: info.loadAvg ?? null, uptimeS: info.uptimeS ?? null, peers: info.peers.length, egressTargets: info.egressTargets,
+                jfsMounted: info.jfsMounted ?? null }),
               missing.length ? "retiring" : status,
             ],
           );
-          if (h.status === "booting") {
+          if (h.status === "booting" && status === "booting") {
+            if (Date.now() - new Date(h.created_at).getTime() > BOOT_TIMEOUT_MS) await this.#hostLost(h, "JuiceFS not mounted");
+          } else if (h.status === "booting") {
             log("vm: AWS host active", { host: h.name, bootMs: Date.now() - new Date(h.created_at).getTime() });
             void this.event("active", h.name, null, { bootMs: Date.now() - new Date(h.created_at).getTime() });
             // warm the current image there now rather than at the first sandbox
@@ -656,7 +670,7 @@ export class VmController {
     );
     const movedAt = new Map(moved.map((m) => [m.id, new Date(m.at).getTime()]));
     const moves = planPacking(
-      active.map((h) => ({ name: h.name, slots: this.slots(h), open: !this.underPressure(h) })),
+      active.map((h) => ({ name: h.name, slots: this.slots(h), open: !this.underPressure(h) && h.info?.jfsMounted !== false })),
       live.map((r) => ({ id: r.id, host: r.host, size: sizeOf(r), movedAt: movedAt.get(r.id) ?? 0 })),
     );
     for (const m of moves) {

@@ -59,17 +59,23 @@ fi
 cat > /etc/systemd/system/sbx-jfs.service <<'EOF'
 [Unit]
 Description=JuiceFS: the sandboxes' /workspace and ~/.claude (/var/lib/sbx/jfs)
-After=network-online.target sbx-userdata.service
+# after sandboxd: the metadata store (Postgres in YYC's cluster) is reached over sandboxd's WireGuard (wg0)
+After=network-online.target sbx-userdata.service sandboxd.service
 Wants=network-online.target
-Before=sandboxd.service
 ConditionPathExists=/etc/sbx/juicefs.env
+# keeps remounting however often juicefs exits
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=/etc/sbx/juicefs.env
 ExecStartPre=/bin/mkdir -p /var/lib/sbx/jfs /var/cache/sbx-jfs
+# sandboxd makes wg0 and its routes within a second or two of starting; a connect before them would go out the VPC's
+# default route and hang until the TCP timeout (~2 min). Up to 30 s, then mount anyway (a host without wg0 routes).
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do [ -n "$(ip route show dev wg0 2>/dev/null)" ] && exit 0; sleep 0.5; done; exit 0'
 ExecStart=/bin/sh -c 'exec /usr/local/bin/juicefs mount --no-usage-report --cache-dir /var/cache/sbx-jfs --cache-size 4096 --open-cache 0 "$META_URL" /var/lib/sbx/jfs'
-# started = mounted: sandboxd (ordered after) must not take a sandbox with a workspace before the mount is there
-# (a host is "active" ~30 s after launch, and the controller places at once; it used to be refused with 503)
+# started = mounted. No sandbox goes to a host before its mount is there: sandboxd reports it (GET /v1/host
+# jfsMounted), the scaler keeps the host booting (and an active one out of placement) while it is false, and a
+# sandbox create waits up to 30 s for it (docs/SANDBOX-VM.md)
 ExecStartPost=/bin/sh -c 'for i in $(seq 240); do mountpoint -q /var/lib/sbx/jfs && exit 0; sleep 0.5; done; exit 1'
 TimeoutStartSec=150
 ExecStop=/bin/umount -l /var/lib/sbx/jfs

@@ -42,6 +42,8 @@ export interface HostInfo {
   images: string[];
   bootId: string;
   startedAt: string;
+  /** whether the host's JuiceFS mount is there; null on a host without one (the gateway), absent from older sandboxd */
+  jfsMounted?: boolean | null;
   sandboxes: HostSandbox[];
 }
 

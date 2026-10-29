@@ -41,8 +41,23 @@ pub fn claude_dir(user: &str) -> P {
     path!("/var/lib/sbx/jfs/users/{user}/claude")
 }
 
-fn is_mount(dir: &str) -> bool {
+pub fn is_mount(dir: &str) -> bool {
     quiet(&["mountpoint", "-q", dir]) == 0
+}
+
+/// Is the host's JuiceFS mount there, waiting up to 30 s for it: sbx-jfs.service remounts within seconds after a
+/// juicefs crash (Restart=always), and a sandbox started in that gap should wait rather than fail.
+fn jfs_mounted() -> bool {
+    let root = jfs_root();
+    for i in 0..60 {
+        if is_mount(root.as_str()) {
+            return true;
+        }
+        if i < 59 {
+            crate::util::sleep_ms(500);
+        }
+    }
+    false
 }
 
 /// Scratch filesystem + root overlay for a new sandbox (idempotent: a half-made one from a failed create is reused).
@@ -89,7 +104,7 @@ pub fn setup(spec: &Spec) -> Res<P> {
         }
         sh(&["mount", "-t", "overlay", "overlay", "-o", opts.as_str(), root.as_str()])?;
     }
-    if (!spec.workspace.is_empty() || !spec.user.is_empty()) && !is_mount(jfs_root().as_str()) {
+    if (!spec.workspace.is_empty() || !spec.user.is_empty()) && !jfs_mounted() {
         return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
     }
     // the top folders belong to the sandbox user (uid 1000) too, so the UI (CloudCLI, uid 1000, the same volume
