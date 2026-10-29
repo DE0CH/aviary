@@ -1,7 +1,6 @@
 import { useCallback, useRef } from "react";
-import * as DocumentPicker from "expo-document-picker";
-import { File } from "expo-file-system";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
+import { pickFilesWithDocumentPicker } from "@/hooks/document-picker-files";
 import { isWeb } from "@/constants/platform";
 import { getMimeTypeFromPath } from "@/attachments/file-types";
 import { readDesktopFileBytes, type SelectedFile } from "@/attachments/selected-file";
@@ -75,23 +74,6 @@ function pickFilesWithWebInput(): Promise<SelectedFile[] | null> {
       input.remove();
     }, 60_000);
   });
-}
-
-async function pickFilesWithDocumentPicker(): Promise<SelectedFile[] | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    multiple: true,
-    copyToCacheDirectory: true,
-  });
-
-  if (result.canceled || result.assets.length === 0) {
-    return null;
-  }
-
-  return result.assets.map((asset) => ({
-    fileName: asset.name,
-    mimeType: asset.mimeType ?? getMimeTypeFromPath(asset.name),
-    readBytes: () => new File(asset.uri).bytes(),
-  }));
 }
 
 export function useFilePicker() {

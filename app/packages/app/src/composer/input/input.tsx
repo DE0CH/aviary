@@ -44,12 +44,8 @@ import type { ImageAttachment, MessagePayload, TextReplacement } from "@/compose
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut, SHOW_SHORTCUT_HINTS } from "@/components/ui/shortcut";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { MenuRoot, MenuTrigger } from "@/components/ui/menu/menu-root";
+import { useMenuContext } from "@/components/ui/menu/menu-context";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
@@ -64,7 +60,7 @@ import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
-import { isReplyDisplayReady, loadChunksForSend } from "@/loading/stages";
+import { isReplyDisplayReady, loadChunksForSend, waitForStage } from "@/loading/stages";
 import { adoptEarlyInput } from "@/yyc/early-input";
 import {
   EditingTextInput,
@@ -111,6 +107,27 @@ const RealtimeVoiceOverlay = lazyArea(
   (module) => module.RealtimeVoiceOverlay,
   null,
 );
+
+// The attach menu's surface and items are their own chunk (composer/input/attachment-menu-content.tsx), fetched at
+// idle or on the first hover or press of the attach button; the button and the menu's state are here
+const loadAttachmentMenuContent = () => import("./attachment-menu-content");
+const LazyAttachmentMenuContent = lazyArea(
+  "attachment-menu",
+  loadAttachmentMenuContent,
+  (module) => module.AttachmentMenuContent,
+  null,
+);
+function prefetchAttachmentMenuContent(): void {
+  void loadAttachmentMenuContent().catch(() => undefined);
+}
+
+/** Draws the menu from its first open on (it stays mounted so it can animate closed). */
+function AttachmentMenuContentSlot(props: { items: AttachmentMenuItem[]; sheetTitle: string }) {
+  const { open } = useMenuContext("AttachmentMenuContentSlot");
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  return opened ? <LazyAttachmentMenuContent {...props} /> : null;
+}
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
@@ -270,24 +287,6 @@ function AttachButtonIcon({
   );
 }
 
-function AttachmentMenuList({ items }: { items: AttachmentMenuItem[] }) {
-  return (
-    <>
-      {items.map((item) => (
-        <DropdownMenuItem
-          key={item.id}
-          testID={`message-input-attachment-menu-item-${item.id}`}
-          disabled={item.disabled}
-          onSelect={item.onSelect}
-          leading={item.icon ?? null}
-        >
-          {item.label}
-        </DropdownMenuItem>
-      ))}
-    </>
-  );
-}
-
 function AttachmentDropdown({
   visible,
   isConnected,
@@ -300,42 +299,39 @@ function AttachmentDropdown({
   visible: boolean;
   isConnected: boolean;
   disabled: boolean;
-  attachButtonStyle: React.ComponentProps<typeof DropdownMenuTrigger>["style"];
+  attachButtonStyle: React.ComponentProps<typeof MenuTrigger>["style"];
   renderAttachButtonIcon: (input: { hovered?: boolean }) => React.ReactElement;
   attachmentMenuItems: AttachmentMenuItem[];
   addAttachmentLabel: string;
 }) {
   const isButtonDisabled = !isConnected || disabled;
+  useEffect(() => {
+    if (!visible) return;
+    void waitForStage(3).then(prefetchAttachmentMenuContent);
+  }, [visible]);
   if (!visible) return null;
   return (
-    <DropdownMenu compactMode="sheet">
+    <MenuRoot compactMode="sheet">
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild>
-          <DropdownMenuTrigger
+          <MenuTrigger
             disabled={isButtonDisabled}
             accessibilityLabel={addAttachmentLabel}
             accessibilityRole="button"
             testID="message-input-attach-button"
             style={attachButtonStyle}
+            onHoverIn={prefetchAttachmentMenuContent}
+            onPressIn={prefetchAttachmentMenuContent}
           >
             {renderAttachButtonIcon}
-          </DropdownMenuTrigger>
+          </MenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="top" align="center" offset={8}>
           <Text style={styles.tooltipText}>{addAttachmentLabel}</Text>
         </TooltipContent>
       </Tooltip>
-      <DropdownMenuContent
-        side="top"
-        align="start"
-        offset={8}
-        minWidth={220}
-        testID="message-input-attachment-menu"
-        sheetTitle={addAttachmentLabel}
-      >
-        <AttachmentMenuList items={attachmentMenuItems} />
-      </DropdownMenuContent>
-    </DropdownMenu>
+      <AttachmentMenuContentSlot items={attachmentMenuItems} sheetTitle={addAttachmentLabel} />
+    </MenuRoot>
   );
 }
 

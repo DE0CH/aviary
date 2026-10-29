@@ -160,7 +160,6 @@ import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { getForgePresentation } from "@/git/forge";
-import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
@@ -301,6 +300,14 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
     };
   };
 }
+
+// The forge's brand icon in the attach menu (only where the server searches a forge; never in YYC) is its own chunk
+const ForgeBrandIcon = lazyArea(
+  "forge-icon",
+  () => import("@/git/forge-icon"),
+  (module) => module.ForgeBrandIcon,
+  null,
+);
 
 // The context window meter (its ring, popover and usage details) is its own chunk, drawn into its fixed 28 px slot
 // when it arrives, so nothing moves (docs/paseo-ui.md "Loading").
