@@ -169,14 +169,19 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   build.
 - **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
   bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1, the reply
-  chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer), starts once the
-  server-message validator has arrived or failed; stage 2, the sidebar chunk (`loading/sidebar-chunk.ts`),
-  once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`, mounted by `app/_layout.tsx`:
-  the command center and its actions, the dialogs and sheets that open from a store, the download toast, the sidebar
-  callouts, the legacy skills migration). A lazy area that is merely rendered waits for its stage
+  chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer) and the
+  conversation page's chunk (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and
+  git actions), starts once the server-message validator has arrived or failed; stage 2, the sidebar chunk
+  (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
+  mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
+  (YYC's conversation rename/share/delete too; their store is `yyc/conversation-dialog-store.ts`), the download toast,
+  the sidebar callouts, the legacy skills migration). The entry keeps the new-chat screen (the landing page) and its
+  composer. A lazy area that is merely rendered waits for its stage
   (`agent-stream/lazy-view.tsx`, `components/markdown/lazy-renderer.tsx`, `components/lazy-left-sidebar.tsx`, each with
-  its own Suspense, so the composer beside the timeline is there at once); a send fetches the reply chunk at once,
-  opening the phone drawer the sidebar. Native has one bundle and starts at stage 3.
+  its own Suspense, so the composer beside the timeline is there at once), except the conversation page, which fetches
+  its chunk as it renders (it holds that page's message box; a loading frame keeps the early box meanwhile); a send
+  fetches the reply and conversation chunks at once (`loadChunksForSend`), opening the phone drawer the sidebar. Native
+  has one bundle and starts at stage 3.
 - **Chunks fetched only when used** (Metro splits every `import()` into its own file; `utils/lazy-with-retry.ts` tries
   a failed fetch three times, each a new fetch (`loading/stages.ts` forgets a failed import), then reloads the page, at
   most once in ten minutes per tab (the mark is never cleared by another chunk loading, so one blocked file cannot
@@ -195,7 +200,13 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   disposed, and bounded like the validator by the connect timeout, so a stalled fetch fails the attempt and it retries),
   and the full Lucide set (`plugins/icons.ts`, the first time a plugin's Lucide icon is drawn, never when a plugin is
   only checked; a plugin's icon name is checked only for its shape, so a plugin is accepted the same before and after
-  the set arrives; a failed fetch is forgotten and the next draw fetches again).
+  the set arrives; a failed fetch is forgotten and the next draw fetches again), the model browser's view
+  (`components/lazy-model-browser.tsx`; its hook is `components/model-browser-state.tsx`), the composer's agent
+  controls (`composer/agent-controls/lazy.tsx`; YYC's composer never draws them) and context window meter (drawn into
+  its fixed 28 px slot), the plugin evaluator with its UI kit (`plugins/registry.ts` `loadPluginEvaluator`, fetched by
+  `plugins/catalog-sync.tsx` only for a catalog with client bundles) and a plugin's own screen (its route). Forge icons
+  come from `git/forges/brands.ts`, not the PR-pane view modules. A split pane that has never been shown mounts
+  nothing (`components/split-container.tsx`), so the hidden explorer's diff views are not fetched.
 - **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
   `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
   each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The cost is bytes
@@ -221,12 +232,15 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
 - **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
   checks the entry (at most 1,100 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
-- **Where it stands** (brotli q4): the page loads one script, `index` (1,512 KB; 2,273 KB with `__common` before it was
-  turned off, 3,102 KB before the stages); then the validator 278 KB, the reply chunk 746 KB (the highlighter's grammars
-  and CodeMirror, which `__common` used to carry, are most of it), the sidebar 88 KB, the hosts 66 KB. Not yet under the
-  1,100 KB budget: what remains is the app shell (expo-router, react-native-web, react-dom, Reanimated, gesture handler,
-  bottom sheet, keyboard controller, unistyles: about half), both languages' text (`i18n/resources`, read synchronously
-  before the first render), the protocol and zod, the composer, and the workspace screen with its tabs row and header.
+- **Where it stands** (brotli q4, 2026-10-29): the page loads one script, `index` (1,241 KB; 1,512 KB before the
+  conversation page, the plugin evaluator, the agent controls and the rest left it, 2,273 KB with `__common`, 3,102 KB
+  before the stages); then the validator 278 KB, the reply chunk 345 KB and the conversation chunk 215 KB, the
+  sidebar 140 KB, the hosts 80 KB; the highlighter 15 KB and a grammar per language (22-71 KB; Swift/Dart/C#/Nix
+  175 KB) when code first shows. Lazy chunks carry their own copies of modules the entry no longer holds (the sidebar
+  grew from 88 KB). Not yet under the 1,100 KB budget: what remains is the app shell (expo-router,
+  react-native-web, react-dom, Reanimated, gesture handler, bottom sheet, keyboard controller, unistyles: about
+  half), both languages' text (`i18n/resources`, about 55 KB, read synchronously before the first render), the
+  protocol and zod, the host runtime and the new-chat screen with its composer.
   Earlier timings (2,273 KB): cold, Chrome's Slow 4G, desktop: the early box takes keys at 0.6-0.7 s, the entry at
   13.9 s; Fast 4G: box 0.2 s, entry 2.3 s, sidebar 3.9 s.
 - Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
