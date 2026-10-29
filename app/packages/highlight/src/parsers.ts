@@ -3,27 +3,34 @@ import type { Grammar } from "./grammar.js";
 
 // Each language family's grammar is its own module, imported the first time a file in that language is highlighted
 // (a bundler splits each import() into its own chunk: the app fetches a grammar when a code block in that language
-// first renders, docs/paseo-ui.md "Loading"). The table below is all that loads up front.
+// first renders, docs/paseo-ui.md "Loading"). The import() calls live in grammar-families.ts, its own chunk with the
+// Lezer runtime the grammars share, so the app's bundler keeps that runtime out of every grammar chunk. The table
+// below is all that loads up front.
 type GrammarFamily = () => Promise<{ grammars: Record<string, Grammar> }>;
+type FamilyName = keyof typeof import("./grammar-families.js").families;
 
-const javascript: GrammarFamily = () => import("./grammars/javascript.js");
-const cpp: GrammarFamily = () => import("./grammars/cpp.js");
-const json: GrammarFamily = () => import("./grammars/json.js");
-const css: GrammarFamily = () => import("./grammars/css.js");
-const html: GrammarFamily = () => import("./grammars/html.js");
-const svelte: GrammarFamily = () => import("./grammars/svelte.js");
-const astro: GrammarFamily = () => import("./grammars/astro.js");
-const vue: GrammarFamily = () => import("./grammars/vue.js");
-const xml: GrammarFamily = () => import("./grammars/xml.js");
-const java: GrammarFamily = () => import("./grammars/java.js");
-const python: GrammarFamily = () => import("./grammars/python.js");
-const go: GrammarFamily = () => import("./grammars/go.js");
-const php: GrammarFamily = () => import("./grammars/php.js");
-const yaml: GrammarFamily = () => import("./grammars/yaml.js");
-const rust: GrammarFamily = () => import("./grammars/rust.js");
-const editorModes: GrammarFamily = () => import("./grammars/editor-modes.js");
-const elixir: GrammarFamily = () => import("./grammars/elixir.js");
-const markdown: GrammarFamily = () => import("./grammars/markdown.js");
+function family(name: FamilyName): GrammarFamily {
+  return () => import("./grammar-families.js").then((module) => module.families[name]());
+}
+
+const javascript = family("javascript");
+const cpp = family("cpp");
+const json = family("json");
+const css = family("css");
+const html = family("html");
+const svelte = family("svelte");
+const astro = family("astro");
+const vue = family("vue");
+const xml = family("xml");
+const java = family("java");
+const python = family("python");
+const go = family("go");
+const php = family("php");
+const yaml = family("yaml");
+const rust = family("rust");
+const editorModes = family("editorModes");
+const elixir = family("elixir");
+const markdown = family("markdown");
 
 const familiesByExtension: Record<string, GrammarFamily> = {
   // JavaScript/TypeScript

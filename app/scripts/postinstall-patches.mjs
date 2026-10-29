@@ -37,7 +37,8 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
-  // Web export: no eager __common chunk; async chunks keep their own copies of shared modules
+  // Web export: no eager __common chunk; async chunks keep their own copies of shared modules, minus what every
+  // chunk importing them has already defined
   // (docs/paseo-ui.md "Loading"). Local, no upstream change; re-check when Expo's chunk splitting changes.
   {
     nodeModulesPath: "node_modules/@expo/metro-config",

@@ -1,8 +1,8 @@
 diff --git a/node_modules/@expo/metro-config/build/serializer/serializeChunks.js b/node_modules/@expo/metro-config/build/serializer/serializeChunks.js
-index 10c8ce3..e1918d5 100644
+index 10c8ce3..0355653 100644
 --- a/node_modules/@expo/metro-config/build/serializer/serializeChunks.js
 +++ b/node_modules/@expo/metro-config/build/serializer/serializeChunks.js
-@@ -61,7 +61,10 @@ async function graphToSerialAssetsAsync(config, serializeChunkOptions, ...props)
+@@ -61,12 +61,19 @@ async function graphToSerialAssetsAsync(config, serializeChunkOptions, ...props)
      const entryChunk = entryChunks.values().next().value;
      if (entryChunk) {
          removeEntryDepsFromAsyncChunks(entryChunk, chunks);
@@ -14,3 +14,99 @@ index 10c8ce3..e1918d5 100644
          if (commonChunk) {
              entryChunk.requiredChunks.add(commonChunk);
              chunks.add(commonChunk);
+         }
+         deduplicateAgainstKnownChunks(chunks, entryChunk, commonChunk);
++        // Paseo: an async chunk drops the modules that every chunk importing it has surely defined by then (its own
++        // or its importers' ancestors'), e.g. the Lezer runtime the grammar loader chunk holds is not copied into
++        // every grammar chunk (docs/paseo-ui.md "Loading"). An import from the entry leaves only what it removed.
++        deduplicateAgainstImportingChunks(chunks, entryChunk);
+         removeEmptyChunks(chunks);
+         if (commonChunk) {
+             createRuntimeChunk(entryChunk, chunks, graph, options);
+@@ -593,6 +600,86 @@ function deduplicateAgainstKnownChunks(chunks, entryChunk, commonChunk) {
+         }
+     }
+ }
++function deduplicateAgainstImportingChunks(chunks, entryChunk) {
++    const chunkByEntryPath = new Map();
++    for (const chunk of chunks) {
++        if (chunk.isAsync && !chunk.sealed) {
++            for (const entry of chunk.entries) {
++                chunkByEntryPath.set(entry.path, chunk);
++            }
++        }
++    }
++    // The original contents: whatever a chunk holds is defined once its code runs
++    const original = new Map();
++    for (const chunk of chunks) {
++        original.set(chunk, new Set(chunk.deps));
++    }
++    const importers = new Map();
++    for (const chunk of chunks) {
++        for (const module of original.get(chunk)) {
++            for (const dependency of module.dependencies.values()) {
++                const asyncType = dependency.data.data.asyncType;
++                if (!asyncType || asyncType === 'worker' || !dependency.absolutePath) {
++                    continue;
++                }
++                const target = chunkByEntryPath.get(dependency.absolutePath);
++                if (!target || target === chunk) {
++                    continue;
++                }
++                if (!importers.has(target)) {
++                    importers.set(target, new Set());
++                }
++                importers.get(target).add(chunk);
++            }
++        }
++    }
++    // available(C): the modules surely defined whenever C's import() runs, i.e. in every importer or its ancestors
++    const available = new Map();
++    function availableFor(chunk, visiting) {
++        if (chunk.isEntry || chunk === entryChunk) {
++            return original.get(chunk);
++        }
++        if (available.has(chunk)) {
++            return available.get(chunk);
++        }
++        const from = importers.get(chunk);
++        if (!from || from.size === 0 || visiting.has(chunk)) {
++            return new Set();
++        }
++        visiting.add(chunk);
++        let result = null;
++        for (const importer of from) {
++            const here = new Set(original.get(importer));
++            for (const module of availableFor(importer, visiting)) {
++                here.add(module);
++            }
++            if (result === null) {
++                result = here;
++            }
++            else {
++                for (const module of result) {
++                    if (!here.has(module)) {
++                        result.delete(module);
++                    }
++                }
++            }
++        }
++        visiting.delete(chunk);
++        available.set(chunk, result ?? new Set());
++        return available.get(chunk);
++    }
++    for (const chunk of chunks) {
++        if (chunk.sealed || chunk.isEntry || !chunk.isAsync) {
++            continue;
++        }
++        const surelyDefined = availableFor(chunk, new Set());
++        for (const dep of chunk.deps) {
++            if (!chunk.entries.has(dep) && surelyDefined.has(dep)) {
++                chunk.deps.delete(dep);
++            }
++        }
++    }
++}
+ function removeEmptyChunks(chunks) {
+     for (const chunk of chunks) {
+         if (!chunk.sealed && !chunk.isEntry && chunk.deps.size === 0) {
