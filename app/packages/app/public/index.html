@@ -207,8 +207,12 @@
         function release(reason) {
           if (!active) return;
           active = false;
+          readied = false;
+          handoff = null;
           clearTimeout(timer);
           if (observer) observer.disconnect();
+          d.removeEventListener("pointerdown", anyTouch, true);
+          d.removeEventListener("touchstart", anyTouch, true);
           layer.remove();
           mark("yyc:early-released:" + reason);
         }
@@ -270,14 +274,17 @@
           if (root.querySelector("#boot,[data-yyc-loading]")) { clearTimeout(timer); timer = 0; return; }
           if (!timer) timer = setTimeout(function () { release("timeout"); }, 1500);
         }
-        function swap(submit) {
+        function swap(submit, focus) {
           if (!handoff) return false;
           var next = handoff;
           handoff = null;
-          next.adopt();
+          next.adopt(focus !== false);
           if (submit) next.submit();
           return true;
         }
+        // A phone's first tap anywhere else (the app's send button, the list, a menu) hands the text over first, in
+        // the capture phase, so that tap already acts on the app's own box; the keyboard is not pulled back
+        function anyTouch(e) { if (readied && !composing && e.target !== box) swap(false, false); }
         box.addEventListener("input", function () {
           setMirror({ text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "", path: norm(location.pathname), t: Date.now() });
         });
@@ -292,6 +299,10 @@
           if (readied && !e.isComposing && !composing) swap(false);
         });
         box.addEventListener("touchend", function () { if (readied && !composing) swap(false); });
+        // Leaving the box (keyboard dismissed, focus moved) hands the text over too: the box never outlives its focus
+        box.addEventListener("blur", function () { if (readied && !composing) swap(false, false); });
+        d.addEventListener("pointerdown", anyTouch, true);
+        d.addEventListener("touchstart", anyTouch, true);
         button.addEventListener("click", function () { if (readied) swap(true); });
         active = true;
         layer.className = "on";

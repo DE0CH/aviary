@@ -9,7 +9,7 @@ const indexHtml = readFileSync(path.resolve(__dirname, "../../public/index.html"
 interface Early {
   take(path: string): { text: string; selStart: number; selEnd: number; base: string } | null;
   release(reason: string): void;
-  ready(handoff: { element: unknown; adopt: () => void; submit: () => void }): void;
+  ready(handoff: { element: unknown; adopt: (focus?: boolean) => void; submit: () => void }): void;
   state(): { active: boolean; composing: boolean; focused: boolean };
   whenIdle(run: () => void): void;
 }
@@ -132,6 +132,41 @@ describe("public/index.html early message box", () => {
     expect(adopt).toHaveBeenCalledTimes(1);
     expect(submit).toHaveBeenCalledTimes(1);
   });
+
+  it("on a phone, a first tap anywhere else hands the text over before that tap acts", () => {
+    const { window, early, type } = page("https://ai.example/new");
+    type("hello");
+    const adopt = vi.fn(() => early.release("adopted"));
+    early.ready({ element: null, adopt, submit: vi.fn() });
+    const send = window.document.createElement("button");
+    window.document.body.appendChild(send);
+    let adoptedFirst = false;
+    send.addEventListener("pointerdown", () => {
+      adoptedFirst = adopt.mock.calls.length === 1;
+    });
+    send.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    expect(adopt).toHaveBeenCalledWith(false);
+    expect(adoptedFirst).toBe(true);
+    expect(window.document.getElementById("yyc-early")).toBeNull();
+  });
+
+  it("on a phone, leaving the box hands the text over without pulling the keyboard back", () => {
+    const { window, early, box, type } = page("https://ai.example/new");
+    type("hello");
+    const adopt = vi.fn();
+    early.ready({ element: null, adopt, submit: vi.fn() });
+    box()!.dispatchEvent(new window.FocusEvent("blur"));
+    expect(adopt).toHaveBeenCalledWith(false);
+  });
+
+  it("does not catch taps once it is gone", () => {
+    const { window, early } = page("https://ai.example/new");
+    const adopt = vi.fn();
+    early.ready({ element: null, adopt, submit: vi.fn() });
+    early.release("composer-gone");
+    window.document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    expect(adopt).not.toHaveBeenCalled();
+  });
 });
 
 describe("mergeEarlyText", () => {
@@ -213,6 +248,20 @@ describe("adoptEarlyInput", () => {
     adoptEarlyInput(input);
     expect(api.ready).toHaveBeenCalledTimes(1);
     expect(input.replaceText).not.toHaveBeenCalled();
+  });
+
+  it("on a phone, a handover without focus does not focus, and an unmount drops the box", () => {
+    const { api } = fakeEarly({ active: true, composing: false, focused: true });
+    (window as unknown as { matchMedia: () => { matches: boolean } }).matchMedia = () => ({ matches: false });
+    const input = target();
+    const cleanup = adoptEarlyInput(input);
+    const handoff = (api.ready.mock.calls[0] as unknown as [{ adopt: (focus?: boolean) => void }])[0];
+    handoff.adopt(false);
+    expect(input.replaceText).toHaveBeenCalledWith("typed", { start: 5, end: 5 });
+    expect(input.focus).not.toHaveBeenCalled();
+    api.release.mockClear();
+    cleanup?.();
+    expect(api.release).toHaveBeenCalledWith("composer-gone");
   });
 });
 

@@ -18,7 +18,11 @@ interface EarlyTake {
 interface EarlyInputApi {
   take(path: string): EarlyTake | null;
   release(reason: string): void;
-  ready(handoff: { element: HTMLElement | null; adopt: () => void; submit: () => void }): void;
+  ready(handoff: {
+    element: HTMLElement | null;
+    adopt: (focus?: boolean) => void;
+    submit: () => void;
+  }): void;
   state(): { active: boolean; composing: boolean; focused: boolean };
   whenIdle(run: () => void): void;
 }
@@ -52,20 +56,21 @@ export function mergeEarlyText(
   return { text, selection: { start: text.length, end: text.length } };
 }
 
-function adoptNow(target: EarlyInputTarget, focus: boolean): void {
+function adoptNow(target: EarlyInputTarget, focus: boolean, focusIfTaken = true): void {
   const api = early();
   if (!api) return;
   const taken = api.take(window.location.pathname);
   const merged = taken ? mergeEarlyText(target.getText(), taken) : null;
   if (merged) target.replaceText(merged.text, merged.selection);
-  if (focus || merged) target.focus();
+  if (focus || (merged && focusIfTaken)) target.focus();
   api.release("adopted");
 }
 
 /**
  * Called by a focused message box once its draft has loaded. Desktop takes the text over at once. On a phone whose
  * keyboard is up in the early box, the swap waits for the next tap or key (only then may a script move the keyboard
- * to the real box); until then the early box sits over the real one. Returns a cleanup for an unmount before that.
+ * to the real box), a tap anywhere else or a blur; until then the early box sits over the real one. Returns a
+ * cleanup for an unmount before that, which drops the box and keeps its text for this page.
  */
 export function adoptEarlyInput(target: EarlyInputTarget): (() => void) | void {
   const api = early();
@@ -73,13 +78,16 @@ export function adoptEarlyInput(target: EarlyInputTarget): (() => void) | void {
   // Gone already (removed on a page without a message box): its text is kept for this page, or /new within 60 s
   if (!api.state().active) return adoptNow(target, false);
   let cancelled = false;
+  let handed = false;
   api.whenIdle(() => {
     if (cancelled) return;
     const { focused } = api.state();
     if (focused && !hasFinePointer()) {
+      handed = true;
       api.ready({
         element: target.element,
-        adopt: () => adoptNow(target, true),
+        // A tap elsewhere or a blur hands over without focus (no keyboard pulled back up)
+        adopt: (focus = true) => adoptNow(target, focus, focus),
         submit: target.submit,
       });
       return;
@@ -88,6 +96,8 @@ export function adoptEarlyInput(target: EarlyInputTarget): (() => void) | void {
   });
   return () => {
     cancelled = true;
+    // Its composer is gone (another conversation): the text stays in the mirror for this page only
+    if (handed) api.release("composer-gone");
   };
 }
 
