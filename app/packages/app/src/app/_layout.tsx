@@ -20,34 +20,22 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  Suspense,
 } from "react";
 import { AppState, useWindowDimensions, View } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AppearanceProvider } from "@/appearance/provider";
-import { CommandCenter } from "@/command-center/command-center";
-import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
-import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
-import { PluginCommandCenterActions } from "@/plugins/command-center/registration";
-import { AddProjectFlowHost } from "@/components/add-project-flow-host";
-import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
-import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
-import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
-import { ChangelogHost } from "@/changelog";
-import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/lazy-left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
-import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
-import { ProviderSettingsHost } from "@/components/provider-settings-host";
-import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
@@ -78,14 +66,11 @@ import { useSettingsRouteEntry } from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
-import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
 import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowChrome } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
 import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
-import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
-import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
@@ -111,7 +96,9 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { startLoadingStages } from "@/loading/stages";
+import { loadHostsChunkInTurn, startLoadingStages } from "@/loading/stages";
+import { ChunkErrorBoundary } from "@/components/loading-frame";
+import { lazyWithRetry } from "@/utils/lazy-with-retry";
 import { isSignedOutPage } from "@/yyc/signed-out-shell";
 import { releaseEarlyInputIfNoComposer } from "@/yyc/early-input";
 import { usePanelStore } from "@/stores/panel-store";
@@ -153,6 +140,9 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   storeReady: false,
   startupBlocker: { kind: "none" },
 });
+
+// What the app shows on request or later (dialogs, sheets, callouts), mounted at stage 3 (loading/hosts-chunk.tsx)
+const LazyAppHosts = lazyWithRetry(loadHostsChunkInTurn, (chunk) => chunk.AppHosts);
 
 function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   const client = useHostRuntimeClient(daemon.serverId);
@@ -515,25 +505,14 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       </AppearanceStyleBoundary>
       {isCompactLayout ? themedSidebarChrome : null}
       <AppearanceStyleBoundary>
-        <DownloadToast />
-        <RosettaCalloutSource />
-        <UpdateCalloutSource />
-        <LegacyAgentSkillsMigration />
-        <WorktreeSetupCalloutSource />
-        <CommandCenterRootActions />
-        <CommandCenterWorkspaceActions />
-        <PluginCommandCenterActions />
         <WorkspacePinShortcutHandler />
-        <WorkspaceRenameHost />
-        <CommandCenter />
-        <AddProjectFlowHost />
         <HostChooserModal />
         <HostConfirmationSheet />
-        <ProviderSettingsHost />
-        <WorkspaceSetupDialog />
-        <KeyboardShortcutsDialog />
-        <AppDiagnosticHost />
-        <ChangelogHost />
+        <ChunkErrorBoundary name="hosts">
+          <Suspense fallback={null}>
+            <LazyAppHosts />
+          </Suspense>
+        </ChunkErrorBoundary>
         <QuittingOverlay />
       </AppearanceStyleBoundary>
     </View>

@@ -9,7 +9,7 @@ import { isWeb } from "@/constants/platform";
 // - stage 1, the reply chunk: once the server-message validator (the connection's own chunk) has arrived, or 4 s after
 //   the entry ran;
 // - stage 2, the sidebar chunk: once stage 1 has settled;
-// - stage 3, the hosts (dialogs, shortcuts): at idle after stage 2.
+// - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
 // Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
 // fetches the reply chunk at once, opening the phone drawer the sidebar. Native has every module in one bundle, so
 // every stage is reached from the start.
@@ -122,6 +122,14 @@ export function requestSidebarChunkNow(): void {
 /** The sidebar chunk once its stage has come (never before the reply chunk has settled), or once asked for. */
 export function loadSidebarChunkInTurn(): Promise<typeof import("./sidebar-chunk")> {
   return Promise.race([waitForStage(2), sidebarRequested]).then(loadSidebarChunk);
+}
+
+/** The hosts chunk (loading/hosts-chunk.tsx), once stage 3 has come. */
+export function loadHostsChunkInTurn(): Promise<typeof import("./hosts-chunk")> {
+  return waitForStage(3).then(() => {
+    markChunk("hosts");
+    return import("./hosts-chunk");
+  });
 }
 
 function onIdle(run: () => void): void {
