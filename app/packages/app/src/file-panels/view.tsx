@@ -1,6 +1,6 @@
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import { createPluginClientStateSource } from "@/plugins/client-state/source";
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import type { PluginFilePanelProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { withUnistyles } from "react-native-unistyles";
@@ -12,8 +12,16 @@ import { resolvePluginPlatform } from "@/plugins/platform";
 import { toPluginTheme } from "@/plugins/theme";
 import type { Theme } from "@/styles/theme";
 import type { FilePanel } from "./panels";
-import { BuiltinFilePanelView } from "./builtin";
+import { ChunkErrorBoundary, LoadingFrame } from "@/components/loading-frame";
+import { lazyWithRetry } from "@/utils/lazy-with-retry";
 import { PluginFilePanelHost } from "./plugin-host";
+
+// The built-in file views (Markdown preview with YAML front matter, source, images) are their own chunk, fetched when a
+// file opens (docs/paseo-ui.md "Loading").
+const BuiltinFilePanelView = lazyWithRetry(
+  () => import("./builtin"),
+  (m) => m.BuiltinFilePanelView,
+);
 
 type Props = Pick<PluginFilePanelProps, "file" | "tab" | "params" | "revision"> & {
   panel: FilePanel;
@@ -31,7 +39,11 @@ function FilePanelHost({ panel, theme, ...input }: Props & { theme: PluginTheme 
   if (panel.builtin)
     return (
       <PluginClientStateProvider source={stateSource}>
-        <BuiltinFilePanelView {...props} panel={panel} />
+        <ChunkErrorBoundary name="file-view">
+          <Suspense fallback={<LoadingFrame />}>
+            <BuiltinFilePanelView {...props} panel={panel} />
+          </Suspense>
+        </ChunkErrorBoundary>
       </PluginClientStateProvider>
     );
   return <PluginFilePanelHost {...props} panel={panel} />;

@@ -1,15 +1,14 @@
-import { useCallback } from "react";
+import { Suspense, useCallback } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
-import {
-  PullRequestPane,
-  PullRequestPaneError,
-  PullRequestPaneSkeleton,
-} from "@/git/pull-request-panel";
+import { ChunkErrorBoundary } from "@/components/loading-frame";
+import { PullRequestPaneError } from "@/git/pull-request-panel/pane-error";
+import { PullRequestPaneSkeleton } from "@/git/pull-request-panel/pane-skeleton";
+import { lazyWithRetry } from "@/utils/lazy-with-retry";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
 
 import { resolvePullRequestContentState } from "./state";
@@ -19,6 +18,13 @@ export {
   usePullRequestAutoAdd,
 } from "./discovery";
 export { usePullRequestData } from "./data";
+
+// The pull request view (its timeline, markdown, rich copy) is its own chunk, fetched when one opens
+// (docs/paseo-ui.md "Loading").
+const PullRequestPane = lazyWithRetry(
+  () => import("@/git/pull-request-panel/pane"),
+  (m) => m.PullRequestPane,
+);
 
 export function PullRequestContent(input: {
   serverId: string;
@@ -37,17 +43,21 @@ export function PullRequestContent(input: {
 
   if (input.prPane.data) {
     return (
-      <PullRequestPane
-        serverId={input.serverId}
-        cwd={input.cwd}
-        data={input.prPane.data}
-        activityLoading={input.prPane.activityLoading}
-        workspaceAttachmentScopeKey={buildWorkspaceAttachmentScopeKey({
-          serverId: input.serverId,
-          workspaceId: input.workspaceId,
-          cwd: input.cwd,
-        })}
-      />
+      <ChunkErrorBoundary name="pull-request" fallback={<PullRequestPaneError onRetry={onRetry} />}>
+        <Suspense fallback={<PullRequestPaneSkeleton />}>
+          <PullRequestPane
+            serverId={input.serverId}
+            cwd={input.cwd}
+            data={input.prPane.data}
+            activityLoading={input.prPane.activityLoading}
+            workspaceAttachmentScopeKey={buildWorkspaceAttachmentScopeKey({
+              serverId: input.serverId,
+              workspaceId: input.workspaceId,
+              cwd: input.cwd,
+            })}
+          />
+        </Suspense>
+      </ChunkErrorBoundary>
     );
   }
   const contentState = resolvePullRequestContentState(input.prPane);
