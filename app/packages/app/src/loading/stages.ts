@@ -6,11 +6,13 @@ import { isWeb } from "@/constants/platform";
 // connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
 // conversation list; everything else only when used. Each stage's import() starts when the one before it has
 // arrived, so a later chunk never takes bandwidth from an earlier one:
-// - stage 1, the reply chunk: once the server-message validator (the connection's own chunk) has arrived or failed;
+// - stage 1, the reply chunk and the conversation page's chunk (loading/workspace-chunk.ts): once the server-message
+//   validator (the connection's own chunk) has arrived or failed;
 // - stage 2, the sidebar chunk: once stage 1 has settled;
 // - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
 // Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
-// fetches the reply chunk at once, opening the phone drawer the sidebar. Native has every module in one bundle, so
+// fetches the reply and conversation chunks at once, opening the phone drawer the sidebar, and a conversation page
+// fetches its own chunk as it renders (it holds that page's message box). Native has every module in one bundle, so
 // every stage is reached from the start.
 export type LoadingStage = 0 | 1 | 2 | 3;
 
@@ -73,6 +75,7 @@ function settle(promise: Promise<unknown>): Promise<void> {
 }
 
 let replyChunk: Promise<typeof import("./reply-chunk")> | null = null;
+let workspaceChunk: Promise<typeof import("./workspace-chunk")> | null = null;
 let sidebarChunk: Promise<typeof import("./sidebar-chunk")> | null = null;
 
 /** The reply's display: the timeline and the markdown renderer. Starts the fetch now (a send, a stage). */
@@ -86,6 +89,24 @@ export function loadReplyChunk(): Promise<typeof import("./reply-chunk")> {
     });
   }
   return replyChunk;
+}
+
+/** The conversation page (the workspace screen). Starts the fetch now (a conversation page, a send, stage 1). */
+export function loadWorkspaceChunk(): Promise<typeof import("./workspace-chunk")> {
+  if (!workspaceChunk) {
+    markChunk("workspace");
+    workspaceChunk = import("./workspace-chunk").catch((error: unknown) => {
+      workspaceChunk = null;
+      throw error;
+    });
+  }
+  return workspaceChunk;
+}
+
+/** A message is being sent: the reply's display and the conversation page jump the loading queue. */
+export function loadChunksForSend(): void {
+  void loadReplyChunk();
+  void loadWorkspaceChunk();
 }
 
 /** The reply chunk once its stage has come, for a lazy area that is merely rendered. */
@@ -145,7 +166,7 @@ export function startLoadingStages(): void {
   void settle(loadWSOutboundValidator())
     .then(() => {
       reach(1);
-      return settle(loadReplyChunk());
+      return settle(Promise.all([loadReplyChunk(), loadWorkspaceChunk()]));
     })
     .finally(() => {
       reach(2);
@@ -158,6 +179,7 @@ export const __private__ = {
     reached = stage;
     started = false;
     replyChunk = null;
+    workspaceChunk = null;
     sidebarChunk = null;
     stageWaiters.clear();
   },

@@ -17,6 +17,10 @@ vi.mock("./reply-chunk", () => {
   chunks.order.push("reply");
   return { AgentStreamView: () => null, MarkdownRenderer: () => null };
 });
+vi.mock("./workspace-chunk", () => {
+  chunks.order.push("workspace");
+  return { WorkspaceScreen: () => null };
+});
 vi.mock("./sidebar-chunk", () => {
   chunks.order.push("sidebar");
   return { LeftSidebar: () => null };
@@ -29,7 +33,7 @@ describe("loading stages", () => {
     stages.__private__.reset();
   });
 
-  it("fetches the reply chunk after the validator, then the sidebar, then reaches the hosts stage", async () => {
+  it("fetches the reply and conversation chunks after the validator, then the sidebar, then the hosts", async () => {
     stages.startLoadingStages();
     await Promise.resolve();
     expect(stages.hasReachedStage(1)).toBe(false);
@@ -37,7 +41,7 @@ describe("loading stages", () => {
     validator.resolve();
     await stages.waitForStage(2);
     await stages.loadSidebarChunk();
-    expect(chunks.order).toEqual(["reply", "sidebar"]);
+    expect(chunks.order).toEqual(["reply", "workspace", "sidebar"]);
     await vi.waitFor(() => expect(stages.hasReachedStage(3)).toBe(true));
   });
 

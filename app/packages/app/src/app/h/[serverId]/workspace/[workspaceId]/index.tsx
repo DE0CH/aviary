@@ -11,7 +11,8 @@ import {
 import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-store-hooks";
 import { useDirectoryDemand } from "@/hooks/use-directory-demand";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
-import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
+import { lazyArea } from "@/components/lazy-area";
+import { loadWorkspaceChunk } from "@/loading/stages";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   areRetainedWorkspaceSelectionListsEqual,
@@ -37,6 +38,10 @@ import {
 import { prepareWorkspaceTab } from "@/utils/prepare-workspace-tab";
 import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
+
+// The conversation page is its own chunk, fetched as soon as it renders (and with the reply chunk on any other page);
+// until it arrives the area is a loading frame, which keeps the early message box (docs/paseo-ui.md "Loading").
+const WorkspaceScreen = lazyArea("workspace", loadWorkspaceChunk, (chunk) => chunk.WorkspaceScreen);
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {

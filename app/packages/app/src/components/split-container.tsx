@@ -312,12 +312,16 @@ function SplitGroupChild({
     ],
     [hidden],
   );
+  // A pane that has never been shown draws nothing (its lazy chunks, such as the explorer's diff views, are not
+  // fetched for a hidden pane: docs/paseo-ui.md "Loading"); once shown it stays mounted, so hiding keeps its state.
+  const [everShown, setEverShown] = useState(!hidden);
+  if (!hidden && !everShown) setEverShown(true);
   return (
     <Animated.View
       style={[childStyle, resizeStyle]}
       testID={hidden ? "split-group-child-hidden" : "split-group-child"}
     >
-      {children}
+      {everShown || !hidden ? children : null}
     </Animated.View>
   );
 }

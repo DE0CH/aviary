@@ -66,7 +66,7 @@ import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
-import { loadReplyChunk } from "@/loading/stages";
+import { loadChunksForSend } from "@/loading/stages";
 import { adoptEarlyInput } from "@/yyc/early-input";
 import {
   EditingTextInput,
@@ -1684,8 +1684,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
-      // A reply is coming: its display jumps the loading queue (loading/stages.ts)
-      void loadReplyChunk();
+      // A reply is coming: its display and the conversation page jump the loading queue (loading/stages.ts)
+      loadChunksForSend();
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;
       if (!preserveHeightOnSubmit) {
         updateLiveTextPresence("");
