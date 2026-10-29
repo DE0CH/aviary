@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { pluginRegistry } from "./registry";
+import { loadPluginEvaluator, pluginRegistry } from "./registry";
 
 export function PluginCatalogSync({
   serverId,
@@ -32,7 +32,8 @@ export function PluginCatalogSync({
       refreshQueue = refreshQueue.then(() =>
         client
           .getPluginCatalog()
-          .then((catalog) => {
+          .then(async (catalog) => {
+            if (catalog.some((entry) => entry.clientBundle)) await loadPluginEvaluator();
             if (!cancelled) {
               pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,

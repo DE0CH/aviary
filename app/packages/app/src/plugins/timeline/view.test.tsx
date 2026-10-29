@@ -5,7 +5,7 @@ import appPackage from "../../../package.json";
 import { DaemonClient, type DaemonTransport } from "@getpaseo/client/internal/daemon-client";
 import React, { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hostClient = vi.hoisted(() => ({ invokePluginRpc: async () => null }));
 const selectedHost = vi.hoisted(() => ({ client: null as DaemonClient | null }));
@@ -36,8 +36,10 @@ vi.mock("../icons", () => ({
   pluginIconComponent: () => () => null,
 }));
 
-import { pluginRegistry } from "../registry";
+import { loadPluginEvaluator, pluginRegistry } from "../registry";
 import { PluginTimelineItemView } from "./view";
+
+beforeAll(() => loadPluginEvaluator());
 
 const audio = { play: async () => 0 };
 

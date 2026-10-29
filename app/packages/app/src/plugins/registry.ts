@@ -8,8 +8,26 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
-import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
+
+// The plugin evaluator, with the UI kit it hands plugins, is its own chunk (docs/paseo-ui.md "Loading"): catalog-sync
+// fetches it before installing a catalog that has a plugin with a client bundle, so a host without plugins never
+// loads it. A failed fetch is forgotten, so the next catalog fetches again.
+let evaluator: typeof import("./evaluate") | null = null;
+let loadingEvaluator: Promise<void> | null = null;
+
+export function loadPluginEvaluator(): Promise<void> {
+  loadingEvaluator ??= import("./evaluate").then(
+    (module) => {
+      evaluator = module;
+    },
+    (error: unknown) => {
+      loadingEvaluator = null;
+      throw error;
+    },
+  );
+  return loadingEvaluator;
+}
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
 
@@ -112,8 +130,12 @@ export class PluginRegistry {
           once: true,
         });
         const runtime = this.dependencies.createRuntime(installation, options.audio);
-        const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>
-          this.publish(),
+        if (!evaluator) throw new Error("The plugin evaluator has not loaded");
+        const evaluated = evaluator.runPluginClientBundle(
+          entry.id,
+          entry.clientBundle,
+          runtime,
+          () => this.publish(),
         );
         Object.assign(installation, evaluated);
         const paseo = installation.paseo;

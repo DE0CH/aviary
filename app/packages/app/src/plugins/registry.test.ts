@@ -1,7 +1,9 @@
 import appPackage from "../../package.json";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { pluginRegistry as registry } from "./registry";
+import { loadPluginEvaluator, pluginRegistry as registry } from "./registry";
+
+beforeAll(() => loadPluginEvaluator());
 
 const audio = { play: async () => 0 };
 

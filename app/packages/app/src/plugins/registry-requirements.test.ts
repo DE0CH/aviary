@@ -1,7 +1,9 @@
 import { createPluginHosts } from "./hosts";
-import { afterEach, expect, it } from "vitest";
+import { beforeAll, afterEach, expect, it } from "vitest";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { PluginRegistry } from "./registry";
+import { loadPluginEvaluator, PluginRegistry } from "./registry";
+
+beforeAll(() => loadPluginEvaluator());
 
 const audio = { play: async () => 0 };
 

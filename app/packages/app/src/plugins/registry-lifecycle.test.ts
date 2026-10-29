@@ -3,8 +3,10 @@ import { i18n } from "@/i18n/i18next";
 import { createPluginHosts } from "./hosts";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PaseoApi } from "@getpaseo/client";
-import { expect, test } from "vitest";
-import { PluginRegistry } from "./registry";
+import { beforeAll, expect, test } from "vitest";
+import { loadPluginEvaluator, PluginRegistry } from "./registry";
+
+beforeAll(() => loadPluginEvaluator());
 
 const audio = { play: async () => 0 };
 
