@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { loadAllGrammarsForTests } from "./highlight-grammars.test-support";
 import { highlightDiffLines } from "./diff-highlight";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "./tool-call-parsers";
 
 function joinTokens(line: DiffLine): string {
   return (line.tokens ?? []).map((token) => token.text).join("");
 }
+
+beforeAll(loadAllGrammarsForTests);
 
 describe("highlightDiffLines", () => {
   it("attaches tokens to add/remove/context lines for a supported language", () => {

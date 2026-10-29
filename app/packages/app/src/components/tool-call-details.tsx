@@ -21,6 +21,7 @@ import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
+import { useGrammarReady } from "@/utils/highlight-grammars";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
@@ -138,13 +139,16 @@ function useDetailStyles(
 }
 
 function useDiffLines(detail: ToolCallDetail | undefined): DiffLine[] | undefined {
+  const grammarReady = useGrammarReady(
+    detail?.type === "edit" ? extensionFromPath(detail.filePath) : null,
+  );
   return useMemo(() => {
     if (!detail || detail.type !== "edit") return undefined;
     const diffLines = detail.unifiedDiff
       ? parseUnifiedDiff(detail.unifiedDiff)
       : buildLineDiff(detail.oldString ?? "", detail.newString ?? "");
-    return highlightDiffLines(diffLines, detail.filePath);
-  }, [detail]);
+    return grammarReady ? highlightDiffLines(diffLines, detail.filePath) : diffLines;
+  }, [detail, grammarReady]);
 }
 
 interface ShellDetailProps {
@@ -401,9 +405,11 @@ function ScrollableTextSection({
   filePath,
   startLine,
 }: ScrollableContentProps) {
+  const extension = filePath ? extensionFromPath(filePath) : null;
+  const grammarReady = useGrammarReady(extension);
   const keyedLines = useMemo(
-    () => (filePath ? highlightToKeyedLines(content, extensionFromPath(filePath)) : null),
-    [content, filePath],
+    () => (grammarReady ? highlightToKeyedLines(content, extension) : null),
+    [content, extension, grammarReady],
   );
   const body = (
     <ScrollView

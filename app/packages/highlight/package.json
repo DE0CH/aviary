@@ -19,6 +19,11 @@
       "types": "./dist/theme-colors.d.ts",
       "source": "./src/theme-colors.ts",
       "default": "./dist/theme-colors.js"
+    },
+    "./codemirror": {
+      "types": "./dist/codemirror.d.ts",
+      "source": "./src/codemirror.ts",
+      "default": "./dist/codemirror.js"
     }
   },
   "publishConfig": {

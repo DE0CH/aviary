@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { loadAllGrammarsForTests } from "./highlight-grammars.test-support";
 import {
   extensionFromPath,
   highlightToKeyedLines,
   MAX_HIGHLIGHT_CHARS,
   tokenizeToLines,
 } from "./highlight-cache";
+
+beforeAll(loadAllGrammarsForTests);
 
 describe("extensionFromPath", () => {
   it("extracts a lowercased extension regardless of absolute/relative path", () => {
@@ -34,10 +37,8 @@ describe("tokenizeToLines", () => {
     expect(tokenizeToLines("whatever", null)).toBeNull();
   });
 
-  it("falls back to style-less per-line tokens for an unknown extension", () => {
-    const lines = tokenizeToLines("line one\nline two", "unknownext");
-    expect(lines).toHaveLength(2);
-    expect(lines?.[0]).toEqual([{ text: "line one", style: null }]);
+  it("returns null (callers render plain text) for an extension without a grammar", () => {
+    expect(tokenizeToLines("line one\nline two", "unknownext")).toBeNull();
   });
 
   it("returns null above the size cap so callers fall back to plain text", () => {

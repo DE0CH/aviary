@@ -1,10 +1,29 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import {
   isLanguageSupported,
+  isGrammarLoaded,
+  getGrammarForFile,
   getSupportedExtensions,
   getParserForFile,
-  getLanguageForFile,
+  loadGrammarForFile,
 } from "../parsers.js";
+import { codeMirrorLanguage } from "../codemirror.js";
+
+describe("loadGrammarForFile", () => {
+  it("loads a language's grammar on first use, and only that family", async () => {
+    expect(isGrammarLoaded("main.go")).toBe(false);
+    expect(getParserForFile("main.go")).toBeNull();
+    const grammar = await loadGrammarForFile("main.go");
+    expect(grammar?.parser).toBeTruthy();
+    expect(getParserForFile("main.go")).toBe(grammar?.parser);
+    expect(isGrammarLoaded("Main.java")).toBe(false);
+  });
+
+  it("resolves to null for a language without a grammar", async () => {
+    await expect(loadGrammarForFile("notes.txt")).resolves.toBeNull();
+    await expect(loadGrammarForFile("Makefile")).resolves.toBeNull();
+  });
+});
 
 describe("isLanguageSupported", () => {
   it("returns true for supported file extensions", () => {
@@ -73,10 +92,16 @@ describe("getSupportedExtensions", () => {
 });
 
 describe("getParserForFile", () => {
-  it("projects the parser retained by the editor language registry", () => {
+  beforeAll(async () => {
+    await Promise.all(getSupportedExtensions().map((ext) => loadGrammarForFile(`source.${ext}`)));
+  });
+
+  it("projects the parser retained by the editor language", () => {
     for (const extension of getSupportedExtensions()) {
       const filename = `source.${extension}`;
-      expect(getParserForFile(filename)).toBe(getLanguageForFile(filename)?.parser);
+      const grammar = getGrammarForFile(filename);
+      expect(grammar).not.toBeNull();
+      expect(getParserForFile(filename)).toBe(codeMirrorLanguage(grammar!).parser);
     }
   });
 

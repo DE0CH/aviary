@@ -12,7 +12,24 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { createCodeMirrorHighlightStyle, type HighlightStyle } from "@getpaseo/highlight";
+import type { HighlightStyle } from "@getpaseo/highlight";
+import { codeMirrorLanguage, createCodeMirrorHighlightStyle } from "@getpaseo/highlight/codemirror";
+import { extensionFromPath } from "@/utils/highlight-cache";
+import { loadedHighlighter, useGrammarReady } from "@/utils/highlight-grammars";
+
+/**
+ * The file's language for CodeMirror once its grammar has arrived (the shared highlighter chunk and the language's
+ * own, utils/highlight-grammars.ts), else none: the text shows plain until then.
+ */
+export function languageExtensionForFile(filename: string) {
+  const grammar = loadedHighlighter()?.getGrammarForFile(filename);
+  return grammar ? codeMirrorLanguage(grammar).extension : [];
+}
+
+/** Asks for the file's grammar; true once it is here (reconfigure the language then). */
+export function useFileGrammarReady(filename: string): boolean {
+  return useGrammarReady(extensionFromPath(filename));
+}
 
 export interface EditorVisualTheme {
   colorScheme: "light" | "dark";

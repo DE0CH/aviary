@@ -1,4 +1,5 @@
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import type { HighlightToken } from "@getpaseo/highlight";
+import { isGrammarReady, loadedHighlighter } from "@/utils/highlight-grammars";
 
 // Shared, theme-independent tokenization + cache for syntax highlighting.
 // Used by markdown code blocks, file preview, and tool-call detail blocks
@@ -45,17 +46,20 @@ class LRUCache<K, V> {
 const tokenizationCache = new LRUCache<string, HighlightToken[][]>(200);
 
 // Tokenize `code` to per-line tokens, cached. Returns null when the language is
-// unsupported, the input is over the size cap, or parsing throws — callers then
+// unsupported, its grammar has not arrived yet (useGrammarReady asks for it and
+// re-renders), the input is over the size cap, or parsing throws — callers then
 // render plain text.
 export function tokenizeToLines(code: string, ext: string | null): HighlightToken[][] | null {
   if (!ext) return null;
   if (code.length > MAX_HIGHLIGHT_CHARS) return null;
+  const highlighter = loadedHighlighter();
+  if (!highlighter || !isGrammarReady(ext)) return null;
   const cacheKey = `${ext}:${code}`;
   const cached = tokenizationCache.get(cacheKey);
   if (cached) return cached;
   let lines: HighlightToken[][];
   try {
-    lines = highlightCode(code, `x.${ext}`);
+    lines = highlighter.highlightCode(code, `x.${ext}`);
   } catch {
     return null;
   }

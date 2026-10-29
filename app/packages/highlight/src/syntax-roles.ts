@@ -1,4 +1,3 @@
-import { HighlightStyle as CodeMirrorHighlightStyle } from "@codemirror/language";
 import { tagHighlighter, tags, type Tag } from "@lezer/highlight";
 import type { HighlightStyle } from "./types.js";
 
@@ -49,9 +48,3 @@ export const syntaxRoleTags: ReadonlyArray<{ tag: Tag; role: HighlightStyle }> =
 export const staticSyntaxHighlighter = tagHighlighter(
   syntaxRoleTags.map(({ tag, role }) => ({ tag, class: role })),
 );
-
-export function createCodeMirrorHighlightStyle(colors: Record<HighlightStyle, string>) {
-  return CodeMirrorHighlightStyle.define(
-    syntaxRoleTags.map(({ tag, role }) => ({ tag, color: colors[role] })),
-  );
-}

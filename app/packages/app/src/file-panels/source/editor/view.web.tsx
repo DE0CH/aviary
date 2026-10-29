@@ -2,11 +2,16 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FileFind, FileFindModel } from "../find/index.web";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { getLanguageForFile } from "@getpaseo/highlight";
 import { getCM, vim } from "@replit/codemirror-vim";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
-import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
+import {
+  editorBaseExtensions,
+  editorTheme,
+  languageExtensionForFile,
+  useFileGrammarReady,
+  type EditorVisualTheme,
+} from "./extensions.web";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
@@ -59,6 +64,7 @@ export function FileEditorView({
   });
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
+  const grammarReady = useFileGrammarReady(filename);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -71,7 +77,7 @@ export function FileEditorView({
           vimCompartment.of(values.vimEnabled ? vim() : []),
           find.extension,
           ...editorBaseExtensions(() => void values.model.save()),
-          languageCompartment.of(getLanguageForFile(values.filename)?.extension ?? []),
+          languageCompartment.of(languageExtensionForFile(values.filename)),
           wrappingCompartment.of(wrappingForFile(values.filename)),
           themeCompartment.of(editorTheme(values.theme)),
           EditorView.updateListener.of((update) => {
@@ -129,11 +135,11 @@ export function FileEditorView({
   useEffect(() => {
     viewRef.current?.dispatch({
       effects: [
-        languageCompartment.reconfigure(getLanguageForFile(filename)?.extension ?? []),
+        languageCompartment.reconfigure(languageExtensionForFile(filename)),
         wrappingCompartment.reconfigure(wrappingForFile(filename)),
       ],
     });
-  }, [filename]);
+  }, [filename, grammarReady]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: themeCompartment.reconfigure(editorTheme(theme)) });

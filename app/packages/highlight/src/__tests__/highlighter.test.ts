@@ -1,6 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import type { HighlightToken } from "../types.js";
 import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
+import { getSupportedExtensions, loadGrammarForFile } from "../parsers.js";
+
+beforeAll(async () => {
+  await Promise.all(getSupportedExtensions().map((ext) => loadGrammarForFile(`source.${ext}`)));
+});
 
 describe("highlightCode", () => {
   it("highlights JavaScript code with correct token styles", () => {

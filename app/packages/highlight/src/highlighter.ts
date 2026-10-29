@@ -21,6 +21,7 @@ export interface HighlightStepsOptions {
 /** One unit of work done (`undefined`), or every line with the first ones highlighted. */
 export type HighlightStep = HighlightToken[][] | undefined;
 
+/** Highlights with the grammar loadGrammarForFile has loaded for `filename`; plain lines until then. */
 export function highlightCode(code: string, filename: string): HighlightToken[][] {
   const steps = highlightCodeInSteps(code, filename);
   for (;;) {

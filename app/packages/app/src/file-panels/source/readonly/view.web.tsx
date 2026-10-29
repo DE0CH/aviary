@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { FileFind, FileFindModel } from "../find/index.web";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { getLanguageForFile } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
-import { editorTheme } from "../editor/extensions.web";
+import {
+  editorTheme,
+  languageExtensionForFile,
+  useFileGrammarReady,
+} from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
 import type { SourcePresentation } from "./presentation";
 
@@ -35,6 +38,7 @@ export function FileSourceView({
   const viewRef = useRef<EditorView | null>(null);
   const [ready, setReady] = useState(false);
   const initial = useRef({ content, filename, presentation, theme });
+  const grammarReady = useFileGrammarReady(filename);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -79,7 +83,7 @@ export function FileSourceView({
         themeCompartment.reconfigure(editorTheme(theme)),
       ],
     });
-  }, [filename, presentation, theme]);
+  }, [filename, presentation, theme, grammarReady]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -103,7 +107,7 @@ function languageFor(input: {
   presentation: Exclude<SourcePresentation, "unsupported">;
 }) {
   return input.presentation === "highlighted"
-    ? (getLanguageForFile(input.filename)?.extension ?? [])
+    ? languageExtensionForFile(input.filename)
     : [];
 }
 

@@ -17,6 +17,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
+import { useGrammarReady } from "@/utils/highlight-grammars";
 import {
   markdownCopyCodeBlockDataSet,
   markdownCopyDataSet,
@@ -79,9 +80,12 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     [language],
   );
 
+  const extension = fenceLanguageToExtension(language);
+  // Plain until the language's grammar arrives (fetched with this block's first render), then coloured
+  const grammarReady = useGrammarReady(extension);
   const keyedLines = useMemo<KeyedLine[] | null>(
-    () => highlightToKeyedLines(renderedCode, fenceLanguageToExtension(language)),
-    [renderedCode, language],
+    () => (grammarReady ? highlightToKeyedLines(renderedCode, extension) : null),
+    [renderedCode, extension, grammarReady],
   );
 
   const isCompact = useIsCompactFormFactor();

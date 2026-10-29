@@ -9,6 +9,7 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { DEFAULT_MONO_FONT_STACK } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { tokenizeToLines } from "@/utils/highlight-cache";
+import { useGrammarReady } from "@/utils/highlight-grammars";
 import { CHANGED_LINE_INDICES, PREVIEW_AFTER, PREVIEW_BEFORE } from "./preview-snippet";
 
 // Snippets are TypeScript; the cache keys grammar selection off the extension.
@@ -143,7 +144,9 @@ function markerStyle(type: RowType) {
 // inline styles for live-while-typing feedback on the code font.
 export function AppearancePreview({ overrides }: AppearancePreviewProps) {
   const { t } = useTranslation();
-  const rows = useMemo(() => buildUnifiedRows(), []);
+  // The preview's TypeScript grammar arrives with the shared highlighter chunk; plain until then
+  const grammarReady = useGrammarReady(PREVIEW_EXTENSION);
+  const rows = useMemo(() => buildUnifiedRows(), [grammarReady]);
   const contentOverride = useMemo(() => buildContentOverride(overrides), [overrides]);
   const codeOverride = useMemo(() => buildCodeOverride(overrides), [overrides]);
   const contentStyle = useMemo(() => [styles.contentSample, contentOverride], [contentOverride]);

@@ -1,5 +1,6 @@
-import { isLanguageSupported, type HighlightToken } from "@getpaseo/highlight";
+import type { HighlightToken } from "@getpaseo/highlight";
 import { extensionFromPath, tokenizeToLines } from "@/utils/highlight-cache";
+import { isGrammarReady } from "@/utils/highlight-grammars";
 import type { DiffLine } from "@/utils/tool-call-parsers";
 
 // The leading diff marker glyph for a line. The code on the line is the content
@@ -42,10 +43,11 @@ export function highlightDiffLines(
   filePath: string | null | undefined,
 ): DiffLine[] {
   const ext = extensionFromPath(filePath);
-  // Gate on real grammar support: an unsupported language would tokenize to a
+  // Gate on a loaded grammar: an unsupported language (or one whose grammar has
+  // not arrived; callers ask for it with useGrammarReady) would tokenize to a
   // single style-less token per line, which would shadow the word-level change
   // segments the diff already computes. Better to keep those.
-  if (!ext || diffLines.length === 0 || !isLanguageSupported(`x.${ext}`)) {
+  if (!ext || diffLines.length === 0 || !isGrammarReady(ext)) {
     return diffLines;
   }
 
