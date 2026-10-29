@@ -125,6 +125,26 @@ arrives.
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
 
+## Loading
+
+What a person needs first is the frame and the message box (they can start typing), then the socket with their
+conversation list; everything else is for later (Deyao, 2026-10-29: measured before building, tested on a throttled
+connection). So:
+- **The page frame in `public/index.html`** (`#boot`): the app's own layout (sidebar rows, logo, greeting line, the
+  message box; compact below 600px; light and dark from `styles/theme.ts`; the logo inline SVG) in plain HTML, painted
+  before any script arrives. React replaces it on its first render; while the app is still connecting,
+  `screens/startup-splash-screen.tsx` draws the same frame again (from `window.__yycBootFrame`, saved by the page),
+  so the page goes frame -> app without the logo screen. Keep it in step when the frame's layout changes.
+- **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
+  `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
+- **Chunks fetched only when used** (Metro splits every `import()` into its own file): the Mermaid + KaTeX diagram
+  runtime (`fence/mermaid/iframe-runtime.web.tsx`, the first reply with a diagram), the terminal (`panels/terminal-
+  panel.tsx`, never in YYC), the source view with CodeMirror (`file-panels/builtin.tsx`, a text file opened).
+- **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
+  from the moment the client module loads; a connect waits for it only while it is still on its way
+  (`client/src/daemon-client.ts` `loadWSOutboundValidator`; client tests load it in `src/test-setup.ts`).
+- Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G).
+
 ## The iOS app
 
 The same `paseo/packages/app`, built natively as YYC AI (`dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used
