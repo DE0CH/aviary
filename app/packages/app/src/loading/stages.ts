@@ -6,16 +6,13 @@ import { isWeb } from "@/constants/platform";
 // connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
 // conversation list; everything else only when used. Each stage's import() starts when the one before it has
 // arrived, so a later chunk never takes bandwidth from an earlier one:
-// - stage 1, the reply chunk: once the server-message validator (the connection's own chunk) has arrived, or 4 s after
-//   the entry ran;
+// - stage 1, the reply chunk: once the server-message validator (the connection's own chunk) has arrived or failed;
 // - stage 2, the sidebar chunk: once stage 1 has settled;
 // - stage 3, the hosts chunk (dialogs, sheets, callouts; loading/hosts-chunk.tsx): at idle after stage 2.
 // Being rendered never starts a chunk early (a lazy area waits for its stage); a person's own action does: a send
 // fetches the reply chunk at once, opening the phone drawer the sidebar. Native has every module in one bundle, so
 // every stage is reached from the start.
 export type LoadingStage = 0 | 1 | 2 | 3;
-
-const STAGE_1_LATEST_MS = 4_000;
 
 let reached: LoadingStage = isWeb ? 0 : 3;
 const listeners = new Set<() => void>();
@@ -145,11 +142,7 @@ let started = false;
 export function startLoadingStages(): void {
   if (started || !isWeb) return;
   started = true;
-  const stage1 = new Promise<void>((resolve) => {
-    setTimeout(resolve, STAGE_1_LATEST_MS);
-    void settle(loadWSOutboundValidator()).then(resolve);
-  });
-  void stage1
+  void settle(loadWSOutboundValidator())
     .then(() => {
       reach(1);
       return settle(loadReplyChunk());
