@@ -1,9 +1,8 @@
 import { useStore } from "zustand";
 import { providerSnapshotIcons } from "@/data/provider-icons";
 import { Bot } from "lucide-react-native";
-import { createElement, useCallback, type ComponentType } from "react";
+import { createElement, useCallback, useSyncExternalStore, type ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
-import { TERMINAL_PROFILE_ICON_NAMES } from "@getpaseo/protocol/provider-icon-names";
 import { AntigravityIcon } from "@/components/icons/antigravity-icon";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
 import { CodexIcon } from "@/components/icons/codex-icon";
@@ -13,8 +12,6 @@ import { MiniMaxIcon } from "@/components/icons/minimax-icon";
 import { OpenCodeIcon } from "@/components/icons/opencode-icon";
 import { OmpIcon } from "@/components/icons/omp-icon";
 import { PiIcon } from "@/components/icons/pi-icon";
-import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
-import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 import { resolveProviderIconName } from "@/components/provider-icon-name";
 
 export interface ProviderIconProps {
@@ -36,15 +33,32 @@ const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
   pi: PiIcon as unknown as ProviderIconComponent,
 };
 
-const CATALOG_ICON_SVGS = new Map<string, string>(
-  ACP_PROVIDER_CATALOG.flatMap((entry) => (entry.iconSvg ? [[entry.id, entry.iconSvg]] : [])),
-);
+// The catalog providers' icons are their own chunk (components/provider-catalog-icons.ts), fetched the first time one
+// is drawn; until then the icon draws nothing (docs/paseo-ui.md "Loading").
+let catalogIconSvgs: ReadonlyMap<string, string> | null = null;
+let catalogIconsLoad: Promise<void> | null = null;
+const catalogIconsListeners = new Set<() => void>();
 
-for (const name of TERMINAL_PROFILE_ICON_NAMES) {
-  const iconSvg = (ACP_PROVIDER_ICON_SVGS as Record<string, string | undefined>)[name];
-  if (iconSvg) {
-    CATALOG_ICON_SVGS.set(name, iconSvg);
-  }
+function loadCatalogIcons(): Promise<void> {
+  catalogIconsLoad ??= import("@/components/provider-catalog-icons").then(
+    (module) => {
+      catalogIconSvgs = module.CATALOG_ICON_SVGS;
+      for (const listener of catalogIconsListeners) listener();
+    },
+    () => {
+      catalogIconsLoad = null;
+    },
+  );
+  return catalogIconsLoad;
+}
+
+function subscribeCatalogIcons(listener: () => void): () => void {
+  catalogIconsListeners.add(listener);
+  return () => catalogIconsListeners.delete(listener);
+}
+
+function getCatalogIconSvgs(): ReadonlyMap<string, string> | null {
+  return catalogIconSvgs;
 }
 
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
@@ -67,13 +81,23 @@ function getCatalogProviderIcon(provider: string): ProviderIconComponent {
   if (cached) {
     return cached;
   }
-  const iconSvg = CATALOG_ICON_SVGS.get(provider);
-  if (!iconSvg) {
-    return Bot;
+  if (catalogIconSvgs) {
+    const iconSvg = catalogIconSvgs.get(provider);
+    if (!iconSvg) return Bot;
+    const icon = createSvgIcon(provider, iconSvg);
+    catalogIconComponents.set(provider, icon);
+    return icon;
   }
-  const icon = createSvgIcon(provider, iconSvg);
-  catalogIconComponents.set(provider, icon);
-  return icon;
+  void loadCatalogIcons();
+  const PendingCatalogIcon: ProviderIconComponent = ({ size, color }) => {
+    const svgs = useSyncExternalStore(subscribeCatalogIcons, getCatalogIconSvgs, getCatalogIconSvgs);
+    if (!svgs) return null;
+    const iconSvg = svgs.get(provider);
+    return iconSvg ? SvgIcon({ svg: iconSvg, size, color }) : createElement(Bot, { size, color });
+  };
+  PendingCatalogIcon.displayName = `CatalogProviderIcon(${provider})`;
+  catalogIconComponents.set(provider, PendingCatalogIcon);
+  return PendingCatalogIcon;
 }
 
 function getSnapshotProviderIcon(provider: string, svg: string): ProviderIconComponent {

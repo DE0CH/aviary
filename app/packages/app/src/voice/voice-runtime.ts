@@ -3,10 +3,36 @@ import type { AgentStreamEventPayload, SessionOutboundMessage } from "@getpaseo/
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import type { DaemonServerInfo } from "@/stores/session-store";
 import type { AudioEngine } from "@/audio";
-import {
-  THINKING_TONE_NATIVE_PCM_BASE64,
-  THINKING_TONE_NATIVE_PCM_DURATION_MS,
-} from "@/utils/thinking-tone.native-pcm";
+
+// The thinking tone (a 3 s PCM clip, ~36 KB brotli) is its own chunk, fetched the first time a wait for a reply
+// starts (docs/paseo-ui.md "Loading")
+interface ThinkingCue {
+  source: { size: number; type: string; arrayBuffer(): Promise<ArrayBuffer> };
+  durationMs: number;
+}
+let thinkingCue: Promise<ThinkingCue> | null = null;
+function loadThinkingCue(): Promise<ThinkingCue> {
+  thinkingCue ??= import("@/utils/thinking-tone.native-pcm").then(
+    (tone) => {
+      const pcm16 = Uint8Array.from(Buffer.from(tone.THINKING_TONE_NATIVE_PCM_BASE64, "base64"));
+      return {
+        source: {
+          size: pcm16.byteLength,
+          type: PCM_MIME_TYPE,
+          async arrayBuffer() {
+            return pcm16.buffer.slice(pcm16.byteOffset, pcm16.byteOffset + pcm16.byteLength);
+          },
+        },
+        durationMs: tone.THINKING_TONE_NATIVE_PCM_DURATION_MS,
+      };
+    },
+    (error: unknown) => {
+      thinkingCue = null;
+      throw error;
+    },
+  );
+  return thinkingCue;
+}
 
 const PCM_MIME_TYPE = "audio/pcm;rate=16000;bits=16";
 const KEEP_AWAKE_TAG = "paseo:voice";
@@ -210,14 +236,6 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
   const cue: CueState = {
     controller: null,
     timeout: null,
-  };
-  const cuePcm16 = Uint8Array.from(Buffer.from(THINKING_TONE_NATIVE_PCM_BASE64, "base64"));
-  const cueSource = {
-    size: cuePcm16.byteLength,
-    type: "audio/pcm;rate=16000;bits=16",
-    async arrayBuffer() {
-      return cuePcm16.buffer.slice(cuePcm16.byteOffset, cuePcm16.byteOffset + cuePcm16.byteLength);
-    },
   };
   function emit(): void {
     for (const listener of listeners) {
@@ -462,13 +480,21 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     }
     const controller = new AbortController();
     cue.controller = controller;
+    // Fetched during the silence before the tone, so it is here when the tone starts
+    void loadThinkingCue().catch(() => undefined);
 
     const playNext = () => {
       if (controller.signal.aborted) {
         return;
       }
-      void deps.engine
-        .play(cueSource, controller.signal)
+      // The wait before a retry when the tone failed to load
+      let durationMs = THINKING_TONE_MIN_SILENCE_MS;
+      void loadThinkingCue()
+        .then((tone) => {
+          durationMs = tone.durationMs;
+          if (controller.signal.aborted) return;
+          return deps.engine.play(tone.source, controller.signal);
+        })
         .catch((error) => {
           if (controller.signal.aborted) {
             return;
@@ -479,10 +505,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           if (controller.signal.aborted) {
             return;
           }
-          cue.timeout = setTimeout(
-            playNext,
-            THINKING_TONE_NATIVE_PCM_DURATION_MS + THINKING_TONE_REPEAT_GAP_MS,
-          );
+          cue.timeout = setTimeout(playNext, durationMs + THINKING_TONE_REPEAT_GAP_MS);
         });
     };
 

@@ -6,7 +6,8 @@ import {
   useAssistantFileLinkEnvironment,
 } from "@/assistant-file-links";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
+import { AttachmentLightbox } from "@/components/lazy-attachment-lightbox";
+import type { ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 import { density, resolveDensity } from "@/styles/density";

@@ -152,7 +152,8 @@ import {
   AttachmentPill,
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
-import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
+import { AttachmentLightbox } from "@/components/lazy-attachment-lightbox";
+import type { ImageLightboxSource } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";

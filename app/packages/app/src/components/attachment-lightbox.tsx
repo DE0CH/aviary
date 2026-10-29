@@ -18,7 +18,7 @@ export type ImageLightboxSource =
   | { type: "attachment"; metadata: AttachmentMetadata }
   | { type: "uri"; uri: string; contentSize?: ViewportSize };
 
-interface AttachmentLightboxProps {
+export interface AttachmentLightboxProps {
   source: ImageLightboxSource | null;
   onClose: () => void;
 }

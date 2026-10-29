@@ -52,3 +52,11 @@ export const OpenProjectScreen = lazyScreen<object>(
     (m) => m.OpenProjectScreen,
   ),
 );
+
+export const PairScanScreen = lazyScreen<object>(
+  "pair-scan",
+  lazyWithRetry(
+    () => import("./pair-scan-screen"),
+    (m) => m.PairScanScreen,
+  ),
+);

@@ -7,12 +7,21 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { useHostReportsUsage } from "@/usage";
+import { useHostReportsUsage } from "@/usage/queries";
 import type { Theme } from "@/styles/theme";
-import { ContextWindowDetails } from "./context-window-details";
+import { lazyArea } from "@/components/lazy-area";
 import { ContextWindowSheet } from "./context-window-sheet";
 import { formatContextPercentage } from "./context-window-meter.utils";
 
+
+// The details (with the account's usage cards) are their own chunk, fetched the first time they open
+// (docs/paseo-ui.md "Loading")
+const ContextWindowDetails = lazyArea(
+  "context-window-details",
+  () => import("./context-window-details"),
+  (m) => m.ContextWindowDetails,
+  null,
+);
 interface ContextWindowMeterProps {
   serverId: string;
   agentId: string;

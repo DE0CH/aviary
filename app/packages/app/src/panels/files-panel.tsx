@@ -4,11 +4,18 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
-import { FileExplorerPane } from "@/components/file-explorer-pane";
+import { lazyArea } from "@/components/lazy-area";
 import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelPresentation } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+
+// The file tree is its own chunk, fetched when the files panel opens (docs/paseo-ui.md "Loading")
+const FileExplorerPane = lazyArea(
+  "file-explorer",
+  () => import("@/components/file-explorer-pane"),
+  (m) => m.FileExplorerPane,
+);
 
 const ThemedFiles = withUnistyles(Files);
 const filesPanelPresentation = {

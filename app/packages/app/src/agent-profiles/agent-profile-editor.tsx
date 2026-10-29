@@ -1,9 +1,20 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
-import { AgentProfileEditModal } from "./settings/agent-profile-edit-modal";
+import { lazySheet } from "@/components/lazy-area";
+import type { AgentProfileEditModalProps } from "./settings/agent-profile-edit-modal";
 import { generateAgentProfileId } from "./internal/profile-id";
 import type { AgentProfileSeed, AgentProfileValue } from "./internal/profile-form-model";
 import { useAgentProfiles } from "./internal/use-agent-profiles";
+
+// The edit form is its own chunk, fetched the first time it opens (docs/paseo-ui.md "Loading")
+const AgentProfileEditModal = lazySheet<
+  typeof import("./settings/agent-profile-edit-modal"),
+  AgentProfileEditModalProps
+>(
+  "agent-profile-editor",
+  () => import("./settings/agent-profile-edit-modal"),
+  (m) => m.AgentProfileEditModal,
+);
 
 export interface AgentProfileEditorControls {
   /** Open the create form pre-filled with provider, model, and suggested name. */

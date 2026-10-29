@@ -1,7 +1,8 @@
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
-import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
+import { AttachmentLightbox } from "@/components/lazy-attachment-lightbox";
+import type { ImageLightboxSource } from "@/components/attachment-lightbox";
 import {
   AttachmentFrame,
   AttachmentLabel,

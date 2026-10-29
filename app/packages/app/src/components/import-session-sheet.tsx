@@ -55,7 +55,7 @@ type RecentProviderSessionsClient = Pick<
 
 type ImportedAgent = Awaited<ReturnType<RecentProviderSessionsClient["importAgent"]>>;
 
-interface ImportSessionSheetProps {
+export interface ImportSessionSheetProps {
   visible: boolean;
   client: RecentProviderSessionsClient | null;
   serverId: string | null;

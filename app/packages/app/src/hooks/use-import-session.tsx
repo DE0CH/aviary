@@ -1,6 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { ImportSessionSheet } from "@/components/lazy-import-session-sheet";
 import { useHostChooser } from "@/hosts/host-chooser";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
