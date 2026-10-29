@@ -6,6 +6,7 @@ vi.mock("@getpaseo/client/internal/daemon-client", () => ({
   loadWSOutboundValidator: () => new Promise(() => undefined),
 }));
 vi.mock("@/constants/platform", () => ({ isWeb: true }));
+vi.mock("@/utils/highlight-grammars", () => ({ loadHighlighter: () => Promise.resolve({}) }));
 vi.mock("./reply-chunk", () => {
   reply.attempts += 1;
   if (reply.attempts === 1) throw new Error("offline");

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
+import { loadHighlighter } from "@/utils/highlight-grammars";
 
 // The order the web app's pieces arrive in (Deyao, 2026-10-29; docs/paseo-ui.md "Loading"): the message box and the
 // connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
@@ -166,7 +167,8 @@ export function startLoadingStages(): void {
   void settle(loadWSOutboundValidator())
     .then(() => {
       reach(1);
-      return settle(Promise.all([loadReplyChunk(), loadWorkspaceChunk()]));
+      // The highlighter is part of reply display: it arrives with the reply chunk, before the sidebar
+      return settle(Promise.all([loadReplyChunk(), loadWorkspaceChunk(), loadHighlighter()]));
     })
     .finally(() => {
       reach(2);

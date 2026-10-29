@@ -4,6 +4,7 @@ import {
   extensionFromPath,
   highlightToKeyedLines,
   MAX_HIGHLIGHT_CHARS,
+  plainKeyedLines,
   tokenizeToLines,
 } from "./highlight-cache";
 
@@ -62,5 +63,17 @@ describe("highlightToKeyedLines", () => {
 
   it("returns null when highlighting is unavailable", () => {
     expect(highlightToKeyedLines("text", null)).toBeNull();
+  });
+});
+
+describe("plainKeyedLines", () => {
+  it("splits code into style-less lines with the highlighted lines' keys", () => {
+    const keyed = plainKeyedLines("a\nb");
+    expect(keyed).toHaveLength(2);
+    expect(keyed[1].key).toBe("line-1");
+    expect(keyed.map((line) => line.tokens.map((t) => t.token))).toEqual([
+      [{ text: "a", style: null }],
+      [{ text: "b", style: null }],
+    ]);
   });
 });

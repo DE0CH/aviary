@@ -12,6 +12,7 @@ type Highlighter = typeof HighlightModule;
 let highlighter: Highlighter | null = null;
 let loadingHighlighter: Promise<Highlighter> | null = null;
 const requested = new Set<string>();
+const failures = new Map<string, number>();
 const listeners = new Set<() => void>();
 
 /** The highlighter (fetched once; a failed fetch is forgotten, so the next call fetches again). */
@@ -44,8 +45,8 @@ export function isGrammarReady(ext: string | null): boolean {
 }
 
 /**
- * Fetches the highlighter and the grammar for `ext` (once per extension; a failed fetch is forgotten, so the next
- * render asks again) and tells useGrammarReady's components when it lands.
+ * Fetches the highlighter and the grammar for `ext` (once per extension; a failed fetch is retried with backoff, up to
+ * 5 times, while some component is still waiting) and tells useGrammarReady's components when it lands.
  */
 export function requestGrammar(ext: string | null): void {
   if (!ext || requested.has(ext) || isGrammarReady(ext)) return;
@@ -55,12 +56,21 @@ export function requestGrammar(ext: string | null): void {
     .then((module) => module.loadGrammarForFile(fileFor(ext)))
     .then(
       (grammar) => {
+        failures.delete(ext);
         if (!grammar) return;
         for (const listener of listeners) listener();
       },
       (error: unknown) => {
         requested.delete(ext);
+        const n = (failures.get(ext) ?? 0) + 1;
+        failures.set(ext, n);
         console.warn(`[highlight] the ${ext} grammar did not load`, error);
+        // Code already on screen never asks again by itself (its effect's deps do not change), so retry here
+        if (n <= 5) {
+          setTimeout(() => {
+            if (listeners.size > 0) requestGrammar(ext);
+          }, 1000 * 2 ** (n - 1));
+        }
       },
     );
 }
@@ -69,6 +79,8 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+export const __private__ = { subscribe };
 
 /**
  * Whether code with this extension can be highlighted yet; asks for its grammar when not, and re-renders the caller

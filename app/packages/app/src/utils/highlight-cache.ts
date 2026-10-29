@@ -77,6 +77,11 @@ function toKeyedLine(tokens: HighlightToken[], lineIndex: number): KeyedLine {
   };
 }
 
+/** `code` as style-less lines (plain text with line structure), for a gutter that is there before any grammar. */
+export function plainKeyedLines(code: string): KeyedLine[] {
+  return code.split("\n").map((text, i) => toKeyedLine([{ text, style: null }], i));
+}
+
 export function highlightToKeyedLines(code: string, ext: string | null): KeyedLine[] | null {
   const lines = tokenizeToLines(code, ext);
   return lines ? lines.map(toKeyedLine) : null;

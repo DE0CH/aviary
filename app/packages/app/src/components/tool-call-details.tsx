@@ -20,7 +20,12 @@ import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
-import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
+import {
+  extensionFromPath,
+  highlightToKeyedLines,
+  MAX_HIGHLIGHT_CHARS,
+  plainKeyedLines,
+} from "@/utils/highlight-cache";
 import { useGrammarReady } from "@/utils/highlight-grammars";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
@@ -407,10 +412,13 @@ function ScrollableTextSection({
 }: ScrollableContentProps) {
   const extension = filePath ? extensionFromPath(filePath) : null;
   const grammarReady = useGrammarReady(extension);
-  const keyedLines = useMemo(
-    () => (grammarReady ? highlightToKeyedLines(content, extension) : null),
-    [content, extension, grammarReady],
-  );
+  // With a gutter (Read), the lines are there from the first frame, plain until the grammar lands (or for good when
+  // the language has none), so only the colours change
+  const keyedLines = useMemo(() => {
+    const highlighted = grammarReady ? highlightToKeyedLines(content, extension) : null;
+    if (highlighted) return highlighted;
+    return startLine !== undefined && content.length <= MAX_HIGHLIGHT_CHARS ? plainKeyedLines(content) : null;
+  }, [content, extension, grammarReady, startLine]);
   const body = (
     <ScrollView
       style={ds.scrollAreaFillStyle}
