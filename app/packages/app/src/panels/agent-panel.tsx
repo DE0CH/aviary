@@ -22,7 +22,7 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
-import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/lazy-view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";

@@ -10,7 +10,7 @@ import { useComposerEditingSession, useComposerFullscreen } from "@/composer/edi
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
-import { AgentStreamView } from "@/agent-stream/view";
+import { AgentStreamView } from "@/agent-stream/lazy-view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";

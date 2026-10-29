@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
-import { AgentStreamView } from "@/agent-stream/view";
+import { AgentStreamView } from "@/agent-stream/lazy-view";
 import { useProviderIcon } from "@/components/provider-icons";
 import {
   resolveComposerTrackControlClearance,

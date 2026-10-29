@@ -27,7 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { MarkdownRenderer } from "@/components/markdown/lazy-renderer";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";

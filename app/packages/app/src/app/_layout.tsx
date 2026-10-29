@@ -39,7 +39,7 @@ import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
 import { ChangelogHost } from "@/changelog";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
-import { LeftSidebar } from "@/components/left-sidebar";
+import { LeftSidebar } from "@/components/lazy-left-sidebar";
 import { WindowSidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
@@ -111,6 +111,8 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
+import { startLoadingStages } from "@/loading/stages";
+import { isSignedOutPage } from "@/yyc/signed-out-shell";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
@@ -255,21 +257,35 @@ async function shouldStartBuiltInDaemon(): Promise<boolean> {
   return settings.daemon.manageBuiltInDaemon;
 }
 
+let hostRuntimeBootstrapStarted = false;
+
+function startHostRuntimeBootstrapOnce(): void {
+  if (hostRuntimeBootstrapStarted) return;
+  hostRuntimeBootstrapStarted = true;
+  const store = getHostRuntimeStore();
+  const daemonStartService = getDaemonStartService({ store });
+  startHostRuntimeBootstrap({
+    store,
+    daemonStartService,
+    shouldStartDaemon: shouldStartBuiltInDaemon,
+  });
+}
+
+// On web the connection starts when the entry chunk runs, before React's first render, and the loading stages with
+// it (loading/stages.ts, docs/paseo-ui.md "Loading"); never on a page the server marked signed out (AccessGate renders
+// no host runtime there). Native starts it from the provider's first effect.
+if (isWeb && process.env.NODE_ENV !== "test" && !isSignedOutPage()) {
+  startHostRuntimeBootstrapOnce();
+  startLoadingStages();
+}
+
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const store = getHostRuntimeStore();
     return bindHostRuntimeAppState(store, AppState);
   }, []);
 
-  useEffect(() => {
-    const store = getHostRuntimeStore();
-    const daemonStartService = getDaemonStartService({ store });
-    startHostRuntimeBootstrap({
-      store,
-      daemonStartService,
-      shouldStartDaemon: shouldStartBuiltInDaemon,
-    });
-  }, []);
+  useEffect(startHostRuntimeBootstrapOnce, []);
 
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const daemonStartError = useDaemonStartLastError();

@@ -5,7 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import { AgentStreamView } from "@/agent-stream/view";
+import { AgentStreamView } from "@/agent-stream/lazy-view";
 import { BackHeader } from "@/components/headers/back-header";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";

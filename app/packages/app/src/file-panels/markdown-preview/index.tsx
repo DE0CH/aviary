@@ -1,4 +1,4 @@
-import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { MarkdownRenderer } from "@/components/markdown/lazy-renderer";
 import { resolveMarkdownFileDirectory } from "@/components/markdown/image-source";
 import {
   AssistantFileLinkResolverProvider,
