@@ -115,10 +115,11 @@
       #boot .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #boot .head { display: none; height: 56px; flex: none; }
       /* The message box sits at the bottom on every page and screen size, where the app's composer is
-         (composer/index.tsx: 16 px around it, at most 820 px wide; 116 px tall, 104 px below 720 px), with the
+         (composer/index.tsx: 16 px around it, at most theme.contentMaxWidth wide (the content-width setting, --b-col-w,
+         820 px by default); 116 px tall, 104 px below 720 px), with the
          new-chat screen's logo and greeting just above it (screens/new-workspace-screen.tsx) */
       #boot .center { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 16px 16px; }
-      #boot .col { width: 100%; max-width: 820px; margin: 0 auto; }
+      #boot .col { width: 100%; max-width: var(--b-col-w, 820px); margin: 0 auto; }
       #boot .logo { width: 48px; height: 48px; display: block; }
       #boot .greet { width: 140px; height: 20px; margin: 20px 0 36px; }
       #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); box-sizing: border-box; }
@@ -130,6 +131,8 @@
       /* The saved sidebar: closed (html.yyc-noside) or its width (--b-side-w), from the early box's script; the
          connecting frame drawn inside the app's main column (data-yyc-in-shell) leaves the sidebar to the app */
       html.yyc-noside #boot .side, [data-yyc-in-shell] #boot .side { display: none; }
+      /* Share pages (/s/<id>, html.yyc-share) have no sidebar and no message box */
+      html.yyc-share #boot .side, html.yyc-share #boot .col { display: none; }
       /* The saved theme, when the early box's script could read it, wins over the system's */
       html.yyc-light #boot { --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7; }
       html.yyc-dark #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
@@ -269,6 +272,27 @@
         };
         // A signed-out page's frame has the signed-out screen's second line under the greeting (yyc/signed-out-shell.tsx)
         if (signedOut) html.classList.add("yyc-out");
+        if (/^\/s\//.test(path)) html.classList.add("yyc-share");
+        // The frame's geometry as the app will draw it, also when there is no early box (View as tabs and other skips);
+        // the signed-out shell has a fixed sidebar and the system theme
+        var settings = signedOut ? {} :
+          json(read("localStorage", "@paseo:app-settings")) || json(read("localStorage", "@paseo:settings")) || {};
+        if (!signedOut) {
+          if (settings.theme === "light") html.classList.add("yyc-light");
+          else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
+          if (CONV.test(path)) html.classList.add("yyc-conv");
+          // The column's width (appearance/provider.tsx resolveContentMaxWidth; storage.ts clamps it to 600..4000)
+          var colW = settings.contentMaxWidth;
+          if (typeof colW === "number" && isFinite(colW)) html.style.setProperty("--b-col-w", Math.max(600, Math.min(4000, colW)) + "px");
+          // The sidebar as the app will draw it (stores/panel-store: "panel-state"; desktop-sidebar-layout.ts's width):
+          // closed, or hidden by focus mode on a workspace route (_layout.tsx; host-routes.ts's workspace pattern)
+          var WS = /^\/h\/[^\/]+\/workspace\/[^\/]+\/?$/;
+          var panels = (json(read("localStorage", "panel-state")) || {}).state || {};
+          if (panels.desktop && (panels.desktop.agentListOpen === false ||
+              (WS.test(path) && panels.desktop.focusModeEnabled === true))) html.classList.add("yyc-noside");
+          var sideW = typeof panels.sidebarWidth === "number" ? panels.sidebarWidth : 320;
+          html.style.setProperty("--b-side-w", Math.max(200, Math.min(600, w.innerWidth - 400, sideW)) + "px");
+        }
         if (skip) { layer.remove(); return; }
         // Text typed here before a refresh (or a chunk reload) that never reached the app: back in the box
         var kept = json(read("sessionStorage", MIRROR));
@@ -276,15 +300,6 @@
           box.value = kept.text;
           try { box.setSelectionRange(kept.selStart, kept.selEnd); } catch (e) {}
         }
-        var settings = json(read("localStorage", "@paseo:app-settings")) || json(read("localStorage", "@paseo:settings")) || {};
-        if (settings.theme === "light") html.classList.add("yyc-light");
-        else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
-        if (CONV.test(path)) html.classList.add("yyc-conv");
-        // The sidebar as the app will draw it (stores/panel-store: "panel-state"; desktop-sidebar-layout.ts's width)
-        var panels = (json(read("localStorage", "panel-state")) || {}).state || {};
-        if (panels.desktop && panels.desktop.agentListOpen === false) html.classList.add("yyc-noside");
-        var sideW = typeof panels.sidebarWidth === "number" ? panels.sidebarWidth : 320;
-        html.style.setProperty("--b-side-w", Math.max(200, Math.min(600, w.innerWidth - 400, sideW)) + "px");
         var lang = settings.language;
         if (lang !== "en" && lang !== "zh-HK") {
           lang = "zh-HK";
@@ -301,7 +316,7 @@
         box.setAttribute("aria-label", narrow[lang]);
         var lastRect = null;
         function place() {
-          var target = handoff && handoff.element && handoff.element.isConnected ? handoff.element : root.querySelector(".box");
+          var target = handoff && handoff.element && handoff.element.isConnected ? handoff.element : root.querySelector(".box,[data-yyc-box]");
           var r = target && target.getBoundingClientRect();
           if (r && r.width > 0) lastRect = r;
           if (!lastRect) return;

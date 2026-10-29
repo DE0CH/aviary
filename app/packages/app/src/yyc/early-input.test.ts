@@ -21,7 +21,10 @@ interface Early {
 }
 
 /** public/index.html with its inline scripts run, at `url`. */
-function page(url: string, options: { signedOut?: boolean; session?: Record<string, string> } = {}) {
+function page(
+  url: string,
+  options: { signedOut?: boolean; session?: Record<string, string>; local?: Record<string, string> } = {},
+) {
   let html = indexHtml;
   if (options.signedOut) html = html.replace("<head>", '<head><meta name="yyc-signed-out" content="1">');
   const dom = new JSDOM(html, {
@@ -31,6 +34,9 @@ function page(url: string, options: { signedOut?: boolean; session?: Record<stri
     beforeParse(window) {
       for (const [key, value] of Object.entries(options.session ?? {})) {
         window.sessionStorage.setItem(key, value);
+      }
+      for (const [key, value] of Object.entries(options.local ?? {})) {
+        window.localStorage.setItem(key, value);
       }
       Object.assign(window, { matchMedia: () => ({ matches: true }) });
     },
@@ -74,6 +80,37 @@ describe("public/index.html early message box", () => {
   it("puts the box at the bottom on a conversation page", () => {
     const { window } = page("https://ai.example/h/a/agent/b");
     expect(window.document.documentElement.classList.contains("yyc-conv")).toBe(true);
+  });
+
+  it("draws the frame as the app will: content width, focus mode, share pages, view-as tabs", () => {
+    const html = (url: string, options?: Parameters<typeof page>[1]) => page(url, options).window.document.documentElement;
+    const wide = html("https://ai.example/new", { local: { "@paseo:app-settings": '{"contentMaxWidth":1100}' } });
+    expect(wide.style.getPropertyValue("--b-col-w")).toBe("1100px");
+    expect(html("https://ai.example/new").style.getPropertyValue("--b-col-w")).toBe("");
+    const focus = { "panel-state": '{"state":{"desktop":{"agentListOpen":true,"focusModeEnabled":true}}}' };
+    expect(html("https://ai.example/h/a/workspace/b", { local: focus }).classList.contains("yyc-noside")).toBe(true);
+    expect(html("https://ai.example/h/a/agent/b", { local: focus }).classList.contains("yyc-noside")).toBe(false);
+    expect(html("https://ai.example/s/abc").classList.contains("yyc-share")).toBe(true);
+    const closed = { "panel-state": '{"state":{"desktop":{"agentListOpen":false}}}' };
+    const viewAs = html("https://ai.example/h/a/workspace/b#jarvis-view-as=t.x", { local: closed });
+    expect(viewAs.classList.contains("yyc-conv")).toBe(true);
+    expect(viewAs.classList.contains("yyc-noside")).toBe(true);
+    const out = html("https://ai.example/h/a/workspace/b", { signedOut: true, local: closed });
+    expect(out.classList.contains("yyc-noside")).toBe(false);
+  });
+
+  it("follows the app's composer slot (data-yyc-box) once the frame is gone", () => {
+    const { window } = page("https://ai.example/h/a/workspace/b");
+    const root = window.document.getElementById("root")!;
+    const slot = window.document.createElement("div");
+    slot.setAttribute("data-yyc-box", "");
+    slot.getBoundingClientRect = () => ({ left: 10, top: 500, width: 700, height: 104 }) as DOMRect;
+    root.replaceChildren(slot);
+    window.dispatchEvent(new window.Event("resize"));
+    const layer = window.document.getElementById("yyc-early")!;
+    expect(layer.style.left).toBe("10px");
+    expect(layer.style.width).toBe("700px");
+    expect(layer.style.height).toBe("104px");
   });
 
   it("hands over the live text with its selection, then clears the copy", () => {
