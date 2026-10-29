@@ -30,8 +30,6 @@ import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react
 import * as Haptics from "expo-haptics";
 import { useDictation } from "@/hooks/use-dictation";
 import { hasFinePointer } from "@/hooks/use-fine-pointer";
-import { DictationOverlay } from "@/components/dictation-controls";
-import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
@@ -96,6 +94,23 @@ import {
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
+import { lazyArea } from "@/components/lazy-area";
+import type { DictationStatus } from "@/hooks/use-dictation";
+
+// The dictation and voice overlays are their own chunks, fetched the first time one shows (docs/paseo-ui.md
+// "Loading"); they are drawn over the input, so nothing moves while one arrives
+const DictationOverlay = lazyArea(
+  "dictation-overlay",
+  () => import("@/components/dictation-controls"),
+  (module) => module.DictationOverlay,
+  null,
+);
+const RealtimeVoiceOverlay = lazyArea(
+  "realtime-voice-overlay",
+  () => import("@/components/realtime-voice-overlay"),
+  (module) => module.RealtimeVoiceOverlay,
+  null,
+);
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
@@ -565,7 +580,7 @@ function MessageInputOverlay({
   dictationDuration: number;
   isDictating: boolean;
   isDictationProcessing: boolean;
-  dictationStatus: React.ComponentProps<typeof DictationOverlay>["status"];
+  dictationStatus: DictationStatus;
   dictationError: string | null;
   onCancelRecording: () => Promise<void>;
   onAcceptRecording: () => Promise<void>;

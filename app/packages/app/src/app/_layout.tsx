@@ -37,8 +37,7 @@ import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
-import { HostChooserModal, useHostChooser } from "@/hosts/host-chooser";
-import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
+import { useHostChooser } from "@/hosts/host-chooser";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import {
   canDesktopAppSidebarShare,
@@ -472,8 +471,6 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       {isCompactLayout ? themedSidebarChrome : null}
       <AppearanceStyleBoundary>
         <WorkspacePinShortcutHandler />
-        <HostChooserModal />
-        <HostConfirmationSheet />
         <ChunkErrorBoundary name="hosts">
           <Suspense fallback={null}>
             <LazyAppHosts />

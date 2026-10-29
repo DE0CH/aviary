@@ -1,5 +1,5 @@
 // What the app shows on request or later, one chunk mounted at stage 3 (loading/stages.ts, docs/paseo-ui.md
-// "Loading"): the dialogs and sheets (command center with its actions, add project, provider settings, workspace setup
+// "Loading"): the dialogs and sheets (the host chooser and host confirmation, command center with its actions, add project, provider settings, workspace setup
 // and rename, keyboard shortcuts, diagnostics, changelog, YYC's conversation rename/share/delete), the download toast, the sidebar's callouts (desktop update,
 // Rosetta, worktree setup) and the legacy skills migration. Each reads a store, so a request made before the chunk
 // arrives shows once it has.
@@ -20,10 +20,14 @@ import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
+import { HostChooserModal } from "@/hosts/host-chooser-modal";
+import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 
 export function AppHosts() {
   return (
     <>
+      <HostChooserModal />
+      <HostConfirmationSheet />
       <DownloadToast />
       <RosettaCalloutSource />
       <UpdateCalloutSource />

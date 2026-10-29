@@ -7,14 +7,13 @@ import type {
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { router } from "expo-router";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
 import { useComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
@@ -25,16 +24,13 @@ import {
 } from "@/composer/attachments/submit";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useForgeSearchQuery } from "@/git/use-forge-search-query";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
+import { resolveLaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
@@ -53,18 +49,14 @@ import {
 import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useHasHydratedWorkspaces, useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
-import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
   useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
-import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
-import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { toErrorMessage } from "@/utils/error-messages";
-import { buildSettingsAddHostRoute } from "@/utils/host-routes";
 import {
   getHostProjectId,
   getWorktreeSupportForHostProject,
@@ -74,7 +66,6 @@ import {
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
-import { useProjectIcons } from "@/projects/icons";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
@@ -89,29 +80,20 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
-  buildPickerOptionData,
   defaultBasePickerItem,
-  pickerItemLabel,
   pickerItemToCheckoutRequest,
-  type BranchPickerDetail,
   type PickerCheckoutRequest,
-  type PickerItem,
-  type PickerOptionData,
 } from "./new-workspace-picker-item";
 import {
-  clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
   reducePickerSelection,
-  syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
 import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
-import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 import { isNewWorkspaceSendReady } from "./new-workspace/send-ready";
-import { useNewWorkspaceForm } from "./new-workspace/form";
 import { useImportSession } from "@/hooks/use-import-session";
 import {
   buildTerminalsQueryKey,
@@ -184,9 +166,6 @@ const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
 function noopClearDraft() {}
 
-// Stable reference so the keyboard-action handler doesn't re-register each render.
-const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
-
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
   setIsolation: (value: "local" | "worktree") => void;
@@ -228,14 +207,6 @@ function useWorkspaceIsolation(input: {
   };
 }
 
-function normalizeBranchDetails(
-  data: { branchDetails?: BranchPickerDetail[]; branches?: string[] } | undefined,
-): BranchPickerDetail[] {
-  const details = data?.branchDetails;
-  if (details && details.length > 0) return details;
-  const names = data?.branches ?? [];
-  return names.map((name) => ({ name, committerDate: 0 }));
-}
 
 /**
  * "background" means the user left the New workspace screen mid-creation, so nothing navigated
@@ -860,7 +831,6 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const composerEditing = useNewWorkspaceComposerEditing();
   const { leaveFullscreen } = composerEditing;
@@ -871,12 +841,7 @@ export function NewWorkspaceScreen({
     [],
   );
   const {
-    allHosts,
     selectedServerId,
-    hostPickerOpen,
-    handleSelectHost,
-    handleHostPickerOpenChange,
-    openHostPicker,
     projects,
     routeProject,
     routeProjectContextViewKey,
@@ -899,16 +864,6 @@ export function NewWorkspaceScreen({
     WorkspaceCreationResult | { workspace: null }
   >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
-  const openAddProjectPicker = useOpenAddProject();
-  const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
-  const [pickerSearchQuery, setPickerSearchQuery] = useState("");
-  const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
-  const pickerAnchorRef = useRef<View>(null);
-  const projectPickerAnchorRef = useRef<View>(null);
-  const isolationPickerAnchorRef = useRef<View>(null);
-  const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
@@ -924,14 +879,11 @@ export function NewWorkspaceScreen({
     () => resolveTerminalProfiles(daemonConfig?.terminalProfiles),
     [daemonConfig?.terminalProfiles],
   );
-  // Manual selection wins once the user picks something; until then the target
-  // reads live from preferences so the async load can't race a frozen
-  // initializer. Both go through `resolveLaunchTarget`, so a profile deleted
-  // daemon-side falls back to chat rather than leaving a dead selection.
-  const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
+  // The target reads live from preferences, so the async load can't race a frozen initializer;
+  // `resolveLaunchTarget` falls back to chat when a profile was deleted daemon-side.
   const launchTarget = useMemo(
-    () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
-    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
+    () => resolveLaunchTarget(formPreferences.launchTarget, terminalProfiles),
+    [formPreferences.launchTarget, terminalProfiles],
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
@@ -955,11 +907,6 @@ export function NewWorkspaceScreen({
     [launchFocusKey, terminalComposerValue],
   );
 
-  useEffect(() => {
-    const trimmed = pickerSearchQuery.trim();
-    const timer = setTimeout(() => setDebouncedPickerSearchQuery(trimmed), 180);
-    return () => clearTimeout(timer);
-  }, [pickerSearchQuery]);
 
   const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
@@ -968,10 +915,6 @@ export function NewWorkspaceScreen({
     selectedProject,
     selectedSourceDirectory,
     projectPickerOptions,
-    projectByOptionId,
-    selectedProjectOptionId,
-    projectTriggerLabel,
-    handleSelectProjectOption: selectProjectOption,
   } = useNewWorkspaceProjectPicker({
     selectedServerId,
     projects,
@@ -980,14 +923,7 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
-  const projectIconTargets = useMemo(
-    () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
-    [projects, selectedServerId],
-  );
 
-  const projectIconDataByProjectViewKey = useProjectIcons({
-    projects: projectIconTargets,
-  });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
@@ -1040,195 +976,19 @@ export function NewWorkspaceScreen({
     hasProjectOptions: projectPickerOptions.length > 0,
     hasSelectedSourceDirectory: selectedSourceDirectory !== null,
   });
-  const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
-  const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
-
-  const { status: checkoutStatus } = useCheckoutStatusQuery({
-    serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
-  });
 
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
-  const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
+  const { effectiveIsolation } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
     });
 
-  const branchSuggestionsQuery = useQuery({
-    queryKey: [
-      "branch-suggestions",
-      selectedServerId,
-      selectedSourceDirectory,
-      debouncedPickerSearchQuery,
-    ],
-    queryFn: async () => {
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a project");
-      }
-      const connectedClient = withConnectedClient();
-      return connectedClient.getBranchSuggestions({
-        cwd: selectedSourceDirectory,
-        query: debouncedPickerSearchQuery || undefined,
-        limit: 20,
-      });
-    },
-    enabled: pickerQueryEnabled,
-    staleTime: 15_000,
-  });
-
-  const githubPrSearchQuery = useForgeSearchQuery({
-    client,
-    serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
-    query: debouncedPickerSearchQuery,
-    kinds: ["change_request"],
-    supportsForgeSearch,
-    enabled: pickerQueryEnabled,
-  });
-
-  const branchDetails = useMemo(
-    () => normalizeBranchDetails(branchSuggestionsQuery.data),
-    [branchSuggestionsQuery.data],
-  );
-  const forgeSearchAuthenticated =
-    !githubPrSearchQuery.data || githubPrSearchQuery.data.authState === "authenticated";
-  const prItems: ForgeSearchItem[] = useMemo(() => {
-    if (!forgeSearchAuthenticated) return [];
-    return githubPrSearchQuery.data?.items ?? [];
-  }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
-
-  const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
-  );
-  const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
-    () =>
-      buildPickerOptionData({
-        branchDetails,
-        prItems,
-        baseItem,
-      }),
-    [baseItem, branchDetails, prItems],
-  );
-  const triggerLabel = useMemo(() => {
-    const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
-  const selectPickerItem = useCallback(
-    (item: PickerItem) => {
-      const nextAttachments = syncPickerPrAttachment({
-        attachments: chatDraft.attachments,
-        item,
-      });
-
-      dispatchPickerSelection({ type: "picker-selected", item });
-      chatDraft.setAttachments(nextAttachments);
-      setPickerOpen(false);
-    },
-    [chatDraft],
-  );
-
-  const handleSelectOption = useCallback(
-    (id: string) => {
-      const item = itemById.get(id);
-      if (!item) return;
-      selectPickerItem(item);
-    },
-    [itemById, selectPickerItem],
-  );
-
-  const clearPickerSelectionForTargetChange = useCallback(
-    (currentTargetId: string, nextTargetId: string) => {
-      const nextAttachments = clearPickerPrAttachmentForTargetChange({
-        attachments: chatDraft.attachments,
-        currentTargetId,
-        nextTargetId,
-      });
-      if (nextAttachments === chatDraft.attachments) return;
-      chatDraft.setAttachments(nextAttachments);
-      dispatchPickerSelection({ type: "target-changed" });
-    },
-    [chatDraft],
-  );
-
-  const handleSelectProjectOption = useCallback(
-    (id: string) => {
-      // selectProjectOption enforces selectability (worktree-only when
-      // multiplicity is off, any project when it's on); don't re-gate here on
-      // canCreateWorktree or non-git projects become unselectable.
-      selectProjectOption(id);
-      setProjectPickerOpen(false);
-      clearPickerSelectionForTargetChange(selectedProjectOptionId, id);
-    },
-    [clearPickerSelectionForTargetChange, selectProjectOption, selectedProjectOptionId],
-  );
-
-  const handleSelectWorkspaceHost = useCallback(
-    (id: string) => {
-      handleSelectHost(id);
-      clearPickerSelectionForTargetChange(selectedServerId, id);
-    },
-    [clearPickerSelectionForTargetChange, handleSelectHost, selectedServerId],
-  );
-
-  const handleAddProject = useCallback(() => {
-    setProjectPickerOpen(false);
-    openAddProjectPicker(selectedServerId);
-  }, [openAddProjectPicker, selectedServerId]);
-
-  const handleAddHost = useCallback(() => {
-    router.push(buildSettingsAddHostRoute(Date.now()));
-  }, []);
-
-  const openPicker = useCallback(() => {
-    setPickerOpen(true);
-  }, []);
-
-  const openProjectPicker = useCallback(() => {
-    setProjectPickerOpen(true);
-  }, []);
-
-  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
-  // switch projects from the keyboard. Registered only while this screen is
-  // mounted, so the shortcut doesn't swallow the browser's native print
-  // elsewhere; gated on having projects to pick.
-  const handleProjectPick = useCallback(() => {
-    openProjectPicker();
-    return true;
-  }, [openProjectPicker]);
-  useKeyboardActionHandler({
-    handlerId: "new-workspace-project-pick",
-    actions: PROJECT_PICK_ACTIONS,
-    enabled: projectPickerOptions.length > 0,
-    priority: 0,
-    handle: handleProjectPick,
-  });
-
-  const openIsolationPicker = useCallback(() => {
-    setIsolationPickerOpen(true);
-  }, []);
-
-  const handleIsolationPickerOpenChange = useCallback((nextOpen: boolean) => {
-    setIsolationPickerOpen(nextOpen);
-  }, []);
-
   const handleClearDraft = useCallback(() => {
     // No-op: screen navigates away on success, text should stay for retry on error
-  }, []);
-
-  const handlePickerOpenChange = useCallback((nextOpen: boolean) => {
-    setPickerOpen(nextOpen);
-    if (!nextOpen) {
-      setPickerSearchQuery("");
-    }
-  }, []);
-
-  const handleProjectPickerOpenChange = useCallback((nextOpen: boolean) => {
-    setProjectPickerOpen(nextOpen);
   }, []);
 
   const ensureWorkspace = useCallback(
@@ -1466,74 +1226,6 @@ export function NewWorkspaceScreen({
     [composerState, isPending],
   );
 
-  const pickerEmptyText =
-    branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
-      ? t("newWorkspace.refPicker.searching")
-      : t("newWorkspace.refPicker.noMatchingRefs");
-
-  const formStack = useNewWorkspaceForm({
-    isCompact,
-    isPending,
-    project: {
-      anchorRef: projectPickerAnchorRef,
-      open: openProjectPicker,
-      openState: projectPickerOpen,
-      onOpenChange: handleProjectPickerOpenChange,
-      options: projectPickerOptions,
-      projectByOptionId,
-      iconDataByProjectViewKey: projectIconDataByProjectViewKey,
-      selectedProject,
-      selectedOptionId: selectedProjectOptionId,
-      triggerLabel: projectTriggerLabel,
-      selectedServerId,
-      supportsWorkspaceMultiplicity,
-      onSelect: handleSelectProjectOption,
-      onAddProject: handleAddProject,
-    },
-    host: {
-      anchorRef: hostPickerAnchorRef,
-      open: openHostPicker,
-      openState: hostPickerOpen,
-      onOpenChange: handleHostPickerOpenChange,
-      allHosts,
-      selectedServerId,
-      onSelect: handleSelectWorkspaceHost,
-      onAddHost: handleAddHost,
-    },
-    isolation: {
-      anchorRef: isolationPickerAnchorRef,
-      open: openIsolationPicker,
-      openState: isolationPickerOpen,
-      onOpenChange: handleIsolationPickerOpenChange,
-      effectiveIsolation,
-      canCreateWorktree,
-      onSelect: setIsolation,
-    },
-    base: {
-      anchorRef: pickerAnchorRef,
-      open: openPicker,
-      openState: pickerOpen,
-      onOpenChange: handlePickerOpenChange,
-      selectedSourceDirectory,
-      selectedItem,
-      triggerLabel,
-      options,
-      itemById,
-      selectedOptionId,
-      onSelect: handleSelectOption,
-      setSearchQuery: setPickerSearchQuery,
-      emptyText: pickerEmptyText,
-      showRefPicker,
-    },
-    launch: {
-      serverId: selectedServerId,
-      target: launchTarget,
-      onChange: setManualLaunchTarget,
-      profiles: terminalProfiles,
-      disabled: isPending,
-    },
-  });
-
   const importSession = useImportSession({ serverId: selectedServerId });
 
   const isComposerFullscreen = composerEditing.isFullscreen(isTerminalLaunch);
@@ -1604,7 +1296,6 @@ export function NewWorkspaceScreen({
       <NewWorkspaceLayout
         fullscreen={isComposerFullscreen}
         title={t("newWorkspace.title")}
-        formStack={formStack}
         onImportSession={importSession.open}
         errorMessage={errorMessage}
       >
@@ -1647,7 +1338,6 @@ function NewWorkspaceLayout({
   title: string;
   /** A failed send's reason, drawn above the composer so the box stays where it is. */
   errorMessage: string | null;
-  formStack: ReactNode;
   onImportSession: () => void;
   children: ReactNode;
 }) {

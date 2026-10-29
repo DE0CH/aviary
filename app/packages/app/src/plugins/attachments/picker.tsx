@@ -7,7 +7,8 @@ import type { PluginAttachmentSourceContribution } from "../types";
 import { searchPluginAttachments } from "@getpaseo/plugin/client/host";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import type { ComboboxOption } from "@/components/ui/combobox";
+import { lazyArea } from "@/components/lazy-area";
 import { useFetchQuery } from "@/data/query";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { PluginIconView } from "../icons";
@@ -73,6 +74,14 @@ function attachmentOptions(items: PluginAttachmentItem[]): ComboboxOption[] {
     description: item.subtitle,
   }));
 }
+
+// The picker is its own chunk, fetched when a plugin's attachment source is first chosen (docs/paseo-ui.md "Loading")
+const Combobox = lazyArea(
+  "plugin-attachment-picker",
+  () => import("@/components/ui/combobox"),
+  (module) => module.Combobox,
+  null,
+);
 
 export function usePluginAttachmentPicker(
   input: PluginAttachmentPickerInput,

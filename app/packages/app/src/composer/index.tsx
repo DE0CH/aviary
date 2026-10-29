@@ -143,7 +143,8 @@ import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import type { ComboboxOption } from "@/components/ui/combobox";
+import { lazySheet } from "@/components/lazy-area";
 import {
   AttachmentFrame,
   AttachmentLabel,
@@ -897,47 +898,6 @@ function WorkspaceFileAttachmentPill({
         subtitle={getWorkspaceFileAttachmentSubtitle(attachment)}
       />
     </AttachmentPill>
-  );
-}
-
-interface GithubPickerOptionProps {
-  label: string;
-  testID: string;
-  active: boolean;
-  selected: boolean;
-  item: ForgeSearchItem;
-  onToggle: (item: ForgeSearchItem) => void;
-}
-
-function GithubPickerOption({
-  label,
-  testID,
-  active,
-  selected,
-  item,
-  onToggle,
-}: GithubPickerOptionProps) {
-  const handlePress = useCallback(() => {
-    onToggle(item);
-  }, [onToggle, item]);
-  const leadingSlot = useMemo(
-    () =>
-      item.kind === "change_request" ? (
-        <ThemedGitPullRequest size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-      ) : (
-        <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-      ),
-    [item.kind],
-  );
-  return (
-    <ComboboxItem
-      testID={testID}
-      label={label}
-      selected={selected}
-      active={active}
-      onPress={handlePress}
-      leadingSlot={leadingSlot}
-    />
   );
 }
 
@@ -2311,26 +2271,13 @@ function ComposerContentImpl({
     [setGithubSearchQuery],
   );
 
-  const renderGithubPickerOption = useCallback(
-    ({ option, active }: { option: ComboboxOption; selected: boolean; active: boolean }) => {
-      const item = findForgeItemByOption(githubSearchItems, option.id);
-      if (!item) {
-        return <View key={option.id} />;
-      }
-      const selected = isAttachmentSelectedForForgeItem(selectedAttachments, item);
-      return (
-        <GithubPickerOption
-          key={option.id}
-          testID={`composer-github-option-${option.id}`}
-          label={option.label}
-          selected={selected}
-          active={active}
-          item={item}
-          onToggle={handleToggleGithubItem}
-        />
-      );
+  const resolveGithubPickerOption = useCallback(
+    (optionId: string) => {
+      const item = findForgeItemByOption(githubSearchItems, optionId);
+      if (!item) return null;
+      return { item, selected: isAttachmentSelectedForForgeItem(selectedAttachments, item) };
     },
-    [githubSearchItems, selectedAttachments, handleToggleGithubItem],
+    [githubSearchItems, selectedAttachments],
   );
 
   // Fullscreen fills the dock slot: the chain down to the input stretches and drops
@@ -2551,25 +2498,21 @@ function ComposerContentImpl({
                 />
               </RenderProfile>
               {supportsForgeSearch ? (
-                <Combobox
+                <LazyForgeSearchPicker
+                  visible={isGithubPickerOpen}
                   options={githubSearchOptions}
-                  value=""
-                  onSelect={noop}
-                  keepOpenOnSelect
-                  searchable
                   searchPlaceholder={t("composer.github.searchPlaceholder", {
                     context: forgePresentation.changeRequestContext,
                   })}
                   title={t("composer.github.title", {
                     context: forgePresentation.changeRequestContext,
                   })}
-                  open={isGithubPickerOpen}
                   onOpenChange={handleGithubPickerOpenChange}
                   onSearchQueryChange={setGithubSearchQuery}
-                  desktopPlacement="top-start"
                   anchorRef={attachButtonRef}
                   emptyText={githubEmptyText}
-                  renderOption={renderGithubPickerOption}
+                  resolveOption={resolveGithubPickerOption}
+                  onToggle={handleToggleGithubItem}
                 />
               ) : null}
               {pluginAttachments.picker}
@@ -2742,6 +2685,12 @@ const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
+// The pull request / issue picker is its own chunk, fetched when it first opens (composer/forge-picker.tsx)
+const LazyForgeSearchPicker = lazySheet(
+  "forge-picker",
+  () => import("./forge-picker"),
+  (module) => module.ForgeSearchPicker,
+);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
