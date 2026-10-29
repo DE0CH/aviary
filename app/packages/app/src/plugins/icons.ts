@@ -61,9 +61,11 @@ function findLucideIcon(name: string): LucideIcon | null {
   return isComponent(candidate) ? (candidate as LucideIcon) : null;
 }
 
-/** A name that may be a Lucide icon: exact once the set has arrived, its shape before. */
+/**
+ * A name shaped like a Lucide icon. Checked only for its shape, whether or not the set has arrived, so a plugin is
+ * accepted or refused the same at every load time; an unknown name draws nothing.
+ */
 function isLucideIconName(name: string): boolean {
-  if (lucideIcons) return findLucideIcon(name) !== null;
   void loadLucideIcons();
   return LUCIDE_NAME.test(name);
 }
@@ -186,7 +188,8 @@ export function PluginIconView({ icon, size, color }: PluginIconViewProps): Reac
 }
 
 function isRenderable(icon: PluginIcon): boolean {
-  if (typeof icon === "string") return isLucideIconName(icon);
+  // Drawing (unlike validation) may be exact once the set is here: an unknown name renders nothing either way
+  if (typeof icon === "string") return isLucideIconName(icon) && (!lucideIcons || findLucideIcon(icon) !== null);
   if (isSvgIcon(icon)) return findSvgIconProblem(icon.svg) === null;
   return isComponent(icon);
 }

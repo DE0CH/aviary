@@ -65,8 +65,8 @@ describe("parsePluginIcon", () => {
   it.each([
     ["", "Workspace panel files has no icon"],
     [
-      "NotALucideIcon",
-      'Workspace panel files has an invalid icon: unknown Lucide icon "NotALucideIcon"',
+      "not-an-icon",
+      'Workspace panel files has an invalid icon: unknown Lucide icon "not-an-icon"',
     ],
     [
       { svg: "<svg><script>run()</script></svg>" },
@@ -103,6 +103,11 @@ describe("Icon", () => {
       type: SvgXml,
       props: { xml: SVG, width: 18, color: "#123456" },
     });
+  });
+
+  it("accepts a well-shaped unknown name the same before and after the set arrives, and draws nothing", () => {
+    expect(parseSerializablePluginIcon("Panel", "NotALucideIcon")).toBe("NotALucideIcon");
+    expect(draw(Icon({ name: "NotALucideIcon" }))).toBeNull();
   });
 
   it("renders nothing for an unusable icon", () => {
