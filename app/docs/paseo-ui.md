@@ -129,7 +129,8 @@ arrives.
 
 Deyao's order (2026-10-29): a message box people can type in at once, then the connection, then the reply's display
 (markdown, code highlighting), then the conversation list, everything else only when used; send waits for the app
-("Wait for the app"). Decide by measuring; test on a throttled connection. So:
+("Wait for the app") and for the reply's display ("so nothing goes out before its reply can render"). Decide by
+measuring; test on a throttled connection. So:
 - **The page frame in `public/index.html`** (`#boot`): the app's own layout (sidebar rows, logo, greeting line, the
   message box; compact below 600px; light and dark from `styles/theme.ts`; the logo inline SVG) in plain HTML, painted
   before any script arrives. React replaces it on its first render; while the app is still connecting,
@@ -164,9 +165,13 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   moves the keyboard over; a first tap anywhere else (the send button, the list, a menu; caught in the capture phase,
   before it acts) or the box losing focus hands the text over without the keyboard; a composer that unmounts after
   that point drops the box, its text kept for its own page only. Enter sends only on wide layouts, through the
-  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready: the
-  new-chat composer's send stays off until the connection is open and the server's projects have arrived
-  (`screens/new-workspace/send-ready.ts`), and a refused send's line sits above the box, which stays put. A deep link
+  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready: every
+  composer's send (new chat and conversation, desktop and phone, a view-as tab with the override on) stays off
+  until the reply's display has arrived (`useReplyDisplayReady` in `loading/stages.ts`: the reply chunk and the
+  highlighter; a failed fetch is tried again by itself, 1 s, 2 s ... at most 30 s apart), and an Enter or tap before
+  that does nothing and leaves the text where it is; the new-chat composer's send also waits until the connection is
+  open and the server's projects have arrived (`screens/new-workspace/send-ready.ts`), and a refused send's line
+  sits above the box, which stays put. A deep link
   in a browser that never ran the app (no saved host) shows the connecting frame until the page's own server has
   answered or the startup wait gives up, then opens (`navigation/host-runtime-bootstrap.ts`, host routes).
   The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
@@ -178,12 +183,12 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   comes back in the box after a refresh of the same page. Skipped when signed out, in view-as tabs and in the desktop
   build.
 - **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
-  bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1, the reply
-  chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer) and the
-  conversation page's chunk (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and
-  git actions), starts once the server-message validator has arrived or failed; stage 2, the sidebar chunk
-  (`loading/sidebar-chunk.ts`), once stage 1 has settled (stage 1 also fetches the code highlighter, so a reply's code
-  is coloured before the sidebar arrives); stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
+  bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1 starts once the
+  server-message validator has arrived or failed: first the reply's display alone (the reply chunk,
+  `loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx`, the markdown renderer and the KaTeX and Mermaid
+  loaders, with the code highlighter beside it), which turns send on, then the conversation page's chunk
+  (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and git actions); stage 2, the
+  sidebar chunk (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
   mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
   (YYC's conversation rename/share/delete too; their store is `yyc/conversation-dialog-store.ts`), the download toast,
   the sidebar callouts, the legacy skills migration). The entry keeps the new-chat screen (the landing page) and its
