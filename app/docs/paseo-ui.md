@@ -196,9 +196,10 @@ measuring; test on a throttled connection. So:
   loaders, with the code highlighter beside it), which turns send on (each through `loadWithRetry`, then tried again
   with a backoff capped at 30 s and at once on the browser's `online` event; after three failed rounds, or an error
   the chunk threw, the composer shows a line and a Reload button beside its disabled send,
-  `ReplyDisplayLoadFailed`), then the conversation page's chunk
-  (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and git actions); stage 2, the
-  sidebar chunk (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
+  `ReplyDisplayLoadFailed`); stage 2, once stage 1 has settled: the sidebar chunk (`loading/sidebar-chunk.ts`), then
+  the conversation page's chunk (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels
+  and git actions; after the list, since a send or a conversation route fetches it at once anyway; before it, the list
+  came 0.5 s later on Slow 4G); stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
   mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
   (the host chooser, `hosts/host-chooser-modal.tsx`, whose store is `hosts/host-chooser.tsx`, and the host
   confirmation; YYC's conversation rename/share/delete, their store `yyc/conversation-dialog-store.ts`), the download toast,
