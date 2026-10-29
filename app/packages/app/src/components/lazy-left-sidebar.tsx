@@ -24,7 +24,9 @@ function SidebarFallback() {
     requestedWidth: sidebarWidth,
     viewportWidth: windowWidth - insets.left - insets.right,
   });
-  return <View dataSet={{ yycLoading: "" }} style={[styles.column, { width }]} />;
+  // Not a loading area for the early message box: the box is never in the sidebar, so a page where no composer
+  // takes the text over (a terminal tab, a read-only view) drops the box without waiting for the list
+  return <View style={[styles.column, { width }]} />;
 }
 
 export function LeftSidebar({ active }: { active: boolean }) {
