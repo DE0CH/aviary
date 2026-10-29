@@ -1,4 +1,5 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect } from "react";
+import { releaseEarlyInput } from "@/yyc/early-input";
 import { Image, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -40,6 +41,7 @@ export function SignedOutShell() {
   const compact = isCompactBreakpoint(rt.breakpoint);
   const muted = theme.colors.foregroundMuted;
   const onSignIn = useCallback(() => signIn(), []);
+  useEffect(() => releaseEarlyInput("signed-out"), []);
 
   // The app's own button (as on the iOS sign-in screen), at the sidebar's control size.
   const signInButton = (testID: string) => (

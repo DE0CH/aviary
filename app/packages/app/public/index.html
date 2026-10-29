@@ -116,6 +116,12 @@
       #boot .logo { width: 48px; height: 48px; display: block; }
       #boot .greet { width: 140px; height: 20px; margin: 22px 0 28px; }
       #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); }
+      /* Conversation pages draw the message box at the bottom (html.yyc-conv, set by the early box's script) */
+      .yyc-conv #boot .center { justify-content: flex-end; padding-bottom: 16px; }
+      .yyc-conv #boot .logo, .yyc-conv #boot .greet { display: none; }
+      /* The saved theme, when the early box's script could read it, wins over the system's */
+      html.yyc-light #boot { --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7; }
+      html.yyc-dark #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
       @media (max-width: 599px) {
         #boot .side { display: none; }
         #boot .head { display: flex; align-items: center; padding: 0 16px; }
@@ -123,10 +129,179 @@
         #boot .center { justify-content: flex-end; padding: 0 16px 16px; }
       }
     </style>
+    <!-- The early message box (docs/paseo-ui.md "Loading"): a plain textarea over the frame's message box, so people
+         can type before the app arrives; the app's message box takes the text over (src/yyc/early-input.web.ts).
+         Font, line height and padding follow composer/input/input.tsx (15/21 px; padding 16 px, 8/12 below 720 px). -->
+    <style>
+      #yyc-early {
+        --e-fg: #1a1a1e; --e-muted: #71717a; --e-box: #fafafa; --e-rule: #e4e4e7; --e-accent: #0a7f95;
+        position: fixed; z-index: 2147483000; display: none; box-sizing: border-box;
+        background: var(--e-box); border: 1px solid var(--e-rule); border-radius: 16px;
+      }
+      @media (prefers-color-scheme: dark) {
+        #yyc-early { --e-fg: #fafafa; --e-muted: #a1a1aa; --e-box: #1e2120; --e-rule: #252b2a; }
+      }
+      html.yyc-light #yyc-early { --e-fg: #1a1a1e; --e-muted: #71717a; --e-box: #fafafa; --e-rule: #e4e4e7; }
+      html.yyc-dark #yyc-early { --e-fg: #fafafa; --e-muted: #a1a1aa; --e-box: #1e2120; --e-rule: #252b2a; }
+      #yyc-early.on { display: block; }
+      #yyc-early textarea {
+        position: absolute; left: 0; top: 0; right: 0; bottom: 44px; box-sizing: border-box; width: 100%;
+        margin: 0; padding: 16px 16px 0; border: 0; outline: none; resize: none; background: transparent;
+        color: var(--e-fg); caret-color: var(--e-fg); font-size: 15px; line-height: 21px; font-weight: 400;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang HK',
+          'Noto Sans HK', 'Microsoft JhengHei', 'Noto Sans TC', sans-serif;
+      }
+      #yyc-early textarea::placeholder { color: var(--e-muted); opacity: 1; }
+      #yyc-early button {
+        position: absolute; right: 10px; bottom: 12px; width: 28px; height: 28px; padding: 0; border: 0;
+        border-radius: 14px; background: var(--e-accent); opacity: 0.4; display: flex; align-items: center;
+        justify-content: center; cursor: default;
+      }
+      #yyc-early.ready button { opacity: 1; cursor: pointer; }
+      @media (max-width: 719px) {
+        #yyc-early textarea { padding: 8px 12px 0; bottom: 40px; }
+        #yyc-early button { bottom: 8px; right: 6px; }
+      }
+      /* Phones: 16 px, or iOS zooms the page when the box takes focus */
+      @media (pointer: coarse) {
+        #yyc-early textarea { font-size: 16px; }
+      }
+      /* Over the app's own text box (a phone waiting for its next tap): exactly its rectangle */
+      #yyc-early.over { border-color: transparent; border-radius: 0; }
+      #yyc-early.over textarea { padding: 0; bottom: 0; }
+      #yyc-early.over button { display: none; }
+    </style>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="box"></div></div></div></div></div></div>
     <script>window.__yycBootFrame = document.getElementById("boot").outerHTML;</script>
+    <div id="yyc-early" data-yyc-early><textarea id="yyc-early-input" rows="1" autocomplete="off" spellcheck="true"></textarea><button type="button" tabindex="-1" disabled aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+    <script>
+      // The early message box (docs/paseo-ui.md "Loading"): typable before any app script arrives; the app's message
+      // box takes the text over through window.__yycEarly (src/yyc/early-input.web.ts). Keep COMPOSER and CONV equal
+      // to src/yyc/early-input-routes.ts (a test checks). Every storage access may throw (private windows).
+      (function () {
+        var COMPOSER = /^\/(new|h\/[^\/]+(\/(workspace|agent)\/[^\/]+)?)?$/;
+        var CONV = /^\/h\/[^\/]+\/(workspace|agent)\/[^\/]+$/;
+        var MIRROR = "yyc-early-input";
+        var d = document, w = window, html = d.documentElement;
+        var layer = d.getElementById("yyc-early"), box = d.getElementById("yyc-early-input");
+        var button = layer.querySelector("button"), root = d.getElementById("root");
+        function norm(p) { return p.replace(/\/+$/, "") || "/"; }
+        function read(store, key) { try { return w[store].getItem(key); } catch (e) { return null; } }
+        function json(text) { try { return JSON.parse(text); } catch (e) { return null; } }
+        function mark(name) { try { performance.mark(name); } catch (e) {} }
+        function setMirror(value) {
+          try {
+            if (value) sessionStorage.setItem(MIRROR, JSON.stringify(value));
+            else sessionStorage.removeItem(MIRROR);
+          } catch (e) {}
+        }
+        var path = norm(location.pathname);
+        var skip = (d.querySelector('meta[name="yyc-signed-out"]') || {}).content === "1" ||
+          /(^|[#&])jarvis-view-as=/.test(location.hash) || !!read("sessionStorage", "yyc.view-as") ||
+          !!w.paseoDesktop || !COMPOSER.test(path);
+        var active = false, composing = false, readied = false, handoff = null, timer = 0, observer = null;
+        function compact() { return w.innerWidth < 600; }
+        function release(reason) {
+          if (!active) return;
+          active = false;
+          clearTimeout(timer);
+          if (observer) observer.disconnect();
+          layer.remove();
+          mark("yyc:early-released:" + reason);
+        }
+        function take(p) {
+          var taken = null;
+          if (active) {
+            taken = { text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "" };
+          } else {
+            var m = json(read("sessionStorage", MIRROR)), here = norm(p);
+            if (m && typeof m.text === "string" && (m.path === here || (here === "/new" && Date.now() - m.t < 60000))) {
+              taken = { text: m.text, selStart: m.selStart, selEnd: m.selEnd, base: m.base || "" };
+            }
+          }
+          setMirror(null);
+          return taken;
+        }
+        w.__yycEarly = {
+          take: take,
+          release: release,
+          ready: function (next) { readied = true; handoff = next; layer.className = "on ready over"; place(); },
+          state: function () { return { active: active, composing: composing, focused: active && d.activeElement === box }; },
+          whenIdle: function (run) {
+            if (!composing) return run();
+            box.addEventListener("compositionend", function () { setTimeout(run, 0); }, { once: true });
+          }
+        };
+        if (skip) { layer.remove(); return; }
+        var settings = json(read("localStorage", "@paseo:app-settings")) || json(read("localStorage", "@paseo:settings")) || {};
+        if (settings.theme === "light") html.classList.add("yyc-light");
+        else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
+        if (CONV.test(path)) html.classList.add("yyc-conv");
+        var lang = settings.language;
+        if (lang !== "en" && lang !== "zh-HK") {
+          lang = "zh-HK";
+          var langs = navigator.languages || [navigator.language || ""];
+          for (var i = 0; i < langs.length; i++) {
+            var base = String(langs[i]).toLowerCase().split("-")[0];
+            if (base === "zh") break;
+            if (base === "en") { lang = "en"; break; }
+          }
+        }
+        var wide = { en: "Message the agent, tag @files, or use /commands and /skills", "zh-HK": "給 Agent 發訊息，標記 @files，或使用 /commands 和 /skills" };
+        var narrow = { en: "Message, @files, /commands", "zh-HK": "發訊息，@files，/commands" };
+        box.placeholder = (compact() ? narrow : wide)[lang];
+        box.setAttribute("aria-label", narrow[lang]);
+        var lastRect = null;
+        function place() {
+          var target = handoff && handoff.element && handoff.element.isConnected ? handoff.element : root.querySelector(".box");
+          var r = target && target.getBoundingClientRect();
+          if (r && r.width > 0) lastRect = r;
+          if (!lastRect) return;
+          var s = layer.style;
+          s.left = lastRect.left + "px"; s.top = lastRect.top + "px";
+          s.width = lastRect.width + "px"; s.height = lastRect.height + "px";
+        }
+        function watch() {
+          place();
+          if (readied) return clearTimeout(timer);
+          if (root.querySelector("#boot,[data-yyc-loading]")) { clearTimeout(timer); timer = 0; return; }
+          if (!timer) timer = setTimeout(function () { release("timeout"); }, 1500);
+        }
+        function swap(submit) {
+          if (!handoff) return false;
+          var next = handoff;
+          handoff = null;
+          next.adopt();
+          if (submit) next.submit();
+          return true;
+        }
+        box.addEventListener("input", function () {
+          setMirror({ text: box.value, selStart: box.selectionStart, selEnd: box.selectionEnd, base: "", path: norm(location.pathname), t: Date.now() });
+        });
+        box.addEventListener("compositionstart", function () { composing = true; });
+        box.addEventListener("compositionend", function () { composing = false; });
+        box.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing && !compact()) {
+            e.preventDefault();
+            if (readied) swap(true);
+            return;
+          }
+          if (readied && !e.isComposing && !composing) swap(false);
+        });
+        box.addEventListener("touchend", function () { if (readied && !composing) swap(false); });
+        button.addEventListener("click", function () { if (readied) swap(true); });
+        active = true;
+        layer.className = "on";
+        place();
+        mark("yyc:early-typable");
+        observer = new MutationObserver(watch);
+        observer.observe(root, { childList: true, subtree: true });
+        w.addEventListener("resize", place);
+        if (w.visualViewport) w.visualViewport.addEventListener("resize", place);
+      })();
+    </script>
   </body>
 </html>

@@ -113,6 +113,7 @@ import {
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { startLoadingStages } from "@/loading/stages";
 import { isSignedOutPage } from "@/yyc/signed-out-shell";
+import { releaseEarlyInputIfNoComposer } from "@/yyc/early-input";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
@@ -793,6 +794,8 @@ function OpenProjectListener() {
 function AppWithSidebar({ children }: { children: ReactNode }) {
   useSettingsRouteEntry();
   const pathname = usePathname();
+  // A page without a message box removes the early one (public/index.html, yyc/early-input.web.ts)
+  useEffect(() => releaseEarlyInputIfNoComposer(pathname), [pathname]);
   const hosts = useHosts();
   const storeReady = useStoreReady();
   const routeServerId = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);

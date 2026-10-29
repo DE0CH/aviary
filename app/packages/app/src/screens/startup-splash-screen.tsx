@@ -199,7 +199,9 @@ const BOOT_FRAME_HTML: string | null = isWeb
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const isError = bootstrapState !== undefined && bootstrapState.splashError !== null;
   if (BOOT_FRAME_HTML && !isError) {
+    // data-yyc-loading: the early message box (public/index.html) stays while this frame shows
     return createElement("div", {
+      "data-yyc-loading": "",
       style: { display: "flex", flex: 1, width: "100%", height: "100%" },
       dangerouslySetInnerHTML: { __html: BOOT_FRAME_HTML },
     });

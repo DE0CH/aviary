@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { releaseEarlyInput } from "@/yyc/early-input";
 import { Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -96,6 +97,7 @@ export default function SharedConversationRoute() {
   const [error, setError] = useState<string | null>(null);
   const [continuing, setContinuing] = useState(false);
   const [continueError, setContinueError] = useState<string | null>(null);
+  useEffect(() => releaseEarlyInput("share"), []);
 
   useEffect(() => {
     if (!id) return;

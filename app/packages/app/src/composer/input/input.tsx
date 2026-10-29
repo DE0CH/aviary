@@ -66,6 +66,8 @@ import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
+import { loadReplyChunk } from "@/loading/stages";
+import { adoptEarlyInput } from "@/yyc/early-input";
 import {
   EditingTextInput,
   type EditingTextInputHandle as ComposerTextInputHandle,
@@ -1446,6 +1448,37 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
     }, [textReplacement, updateComposerHeightForText, updateLiveTextPresence]);
 
+    // The early message box (yyc/early-input.web.ts): once this focused box's draft has loaded, it takes over what
+    // was typed before the app arrived. Runs before the hydrated text is applied above, so the merge reads the stored
+    // draft from the replacement and marks it applied.
+    const handleDefaultSendActionRef = useRef<() => void>(() => undefined);
+    const isHydratedReplacement = textReplacement.kind === "hydrated";
+    const hydratedReplacementRef = useRef(textReplacement);
+    hydratedReplacementRef.current = textReplacement;
+    useLayoutEffect(() => {
+      if (!isWeb || readOnly || !isHydratedReplacement || !paneFocusedRef.current) return;
+      return adoptEarlyInput({
+        element: webTextareaRef.current,
+        getText: () => {
+          const replacement = hydratedReplacementRef.current;
+          return appliedTextReplacementKeyRef.current === replacement.key
+            ? (textInputRef.current?.getText() ?? valueRef.current)
+            : replacement.text;
+        },
+        replaceText: (text, selection) => {
+          appliedTextReplacementKeyRef.current = hydratedReplacementRef.current.key;
+          replaceText(text, selection);
+        },
+        focus: () => {
+          focusIntentRef.current = true;
+          textInputRef.current?.focus();
+        },
+        submit: () => handleDefaultSendActionRef.current(),
+      });
+      // Once per hydrated draft; the callbacks read refs
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isHydratedReplacement]);
+
     useEffect(() => {
       return () => {
         onFocusChange?.(false);
@@ -1648,6 +1681,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
+      // A reply is coming: its display jumps the loading queue (loading/stages.ts)
+      void loadReplyChunk();
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;
       if (!preserveHeightOnSubmit) {
         updateLiveTextPresence("");
@@ -1700,6 +1735,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         handleQueueMessage,
       });
     }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    handleDefaultSendActionRef.current = handleDefaultSendAction;
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({

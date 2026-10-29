@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { releaseEarlyInput } from "@/yyc/early-input";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -12,6 +13,7 @@ const YYC_LOGO = require("../../assets/images/yyc-logo.png");
  */
 export default function WelcomeRoute() {
   const { t } = useTranslation();
+  useEffect(() => releaseEarlyInput("welcome"), []);
   const reload = useCallback(() => {
     if (typeof window !== "undefined") window.location.assign("/");
   }, []);
