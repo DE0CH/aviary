@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import Animated, {
   cancelAnimation,
@@ -189,7 +189,25 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
+// On the web the page opens with a static frame of the app (public/index.html #boot, docs/paseo-ui.md "Loading"); React
+// replaces it on its first render. While connecting, this screen draws that same frame again, so the page goes frame ->
+// app with no logo screen in between. index.html saves the frame's markup before React's first render clears #root.
+const BOOT_FRAME_HTML: string | null = isWeb
+  ? ((globalThis as { __yycBootFrame?: string }).__yycBootFrame ?? null)
+  : null;
+
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
+  const isError = bootstrapState !== undefined && bootstrapState.splashError !== null;
+  if (BOOT_FRAME_HTML && !isError) {
+    return createElement("div", {
+      style: { display: "flex", flex: 1, width: "100%", height: "100%" },
+      dangerouslySetInnerHTML: { __html: BOOT_FRAME_HTML },
+    });
+  }
+  return <StartupSplash bootstrapState={bootstrapState} />;
+}
+
+function StartupSplash({ bootstrapState }: StartupSplashScreenProps) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);

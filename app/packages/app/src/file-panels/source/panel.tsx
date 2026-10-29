@@ -59,7 +59,7 @@ export interface TextFilePreviewProps {
   host: PluginFilePanelProps["host"];
 }
 
-type TextFilePanelProps = PluginFilePanelProps & {
+export type TextFilePanelProps = PluginFilePanelProps & {
   /** The panel's Preview; with one, the toolbar switches between Preview and Source. */
   preview?: ComponentType<TextFilePreviewProps>;
 };

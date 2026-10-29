@@ -2,6 +2,7 @@ import {
   DaemonAuthenticationError,
   DaemonClient,
   getDaemonAuthFailureReason,
+  loadWSOutboundValidator,
   type DaemonAuthFailureReason,
 } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
@@ -318,5 +319,8 @@ export async function connectToDaemon(
   deps: DaemonConnectionDependencies<DaemonProbeClient> = defaultDaemonConnectionDependencies,
 ): Promise<{ client: DaemonProbeClient; serverId: string; hostname: string | null }> {
   const config = await buildClientConfig(connection, options?.serverId, options, deps);
+  // The probe's timeout is for the connection: the server-message validator (its own chunk, seconds on a slow
+  // connection) arrives first, so it never counts against it (docs/paseo-ui.md "Loading").
+  await loadWSOutboundValidator();
   return connectAndProbe(config, resolveTimeout(connection, options), deps);
 }

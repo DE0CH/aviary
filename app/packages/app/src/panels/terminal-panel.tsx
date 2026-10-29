@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { lazy, Suspense, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Terminal } from "lucide-react-native";
@@ -6,7 +6,6 @@ import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
-import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
@@ -18,6 +17,12 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
+
+// The terminal (xterm and its add-ons) is its own chunk, fetched when a terminal opens, never at page load
+// (docs/paseo-ui.md "Loading").
+const TerminalPane = lazy(() =>
+  import("@/components/terminal-pane").then((m) => ({ default: m.TerminalPane })),
+);
 
 const CENTERED_PADDED_STYLE = {
   flex: 1,
@@ -105,15 +110,17 @@ function TerminalPanel() {
   }
 
   return (
-    <TerminalPane
-      serverId={serverId}
-      cwd={workspaceDirectory}
-      terminalId={target.terminalId}
-      isWorkspaceFocused={isWorkspaceFocused}
-      isPaneFocused={isPaneFocused}
-      onOpenFileExplorer={handleOpenFileExplorer}
-      onOpenWorkspaceFile={openFileInWorkspace}
-    />
+    <Suspense fallback={null}>
+      <TerminalPane
+        serverId={serverId}
+        cwd={workspaceDirectory}
+        terminalId={target.terminalId}
+        isWorkspaceFocused={isWorkspaceFocused}
+        isPaneFocused={isPaneFocused}
+        onOpenFileExplorer={handleOpenFileExplorer}
+        onOpenWorkspaceFile={openFileInWorkspace}
+      />
+    </Suspense>
   );
 }
 

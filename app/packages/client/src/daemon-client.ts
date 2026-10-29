@@ -38,7 +38,7 @@ import {
   type ActiveTurnBehavior,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
-import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
+import type { validateWSOutboundMessage as ValidateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
@@ -185,6 +185,21 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+
+
+// The generated validator for server messages is 4 MB of code, the largest single module of the web app. It is its own
+// chunk: its fetch starts when this module loads, in parallel with the first render, and a connect waits for it only
+// while it is still on its way, since no server message can arrive before a socket opens (DE0CH/claudecodeui
+// docs/paseo-ui.md "Loading").
+let validateWSOutboundMessage: typeof ValidateWSOutboundMessage | null = null;
+let validatorLoad: Promise<typeof ValidateWSOutboundMessage> | null = null;
+export function loadWSOutboundValidator(): Promise<typeof ValidateWSOutboundMessage> {
+  validatorLoad ??= import("@getpaseo/protocol/validation/ws-outbound").then(
+    (m) => (validateWSOutboundMessage = m.validateWSOutboundMessage),
+  );
+  return validatorLoad;
+}
+void loadWSOutboundValidator();
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -1455,6 +1470,10 @@ export class DaemonClient {
     }
 
     try {
+      if (!validateWSOutboundMessage) {
+        await loadWSOutboundValidator();
+        if (!this.shouldReconnect) return;
+      }
       const resolution = resolveConnectionAuth(this.config);
       const selected = resolution instanceof Promise ? await resolution : resolution;
       if (!this.shouldReconnect) return;
@@ -6722,9 +6741,10 @@ export class DaemonClient {
     }
 
     const validationTrace = this.beginTraceSection("paseo.ws.validate");
-    let parsed: ReturnType<typeof validateWSOutboundMessage>;
+    let parsed: ReturnType<typeof ValidateWSOutboundMessage>;
     try {
-      parsed = validateWSOutboundMessage(parsedJson);
+      // set before any socket opens (attemptConnect awaits loadWSOutboundValidator)
+      parsed = validateWSOutboundMessage!(parsedJson);
     } finally {
       this.endTraceSection(validationTrace);
     }

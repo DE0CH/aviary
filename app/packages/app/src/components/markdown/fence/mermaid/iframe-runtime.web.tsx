@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiagramColorScheme, MermaidRenderRequest } from "./render-model";
-import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
+
+// The runtime page (Mermaid + KaTeX, 3.6 MB) is its own chunk, fetched the first time a reply has a diagram, never at
+// page load (docs/paseo-ui.md "Loading").
+let runtimeHtml: Promise<string> | null = null;
+function loadRuntimeHtml(): Promise<string> {
+  runtimeHtml ??= import("./runtime/html.gen").then((m) => m.mermaidRuntimeHtml);
+  return runtimeHtml;
+}
 
 export interface MermaidRenderedMessage {
   revision: number;
@@ -27,6 +34,17 @@ export function MermaidIframeRuntime({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
   driverRef.current ??= new MermaidRuntimeRequestDriver();
+  const [html, setHtml] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void loadRuntimeHtml().then((loaded) => {
+      if (live) setHtml(loaded);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const sendRequest = useCallback((current: MermaidRenderRequest | null) => {
     const target = iframeRef.current?.contentWindow;
@@ -68,6 +86,7 @@ export function MermaidIframeRuntime({
 
   // `inert` (not just tabIndex) because the Modal focus trap focuses descendants
   // programmatically; a focused iframe swallows every keystroke, including Escape.
+  if (html === null) return null;
   return (
     <iframe
       ref={iframeRef}
@@ -75,7 +94,7 @@ export function MermaidIframeRuntime({
       aria-hidden
       inert
       sandbox="allow-scripts"
-      srcDoc={mermaidRuntimeHtml}
+      srcDoc={html}
       tabIndex={-1}
       style={iframeStyle}
     />

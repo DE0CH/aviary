@@ -1,5 +1,5 @@
 import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { useCallback, useState } from "react";
+import { lazy, Suspense, useCallback, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
@@ -7,8 +7,22 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
-import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
+import type { TextFilePanelProps, TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
+
+// The source view (CodeMirror and its language grammars) is its own chunk, fetched when a text file opens, never at
+// page load (docs/paseo-ui.md "Loading").
+const LazyTextFilePanel = lazy(() =>
+  import("./source/panel").then((m) => ({ default: m.TextFilePanel })),
+);
+
+function TextFilePanel(props: TextFilePanelProps) {
+  return (
+    <Suspense fallback={<FilePanelLoading />}>
+      <LazyTextFilePanel {...props} />
+    </Suspense>
+  );
+}
 
 /** Source: the text file panel with no Preview, for text files no other built-in panel claims. */
 function SourcePanel(props: PluginFilePanelProps) {

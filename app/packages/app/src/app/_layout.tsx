@@ -1,4 +1,5 @@
 import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
+import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { EXPLORER_ENABLED, useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -274,6 +275,19 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const daemonStartError = useDaemonStartLastError();
   const daemonStartIsRunning = useDaemonStartIsRunning();
   const [hasGivenUpWaitingForHost, setHasGivenUpWaitingForHost] = useState(false);
+  // The give-up timer is for the host to answer: it starts once the server-message validator (its own chunk,
+  // seconds on a slow connection; docs/paseo-ui.md "Loading") has arrived, or a slow download alone would show the
+  // offline screen.
+  const [validatorReady, setValidatorReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadWSOutboundValidator().then(() => {
+      if (live) setValidatorReady(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const isDesktopRuntime = shouldUseDesktopDaemon();
   const startupBlocker = useMemo(
     () =>
@@ -292,7 +306,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (!shouldRunGiveUpTimer) {
+    if (!shouldRunGiveUpTimer || !validatorReady) {
       return;
     }
     const handle = setTimeout(() => {
@@ -301,7 +315,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTimeout(handle);
     };
-  }, [shouldRunGiveUpTimer]);
+  }, [shouldRunGiveUpTimer, validatorReady]);
 
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });

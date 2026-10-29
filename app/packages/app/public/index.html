@@ -90,9 +90,43 @@
         outline-offset: 2px;
       }
     </style>
+    <!-- The page frame before the script arrives (docs/paseo-ui.md "Loading"): the app's own layout drawn in plain
+         HTML, so a slow connection shows the app at once instead of a blank page. React replaces #root's children
+         on its first render. Colours and sizes follow styles/theme.ts and the sidebar/composer; compact below 600px. -->
+    <style>
+      #boot {
+        --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7;
+        display: flex; width: 100%; height: 100%; background: var(--b-main);
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
+      }
+      #boot .side { width: 320px; flex: none; background: var(--b-side); border-right: 1px solid var(--b-rule); }
+      #boot .side .rows { padding: 16px; border-bottom: 1px solid var(--b-rule); }
+      #boot .bar { height: 12px; background: var(--b-bar); border-radius: 6px; }
+      #boot .side .rows .bar { margin: 14px 0; width: 45%; }
+      #boot .side .rows .bar:nth-child(2) { width: 38%; }
+      #boot .side .rows .bar:nth-child(3) { width: 30%; }
+      #boot .side .list { padding: 20px 16px; }
+      #boot .side .list .bar { width: 20%; height: 10px; }
+      #boot .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+      #boot .head { display: none; height: 56px; flex: none; }
+      #boot .center { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 4vh; }
+      #boot .col { width: 100%; max-width: 788px; margin: 0 auto; }
+      #boot .logo { width: 48px; height: 48px; display: block; }
+      #boot .greet { width: 140px; height: 20px; margin: 22px 0 28px; }
+      #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); }
+      @media (max-width: 599px) {
+        #boot .side { display: none; }
+        #boot .head { display: flex; align-items: center; padding: 0 16px; }
+        #boot .head .bar { width: 22px; height: 14px; border-radius: 3px; }
+        #boot .center { justify-content: flex-end; padding: 0 16px 16px; }
+      }
+    </style>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
+    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="box"></div></div></div></div></div></div>
+    <script>window.__yycBootFrame = document.getElementById("boot").outerHTML;</script>
   </body>
 </html>
