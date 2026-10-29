@@ -958,6 +958,8 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  /** When true, send is off (button, Enter) without a spinner: the screen cannot send yet. */
+  isSubmitUnavailable?: boolean;
   /** When true, waits for pasted forge links to resolve before enabling submit. */
   waitForForgeAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
@@ -1271,6 +1273,7 @@ function ComposerContentImpl({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
+  isSubmitUnavailable = false,
   waitForForgeAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
@@ -2416,6 +2419,7 @@ function ComposerContentImpl({
   const isViewAsReadOnly = useViewAsReadOnly();
   const isSubmitDisabled =
     isSubmitLoadingVisible ||
+    isSubmitUnavailable ||
     (waitForForgeAutoAttachOnSubmit && isForgeResolving) ||
     isViewAsReadOnly;
 

@@ -51,7 +51,7 @@ import {
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspace } from "@/stores/session-store-hooks";
+import { useHasHydratedWorkspaces, useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
@@ -110,6 +110,7 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { isNewWorkspaceSendReady } from "./new-workspace/send-ready";
 import { useNewWorkspaceForm } from "./new-workspace/form";
 import { useImportSession } from "@/hooks/use-import-session";
 import {
@@ -1030,6 +1031,15 @@ export function NewWorkspaceScreen({
   }, [selectedServerId, t]);
 
   const clientReady = isConnected && Boolean(client);
+  const hasHydratedWorkspaces = useHasHydratedWorkspaces(selectedServerId);
+  // Send waits for the app (docs/paseo-ui.md "Loading"): the connection and the host's projects,
+  // so a send right after the early box hands over is not refused with "Choose a project".
+  const isSubmitUnavailable = !isNewWorkspaceSendReady({
+    clientReady,
+    hasHydratedWorkspaces,
+    hasProjectOptions: projectPickerOptions.length > 0,
+    hasSelectedSourceDirectory: selectedSourceDirectory !== null,
+  });
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
@@ -1543,6 +1553,7 @@ export function NewWorkspaceScreen({
       submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
       submitButtonTestID="new-workspace-launch-submit"
       isSubmitLoading={isPending}
+      isSubmitUnavailable={isSubmitUnavailable}
       submitBehavior="preserve-and-lock"
       blurOnSubmit={true}
       textSource={terminalTextSource}
@@ -1568,6 +1579,7 @@ export function NewWorkspaceScreen({
       submitButtonTestID="workspace-create-submit"
       submitIcon="return"
       isSubmitLoading={isPending}
+      isSubmitUnavailable={isSubmitUnavailable}
       waitForForgeAutoAttachOnSubmit
       submitBehavior="preserve-and-lock"
       blurOnSubmit={true}
@@ -1594,9 +1606,9 @@ export function NewWorkspaceScreen({
         title={t("newWorkspace.title")}
         formStack={formStack}
         onImportSession={importSession.open}
+        errorMessage={errorMessage}
       >
         {composer}
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       </NewWorkspaceLayout>
       {importSession.sheet}
     </FileDropZone>
@@ -1627,11 +1639,14 @@ function useNewWorkspaceComposerEditing() {
 function NewWorkspaceLayout({
   fullscreen,
   title,
+  errorMessage,
   children,
 }: {
   /** The composer covers the screen; the header leaves and the dock fills the content. */
   fullscreen: boolean;
   title: string;
+  /** A failed send's reason, drawn above the composer so the box stays where it is. */
+  errorMessage: string | null;
   formStack: ReactNode;
   onImportSession: () => void;
   children: ReactNode;
@@ -1660,7 +1675,16 @@ function NewWorkspaceLayout({
       <View style={styles.content}>
         <TitlebarDragRegion />
         <ComposerDock fullscreen={fullscreen}>
-          {welcome}
+          <>
+            {welcome}
+            {errorMessage ? (
+              <View style={styles.composerTitleColumn}>
+                <Text accessibilityRole="alert" style={styles.errorText}>
+                  {errorMessage}
+                </Text>
+              </View>
+            ) : null}
+          </>
           {children}
         </ComposerDock>
       </View>
@@ -1703,11 +1727,14 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
   },
+  // In the dock's content slot, above the composer and on its column, so the box never moves.
   errorText: {
+    width: "100%",
+    maxWidth: theme.contentMaxWidth,
+    alignSelf: "center",
     fontSize: theme.fontSize.base,
     color: theme.colors.destructive,
     lineHeight: 20,
-    paddingHorizontal: theme.spacing[4],
-    paddingBottom: theme.spacing[4],
+    paddingBottom: theme.spacing[2],
   },
 }));
