@@ -1482,6 +1482,14 @@ export class DaemonClient {
       const resolution = resolveConnectionAuth(this.config);
       const selected = resolution instanceof Promise ? await resolution : resolution;
       if (!this.shouldReconnect) return;
+      // The encryption is its own chunk, fetched only for an encrypted relay connection. It is awaited here, before
+      // the dispose below, so everything from the dispose to "connecting" stays synchronous: an overlapping attempt
+      // then always disposes the transport of the one before it.
+      const relayE2ee =
+        this.config.e2ee?.enabled === true
+          ? await import("./daemon-client-relay-e2ee-transport.js")
+          : null;
+      if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
       // Reconnect can overlap with browser close/error delivery ordering.
       // Always dispose previous transport before constructing the next one.
@@ -1497,17 +1505,12 @@ export class DaemonClient {
         ? createRelayUpgradeTransportFactory(baseTransportFactory)
         : baseTransportFactory;
       // Endpoint security is selected by configuration, never inferred from the URL.
-      if (this.config.e2ee?.enabled === true) {
+      if (relayE2ee && this.config.e2ee?.enabled === true) {
         const daemonPublicKeyB64 = this.config.e2ee.daemonPublicKeyB64;
         if (!daemonPublicKeyB64) {
           throw new Error("daemonPublicKeyB64 is required for relay E2EE");
         }
-        // The encryption is its own chunk, fetched only for an encrypted relay connection
-        const { createRelayE2eeTransportFactory } = await import(
-          "./daemon-client-relay-e2ee-transport.js"
-        );
-        if (!this.shouldReconnect) return;
-        transportFactory = createRelayE2eeTransportFactory({
+        transportFactory = relayE2ee.createRelayE2eeTransportFactory({
           baseFactory: transportFactory,
           daemonPublicKeyB64,
           logger: this.logger,
