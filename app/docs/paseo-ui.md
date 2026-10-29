@@ -127,23 +127,62 @@ arrives.
 
 ## Loading
 
-What a person needs first is the frame and the message box (they can start typing), then the socket with their
-conversation list; everything else is for later (Deyao, 2026-10-29: measured before building, tested on a throttled
-connection). So:
+Deyao's order (2026-10-29): a message box people can type in at once, then the connection, then the reply's display
+(markdown, code highlighting), then the conversation list, everything else only when used; send waits for the app
+("Wait for the app"). Decide by measuring; test on a throttled connection. So:
 - **The page frame in `public/index.html`** (`#boot`): the app's own layout (sidebar rows, logo, greeting line, the
   message box; compact below 600px; light and dark from `styles/theme.ts`; the logo inline SVG) in plain HTML, painted
   before any script arrives. React replaces it on its first render; while the app is still connecting,
-  `screens/startup-splash-screen.tsx` draws the same frame again (from `window.__yycBootFrame`, saved by the page),
-  so the page goes frame -> app without the logo screen. Keep it in step when the frame's layout changes.
-- **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
-  `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
-- **Chunks fetched only when used** (Metro splits every `import()` into its own file): the Mermaid + KaTeX diagram
-  runtime (`fence/mermaid/iframe-runtime.web.tsx`, the first reply with a diagram), the terminal (`panels/terminal-
-  panel.tsx`, never in YYC), the source view with CodeMirror (`file-panels/builtin.tsx`, a text file opened).
+  `screens/startup-splash-screen.tsx` draws the same frame again (from `window.__yycBootFrame`, saved by the page;
+  marked `data-yyc-loading`), so the page goes frame -> app without the logo screen. Keep it in step when the frame's
+  layout changes. On conversation pages the frame's box sits at the bottom (`html.yyc-conv`).
+- **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
+  send button over the frame's message box, typable before any script (font, line height and padding from
+  `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
+  inline script exposes `window.__yycEarly`; `yyc/early-input.web.ts` hands the text to the app's message box: the
+  first focused composer whose draft has loaded takes the live text and selection in one layout effect (after an IME
+  composition ends) and the box goes. A stored draft is never overwritten (the early text goes after it on a new line).
+  On a phone with the keyboard up the swap waits for the next tap or key (a script may only move the keyboard inside
+  one), with the box over the real one. Enter sends only on wide layouts, and nothing is sent before the app is ready.
+  The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
+  `yyc/early-input-routes.ts`, equal to the page's, and a test classifies every route file: a new route file must be
+  placed there), on the welcome, signed-out and share screens, and 1.5 s after the app shows something other than the
+  connecting frame or a loading area (`data-yyc-loading`). Its text then stays in sessionStorage for that page, or
+  `/new` within 60 s. Skipped when signed out, in view-as tabs and in the desktop build.
+- **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
+  bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1, the reply
+  chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer), starts once the
+  server-message validator has arrived (4 s at the latest); stage 2, the sidebar chunk (`loading/sidebar-chunk.ts`),
+  once stage 1 has settled; stage 3 (hosts) at idle. A lazy area that is merely rendered waits for its stage
+  (`agent-stream/lazy-view.tsx`, `components/markdown/lazy-renderer.tsx`, `components/lazy-left-sidebar.tsx`, each with
+  its own Suspense, so the composer beside the timeline is there at once); a send fetches the reply chunk at once,
+  opening the phone drawer the sidebar. Native has one bundle and starts at stage 3.
+- **Chunks fetched only when used** (Metro splits every `import()` into its own file; `utils/lazy-with-retry.ts` tries
+  three times, then reloads the page once per tab; `ChunkErrorBoundary` keeps a failure local): the settings, schedules,
+  sessions and open-project screens (`screens/lazy-screens.tsx`), the pull request view, the built-in file views
+  (Markdown preview, source, images), the Mermaid + KaTeX diagram runtime (`fence/mermaid/iframe-runtime.web.tsx`), the
+  terminal (`panels/terminal-panel.tsx`), KaTeX for inline math (`markdown-runtime/enriched-markdown-katex.ts`, aliased in
+  `metro.config.cjs`; the renderer has math off), the relay's end-to-end encryption (`client/src/daemon-client.ts`,
+  only for an encrypted relay connection), and the full Lucide set (`plugins/icons.ts`, the first time a plugin names
+  an icon).
+- **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
+  colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
+  (`loading/zod-locales.ts`).
 - **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
   from the moment the client module loads; a connect waits for it only while it is still on its way
   (`client/src/daemon-client.ts` `loadWSOutboundValidator`; client tests load it in `src/test-setup.ts`).
-- Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G).
+- **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
+  `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
+- **Budgets:** `scripts/check-chunks.mjs` (run by the build) prints every chunk's raw, gzip -9 and brotli q4 size and
+  checks the entry (at most 1,250 KB brotli) and the reply chunk (at most 450 KB); report only, `--strict` fails.
+- **Where it stands** (brotli q4): the page loads `index` (1,785 KB) and Expo's `__common` (487 KB: modules the lazy
+  chunks share, which Expo loads up front), 2,273 KB in all (3,102 KB before the stages); the reply chunk 267 KB, the
+  sidebar 62 KB, the validator 278 KB. Cold, Chrome's Slow 4G, desktop: the early box takes keys at 0.6-0.7 s (phone at
+  4x CPU 0.75 s), the entry has arrived at 13.9 s, then the validator, the reply chunk (16.7-18.8 s), the sidebar
+  (18.9-19.8 s); Fast 4G: box 0.2 s, entry 2.3 s, sidebar 3.9 s. Not yet under the 1,250 KB budget: `__common` should
+  move into a lazy chunk.
+- Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
+  `brotli-proxy.mjs`.
 
 ## The iOS app
 
