@@ -1,5 +1,5 @@
 // The tools role (docs/CHAT.md, "tools"): the MCP server Claude Code in a sandbox reaches through egress (route `tools`, with its
-// sandbox's egress token). Holds the tool keys (Exa, TikHub, the Wisers relay's Access service token, upstream MCP
+// sandbox's egress token). Holds the tool keys (Exa, TikHub, upstream MCP
 // tokens); nothing else in the chat runtime does.
 import { loadConfig } from "../common/config.ts";
 import { connect } from "../common/db.ts";

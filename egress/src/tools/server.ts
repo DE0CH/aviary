@@ -17,7 +17,6 @@ export function toolList(deps: Deps, upstreams: Upstream[]): ToolDef[] {
   const have: Record<string, boolean> = {
     web_search: !!t.exa,
     web_fetch: true,
-    news_search: !!t.wisers,
     social_search: !!t.tikhub,
     anyapi_search: !!t.anyapi,
     anyapi_describe: !!t.anyapi,

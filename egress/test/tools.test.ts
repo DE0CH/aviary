@@ -68,7 +68,6 @@ before(async () => {
       exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
       tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
       anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
-      wisers: { url: `${fakes.url}/wisers`, accessClientIdEnv: "W_ID", accessClientSecretEnv: "W_SECRET" },
       capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
       upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"] }],
     },
@@ -76,7 +75,7 @@ before(async () => {
   deps = {
     config,
     db: t.db,
-    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", ANY_KEY: "any-key", W_ID: "cid", W_SECRET: "csecret", UP_TOKEN: "up", CAP: "cap-token" },
+    env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", ANY_KEY: "any-key", UP_TOKEN: "up", CAP: "cap-token" },
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
@@ -114,7 +113,7 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "news_search", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names");
   const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
@@ -178,22 +177,6 @@ test("web_fetch: Exa text first, then the page itself; private addresses refused
     deps.resolve = saved;
   }
   assert.equal((await call("web_fetch", { url: "file:///etc/passwd" })).isError, true);
-});
-
-test("news_search: through the relay with the service token, polling a running job", async () => {
-  fakes.relayRunsFor = 2;
-  const r = await call("news_search", { query: "施政", period: "30", reason: "test" });
-  const s = textOf(r);
-  assert.match(s, /45 articles/);
-  assert.match(s, /明報 報道[\s\S]*明報 · 2026-10-16 08:00 · 記者[\s\S]*\(print; no web link\)[\s\S]*今日 \*\*施政\*\*/);
-  assert.match(s, /https:\/\/hk01\.com\/x/);
-  const asked = fakes.seen.filter((x) => x.path.startsWith("/wisers/"));
-  assert.equal(asked[0]!.headers["x-yyc-user"], owner);
-  assert.match(asked[0]!.path, /q=%E6%96%BD%E6%94%BF&period=30&reason=test/);
-  assert.ok(asked.some((x) => x.path.startsWith("/wisers/job/J1?wait=")));
-  const failed = await call("news_search", { query: "fail" });
-  assert.equal(failed.isError, true);
-  assert.match(textOf(failed), /Wisers 沒有回應.*quota may have been used: maybe/);
 });
 
 test("anyapi: find an API, read its input, run it (cost logged), re-read the result free; refusals", async () => {

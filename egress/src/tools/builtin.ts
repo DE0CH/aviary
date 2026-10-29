@@ -2,7 +2,7 @@
 // changes anything outside). Descriptions are what the model reads: written for a Hong Kong news / PR assistant,
 // saying when to use each and what comes back.
 import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
-import { ANYAPI_SKU, anyapiDescribe, anyapiResult, anyapiRun, anyapiSearch, exaContents, exaSearch, PLATFORMS, tikhubSearch, wisersSearch, type AnyapiRun, type AnyapiShape } from "./providers.ts";
+import { ANYAPI_SKU, anyapiDescribe, anyapiResult, anyapiRun, anyapiSearch, exaContents, exaSearch, PLATFORMS, tikhubSearch, type AnyapiRun, type AnyapiShape } from "./providers.ts";
 import { int, str, text, ToolInputError, type Deps, type ToolDef, type ToolResult } from "./types.ts";
 
 const DATE = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
@@ -24,7 +24,7 @@ export const webSearch: ToolDef = {
     "event. Works in Traditional/Simplified Chinese and English; for Hong Kong topics search in Chinese too (e.g. 「李家超 施政報告」). " +
     "Narrow with `since`/`until` (YYYY-MM-DD) for recent news and `include_domains` (e.g. info.gov.hk, rthk.hk, " +
     "hk01.com, mingpao.com). Follow up with web_fetch to read a result in full. For Hong Kong print/newspaper archives " +
-    "use news_search (Wisers); for 小紅書/抖音/微博/X/Threads posts use social_search; for Facebook, LinkedIn and other " +
+    "use the WiseSearch tools when listed (yyc_wisers_search, then yyc_wisers_doc); for 小紅書/抖音/微博/X/Threads posts use social_search; for Facebook, LinkedIn and other " +
     "platforms' data use anyapi_search then anyapi_run.",
   inputSchema: {
     type: "object",
@@ -188,64 +188,6 @@ export const webFetch: ToolDef = {
       if (e instanceof BlockedAddress) return text(`Not allowed: ${e.message}.`, true);
       return text(`Could not read the page: ${(e as Error).message}`, true);
     }
-  },
-};
-
-export const newsSearch: ToolDef = {
-  name: "news_search",
-  title: "Search Wisers news archive",
-  description:
-    "Search Wisers (慧科), the archive of Hong Kong and Greater China newspapers, magazines and news sites — the " +
-    "authoritative source for what HK print media (明報, 星島, 東方, 信報, SCMP, 經濟日報…) published. Use it for media " +
-    "coverage questions: who reported X, how a story was covered, press clippings for a period. Every search uses YYC's " +
-    "Wisers quota, so make each query count (no near-duplicate searches; the same search within a day is answered from " +
-    "the saved result). Keywords in Traditional Chinese work best (e.g. 「施政報告 AND 房屋」); `period` is days back " +
-    "(today, 2, 3, 7, 30, 182, 365) or give `from`/`to`. Returns headline, outlet, date, author and the matching excerpt " +
-    "(**bold** = the hit); print items have no web link. Results come 20 per page (`page`). Say in `reason` why you search.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "Keywords (Wisers syntax: AND, OR, NOT, quotes)." },
-      period: { type: "string", enum: ["today", "2", "3", "7", "30", "182", "365"], default: "7" },
-      from: { ...DATE, description: "Start date (YYYY-MM-DD); with `to`, instead of period." },
-      to: { ...DATE, description: "End date (YYYY-MM-DD)." },
-      lang: { type: "string", enum: ["all", "cn", "en"], default: "all" },
-      sort: { type: "string", enum: ["DESC:date", "DESC:score"], default: "DESC:date", description: "Newest first, or most relevant first." },
-      range: { type: "string", enum: ["all", "title", "content"], default: "all", description: "Match in headline, body, or both." },
-      page: { type: "integer", minimum: 1, maximum: 50, default: 1 },
-      reason: { type: "string", description: "One line: why this search (kept in the search log)." },
-    },
-    required: ["query"],
-    additionalProperties: false,
-  },
-  annotations: { title: "Search Wisers news archive", readOnlyHint: true, openWorldHint: true },
-  async run(args, ctx) {
-    const from = str(args, "from");
-    const to = str(args, "to");
-    if (!isDate(from) || !isDate(to)) throw new ToolInputError("dates are YYYY-MM-DD");
-    const r = await wisersSearch(ctx.deps, ctx.caller.owner, {
-      query: str(args, "query", true),
-      period: str(args, "period") || "7",
-      from,
-      to,
-      lang: str(args, "lang"),
-      sort: str(args, "sort"),
-      range: str(args, "range"),
-      page: int(args, "page", 1, 1, 50),
-      reason: (str(args, "reason") || "YYC AI").slice(0, 200),
-    });
-    if (!r.items.length) return text(`No articles found (total ${r.total ?? 0}). Try other keywords or a longer period.`);
-    const first = (r.page - 1) * r.pageSize + 1;
-    const lines = r.items.map((x, i) =>
-      [
-        `${first + i}. ${x.headline}`,
-        `   ${[x.source, x.publishDate, x.author, x.section].filter(Boolean).join(" · ")}`,
-        x.link ? `   ${x.link}` : "   (print; no web link)",
-        x.excerpt ? `   ${x.excerpt}` : "",
-      ].filter(Boolean).join("\n"),
-    );
-    const head = `Wisers: ${r.total ?? "?"} articles in total; showing ${first}–${first + r.items.length - 1}${r.cached ? " (saved result from earlier today)" : ""}.`;
-    return { content: [{ type: "text", text: `${head}\n\n${lines.join("\n\n")}` }], structuredContent: r };
   },
 };
 
@@ -451,4 +393,4 @@ export const anyapiResultTool: ToolDef = {
   },
 };
 
-export const BUILTIN: ToolDef[] = [webSearch, webFetch, newsSearch, socialSearch, anyapiSearchTool, anyapiDescribeTool, anyapiRunTool, anyapiResultTool];
+export const BUILTIN: ToolDef[] = [webSearch, webFetch, socialSearch, anyapiSearchTool, anyapiDescribeTool, anyapiRunTool, anyapiResultTool];

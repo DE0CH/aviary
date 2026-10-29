@@ -1,5 +1,5 @@
-// The outside services behind the built-in tools: Exa (web search, page text), TikHub (social platforms), and the YYC
-// WiseSearch relay (Wisers news archive, through Cloudflare Access with a service token). Each call reports its cost
+// The outside services behind the built-in tools: Exa (web search, page text), TikHub (social platforms) and AnyAPI.
+// Each call reports its cost
 // where the provider says it (Exa's costDollars; TikHub's list price per successful request).
 import type { Deps } from "./types.ts";
 
@@ -466,85 +466,3 @@ export async function anyapiResult(deps: Deps, id: string, shape: AnyapiShape): 
   return await anyapiCall<AnyapiRun>(deps, `/v1/results/${encodeURIComponent(id)}${shapeQuery(shape)}`, { method: "GET" }, 30_000);
 }
 
-// ---- Wisers (through the YYC relay) ---------------------------------------------------------------------------------
-
-export interface WisersArgs {
-  query: string;
-  period?: string;
-  from?: string;
-  to?: string;
-  lang?: string;
-  sort?: string;
-  range?: string;
-  page?: number;
-  reason?: string;
-}
-
-export interface WisersItem {
-  headline: string;
-  source: string;
-  publishDate: string;
-  author?: string;
-  section?: string;
-  type?: string;
-  link?: string;
-  excerpt: string;
-}
-
-export interface WisersAnswer {
-  total: string | number | null;
-  page: number;
-  pageSize: number;
-  cached: boolean;
-  items: WisersItem[];
-}
-
-type RelayAnswer = {
-  job: { id: string; state: "running" | "ok" | "err"; cached?: boolean };
-  result: null | { data: { items?: Record<string, any>[]; total?: string | number }; view: { link: string; excerpt: [string, boolean][] }[]; page: number; pageSize: number; cached: boolean };
-  failure: null | { message: string; outcome: string; charged: string };
-};
-
-export async function wisersSearch(deps: Deps, owner: string, a: WisersArgs, maxWaitMs = 300_000, pollMs = 20_000): Promise<WisersAnswer> {
-  const w = deps.config.tools.wisers;
-  if (!w) throw new Error("Wisers news search is not configured on this server");
-  const headers: Record<string, string> = {
-    "CF-Access-Client-Id": key(deps, w.accessClientIdEnv, "Wisers news search"),
-    "CF-Access-Client-Secret": key(deps, w.accessClientSecretEnv, "Wisers news search"),
-    "X-YYC-User": owner,
-    accept: "application/json",
-  };
-  const base = w.url.replace(/\/$/, "");
-  const q = new URLSearchParams({ q: a.query });
-  for (const [k, v] of Object.entries({ period: a.period, from: a.from, to: a.to, lang: a.lang, sort: a.sort, range: a.range, reason: a.reason }))
-    if (v) q.set(k, String(v));
-  if (a.from || a.to) q.set("period", "custom");
-  if (a.page && a.page > 1) q.set("page", String(a.page));
-  let ans = await callJson<RelayAnswer>(deps.fetch, "Wisers", `${base}/search?${q}`, { headers }, 60_000);
-  const deadline = Date.now() + maxWaitMs;
-  while (ans.job?.state === "running") {
-    if (Date.now() > deadline) throw new Error(`Wisers is still searching after ${Math.round(maxWaitMs / 1000)} s (job ${ans.job.id}); try again later — the same search then answers from its saved result`);
-    ans = await callJson<RelayAnswer>(deps.fetch, "Wisers", `${base}/job/${encodeURIComponent(ans.job.id)}?wait=${Math.round(pollMs / 1000)}`, { headers }, pollMs + 40_000);
-  }
-  if (ans.job?.state === "err" || !ans.result) {
-    const f = ans.failure;
-    throw new Error(`Wisers search failed: ${f?.message ?? "no result"}${f?.charged && f.charged !== "no" ? ` (quota may have been used: ${f.charged})` : ""}`);
-  }
-  const r = ans.result;
-  const items = (r.data.items ?? []).map((x, i) => {
-    const v = r.view[i];
-    const link = v?.link && v.link.startsWith("http") ? v.link : "";
-    const excerpt = (v?.excerpt ?? []).map(([t, hit]) => (hit ? `**${t}**` : t)).join("");
-    return {
-      headline: clean(x.headline, 300) || "(no headline)",
-      source: clean(x.source, 80),
-      publishDate: String(x.publishDate ?? ""),
-      ...(x.author ? { author: clean(x.author, 80) } : {}),
-      ...(x.section && x.section !== x.author ? { section: clean(x.section, 80) } : {}),
-      ...(x.typeId ? { type: String(x.typeId) } : {}),
-      ...(link ? { link } : {}),
-      excerpt: clean(excerpt, 600),
-    };
-  });
-  return { total: r.data.total ?? null, page: r.page, pageSize: r.pageSize, cached: !!r.cached, items };
-}
