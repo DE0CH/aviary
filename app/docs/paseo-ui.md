@@ -111,10 +111,13 @@ arrives.
 - **View as** (Deyao, 2026-10-28; router.mjs "View as", DE0CH/jarvis3 docs/CHAT.md "View as"): the operator page's
   「View as」 opens the app in a new tab at `/#jarvis-view-as=<token>`. `yyc/view-as.ts` keeps the token in that tab's
   sessionStorage (the admin's other tabs stay themselves) and adds it as `?jarvis_view_as=` to every `apiUrl` (REST,
-  file links) and the web socket (`runtime/websocket-factory.web.ts`); the router serves the person's own process as
-  them, so the list, conversations, files and shares are theirs. The tab is read-only: the composer's send (button,
-  Enter, queue) and the new-conversation entries (sidebar 新對話 dimmed, the palette item, the shortcut) do nothing, and
-  typing warms nothing. `yyc/view-as-box.tsx` above the composer is the one box only the admin sees (English, "Visible
+  file links) and the web socket (`runtime/websocket-factory.web.ts`, also used by the startup connection check in
+  `utils/test-daemon-connection.ts`, whose client can become the live one); the router serves the person's own process
+  as them, so the list, conversations, files and shares are theirs. The tab keeps the person's replica cache in an
+  IndexedDB of its own (`paseo-replica-row-store.view-as.<email>`) and their last conversation under its own key, so it
+  never starts from the admin's cached list nor writes into it. The tab is read-only: the message box shows its text
+  without an input, the composer's send (button, Enter, queue) and the new-conversation entries (sidebar 新對話
+  dimmed, the palette item, the shortcut) do nothing, and typing warms nothing. `yyc/view-as-box.tsx` above the composer is the one box only the admin sees (English, "Visible
   only to you"): whose view it is, and the override switch (off on every load; the box turns red while on) that lets
   the admin send and start conversations as the person. The bridge (`paseo-connection.ts`, viewer from the router's
   `X-Jarvis-Viewer`) records each such send in Ops History before sending (`server/modules/jarvis/jarvis-view-as.ts`;
