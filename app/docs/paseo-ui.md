@@ -164,7 +164,11 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   moves the keyboard over; a first tap anywhere else (the send button, the list, a menu; caught in the capture phase,
   before it acts) or the box losing focus hands the text over without the keyboard; a composer that unmounts after
   that point drops the box, its text kept for its own page only. Enter sends only on wide layouts, through the
-  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready.
+  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready: the
+  new-chat composer's send stays off until the connection is open and the server's projects have arrived
+  (`screens/new-workspace/send-ready.ts`), and a refused send's line sits above the box, which stays put. A deep link
+  in a browser that never ran the app (no saved host) shows the connecting frame until the page's own server has
+  answered or the startup wait gives up, then opens (`navigation/host-runtime-bootstrap.ts`, host routes).
   The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
   `yyc/early-input-routes.ts`, equal to the page's, and a test classifies every route file: a new route file must be
   placed there), on the welcome, signed-out and share screens, and 1.5 s after the app shows something other than the
