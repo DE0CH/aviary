@@ -199,8 +199,17 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
 - **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
   `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
   each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The cost is bytes
-  in lazy chunks: the code highlighter and CodeMirror are in the reply chunk, the settings screen and the source view.
-  Native has no chunks and is unaffected.
+  in lazy chunks, so a module several lazy areas use is reached through one `import()` of its own instead (the code
+  highlighter below). Native has no chunks and is unaffected.
+- **Code highlighting loads per language** (`utils/highlight-grammars.ts`): the highlighter (`@getpaseo/highlight`,
+  about 15 KB) is one chunk shared by the reply's code blocks and tool calls, the settings preview and the source
+  view, fetched the first time any code renders; each language family's grammar is its own chunk
+  (`packages/highlight/src/grammars/`, `loadGrammarForFile`), fetched when code in that language first renders
+  (`useGrammarReady` re-renders the block). Until then the code shows plain, in the same font and lines (token
+  styles are colours only), so nothing moves. Swift, Dart, C# and Nix are CodeMirror languages and share one chunk
+  with `@codemirror/language`; the editor wraps the others (`@getpaseo/highlight/codemirror`), so the package's main
+  entry has no CodeMirror. Every value import of `@getpaseo/highlight` goes through the loader: a static one would
+  copy it into that chunk.
 - **Smaller entry:** `babel/lucide-per-icon.js` rewrites Lucide imports to one file per icon; startup reads syntax
   colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
   (`loading/zod-locales.ts`).
