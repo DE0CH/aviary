@@ -186,12 +186,17 @@ measuring; test on a throttled connection. So:
   bootstrap and the stages start when the entry runs (`index.ts`, with `runtime/host-runtime-start.ts`; never on a
   signed-out page), and the page's language arrives meanwhile as its own chunk (`i18n/translations.web.ts`: the
   saved language, read before the first render as the early box does, `i18n/initial-locale.ts`; zh-HK 31 KB, en 26 KB;
-  no English fallback, every key is in both, `resources.test.ts`; another language is fetched when chosen and the
-  page keeps the current one until it lands); React renders once it has (the frame and the early box are there and
-  typable until then; native has both languages in its bundle). Stage 1 starts once the
+  every key is in both, `resources.test.ts`; the fallback is the language loaded at start, already in the store, so a
+  switch that fails shows it rather than raw keys; another language is fetched when chosen and the page keeps the
+  current one until it lands; a failed fetch goes through `loadWithRetry`, then is tried again with a backoff capped
+  at 30 s, never given up); React renders once the language's text is in the store (`index.ts` loads it again until
+  it is; the frame and the early box are there and typable until then; native has both languages in its bundle). Stage 1 starts once the
   server-message validator has arrived or failed: first the reply's display alone (the reply chunk,
   `loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx`, the markdown renderer and the KaTeX and Mermaid
-  loaders, with the code highlighter beside it), which turns send on, then the conversation page's chunk
+  loaders, with the code highlighter beside it), which turns send on (each through `loadWithRetry`, then tried again
+  with a backoff capped at 30 s and at once on the browser's `online` event; after three failed rounds, or an error
+  the chunk threw, the composer shows a line and a Reload button beside its disabled send,
+  `ReplyDisplayLoadFailed`), then the conversation page's chunk
   (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and git actions); stage 2, the
   sidebar chunk (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
   mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
