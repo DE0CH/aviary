@@ -1,5 +1,5 @@
 import { Redirect, useLocalSearchParams } from "expo-router";
-import { buildLegacyPluginSurfaceRedirectRoute } from "@/plugins";
+import { buildLegacyPluginSurfaceRedirectRoute } from "@/plugins/routes";
 
 function routeParam(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";

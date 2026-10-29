@@ -31,7 +31,7 @@ import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
-import { usePluginWorkspaceMenu } from "@/plugins";
+import { usePluginWorkspaceMenu } from "@/plugins/buttons/view";
 import {
   CONVERSATION_MENU_WIDTH,
   ConversationMenuItems,

@@ -118,7 +118,7 @@ import {
   parseHostWorkspaceRouteFromPathname,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
-import { PluginCatalogSync } from "@/plugins";
+import { PluginCatalogSync } from "@/plugins/catalog-sync";
 import { NotificationOpenRouter } from "@/notification-open/react";
 import { ensureOsNotificationPermission } from "@/utils/os-notifications";
 

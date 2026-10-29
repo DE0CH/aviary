@@ -7,7 +7,7 @@ import { ComposerTrackBar } from "@/composer/tracks";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import { useSettings } from "@/hooks/use-settings";
-import { PluginComposerPills } from "@/plugins";
+import { PluginComposerPills } from "@/plugins/buttons/view";
 import { useSessionStore } from "@/stores/session-store";
 import {
   type ArchiveFinishedStatus,

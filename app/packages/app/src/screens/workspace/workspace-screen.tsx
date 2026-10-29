@@ -211,7 +211,7 @@ import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
 } from "@/screens/workspace/workspace-header-menu";
-import { PluginHeaderButtons } from "@/plugins";
+import { PluginHeaderButtons } from "@/plugins/buttons/view";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
