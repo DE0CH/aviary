@@ -49,12 +49,9 @@ import {
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT } from "@/constants/layout";
-import {
-  AgentControls,
-  DraftAgentControls,
-  type DraftAgentControlsProps,
-} from "@/composer/agent-controls";
-import { ContextWindowMeter } from "@/components/context-window-meter";
+import type { DraftAgentControlsProps } from "@/composer/agent-controls";
+import { AgentControls, DraftAgentControls } from "@/composer/agent-controls/lazy";
+import { lazyArea } from "@/components/lazy-area";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import {
   selectAgentSentMessages,
@@ -300,6 +297,15 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
     };
   };
 }
+
+// The context window meter (its ring, popover and usage details) is its own chunk, drawn into its fixed 28 px slot
+// when it arrives, so nothing moves (docs/paseo-ui.md "Loading").
+const ContextWindowMeter = lazyArea(
+  "context-window-meter",
+  () => import("@/components/context-window-meter"),
+  (module) => module.ContextWindowMeter,
+  null,
+);
 
 interface RenderLeftContentArgs {
   agentControls: DraftAgentControlsProps | undefined;
