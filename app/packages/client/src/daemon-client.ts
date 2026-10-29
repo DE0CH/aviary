@@ -201,10 +201,37 @@ let validatorLoad: Promise<typeof ValidateWSOutboundMessage> | null = null;
 export function loadWSOutboundValidator(): Promise<typeof ValidateWSOutboundMessage> {
   validatorLoad ??= import("@getpaseo/protocol/validation/ws-outbound").then(
     (m) => (validateWSOutboundMessage = m.validateWSOutboundMessage),
+    (error: unknown) => {
+      // A failed fetch is forgotten, so the next connect attempt fetches again
+      validatorLoad = null;
+      throw error;
+    },
   );
   return validatorLoad;
 }
-void loadWSOutboundValidator();
+loadWSOutboundValidator().catch(() => undefined);
+
+// The relay encryption is its own chunk too, fetched when a client with E2EE is made and awaited by its connect.
+type RelayE2eeModule = typeof import("./daemon-client-relay-e2ee-transport.js");
+let relayE2eeLoad: Promise<RelayE2eeModule> | null = null;
+function loadRelayE2ee(): Promise<RelayE2eeModule> {
+  relayE2eeLoad ??= import("./daemon-client-relay-e2ee-transport.js").catch((error: unknown) => {
+    relayE2eeLoad = null;
+    throw error;
+  });
+  return relayE2eeLoad;
+}
+
+/** A chunk a connect waits for, bounded by the connect timeout: a stalled fetch fails the attempt, which retries. */
+function withinConnectTimeout<T>(load: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Connection timed out")), timeoutMs);
+  });
+  return Promise.race([load, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -1385,6 +1412,8 @@ export class DaemonClient {
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
     this.relaySecurityFloorValue = config.e2ee?.minimumMode;
+    // Its chunk is on the way while the connect resolves auth; a failure is retried by the connect itself
+    if (config.e2ee?.enabled === true) loadRelayE2ee().catch(() => undefined);
     this.logConnectionPath = isRelayClientWebSocketUrl(this.config.url) ? "relay" : "direct";
     let parsedUrlForLog: URL | null = null;
     try {
@@ -1475,8 +1504,9 @@ export class DaemonClient {
     }
 
     try {
+      const chunkTimeoutMs = Math.max(1, this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
       if (!validateWSOutboundMessage) {
-        await loadWSOutboundValidator();
+        await withinConnectTimeout(loadWSOutboundValidator(), chunkTimeoutMs);
         if (!this.shouldReconnect) return;
       }
       const resolution = resolveConnectionAuth(this.config);
@@ -1487,7 +1517,7 @@ export class DaemonClient {
       // then always disposes the transport of the one before it.
       const relayE2ee =
         this.config.e2ee?.enabled === true
-          ? await import("./daemon-client-relay-e2ee-transport.js")
+          ? await withinConnectTimeout(loadRelayE2ee(), chunkTimeoutMs)
           : null;
       if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
