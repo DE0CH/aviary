@@ -7,6 +7,7 @@ const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const enrichedMarkdownKatexLoader = path.resolve(appSrcRoot, "markdown-runtime/enriched-markdown-katex.ts");
+const zodLocalesShim = path.resolve(appSrcRoot, "loading/zod-locales.ts");
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
@@ -89,6 +90,14 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     /react-native-enriched-markdown[\\/]lib[\\/]module[\\/]web[\\/]/.test(context.originModulePath)
   ) {
     return { type: "sourceFile", filePath: enrichedMarkdownKatexLoader };
+  }
+  // zod's `locales` namespace (every language's messages) is never read; English alone stays
+  if (
+    platform === "web" &&
+    moduleName === "../locales/index.js" &&
+    /[\\/]zod[\\/]v4[\\/](classic|core)[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: zodLocalesShim };
   }
   if (
     isWatchdogBuild &&
