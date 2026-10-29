@@ -17,7 +17,9 @@ const forgesDir = path.dirname(new URL(import.meta.url).pathname);
 const dirEntries = readdirSync(forgesDir);
 
 const logicModuleIds = dirEntries
-  .filter((file) => /^[a-z0-9-]+\.ts$/.test(file) && file !== "index.ts" && file !== "view.ts")
+  .filter(
+    (file) => /^[a-z0-9-]+\.ts$/.test(file) && !["index.ts", "view.ts", "brands.ts"].includes(file),
+  )
   .map((file) => file.replace(/\.ts$/, ""))
   .sort();
 

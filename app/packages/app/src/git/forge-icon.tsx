@@ -1,8 +1,9 @@
 /**
  * Brand marks are SVG React components, so they cannot travel over the wire as
  * a string. This file derives icon and brand-color lookup tables from
- * CLIENT_FORGE_VIEW_MODULES; a new forge ships an icon component in the client
- * bundle and references it from its view module. Unknown icon kinds fall back to
+ * CLIENT_FORGE_BRANDS (git/forges/brands.ts, not the view modules with their
+ * PR-pane code); a new forge ships an icon component in the client bundle and
+ * references it from its brand and view modules. Unknown icon kinds fall back to
  * a generic pull-request glyph.
  */
 import { withUnistyles } from "react-native-unistyles";
@@ -12,10 +13,10 @@ import {
   type ForgeIconColorMapping,
   type ForgeIconComponent,
 } from "@/git/client-forge-module";
-import { CLIENT_FORGE_VIEW_MODULES } from "@/git/forges/view";
+import { CLIENT_FORGE_BRANDS } from "@/git/forges/brands";
 
 const FORGE_ICON_BY_KIND = new Map(
-  CLIENT_FORGE_VIEW_MODULES.map((module) => [module.id, module.icon]),
+  CLIENT_FORGE_BRANDS.map((module) => [module.id, module.icon]),
 );
 
 /**
@@ -27,7 +28,7 @@ export function getForgeIconComponent(iconKind: string): ForgeIconComponent {
 }
 
 const THEMED_ICON_BY_KIND = Object.fromEntries(
-  CLIENT_FORGE_VIEW_MODULES.map((module) => [module.id, withUnistyles(module.icon)]),
+  CLIENT_FORGE_BRANDS.map((module) => [module.id, withUnistyles(module.icon)]),
 );
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 
@@ -39,7 +40,7 @@ function brandColorMapping(colors: ForgeBrandColor): ForgeIconColorMapping {
 }
 
 const BRAND_COLOR_MAPPING_BY_KIND = new Map(
-  CLIENT_FORGE_VIEW_MODULES.flatMap((module) =>
+  CLIENT_FORGE_BRANDS.flatMap((module) =>
     module.brandColor ? [[module.id, brandColorMapping(module.brandColor)] as const] : [],
   ),
 );

@@ -209,9 +209,13 @@ export interface ClientForgeLogicModule<
  * View half of a forge: the brand mark, brand color, and PR-pane render
  * contributions. Imported only by rendering code (icon lookup, the PR pane).
  */
-export interface ClientForgeViewModule {
+export interface ClientForgeViewModule extends ClientForgeBrand {
+  readonly paneContributions?: readonly PaneNativeContribution[];
+}
+
+/** A forge's brand mark and colour alone (git/forges/brands.ts): what icon lookups need. */
+export interface ClientForgeBrand {
   readonly id: string;
   readonly icon: ForgeIconComponent;
   readonly brandColor?: ForgeBrandColor | null;
-  readonly paneContributions?: readonly PaneNativeContribution[];
 }

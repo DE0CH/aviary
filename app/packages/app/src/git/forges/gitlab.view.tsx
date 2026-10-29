@@ -4,7 +4,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { CircleCheck, ExternalLink } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { CheckoutPipelineJob, CheckoutPipelineStage } from "@getpaseo/protocol/messages";
-import { GitLabIcon } from "@/components/icons/gitlab-icon";
+import { gitlabForgeBrand } from "./gitlab.brand";
 import {
   definePaneContribution,
   type ClientForgeViewModule,
@@ -256,12 +256,7 @@ function GitLabPipelineStatusIcon({
 }
 
 export const gitlabForgeView = {
-  id: "gitlab",
-  icon: GitLabIcon,
-  brandColor: {
-    light: "#FC6D26",
-    dark: "#FC6D26",
-  },
+  ...gitlabForgeBrand,
   paneContributions: [
     definePaneContribution(GitlabMergeFactsSchema, {
       renderHeaderMeta: renderGitlabHeaderMeta,
