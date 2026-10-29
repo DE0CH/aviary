@@ -1,4 +1,5 @@
-import { isReplyDisplayReady, useReplyDisplayReady } from "@/loading/stages";
+import { isReplyDisplayReady, useReplyDisplayFailed, useReplyDisplayReady } from "@/loading/stages";
+import { ReplyDisplayLoadFailed } from "@/components/loading-frame";
 import { warmSandbox } from "@/yyc/warm";
 import {
   useComposerEditingSession,
@@ -2369,6 +2370,7 @@ function ComposerContentImpl({
   // Send waits for the reply display (Deyao, 2026-10-29; loading/stages.ts): nothing goes out before its reply can
   // render. Every composer (new chat, conversation, setup) and so the early box's Enter, which goes through this gate.
   const replyDisplayReady = useReplyDisplayReady();
+  const replyDisplayFailed = useReplyDisplayFailed();
   const isSubmitDisabled =
     isSubmitLoadingVisible ||
     isSubmitUnavailable ||
@@ -2397,8 +2399,10 @@ function ComposerContentImpl({
         <Text accessibilityRole="alert" style={styles.sendErrorText}>
           {sendError}
         </Text>
+      ) : !replyDisplayReady && replyDisplayFailed ? (
+        <ReplyDisplayLoadFailed />
       ) : null,
-    [sendError],
+    [sendError, replyDisplayReady, replyDisplayFailed],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")

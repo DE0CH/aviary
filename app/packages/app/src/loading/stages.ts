@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
 import { isWeb } from "@/constants/platform";
 import { loadHighlighter } from "@/utils/highlight-grammars";
+import { isChunkLoadError, loadWithRetry } from "@/utils/lazy-with-retry";
 
 // The order the web app's pieces arrive in (Deyao, 2026-10-29; docs/paseo-ui.md "Loading"): the message box and the
 // connection come with the entry chunk; then the reply's display (timeline, markdown, code highlighting); then the
@@ -110,39 +111,67 @@ export function loadWorkspaceChunk(): Promise<typeof import("./workspace-chunk")
 let replyDisplayReady = !isWeb || process.env.NODE_ENV === "test";
 let replyDisplay: Promise<void> | null = null;
 let replyDisplayFailures = 0;
+let replyDisplayFailed = false;
 const replyDisplayListeners = new Set<() => void>();
+
+function notifyReplyDisplay(): void {
+  for (const listener of replyDisplayListeners) listener();
+}
 
 /**
  * The reply's display, everything a reply needs to render: the reply chunk (timeline, markdown, the KaTeX and Mermaid
- * loaders) and the code highlighter. A failed fetch rejects and is tried again by itself (1 s, 2 s, 4 s ... at most
- * 30 s apart) until it arrives, since every send waits for it.
+ * loaders) and the code highlighter. A failed fetch goes through loadWithRetry (retries, then one page reload, which
+ * covers a deploy that replaced the build), and after that is tried again by itself (1 s, 2 s, 4 s ... at most 30 s
+ * apart, and at once when the browser comes back online) until it arrives, since every send waits for it. After three
+ * failures in a row, or an error that is not a fetch, `useReplyDisplayFailed` turns true so the composer says why send
+ * is off and offers a reload; send stays off.
  */
 export function loadReplyDisplay(): Promise<void> {
   if (replyDisplayReady) return Promise.resolve();
-  replyDisplay ??= Promise.all([loadReplyChunk(), loadHighlighter()]).then(
+  replyDisplay ??= Promise.all([loadWithRetry(loadReplyChunk), loadWithRetry(loadHighlighter)]).then(
     () => {
       replyDisplayReady = true;
       replyDisplayFailures = 0;
+      replyDisplayFailed = false;
       try {
         performance.mark("yyc:reply-display");
       } catch {
         // performance marks are for load-timing only
       }
-      for (const listener of replyDisplayListeners) listener();
+      notifyReplyDisplay();
     },
     (error: unknown) => {
       replyDisplay = null;
       replyDisplayFailures += 1;
-      const delay = Math.min(30_000, 1000 * 2 ** (replyDisplayFailures - 1));
-      setTimeout(() => void loadReplyDisplay().catch(() => undefined), delay);
+      const fetchError = isChunkLoadError(error);
+      if (!replyDisplayFailed && (!fetchError || replyDisplayFailures >= 3)) {
+        replyDisplayFailed = true;
+        notifyReplyDisplay();
+      }
+      // An error the chunk threw while it evaluated is a bug: fetching it again cannot help
+      if (fetchError) {
+        const delay = Math.min(30_000, 1000 * 2 ** (replyDisplayFailures - 1));
+        setTimeout(() => void loadReplyDisplay().catch(() => undefined), delay);
+      }
       throw error;
     },
   );
   return replyDisplay;
 }
 
+if (isWeb && typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  // Back online: try again now rather than at the next backoff tick (an in-flight load is reused, not doubled)
+  window.addEventListener("online", () => {
+    if (!replyDisplayReady && replyDisplayFailures > 0) void loadReplyDisplay().catch(() => undefined);
+  });
+}
+
 export function isReplyDisplayReady(): boolean {
   return replyDisplayReady;
+}
+
+function isReplyDisplayFailed(): boolean {
+  return replyDisplayFailed;
 }
 
 function subscribeReplyDisplay(listener: () => void): () => void {
@@ -158,6 +187,11 @@ export function useReplyDisplayReady(): boolean {
     if (!ready) void waitForStage(1).then(loadReplyDisplay).catch(() => undefined);
   }, [ready]);
   return ready;
+}
+
+/** The reply display has failed to load repeatedly (or threw): the composer says so beside its disabled send. */
+export function useReplyDisplayFailed(): boolean {
+  return useSyncExternalStore(subscribeReplyDisplay, isReplyDisplayFailed, isReplyDisplayFailed);
 }
 
 /** A message is being sent: the reply's display and the conversation page jump the loading queue. */
@@ -242,7 +276,9 @@ export const __private__ = {
     replyDisplayReady = !isWeb;
     replyDisplay = null;
     replyDisplayFailures = 0;
+    replyDisplayFailed = false;
     stageWaiters.clear();
   },
   reach,
+  isReplyDisplayFailed,
 };

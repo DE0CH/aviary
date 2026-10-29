@@ -72,19 +72,69 @@ describe("reply display (send waits for it)", () => {
     await stages.waitForStage(2);
   });
 
+  const fetchError = () => Object.assign(new Error("offline"), { name: "AsyncRequireError" });
+
   it("tries a failed fetch again by itself", async () => {
+    vi.useFakeTimers();
+    try {
+      const highlight = await import("@/utils/highlight-grammars");
+      // loadWithRetry's own three tries fail, then the backoff retry succeeds
+      const spy = vi
+        .spyOn(highlight, "loadHighlighter")
+        .mockRejectedValueOnce(fetchError())
+        .mockRejectedValueOnce(fetchError())
+        .mockRejectedValueOnce(fetchError())
+        .mockResolvedValue({} as never);
+      const first = stages.loadReplyDisplay();
+      const settled = expect(first).rejects.toThrow("offline");
+      await vi.advanceTimersByTimeAsync(2_000);
+      await settled;
+      expect(stages.isReplyDisplayReady()).toBe(false);
+      expect(stages.__private__.isReplyDisplayFailed()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(stages.isReplyDisplayReady()).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(4);
+      spy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a failure after three failed rounds and keeps trying; back online tries at once", async () => {
+    vi.useFakeTimers();
+    try {
+      const highlight = await import("@/utils/highlight-grammars");
+      let failing = true;
+      const spy = vi.spyOn(highlight, "loadHighlighter").mockImplementation(() =>
+        failing ? Promise.reject(fetchError()) : Promise.resolve({} as never),
+      );
+      void stages.loadReplyDisplay().catch(() => undefined);
+      // round 1 (2 s of in-round retries), +1 s, round 2, +2 s, round 3
+      await vi.advanceTimersByTimeAsync(2_000 + 1_000 + 2_000 + 2_000 + 2_000);
+      expect(stages.__private__.isReplyDisplayFailed()).toBe(true);
+      expect(stages.isReplyDisplayReady()).toBe(false);
+      failing = false;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(stages.isReplyDisplayReady()).toBe(true);
+      expect(stages.__private__.isReplyDisplayFailed()).toBe(false);
+      spy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an error the chunk threw at once and does not fetch it again", async () => {
     vi.useFakeTimers();
     try {
       const highlight = await import("@/utils/highlight-grammars");
       const spy = vi
         .spyOn(highlight, "loadHighlighter")
-        .mockRejectedValueOnce(new Error("offline"))
-        .mockResolvedValue({} as never);
-      await expect(stages.loadReplyDisplay()).rejects.toThrow("offline");
-      expect(stages.isReplyDisplayReady()).toBe(false);
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(stages.isReplyDisplayReady()).toBe(true);
-      expect(spy).toHaveBeenCalledTimes(2);
+        .mockRejectedValue(new TypeError("x is not a function"));
+      await expect(stages.loadReplyDisplay()).rejects.toThrow("x is not a function");
+      expect(stages.__private__.isReplyDisplayFailed()).toBe(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
     } finally {
       vi.useRealTimers();
     }

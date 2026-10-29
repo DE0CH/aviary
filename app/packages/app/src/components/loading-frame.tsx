@@ -68,6 +68,26 @@ export function ChunkLoadFailed() {
 }
 
 /**
+ * Beside a composer's disabled send when the reply display (loading/stages.ts) keeps failing to load: one line and a
+ * Reload button. Send stays off, since nothing goes out before its reply can render.
+ */
+export function ReplyDisplayLoadFailed() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.inlineFailed} testID="reply-display-load-failed">
+      <Text accessibilityRole="alert" style={styles.inlineFailedText}>
+        {t("common.replyDisplayLoadFailed")}
+      </Text>
+      {isWeb ? (
+        <Button variant="ghost" size="xs" leftIcon={RotateCw} onPress={() => window.location.reload()}>
+          {t("common.actions.reload")}
+        </Button>
+      ) : null}
+    </View>
+  );
+}
+
+/**
  * Keeps a lazy area's chunk that could not be fetched from taking the rest of the app down with it. Any other error
  * (a render bug below it) goes on up to RootErrorBoundary, which shows it with a Reload button.
  */
@@ -116,4 +136,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   failedText: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted, textAlign: "center" },
+  inlineFailed: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: theme.spacing[2] },
+  inlineFailedText: { color: theme.colors.palette.red[500], fontSize: theme.fontSize.base },
 }));

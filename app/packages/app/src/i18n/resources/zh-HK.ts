@@ -29,6 +29,7 @@ export const zhHK: TranslationResources = {
     back: "返回",
     loading: "載入中...",
     pageLoadFailed: "未能載入此頁面",
+    replyDisplayLoadFailed: "未能載入顯示回覆的程式，暫時無法傳送",
     actions: {
       save: "儲存",
       back: "返回",

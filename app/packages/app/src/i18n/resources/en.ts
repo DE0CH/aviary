@@ -26,6 +26,7 @@ export const en = {
     back: "Back",
     loading: "Loading...",
     pageLoadFailed: "Couldn't load this page",
+    replyDisplayLoadFailed: "Couldn't load what shows replies, so sending is off for now",
     actions: {
       save: "Save",
       back: "Back",

@@ -12,7 +12,8 @@ import { renderRootComponent } from "expo-router/build/renderRootComponent";
 import { startWatchdog } from "./src/watchdog";
 import { RootApp } from "./src/root-app";
 import { isWeb } from "./src/constants/platform";
-import { i18nReady } from "./src/i18n/i18next";
+import { i18n, i18nReady } from "./src/i18n/i18next";
+import { INITIAL_LANGUAGE } from "./src/i18n/translations";
 import { startLoadingStages } from "./src/loading/stages";
 import { startHostRuntimeBootstrapOnce } from "./src/runtime/host-runtime-start";
 import { isSignedOutPage } from "./src/yyc/signed-out-shell";
@@ -27,7 +28,15 @@ if (isWeb) {
     startHostRuntimeBootstrapOnce();
     startLoadingStages();
   }
-  void i18nReady.then(() => renderRootComponent(RootApp));
+  // Never render without the text: should the language still be missing (its chunk threw), load it again with a
+  // capped backoff, the early box staying typable meanwhile
+  void i18nReady.then(async () => {
+    for (let attempt = 0; !i18n.hasResourceBundle(INITIAL_LANGUAGE, "translation"); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, 2_000 * 2 ** attempt)));
+      await i18n.reloadResources([INITIAL_LANGUAGE]).catch(() => undefined);
+    }
+    renderRootComponent(RootApp);
+  });
 } else {
   renderRootComponent(RootApp);
 }
