@@ -13,6 +13,8 @@ module.exports = function (api) {
   return {
     presets: [expoPreset],
     plugins: [
+      // One import per Lucide icon instead of the whole barrel (docs/paseo-ui.md "Loading")
+      "./babel/lucide-per-icon.js",
       [
         "react-native-unistyles/plugin",
         {

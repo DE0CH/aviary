@@ -1,5 +1,9 @@
-import { createElement, type ComponentType, type ReactElement } from "react";
-import * as LucideIcons from "lucide-react-native";
+import {
+  createElement,
+  useSyncExternalStore,
+  type ComponentType,
+  type ReactElement,
+} from "react";
 import type { LucideIcon } from "lucide-react-native";
 import {
   findSvgIconProblem,
@@ -19,10 +23,49 @@ type HostIcon = (props: HostIconProps) => ReactElement | null;
 const lucideIconComponents = new Map<string, HostIcon>();
 const svgIconComponents = new Map<string, HostIcon>();
 
+// Plugins name any of Lucide's 3,700 icons, so the whole set is its own chunk, fetched the first time a plugin icon is
+// looked up (docs/paseo-ui.md "Loading"). Until it arrives a name is checked only for its shape and draws nothing.
+type LucideModule = typeof import("lucide-react-native");
+let lucideIcons: LucideModule | null = null;
+let lucideIconsLoad: Promise<LucideModule> | null = null;
+const lucideIconsListeners = new Set<() => void>();
+const LUCIDE_NAME = /^[A-Z][A-Za-z0-9]*$/;
+
+/** Fetches the Lucide set for plugin icons; resolves at once when it is already here. */
+export function loadLucideIcons(): Promise<LucideModule> {
+  lucideIconsLoad ??= import("lucide-react-native").then((module) => {
+    lucideIcons = module;
+    for (const listener of lucideIconsListeners) listener();
+    return module;
+  });
+  return lucideIconsLoad;
+}
+
+function subscribeLucideIcons(listener: () => void): () => void {
+  lucideIconsListeners.add(listener);
+  return () => lucideIconsListeners.delete(listener);
+}
+
+function getLucideIcons(): LucideModule | null {
+  return lucideIcons;
+}
+
 function findLucideIcon(name: string): LucideIcon | null {
-  const candidate = Reflect.get(LucideIcons, name);
-  if (candidate === LucideIcons.Icon || candidate === LucideIcons.createLucideIcon) return null;
+  const icons = lucideIcons;
+  if (!icons) {
+    void loadLucideIcons();
+    return null;
+  }
+  const candidate = Reflect.get(icons, name);
+  if (candidate === icons.Icon || candidate === icons.createLucideIcon) return null;
   return isComponent(candidate) ? (candidate as LucideIcon) : null;
+}
+
+/** A name that may be a Lucide icon: exact once the set has arrived, its shape before. */
+function isLucideIconName(name: string): boolean {
+  if (lucideIcons) return findLucideIcon(name) !== null;
+  void loadLucideIcons();
+  return LUCIDE_NAME.test(name);
 }
 
 function isComponent(value: unknown): boolean {
@@ -59,7 +102,7 @@ export function parseSerializablePluginIcon(
   if (typeof icon === "string") {
     const name = icon.trim();
     if (!name) throw new Error(`${owner} has no icon`);
-    if (!findLucideIcon(name)) throw invalidIcon(owner, `unknown Lucide icon "${name}"`);
+    if (!isLucideIconName(name)) throw invalidIcon(owner, `unknown Lucide icon "${name}"`);
     return name;
   }
   if (!isSvgIcon(icon)) throw invalidIcon(owner, "expected a Lucide icon name or { svg }");
@@ -85,9 +128,18 @@ function MissingIcon(): null {
   return null;
 }
 
-function createLucideIcon(name: string, Lucide: LucideIcon): HostIcon {
+/** Stands in for a Lucide icon until the set arrives, then draws it. */
+function PendingLucideIcon({ name, ...props }: HostIconProps & { name: string }) {
+  useSyncExternalStore(subscribeLucideIcons, getLucideIcons, getLucideIcons);
+  const Lucide = findLucideIcon(name);
+  return Lucide ? createElement(Lucide, props) : null;
+}
+
+function createLucideIcon(name: string): HostIcon {
   function PluginLucideIcon({ size, color, strokeWidth }: HostIconProps) {
-    return createElement(Lucide, { size, color, strokeWidth });
+    if (!lucideIcons) return createElement(PendingLucideIcon, { name, size, color, strokeWidth });
+    const Lucide = findLucideIcon(name);
+    return Lucide ? createElement(Lucide, { size, color, strokeWidth }) : null;
   }
   PluginLucideIcon.displayName = `PluginLucideIcon(${name})`;
   return PluginLucideIcon;
@@ -96,9 +148,8 @@ function createLucideIcon(name: string, Lucide: LucideIcon): HostIcon {
 function lucideIconComponent(name: string): HostIcon {
   const cached = lucideIconComponents.get(name);
   if (cached) return cached;
-  const Lucide = findLucideIcon(name);
-  if (!Lucide) return MissingIcon;
-  const icon = createLucideIcon(name, Lucide);
+  if (!isLucideIconName(name)) return MissingIcon;
+  const icon = createLucideIcon(name);
   lucideIconComponents.set(name, icon);
   return icon;
 }
@@ -135,7 +186,7 @@ export function PluginIconView({ icon, size, color }: PluginIconViewProps): Reac
 }
 
 function isRenderable(icon: PluginIcon): boolean {
-  if (typeof icon === "string") return findLucideIcon(icon) !== null;
+  if (typeof icon === "string") return isLucideIconName(icon);
   if (isSvgIcon(icon)) return findSvgIconProblem(icon.svg) === null;
   return isComponent(icon);
 }

@@ -1,6 +1,7 @@
 const { getDefaultConfig } = require("expo/metro-config");
 const { resolve } = require("metro-resolver");
 const path = require("path");
+const { resolveLucideFile } = require("./babel/lucide-per-icon.js");
 
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
@@ -77,6 +78,9 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
 }
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // babel/lucide-per-icon.js imports icon files the package's exports map does not list
+  const lucideFile = resolveLucideFile(moduleName);
+  if (lucideFile) return { type: "sourceFile", filePath: lucideFile };
   if (
     isWatchdogBuild &&
     platform === "android" &&
