@@ -1,5 +1,6 @@
 import {
   createElement,
+  useEffect,
   useSyncExternalStore,
   type ComponentType,
   type ReactElement,
@@ -23,8 +24,9 @@ type HostIcon = (props: HostIconProps) => ReactElement | null;
 const lucideIconComponents = new Map<string, HostIcon>();
 const svgIconComponents = new Map<string, HostIcon>();
 
-// Plugins name any of Lucide's 3,700 icons, so the whole set is its own chunk, fetched the first time a plugin icon is
-// looked up (docs/paseo-ui.md "Loading"). Until it arrives a name is checked only for its shape and draws nothing.
+// Plugins name any of Lucide's 3,700 icons, so the whole set is its own chunk, fetched the first time a plugin's Lucide
+// icon is drawn (docs/paseo-ui.md "Loading"), never when a plugin is merely checked. Until it arrives a name is checked
+// only for its shape and draws nothing; a failed fetch is forgotten, so the next draw fetches again.
 type LucideModule = typeof import("lucide-react-native");
 let lucideIcons: LucideModule | null = null;
 let lucideIconsLoad: Promise<LucideModule> | null = null;
@@ -33,12 +35,24 @@ const LUCIDE_NAME = /^[A-Z][A-Za-z0-9]*$/;
 
 /** Fetches the Lucide set for plugin icons; resolves at once when it is already here. */
 export function loadLucideIcons(): Promise<LucideModule> {
-  lucideIconsLoad ??= import("lucide-react-native").then((module) => {
-    lucideIcons = module;
-    for (const listener of lucideIconsListeners) listener();
-    return module;
-  });
+  lucideIconsLoad ??= import("lucide-react-native").then(
+    (module) => {
+      lucideIcons = module;
+      for (const listener of lucideIconsListeners) listener();
+      return module;
+    },
+    (error: unknown) => {
+      lucideIconsLoad = null;
+      throw error;
+    },
+  );
   return lucideIconsLoad;
+}
+
+function requestLucideIcons(): void {
+  loadLucideIcons().catch((error: unknown) => {
+    console.warn("[Loading] The Lucide icon set failed to load", error);
+  });
 }
 
 function subscribeLucideIcons(listener: () => void): () => void {
@@ -52,10 +66,7 @@ function getLucideIcons(): LucideModule | null {
 
 function findLucideIcon(name: string): LucideIcon | null {
   const icons = lucideIcons;
-  if (!icons) {
-    void loadLucideIcons();
-    return null;
-  }
+  if (!icons) return null;
   const candidate = Reflect.get(icons, name);
   if (candidate === icons.Icon || candidate === icons.createLucideIcon) return null;
   return isComponent(candidate) ? (candidate as LucideIcon) : null;
@@ -66,7 +77,6 @@ function findLucideIcon(name: string): LucideIcon | null {
  * accepted or refused the same at every load time; an unknown name draws nothing.
  */
 function isLucideIconName(name: string): boolean {
-  void loadLucideIcons();
   return LUCIDE_NAME.test(name);
 }
 
@@ -130,9 +140,12 @@ function MissingIcon(): null {
   return null;
 }
 
-/** Stands in for a Lucide icon until the set arrives, then draws it. */
+/** Stands in for a Lucide icon until the set arrives (it asks for it once drawn), then draws it. */
 function PendingLucideIcon({ name, ...props }: HostIconProps & { name: string }) {
-  useSyncExternalStore(subscribeLucideIcons, getLucideIcons, getLucideIcons);
+  const icons = useSyncExternalStore(subscribeLucideIcons, getLucideIcons, getLucideIcons);
+  useEffect(() => {
+    if (!icons) requestLucideIcons();
+  }, [icons]);
   const Lucide = findLucideIcon(name);
   return Lucide ? createElement(Lucide, props) : null;
 }
