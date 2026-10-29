@@ -1,6 +1,6 @@
 // What the app shows on request or later, one chunk mounted at stage 3 (loading/stages.ts, docs/paseo-ui.md
 // "Loading"): the dialogs and sheets (command center with its actions, add project, provider settings, workspace setup
-// and rename, keyboard shortcuts, diagnostics, changelog), the download toast, the sidebar's callouts (desktop update,
+// and rename, keyboard shortcuts, diagnostics, changelog, YYC's conversation rename/share/delete), the download toast, the sidebar's callouts (desktop update,
 // Rosetta, worktree setup) and the legacy skills migration. Each reads a store, so a request made before the chunk
 // arrives shows once it has.
 import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
@@ -19,6 +19,7 @@ import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
+import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
 
 export function AppHosts() {
   return (
@@ -39,6 +40,7 @@ export function AppHosts() {
       <KeyboardShortcutsDialog />
       <AppDiagnosticHost />
       <ChangelogHost />
+      <ConversationDialogsHost />
     </>
   );
 }

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect } from "react";
-import { create } from "zustand";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
@@ -7,26 +6,11 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { ShareSheet } from "@/yyc/share";
 import { sessionIdOfWorkspace } from "@/yyc/api";
-
-type ConversationDialog = { kind: "rename" | "share" | "delete"; serverId: string; workspaceId: string };
-
-const useConversationDialogStore = create<{
-  dialog: ConversationDialog | null;
-  open: (dialog: ConversationDialog) => void;
-  close: () => void;
-}>((set) => ({
-  dialog: null,
-  open: (dialog) => set({ dialog }),
-  close: () => set({ dialog: null }),
-}));
-
-/** Opens a conversation dialog; menus close as soon as an item is chosen, so the dialog lives in the host below. */
-export function openConversationDialog(dialog: ConversationDialog): void {
-  useConversationDialogStore.getState().open(dialog);
-}
+import { useConversationDialogStore, type ConversationDialog } from "@/yyc/conversation-dialog-store";
 
 /**
- * The conversation dialogs (rename, share, delete) outside any menu (docs/paseo-ui.md). Mounted once at the root.
+ * The conversation dialogs (rename, share, delete) outside any menu (docs/paseo-ui.md). Mounted once, in the hosts
+ * chunk (loading/hosts-chunk.tsx); a dialog asked for before it arrives shows once it has.
  */
 export function ConversationDialogsHost() {
   const dialog = useConversationDialogStore((state) => state.dialog);

@@ -40,7 +40,7 @@ import {
   RENAME_ICON,
   SHARE_ICON,
 } from "@/screens/workspace/conversation-menu-items";
-import { openConversationDialog } from "@/yyc/conversation-dialogs";
+import { openConversationDialog } from "@/yyc/conversation-dialog-store";
 import { useSharingAvailable } from "@/yyc/me";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";

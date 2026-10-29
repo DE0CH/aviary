@@ -4,7 +4,7 @@ import { Pencil, Share2, Trash2 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { openConversationDialog } from "@/yyc/conversation-dialogs";
+import { openConversationDialog } from "@/yyc/conversation-dialog-store";
 import { useSharingAvailable } from "@/yyc/me";
 import type { Theme } from "@/styles/theme";
 

@@ -1,4 +1,3 @@
-import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
 import { loadWSOutboundValidator } from "@getpaseo/client/internal/daemon-client";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
@@ -890,7 +889,6 @@ function RootProviders({ children }: { children: ReactNode }) {
               <PortalProvider>
                 <BottomSheetModalProvider>
                   {children}
-                  <ConversationDialogsHost />
                 </BottomSheetModalProvider>
               </PortalProvider>
             </ToastProvider>
