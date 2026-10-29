@@ -142,21 +142,26 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   inline script exposes `window.__yycEarly`; `yyc/early-input.web.ts` hands the text to the app's message box: the
   first focused composer whose draft has loaded takes the live text and selection in one layout effect (after an IME
   composition ends) and the box goes. A stored draft is never overwritten (the early text goes after it on a new line).
-  On a phone with the keyboard up the swap waits for the next tap or key (a script may only move the keyboard inside
-  one), with the box over the real one: a tap on the box itself moves the keyboard over; a first tap anywhere else (the
-  send button, the list, a menu; caught in the capture phase, before it acts) or the box losing focus hands the text over
-  without the keyboard; a composer that unmounts after that point drops the box, its text kept for its own page only.
-  Enter sends only on wide layouts, and nothing is sent before the app is ready.
+  On a phone with the keyboard up the swap waits for the next tap or typed character (a script may only move the
+  keyboard inside one), with the box over the real one, which already holds a copy of the text (no focus), so the app's
+  own send button shows: a typed character swaps once it has landed in the box (its `input` event, after an IME
+  composition ends; never from keydown, which Android keyboards send before the character); a tap on the box itself
+  moves the keyboard over; a first tap anywhere else (the send button, the list, a menu; caught in the capture phase,
+  before it acts) or the box losing focus hands the text over without the keyboard; a composer that unmounts after
+  that point drops the box, its text kept for its own page only. Enter sends only on wide layouts, through the
+  composer's own gate (nothing is sent while its send is off), and nothing is sent before the app is ready.
   The box goes on pages without a message box (route guard in `app/_layout.tsx`; the patterns in
   `yyc/early-input-routes.ts`, equal to the page's, and a test classifies every route file: a new route file must be
   placed there), on the welcome, signed-out and share screens, and 1.5 s after the app shows something other than the
   connecting frame or a loading area (`data-yyc-loading`, a lazy main area; the sidebar's placeholder is not one, the
-  box never sits there). Its text then stays in sessionStorage for that page, or
-  `/new` within 60 s. Skipped when signed out, in view-as tabs and in the desktop build.
+  box never sits there); never during an IME composition or while an adoption waits for one to end. Its text then
+  stays in sessionStorage for that page, or `/new` within 60 s; only taking it clears it, and text not yet handed over
+  comes back in the box after a refresh of the same page. Skipped when signed out, in view-as tabs and in the desktop
+  build.
 - **Stages** (`loading/stages.ts`): the entry chunk holds the message box and the connection; on web the host runtime
   bootstrap and the stages start when `app/_layout.tsx` evaluates (never on a signed-out page). Stage 1, the reply
   chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer), starts once the
-  server-message validator has arrived (4 s at the latest); stage 2, the sidebar chunk (`loading/sidebar-chunk.ts`),
+  server-message validator has arrived or failed; stage 2, the sidebar chunk (`loading/sidebar-chunk.ts`),
   once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`, mounted by `app/_layout.tsx`:
   the command center and its actions, the dialogs and sheets that open from a store, the download toast, the sidebar
   callouts, the legacy skills migration). A lazy area that is merely rendered waits for its stage
@@ -164,8 +169,10 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   its own Suspense, so the composer beside the timeline is there at once); a send fetches the reply chunk at once,
   opening the phone drawer the sidebar. Native has one bundle and starts at stage 3.
 - **Chunks fetched only when used** (Metro splits every `import()` into its own file; `utils/lazy-with-retry.ts` tries
-  three times, each a new fetch (`loading/stages.ts` forgets a failed import), then reloads the page, at most once in a
-  row (a chunk that loads clears the mark); `ChunkErrorBoundary` keeps a failure local; `components/lazy-area.tsx`
+  a failed fetch three times, each a new fetch (`loading/stages.ts` forgets a failed import), then reloads the page, at
+  most once in ten minutes per tab (the mark is never cleared by another chunk loading, so one blocked file cannot
+  loop); a chunk that throws while it evaluates is not retried; `ChunkErrorBoundary` keeps a failed fetch local and
+  passes any other error on to `RootErrorBoundary`; `components/lazy-area.tsx`
   wraps a component as `lazyArea`, or `lazySheet` for one fetched when first visible): the settings, schedules, sessions,
   open-project and QR-scan screens (`screens/lazy-screens.tsx`), the diff panels (`panels/diff-panel-views.tsx`), the
   file tree, the file-type icons (`components/material-file-icon.tsx`), the catalog providers' icons
@@ -175,9 +182,11 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   (Markdown preview, source, images), the Mermaid + KaTeX diagram runtime (`fence/mermaid/iframe-runtime.web.tsx`), the
   terminal (`panels/terminal-panel.tsx`), KaTeX for inline math (`markdown-runtime/enriched-markdown-katex.ts`, aliased in
   `metro.config.cjs`; the renderer has math off), the relay's end-to-end encryption (`client/src/daemon-client.ts`,
-  only for an encrypted relay connection, fetched before the old transport is disposed), and the full Lucide set
-  (`plugins/icons.ts`, the first time a plugin names an icon; a plugin's icon name is checked only for its shape, so a
-  plugin is accepted the same before and after the set arrives).
+  only for an encrypted relay connection: fetched when such a client is made, awaited before the old transport is
+  disposed, and bounded like the validator by the connect timeout, so a stalled fetch fails the attempt and it retries),
+  and the full Lucide set (`plugins/icons.ts`, the first time a plugin's Lucide icon is drawn, never when a plugin is
+  only checked; a plugin's icon name is checked only for its shape, so a plugin is accepted the same before and after
+  the set arrives; a failed fetch is forgotten and the next draw fetches again).
 - **No eager `__common` chunk:** Expo moves modules two lazy chunks share into `__common`, which the page loads up front.
   `paseo/patches/@expo+metro-config+57.0.13.patch` (applied by `paseo/scripts/postinstall-patches.mjs`) turns that off:
   each lazy chunk keeps its own copy (Metro defines a module id once, so a second copy is skipped). The cost is bytes
@@ -187,7 +196,8 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   colours from `@getpaseo/highlight/themes` (no grammars); zod's `locales` namespace is English only on web
   (`loading/zod-locales.ts`).
 - **The server-message validator** (`@getpaseo/protocol` generated AOT, 4 MB) is its own chunk, fetched in parallel
-  from the moment the client module loads; a connect waits for it only while it is still on its way
+  from the moment the client module loads; a connect waits for it only while it is still on its way, at most the
+  connect timeout (a failed fetch is forgotten, so the next attempt fetches again)
   (`client/src/daemon-client.ts` `loadWSOutboundValidator`; client tests load it in `src/test-setup.ts`).
 - **No render-blocking CSS:** the terminal's stylesheet is the only one Expo hoists into the page;
   `scripts/build-paseo-ui.mjs` marks it `media="print"` until loaded.
