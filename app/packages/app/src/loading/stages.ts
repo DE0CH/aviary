@@ -123,6 +123,11 @@ export function loadReplyDisplay(): Promise<void> {
     () => {
       replyDisplayReady = true;
       replyDisplayFailures = 0;
+      try {
+        performance.mark("yyc:reply-display");
+      } catch {
+        // performance marks are for load-timing only
+      }
       for (const listener of replyDisplayListeners) listener();
     },
     (error: unknown) => {

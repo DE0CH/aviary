@@ -8,6 +8,7 @@ const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const enrichedMarkdownKatexLoader = path.resolve(appSrcRoot, "markdown-runtime/enriched-markdown-katex.ts");
 const zodLocalesShim = path.resolve(appSrcRoot, "loading/zod-locales.ts");
+const gestureHandlerHammerStub = path.resolve(appSrcRoot, "loading/gesture-handler-hammer.js");
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
@@ -98,6 +99,15 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     /[\\/]zod[\\/]v4[\\/](classic|core)[\\/]/.test(context.originModulePath)
   ) {
     return { type: "sourceFile", filePath: zodLocalesShim };
+  }
+  // Gesture handler's legacy Hammer.js web implementation (and Hammer.js) is never enabled; a stub stands in
+  if (
+    platform === "web" &&
+    /(^|[\\/])web_hammer[\\/]/.test(moduleName) &&
+    /react-native-gesture-handler[\\/]lib[\\/]module[\\/]/.test(context.originModulePath) &&
+    !/[\\/]web_hammer[\\/]/.test(context.originModulePath)
+  ) {
+    return { type: "sourceFile", filePath: gestureHandlerHammerStub };
   }
   if (
     isWatchdogBuild &&
