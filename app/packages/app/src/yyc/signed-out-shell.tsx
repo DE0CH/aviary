@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { DEFAULT_SIDEBAR_WIDTH } from "@/stores/panel-store/state";
 import { density, densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
 import { ICON_SIZE } from "@/styles/theme";
-import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
+import { YYC_GREETING_LINE_HEIGHT, YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 
 const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
@@ -60,14 +60,14 @@ export function SignedOutShell() {
           {signInButton("yyc-signed-out-header-sign-in")}
         </View>
       ) : null}
-      <View style={[styles.center, compact ? styles.centerCompact : styles.centerDesktop]}>
+      <View style={styles.center}>
         <View style={styles.content}>
           <View style={styles.titleBlock}>
             <Image source={YYC_LOGO} style={styles.logo} accessibilityIgnoresInvertColors />
             <Text style={styles.greeting}>{t("conversation.signedOut.greeting")}</Text>
             <Text style={styles.lead}>{t("conversation.signedOut.lead")}</Text>
           </View>
-          <View style={styles.composer}>
+          <View style={styles.composer} testID="yyc-signed-out-composer">
             <TextInput
               editable={false}
               placeholder={t("conversation.signedOut.placeholder")}
@@ -198,10 +198,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerLogo: { width: 28, height: 28, borderRadius: 7 },
   headerTitle: { color: theme.colors.foreground, fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
-  // The new-chat screen's layout (composer/dock/index.tsx, new-workspace-screen.tsx, composer/input/input.tsx).
-  center: { flex: 1, justifyContent: "center", paddingHorizontal: theme.spacing[4] },
-  centerDesktop: { paddingBottom: HEADER_INNER_HEIGHT + theme.spacing[6] },
-  centerCompact: { justifyContent: "flex-end", paddingHorizontal: theme.spacing[4], paddingBottom: theme.spacing[4] },
+  // The new-chat screen's layout (composer/dock/index.tsx, new-workspace-screen.tsx, composer/input/input.tsx): the
+  // box at the bottom on every screen size, where the signed-in app and public/index.html's frame put it.
+  center: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
+  },
   content: { width: "100%", maxWidth: theme.contentMaxWidth, alignSelf: "center" },
   titleBlock: { marginBottom: theme.spacing[8] },
   logo: {
@@ -213,6 +217,7 @@ const styles = StyleSheet.create((theme) => ({
   greeting: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize["2xl"],
+    lineHeight: YYC_GREETING_LINE_HEIGHT,
     fontWeight: theme.fontWeight.normal,
     marginBottom: theme.spacing[2],
   },
@@ -237,6 +242,8 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.content,
     lineHeight: Math.round(theme.fontSize.content * 1.4),
   },
-  composerRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  // The real composer's row is its 28 px send button; 「登入」 (32 px) overhangs it evenly, so the box keeps the real
+  // one's height and place (public/index.html's frame draws that box)
+  composerRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2], height: 28 },
   composerButton: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
 }));

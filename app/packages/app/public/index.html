@@ -101,7 +101,10 @@
       @media (prefers-color-scheme: dark) {
         #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
       }
-      #boot .side { width: 320px; flex: none; background: var(--b-side); border-right: 1px solid var(--b-rule); }
+      #boot .side {
+        width: var(--b-side-w, 320px); flex: none; box-sizing: border-box; background: var(--b-side);
+        border-right: 1px solid var(--b-rule);
+      }
       #boot .side .rows { padding: 16px; border-bottom: 1px solid var(--b-rule); }
       #boot .bar { height: 12px; background: var(--b-bar); border-radius: 6px; }
       #boot .side .rows .bar { margin: 14px 0; width: 45%; }
@@ -111,22 +114,32 @@
       #boot .side .list .bar { width: 20%; height: 10px; }
       #boot .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
       #boot .head { display: none; height: 56px; flex: none; }
-      #boot .center { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 24px 4vh; }
-      #boot .col { width: 100%; max-width: 788px; margin: 0 auto; }
+      /* The message box sits at the bottom on every page and screen size, where the app's composer is
+         (composer/index.tsx: 16 px around it, at most 820 px wide; 116 px tall, 104 px below 720 px), with the
+         new-chat screen's logo and greeting just above it (screens/new-workspace-screen.tsx) */
+      #boot .center { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 16px 16px; }
+      #boot .col { width: 100%; max-width: 820px; margin: 0 auto; }
       #boot .logo { width: 48px; height: 48px; display: block; }
-      #boot .greet { width: 140px; height: 20px; margin: 22px 0 28px; }
-      #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); }
-      /* Conversation pages draw the message box at the bottom (html.yyc-conv, set by the early box's script) */
-      .yyc-conv #boot .center { justify-content: flex-end; padding-bottom: 16px; }
+      #boot .greet { width: 140px; height: 20px; margin: 20px 0 36px; }
+      #boot .box { height: 116px; border: 1px solid var(--b-rule); border-radius: 16px; background: var(--b-box); box-sizing: border-box; }
+      #boot .lead { display: none; width: 260px; max-width: 80%; height: 12px; }
+      html.yyc-out #boot .greet { margin-bottom: 16px; }
+      html.yyc-out #boot .lead { display: block; margin: 0 0 37px; }
+      /* Conversation pages (html.yyc-conv, set by the early box's script) have no logo or greeting */
       .yyc-conv #boot .logo, .yyc-conv #boot .greet { display: none; }
+      /* The saved sidebar: closed (html.yyc-noside) or its width (--b-side-w), from the early box's script; the
+         connecting frame drawn inside the app's main column (data-yyc-in-shell) leaves the sidebar to the app */
+      html.yyc-noside #boot .side, [data-yyc-in-shell] #boot .side { display: none; }
       /* The saved theme, when the early box's script could read it, wins over the system's */
       html.yyc-light #boot { --b-main: #ffffff; --b-side: #f4f4f5; --b-box: #fafafa; --b-rule: #e4e4e7; --b-bar: #e4e4e7; }
       html.yyc-dark #boot { --b-main: #181b1a; --b-side: #141716; --b-box: #1e2120; --b-rule: #252b2a; --b-bar: #252b2a; }
+      @media (max-width: 719px) {
+        #boot .box { height: 104px; }
+      }
       @media (max-width: 599px) {
         #boot .side { display: none; }
         #boot .head { display: flex; align-items: center; padding: 0 16px; }
         #boot .head .bar { width: 22px; height: 14px; border-radius: 3px; }
-        #boot .center { justify-content: flex-end; padding: 0 16px 16px; }
       }
     </style>
     <!-- The early message box (docs/paseo-ui.md "Loading"): a plain textarea over the frame's message box, so people
@@ -174,7 +187,7 @@
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="box"></div></div></div></div></div></div>
+    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="bar lead"></div><div class="box"></div></div></div></div></div></div>
     <script>window.__yycBootFrame = document.getElementById("boot").outerHTML;</script>
     <div id="yyc-early" data-yyc-early><textarea id="yyc-early-input" rows="1" autocomplete="off" spellcheck="true"></textarea><button type="button" tabindex="-1" disabled aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
     <script>
@@ -199,7 +212,8 @@
           } catch (e) {}
         }
         var path = norm(location.pathname);
-        var skip = (d.querySelector('meta[name="yyc-signed-out"]') || {}).content === "1" ||
+        var signedOut = (d.querySelector('meta[name="yyc-signed-out"]') || {}).content === "1";
+        var skip = signedOut ||
           /(^|[#&])jarvis-view-as=/.test(location.hash) || !!read("sessionStorage", "yyc.view-as") ||
           !!w.paseoDesktop || !COMPOSER.test(path);
         var active = false, composing = false, readied = false, handoff = null, timer = 0, observer = null;
@@ -253,6 +267,8 @@
             clearTimeout(timer); timer = 0;
           }
         };
+        // A signed-out page's frame has the signed-out screen's second line under the greeting (yyc/signed-out-shell.tsx)
+        if (signedOut) html.classList.add("yyc-out");
         if (skip) { layer.remove(); return; }
         // Text typed here before a refresh (or a chunk reload) that never reached the app: back in the box
         var kept = json(read("sessionStorage", MIRROR));
@@ -264,6 +280,11 @@
         if (settings.theme === "light") html.classList.add("yyc-light");
         else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
         if (CONV.test(path)) html.classList.add("yyc-conv");
+        // The sidebar as the app will draw it (stores/panel-store: "panel-state"; desktop-sidebar-layout.ts's width)
+        var panels = (json(read("localStorage", "panel-state")) || {}).state || {};
+        if (panels.desktop && panels.desktop.agentListOpen === false) html.classList.add("yyc-noside");
+        var sideW = typeof panels.sidebarWidth === "number" ? panels.sidebarWidth : 320;
+        html.style.setProperty("--b-side-w", Math.max(200, Math.min(600, w.innerWidth - 400, sideW)) + "px");
         var lang = settings.language;
         if (lang !== "en" && lang !== "zh-HK") {
           lang = "zh-HK";

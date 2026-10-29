@@ -196,12 +196,21 @@ const BOOT_FRAME_HTML: string | null = isWeb
   ? ((globalThis as { __yycBootFrame?: string }).__yycBootFrame ?? null)
   : null;
 
+// A conversation route draws this frame in the main column, beside the app's own sidebar: the frame's sidebar goes
+// (public/index.html [data-yyc-in-shell]), so its message box stays where the page's was. Set before the first paint.
+function markInsideShell(element: HTMLElement | null) {
+  if (element && element.getBoundingClientRect().left > 0) {
+    element.setAttribute("data-yyc-in-shell", "");
+  }
+}
+
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const isError = bootstrapState !== undefined && bootstrapState.splashError !== null;
   if (BOOT_FRAME_HTML && !isError) {
     // data-yyc-loading: the early message box (public/index.html) stays while this frame shows
     return createElement("div", {
       "data-yyc-loading": "",
+      ref: markInsideShell,
       style: { display: "flex", flex: 1, width: "100%", height: "100%" },
       dangerouslySetInnerHTML: { __html: BOOT_FRAME_HTML },
     });

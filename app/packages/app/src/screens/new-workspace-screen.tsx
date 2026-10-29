@@ -119,7 +119,7 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
+import { YYC_GREETING_LINE_HEIGHT, YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -1590,7 +1590,6 @@ export function NewWorkspaceScreen({
   return (
     <FileDropZone style={styles.container}>
       <NewWorkspaceLayout
-        isCompact={isCompact}
         fullscreen={isComposerFullscreen}
         title={t("newWorkspace.title")}
         formStack={formStack}
@@ -1626,12 +1625,10 @@ function useNewWorkspaceComposerEditing() {
 }
 
 function NewWorkspaceLayout({
-  isCompact,
   fullscreen,
   title,
   children,
 }: {
-  isCompact: boolean;
   /** The composer covers the screen; the header leaves and the dock fills the content. */
   fullscreen: boolean;
   title: string;
@@ -1640,8 +1637,9 @@ function NewWorkspaceLayout({
   children: ReactNode;
 }) {
   // CloudCLI's server has one project, one host and one model: no setup fields and no session
-  // import, only YYC's logo, the time-of-day greeting and the composer (docs/paseo-ui.md). Compact
-  // keeps the composer low, where the thumb is.
+  // import, only YYC's logo, the time-of-day greeting and the composer (docs/paseo-ui.md). The
+  // composer sits at the bottom on every screen size, where a conversation's does, with the logo
+  // and greeting just above it, so the box never moves (public/index.html draws the same layout).
   const { i18n } = useTranslation();
   const firstName = useFirstName();
   const greetingText =
@@ -1649,26 +1647,20 @@ function NewWorkspaceLayout({
       ? "\u00a0"
       : greeting(greetingLocale(i18n.language), new Date(), GREETING_DRAW, firstName);
   const welcome = (
-    <View style={styles.composerTitleContainer} pointerEvents="none">
-      <Image source={YYC_LOGO} style={styles.brandLogo} accessibilityIgnoresInvertColors />
-      <Text style={styles.composerTitle}>{greetingText ?? title}</Text>
+    <View style={styles.composerTitleColumn} pointerEvents="none">
+      <View style={styles.composerTitleContainer}>
+        <Image source={YYC_LOGO} style={styles.brandLogo} accessibilityIgnoresInvertColors />
+        <Text style={styles.composerTitle}>{greetingText ?? title}</Text>
+      </View>
     </View>
-  );
-  const setupFields = isCompact ? (
-    <>
-      <View style={styles.compactSetupSpace} pointerEvents="none" />
-      {welcome}
-    </>
-  ) : (
-    welcome
   );
   return (
     <>
       {fullscreen ? null : <MenuHeader borderless />}
       <View style={styles.content}>
         <TitlebarDragRegion />
-        <ComposerDock centered={!isCompact} fullscreen={fullscreen}>
-          {setupFields}
+        <ComposerDock fullscreen={fullscreen}>
+          {welcome}
           {children}
         </ComposerDock>
       </View>
@@ -1686,13 +1678,16 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
     flex: 1,
   },
-  compactSetupSpace: {
-    flex: 1,
-  },
-  // On the composer box's edge (composer/index.tsx inputAreaContainer paddingHorizontal 16).
-  composerTitleContainer: {
-    marginBottom: theme.spacing[8],
+  // The composer box's column (composer/index.tsx inputAreaContent maxWidth, inputAreaContainer
+  // paddingHorizontal 16), so the logo and greeting start on the box's edge.
+  composerTitleColumn: {
     paddingHorizontal: theme.spacing[4],
+  },
+  composerTitleContainer: {
+    width: "100%",
+    maxWidth: theme.contentMaxWidth,
+    alignSelf: "center",
+    marginBottom: theme.spacing[8],
   },
   brandLogo: {
     width: YYC_HERO_LOGO_SIZE,
@@ -1700,8 +1695,11 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.xl,
     marginBottom: theme.spacing[4],
   },
+  // A set line height: the greeting keeps its height whatever script it is in (and before the name
+  // arrives), so the logo above it does not move; public/index.html's frame draws the same rows.
   composerTitle: {
     fontSize: theme.fontSize["2xl"],
+    lineHeight: YYC_GREETING_LINE_HEIGHT,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
   },

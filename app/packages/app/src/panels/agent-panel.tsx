@@ -227,6 +227,10 @@ function AgentLoadErrorView({ message, onRetry }: { message: string; onRetry: ()
   );
 }
 
+// A conversation still arriving is a loading area for public/index.html's early message box (docs/paseo-ui.md
+// "Loading"): the box stays where the composer will be instead of leaving the page without one.
+const AGENT_LOADING_DATASET = { yycLoading: "" };
+
 function renderChatAgentNonReadyView(args: {
   viewState: AgentScreenViewState;
   effectiveAgent: AgentScreenAgent | null;
@@ -248,7 +252,7 @@ function renderChatAgentNonReadyView(args: {
   }
   if (viewState.tag === "boot" || !effectiveAgent) {
     return (
-      <View style={styles.container} testID="agent-loading">
+      <View style={styles.container} testID="agent-loading" dataSet={AGENT_LOADING_DATASET}>
         <View style={styles.errorContainer}>
           <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
@@ -645,7 +649,7 @@ function AgentPanelBody({
 
   if (!agent) {
     return (
-      <View style={styles.container} testID="agent-loading">
+      <View style={styles.container} testID="agent-loading" dataSet={AGENT_LOADING_DATASET}>
         <View style={styles.errorContainer}>
           <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
