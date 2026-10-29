@@ -56,7 +56,6 @@ import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
   shouldRunStartupGiveUpTimer,
-  startHostRuntimeBootstrap,
   bindHostRuntimeAppState,
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
@@ -69,7 +68,6 @@ import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { updateDesktopWindowChrome } from "@/desktop/electron/window";
 import { getDesktopHost } from "@/desktop/host";
-import { loadDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { useGlobalNewWorkspaceAction } from "@/hooks/use-global-new-workspace-action";
 import { useLatchedBoolean } from "@/hooks/use-latched-boolean";
@@ -88,17 +86,19 @@ import {
 import { polyfillCrypto } from "@/polyfills/crypto";
 import {
   getHostRuntimeStore,
-  hasConfiguredLocalDaemonOverride,
   useHostRegistryLoaded,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { loadHostsChunkInTurn, startLoadingStages } from "@/loading/stages";
+import { loadHostsChunkInTurn } from "@/loading/stages";
+import {
+  shouldStartBuiltInDaemon,
+  startHostRuntimeBootstrapOnce,
+} from "@/runtime/host-runtime-start";
 import { ChunkErrorBoundary } from "@/components/loading-frame";
 import { lazyWithRetry } from "@/utils/lazy-with-retry";
-import { isSignedOutPage } from "@/yyc/signed-out-shell";
 import { releaseEarlyInputIfNoComposer } from "@/yyc/early-input";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
@@ -235,39 +235,6 @@ function useDaemonStartIsRunning(): boolean {
 }
 
 const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
-
-async function shouldStartBuiltInDaemon(): Promise<boolean> {
-  if (!shouldUseDesktopDaemon()) {
-    return false;
-  }
-  if (hasConfiguredLocalDaemonOverride()) {
-    return false;
-  }
-  const settings = await loadDesktopSettings();
-  return settings.daemon.manageBuiltInDaemon;
-}
-
-let hostRuntimeBootstrapStarted = false;
-
-function startHostRuntimeBootstrapOnce(): void {
-  if (hostRuntimeBootstrapStarted) return;
-  hostRuntimeBootstrapStarted = true;
-  const store = getHostRuntimeStore();
-  const daemonStartService = getDaemonStartService({ store });
-  startHostRuntimeBootstrap({
-    store,
-    daemonStartService,
-    shouldStartDaemon: shouldStartBuiltInDaemon,
-  });
-}
-
-// On web the connection starts when the entry chunk runs, before React's first render, and the loading stages with
-// it (loading/stages.ts, docs/paseo-ui.md "Loading"); never on a page the server marked signed out (AccessGate renders
-// no host runtime there). Native starts it from the provider's first effect.
-if (isWeb && process.env.NODE_ENV !== "test" && !isSignedOutPage()) {
-  startHostRuntimeBootstrapOnce();
-  startLoadingStages();
-}
 
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   useEffect(() => {

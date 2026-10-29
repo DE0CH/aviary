@@ -20,11 +20,13 @@ function getSystemLocales(): string[] {
 }
 
 export function I18nProvider({ children }: I18nProviderProps) {
-  const { settings } = useAppSettings();
+  const { settings, isLoading } = useAppSettings();
   const systemLocales = useMemo(() => getSystemLocales(), []);
   const locale = resolveSupportedLocale(settings.language, systemLocales);
 
-  ensureI18nLanguageForRender(locale, i18n);
+  // On the web the page starts in the saved language, read before the first render (i18n/translations.web.ts); the
+  // settings' defaults while they load would fetch the other language for nothing
+  if (!(isWeb && isLoading)) ensureI18nLanguageForRender(locale, i18n);
 
   return <I18nextProvider i18n={i18n}>{children}</I18nextProvider>;
 }

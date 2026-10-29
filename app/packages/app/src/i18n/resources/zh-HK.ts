@@ -1,5 +1,4 @@
-import { en, type TranslationResources } from "./en";
-import { pluginSettings } from "./plugin-settings";
+import type { TranslationResources } from "./en";
 
 export const zhHK: TranslationResources = {
   paneFind: {
@@ -404,7 +403,7 @@ export const zhHK: TranslationResources = {
     },
   },
   importSession: {
-    chooseHostTitle: en.importSession.chooseHostTitle,
+    chooseHostTitle: "從主機匯入",
     title: "匯入會話",
     searchPlaceholder: "搜尋會話...",
     scope: {
@@ -1389,7 +1388,21 @@ export const zhHK: TranslationResources = {
       detail: "正在停止本地 daemon。",
     },
     daemon: {
-      lifecycle: en.desktop.daemon.lifecycle,
+      lifecycle: {
+        owned: "由這個桌面工作階段啟動",
+        attached: "已連接現有的 daemon",
+        ownedMessage: "這個 daemon 由這個桌面工作階段啟動。",
+        attachedMessage: "這個 daemon 不是由這個桌面工作階段啟動。",
+        stopTitle: "停止本機 daemon？",
+        stopMessage: "{{ownership}}\n主目錄：{{home}}\nSupervisor PID：{{pid}}\n執行中的 Agent 工作會被中斷。",
+        stop: "停止 daemon",
+        stopping: "正在停止…",
+        stopFailed: "無法停止 daemon",
+        pauseAttached: "暫停自動管理 daemon？已連接的 daemon 會繼續執行。",
+        pause: "暫停管理",
+        workerUpdated: "Worker 已更新至 {{version}}",
+        supervisorRefresh: "執行中的 supervisor 會保留原本的程式碼。要更新 supervisor，須由其啟動程式停止再啟動它。",
+      },
       title: "Daemon",
       status: {
         title: "狀態",
@@ -2172,7 +2185,39 @@ export const zhHK: TranslationResources = {
       diagnostics: "診斷",
       about: "關於",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "開啟位置",
+        destinations: { main: "主面板", side: "旁邊", explorer: "檔案總管側欄" },
+        sources: {
+          explorerFiles: {
+            label: "在檔案總管側欄按下檔案",
+            description: "在工作旁邊開啟於檔案總管側欄選取的檔案",
+          },
+          diffs: {
+            label: "在檔案總管側欄或對話中按下變更",
+            description: "在工作旁邊開啟來自檔案總管和 Agent 對話的差異",
+          },
+          chatFiles: {
+            label: "在 Agent 對話中按下檔案",
+            description: "在對話旁邊開啟檔案連結和工具呼叫的檔案",
+          },
+          diffFiles: {
+            label: "在差異中按下檔案",
+            description: "在差異旁邊開啟從中選取的原始檔",
+          },
+          subagents: {
+            label: "在 Agent 對話中按下子 Agent",
+            description: "在上層 Agent 旁邊開啟子 Agent",
+          },
+          pullRequests: {
+            label: "在檔案總管側欄按下 Pull Request",
+            description: "在變更旁邊開啟 Pull Request 詳情",
+          },
+          serviceUrls: { label: "按下指令碼的服務 URL" },
+        },
+      },
+    },
     editor: {
       title: "編輯器",
       vimKeybindings: "Vim 鍵位",
@@ -2214,7 +2259,68 @@ export const zhHK: TranslationResources = {
       plugins: "外掛",
       host: "概覽",
     },
-    plugins: pluginSettings["zh-CN"],
+    plugins: {
+      logs: {
+        action: "記錄",
+        title: "記錄：{{id}}",
+        loading: "正在載入記錄…",
+        refresh: "重新整理",
+        refreshing: "正在重新整理…",
+        errorTitle: "無法載入插件記錄",
+        empty: "插件暫時未有輸出",
+      },
+      screens: {
+        open: "開啟",
+        offline: "連接此主機以開啟插件設定。",
+        update: "更新此主機以使用插件設定。",
+        unavailable: "此插件設定頁面無法使用。",
+        backToPlugins: "返回插件",
+      },
+      title: "插件",
+      trustedTitle: "插件是受信任的程式碼",
+      trustedDescription: "插件會在此主機和應用程式內執行，沒有隔離。請只安裝你信任的程式碼。",
+      globalTitle: "啟用插件",
+      globalHint: "所有已設定插件的總開關",
+      sourceLabel: "插件來源",
+      sourcePlaceholder: "owner/slug、目錄、Git URL 或 npm 套件",
+      docs: "文件",
+      install: "安裝插件",
+      installing: "正在安裝…",
+      status: { running: "執行中", disabled: "已停用", failed: "失敗" },
+      actions: {
+        menu: "{{id}} 的操作",
+        reload: "重新載入",
+        reloading: "正在重新載入…",
+        enable: "啟用",
+        enabling: "正在啟用…",
+        disable: "停用",
+        disabling: "正在停用…",
+        remove: "移除",
+        removing: "正在移除…",
+      },
+      feedback: {
+        installed: "已安裝 {{id}}",
+        reload: "已重新載入 {{id}}",
+        enable: "已啟用 {{id}}",
+        disable: "已停用 {{id}}",
+        remove: "已移除 {{id}}",
+        kept: "已保留 {{id}}",
+        globalEnabled: "插件已啟用",
+        globalDisabled: "插件已停用",
+      },
+      removeConfirmTitle: "移除 {{id}}？",
+      removeConfirmMessage: "這會移除設定，但不會刪除來源目錄。",
+      states: {
+        offlineTitle: "插件主機離線",
+        offlineDescription: "重新連接此主機以管理其插件。",
+        updateTitle: "更新此主機以管理插件",
+        sourceUpdateTitle: "更新此主機以安裝插件",
+        loading: "正在載入插件…",
+        errorTitle: "無法載入插件",
+        retry: "重試",
+        empty: "沒有已設定的插件",
+      },
+    },
     metadataGeneration: {
       title: "後設資料生成",
       description: "選擇 Paseo 用於工作區標題、分支名稱、提交訊息和拉取請求草稿的模型",
@@ -2635,8 +2741,11 @@ export const zhHK: TranslationResources = {
         rowHint: "掃描二維碼或複製連結，將手機連線到這個 Host",
       },
       skills: {
-        ...en.settings.host.skills,
         sectionTitle: "編排 skills",
+        docs: "Skills",
+        openDocs: "開啟 skills 文件",
+        unavailable: "連接此主機以管理編排 skills",
+        unsupported: "更新此主機以管理編排 skills",
         title: "編排 skills",
         description: "教會 Agent 通過 CLI 編排任務",
         updateAvailable: "有更新可用",
