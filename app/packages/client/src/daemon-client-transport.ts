@@ -17,9 +17,11 @@ export {
 export {
   createEncryptedTransport,
   createRelayE2eeTransportFactory,
+} from "./daemon-client-relay-e2ee-transport.js";
+export {
   createRelayUpgradeTransportFactory,
   describeEndpointSecurityClose,
-} from "./daemon-client-relay-e2ee-transport.js";
+} from "./daemon-client-relay-routing.js";
 export {
   bindWsHandler,
   createWebSocketTransportFactory,

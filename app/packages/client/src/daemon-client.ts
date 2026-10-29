@@ -161,19 +161,24 @@ import {
   TerminalStreamOpcode,
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
+import type {
+  DaemonTransport,
+  DaemonTransportFactory,
+  WebSocketFactory,
+} from "./daemon-client-transport-types.js";
 import {
-  createRelayE2eeTransportFactory,
-  createRelayUpgradeTransportFactory,
-  createWebSocketTransportFactory,
   decodeMessageData,
-  defaultWebSocketFactory,
-  describeEndpointSecurityClose,
   describeTransportClose,
   describeTransportError,
-  type DaemonTransport,
-  type DaemonTransportFactory,
-  type WebSocketFactory,
-} from "./daemon-client-transport.js";
+} from "./daemon-client-transport-utils.js";
+import {
+  createWebSocketTransportFactory,
+  defaultWebSocketFactory,
+} from "./daemon-client-websocket-transport.js";
+import {
+  createRelayUpgradeTransportFactory,
+  describeEndpointSecurityClose,
+} from "./daemon-client-relay-routing.js";
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import {
   normalizeListProviderModelsPayload,
@@ -1497,6 +1502,11 @@ export class DaemonClient {
         if (!daemonPublicKeyB64) {
           throw new Error("daemonPublicKeyB64 is required for relay E2EE");
         }
+        // The encryption is its own chunk, fetched only for an encrypted relay connection
+        const { createRelayE2eeTransportFactory } = await import(
+          "./daemon-client-relay-e2ee-transport.js"
+        );
+        if (!this.shouldReconnect) return;
         transportFactory = createRelayE2eeTransportFactory({
           baseFactory: transportFactory,
           daemonPublicKeyB64,
