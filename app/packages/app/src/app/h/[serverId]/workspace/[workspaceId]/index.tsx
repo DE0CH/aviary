@@ -12,6 +12,7 @@ import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-s
 import { useDirectoryDemand } from "@/hooks/use-directory-demand";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { lazyArea } from "@/components/lazy-area";
+import { ChunkLoadFailed, WorkspaceLoadingFrame } from "@/components/loading-frame";
 import { loadWorkspaceChunk } from "@/loading/stages";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
@@ -40,8 +41,16 @@ import { isNative, isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
 // The conversation page is its own chunk, fetched as soon as it renders (and with the reply chunk on any other page);
-// until it arrives the area is a loading frame, which keeps the early message box (docs/paseo-ui.md "Loading").
-const WorkspaceScreen = lazyArea("workspace", loadWorkspaceChunk, (chunk) => chunk.WorkspaceScreen);
+// until it arrives the area is a loading frame with the message box at the bottom, where the composer will be (the
+// early box sits on it while it is still there), and a chunk that cannot be fetched shows a Reload button
+// (docs/paseo-ui.md "Loading").
+const WorkspaceScreen = lazyArea(
+  "workspace",
+  loadWorkspaceChunk,
+  (chunk) => chunk.WorkspaceScreen,
+  <WorkspaceLoadingFrame />,
+  <ChunkLoadFailed />,
+);
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {

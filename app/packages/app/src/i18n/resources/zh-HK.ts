@@ -29,6 +29,7 @@ export const zhHK: TranslationResources = {
     bottomSheetBackdrop: "底部面板背景",
     back: "返回",
     loading: "載入中...",
+    pageLoadFailed: "未能載入此頁面",
     actions: {
       save: "儲存",
       back: "返回",

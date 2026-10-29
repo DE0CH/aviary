@@ -25,6 +25,7 @@ import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/lazy-view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { ComposerDock } from "@/composer/dock";
+import { ComposerSlot } from "@/components/loading-frame";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
@@ -228,7 +229,8 @@ function AgentLoadErrorView({ message, onRetry }: { message: string; onRetry: ()
 }
 
 // A conversation still arriving is a loading area for public/index.html's early message box (docs/paseo-ui.md
-// "Loading"): the box stays where the composer will be instead of leaving the page without one.
+// "Loading"): the box stays where the composer will be instead of leaving the page without one, sitting on a hidden
+// ComposerSlot so it follows a resize or a rotation.
 const AGENT_LOADING_DATASET = { yycLoading: "" };
 
 function renderChatAgentNonReadyView(args: {
@@ -256,6 +258,7 @@ function renderChatAgentNonReadyView(args: {
         <View style={styles.errorContainer}>
           <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
+        <ComposerSlot hidden />
       </View>
     );
   }
@@ -653,6 +656,7 @@ function AgentPanelBody({
         <View style={styles.errorContainer}>
           <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
         </View>
+        <ComposerSlot hidden />
       </View>
     );
   }

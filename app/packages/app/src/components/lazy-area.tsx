@@ -1,21 +1,23 @@
-import { Suspense, useState, type ComponentType, type ReactElement } from "react";
+import { Suspense, useState, type ComponentType, type ReactElement, type ReactNode } from "react";
 import { ChunkErrorBoundary, LoadingFrame } from "@/components/loading-frame";
 import { lazyWithRetry } from "@/utils/lazy-with-retry";
 
 /**
  * A component that is its own chunk, fetched the first time it renders (docs/paseo-ui.md "Loading"): retried by
- * lazyWithRetry, an empty LoadingFrame until it arrives (or `fallback`), a failure kept local.
+ * lazyWithRetry, an empty LoadingFrame until it arrives (or `fallback`), a failure kept local (showing `errorFallback`,
+ * nothing by default).
  */
 export function lazyArea<Module, Props extends object>(
   name: string,
   load: () => Promise<Module>,
   pick: (module: Module) => ComponentType<Props>,
-  fallback: ReactElement | null = <LoadingFrame />
+  fallback: ReactElement | null = <LoadingFrame />,
+  errorFallback?: ReactNode,
 ): (props: Props) => ReactElement {
   const Lazy = lazyWithRetry(load, pick);
   function LazyArea(props: Props) {
     return (
-      <ChunkErrorBoundary name={name}>
+      <ChunkErrorBoundary name={name} fallback={errorFallback}>
         <Suspense fallback={fallback}>
           <Lazy {...props} />
         </Suspense>

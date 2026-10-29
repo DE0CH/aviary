@@ -2,7 +2,7 @@ import React, { act, Component, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChunkErrorBoundary } from "./loading-frame";
+import { ChunkErrorBoundary, ChunkLoadFailed } from "./loading-frame";
 
 let root: Root | null = null;
 
@@ -71,5 +71,18 @@ describe("ChunkErrorBoundary", () => {
     });
     expect(document.querySelector('[data-testid="fallback"]')).toBeNull();
     expect(document.querySelector('[data-testid="outer"]')?.textContent).toBe("bad timeline item");
+  });
+
+  it("can show a Reload control when the chunk could not be fetched", () => {
+    const error = new Error("Loading chunk 12 failed.");
+    error.name = "ChunkLoadError";
+    act(() => {
+      root?.render(
+        <ChunkErrorBoundary name="workspace" fallback={<ChunkLoadFailed />}>
+          <Throws error={error} />
+        </ChunkErrorBoundary>,
+      );
+    });
+    expect(document.querySelector('[data-testid="chunk-load-failed"]')).not.toBeNull();
   });
 });

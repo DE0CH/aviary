@@ -25,6 +25,7 @@ export const en = {
     bottomSheetBackdrop: "Bottom sheet backdrop",
     back: "Back",
     loading: "Loading...",
+    pageLoadFailed: "Couldn't load this page",
     actions: {
       save: "Save",
       back: "Back",
