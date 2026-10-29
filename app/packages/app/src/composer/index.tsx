@@ -2527,7 +2527,7 @@ function ComposerContentImpl({
                   inputWrapperStyle={inputWrapperStyle}
                   attachmentSlot={attachmentTray}
                   inputMode={inputMode}
-                  readOnly={readOnly}
+                  readOnly={readOnly || isViewAsReadOnly}
                   textReplacement={textReplacement}
                   submitLabel={submitLabel}
                 />

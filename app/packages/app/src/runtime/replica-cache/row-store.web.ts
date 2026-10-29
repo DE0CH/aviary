@@ -1,5 +1,6 @@
 import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
 import { REPLICA_ROW_STORE_SCHEMA_VERSION } from "./row-store-schema";
+import { useViewAsStore } from "@/yyc/view-as";
 
 export type {
   ReplicaHostRows,
@@ -210,9 +211,15 @@ export function createIndexedDbReplicaRowStore(
   return { open, read, readAll, apply, deleteHost, renameHost, clear };
 }
 
+/** A view-as tab keeps the person's rows in a database of their own, never in the admin's (yyc/view-as.ts). */
+function databaseName(): string {
+  const viewAs = useViewAsStore.getState().viewAs;
+  return viewAs ? `${DATABASE_NAME}.view-as.${viewAs.user}` : DATABASE_NAME;
+}
+
 export function createReplicaRowStore(): ReplicaRowStore {
   return createIndexedDbReplicaRowStore({
-    databaseName: DATABASE_NAME,
+    databaseName: databaseName(),
     schemaVersion: REPLICA_ROW_STORE_SCHEMA_VERSION,
   });
 }

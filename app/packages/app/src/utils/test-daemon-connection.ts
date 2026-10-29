@@ -17,6 +17,7 @@ import {
   buildDesktopDaemonTransportUrl,
   createDesktopDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 import type { DesktopDaemonTransportTarget } from "@/desktop/daemon/desktop-daemon";
 
 export interface DaemonProbeClient {
@@ -184,9 +185,13 @@ export async function buildClientConfig(
     });
   }
 
+  // The page's socket factory, so a view-as tab's probe (which can become the live client) carries its token.
+  const webSocketFactory = createAppWebSocketFactory();
+
   if (connection.type === "directTcp") {
     return {
       ...base,
+      webSocketFactory,
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
     };
   }
@@ -197,6 +202,7 @@ export async function buildClientConfig(
 
   return {
     ...base,
+    webSocketFactory,
     url: buildRelayWebSocketUrl({
       endpoint: connection.relayEndpoint,
       useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
