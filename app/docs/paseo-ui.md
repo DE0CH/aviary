@@ -137,14 +137,20 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   marked `data-yyc-loading`; inside the app's main column, beside its sidebar, without the frame's own sidebar), so
   the page goes frame -> app without the logo screen. Keep it in step when the layout changes.
 - **The message box is always at the bottom** (Deyao, 2026-10-29: "so it doesn't shift"): on every page and screen
-  size the composer sits at the bottom of the main column, 16 px from the edges, at most 820 px wide, 116 px tall
+  size the composer sits at the bottom of the main column, 16 px from the edges, at most `theme.contentMaxWidth` wide
+  (the content-width setting, 820 px by default; the frame reads it as `--b-col-w`), 116 px tall
   (104 px below 720px), as in a conversation. The new-chat screen (`screens/new-workspace-screen.tsx`, the dock never
   centred) and the signed-out screen (`yyc/signed-out-shell.tsx`, whose 「登入」 overhangs a 28 px row) put the
   logo and greeting just above it (the greeting a set 28 px line, `yyc/hero.ts`); the frame draws the same rows
   (signed out, `html.yyc-out`, its second line too; conversation pages, `html.yyc-conv`, the box alone) and the
-  sidebar at the saved width or closed (`panel-state`). Measured at 1440x900, 390x844, 700 and 650 wide: frame,
+  sidebar at the saved width, closed, or hidden by focus mode on a workspace route (`panel-state`), also in view-as
+  tabs and the desktop build (only the early box is skipped there); share pages (`html.yyc-share`) draw neither
+  sidebar nor box. Measured at 1440x900, 390x844, 700 and 650 wide: frame,
   early box and app box within 1 px; the logo too. A conversation that is still loading (`agent-loading` in
-  `panels/agent-panel.tsx`) is a loading area, so the early box stays until the composer is there.
+  `panels/agent-panel.tsx`) is a loading area, so the early box stays until the composer is there, over a hidden
+  `ComposerSlot` (`components/loading-frame.tsx`, `data-yyc-box`) that the box follows on a resize. The conversation
+  page's own loading frame (`WorkspaceLoadingFrame`) draws the box at the composer's place, so a send or a drawer tap
+  before its chunk arrives never leaves the page without one; if the chunk cannot be fetched it shows a Reload button.
 - **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
   send button over the frame's message box, typable before any script (font, line height and padding from
   `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
@@ -172,7 +178,8 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   chunk (`loading/reply-chunk.ts`: the timeline `agent-stream/view.tsx` and the markdown renderer) and the
   conversation page's chunk (`loading/workspace-chunk.ts`: the workspace screen with its header, tabs row, panels and
   git actions), starts once the server-message validator has arrived or failed; stage 2, the sidebar chunk
-  (`loading/sidebar-chunk.ts`), once stage 1 has settled; stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
+  (`loading/sidebar-chunk.ts`), once stage 1 has settled (stage 1 also fetches the code highlighter, so a reply's code
+  is coloured before the sidebar arrives); stage 3 at idle: the hosts chunk (`loading/hosts-chunk.tsx`,
   mounted by `app/_layout.tsx`: the command center and its actions, the dialogs and sheets that open from a store
   (YYC's conversation rename/share/delete too; their store is `yyc/conversation-dialog-store.ts`), the download toast,
   the sidebar callouts, the legacy skills migration). The entry keeps the new-chat screen (the landing page) and its
@@ -216,8 +223,9 @@ Deyao's order (2026-10-29): a message box people can type in at once, then the c
   about 15 KB) is one chunk shared by the reply's code blocks and tool calls, the settings preview and the source
   view, fetched the first time any code renders; each language family's grammar is its own chunk
   (`packages/highlight/src/grammars/`, `loadGrammarForFile`), fetched when code in that language first renders
-  (`useGrammarReady` re-renders the block). Until then the code shows plain, in the same font and lines (token
-  styles are colours only), so nothing moves. Swift, Dart, C# and Nix are CodeMirror languages and share one chunk
+  (`useGrammarReady` re-renders the block; a failed fetch is retried with backoff while code still waits). Until then
+  the code shows plain, in the same font and lines (token styles are colours only; a Read's line-number gutter is
+  there from the first frame, also for languages with no grammar), so nothing moves. Swift, Dart, C# and Nix are CodeMirror languages and share one chunk
   with `@codemirror/language`; the editor wraps the others (`@getpaseo/highlight/codemirror`), so the package's main
   entry has no CodeMirror. Every value import of `@getpaseo/highlight` goes through the loader: a static one would
   copy it into that chunk.
