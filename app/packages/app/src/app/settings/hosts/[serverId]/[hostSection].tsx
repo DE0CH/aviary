@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from "expo-router";
 import { useMemo } from "react";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import SettingsScreen from "@/screens/settings-screen";
+import { SettingsScreen } from "@/screens/lazy-screens";
 import { normalizeHostSectionSlug } from "@/utils/host-routes";
 
 export default function SettingsHostSectionRoute() {

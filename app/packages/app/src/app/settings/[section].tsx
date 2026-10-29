@@ -4,7 +4,7 @@ import { useHostRuntimeBootstrapState } from "@/app/_layout";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHosts } from "@/runtime/host-runtime";
-import SettingsScreen from "@/screens/settings-screen";
+import { SettingsScreen } from "@/screens/lazy-screens";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
 import {
   buildSettingsHostSectionRoute,

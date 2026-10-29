@@ -1,5 +1,5 @@
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { SchedulesScreen } from "@/screens/schedules-screen";
+import { SchedulesScreen } from "@/screens/lazy-screens";
 
 export default function SchedulesRoute() {
   return (
