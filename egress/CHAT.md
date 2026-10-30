@@ -540,7 +540,9 @@ model routes refuse any other id (400, `deny:model`); `defaultModel` is Claude C
 `high`, `max`) is set by egress on that model's requests that carry tools (Claude Code's turns), `titleReasoning` on the
 title model's tool-less ones (titles, Claude Code's quick calls); absent = the model's own default. On OpenRouter's
 Messages API only `thinking: {type: "disabled"}` turns thinking off (`reasoning.effort: "none"` is ignored), so `none`
-is sent that way and any other level as `reasoning.effort`.
+is sent that way and any other level as `reasoning.effort`. A model's `contextWindow` (tokens) reaches Claude Code as
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`: Claude Code takes a model it doesn't recognise (any non-Anthropic one) as 200k and
+auto-compacts it at ~170k, whatever the model's real window.
 
 Secrets come from the environment (`DATABASE_URL`, `JARVIS_CC_TOKEN` (web), `OPENROUTER_API_KEY` (egress only), tool
 keys (tools only); provider "vm", web only: `SBX_CA_CERT`, `SBX_CLIENT_CERT`, `SBX_CLIENT_KEY`, `SBX_HOST_CERT`,
