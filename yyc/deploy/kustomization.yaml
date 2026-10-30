@@ -35,6 +35,12 @@ configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
     files: [config.json, system-prompt.md]
+  # the access catalogue for yyc-mcp (news-stream/deploy/apps/yyc-mcp.yaml), which checks it on every call; a fixed name
+  # so the mounted file changes in place (no restart) when the catalogue does
+  - name: yyc-catalogue
+    namespace: yyc
+    files: [config.json]
+    options: {disableNameSuffixHash: true}
 # GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
 patches:
   # memory request = limit at about 2-4x the measured peak (2026-10-20, memory.peak since start: web 66 Mi, tools 60,
