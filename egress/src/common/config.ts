@@ -12,6 +12,9 @@ export interface ModelEntry {
   label: string;
   /** Thinking level for this model's chat turns (requests that carry tools); absent = the model's own default. */
   reasoning?: ReasoningEffort;
+  /** The model's context window in tokens, for Claude Code (CLAUDE_CODE_MAX_CONTEXT_TOKENS): a model it doesn't
+   * recognise is otherwise taken as 200k and auto-compacted at ~170k; absent = Claude Code's own idea. */
+  contextWindow?: number;
 }
 
 export interface EgressRoute {
@@ -296,6 +299,7 @@ export function parseConfig(raw: unknown): ChatConfig {
   if (!c.models.some((m: ModelEntry) => m.id === c.defaultModel)) throw new Error("config: defaultModel must be one of models");
   for (const m of c.models as ModelEntry[]) {
     if (m.reasoning !== undefined && !REASONING_EFFORTS.has(m.reasoning)) throw new Error(`config: models[${m.id}].reasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
+    if (m.contextWindow !== undefined && !(Number.isInteger(m.contextWindow) && m.contextWindow > 0)) throw new Error(`config: models[${m.id}].contextWindow must be a positive integer`);
   }
   if (c.titleReasoning !== undefined && !REASONING_EFFORTS.has(c.titleReasoning)) throw new Error(`config: titleReasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
   let budget: BudgetConfig | undefined;

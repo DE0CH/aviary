@@ -42,12 +42,15 @@ export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egre
       yyc: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: { Authorization: `Bearer ${egressToken}` } },
     },
   };
+  const contextWindow = config.models.find((m) => m.id === config.defaultModel)?.contextWindow;
   return {
     ANTHROPIC_BASE_URL: `${egressBase}/x/claude`,
     ANTHROPIC_AUTH_TOKEN: egressToken,
     ANTHROPIC_MODEL: config.defaultModel,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: config.titleModel,
     ANTHROPIC_SMALL_FAST_MODEL: config.titleModel,
+    // The model's real window, so auto-compact doesn't fire at Claude Code's 200k guess for a model it doesn't know.
+    ...(contextWindow ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(contextWindow) } : {}),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     DISABLE_AUTOUPDATER: "1",
     DISABLE_TELEMETRY: "1",

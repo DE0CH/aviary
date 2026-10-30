@@ -97,6 +97,14 @@ test("Claude Code in a sandbox: egress for the model and tools, SendUserFile on,
   const mcp = JSON.parse(Buffer.from(env.JARVIS_CLAUDE_MCP!, "base64").toString());
   assert.equal(mcp.mcpServers.yyc.url, "http://10.201.1.1:3128/x/tools/mcp");
   assert.match(Buffer.from(env.JARVIS_CLAUDE_MD!, "base64").toString(), /# Your computer/);
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, "no contextWindow: Claude Code's own idea");
+});
+
+test("Claude Code in a sandbox: the default model's contextWindow is its window; a bad one is refused", async () => {
+  const models = [{ id: "deepseek/deepseek-v4.1-flash-1017", label: "DS", contextWindow: 1048576 }];
+  const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", models, defaultModel: models[0]!.id }), "http://10.201.1.1:3128", "tok");
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "1048576");
+  assert.throws(() => parseConfig({ ...base, models: [{ ...base.models[0]!, contextWindow: "1M" }] }), /contextWindow must be a positive integer/);
 });
 
 test("sent-file snapshots: a sent-files route turns on the SendUserFile hook; the hook asks it and blocks on a failure", async () => {
