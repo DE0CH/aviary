@@ -1,5 +1,6 @@
-//! The supervisor's client of magpie (surface `magpie-sandbox`). WP-21 builds the client and the start's lease
-//! step (supervisor 4.3 step 5); the `~/.claude` operations, commands and reports are WP-22's and WP-23's.
+//! The supervisor's client of magpie (surface `magpie-sandbox`): the client, the start's lease step (supervisor 4.3
+//! step 5) and the `opId`s of the `~/.claude` operations (9.3); the operations themselves are in `fuse::remote`, the
+//! commands and reports WP-23's.
 
 use std::time::Duration;
 
@@ -19,6 +20,20 @@ const NO_BEARER: &str = "sandbox";
 #[must_use]
 pub fn client(http: reqwest::Client) -> magpie_api::client::Client {
     magpie_api::client::Client::new(http, BASE, NO_BEARER)
+}
+
+/// The namespace of every cc operation's `opId` (9.3: `UUIDv5` of `bootId ‖ unique ‖ step`). Fixed for ever: a
+/// replayed request after a restart must recompute the ids it used.
+pub const SUPERVISOR_OP_NS: Uuid = Uuid::from_u128(0x5b1e_4c1d_9f3a_4e0b_8a6d_2c7f_0e91_d4a3);
+
+/// The `opId` of the `step`-th magpie call of the FUSE request `unique` on the connection `boot_id`.
+#[must_use]
+pub fn op_id(boot_id: Uuid, unique: u64, step: u32) -> Uuid {
+    let mut name = [0u8; 28];
+    name[..16].copy_from_slice(boot_id.as_bytes());
+    name[16..24].copy_from_slice(&unique.to_le_bytes());
+    name[24..].copy_from_slice(&step.to_le_bytes());
+    Uuid::new_v5(&SUPERVISOR_OP_NS, &name)
 }
 
 /// Why a lease attempt has to wait.
@@ -92,6 +107,16 @@ pub async fn take_lease(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn op_ids_are_derived() {
+        let b = Uuid::from_u128(7);
+        assert_eq!(op_id(b, 9, 0), op_id(b, 9, 0));
+        assert_ne!(op_id(b, 9, 0), op_id(b, 9, 1));
+        assert_ne!(op_id(b, 9, 0), op_id(b, 10, 0));
+        assert_ne!(op_id(b, 9, 0), op_id(Uuid::from_u128(8), 9, 0));
+        assert_eq!(op_id(b, 9, 0).get_version_num(), 5);
+    }
 
     #[test]
     fn delays() {

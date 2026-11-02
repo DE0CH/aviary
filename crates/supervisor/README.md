@@ -24,7 +24,12 @@ hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code drive
 | `hermit::{Hermit, activity, control, exec}` | 15.1-15.4: the descriptor, activity reports, `:7070`, `/v1/exec` |
 | `lifecycle` | 15.5: the state machine, admission, release, prepare, resumed, clock-jump detection; the `Agent` and `Filesystem` seams |
 | `local` | 15.2: `agent.sock` secrets, `sandbox-secret` |
-| `magpie` | 4.3 step 5: the lease at start (WP-22 adds the rest of the client) |
+| `magpie` | 4.3 step 5: the lease at start; the cc operations' `opId`s (9.3: UUIDv5 of `bootId ‖ unique ‖ step` under `SUPERVISOR_OP_NS`) |
+| `fuse::{proto, errno, scope}` | 2.5, 9.1, 9.3, 9.5 items 5-7: the 7.31 wire format, magpie's answers as errno, the scope table and path checks |
+| `fuse::{nodes, cache, local}` | 9.7, 9.8, 9.1: node ids and `nodes.log`, the tree (`tree.json` every 5 s) and the content cache (`cache/<node>.<version>`, 256 MiB LRU, the main transcript pinned), local scope's passthrough and fd table |
+| `fuse::remote` | 9.5, 19, 20: the lease, 16 calls at once, 30 s attempts, the retry rule (general outage vs one stuck op), INTERRUPT before any attempt |
+| `fuse::{journal, dispatch}` | 9.3, 9.9, 9.10: the `MAP_SHARED` journal (requests read straight into a slot, the short-read check, the kept results of the resend rule), the workers, every opcode, the resend rule, the replay, the repair, the lease loop after `lease_lost` |
+| `fuse` (`FuseFs`) | 4.3 step 6, 9.3: the `Filesystem` the binary mounts: a fresh `/dev/fuse` connection (`mount(2)`, the new `bootId` stored atomically, then `PUT_FD`) or the keeper's (`GET_FD`, the stored `bootId` or exit 75 `boot_id_unreadable`) |
 | `start` | 4.3, 4.7: the start sequence, `/etc/hosts` and apt's proxy file, the re-attach check, SIGTERM |
 
 ## The seams for WP-22 and WP-23
@@ -51,8 +56,13 @@ client and exit stream, the boot environment, the agent cgroup), and the release
 - `Agent::tasks()`/`asks()` (default empty) fill `GET /v1/state`'s `run.tasks[]`/`run.asks[]`: WP-23 implements them.
 - The driver's `stop(deadline)` and `end_turn(deadline)` must end by their deadline: under SIGTERM the release has
   18 s in all (`lifecycle::ReleaseTimes`). Until those packages land, the binary runs with
-`IdleAgent` and `UnbuiltFilesystem`, which refuses to mount: such a sandbox answers health `ready: false` for ever
-rather than claim a `~/.claude` it does not have.
+`IdleAgent` (the binary mounts the real `fuse::FuseFs` since WP-22).
+
+What WP-23 wires to the FUSE layer (`fuse::Hooks`, `FuseFs::core()`): `lease_lost` (SIGKILL the generation, no more
+reports for its turn; the binary already turns health `ready: false` and back on `lease_regained`), `write_stuck` (the
+turn `failed` with `cc.write_stuck`, the generation ended), `forked` (stop the agent), `Core::set_turn` (every write's
+`turnId`), `Core::set_main_transcript` (from the `running` report), and `Remote::record_ok` on each successful
+heartbeat (the stuck rule's evidence that magpie answers other calls).
 
 ## Tests
 
@@ -94,6 +104,51 @@ rather than claim a `~/.claude` it does not have.
   running live under the keeper as PID 1 is left to the image smoke test (WP-24).
 - `ci.yml` runs as a user, so the dockerd test there only sees the keeper refuse uid 0; a step after the suite runs
   it again under `sudo` (dockerd spawned as root, `daemon.json`, the `_ping` wait).
+
+- FUSE (`src/fuse/tests.rs`, through the sentry stand-in `src/fuse/testing.rs`, a `/dev/fuse` in memory, against
+  fake magpie): every opcode against both scopes (and refused paths, EXDEV across scopes, the root's union, INIT
+  7.31); the journal replay at each fault point ("read returned", "magpie call sent", "magpie answered", "reply
+  written") for a WRITE, MKDIR, CREATE `O_EXCL` and RENAME, each caller answered once with success, each op stored
+  once, node ids kept; the resend rule with a WRITE, CREATE `O_EXCL`, MKDIR and RENAME in flight at a "checkpoint"
+  (the stand-in forgets the request and resends it under a new `unique` with no INTERRUPT), both while the original
+  is still in flight and after its reply was refused with ENOENT, each applied by one magpie operation; a general
+  outage blocks without EIO; one stuck op answers EIO and `write_stuck`; the offset repair from the cache and a
+  fork answering EIO; `lease_lost` and `not_current_sandbox` without a restart loop (unleased: magpie scope EIO);
+  `bootId` per connection; an INTERRUPT before any attempt reached magpie answers EINTR. Unit tests: the wire
+  layouts, the errno table, the scope table, node-log restarts, the tree and the cache (LRU, pin, reconcile), the
+  journal (slots across mappings, the short-read check, kept results).
+
+## Deviations from the spec text (WP-22)
+
+1. **The resend rule's "any other request from that thread drops the entry"** counts only state-changing requests
+   (SETATTR, MKDIR, UNLINK, RMDIR, RENAME, OPEN, WRITE, CREATE, SYMLINK): a restarted `mkdir`/`rename` walks its path
+   again, and the LOOKUPs of that walk must not drop the result the resend needs. The rule applies to local scope's
+   state-changing requests too (their passthrough is no more idempotent than magpie's).
+2. **Kept results live in a 64-entry area after the 64 request slots** of `fuse-journal` (4 KiB each), not in the
+   request's own slot: a kept result would otherwise occupy a reader slot until its resend arrives.
+3. **A journal replay leaves namespace checks to magpie**: the tree loaded after a restart may already show the
+   replayed request's own effect (a MKDIR magpie committed before the kill), so a replay never answers EEXIST/ENOENT
+   from the tree; the derived `opId` returns magpie's stored result. Node ids are pruned against the tree only after
+   the replay, so a replayed RENAME keeps its node's id.
+4. **The repair's fresh `opId`s are not recorded in `run.json`** (9.5 item 6): a repair repeated after a crash re-sends
+   bytes that are then already in magpie, which magpie answers with success and no change (magpie 6.6 rule 0).
+5. **Repair candidates at a new lease** are cache files whose version is newer and size larger than the tree's (magpie
+   lost acknowledged writes); a cache file older than the tree is dropped as 9.7 says. Without the version test a
+   crash between magpie's 200 for a truncate and the cache update would re-append truncated bytes.
+6. **INTERRUPT answers EINTR** while no attempt is in flight and every earlier attempt was refused by magpie itself
+   (`503 unavailable`); after a connection error, a timeout or a gateway 502/504 the call may have been executed, so
+   it runs to its end (the sentry discards a reply nobody waits for).
+7. **A READ miss fetches the whole file, then answers** (9.7 also answers ranges already arrived while the rest
+   streams); the file is streamed to the cache's disk, never held in memory. When the cache cannot hold it (disk
+   full) the range is fetched from magpie for that READ.
+8. **`close_connections` is a no-op**: the fixed-names client's pool is not the FUSE layer's to rebuild; a connection
+   left half-open by a pause fails its next attempt, which the retry rule repeats with the same `opId`.
+9. **Fault injection in tests** "kills" one server instance in-process (its workers stop at the point, without a
+   reply or freeing the slot, and the next instance takes the connection, as from the keeper); the `fault-injection`
+   cargo feature SIGKILLs the process instead (gate item 4 on the fork). "Magpie call sent" is the moment an attempt
+   came back, before its answer is used; "magpie answered" is after the answer, before the tree and cache change.
+10. **The bootId of a fresh connection is stored before `PUT_FD`** (9.3 says after the mount and before the first
+    read): a crash between the two then leaves no keeper fd, never a keeper fd without its id.
 
 ## Deviations from the spec text (WP-21)
 

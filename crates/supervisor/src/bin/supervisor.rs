@@ -9,8 +9,9 @@ use std::sync::Arc;
 use aviary_core::log;
 use aviary_core::version::Build;
 use supervisor::boot::BootEnv;
+use supervisor::fuse::{Config as FuseConfig, FuseFs, Hooks};
 use supervisor::hermit::Hermit;
-use supervisor::lifecycle::{IdleAgent, UnbuiltFilesystem};
+use supervisor::lifecycle::IdleAgent;
 use supervisor::start::{EXIT_INTERNAL, Paths, Start};
 
 fn build() -> Build {
@@ -75,6 +76,7 @@ fn run() -> i32 {
                 return EXIT_INTERNAL;
             }
         };
+        let fs = FuseFs::new(FuseConfig::sandbox(), supervisor::magpie::client(http.clone()));
         let start = Start {
             paths,
             boot,
@@ -82,12 +84,22 @@ fn run() -> i32 {
             hermit: Hermit::new(http.clone()),
             magpie: supervisor::magpie::client(http),
             keeper: supervisor::keeper::Client::new(std::path::Path::new(supervisor::keeper::RUN_DIR)),
-            // WP-23 and WP-22 replace these two
+            // WP-23 replaces the agent (and adds its hooks: the generation killed on lease_lost, cc.write_stuck)
             agent: Arc::new(IdleAgent::default()),
-            fs: Arc::new(UnbuiltFilesystem),
+            fs: fs.clone(),
             control,
         };
-        let (_running, done) = start.spawn();
+        let (running, done) = start.spawn();
+        let (lost, regained) = (running.lifecycle.clone(), running.lifecycle.clone());
+        fs.set_hooks(Hooks {
+            // 9.5 item 7: unready while unleased, ready again with the new lease (no exit, no restart)
+            lease_lost: Arc::new(move || lost.set_ready(|r| r.lease = false)),
+            lease_regained: Arc::new(move |l| {
+                regained.set_lease_epoch(l.epoch);
+                regained.set_ready(|r| r.lease = true);
+            }),
+            ..Hooks::default()
+        });
         done.await.unwrap_or(EXIT_INTERNAL)
     })
 }

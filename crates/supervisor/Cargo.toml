@@ -18,6 +18,10 @@ path = "src/bin/supervisor.rs"
 name = "supervisor-keeper"
 path = "src/bin/keeper.rs"
 
+[features]
+# A test build that SIGKILLs itself at the FUSE fault points (supervisor 9.9, 22 item 4); never in a release image.
+fault-injection = []
+
 [dependencies]
 aviary-core = { path = "../aviary-core" }
 axum.workspace = true

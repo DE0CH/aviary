@@ -6,6 +6,7 @@
 
 pub mod boot;
 pub mod docker;
+pub mod fuse;
 pub mod hermit;
 pub mod keeper;
 pub mod lifecycle;
