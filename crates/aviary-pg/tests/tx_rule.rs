@@ -236,7 +236,7 @@ const EC2_CALLS: &str = r#"let _ = c.ec2.describe_instances().customize().send()
         let _ = aws_sdk_ec2::operation::describe_instances::builders::DescribeInstancesInputBuilder::default()
             .send_with(&c.ec2)
             .await;
-        let _ = c.ec2.wait_until_instance_running().wait(std::time::Duration::from_secs(1)).await;"#;
+        let _ = aws_sdk_ec2::client::Waiters::wait_until_instance_running(&c.ec2).wait(std::time::Duration::from_secs(1)).await;"#;
 const EC2_CALLED: &[&str] = &[
     "aws_sdk_ec2::client::customize::CustomizableOperation::send",
     "aws_sdk_ec2::operation::terminate_instances::builders::TerminateInstancesFluentBuilder::send",
