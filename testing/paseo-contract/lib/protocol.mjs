@@ -1,9 +1,10 @@
 // The Paseo protocol package of one client build, loaded the way that build validates frames.
 //
 // A client build is a DE0CH/claudecodeui commit. Its `paseo/packages/protocol` is fetched (a blobless, shallow fetch
-// of just that commit), its zod-aot validators are generated with the commit's own generator script (what the shipped
-// bundle runs), and the package is bundled with esbuild into one ESM module. Builds are cached by the protocol
-// package's git tree hash, so the many commits that share one protocol cost one build.
+// of just that commit), its runtime packages (zod, zod-aot, semver, …) are installed at the versions the commit's own
+// `paseo/package-lock.json` resolves (lib/runtime.mjs), its zod-aot validators are generated with the commit's own
+// generator script (what the shipped bundle runs), and the package is bundled with esbuild into one ESM module.
+// Installs are shared by every build that resolves the same versions; builds are cached by the package's git tree.
 //
 // Every validator a client applies to a server frame is exposed:
 //   - `outbound`: `WSOutboundMessageSchema` (zod), the schema of record;
@@ -11,36 +12,44 @@
 //   - `knownStatus`: `KnownStatusPayloadSchema`, applied by the client to `status` payloads it knows;
 //   - `serverInfo`: `ServerInfoStatusPayloadSchema`, the client's parse of the hello reply;
 //   - `inbound`: `WSInboundMessageSchema`, for checking frames a driver sends.
+// plus `tree` (the package's git tree), `id` (tree and runtime install: builds with one id validate identically) and
+// `runtime`: the versions the protocol package resolved for its own dependencies (`{ zod: "4.4.3", … }`).
 //
-// `clientForCommit` bundles the same commit's `paseo/packages/client` (with its protocol and relay packages), the SDK
-// the apps speak with, for drivers that talk to a server the way a shipped client does.
+// `clientForCommit` bundles the same commit's `paseo/packages/client` (with its protocol and relay packages, ws
+// included), the SDK the apps speak with, for drivers that talk to a server the way a shipped client does.
 //
-// A build runs under the harness's one installed version of each runtime package (zod, zod-aot, semver, ws, …). A
-// client commit whose own `paseo/package-lock.json` resolves another version is refused (an error, exit 2 in the
-// scripts) instead of being validated under the wrong runtime: bump the harness's pin to match.
+// Concurrent processes may share the cache: every directory is built under a unique scratch name and renamed into
+// place; when another process got there first, its copy is kept.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { assertIsolated, installRuntime, publish, runtimePlan, scratch } from "./runtime.mjs";
 
 export const harnessRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(path.join(harnessRoot, "package.json"), "utf8"));
 
-/** Where fetched commits and built protocol bundles live (inside node_modules: never committed, kept between runs). */
+/**
+ * Where fetched commits, runtime installs and built bundles live (kept between runs). Outside any tree with a
+ * `node_modules` (checked), so a build can only resolve what its own install holds.
+ */
 export const cacheRoot = process.env.PASEO_CONTRACT_CACHE
   ? path.resolve(process.env.PASEO_CONTRACT_CACHE)
-  : path.join(harnessRoot, "node_modules", ".cache", "paseo-contract");
+  : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "paseo-contract");
 
 /** The claudecodeui repository the client commits come from (a URL, or a local clone for offline runs). */
 export const repository = process.env.PASEO_CONTRACT_REPOSITORY || pkg.paseo.repository;
 
 const SHA = /^[0-9a-f]{40}$/;
 
-/** Built packages are keyed by this too: a change to the build (this file) or to the pinned tools rebuilds them. */
+/** Built packages are keyed by this too: a change to the build (these files) or to the pinned esbuild rebuilds them. */
 const buildId = (() => {
   const hash = createHash("sha256").update(readFileSync(fileURLToPath(import.meta.url)));
+  hash.update(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "runtime.mjs")));
   const lock = path.join(harnessRoot, "package-lock.json");
   if (existsSync(lock)) hash.update(readFileSync(lock));
   return hash.digest("hex").slice(0, 8);
@@ -50,30 +59,28 @@ function git(args, options = {}) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 28, ...options }).trim();
 }
 
-/**
- * The cache directory. A protocol package built there resolves `zod`, `zod-aot` and `semver` by walking up to a
- * `node_modules`: inside the harness's own `node_modules` that is found; elsewhere (CI caches it under the runner's
- * home) a `node_modules` link to the harness's is made.
- */
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+let checked = false;
 function cache() {
   mkdirSync(cacheRoot, { recursive: true });
-  const inside = path.relative(path.join(harnessRoot, "node_modules"), cacheRoot);
-  const link = path.join(cacheRoot, "node_modules");
-  if ((inside.startsWith("..") || path.isAbsolute(inside)) && !existsSync(link)) {
-    symlinkSync(path.join(harnessRoot, "node_modules"), link, "dir");
-  }
+  if (!checked) assertIsolated(cacheRoot);
+  checked = true;
   return cacheRoot;
 }
 
-/** The bare, partial clone every commit is fetched into. */
+/** The bare, partial clone every commit is fetched into (created under a scratch name, then renamed into place). */
 function mirror() {
   const dir = path.join(cache(), "claudecodeui.git");
   if (!existsSync(path.join(dir, "HEAD"))) {
-    mkdirSync(dir, { recursive: true });
-    git(["init", "--bare", "--quiet", dir]);
-    git(["-C", dir, "remote", "add", "origin", repository]);
-    git(["-C", dir, "config", "remote.origin.promisor", "true"]);
-    git(["-C", dir, "config", "remote.origin.partialclonefilter", "blob:none"]);
+    const work = scratch(dir);
+    git(["init", "--bare", "--quiet", work]);
+    git(["-C", work, "remote", "add", "origin", repository]);
+    git(["-C", work, "config", "remote.origin.promisor", "true"]);
+    git(["-C", work, "config", "remote.origin.partialclonefilter", "blob:none"]);
+    publish(work, dir);
   }
   return dir;
 }
@@ -82,12 +89,21 @@ function haveCommit(dir, sha) {
   return spawnSync("git", ["-C", dir, "cat-file", "-e", `${sha}^{commit}`], { stdio: "ignore" }).status === 0;
 }
 
-/** Fetches one commit (no history, blobs on demand) into the mirror; returns the mirror's directory. */
+/**
+ * Fetches one commit (no history, blobs on demand) into the mirror; returns the mirror's directory. Another process
+ * fetching at the same time holds the mirror's shallow.lock, so a failed fetch is retried a few times.
+ */
 function fetchCommit(sha) {
   if (!SHA.test(sha)) throw new Error(`not a full commit hash: ${sha}`);
   const dir = mirror();
-  if (!haveCommit(dir, sha)) {
-    git(["-C", dir, "fetch", "--quiet", "--depth=1", "--filter=blob:none", "origin", sha], { stdio: ["ignore", "pipe", "inherit"] });
+  for (let attempt = 1; !haveCommit(dir, sha); attempt++) {
+    try {
+      git(["-C", dir, "fetch", "--quiet", "--depth=1", "--filter=blob:none", "origin", sha]);
+    } catch (error) {
+      if (haveCommit(dir, sha)) break;
+      if (attempt >= 6) throw new Error(`fetching claudecodeui ${sha} failed: ${error.stderr || error.message}`);
+      sleep(250 * attempt);
+    }
   }
   return dir;
 }
@@ -119,55 +135,25 @@ export function protocolTree(sha) {
   return tree;
 }
 
-/**
- * The runtime packages each Paseo package is built and run with. The harness installs one version of each
- * (package.json); a client commit must resolve exactly that version for each package that uses it.
- */
-export const RUNTIME = {
-  protocol: ["zod", "zod-aot", "semver"],
-  client: ["ws", "zod"],
-  relay: ["ws", "tweetnacl", "base64-js", "@noble/ciphers", "@noble/curves", "@noble/hashes"],
-};
-
-/** The version of a package installed in the harness's node_modules. */
-export function installedVersion(name) {
-  const file = path.join(harnessRoot, "node_modules", name, "package.json");
-  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).version : null;
-}
-
-/**
- * Where an app lockfile (`paseo/package-lock.json`, npm workspaces) and the harness disagree: for each named Paseo
- * package, each runtime package it uses resolves (as Node would: the workspace's own node_modules first, then the
- * root's) to a version other than the one the harness has installed.
- */
-export function runtimeMismatches(lock, packages, installed = installedVersion) {
-  const entries = lock?.packages ?? {};
-  const problems = [];
-  for (const pkg of packages) {
-    for (const name of RUNTIME[pkg]) {
-      const want = (entries[`packages/${pkg}/node_modules/${name}`] ?? entries[`node_modules/${name}`])?.version ?? null;
-      const have = installed(name);
-      if (want !== have) problems.push(`${name}: packages/${pkg} resolves ${want ?? "nothing"}, the harness has ${have ?? "nothing"}`);
-    }
-  }
-  return problems;
-}
-
-/** Throws when the commit's lockfile resolves another runtime than the harness's (see `runtimeMismatches`). */
-function checkRuntime(sha, packages) {
+/** The commit's `paseo/package-lock.json`. */
+function commitLock(sha) {
   const dir = fetchCommit(sha);
-  let lock;
   try {
-    lock = JSON.parse(git(["-C", dir, "show", `${sha}:paseo/package-lock.json`]));
+    return JSON.parse(git(["-C", dir, "show", `${sha}:paseo/package-lock.json`]));
   } catch (error) {
     throw new Error(`claudecodeui ${sha}: cannot read paseo/package-lock.json (${error.message})`);
   }
-  const problems = runtimeMismatches(lock, packages);
-  if (problems.length) {
-    throw new Error(
-      `claudecodeui ${sha.slice(0, 12)} runs other package versions than the harness pins (update testing/paseo-contract/package.json and its lockfile): ${problems.join("; ")}`,
-    );
+}
+
+/** Installs what `lock` resolves for `workspaces` (lib/runtime.mjs); returns `{ dir, plan }`. */
+async function runtimeFor(lock, workspaces, label) {
+  let plan;
+  try {
+    plan = runtimePlan(lock, workspaces);
+  } catch (error) {
+    throw new Error(`${label}: ${error.message}`);
   }
+  return { dir: await installRuntime(plan, cache()), plan };
 }
 
 /** Writes `paseo/packages/<name>` of `sha` for each name into `target/<name>`. */
@@ -190,58 +176,103 @@ function run(cmd, args, cwd) {
 }
 
 /**
- * Builds a protocol package directory (generated validators + one bundle) into `out`. The package keeps the layout
- * its generator script expects (`src/`, `scripts/`, `codegen/`); `node_modules` resolution walks up to the
- * harness's own pinned zod / zod-aot / semver.
- */
-/**
  * Generates a protocol package's zod-aot validators with the package's own generator script; returns whether it has
  * them. The generator patches zod-aot in place (as the app's build does), so the package gets its own copy of the
- * harness's zod-aot to patch: the harness's node_modules stay as installed.
+ * runtime's zod-aot to patch: the shared install stays as unpacked.
  */
-function generateAot(dir) {
+function generateAot(dir, runtimeDir) {
   if (!existsSync(path.join(dir, "src/validation/ws-outbound.ts"))) return false;
   const own = path.join(dir, "node_modules", "zod-aot");
-  rmSync(own, { recursive: true, force: true });
-  cpSync(path.join(harnessRoot, "node_modules", "zod-aot"), own, { recursive: true, dereference: true });
+  if (!existsSync(own)) {
+    const shared = path.join(runtimeDir, "node_modules", "zod-aot");
+    if (!existsSync(shared)) throw new Error(`${dir}: the package generates zod-aot validators but its lockfile installs no zod-aot`);
+    cpSync(shared, own, { recursive: true, dereference: true });
+  }
   run(process.execPath, ["scripts/generate-validation-aot.mjs"], dir);
   return true;
 }
 
-async function build(work, out) {
-  const hasAot = generateAot(work);
-  const entry = path.join(work, "__contract_entry.ts");
-  writeFileSync(
-    entry,
+/**
+ * Builds one bundle inside a runtime install: `populate(work)` writes the workspace packages to `work/<name>`; each
+ * gets its own nested node_modules from the install (`packages/<name>/node_modules`), so it resolves exactly what it
+ * resolves in the app; the protocol's validators are generated; `entry` (a file name and its text, written inside
+ * `work/<entryWorkspace>` so its imports resolve from that package) is bundled into `work/<outfile>`. Returns the
+ * directory.
+ */
+async function buildIn(runtimeDir, name, { populate, workspaces, entryWorkspace, entry, outfile, alias = {}, external = [], banner }) {
+  const dir = path.join(runtimeDir, name);
+  if (existsSync(path.join(dir, outfile))) return dir;
+  const work = scratch(dir);
+  try {
+    populate(work);
+    for (const workspace of workspaces) {
+      const nested = path.join(runtimeDir, "packages", workspace, "node_modules");
+      if (existsSync(nested)) cpSync(nested, path.join(work, workspace, "node_modules"), { recursive: true });
+    }
+    const hasAot = workspaces.includes("protocol") ? generateAot(path.join(work, "protocol"), runtimeDir) : false;
+    const entryFile = path.join(work, entryWorkspace, entry.name);
+    writeFileSync(entryFile, entry.text(hasAot));
+    const esbuild = await import("esbuild");
+    await esbuild.build({
+      entryPoints: [entryFile],
+      outfile: path.join(work, outfile),
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      alias: Object.fromEntries(Object.entries(alias).map(([from, to]) => [from, path.join(work, to)])),
+      external,
+      banner: banner ? { js: banner } : undefined,
+      logLevel: "error",
+      legalComments: "none",
+    });
+    writeFileSync(path.join(work, "meta.json"), JSON.stringify({ hasAot }, null, 2));
+    publish(work, dir);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  return dir;
+}
+
+const PROTOCOL_ENTRY = {
+  name: "__contract_entry.ts",
+  text: (hasAot) =>
     [
       'export * as messages from "./src/messages.ts";',
       'export { z } from "zod";',
       hasAot ? 'export { validateWSOutboundMessage } from "./src/validation/ws-outbound.ts";' : "export const validateWSOutboundMessage = null;",
       "",
     ].join("\n"),
-  );
-  const esbuild = await import("esbuild");
-  await esbuild.build({
-    entryPoints: [entry],
-    outfile: path.join(work, "bundle.mjs"),
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    target: "node22",
-    alias: { "@getpaseo/protocol": path.join(work, "src") },
-    nodePaths: [path.join(harnessRoot, "node_modules")],
-    logLevel: "error",
-    legalComments: "none",
+};
+
+async function buildProtocol(runtime, name, populate) {
+  return buildIn(runtime.dir, name, {
+    populate,
+    workspaces: ["protocol"],
+    entryWorkspace: "protocol",
+    entry: PROTOCOL_ENTRY,
+    outfile: "bundle.mjs",
+    alias: { "@getpaseo/protocol": "protocol/src" },
   });
-  writeFileSync(path.join(work, "meta.json"), JSON.stringify({ hasAot }, null, 2));
-  rmSync(out, { recursive: true, force: true });
-  renameSync(work, out);
+}
+
+/**
+ * Writes the commit's `paseo/packages/<name>` for each name to `target/packages/<name>` and its
+ * `paseo/package-lock.json` to `target/package-lock.json`: the layout `protocolForDirectory` reads.
+ */
+export function exportCommit(sha, names, target) {
+  extract(sha, names, path.join(target, "packages"));
+  writeFileSync(path.join(target, "package-lock.json"), `${JSON.stringify(commitLock(sha), null, 2)}\n`);
 }
 
 const loaded = new Map();
 
-async function load(dir, label) {
+async function load(dir, label, runtime) {
   const mod = await import(pathToFileURL(path.join(dir, "bundle.mjs")).href);
+  const bundled = mod.z?.core?.version;
+  if (bundled && runtime?.zod && `${bundled.major}.${bundled.minor}.${bundled.patch}` !== runtime.zod) {
+    throw new Error(`${label}: the bundle runs zod ${bundled.major}.${bundled.minor}.${bundled.patch}, the lockfile resolves ${runtime.zod}`);
+  }
   const m = mod.messages;
   for (const name of ["WSOutboundMessageSchema", "WSInboundMessageSchema"]) {
     if (!m[name]) throw new Error(`${label}: messages.ts exports no ${name}`);
@@ -255,35 +286,34 @@ async function load(dir, label) {
     aot: mod.validateWSOutboundMessage ?? null,
     messages: m,
     z: mod.z,
+    runtime,
   };
 }
 
-/** The validators of client commit `sha` (fetched and built on first use). */
+/** The validators of client commit `sha` (fetched, installed and built on first use). */
 export async function protocolForCommit(sha) {
   const tree = protocolTree(sha);
-  checkRuntime(sha, ["protocol"]);
-  if (loaded.has(tree)) return { ...loaded.get(tree), commit: sha, tree };
-  const dir = path.join(cache(), `protocol-${tree}-${buildId}`);
-  if (!existsSync(path.join(dir, "bundle.mjs"))) {
-    const work = `${dir}.work-${process.pid}`;
-    rmSync(work, { recursive: true, force: true });
-    extract(sha, ["protocol"], `${work}.x`);
-    renameSync(path.join(`${work}.x`, "protocol"), work);
-    rmSync(`${work}.x`, { recursive: true, force: true });
-    await build(work, dir);
-  }
-  const protocol = await load(dir, `claudecodeui ${sha.slice(0, 12)} (protocol tree ${tree.slice(0, 10)})`);
-  loaded.set(tree, protocol);
-  return { ...protocol, commit: sha, tree };
+  const label = `claudecodeui ${sha.slice(0, 12)}`;
+  const runtime = await runtimeFor(commitLock(sha), ["protocol"], label);
+  const id = `${tree}-${runtime.plan.key}`;
+  if (loaded.has(id)) return { ...loaded.get(id), commit: sha, tree, id };
+  const dir = await buildProtocol(runtime, `protocol-${tree}-${buildId}`, (work) => extract(sha, ["protocol"], work));
+  const protocol = await load(dir, `${label} (protocol tree ${tree.slice(0, 10)})`, runtime.plan.versions.protocol);
+  loaded.set(id, protocol);
+  return { ...protocol, commit: sha, tree, id };
 }
 
 /**
- * The validators of a protocol package on disk (an app's own checkout, `paseo/packages/protocol`). It is copied, so
- * the checkout is left as it was; the copy is rebuilt when the package's files change.
+ * The validators of a protocol package on disk (an app's own checkout, `paseo/packages/protocol`), installed from the
+ * checkout's own lockfile (`paseo/package-lock.json`, two levels up). The package is copied, so the checkout is left as
+ * it was; the copy is rebuilt when the package's files change.
  */
 export async function protocolForDirectory(source) {
   const abs = path.resolve(source);
   if (!existsSync(path.join(abs, "src/messages.ts"))) throw new Error(`${abs} is not a Paseo protocol package (no src/messages.ts)`);
+  const lockFile = path.resolve(abs, "..", "..", "package-lock.json");
+  if (!existsSync(lockFile)) throw new Error(`${abs}: no lockfile at ${lockFile} (the package must sit at <app>/packages/protocol)`);
+  const runtime = await runtimeFor(JSON.parse(readFileSync(lockFile, "utf8")), ["protocol"], `local ${abs}`);
   const hash = createHash("sha256");
   const files = execFileSync("find", [abs, "-type", "f", "-not", "-path", "*/node_modules/*", "-not", "-path", "*/generated/*"], {
     encoding: "utf8",
@@ -293,65 +323,50 @@ export async function protocolForDirectory(source) {
     .sort();
   for (const file of files) hash.update(file.slice(abs.length)).update(readFileSync(file));
   const key = `${hash.digest("hex").slice(0, 20)}-${buildId}`;
-  const dir = path.join(cache(), `local-${key}`);
-  if (!existsSync(path.join(dir, "bundle.mjs"))) {
-    const work = `${dir}.work-${process.pid}`;
-    rmSync(work, { recursive: true, force: true });
-    cpSync(abs, work, { recursive: true, filter: (p) => !p.includes(`${path.sep}node_modules`) });
-    await build(work, dir);
-  }
-  return { ...(await load(dir, `local ${abs}`)), commit: null, tree: key };
+  const dir = await buildProtocol(runtime, `local-${key}`, (work) =>
+    cpSync(abs, path.join(work, "protocol"), { recursive: true, filter: (p) => !p.slice(abs.length).split(path.sep).includes("node_modules") }),
+  );
+  return { ...(await load(dir, `local ${abs}`, runtime.plan.versions.protocol)), commit: null, tree: key, id: `${key}-${runtime.plan.key}` };
 }
 
 const clientsLoaded = new Map();
 
 /**
  * The client SDK of client commit `sha`: its `paseo/packages/client` bundled (with the same commit's protocol and relay
- * packages, the protocol's zod-aot validators generated) into one ESM module, fetched and built on first use. Returns
- * `{ commit, sdk, node }`: `sdk` is the package root (`createPaseoClient`, …), `node` its `./node` entry. `ws` is the
- * harness's own (the version the commit's lockfile resolves, checked).
+ * packages, the protocol's zod-aot validators generated, and the ws, zod, tweetnacl, … its lockfile resolves) into one
+ * ESM module, fetched, installed and built on first use. Returns `{ commit, sdk, node, runtime }`: `sdk` is the package
+ * root (`createPaseoClient`, …), `node` its `./node` entry, `runtime` what each package resolved.
  */
 export async function clientForCommit(sha) {
-  const trees = ["protocol", "client", "relay"].map((name) => {
+  const workspaces = ["protocol", "client", "relay"];
+  const trees = workspaces.map((name) => {
     const tree = packageTree(sha, name);
     if (!tree) throw new Error(`claudecodeui ${sha} has no paseo/packages/${name}: it is not a Paseo client build`);
     return tree;
   });
-  checkRuntime(sha, ["protocol", "client", "relay"]);
+  const runtime = await runtimeFor(commitLock(sha), workspaces, `claudecodeui ${sha.slice(0, 12)}`);
   const key = createHash("sha256").update(trees.join(" ")).digest("hex").slice(0, 20);
-  if (clientsLoaded.has(key)) return { ...clientsLoaded.get(key), commit: sha };
-  const dir = path.join(cache(), `client-${key}-${buildId}`);
-  if (!existsSync(path.join(dir, "client.mjs"))) {
-    const work = `${dir}.work-${process.pid}`;
-    rmSync(work, { recursive: true, force: true });
-    extract(sha, ["protocol", "client", "relay"], work);
-    generateAot(path.join(work, "protocol"));
-    const entry = path.join(work, "__contract_client.ts");
-    writeFileSync(entry, ['export * as sdk from "./client/src/index.ts";', 'export * as node from "./client/src/node/index.ts";', ""].join("\n"));
-    const esbuild = await import("esbuild");
-    await esbuild.build({
-      entryPoints: [entry],
-      outfile: path.join(work, "client.mjs"),
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      target: "node22",
-      alias: { "@getpaseo/protocol": path.join(work, "protocol/src"), "@getpaseo/relay": path.join(work, "relay/src") },
-      // ws (with its optional native add-ons) is loaded from the harness at run time, not bundled
-      external: ["ws", "bufferutil", "utf-8-validate"],
-      // CommonJS dependencies (tweetnacl) require Node built-ins
-      banner: { js: 'import { createRequire as __contractRequire } from "node:module"; const require = __contractRequire(import.meta.url);' },
-      nodePaths: [path.join(harnessRoot, "node_modules")],
-      logLevel: "error",
-      legalComments: "none",
-    });
-    rmSync(dir, { recursive: true, force: true });
-    renameSync(work, dir);
-  }
+  const id = `${key}-${runtime.plan.key}`;
+  if (clientsLoaded.has(id)) return { ...clientsLoaded.get(id), commit: sha };
+  const dir = await buildIn(runtime.dir, `client-${key}-${buildId}`, {
+    populate: (work) => extract(sha, workspaces, work),
+    workspaces,
+    entryWorkspace: "client",
+    entry: {
+      name: "__contract_client.ts",
+      text: () => ['export * as sdk from "./src/index.ts";', 'export * as node from "./src/node/index.ts";', ""].join("\n"),
+    },
+    outfile: "client.mjs",
+    alias: { "@getpaseo/protocol": "protocol/src", "@getpaseo/relay": "relay/src" },
+    // ws's optional native add-ons, required inside a try
+    external: ["bufferutil", "utf-8-validate"],
+    // CommonJS dependencies (ws, tweetnacl) require Node built-ins
+    banner: 'import { createRequire as __contractRequire } from "node:module"; const require = __contractRequire(import.meta.url);',
+  });
   const mod = await import(pathToFileURL(path.join(dir, "client.mjs")).href);
   if (typeof mod.sdk.createPaseoClient !== "function") throw new Error(`claudecodeui ${sha.slice(0, 12)}: the client package exports no createPaseoClient`);
-  const client = { sdk: mod.sdk, node: mod.node, key };
-  clientsLoaded.set(key, client);
+  const client = { sdk: mod.sdk, node: mod.node, key: id, runtime: runtime.plan.versions };
+  clientsLoaded.set(id, client);
   return { ...client, commit: sha };
 }
 
@@ -394,7 +409,11 @@ export function readClients(file = path.join(harnessRoot, "clients.txt")) {
   return commits;
 }
 
-/** The newest Paseo client of `kind` (any kind when null): the live web build is `newestClient("web")`. */
+/**
+ * The newest listed Paseo client of `kind` (any kind when null), by commit time. It is not necessarily the build being
+ * served: a build is listed when it is built, before (or without) its deploy, and a rollback serves an older one. A
+ * driver that needs the deployed build takes its commit from the deploy pin (outside this repository) as an input.
+ */
 export function newestClient(kind = null, file = path.join(harnessRoot, "clients.txt")) {
   const clients = readClients(file).filter((client) => kind === null || client.kinds.includes(kind));
   if (clients.length === 0) throw new Error(`${file} lists no ${kind} client`);

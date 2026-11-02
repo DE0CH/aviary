@@ -14,7 +14,8 @@
 #              web UI and has no Paseo client, so there is no protocol to validate; it is listed so this file is the
 #              one list of builds in use (DESIGN 9.6: their chunks seed pigeon-app), and the validators skip it.
 #
-# New builds are added by .github/workflows/clients.yml (a repository_dispatch from the app's workflows). A build
+# New builds are added by .github/workflows/clients.yml (a repository_dispatch from the app's workflows, one build or a
+# list). Each build is validated under the runtime its own paseo/package-lock.json resolves. A build
 # leaves the file only when no connection with its version has been seen for 30 days (for web-legacy: 720 h after the
 # image stopped being served).
 a684b2ebd5b5465b9c2efe4709d00be8d2cdd1a2 web-legacy 2026-10-21T14:19:07Z

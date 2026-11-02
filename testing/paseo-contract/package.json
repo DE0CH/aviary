@@ -17,22 +17,7 @@
     "export-schema": "node export-schema.mjs"
   },
   "dependencies": {
-    "@noble/ciphers": "2.4.0",
-    "@noble/curves": "2.4.0",
-    "@noble/hashes": "2.4.0",
-    "base64-js": "1.5.1",
     "esbuild": "0.27.3",
-    "semver": "7.8.5",
-    "tweetnacl": "1.0.3",
-    "ws": "8.20.0",
-    "zod": "4.4.3",
-    "zod-aot": "0.20.4"
-  },
-  "overrides": {
-    "@jridgewell/sourcemap-codec": "1.5.5",
-    "acorn": "8.16.0",
-    "get-tsconfig": "4.14.0",
-    "picomatch": "4.0.5",
-    "unplugin": "3.0.0"
+    "ws": "8.20.0"
   }
 }

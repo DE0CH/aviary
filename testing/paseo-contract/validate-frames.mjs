@@ -52,19 +52,19 @@ try {
       targets.push(() => protocolForCommit(client.sha));
     }
   }
-  // one validation per protocol package (commits sharing a package tree validate identically)
+  // one validation per protocol build (commits sharing a package tree and its runtime install validate identically)
   const byTree = new Map();
   for (const target of targets) {
     const protocol = await target();
-    let group = byTree.get(protocol.tree);
-    if (!group) byTree.set(protocol.tree, (group = { protocol, clients: [] }));
+    let group = byTree.get(protocol.id);
+    if (!group) byTree.set(protocol.id, (group = { protocol, clients: [] }));
     group.clients.push(protocol.commit ? protocol.commit.slice(0, 12) : protocol.label);
   }
   for (const { protocol, clients } of byTree.values()) {
     const { checked, failures } = validateRecords(protocol, records, { inbound });
     const tag = failures.length ? "FAIL" : "ok  ";
     console.log(
-      `${tag} protocol ${protocol.tree.slice(0, 10)} (${protocol.aot ? "zod + zod-aot" : "zod"}) of ${clients.join(" ")}: ${checked.out} server frames, ${checked.in} client frames, ${failures.length} invalid`,
+      `${tag} protocol ${protocol.tree.slice(0, 10)} (zod ${protocol.runtime?.zod ?? "?"}${protocol.aot ? ` + zod-aot ${protocol.runtime?.["zod-aot"] ?? "?"}` : ""}) of ${clients.join(" ")}: ${checked.out} server frames, ${checked.in} client frames, ${failures.length} invalid`,
     );
     for (const failure of failures.slice(0, 20)) {
       console.log(`     ${failure.file}:${failure.line} ${failure.dir} ${failure.type}${failure.case ? ` (${failure.case})` : ""}: ${failure.problem}`);

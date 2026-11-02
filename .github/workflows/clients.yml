@@ -1,15 +1,22 @@
-# Adds a Paseo client build to testing/paseo-contract/clients.txt (pigeon spec 17.1 step 9, 18.1). The app's workflows
-# in DE0CH/claudecodeui send a repository_dispatch of type paseo-client with {"commit": "<40 hex>", "kind": "web"|"ios"}
-# after each web bundle build and each TestFlight upload (and pigeon-app seeds the pre-Paseo ui images, which are
-# listed as web-legacy). The line is inserted at its place by commit time, the newest client's JSON Schema is
-# re-exported, and the contract suite runs against the new list BEFORE anything is pushed, so main never gets a red
-# client list. The commit is then pushed with a plain push (never forced). A push made with this workflow's token starts
-# no other workflow, which is why the suite runs here.
+# Adds Paseo client builds to testing/paseo-contract/clients.txt (pigeon spec 17.1 step 9, 18.1). The app's workflows
+# in DE0CH/claudecodeui send a repository_dispatch of type paseo-client after each web bundle build and each TestFlight
+# upload, with {"commit": "<40 hex>", "kind": "web"|"ios"}, or with a list of builds in one dispatch:
+# {"clients": [{"commit": …, "kind": …}, …]} (pigeon-app seeds every pre-Paseo ui image this way; those are listed as
+# web-legacy). Each line is inserted at its place by commit time, the newest client's JSON Schema is re-exported, and
+# the contract suite runs against the new list BEFORE anything is pushed.
 #
-# The job builds and runs code from the client commit (its zod-aot generator), so the checkout keeps no credentials and
-# the token reaches only the push step. If main moved meanwhile, the push step rebases onto it only when the move left
-# testing/paseo-contract alone (the tested state is then what lands); otherwise it fails, and a re-run of this workflow
-# redoes the append on the new main.
+# There is no concurrency group: GitHub keeps one pending run per group and cancels the one already pending when
+# another arrives, which would drop builds without a trace. Runs go in parallel instead, and whichever pushes first
+# wins; a run whose tested list went stale (testing/paseo-contract changed on main after it started) dispatches this
+# workflow again with the same builds, on the new main (input `attempt`, up to 20). Every dispatch therefore ends with
+# its builds listed, or with a red run.
+#
+# Trust: the build job runs code from the client commits (their zod-aot generators, and the suite imports their
+# packages), so it holds a read-only token and no credentials in its checkout; it hands the change on as an artifact
+# (a patch). The land job runs no client code: a fresh checkout of main, the patch applied (it may touch only
+# testing/paseo-contract), git hooks off, a plain push (never forced). A push made with this workflow's token starts no
+# workflow, so the land job then starts ci.yml on main itself: pigeon's Rust schema tests run against a new newest
+# client's schema/<commit>.json and a break is a red check on main (pigeon spec 18.1).
 name: clients
 
 on:
@@ -17,31 +24,29 @@ on:
     types: [paseo-client]
   workflow_dispatch:
     inputs:
-      commit:
-        description: "claudecodeui commit (40 hex)"
+      clients:
+        description: "builds to add: <claudecodeui commit, 40 hex>:<web|ios>, space-separated"
         required: true
-      kind:
-        description: "web or ios"
-        required: true
-        type: choice
-        options: [web, ios]
-
-concurrency:
-  group: clients
-  cancel-in-progress: false
+      attempt:
+        description: "set by a re-dispatch after a stale list"
+        required: false
+        default: "1"
 
 permissions:
   contents: read
 
 jobs:
-  append:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      clients: ${{ steps.list.outputs.clients }}
+      attempt: ${{ steps.list.outputs.attempt }}
+      changed: ${{ steps.diff.outputs.changed }}
     env:
-      COMMIT: ${{ github.event.client_payload.commit || inputs.commit }}
-      KIND: ${{ github.event.client_payload.kind || inputs.kind }}
+      PASEO_CONTRACT_CACHE: ${{ github.workspace }}/../paseo-contract-cache
     defaults:
       run:
         working-directory: testing/paseo-contract
@@ -49,61 +54,119 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.4
           cache: npm
           cache-dependency-path: testing/paseo-contract/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - name: the commit is on claudecodeui main
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/../paseo-contract-cache
+          key: paseo-contract-clients-${{ github.run_id }}
+          restore-keys: paseo-contract-
+      - name: the builds to add
+        id: list
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+          INPUT: ${{ inputs.clients }}
+          ATTEMPT: ${{ inputs.attempt || '1' }}
         run: |
-          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit hash: $COMMIT" >&2; exit 1; }
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            list=$INPUT
+          else
+            list=$(jq -r 'if has("clients") then .clients[] else . end | "\(.commit):\(.kind)"' <<<"$PAYLOAD" | tr '\n' ' ')
+          fi
+          list=$(echo $list)
+          [ -n "$list" ] || { echo "no builds given" >&2; exit 1; }
+          for item in $list; do
+            [[ "$item" =~ ^[0-9a-f]{40}:(web|ios)$ ]] || { echo "not <40 hex>:<web|ios>: $item" >&2; exit 1; }
+          done
+          [[ "$ATTEMPT" =~ ^[0-9]+$ ]] || { echo "bad attempt $ATTEMPT" >&2; exit 1; }
+          echo "clients=$list" >> "$GITHUB_OUTPUT"
+          echo "attempt=$ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "builds (attempt $ATTEMPT): $list"
+      - run: npm ci --no-audit --no-fund
+      - name: the commits are on claudecodeui main
+        env:
+          CLIENTS: ${{ steps.list.outputs.clients }}
+        run: |
           git init -q --bare "$RUNNER_TEMP/ccui-history"
           # every commit of main, no trees or blobs
           git -C "$RUNNER_TEMP/ccui-history" fetch -q --filter=tree:0 https://github.com/DE0CH/claudecodeui.git main
-          git -C "$RUNNER_TEMP/ccui-history" merge-base --is-ancestor "$COMMIT" FETCH_HEAD \
-            || { echo "claudecodeui $COMMIT is not on main" >&2; exit 1; }
-      - name: insert the client (the script checks the hash, the kind and that the commit is a client build)
-        run: node append-client.mjs "$COMMIT" "$KIND"
+          for item in $CLIENTS; do
+            git -C "$RUNNER_TEMP/ccui-history" merge-base --is-ancestor "${item%%:*}" FETCH_HEAD \
+              || { echo "claudecodeui ${item%%:*} is not on main" >&2; exit 1; }
+          done
+      - name: insert the builds (the script checks each hash, kind and that the commit is a client build)
+        env:
+          CLIENTS: ${{ steps.list.outputs.clients }}
+        run: node append-client.mjs $(for item in $CLIENTS; do echo "${item%%:*} ${item##*:}"; done)
       - name: export the newest client's schema
         run: node export-schema.mjs
       - name: contract suite against the new client list
         run: npm test
-      - name: commit
-        id: commit
+      - name: the change, as a patch
+        id: diff
         run: |
-          git add clients.txt schema
-          if git diff --cached --quiet; then
-            echo "nothing to commit"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -q -m "paseo-contract: client claudecodeui ${COMMIT:0:12} (${KIND})"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/change"
+          git rev-parse HEAD > "$RUNNER_TEMP/change/base"
+          git add -A clients.txt schema
+          git diff --cached --binary > "$RUNNER_TEMP/change/change.patch"
+          if [ -s "$RUNNER_TEMP/change/change.patch" ]; then echo "changed=true"; else echo "changed=false"; fi >> "$GITHUB_OUTPUT"
+          git diff --cached --stat
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          name: clients-change
+          path: ${{ runner.temp }}/change
+          retention-days: 7
+
+  land:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: clients-change
+          path: ${{ runner.temp }}/change
       - name: push to main
-        if: steps.commit.outputs.changed == 'true'
+        id: land
         env:
-          TOKEN: ${{ github.token }}
+          CLIENTS: ${{ needs.build.outputs.clients }}
+          ATTEMPT: ${{ needs.build.outputs.attempt }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
-          base=$(git rev-parse HEAD~1)
-          for attempt in 1 2 3 4 5; do
-            if git -c "http.https://github.com/.extraheader=$auth" push -q origin HEAD:main; then
-              echo "pushed $(git rev-parse --short HEAD)"
-              exit 0
-            fi
-            git fetch -q origin main
-            if ! git diff --quiet "$base" FETCH_HEAD -- .; then
-              echo "testing/paseo-contract changed on main since $base: the tested client list is stale; re-run this workflow" >&2
+          # land.sh checks out other commits: run a copy of main's, outside the work tree
+          cp testing/paseo-contract/ci/land.sh "$RUNNER_TEMP/land.sh"
+          set +e
+          "$RUNNER_TEMP/land.sh" "$RUNNER_TEMP/change/change.patch" "$(cat "$RUNNER_TEMP/change/base")" \
+            "paseo-contract: clients $(for item in $CLIENTS; do printf '%s ' "${item:0:12}${item:40}"; done | sed 's/ $//')"
+          rc=$?
+          set -e
+          if [ "$rc" = 3 ]; then
+            if [ "$ATTEMPT" -ge 20 ]; then
+              echo "the client list went stale 20 times; dispatch these builds again: $CLIENTS" >&2
               exit 1
             fi
-            # main moved elsewhere only: replay the one commit on it (no conflict is possible in this directory)
-            git rebase -q FETCH_HEAD || { git rebase --abort || true; echo "rebase onto main failed" >&2; exit 1; }
-            base=$(git rev-parse FETCH_HEAD)
-          done
-          echo "could not push after 5 attempts" >&2
-          exit 1
+            gh workflow run clients.yml --repo "$GITHUB_REPOSITORY" --ref main -f clients="$CLIENTS" -f attempt=$((ATTEMPT + 1))
+            echo "::notice::the tested client list went stale; dispatched attempt $((ATTEMPT + 1)) with the same builds"
+            echo "landed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
+          echo "landed=true" >> "$GITHUB_OUTPUT"
+      - name: run ci on the new main (a push made with this token starts no workflow)
+        if: steps.land.outputs.landed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main

@@ -19,14 +19,22 @@ validator that build applies to a server frame:
 Frames a client sends (`dir: in`) are checked against `WSInboundMessageSchema`, so a driver's own frames are realistic.
 Builds sharing a protocol package tree are built and checked once.
 
-Each build runs under the harness's one installed version of each runtime package (`zod`, `zod-aot`, `semver` for the
-protocol package; `ws`, `tweetnacl`, `base64-js`, `@noble/*` for the client and relay packages), pinned in
-`package.json` at the versions the app's lockfile resolves. A client commit whose own `paseo/package-lock.json`
-resolves another version of one of them is refused (exit 2) rather than validated under the wrong runtime: bump the
-pin here, with its lockfile, to match. The commit's zod-aot generator patches zod-aot in place, as the app's build
-does; it patches a private copy inside the build directory, never the harness's `node_modules`. Builds are cached in
-`node_modules/.cache/paseo-contract` (or `$PASEO_CONTRACT_CACHE`); the claudecodeui commits are fetched shallow and
-blobless from `package.json`'s `paseo.repository` (or `$PASEO_CONTRACT_REPOSITORY`, e.g. a local clone).
+Each build runs under the runtime its own `paseo/package-lock.json` resolves (`lib/runtime.mjs`): the harness walks
+the lockfile from the workspaces it builds (their `dependencies`, plus the protocol's zod-aot generator) through every
+transitive dependency the way Node resolves them (a workspace's own `packages/<name>/node_modules` first), downloads
+each tarball from the URL the lockfile records, checks the lockfile's integrity hash and unpacks it at the lockfile's
+path; no install scripts run. Builds that resolve the same versions share one install, and clients on different zod
+(or ws, semver, …) versions are validated side by side in one run. The harness's own `package.json` holds only its
+tools (esbuild, and ws for the test server). The commit's zod-aot generator patches zod-aot in place, as the app's
+build does; it patches a private copy inside the build directory. A loaded bundle checks that the zod it runs is the
+version the lockfile resolves.
+
+Builds are cached in `~/.cache/paseo-contract` (`$XDG_CACHE_HOME/paseo-contract`, or `$PASEO_CONTRACT_CACHE`), which
+must not sit under any directory holding a `node_modules` (checked: a package missing from a lockfile is an error,
+never a silent fallback to another copy). Concurrent processes may share it: every directory is built under a scratch
+name and renamed into place, and when another process got there first its copy is kept. The claudecodeui commits are
+fetched shallow and blobless from `package.json`'s `paseo.repository` (or `$PASEO_CONTRACT_REPOSITORY`, e.g. a local
+clone).
 
 ## Files
 
@@ -35,9 +43,11 @@ blobless from `package.json`'s `paseo.repository` (or `$PASEO_CONTRACT_REPOSITOR
 | `clients.txt` | the client builds that may be connected: `<commit> <kinds> <commit time, UTC>`, sorted by commit time (kinds: `web`, `ios`, `web,ios`, `web-legacy`) |
 | `validate-frames.mjs` | `node validate-frames.mjs [--clients FILE] [--commit SHA]... [--protocol-dir DIR] [--outbound-only] LOG.ndjson...`; exit 0 all valid, 1 a frame invalid, 2 setup error |
 | `export-schema.mjs` | writes `schema/<newest Paseo commit>.json`: JSON Schema (zod `toJSONSchema`, input side) of the outbound and inbound unions, for pigeon's Rust type tests; `--check` fails when it is stale |
-| `append-client.mjs` | `node append-client.mjs <commit> <web\|ios> [--file F]`: inserts a build at its place by commit time (run by `.github/workflows/clients.yml`) |
-| `lib/protocol.mjs` | `protocolForCommit` (the validators of a build), `clientForCommit` (its client SDK), `readClients`, `newestClient` |
-| `fixtures/cloudcli-bridge-488a7736.ndjson` | a recorded frame log of the CloudCLI Paseo bridge at the live web build's commit (`record/`); the file name names the live web build, which the suite checks is listed |
+| `append-client.mjs` | `node append-client.mjs <commit> <web\|ios> [<commit> <kind>]... [--file F]`: inserts builds at their place by commit time (run by `.github/workflows/clients.yml`) |
+| `ci/land.sh` | the land job of `clients.yml`: applies the tested patch on its base, pushes, replays it on a main that moved elsewhere, exit 3 when the list went stale |
+| `lib/protocol.mjs` | `protocolForCommit` (the validators of a build), `protocolForDirectory`, `clientForCommit` (its client SDK), `readClients`, `newestClient` |
+| `lib/runtime.mjs` | installs a build's runtime packages from its own lockfile |
+| `fixtures/cloudcli-bridge-488a7736.ndjson` | a recorded frame log of the CloudCLI Paseo bridge at 488a7736, the web build deployed when it was recorded (`record/`); the suite checks the commit the file name names is listed |
 | `fixtures/pigeon-spec-frames.ndjson` | frames pigeon sends that the CloudCLI bridge never does (`hello.rejected` `incompatible_protocol`, pigeon spec 7.2), which every client must accept |
 | `fixtures/seeded-invalid.ndjson` | frames each client must reject (a type change, a new enum value, a missing field, a new message type …) |
 | `record/` | the recorder of the bridge log: `record/record.sh <claudecodeui checkout, after npm ci> OUT.ndjson` |
@@ -47,13 +57,17 @@ blobless from `package.json`'s `paseo.repository` (or `$PASEO_CONTRACT_REPOSITOR
 
 pigeon's contract suite drives a socket with the apps' own client package (pigeon spec 18.1). `clientForCommit(sha)`
 bundles `paseo/packages/client` of a client commit, with the same commit's protocol and relay packages, into one
-module and returns `{ sdk, node }` (`sdk.createPaseoClient({ url })`, …). The live web build is
-`newestClient("web").sha`, the newest iOS build `newestClient("ios").sha`; a driver covering every build loops over
-`readClients()`. The suite checks that the newest web build's SDK connects to a server speaking the bridge's handshake.
+module (ws, zod and the relay's crypto at the versions its lockfile resolves) and returns `{ sdk, node, runtime }`
+(`sdk.createPaseoClient({ url })`, …). `newestClient("web").sha` is the newest *listed* web build and
+`newestClient("ios").sha` the newest listed iOS build, by commit time; a driver covering every build loops over
+`readClients()`. The newest listed web build is not necessarily the one being served: a build is listed when it is
+built, before its deploy (or without one), and a rollback serves an older pin. A driver that needs the deployed build
+takes its commit as an input, from the ui pin in the deploy repository. The suite checks that the newest web build's SDK
+connects to a server speaking the bridge's handshake.
 
 ## The recorded bridge log
 
-The bridge log is recorded in process from the bridge code of the live web build's commit (`record/`), not captured
+The bridge log is recorded in process from the bridge code of the deployed web build's commit (`record/`), not captured
 from production traffic: a wire capture would hold staff conversations, and the harness may not touch the live
 cluster. The recorder drives that commit's own `paseo-connection` / `paseo-hub` / `paseo-timeline` with an in-memory
 session store and made-up conversations (product name, model and people are placeholders). It covers user rows with an
@@ -72,12 +86,29 @@ validates that corpus against a new app commit before publishing it (`--protocol
 
 ## Adding a client
 
-The app's workflows send a `repository_dispatch` of type `paseo-client` with `{"commit": "<40 hex>", "kind": "web" |
-"ios"}` to this repository. `clients.yml` checks the commit is on claudecodeui main, inserts the line at its place by
+The app's workflows send a `repository_dispatch` of type `paseo-client` to this repository, with `{"commit": "<40
+hex>", "kind": "web" | "ios"}` for one build or `{"clients": [{"commit": …, "kind": …}, …]}` for several (a seed list
+goes as one dispatch). `clients.yml` checks each commit is on claudecodeui main, inserts the lines at their place by
 commit time (builds finish out of order: a late TestFlight upload of an older commit does not become the newest),
-re-exports the schema of the newest Paseo client, runs this suite on the result, and only then pushes to main (a plain
-push; if `testing/paseo-contract` changed on main meanwhile the run fails instead, and a re-run redoes it). The job
-keeps no credentials in its checkout; the token reaches only the push step.
+re-exports the schema of the newest Paseo client, runs this suite on the result, and only then lands it on main.
+
+- **No build is dropped.** The workflow has no concurrency group: GitHub keeps one pending run per group and cancels
+  the pending one when another arrives, and `repository_dispatch` answers 204 either way, so a group would lose builds
+  in a burst without a trace. Runs go in parallel; the first to push wins. A run whose tested list went stale
+  (`testing/paseo-contract` changed on main after it started) dispatches `clients.yml` again with the same builds
+  (`workflow_dispatch`, input `attempt`, up to 20), which redoes the append on the new main; a move of main elsewhere
+  is replayed under the tested commit. So every dispatch ends with its builds listed, or with a red run. The suite's
+  burst test runs five parallel appends against a local repository through `ci/land.sh` with an unrelated push in
+  between, and checks every build is listed.
+- **Trust.** The build job runs code from the client commits (their zod-aot generators; the suite imports their
+  packages), so it has a read-only token and keeps no credentials in its checkout; it hands its change on as an
+  artifact (a patch and its base). The land job, which holds `contents: write`, runs no client code: a fresh checkout
+  of main, `ci/land.sh` from that checkout, the patch applied (it may touch only `testing/paseo-contract`), git hooks
+  off, a plain push (never forced). What the build job's client code can affect is the patch's content, which is the
+  tested list and schema it produced; the commits are checked to be on claudecodeui main first.
+- **CI on the new main.** A push made with the workflow's token starts no workflow, so the land job starts `ci.yml` on
+  main itself (`gh workflow run`, `actions: write`): when a new newest client changes `schema/<commit>.json` for a
+  message pigeon handles, pigeon's Rust schema tests fail as a red check on main (pigeon spec 18.1).
 
 **Pre-Paseo ui images.** cutover 13.1, DESIGN 8.3/9.6 and WP-27 list every ui image served within the 720 h Access
 session lifetime. The images pinned from 2026-10-21 to 2026-10-23 come from claudecodeui commits without `paseo/`
@@ -94,8 +125,9 @@ A build leaves `clients.txt` only when no connection with its version has been s
 ```sh
 cd testing/paseo-contract
 npm ci
-npm test                                                  # the harness's acceptance (includes a simulated append)
+npm test                                                  # the harness's acceptance (a simulated append, a burst)
 node validate-frames.mjs fixtures/cloudcli-bridge-488a7736.ndjson
 ```
 
-Node 22. A cold run builds each distinct protocol package (about 20 s each); later runs use the cache.
+Node 22, network access to GitHub and the npm registry. A cold run installs each distinct runtime and builds each
+distinct protocol package (about 20 s each); later runs use the cache.

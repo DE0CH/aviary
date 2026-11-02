@@ -53,7 +53,7 @@ jobs:
       - name: shellcheck
         run: |
           shopt -s globstar nullglob
-          files=(.github/ci/*.sh fabric/**/*.sh images/sandbox/*.sh)
+          files=(.github/ci/*.sh fabric/**/*.sh images/sandbox/*.sh testing/paseo-contract/**/*.sh)
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh
@@ -163,7 +163,7 @@ jobs:
   paseo-contract:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PASEO_CONTRACT_CACHE: ${{ github.workspace }}/../paseo-contract-cache
     defaults:
@@ -180,7 +180,7 @@ jobs:
         with:
           # built client protocol packages, keyed by what decides them
           path: ${{ github.workspace }}/../paseo-contract-cache
-          key: paseo-contract-${{ hashFiles('testing/paseo-contract/clients.txt', 'testing/paseo-contract/lib/protocol.mjs', 'testing/paseo-contract/package-lock.json') }}
+          key: paseo-contract-${{ hashFiles('testing/paseo-contract/clients.txt', 'testing/paseo-contract/lib/*.mjs', 'testing/paseo-contract/package-lock.json') }}
           restore-keys: paseo-contract-
       - run: npm ci --no-audit --no-fund
       - run: npm test
