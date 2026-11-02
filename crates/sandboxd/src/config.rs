@@ -120,13 +120,19 @@ pub fn parse_peer(o: &[u8]) -> Res<Peer> {
 }
 
 impl HostConfig {
+    /// Pulls images from the registry (a hub, or a host with `registryConfigDir`); else fetches them from
+    /// `imageSource`.
+    pub fn pulls_from_registry(&self) -> bool {
+        self.hub || !self.registry_config_dir.is_empty()
+    }
+
     pub fn parse(text: &[u8]) -> Res<HostConfig> {
         let mut c = HostConfig {
             name: Str::new(),
             hub: false,
             gateway: false,
             wg_address: Str::new(),
-            host_cidr: Str::lossy("10.201.0.0/24"),
+            host_cidr: Str::new(),
             wg_port: 51820,
             wg_key_file: Str::lossy("/etc/sbx/wg.key"),
             api_port: 7443,
@@ -134,9 +140,9 @@ impl HostConfig {
             tls_cert: Str::new(),
             tls_key: Str::new(),
             tls_ca: Str::new(),
-            control_cidr: Str::lossy("10.0.0.0/16"),
-            sandbox_cidr: Str::lossy("10.200.0.0/16"),
-            egress_vip: Str::lossy("10.201.1.1"),
+            control_cidr: Str::new(),
+            sandbox_cidr: Str::new(),
+            egress_vip: Str::new(),
             pod_cidr: Str::new(),
             private_gateway: Str::new(),
             hub_peer: None,
@@ -245,6 +251,19 @@ impl HostConfig {
         }
         if !c.hub && c.hub_peer.is_none() {
             return Err(Error::new(400, "host.json: a burst host needs `hub`"));
+        }
+        // the deployment's addresses: no compiled-in ranges (docs/HOST.md "host.json")
+        if c.host_cidr.is_empty() || c.control_cidr.is_empty() || c.sandbox_cidr.is_empty() || c.egress_vip.is_empty() {
+            return Err(Error::new(400, "host.json: hostCidr, controlCidr, sandboxCidr and egressVip are required"));
+        }
+        if c.hub && c.private_gateway.is_empty() {
+            return Err(Error::new(400, "host.json: a hub needs privateGateway"));
+        }
+        if c.gateway && c.pod_cidr.is_empty() {
+            return Err(Error::new(400, "host.json: a gateway needs podCidr"));
+        }
+        if !c.pulls_from_registry() && c.image_source.is_empty() {
+            return Err(Error::new(400, "host.json: a host without registry access needs imageSource"));
         }
         if !in_cidr(c.wg_address.as_str(), c.host_cidr.as_str()) {
             return Err(Error::new(400, "host.json: wgAddress must be in hostCidr"));
@@ -538,48 +557,70 @@ mod tests {
 
     #[test]
     fn spec_checks() {
-        let ok = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e"},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu,sse2"}"#;
-        let s = Spec::parse(ok, "10.200.0.0/16").ok().unwrap();
+        let ok = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.99.1.1:3128","EXEC_TOKEN":"e"},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu,sse2"}"#;
+        let s = Spec::parse(ok, "10.98.0.0/16").ok().unwrap();
         assert_eq!(s.name.as_str(), "sbx-abc");
         assert_eq!(s.env_pairs().count(), 2);
         let mut out = [0u8; 4096];
         let j = s.write_json(&mut out).unwrap();
-        let back = Spec::parse(j, "10.200.0.0/16").ok().unwrap();
+        let back = Spec::parse(j, "10.98.0.0/16").ok().unwrap();
         assert_eq!(back.env.as_str(), s.env.as_str());
         assert_eq!(back.memory, 2 << 30);
         // the persistent folders survive the round trip (GET spec → a migration's receive; the state file)
-        let cc = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu","workspace":"c0ffee-1"}"#;
-        let s2 = Spec::parse(cc, "10.200.0.0/16").ok().unwrap();
+        let cc = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu","workspace":"c0ffee-1"}"#;
+        let s2 = Spec::parse(cc, "10.98.0.0/16").ok().unwrap();
         let mut out2 = [0u8; 4096];
-        let back2 = Spec::parse(s2.write_json(&mut out2).unwrap(), "10.200.0.0/16").ok().unwrap();
+        let back2 = Spec::parse(s2.write_json(&mut out2).unwrap(), "10.98.0.0/16").ok().unwrap();
         assert_eq!(back2.workspace.as_str(), "c0ffee-1");
         let bad = |b: &[u8], m: &str| {
-            let e = Spec::parse(b, "10.200.0.0/16").err().unwrap();
+            let e = Spec::parse(b, "10.98.0.0/16").err().unwrap();
             assert_eq!(e.status, 400);
             assert!(e.msg.as_str().contains(m), "{} vs {m}", e.msg);
         };
-        bad(br#"{"name":"sbx-abc","ip":"10.0.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648}"#, "sandbox range");
-        bad(br#"{"name":"../x","ip":"10.200.0.5","image":"b","cpu":1,"memory":2147483648}"#, "bad name");
-        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"A B":"x"},"cpu":1,"memory":2147483648}"#, "bad env");
-        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":0,"memory":2147483648}"#, "cpu");
-        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1000}"#, "memory");
+        bad(br#"{"name":"sbx-abc","ip":"10.97.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648}"#, "sandbox range");
+        bad(br#"{"name":"../x","ip":"10.98.0.5","image":"b","cpu":1,"memory":2147483648}"#, "bad name");
+        bad(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"A B":"x"},"cpu":1,"memory":2147483648}"#, "bad env");
+        bad(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":0,"memory":2147483648}"#, "cpu");
+        bad(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1000}"#, "memory");
         // hermit spec 13.2 item 2: no `user` (an old controller's ~/.claude bind), nor any other unknown field
-        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#, "unknown field user");
-        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"args":["x"]}"#, "unknown field args");
+        bad(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#, "unknown field user");
+        bad(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"args":["x"]}"#, "unknown field args");
         // a state file's spec (an older version's) skips them
-        let Ok(Val::Obj(o)) = json::parse(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#) else { panic!() };
-        assert!(Spec::parse_obj(o, "10.200.0.0/16", false).is_ok());
+        let Ok(Val::Obj(o)) = json::parse(br#"{"name":"sbx-a","ip":"10.98.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#) else { panic!() };
+        assert!(Spec::parse_obj(o, "10.98.0.0/16", false).is_ok());
         bad(b"[1]", "object");
         bad(b"{", "JSON");
     }
 
     #[test]
     fn host_config() {
-        let c = HostConfig::parse(br#"{"name":"h","role":"burst","wgAddress":"10.201.0.10","hub":{"publicKey":"k","endpoint":"1.2.3.4:51820","allowedIps":["10.201.0.1/32","x"]},"limits":{"maxSandboxes":30}}"#).ok().unwrap();
+        let c = HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","imageSource":"http://10.99.0.1:7444","name":"h","role":"burst","wgAddress":"10.99.0.10","hub":{"publicKey":"k","endpoint":"1.2.3.4:51820","allowedIps":["10.99.0.1/32","x"]},"limits":{"maxSandboxes":30}}"#).ok().unwrap();
         assert!(!c.hub);
         assert_eq!(c.limits.max_sandboxes, 30);
-        assert_eq!(c.hub_peer.unwrap().allowed.as_str(), "10.201.0.1/32");
-        assert!(HostConfig::parse(br#"{"name":"h","role":"burst","wgAddress":"10.201.0.10"}"#).is_err());
-        assert!(HostConfig::parse(br#"{"name":"h","role":"hub","wgAddress":"10.9.0.1"}"#).is_err());
+        assert_eq!(c.hub_peer.unwrap().allowed.as_str(), "10.99.0.1/32");
+        assert!(HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","imageSource":"http://10.99.0.1:7444","name":"h","role":"burst","wgAddress":"10.99.0.10"}"#).is_err());
+        assert!(HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","name":"h","role":"hub","wgAddress":"10.9.0.1"}"#).is_err());
+    }
+
+    #[test]
+    fn addresses_are_required() {
+        // no compiled-in ranges: every deployment names its own (docs/HOST.md "host.json")
+        let msg = |t: &str| HostConfig::parse(t.as_bytes()).err().map(|e| (e.status, e.msg.as_str().to_owned()));
+        let burst = r#""name":"h","role":"burst","wgAddress":"10.99.0.10","hub":{"publicKey":"k"}"#;
+        let addrs = r#""hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1""#;
+        for drop in ["hostCidr", "controlCidr", "sandboxCidr", "egressVip"] {
+            let kept: Vec<&str> = addrs.split(',').filter(|kv| !kv.contains(drop)).collect();
+            let t = format!(r#"{{{burst},{},"imageSource":"http://10.99.0.1:7444"}}"#, kept.join(","));
+            let (st, m) = msg(&t).unwrap();
+            assert!(st == 400 && m.contains("are required"), "{drop}: {m}");
+        }
+        let (_, m) = msg(&format!("{{{burst},{addrs}}}")).unwrap();
+        assert!(m.contains("imageSource"), "{m}");
+        assert!(msg(&format!(r#"{{{burst},{addrs},"registryConfigDir":"/etc/sbx/registry"}}"#)).is_none());
+        let hub = r#""name":"g","role":"hub","wgAddress":"10.99.0.1""#;
+        assert!(msg(&format!("{{{hub},{addrs}}}")).unwrap().1.contains("privateGateway"));
+        let gw = format!(r#"{{{hub},"gateway":true,{addrs},"privateGateway":"10.97.0.1"}}"#);
+        assert!(msg(&gw).unwrap().1.contains("podCidr"));
+        assert!(msg(&gw.replace(r#""gateway":true,"#, r#""gateway":true,"podCidr":"10.96.0.0/16","#)).is_none());
     }
 }

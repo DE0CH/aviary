@@ -167,7 +167,7 @@ pub fn host_rules(
         let (vip, api, img) = (cfg.egress_vip.as_str(), cfg.api_port, cfg.image_port);
         // a k3s node masquerades every non-pod source going to a pod (flannel's FLANNEL-POSTRTG): what comes in on wg0
         // keeps the sandbox's own address (egress admits a sandbox's token only from it; its NetworkPolicy only
-        // 10.200.0.0/16). An identity SNAT, earlier than iptables' nat (priority srcnat), binds the connection's NAT
+        // sandboxCidr). An identity SNAT, earlier than iptables' nat (priority srcnat), binds the connection's NAT
         // so the later masquerade never applies; such packets leave over the private network (policy route, init).
         let sbx = cfg.sandbox_cidr.as_str();
         let _ = write!(
@@ -175,11 +175,11 @@ pub fn host_rules(
             "\n  chain keep_source {{\n    type nat hook postrouting priority srcnat - 10; policy accept;\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}"
         );
         // this node's own pods reaching a sandbox (the ui pod's Claude Code runs, the controller): they leave through
-        // wg0, where flannel's masquerade would give them wg0's address 10.201.0.1, which a sandbox's lock drops (it
+        // wg0, where flannel's masquerade would give them wg0's own address, which a sandbox's lock drops (it
         // admits the controlCidr only); other nodes' pods arrive masqueraded to their node's private address. So
         // these get this node's private address too, before iptables' nat runs.
         if !private_addr.is_empty() {
-            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            let pods = cfg.pod_cidr.as_str();
             let _ = write!(b, "\n    oifname \"wg0\" ip saddr {pods} ip daddr {sbx} snat to {private_addr}");
         }
         b.s("\n  }");
@@ -291,7 +291,7 @@ impl HostNet {
         if cfg.gateway {
             // every sandbox is behind WireGuard; the node's own pods reach them from its private address (they are
             // masqueraded to it, and sandboxes accept the controller only from the private network)
-            let gw = if cfg.private_gateway.is_empty() { "10.0.0.1" } else { cfg.private_gateway.as_str() };
+            let gw = cfg.private_gateway.as_str();
             let o = run(&["ip", "-o", "route", "get", gw], &mut out, 10_000)?;
             let pif = iface_from_route(o.out_str()).ok_or_else(|| err!(500, "no route to {gw}"))?;
             let mut out2 = [0u8; 4096];
@@ -310,7 +310,7 @@ impl HostNet {
             }
             // what comes in on wg0 (sandboxes, to egress pods) goes to pods over the private network, as from the old
             // hub, not through flannel's WireGuard (its peers drop a source outside the node's pod range)
-            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            let pods = cfg.pod_cidr.as_str();
             sh(&["ip", "route", "replace", pods, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
             let mut out3 = [0u8; 4096];
             let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
@@ -337,7 +337,7 @@ impl HostNet {
             st.private_if = Some(pif);
             load_targets(&mut st);
         } else if cfg.hub {
-            let gw = if cfg.private_gateway.is_empty() { "10.0.0.1" } else { cfg.private_gateway.as_str() };
+            let gw = cfg.private_gateway.as_str();
             let o = run(&["ip", "-o", "route", "get", gw], &mut out, 10_000)?;
             let pif = iface_from_route(o.out_str()).ok_or_else(|| err!(500, "no route to {gw}"))?;
             sh(&["ip", "route", "replace", cfg.sandbox_cidr.as_str(), "dev", "wg0"])?;
@@ -380,7 +380,7 @@ impl HostNet {
             table.lines().any(|l| l.strip_prefix(dst).is_some_and(|r| r.starts_with(' ')) && l.contains(" table 51822"))
         };
         if cfg.gateway {
-            let pods = if cfg.pod_cidr.is_empty() { "10.244.0.0/16" } else { cfg.pod_cidr.as_str() };
+            let pods = cfg.pod_cidr.as_str();
             !has(cfg.sandbox_cidr.as_str(), "") || !has_tbl(pods)
         } else if cfg.hub {
             !has(cfg.sandbox_cidr.as_str(), "")
@@ -452,7 +452,7 @@ fn load_targets(st: &mut NetState) {
     }
 }
 
-/// The DNAT map's addresses in `nft list table ip sbxhost` output ("... map { 0 : 10.244.3.5, 1 : 10.244.6.7 }").
+/// The DNAT map's addresses in `nft list table ip sbxhost` output ("... map { 0 : 10.96.3.5, 1 : 10.96.6.7 }").
 pub fn targets_from_nft(out: &str, t: &mut [Str<16>; MAX_TARGETS]) -> usize {
     let Some(i) = out.find("dnat to numgen") else { return 0 };
     let Some(j) = out[i..].find('{') else { return 0 };
@@ -655,24 +655,24 @@ mod tests {
     #[test]
     fn missing_routes() {
         let g =
-            HostConfig::parse(br#"{"name":"g","role":"hub","gateway":true,"wgAddress":"10.201.0.1"}"#).ok().unwrap();
-        let ok = "10.200.0.0/16 dev wg0 scope link src 10.0.0.6 \n10.200.0.0/15 via 10.0.0.1 dev enp7s0 \n10.244.0.0/16 via 10.0.0.1 dev enp7s0 table 51822 \n";
+            HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","name":"g","role":"hub","gateway":true,"wgAddress":"10.99.0.1"}"#).ok().unwrap();
+        let ok = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.98.0.0/15 via 10.97.0.1 dev enp7s0 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
         assert!(!HostNet::routes_missing(&g, ok));
         // what the gateway node had after systemd-networkd restarted: only the Hetzner network's /15
         assert!(HostNet::routes_missing(
             &g,
-            "10.200.0.0/15 via 10.0.0.1 dev enp7s0 \n10.201.0.0/24 dev wg0 proto kernel scope link src 10.201.0.1 \n"
+            "10.98.0.0/15 via 10.97.0.1 dev enp7s0 \n10.99.0.0/24 dev wg0 proto kernel scope link src 10.99.0.1 \n"
         ));
-        let b = HostConfig::parse(br#"{"name":"b","role":"burst","wgAddress":"10.201.0.10","controlCidr":"10.0.0.0/16","hub":{"publicKey":"k"}}"#).ok().unwrap();
-        assert!(!HostNet::routes_missing(&b, "10.0.0.0/16 dev wg0 scope link \n10.201.1.1 dev wg0 scope link \n"));
-        assert!(HostNet::routes_missing(&b, "10.201.1.1 dev wg0 scope link \n"));
+        let b = HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","imageSource":"http://10.99.0.1:7444","name":"b","role":"burst","wgAddress":"10.99.0.10","controlCidr":"10.97.0.0/16","hub":{"publicKey":"k"}}"#).ok().unwrap();
+        assert!(!HostNet::routes_missing(&b, "10.97.0.0/16 dev wg0 scope link \n10.99.1.1 dev wg0 scope link \n"));
+        assert!(HostNet::routes_missing(&b, "10.99.1.1 dev wg0 scope link \n"));
     }
 
     #[test]
     fn rules() {
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        sandbox_rules(&mut b, "sbx-abc", "10.200.0.10", "10.201.1.1", "10.0.0.0/16");
+        sandbox_rules(&mut b, "sbx-abc", "10.98.0.10", "10.99.1.1", "10.97.0.0/16");
         let r = b.as_str();
         let v = veth_of("sbx-abc");
         assert_eq!(v.len(), 13);
@@ -680,56 +680,56 @@ mod tests {
             r.contains(
                 {
                     let mut s: Str<200> = Str::new();
-                    let _ = write!(s, "iifname \"{v}\" ip saddr 10.200.0.10 ip daddr 10.201.1.1 tcp dport 3128 accept");
+                    let _ = write!(s, "iifname \"{v}\" ip saddr 10.98.0.10 ip daddr 10.99.1.1 tcp dport 3128 accept");
                     s
                 }
                 .as_str()
             )
         );
-        assert!(r.contains("ip saddr 10.0.0.0/16 tcp dport 7070 ip daddr 10.200.0.10 accept"));
+        assert!(r.contains("ip saddr 10.97.0.0/16 tcp dport 7070 ip daddr 10.98.0.10 accept"));
         assert!(r.contains("counter drop"));
         assert!(!r.contains("ct state"));
-        assert_eq!(mac_of("10.200.0.10").as_str(), "02:5b:0a:c8:00:0a");
+        assert_eq!(mac_of("10.98.0.10").as_str(), "02:5b:0a:62:00:0a");
         // same as the Node code: sha256("sbx-abc")[..12]
         assert_eq!(h12("sbx-abc").as_str(), "8709bfe435f5");
-        let cfg = HostConfig::parse(br#"{"name":"h","role":"hub","wgAddress":"10.201.0.1"}"#).ok().unwrap();
+        let cfg = HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","name":"h","role":"hub","wgAddress":"10.99.0.1"}"#).ok().unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        host_rules(&mut b, &cfg, "eth0", Some("enp7s0"), "", &[Str::lossy("10.244.3.5"), Str::lossy("10.244.6.7")]);
+        host_rules(&mut b, &cfg, "eth0", Some("enp7s0"), "", &[Str::lossy("10.96.3.5"), Str::lossy("10.96.6.7")]);
         assert!(
-            b.as_str().contains("dnat to numgen random mod 2 map { 0 : 10.244.3.5, 1 : 10.244.6.7 }"),
+            b.as_str().contains("dnat to numgen random mod 2 map { 0 : 10.96.3.5, 1 : 10.96.6.7 }"),
             "{}",
             b.as_str()
         );
         assert!(!b.as_str().contains("snat") && !b.as_str().contains("masquerade"));
         assert!(
-            b.as_str().contains("ip daddr 10.201.1.1 drop"),
+            b.as_str().contains("ip daddr 10.99.1.1 drop"),
             "the hub drops what reaches the egress address untranslated"
         );
         // a burst host forwards its sandboxes' egress traffic into wg0 untranslated: never dropped there
         let burst =
-            HostConfig::parse(br#"{"name":"h","role":"burst","wgAddress":"10.201.0.10","hub":{"publicKey":"k"}}"#)
+            HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","imageSource":"http://10.99.0.1:7444","name":"h","role":"burst","wgAddress":"10.99.0.10","hub":{"publicKey":"k"}}"#)
                 .ok()
                 .unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
         host_rules(&mut b, &burst, "ens5", None, "", &[]);
-        assert!(!b.as_str().contains("10.201.1.1") && !b.as_str().contains("egress_dnat"), "{}", b.as_str());
-        assert!(b.as_str().contains("ip daddr 10.0.0.0/16 oifname != \"wg0\" drop"));
+        assert!(!b.as_str().contains("10.99.1.1") && !b.as_str().contains("egress_dnat"), "{}", b.as_str());
+        assert!(b.as_str().contains("ip daddr 10.97.0.0/16 oifname != \"wg0\" drop"));
         // a gateway on a k3s node fences wg0's traffic only: the node's pods keep their own forwarding
         let gw =
-            HostConfig::parse(br#"{"name":"g","role":"hub","gateway":true,"wgAddress":"10.201.0.1"}"#).ok().unwrap();
+            HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","name":"g","role":"hub","gateway":true,"wgAddress":"10.99.0.1"}"#).ok().unwrap();
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        host_rules(&mut b, &gw, "eth0", Some("enp7s0"), "10.0.0.6", &[Str::lossy("10.244.3.5")]);
-        // the node's own pods reach sandboxes from its private address (not wg0's 10.201.0.1, which sandboxes drop)
+        host_rules(&mut b, &gw, "eth0", Some("enp7s0"), "10.97.0.6", &[Str::lossy("10.96.3.5")]);
+        // the node's own pods reach sandboxes from its private address (not wg0's 10.99.0.1, which sandboxes drop)
         assert!(
-            b.as_str().contains("oifname \"wg0\" ip saddr 10.244.0.0/16 ip daddr 10.200.0.0/16 snat to 10.0.0.6"),
+            b.as_str().contains("oifname \"wg0\" ip saddr 10.96.0.0/16 ip daddr 10.98.0.0/16 snat to 10.97.0.6"),
             "{}",
             b.as_str()
         );
         let g = b.as_str();
-        assert!(g.contains("dnat to numgen random mod 1 map { 0 : 10.244.3.5 }"));
+        assert!(g.contains("dnat to numgen random mod 1 map { 0 : 10.96.3.5 }"));
         assert!(
             g.contains("iifname \"wg0\" oifname \"eth0\" drop") && g.contains("iifname \"eth0\" oifname \"wg0\" drop")
         );
@@ -738,20 +738,20 @@ mod tests {
         // the sandbox's own address survives the k3s node's masquerade (identity SNAT before iptables' nat)
         assert!(g.contains("type nat hook postrouting priority srcnat - 10"));
         assert!(g.contains(
-            "iifname \"wg0\" ip saddr 10.200.0.0/16 snat ip prefix to ip saddr map { 10.200.0.0/16 : 10.200.0.0/16 }"
+            "iifname \"wg0\" ip saddr 10.98.0.0/16 snat ip prefix to ip saddr map { 10.98.0.0/16 : 10.98.0.0/16 }"
         ));
         assert!(
             HostConfig::parse(
-                br#"{"name":"g","role":"burst","gateway":true,"wgAddress":"10.201.0.1","hub":{"publicKey":"k"}}"#
+                br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","podCidr":"10.96.0.0/16","imageSource":"http://10.99.0.1:7444","name":"g","role":"burst","gateway":true,"wgAddress":"10.99.0.1","hub":{"publicKey":"k"}}"#
             )
             .is_err()
         );
         assert!(valid_wg_key("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ="));
         assert!(!valid_wg_key("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPB="));
-        assert!(sorted_eq("10.0.0.1/32,10.0.0.2/32", "10.0.0.2/32,10.0.0.1/32"));
+        assert!(sorted_eq("10.97.0.1/32,10.97.0.2/32", "10.97.0.2/32,10.97.0.1/32"));
         let mut t = [Str::new(); MAX_TARGETS];
-        let live = "table ip sbxhost {\n\tchain egress_dnat {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n\t\tip daddr 10.201.1.1 tcp dport 3128 dnat to numgen random mod 2 map { 0 : 10.244.3.5, 1 : 10.244.6.7 }\n\t}\n}";
+        let live = "table ip sbxhost {\n\tchain egress_dnat {\n\t\ttype nat hook prerouting priority dstnat; policy accept;\n\t\tip daddr 10.99.1.1 tcp dport 3128 dnat to numgen random mod 2 map { 0 : 10.96.3.5, 1 : 10.96.6.7 }\n\t}\n}";
         assert_eq!(targets_from_nft(live, &mut t), 2);
-        assert_eq!((t[0].as_str(), t[1].as_str()), ("10.244.3.5", "10.244.6.7"));
+        assert_eq!((t[0].as_str(), t[1].as_str()), ("10.96.3.5", "10.96.6.7"));
     }
 }

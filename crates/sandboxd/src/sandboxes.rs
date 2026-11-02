@@ -1240,8 +1240,8 @@ mod tests {
 
     #[test]
     fn state_roundtrip_with_node_files() {
-        let node = br#"{"spec":{"name":"sbx-memtestb1","ip":"10.200.250.21","image":"a18f79b442fee2d4bae0fc5da3b2d892f015af58446c3c4363863991b8d76eb5","imageRef":"ghcr.io/de0ch/jarvis3-sandbox:2712e71c5178","env":{"HOME":"/home/sandbox","HTTP_PROXY":"http://x"},"cpu":1,"memory":536870912,"cpuFeatures":"fpu"},"state":"receiving","createdAt":"2026-10-21T02:13:58.974Z","port":7100,"migrated":{"from":"10.201.0.10:58490","bytes":30306113,"rounds":1}}"#;
-        let e = Sandboxes::parse_state(node, "10.200.0.0/16").ok().unwrap();
+        let node = br#"{"spec":{"name":"sbx-memtestb1","ip":"10.98.250.21","image":"a18f79b442fee2d4bae0fc5da3b2d892f015af58446c3c4363863991b8d76eb5","imageRef":"ghcr.io/de0ch/jarvis3-sandbox:2712e71c5178","env":{"HOME":"/home/sandbox","HTTP_PROXY":"http://x"},"cpu":1,"memory":536870912,"cpuFeatures":"fpu"},"state":"receiving","createdAt":"2026-10-21T02:13:58.974Z","port":7100,"migrated":{"from":"10.99.0.10:58490","bytes":30306113,"rounds":1}}"#;
+        let e = Sandboxes::parse_state(node, "10.98.0.0/16").ok().unwrap();
         assert_eq!(e.state, RECEIVING);
         assert_eq!(e.port, 7100);
         assert_eq!(e.created_at.as_str(), "2026-10-21T02:13:58.974Z");

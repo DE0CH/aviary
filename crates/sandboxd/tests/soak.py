@@ -43,10 +43,13 @@ class Daemon:
         lim = {"cgroups": False, "mlock": True}
         lim.update(limits or {})
         self.cfg = f"{self.base}/host.json"
-        role = ({"role": "hub", "gateway": True, "egressVip": "10.201.1.1", "privateGateway": "10.0.0.1",
-                 "podCidr": "10.244.0.0/16", "reserveMemory": 0} if gateway else
-                {"role": "burst", "hub": {"publicKey": GOOD_KEY, "endpoint": "1.2.3.4:51820", "allowedIps": ["10.201.0.1/32"]}})
-        json.dump({"name": name, "wgAddress": ip, "hostCidr": "127.0.0.0/24", "apiPort": 17443, **role,
+        role = ({"role": "hub", "gateway": True, "egressVip": "10.99.1.1", "privateGateway": "10.97.0.1",
+                 "podCidr": "10.96.0.0/16", "reserveMemory": 0} if gateway else
+                {"role": "burst", "hub": {"publicKey": GOOD_KEY, "endpoint": "1.2.3.4:51820", "allowedIps": ["10.99.0.1/32"]},
+                 "imageSource": "http://127.0.0.3:7444"})
+        # the deployment's addresses (placeholder ranges; sandboxd compiles none in)
+        addrs = {"hostCidr": "127.0.0.0/24", "controlCidr": "10.97.0.0/16", "sandboxCidr": "10.98.0.0/16", "egressVip": "10.99.1.1"}
+        json.dump({"name": name, "wgAddress": ip, **addrs, "apiPort": 17443, **role,
                    "tls": {"ca": f"{pki}/ca.crt", "cert": f"{pki}/gateway.crt", "key": f"{pki}/gateway.key"}, "limits": lim}, open(self.cfg, "w"))
         self.env = dict(SBX_ROOT=self.root, SBX_CONFIG=self.cfg, SBX_RUNSC=f"{FAKE}/runsc", SBX_FAKE=f"{self.base}/fake",
                         PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
@@ -128,7 +131,7 @@ class Client:
 
 def spec(n, ip, mem=1 << 30):
     return {"name": f"sbx-{n}", "ip": ip, "image": DIGEST, "imageRef": "ghcr.io/de0ch/jarvis3-sandbox:test",
-            "env": {"HTTP_PROXY": "http://sbx:token@10.201.1.1:3128", "EXEC_TOKEN": "e" * 40, "NO_PROXY": "localhost"},
+            "env": {"HTTP_PROXY": "http://sbx:token@10.99.1.1:3128", "EXEC_TOKEN": "e" * 40, "NO_PROXY": "localhost"},
             "cpu": 1, "memory": mem, "cpuFeatures": "fpu,sse2"}
 
 
@@ -141,19 +144,19 @@ def check(cond, what):
 def functional(A, B, G, cl, intruder):
     s, h = cl.call(G.ip, "GET", "/v1/host")
     check(s == 200 and h["role"] == "hub" and h["gateway"] and h["sandboxd"]["memory"]["budget"] > 0, "gateway: GET /v1/host")
-    s, r = cl.call(G.ip, "PUT", "/v1/egress", {"targets": ["10.244.0.6", "10.244.0.5", "10.244.0.5"]})
-    check(s == 200 and r == {"targets": ["10.244.0.5", "10.244.0.6"]}, f"gateway: PUT /v1/egress {s} {r}")
-    check(cl.call(G.ip, "GET", "/v1/host")[1]["egressTargets"] == ["10.244.0.5", "10.244.0.6"], "gateway: egress targets kept")
+    s, r = cl.call(G.ip, "PUT", "/v1/egress", {"targets": ["10.96.0.6", "10.96.0.5", "10.96.0.5"]})
+    check(s == 200 and r == {"targets": ["10.96.0.5", "10.96.0.6"]}, f"gateway: PUT /v1/egress {s} {r}")
+    check(cl.call(G.ip, "GET", "/v1/host")[1]["egressTargets"] == ["10.96.0.5", "10.96.0.6"], "gateway: egress targets kept")
     check(cl.call(G.ip, "GET", "/v1/sandboxes") == (200, {"sandboxes": []}), "gateway: no sandboxes")
-    check(cl.call(G.ip, "POST", "/v1/sandboxes", spec("g1", "10.200.0.21"))[0] == 409, "gateway: create is 409")
+    check(cl.call(G.ip, "POST", "/v1/sandboxes", spec("g1", "10.98.0.21"))[0] == 409, "gateway: create is 409")
     s, h = cl.call(A.ip, "GET", "/v1/host")
     check(s == 200 and h["role"] == "burst" and h["images"] == [DIGEST] and h["cpuFeatures"] == "fpu,sse2,avx", "GET /v1/host")
-    check(h["sandboxd"]["memory"]["budget"] > 0 and h["peers"][0]["allowedIps"] == ["10.201.0.1/32"], "host: memory + peers")
+    check(h["sandboxd"]["memory"]["budget"] > 0 and h["peers"][0]["allowedIps"] == ["10.99.0.1/32"], "host: memory + peers")
     check(intruder.call(A.ip, "GET", "/v1/host") == (403, {"error": "not the controller"}), "403 for another client certificate")
-    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.200.0.11"))
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.98.0.11"))
     check(s == 200 and r["name"] == "sbx-f1" and r["state"] == "running" and r["memory"] == 1 << 30, f"create {s} {r}")
-    check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.200.0.11"))[0] == 200, "create is idempotent")
-    check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f2", "10.200.0.11"))[0] == 409, "ip in use: 409")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f1", "10.98.0.11"))[0] == 200, "create is idempotent")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f2", "10.98.0.11"))[0] == 409, "ip in use: 409")
     bundle = json.load(open(f"{A.root}/var/lib/sbx/bundles/sbx-f1/config.json"))
     check("HOME=/home/sandbox" in bundle["process"]["env"] and "LANG=C.UTF-8" in bundle["process"]["env"], "bundle env")
     # hermit spec 13.2: the first process from the image (item 1); no ~/.claude or /etc/hosts bind (2, 4); /dev/fuse (7)
@@ -162,14 +165,14 @@ def functional(A, B, G, cl, intruder):
     check("/home/sandbox/.claude" not in dests and "/etc/hosts" not in dests, f"no ~/.claude or /etc/hosts bind {dests}")
     check(bundle["linux"]["devices"] == [{"path": "/dev/fuse", "type": "c", "major": 10, "minor": 229, "fileMode": 0o666, "uid": 0, "gid": 0}]
           and {"allow": True, "type": "c", "major": 10, "minor": 229, "access": "rwm"} in bundle["linux"]["resources"]["devices"], "bundle: /dev/fuse")
-    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.200.0.12"), user="u-1"))
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.98.0.12"), user="u-1"))
     check(s == 400 and "unknown field user" in r["error"], f"the spec's user is refused (item 2): {s} {r}")
     # an image without an entrypoint is refused (item 1)
     bare = f"{A.root}/var/lib/sbx/images/{'d' * 64}"
     os.makedirs(f"{bare}/rootfs", exist_ok=True)
     json.dump({"config": {"Env": ["PATH=/usr/bin"], "Cmd": ["/bin/sh"]}}, open(f"{bare}/config.json", "w"))
     open(f"{bare}/.done", "w").close()
-    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.200.0.12"), image="d" * 64))
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.98.0.12"), image="d" * 64))
     check(s == 400 and "Entrypoint" in r["error"], f"an image without an entrypoint: 400 {s} {r}")
     shutil.rmtree(bare)
     check([x["name"] for x in cl.call(A.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == ["sbx-f1"], "the refused create left nothing")
@@ -180,7 +183,7 @@ def functional(A, B, G, cl, intruder):
     check(s == 200 and body == b"serve\n", f"log?tail=6 {body}")
     check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/log?tail=10") == (404, {"error": "sbx-nope has no console here"}), "log of a name never here: 404")
     # liveness (item 6): alive while its cgroup holds a process; false within 10 s once it is empty
-    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f3", "10.200.0.13"))
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f3", "10.98.0.13"))
     check(s == 200 and r["alive"] is True, f"created: alive {r}")
     open(f"{A.root}/sys/fs/cgroup/sbx/sbx-f3/cgroup.events", "w").write("populated 0\nfrozen 0\n")
     t0, alive = time.time(), True
@@ -197,9 +200,9 @@ def functional(A, B, G, cl, intruder):
     check(cl.call(A.ip, "GET", "/v1/sandboxes/BAD/spec")[0] == 400, "bad name: 400")
     check(cl.call(A.ip, "DELETE", "/v1/sandboxes/sbx-nope") == (200, {"deleted": "sbx-nope"}), "delete a missing one")
     check(cl.call(A.ip, "POST", "/v1/sandboxes", raw="{")[0] == 400, "bad JSON: 400")
-    check(cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.200.0.12"), cpu=0))[0] == 400, "bad spec: 400")
-    check(cl.call(A.ip, "PUT", "/v1/egress", {"targets": ["10.244.0.5"]})[0] == 400, "egress on a burst host: 400")
-    check(cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.201.0.1/32"]}]})[0] == 200, "PUT peers")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.98.0.12"), cpu=0))[0] == 400, "bad spec: 400")
+    check(cl.call(A.ip, "PUT", "/v1/egress", {"targets": ["10.96.0.5"]})[0] == 400, "egress on a burst host: 400")
+    check(cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.99.0.1/32"]}]})[0] == 200, "PUT peers")
     check(cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": "short"}]})[0] == 400, "PUT peers with a bad key: 400")
     check(cl.call(A.ip, "POST", "/v1/images", {"digest": DIGEST}) == (200, {"digest": DIGEST}), "images: have it")
     check(cl.call(A.ip, "GET", "/v1/nope")[0] == 404, "unknown path: 404")
@@ -281,7 +284,7 @@ def hostile(ip, pki, stop):
 def soak(A, B, cl, intruder, seconds, pki, budget_rss):
     print(f"soak: {seconds}s; 6 sandboxes on A, a slow migration A -> B, hammering every endpoint")
     for i in range(6):
-        s, _ = cl.call(A.ip, "POST", "/v1/sandboxes", spec(f"s{i}", f"10.200.1.{i + 1}"))
+        s, _ = cl.call(A.ip, "POST", "/v1/sandboxes", spec(f"s{i}", f"10.98.1.{i + 1}"))
         assert s == 200
     stop = threading.Event()
     counts, errors = {}, []
@@ -322,10 +325,10 @@ def soak(A, B, cl, intruder, seconds, pki, budget_rss):
                 elif k == 2:
                     r = cl.call(A.ip, "GET", f"/v1/sandboxes/sbx-s{rnd.randrange(1, 6)}/spec", conn=conn)
                 elif k == 3:
-                    r = cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.201.0.1/32"]}]}, conn=conn)
+                    r = cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.99.0.1/32"]}]}, conn=conn)
                 elif k == 4:
                     name = f"t{n}"
-                    r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec(name, f"10.200.2.{n + 1}"), env=big_env), conn=conn)
+                    r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec(name, f"10.98.2.{n + 1}"), env=big_env), conn=conn)
                     cl.call(A.ip, "DELETE", f"/v1/sandboxes/sbx-{name}", conn=conn)
                 elif k == 5:
                     r = cl.call(A.ip, "POST", "/v1/sandboxes", raw="[" * 5000 + "]" * 5000, conn=conn)
@@ -339,7 +342,7 @@ def soak(A, B, cl, intruder, seconds, pki, budget_rss):
                 elif k == 9:
                     r = intruder.call(A.ip, "GET", "/v1/host")
                 elif k == 10:
-                    r = cl.call(A.ip, "PUT", "/v1/egress", {"targets": ["10.0.0.1"] * 100}, conn=conn)
+                    r = cl.call(A.ip, "PUT", "/v1/egress", {"targets": ["10.97.0.1"] * 100}, conn=conn)
                 else:
                     r = cl.call(A.ip, "DELETE", f"/v1/sandboxes/sbx-missing{n}", conn=conn)
                 with lock:
@@ -394,7 +397,7 @@ def node_soak(binary_node, base, pki, seconds):
     cl = Client(pki)
     idle = A.rss()
     for i in range(6):
-        cl.call(A.ip, "POST", "/v1/sandboxes", spec(f"n{i}", f"10.200.3.{i + 1}"))
+        cl.call(A.ip, "POST", "/v1/sandboxes", spec(f"n{i}", f"10.98.3.{i + 1}"))
     stop = threading.Event()
 
     def hammer(n):
@@ -408,7 +411,7 @@ def node_soak(binary_node, base, pki, seconds):
                 elif k == 2:
                     cl.call(A.ip, "POST", "/v1/sandboxes", raw="x" * (200 << 10))
                 else:
-                    cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.201.0.1/32"]}]})
+                    cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": GOOD_KEY, "allowedIps": ["10.99.0.1/32"]}]})
             except Exception:
                 pass
 

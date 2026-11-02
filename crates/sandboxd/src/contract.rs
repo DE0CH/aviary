@@ -110,7 +110,7 @@ fn names_and_constants_agree() {
         assert_eq!(crate::config::valid_name(n), sandboxd_api::valid_name(n), "{n}");
     }
     assert_eq!(crate::server::CONTROLLER_CN, sandboxd_api::CLIENT_CN);
-    let c = crate::config::HostConfig::parse(br#"{"name":"x","role":"hub","wgAddress":"10.201.0.1"}"#).ok().unwrap();
+    let c = crate::config::HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","name":"x","role":"hub","wgAddress":"10.99.0.1"}"#).ok().unwrap();
     assert_eq!((c.api_port, c.image_port), (sandboxd_api::PORT, sandboxd_api::IMAGE_PORT));
     assert_eq!(c.limits.max_body, sandboxd_api::MAX_BODY);
 }

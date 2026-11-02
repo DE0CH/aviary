@@ -38,25 +38,12 @@ fork registers FUSE unconditionally, `runsc/boot/vfs.go`, and the FUSE gate ran 
 `GET …/log?tail=` (item 10) and the receive's state without a wait (item 11; `{"state": "none"}` for a name with no
 receive record). Items 5 (network) and everything else are unchanged.
 
-## Deployment defaults still compiled in
+## No deployment defaults
 
-sandboxd was moved with its behaviour unchanged, so it still has these defaults of the old jarvis3 deployment (their
-values are in the source, not repeated here). Every deployment sets the fields in host.json or the spec; hermit spec
-13.2 (WP-19) makes them required or neutral and removes the old values:
-
-| Default | Where | Value |
-|---|---|---|
-| `controlCidr` | `src/config.rs` | the old Hetzner private network |
-| `hostCidr`, `sandboxCidr`, `egressVip` | `src/config.rs` | the old fabric's ranges |
-| `privateGateway` when empty | `src/net.rs` (gateway and hub branches) | the old Hetzner network's gateway |
-| `podCidr` when empty | `src/net.rs` | k3s's default pod range |
-| the image base of a pull without a reference (`ref`, `imageRef`) | `src/images.rs` | jarvis3's sandbox image on ghcr.io (wrong once hermit's sandbox image replaces it) |
-| `imageSource` when empty (where a burst host fetches an image by digest) | `src/images.rs` | `http://` + the old fabric's hub address + `:<imagePort>` (on hermit's fabric the gateway's overlay address, so a host.json without it fetches from nothing) |
-
-For WP-19: `imageSource` becomes required for a burst host (hermit's scaler writes the gateway's overlay address,
-`http://<gateway wgAddress>:<imagePort>`, into every user-data host.json; docs/HOST.md, "host.json"). The unit tests in
-`src/` and `tests/soak.py` (with `tests/fake/`) use the old fabric's addresses because they exercise these defaults;
-they move to placeholder ranges with them.
+sandboxd compiles in no deployment's addresses or image: `hostCidr`, `controlCidr`, `sandboxCidr`, `egressVip` are
+required in every host.json, `privateGateway` on a hub, `podCidr` on the gateway, `imageSource` on a host without
+registry access, and a registry pull needs a reference (docs/HOST.md, "Addresses and paths"). The unit tests, the
+soak and `tests/fake/` use the placeholder ranges of the sandboxd-api fixtures (10.96-10.99).
 
 ## Build and test
 

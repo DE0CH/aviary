@@ -1,6 +1,6 @@
 //! The sandbox image on a host: unpacked once per digest into /var/lib/sbx/images/<digest>/{rootfs,config.json};
 //! every sandbox shares it read-only. Pulled with crane from the registry (a hub, or any host with
-//! `registryConfigDir`), else fetched unpacked from `imageSource` (an image server, e.g. the old hub).
+//! `registryConfigDir`), else fetched unpacked from `imageSource` (an image server: the gateway's).
 //! Data never passes through sandboxd: `crane export | tar -x` and `curl | tar -x` are piped child to child.
 use crate::config::HostConfig;
 use crate::fixed::Str;
@@ -126,7 +126,7 @@ impl Pulls {
 }
 
 fn from_registry(cfg: &HostConfig) -> bool {
-    cfg.hub || !cfg.registry_config_dir.is_empty()
+    cfg.pulls_from_registry()
 }
 
 /// Makes sure the image is unpacked here; returns its digest. With registry access, resolves `image_ref`.
@@ -175,8 +175,11 @@ fn unpack(cfg: &HostConfig, env: &[&str], d: &str, image_ref: Option<&str>) -> R
     let r = (|| -> Res<()> {
         if from_registry(cfg) {
             let base = image_ref.map(|r| r.split([':', '@']).next().unwrap_or("")).filter(|b| !b.is_empty());
+            let base = base.ok_or_else(|| {
+                Error::new(400, "image: a pull from the registry needs a reference (ref or imageRef)")
+            })?;
             let mut src: Str<400> = Str::new();
-            let _ = write!(src, "{}@sha256:{d}", base.unwrap_or("ghcr.io/de0ch/jarvis3-sandbox"));
+            let _ = write!(src, "{base}@sha256:{d}");
             // crane's `export` has a registry name with a colon only for a port: split at the first ':' or '@' as the
             // old code did ("ghcr.io/x:tag" -> "ghcr.io/x")
             pipeline(&["crane", "export", src.as_str(), "-"], env, &["tar", "-x", "-C", rootfs.as_str()], 30 * 60_000)?;
@@ -196,12 +199,9 @@ fn unpack(cfg: &HostConfig, env: &[&str], d: &str, image_ref: Option<&str>) -> R
                 return Err(o.failure(&["crane", "config", src.as_str()]));
             }
         } else {
+            // imageSource is required without registry access (HostConfig::parse)
             let mut url: Str<400> = Str::new();
-            if cfg.image_source.is_empty() {
-                let _ = write!(url, "http://10.201.0.1:{}/images/{d}.tar.zst", cfg.image_port);
-            } else {
-                let _ = write!(url, "{}/images/{d}.tar.zst", cfg.image_source);
-            }
+            let _ = write!(url, "{}/images/{d}.tar.zst", cfg.image_source);
             pipeline(
                 &["curl", "-fsS", "--max-time", "1800", url.as_str()],
                 &[],

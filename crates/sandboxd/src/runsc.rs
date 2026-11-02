@@ -206,16 +206,16 @@ mod tests {
 
     #[test]
     fn pids_from_the_spec() {
-        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":512}"#;
-        let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":512}"#;
+        let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
         bundle_spec(&mut b, &spec, &[], &["/init"], "/r", "/s");
         let n = b.len;
         let s = core::str::from_utf8(&mem[..n]).unwrap();
         assert!(s.contains(r#""pids":{"limit":512}"#), "{s}");
-        let bad = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":3}"#;
-        assert!(Spec::parse(bad, "10.200.0.0/16").is_err());
+        let bad = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":3}"#;
+        assert!(Spec::parse(bad, "10.98.0.0/16").is_err());
     }
 
     #[test]
@@ -228,8 +228,8 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1"}"#;
-        let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.99.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1"}"#;
+        let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
         bundle_spec(
@@ -246,7 +246,7 @@ mod tests {
         assert!(s.contains(r#""dev.gvisor.internal.cpufeatures":"fpu,sse2""#));
         assert!(s.contains(r#""args":["/usr/bin/tini","--","/opt/keeper","--serve"]"#), "{s}");
         assert!(s.contains(r#""user":{"uid":0,"gid":0},"cwd":"/work""#), "{s}");
-        assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.201.1.1:3128","EXEC_TOKEN=e"]"#), "{s}");
+        assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.99.1.1:3128","EXEC_TOKEN=e"]"#), "{s}");
         assert!(s.contains(r#""limit":2147483648"#));
         assert!(s.contains(r#""quota":150000"#));
         assert!(s.contains(r#""pids":{"limit":4096}"#), "no pids in the spec: the default");

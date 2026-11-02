@@ -23,8 +23,10 @@ spec 13.1, in DE0CH/YYC):
 | hermit's sources (the nodes' private addresses) | `controlCidr` | the cluster's private network |
 | Pods (egress targets) and their next hop | `podCidr`, `privateGateway` | the cluster's pod range and private gateway |
 
-sandboxd still has built-in defaults for some of these, carried over from jarvis3 unchanged (README.md, "Deployment
-defaults still compiled in"); deployments set every field and do not rely on them.
+sandboxd compiles none of them in: `hostCidr`, `controlCidr`, `sandboxCidr` and `egressVip` are required on every
+host, `privateGateway` on a hub, `podCidr` on the gateway, and `imageSource` on a host without registry access (a
+burst host); a host.json without them is refused at start (400). A registry pull needs the image's reference (`ref`,
+or the spec's `imageRef`): there is no default image.
 
 ### host.json
 
@@ -33,7 +35,8 @@ defaults still compiled in"); deployments set every field and do not rely on the
 (7444), `tls` {`ca`, `cert`, `key`}, `controlCidr`, `sandboxCidr`, `egressVip`, `podCidr`, `privateGateway`, `hub`
 (burst: the hub peer {`publicKey`, `endpoint`, `allowedIps`}), `reserveMemory` (bytes), `registryConfigDir`,
 `imageSource`, `mtu`, `limits`. Unknown keys are ignored, so a host.json may already carry fields of a later sandboxd
-(hermit spec 14.2 lists `egressPorts` for the gateway, which sandboxd reads from hermit spec 13.2 on).
+(hermit spec 14.2 lists `egressPorts`; this sandboxd does not read it: the egress port is 3128, hermit spec 13.2
+item 5).
 
 - **Sandbox → egress:** sandbox → its host's veth → wg0 → gateway, which DNATs VIP:3128 to one egress pod (`numgen
   random` over the targets hermit pushes with `PUT /v1/egress`) → private network → egress pod. The **source is never

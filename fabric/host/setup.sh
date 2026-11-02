@@ -211,8 +211,8 @@ set -euo pipefail
 tok=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)
 ud=$(mktemp); chmod 600 "$ud"
 curl -fsS -H "X-aws-ec2-metadata-token: $tok" http://169.254.169.254/latest/user-data > "$ud"
-# a burst host fetches images by digest from imageSource (the gateway: http://<its wgAddress>:<imagePort>); sandboxd's
-# compiled-in fallback is the old fabric's hub, so a host.json without it is refused here (crates/sandboxd/README.md)
+# a burst host fetches images by digest from imageSource (the gateway: http://<its wgAddress>:<imagePort>); sandboxd
+# refuses a host.json without it at start, so it is checked here first, before the unit starts (docs/HOST.md)
 if ! jq -e '.host.imageSource | type == "string" and startswith("http")' "$ud" >/dev/null; then
   echo "sbx-userdata: the user data's host has no imageSource (http://<gateway wgAddress>:<imagePort>)" >&2
   rm -f "$ud"; exit 1

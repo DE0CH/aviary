@@ -349,16 +349,17 @@ fn main() {
         std::process::exit(relay::main(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("budget") {
-        let cfg = if let Some(p) = args.get(2) {
+        // a host.json's limits, or the defaults of a burst host
+        let (limits, hub) = if let Some(p) = args.get(2) {
             let t = std::fs::read(p).unwrap_or_else(|e| fatal("config", &e.to_string()));
-            HostConfig::parse(&t).unwrap_or_else(|e| fatal("config", e.msg.as_str()))
+            let cfg = HostConfig::parse(&t).unwrap_or_else(|e| fatal("config", e.msg.as_str()));
+            (cfg.limits, cfg.hub)
         } else {
-            HostConfig::parse(br#"{"name":"x","role":"burst","wgAddress":"10.201.0.10","hub":{"publicKey":"x"}}"#)
-                .unwrap_or_else(|_| unreachable!())
+            (config::Limits::default(), false)
         };
-        let b = Budget::of(&cfg.limits, cfg.hub);
+        let b = Budget::of(&limits, hub);
         let mut s = String::new();
-        let _ = writeln!(s, "{:?}", cfg.limits);
+        let _ = writeln!(s, "{limits:?}");
         b.write_table(&mut s);
         let _ = writeln!(s, "total bytes: {}", b.total());
         cli_out(&s);
