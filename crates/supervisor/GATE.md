@@ -109,7 +109,7 @@ overwrote with zeroes and a page after `MADV_DONTNEED`; a second process rewrite
 
 0 of 40 at the old rate (4 of 20) happens by chance with probability 0.8^40 = 0.00013.
 
-**Fix**: DE0CH/gvisor `1635a240b` ("Pre-copy: the final save sends dirty pages that are no longer committed as
+**Fix**: the runtime fork's commit `1635a240b` ("Pre-copy: the final save sends dirty pages that are no longer committed as
 zeroes"), released as `precopy-20261102.1` by the fork's release workflow (tag `precopy-*` on `main`, the same path as
 `precopy-20261021.2`): such pages are sent as zero ranges, which the target punches out of the received file. Its
 test `TestPrecopyContentsPresentAfterZeroing` (pgalloc) sends a live round, then zeroes, decommits and frees pages,
