@@ -223,8 +223,19 @@ describe("paseo contract harness", () => {
     const older = "01d7db996cc2a12a70bd82194e895428325638dc"; // 2026-10-28, an iOS run cancelled before its upload
     const legacy = "12397ad3b9389bf8357cb72bfc5bf6c2d6e77dda"; // 2026-10-21, before paseo/
     const newer = "a57656af3076b3d8c69ceac8486777233fc83fe7"; // 2026-11-02, a web build
-    const start = readFileSync(path.join(harnessRoot, "clients.txt"), "utf8").split("\n").filter((l) => ![older, legacy, newer].some((sha) => l.startsWith(sha)));
-    writeFileSync(file, start.join("\n"));
+    // a fixed list, not the live clients.txt (clients.yml runs this suite after inserting the dispatched builds):
+    // builds on both sides of older, all before newer
+    writeFileSync(
+      file,
+      [
+        "# a fixture of clients.txt",
+        "a684b2ebd5b5465b9c2efe4709d00be8d2cdd1a2 web-legacy 2026-10-21T14:19:07Z",
+        "a93e3e695bd10f570f90a952d3e8572ba074e1a4 web        2026-10-26T19:46:28Z",
+        "3de3f5d8771bc5df24aaa95ba317bdbb2bd4d005 web        2026-10-29T17:27:19Z",
+        "488a7736ef2c3783388fde060621c3d1df8e8f47 web        2026-11-02T08:29:13Z",
+        "",
+      ].join("\n"),
+    );
     const newestEntry = readClientLines(file).at(-1);
     const newest = newestEntry.sha;
     let result = node("append-client.mjs", [older, "ios", "--file", file]);
@@ -261,14 +272,10 @@ describe("paseo contract harness", () => {
     result = node("append-client.mjs", [newer, "web", older, "ios", "--file", file]);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.stdout.trim().split("\n").map((l) => l.split(":")[0]), ["added", "unchanged"]);
-    // newer sits at its commit time: last, unless the list already holds a later build (clients.yml runs this suite
-    // after inserting the dispatched builds, which can be newer than this fixture commit)
+    // newer is the newest build: last
     listed = readClientLines(file);
-    const newerEntry = listed.find((c) => c.sha === newer);
-    assert.deepEqual(newerEntry.kinds, ["web"]);
-    const at = listed.indexOf(newerEntry);
-    assert.ok(listed[at - 1].time <= newerEntry.time && (at === listed.length - 1 || listed[at + 1].time >= newerEntry.time));
-    assert.equal(listed.at(-1).sha, newestEntry.time > newerEntry.time ? newest : newer);
+    assert.deepEqual(listed.at(-1).kinds, ["web"]);
+    assert.equal(listed.at(-1).sha, newer);
     // a file out of order is refused
     const unsorted = path.join(dir, "unsorted.txt");
     writeFileSync(unsorted, `${newest} web 2026-11-02T08:29:13Z\n${older} ios 2026-10-28T03:49:44Z\n`);
