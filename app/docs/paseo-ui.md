@@ -335,6 +335,9 @@ Store Connect key) and uploads to TestFlight. Its secrets: `YYC_SITE`, `ASC_KEY_
   (the CORS answer refuses credentials), so the YYC REST features only work on the built app served by the server.
 - A change to `paseo/packages/protocol` needs `npm --prefix paseo run build:protocol` (it regenerates the validators)
   before the app typechecks against it.
+- For pigeon (DE0CH/aviary), `.github/workflows/pigeon-app.yml` packs the web export into
+  `ghcr.io/de0ch/pigeon-app:<commit 12>`. The image also holds the hashed chunks of recent builds and of every ui image
+  served in the last 720 h, and the workflow checks the app against pigeon's frames: `scripts/pigeon-app/README.md`.
 
 ## Tests
 
