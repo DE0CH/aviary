@@ -1,1 +1,1 @@
-{"peers":[{"publicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA=","endpoint":"[2a01:4f8::1]:51821","allowedIps":["10.202.0.1/32","10.0.0.0/16"]},{"publicKey":"ccccccccccccccccccccccccccccccccccccccccccA=","allowedIps":["10.202.0.11/32","10.203.0.12/32"]}]}
+{"peers":[{"publicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA=","endpoint":"[2001:db8::1]:51821","allowedIps":["10.99.0.1/32","10.97.0.0/16"]},{"publicKey":"ccccccccccccccccccccccccccccccccccccccccccA=","allowedIps":["10.99.0.11/32","10.98.0.12/32"]}]}

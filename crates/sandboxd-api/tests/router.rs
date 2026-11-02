@@ -95,7 +95,7 @@ async fn every_route_through_the_client() {
     let peers = vec![Peer {
         public_key: "k".into(),
         endpoint: None,
-        allowed_ips: vec!["10.202.0.1/32".into()],
+        allowed_ips: vec!["10.99.0.1/32".into()],
     }];
     assert_eq!(c.set_peers(peers).await.unwrap().peers.len(), 2);
     let d = c
@@ -124,7 +124,7 @@ async fn every_route_through_the_client() {
             "create sbx-0a1b2c env 3",
             "receive sbx-0a1b2c",
             "result sbx-0a1b2c 90000", // the client asks for at most RECEIVE_WAIT_MS
-            "send sbx-0a1b2c 10.202.0.11:7142",
+            "send sbx-0a1b2c 10.99.0.11:7142",
         ]
     );
 }

@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn spec_checks() {
-        let ok = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","JARVIS_EXEC_TOKEN":"e"},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu,sse2"}"#;
+        let ok = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e"},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu,sse2"}"#;
         let s = Spec::parse(ok, "10.200.0.0/16").ok().unwrap();
         assert_eq!(s.name.as_str(), "sbx-abc");
         assert_eq!(s.env_pairs().count(), 2);

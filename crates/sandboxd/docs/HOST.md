@@ -10,15 +10,16 @@ those of 2026-10-21. The memory bound of sandboxd itself is [MEMORY.md](MEMORY.m
 
 Every address is the deployment's: sandboxd reads them from host.json (below), which the deployment writes (the
 gateway's from hermit's ConfigMap through `fabric/host/gateway.sh`, a burst host's from the user data hermit's scaler
-gives it, a test hub's through `setup.sh hub`). aviary's scripts carry none. The table shows, as an example, the
-ranges hermit spec 13.1 uses (and the soak and fixtures use alike):
+gives it, a test hub's through `setup.sh hub`). aviary's scripts carry none. The table shows the layout with
+placeholder ranges (the sandboxd-api fixtures use the same); a deployment's own ranges live in its config (YYC's: hermit
+spec 13.1, in DE0CH/YYC):
 
-| What | host.json | Example (hermit spec 13.1) |
+| What | host.json | Example (placeholders) |
 |---|---|---|
-| Hosts on wg0 | `hostCidr`, `wgAddress` | 10.202.0.0/24 (gateway .1, burst hosts .10-.250) |
-| Egress VIP | `egressVip` (tcp 3128 only) | 10.202.1.1 |
-| Sandboxes | `sandboxCidr` | 10.203.0.0/16, one fixed /32 each, which follows it across hosts |
-| The private network's route to the gateway node | (the cloud network's, `gateway-net.sh`) | 10.202.0.0/15 |
+| Hosts on wg0 | `hostCidr`, `wgAddress` | 10.99.0.0/24 (gateway .1, burst hosts .10-.250) |
+| Egress VIP | `egressVip` (tcp 3128 only) | 10.99.1.1 |
+| Sandboxes | `sandboxCidr` | 10.98.0.0/16, one fixed /32 each, which follows it across hosts |
+| The private network's route to the gateway node | (the cloud network's, `gateway-net.sh`) | 10.98.0.0/15 |
 | hermit's sources (the nodes' private addresses) | `controlCidr` | the cluster's private network |
 | Pods (egress targets) and their next hop | `podCidr`, `privateGateway` | the cluster's pod range and private gateway |
 
@@ -89,7 +90,9 @@ the node's IPv6; the egress VIP translation; the image source for burst hosts (:
 - Host setup: `fabric/host/setup.sh hub|burst [image]` (idempotent: the fork's runsc checked against SHA256SUMS,
   crane, sandboxd from `bin/` (`fabric/host/fetch-sandboxd.sh`: aviary's release `aviary-<sha12>`, checked), sysctls,
   the tmpfs for migration images, units, logrotate, the image unpacked). Burst images get each instance's host.json,
-  WireGuard key and TLS files from EC2 user data at first boot (`sbx-userdata.service`).
+  WireGuard key and TLS files from EC2 user data at first boot (`sbx-userdata.service`). The user data's `host` must
+  set `imageSource` to the gateway's image server, `http://<gateway wgAddress>:<imagePort>`: sbx-userdata refuses
+  user data without it, because sandboxd's compiled-in fallback is the old fabric's hub (README.md).
 - PKI: `fabric/host/make-certs.sh` (CA "hermit fabric CA", the gateway's and the burst hosts' server certificates
   "sandboxd", hermit's client certificate CN `hermit`).
 

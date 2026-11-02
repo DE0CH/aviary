@@ -43,7 +43,7 @@ fn written(f: impl FnOnce(&mut W)) -> Value {
 fn spec_fixtures_parse_and_write_back() {
     for name in ["spec.json", "spec-minimal.json"] {
         let text = fixture(name);
-        let s = Spec::parse(text.as_bytes(), "10.203.0.0/16").ok().unwrap();
+        let s = Spec::parse(text.as_bytes(), "10.98.0.0/16").ok().unwrap();
         let bytes = written_bytes(|w| s.write(w));
         let back: Value = serde_json::from_slice(&bytes).unwrap();
         let want: Value = serde_json::from_str(&text).unwrap();

@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","JARVIS_EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1","user":"u-1"}"#;
+        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1","user":"u-1"}"#;
         let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
@@ -199,7 +199,7 @@ mod tests {
         assert!(json::parse(s.as_bytes()).is_ok(), "{s}");
         assert!(s.contains(r#""dev.gvisor.internal.cpufeatures":"fpu,sse2""#));
         assert!(s.contains(r#""args":["/usr/bin/tini","--","node","/opt/agent/sbx-init.mjs"]"#));
-        assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.201.1.1:3128","JARVIS_EXEC_TOKEN=e"]"#), "{s}");
+        assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.201.1.1:3128","EXEC_TOKEN=e"]"#), "{s}");
         assert!(s.contains(r#""limit":2147483648"#));
         assert!(s.contains(r#""quota":150000"#));
         assert!(s.contains(r#""path":"/var/run/netns/sbx-abc""#));

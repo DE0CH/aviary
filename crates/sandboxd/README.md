@@ -17,18 +17,35 @@ filesystem by rsync). hermit is its only client.
 Moved from DE0CH/jarvis3 `chat/sandboxd/daemon` on 2026-11-02 (jarvis3 commit 52c9b8c, platform spec 4.1); jarvis3
 keeps its own copy for the old fabric until the switch's P5.
 
+## Behaviour changed in the move
+
+One change, deliberately, and recorded as a deviation from "behaviour unchanged" (WP-06): the client certificate CN
+sandboxd serves is `hermit`, not jarvis3's `sandbox-controller` (`src/server.rs` `CONTROLLER_CN` =
+`sandboxd_api::CLIENT_CN`). It is coupled to `fabric/host/make-certs.sh`, which issues the client certificate as
+`hermit` (hermit spec 13.2 item 8, 14.5); keeping the old CN would have meant a make-certs.sh that issues a name
+hermit's spec does not use. So a sandboxd built from aviary refuses jarvis3's controller certificate (403). That is
+harmless while the old fabric runs jarvis3's own copy of sandboxd (until P5), and nothing on the old fabric installs
+aviary's binary. Everything else on the wire is unchanged.
+
 ## Deployment defaults still compiled in
 
-sandboxd was moved with its behaviour unchanged, so it still has these defaults of the old jarvis3 deployment. Every
-deployment sets the fields in host.json or the spec, and hermit spec 13.2 (WP-19) makes them required or neutral:
+sandboxd was moved with its behaviour unchanged, so it still has these defaults of the old jarvis3 deployment (their
+values are in the source, not repeated here). Every deployment sets the fields in host.json or the spec; hermit spec
+13.2 (WP-19) makes them required or neutral and removes the old values:
 
 | Default | Where | Value |
 |---|---|---|
-| `controlCidr` | `src/config.rs` | 10.0.0.0/16 (the old Hetzner private network) |
-| `hostCidr`, `sandboxCidr`, `egressVip` | `src/config.rs` | 10.201.0.0/24, 10.200.0.0/16, 10.201.1.1 (the old fabric) |
-| `privateGateway` when empty | `src/net.rs` (gateway and hub branches) | 10.0.0.1 |
-| `podCidr` when empty | `src/net.rs` | 10.244.0.0/16 |
-| the image base of a pull without a reference (`ref`, `imageRef`) | `src/images.rs` | `ghcr.io/de0ch/jarvis3-sandbox` (wrong once hermit's sandbox image replaces it) |
+| `controlCidr` | `src/config.rs` | the old Hetzner private network |
+| `hostCidr`, `sandboxCidr`, `egressVip` | `src/config.rs` | the old fabric's ranges |
+| `privateGateway` when empty | `src/net.rs` (gateway and hub branches) | the old Hetzner network's gateway |
+| `podCidr` when empty | `src/net.rs` | k3s's default pod range |
+| the image base of a pull without a reference (`ref`, `imageRef`) | `src/images.rs` | jarvis3's sandbox image on ghcr.io (wrong once hermit's sandbox image replaces it) |
+| `imageSource` when empty (where a burst host fetches an image by digest) | `src/images.rs` | `http://` + the old fabric's hub address + `:<imagePort>` (on hermit's fabric the gateway's overlay address, so a host.json without it fetches from nothing) |
+
+For WP-19: `imageSource` becomes required for a burst host (hermit's scaler writes the gateway's overlay address,
+`http://<gateway wgAddress>:<imagePort>`, into every user-data host.json; docs/HOST.md, "host.json"). The unit tests in
+`src/` and `tests/soak.py` (with `tests/fake/`) use the old fabric's addresses because they exercise these defaults;
+they move to placeholder ranges with them.
 
 ## Build and test
 

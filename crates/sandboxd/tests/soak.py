@@ -118,7 +118,7 @@ class Client:
 
 def spec(n, ip, mem=1 << 30):
     return {"name": f"sbx-{n}", "ip": ip, "image": DIGEST, "imageRef": "ghcr.io/de0ch/jarvis3-sandbox:test",
-            "env": {"HTTP_PROXY": "http://sbx:token@10.201.1.1:3128", "JARVIS_EXEC_TOKEN": "e" * 40, "NO_PROXY": "localhost"},
+            "env": {"HTTP_PROXY": "http://sbx:token@10.201.1.1:3128", "EXEC_TOKEN": "e" * 40, "NO_PROXY": "localhost"},
             "cpu": 1, "memory": mem, "cpuFeatures": "fpu,sse2"}
 
 
@@ -147,7 +147,7 @@ def functional(A, B, G, cl, intruder):
     bundle = json.load(open(f"{A.root}/var/lib/sbx/bundles/sbx-f1/config.json"))
     check("HOME=/home/sandbox" in bundle["process"]["env"] and "LANG=C.UTF-8" in bundle["process"]["env"], "bundle env")
     s, sp = cl.call(A.ip, "GET", "/v1/sandboxes/sbx-f1/spec")
-    check(s == 200 and sp["env"]["JARVIS_EXEC_TOKEN"] == "e" * 40 and sp["imageRef"].endswith(":test"), "spec")
+    check(s == 200 and sp["env"]["EXEC_TOKEN"] == "e" * 40 and sp["imageRef"].endswith(":test"), "spec")
     check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/spec")[0] == 404, "spec of a missing one: 404")
     check(cl.call(A.ip, "GET", "/v1/sandboxes/BAD/spec")[0] == 400, "bad name: 400")
     check(cl.call(A.ip, "DELETE", "/v1/sandboxes/sbx-nope") == (200, {"deleted": "sbx-nope"}), "delete a missing one")
