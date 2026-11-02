@@ -492,13 +492,8 @@ async fn delete_restore_and_delete_for_good() {
         .collect();
     assert_eq!(
         kinds,
-        vec![
-            "release_sandbox",
-            "release_sandbox",
-            "release_sandbox",
-            "delete_workspace"
-        ],
-        "a release per delete, then the purge's release and workspace deletion"
+        vec!["release_sandbox", "release_sandbox", "delete_workspace"],
+        "the second delete's release (the restore dropped the first's), then the purge's release and workspace deletion"
     );
     let events: i64 = conn
         .query_one("select count(*) from events where conversation_id = $1", &[&id])

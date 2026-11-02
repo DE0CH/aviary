@@ -597,6 +597,126 @@ async fn the_outbox_deletes_a_workspace_only_after_its_release_and_parks_what_do
     assert_eq!(left, 1, "only the parked item is left");
 }
 
+/// Delete, then restore: the delete's queued sandbox release is never delivered (it names only the conversation, so it
+/// would release the sandbox of the restored conversation's next turn). Restore drops it; a release that escaped the
+/// drop (restored behind the outbox's back) is dropped by the pass, uncalled.
+#[tokio::test]
+async fn a_restore_drops_the_deletes_sandbox_release() {
+    let db = common::fresh_db("outbox_restore").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let pigeon = a.pigeon();
+    let mk = |title: &'static str| {
+        let pigeon = pigeon.clone();
+        async move {
+            pigeon
+                .person(ALICE)
+                .create_conversation(&empty(title))
+                .await
+                .unwrap()
+                .get()
+                .conversation
+                .id
+        }
+    };
+    let pending = || async {
+        sql.get()
+            .await
+            .unwrap()
+            .query_one("select count(*) from outbox", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+    };
+    // hermit was failing: the release waits in the backoff while the person restores
+    let x = mk("x").await;
+    pigeon.person(ALICE).delete_conversation(x).await.unwrap();
+    let failing = Recorder::default();
+    *failing.fail.lock().unwrap() = 1;
+    assert_eq!(outbox::pass(a.pool(), &failing).await.unwrap(), 0);
+    assert_eq!(pending().await, 1);
+    pigeon.person(ALICE).restore_conversation(x).await.unwrap();
+    assert_eq!(pending().await, 0, "restore dropped the queued release");
+    sql.get()
+        .await
+        .unwrap()
+        .execute("update outbox set next_at = now()", &[])
+        .await
+        .unwrap();
+    let rec = Recorder::default();
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 0);
+    assert!(rec.calls.lock().unwrap().is_empty(), "no release after the restore");
+
+    // a release still queued for a conversation that is no longer deleted: the pass drops it without a call
+    let y = mk("y").await;
+    pigeon.person(ALICE).delete_conversation(y).await.unwrap();
+    sql.get()
+        .await
+        .unwrap()
+        .execute("update conversations set deleted_at = null where id = $1", &[&y])
+        .await
+        .unwrap();
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 0);
+    assert!(
+        rec.calls.lock().unwrap().is_empty(),
+        "the stale release was not delivered"
+    );
+    assert_eq!(pending().await, 0, "the stale release was dropped");
+
+    // delete again after the restore: the new release is delivered as usual
+    pigeon.person(ALICE).delete_conversation(x).await.unwrap();
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 1);
+    assert_eq!(
+        rec.calls.lock().unwrap().clone(),
+        vec![Item::ReleaseSandbox {
+            conversation_id: x,
+            reason: ConversationReleaseReason::Deleted
+        }]
+    );
+}
+
+/// A pass stops before the next item once the leader check fails: a replica that lost the lock mid-pass does not
+/// keep delivering beside the new leader.
+#[tokio::test]
+async fn an_outbox_pass_stops_when_leadership_is_lost() {
+    let db = common::fresh_db("outbox_lead").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    for title in ["a", "b", "c"] {
+        let id = pigeon
+            .person(ALICE)
+            .create_conversation(&empty(title))
+            .await
+            .unwrap()
+            .get()
+            .conversation
+            .id;
+        pigeon.person(ALICE).delete_conversation(id).await.unwrap();
+    }
+    let rec = Recorder::default();
+    let checks = Arc::new(Mutex::new(0u32));
+    let c = checks.clone();
+    let done = outbox::pass_while(a.pool(), &rec, move || {
+        let c = c.clone();
+        async move {
+            let mut n = c.lock().unwrap();
+            *n += 1;
+            *n <= 1
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(done, 1);
+    assert_eq!(rec.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        *checks.lock().unwrap(),
+        2,
+        "checked before each item, stopped at the second"
+    );
+}
+
 #[tokio::test]
 async fn the_outbox_calls_hermit_and_takes_404_as_done() {
     let db = common::fresh_db("outbox_hermit").await;

@@ -1,7 +1,9 @@
 //! Delete, restore and purge (M6), magpie 9.6.
 //!
 //! A soft delete puts the conversation in Recently deleted and releases its sandbox through the outbox; restore takes
-//! it out. A purge (the person's "delete for good" from Recently deleted, the 30-day job, a person purge) removes the
+//! it out and drops that release if it is still queued (the release names only the conversation, so delivered after a
+//! restore it would release the sandbox of the restored conversation's next turn; the outbox also re-checks, see
+//! [`outbox`]). A purge (the person's "delete for good" from Recently deleted, the 30-day job, a person purge) removes the
 //! conversation and everything it owns in one transaction and queues the hermit calls: the sandbox release and the
 //! workspace deletion, and each share's frozen workspace.
 
@@ -62,6 +64,7 @@ pub async fn restore(pool: &Pool, person: &Person, id: Uuid) -> Result<Conversat
         }
         t.execute("update conversations set deleted_at = null where id = $1", &[&id])
             .await?;
+        outbox::cancel_deleted_release(t, id).await?;
         changes::upserted(t, &person.email, id).await?;
         Ok(())
     })

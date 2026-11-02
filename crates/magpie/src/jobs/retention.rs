@@ -1,4 +1,8 @@
 //! Retention (magpie 15, 17): what magpie keeps only for a while.
+//!
+//! Each table is deleted in batches of [`limits::RETENTION_BATCH`] rows, one short statement each, until nothing is
+//! due: however far behind a pass starts (a leader that never ran, the import's old changes and operation ids), no
+//! statement comes near the statement timeout, so retention always catches up.
 
 use aviary_pg::Pool;
 
@@ -9,64 +13,76 @@ fn secs(d: std::time::Duration) -> f64 {
     d.as_secs_f64()
 }
 
+/// Deletes the rows of `table` matching `due` (which uses `$1`, a number of seconds), in batches; how many.
+async fn delete_due(pool: &Pool, table: &str, due: &str, age: std::time::Duration) -> Result<u64> {
+    let sql = format!("delete from {table} where ctid in (select ctid from {table} where {due} limit $2)");
+    let conn = pool.get().await?;
+    let mut n = 0;
+    loop {
+        let deleted = conn
+            .execute(sql.as_str(), &[&secs(age), &limits::RETENTION_BATCH])
+            .await?;
+        n += deleted;
+        if deleted < u64::try_from(limits::RETENTION_BATCH).unwrap_or(u64::MAX) {
+            return Ok(n);
+        }
+    }
+}
+
+/// The tables, what is due in each, and after how long. Unattached uploads' blob refs go before the uploads (the
+/// blob GC frees the bytes).
+const DUE: &[(&str, &str, std::time::Duration)] = &[
+    (
+        "blob_refs",
+        "owner_kind = 'upload' and owner in (select id from uploads where conversation_id is null
+           and created_at < now() - make_interval(secs => $1))",
+        limits::UNATTACHED_UPLOAD,
+    ),
+    (
+        "uploads",
+        "conversation_id is null and created_at < now() - make_interval(secs => $1)",
+        limits::UNATTACHED_UPLOAD,
+    ),
+    (
+        "commands",
+        "acked_at < now() - make_interval(secs => $1)",
+        limits::IDEMPOTENCY_RETENTION,
+    ),
+    (
+        "cc_ops",
+        "at < now() - make_interval(secs => $1)",
+        limits::IDEMPOTENCY_RETENTION,
+    ),
+    (
+        "report_ids",
+        "at < now() - make_interval(secs => $1)",
+        limits::IDEMPOTENCY_RETENTION,
+    ),
+    (
+        "changes",
+        "at < now() - make_interval(secs => $1)",
+        limits::CHANGES_RETENTION,
+    ),
+    (
+        "sent_staging",
+        "created_at < now() - make_interval(secs => $1)",
+        limits::SENT_STAGING_RETENTION,
+    ),
+    (
+        "cc_limbo",
+        "reason = 'moved' and removed_at < now() - make_interval(secs => $1)",
+        limits::MOVED_LIMBO,
+    ),
+];
+
 /// One pass; how many rows were deleted.
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn pass(pool: &Pool) -> Result<u64> {
-    let conn = pool.get().await?;
     let mut n = 0;
-    // unattached uploads after 24 h (their blob refs first; the blob GC frees the bytes)
-    n += conn
-        .execute(
-            "delete from blob_refs where owner_kind = 'upload' and owner in
-               (select id from uploads where conversation_id is null
-                  and created_at < now() - make_interval(secs => $1))",
-            &[&secs(limits::UNATTACHED_UPLOAD)],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from uploads where conversation_id is null and created_at < now() - make_interval(secs => $1)",
-            &[&secs(limits::UNATTACHED_UPLOAD)],
-        )
-        .await?;
-    let day = secs(limits::IDEMPOTENCY_RETENTION);
-    n += conn
-        .execute(
-            "delete from commands where acked_at < now() - make_interval(secs => $1)",
-            &[&day],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from cc_ops where at < now() - make_interval(secs => $1)",
-            &[&day],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from report_ids where at < now() - make_interval(secs => $1)",
-            &[&day],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from changes where at < now() - make_interval(secs => $1)",
-            &[&secs(limits::CHANGES_RETENTION)],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from sent_staging where created_at < now() - make_interval(secs => $1)",
-            &[&secs(limits::SENT_STAGING_RETENTION)],
-        )
-        .await?;
-    n += conn
-        .execute(
-            "delete from cc_limbo where reason = 'moved' and removed_at < now() - make_interval(secs => $1)",
-            &[&secs(limits::MOVED_LIMBO)],
-        )
-        .await?;
+    for (table, due, age) in DUE {
+        n += delete_due(pool, table, due, *age).await?;
+    }
     Ok(n)
 }

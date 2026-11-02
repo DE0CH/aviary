@@ -59,5 +59,12 @@ the conversation routes; `tests/changes.rs` the change feed and the fan-out acro
   truncated to the wire's milliseconds skips entries that share a time or differ by less than a millisecond. Each
   entry carries its `id`; entries are ordered newest first by `(at, id)` and a page holds those older than the
   `before` entry (migration `0003_view_as_order.sql` adds the index).
+- `/v1/ops/stats` `events` and `rows` are Postgres's estimates (`pg_class.reltuples`), so the call does not grow
+  with the two largest tables; the other figures are exact.
+- Restore drops the delete's queued `release_sandbox {reason: deleted}`, and the outbox drops one whose
+  conversation is no longer deleted before calling hermit (magpie 9.6 says only that the next turn gets a new
+  sandbox; the release names only the conversation, so a late one would release the restored conversation's live
+  sandbox). A release already in flight when the restore commits still lands; the window is one hermit call
+  (10 s at most); a turn caught by it fails `sandbox.lost` (magpie 8.8) and the next turn gets a new sandbox.
 - Until WP-14's admission, a create whose first message has text or attachments answers 501 `not_supported` and
   commits nothing; an empty first message creates the conversation without a turn.

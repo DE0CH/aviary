@@ -108,7 +108,8 @@ pub async fn view_as(pool: &Pool, limit: Option<u32>, before: Option<u64>) -> Re
     Ok(ViewAsLog { view_as })
 }
 
-/// `GET /v1/ops/stats`.
+/// `GET /v1/ops/stats`. `events` and `rows`, the largest tables, are Postgres's estimates (`pg_class.reltuples`,
+/// kept by autovacuum and analyze), so the call stays cheap however much is stored; the other figures are exact.
 ///
 /// # Errors
 /// When a statement fails.
@@ -120,8 +121,8 @@ pub async fn stats(pool: &Pool) -> Result<OpsStats> {
             "select
                (select count(*) from conversations where deleted_at is null) as conversations,
                (select count(*) from conversations where deleted_at is not null) as deleted,
-               (select count(*) from events) as events,
-               (select count(*) from rows) as rows,
+               (select greatest(reltuples, 0)::bigint from pg_class where oid = 'events'::regclass) as events,
+               (select greatest(reltuples, 0)::bigint from pg_class where oid = 'rows'::regclass) as rows,
                (select coalesce(sum(cc_bytes), 0)::bigint from conversations) as cc_bytes,
                (select count(*) from blobs where stored) as blobs,
                (select coalesce(sum(size), 0)::bigint from blobs where stored) as blob_bytes,

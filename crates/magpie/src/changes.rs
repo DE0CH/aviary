@@ -5,8 +5,8 @@
 //! A `conversation_upserted` change stores no conversation: the reader puts in the conversation's state when the
 //! change is read (pigeon 14.1), so a burst of upserts never sends stale states.
 //!
-//! [`read`] answers `after=latest` at once, 410 `cursor_expired` for a position older than retention keeps, and
-//! otherwise long-polls on the person's watch.
+//! [`read`] answers `after=latest` at once, 410 `cursor_expired` for a position older than retention keeps (checked
+//! in the page's own snapshot, on every look), and otherwise long-polls on the person's watch.
 //!
 //! The cursor: a reader asks for the next page `after` the seq of the last change it got (`headSeq` when a page
 //! came back empty). `headSeq` and the page come from one snapshot, so `headSeq` is at least every returned seq, and
@@ -135,7 +135,10 @@ pub async fn read(
         }
         After::Seq(n) => i64::try_from(n).map_err(|_| Error::bad_request("after is too large"))?,
     };
-    check_cursor(app.pool, person, &p, after).await?;
+    if after > p.change_seq {
+        // a position this feed never had (another deployment's, or a reset): start over from M1
+        return Err(Error::code(ErrorCode::CursorExpired, "cursor is past the feed's head"));
+    }
     let wait = Duration::from_millis(wait_ms.unwrap_or(0));
     let key = p.person_key.clone();
     let generation_empty = generation.clone();
@@ -168,36 +171,12 @@ pub async fn read(
         .await
 }
 
-/// 410 `cursor_expired` when changes after `after` were already deleted by retention (the oldest kept change is
-/// more than one past it), or `after` is past the head.
-async fn check_cursor(pool: &Pool, person: &str, p: &PersonRow, after: i64) -> Result<()> {
-    if after > p.change_seq {
-        // a position this feed never had (another deployment's, or a reset): start over from M1
-        return Err(Error::code(ErrorCode::CursorExpired, "cursor is past the feed's head"));
-    }
-    if after == p.change_seq {
-        return Ok(());
-    }
-    let row = pool
-        .get()
-        .await?
-        .query_one("select min(seq) from changes where person = $1", &[&person])
-        .await?;
-    let oldest: Option<i64> = row.get(0);
-    // with nothing kept, the next change would be head + 1
-    let oldest = oldest.unwrap_or(p.change_seq + 1);
-    if after < oldest - 1 {
-        return Err(Error::code(
-            ErrorCode::CursorExpired,
-            "changes after the cursor are no longer kept",
-        ));
-    }
-    Ok(())
-}
-
 /// The head and up to `limit` changes after `after`, upserts filled with the conversations' current state (a
 /// purged conversation's upsert reads as its removal). All in one snapshot, so the head is never older than a change
-/// of the page, and a page shorter than `limit` ends at the head.
+/// of the page, and a page shorter than `limit` ends at the head. The retention check is in the same snapshot and
+/// runs on every look of a held poll: 410 `cursor_expired` when changes after `after` were already deleted (the
+/// oldest kept change is more than one past it), so a retention pass between looks can never make a page skip
+/// changes.
 async fn page(pool: &Pool, person: &str, after: i64, limit: i64) -> Result<(i64, Vec<Change>)> {
     aviary_pg::tx!(pool, |t| -> Result<(i64, Vec<Change>)> {
         crate::db::snapshot(t).await?;
@@ -211,6 +190,19 @@ async fn page_in(conn: &impl Db, person: &str, after: i64, limit: i64) -> Result
         .query_one("select change_seq from persons where person = $1", &[&person])
         .await?
         .get(0);
+    if after < head {
+        let oldest: Option<i64> = conn
+            .query_one("select min(seq) from changes where person = $1", &[&person])
+            .await?
+            .get(0);
+        // with nothing kept, the next change would be head + 1
+        if after < oldest.unwrap_or(head + 1) - 1 {
+            return Err(Error::code(
+                ErrorCode::CursorExpired,
+                "changes after the cursor are no longer kept",
+            ));
+        }
+    }
     let rows = conn
         .query(
             "select seq, at, type, conversation_id, data from changes

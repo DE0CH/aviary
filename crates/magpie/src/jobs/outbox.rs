@@ -7,6 +7,15 @@
 //! not promise that deleting a workspace under a live sandbox is safe). An item that does not parse is logged and
 //! looked at again only hourly, so it never holds up the queue.
 //! An item failing for 24 h logs `outbox failing` on every later attempt, which the backoff makes hourly.
+//!
+//! A `release_sandbox {reason: deleted}` is meant for a conversation in Recently deleted (or purged). Restore drops
+//! the queued one ([`cancel_deleted_release`]), and the pass checks again just before the call: an item whose
+//! conversation is no longer deleted is dropped uncalled, so a release held back by hermit's backoff never lands on
+//! the sandbox of a restored conversation's later turn.
+//!
+//! Leadership is confirmed before each item (`still_leading`), not only before the pass: a pass with hermit
+//! unreachable can take minutes, and a replica that lost the lock stops at the next item instead of racing the new
+//! leader on the same items.
 
 use std::future::Future;
 use std::time::Duration;
@@ -72,6 +81,34 @@ pub async fn enqueue(tx: &Tx<'_>, item: &Item) -> Result<()> {
     Ok(())
 }
 
+/// Drops `conversation`'s queued `release_sandbox {reason: deleted}` items, in `tx` (restore).
+///
+/// # Errors
+/// When the statement fails.
+pub async fn cancel_deleted_release(tx: &Tx<'_>, conversation: Uuid) -> Result<u64> {
+    Ok(tx
+        .execute(
+            "delete from outbox where kind = 'release_sandbox'
+               and payload->>'conversationId' = $1 and payload->>'reason' = 'deleted'",
+            &[&conversation.to_string()],
+        )
+        .await?)
+}
+
+/// Whether a `release_sandbox {reason: deleted}` for `conversation` still applies: the conversation is in Recently
+/// deleted or gone.
+async fn deleted_release_applies(pool: &Pool, conversation: Uuid) -> Result<bool> {
+    let row = pool
+        .get()
+        .await?
+        .query_opt(
+            "select deleted_at is not null from conversations where id = $1",
+            &[&conversation],
+        )
+        .await?;
+    Ok(row.is_none_or(|r| r.get::<_, bool>(0)))
+}
+
 /// How one call ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -126,6 +163,18 @@ pub fn backoff(attempts: i32) -> Duration {
 /// # Errors
 /// When a statement fails.
 pub async fn pass(pool: &Pool, deliver: &impl Deliver) -> Result<usize> {
+    pass_while(pool, deliver, || async { true }).await
+}
+
+/// [`pass`], stopping before the next item once `still_leading` answers false (the job leader's lock check).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn pass_while<F, Fut>(pool: &Pool, deliver: &impl Deliver, mut still_leading: F) -> Result<usize>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
     let rows = pool
         .get()
         .await?
@@ -161,6 +210,23 @@ pub async fn pass(pool: &Pool, deliver: &impl Deliver) -> Result<usize> {
                 .await?;
             continue;
         };
+        if !still_leading().await {
+            tracing::info!("outbox pass stopped: no longer the job leader");
+            break;
+        }
+        if let Item::ReleaseSandbox {
+            conversation_id,
+            reason: ConversationReleaseReason::Deleted,
+        } = &item
+            && !deleted_release_applies(pool, *conversation_id).await?
+        {
+            pool.get()
+                .await?
+                .execute("delete from outbox where id = $1", &[&id])
+                .await?;
+            tracing::info!(id, conversation = %conversation_id, "outbox release dropped: the conversation was restored");
+            continue;
+        }
         let outcome = tokio::time::timeout(limits::OUTBOX_CALL_TIMEOUT, deliver.deliver(&item))
             .await
             .unwrap_or_else(|_| Outcome::Retry("timed out".into()));

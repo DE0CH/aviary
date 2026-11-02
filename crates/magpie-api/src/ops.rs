@@ -174,9 +174,9 @@ pub struct OpsStats {
     pub conversations: u64,
     /// In Recently deleted.
     pub deleted: u64,
-    /// Events.
+    /// Events (Postgres's estimate, `pg_class.reltuples`).
     pub events: u64,
-    /// Timeline rows.
+    /// Timeline rows (Postgres's estimate).
     pub rows: u64,
     /// Claude Code state bytes.
     pub cc_bytes: u64,

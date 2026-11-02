@@ -146,6 +146,57 @@ async fn a_cursor_older_than_retention_answers_410() {
     assert_eq!(e.code(), Some(&ErrorCode::CursorExpired));
 }
 
+/// Retention deletes in batches until nothing is due: a backlog several batches long (a leader that never ran, the
+/// import's old rows) is cleared in one pass, and what is still kept stays.
+#[tokio::test]
+async fn retention_clears_a_backlog_larger_than_a_batch() {
+    let db = common::fresh_db("retbatch").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    alice.create_conversation(&empty("kept")).await.unwrap();
+    let old = 2 * magpie::limits::RETENTION_BATCH + 17;
+    sql.get()
+        .await
+        .unwrap()
+        .execute(
+            "insert into changes (person, seq, at, type, conversation_id, data)
+               select $1, -g, now() - interval '31 days', 'conversation_upserted', gen_random_uuid(), '{}'
+               from generate_series(1::bigint, $2::bigint) g",
+            &[&ALICE, &old],
+        )
+        .await
+        .unwrap();
+    sql.get()
+        .await
+        .unwrap()
+        .execute(
+            "insert into cc_ops (scope, op_id, result, at)
+               select gen_random_uuid(), gen_random_uuid(), '{}', now() - interval '2 days'
+               from generate_series(1::bigint, $1::bigint) g",
+            &[&old],
+        )
+        .await
+        .unwrap();
+    let deleted = magpie::jobs::retention::pass(a.pool()).await.unwrap();
+    assert_eq!(deleted, u64::try_from(2 * old).unwrap());
+    let left: i64 = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select (select count(*) from changes) + (select count(*) from cc_ops)",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(left, 1, "only the recent change is kept");
+    assert_eq!(magpie::jobs::retention::pass(a.pool()).await.unwrap(), 0);
+}
+
 #[tokio::test]
 async fn joining_from_the_list_loses_nothing() {
     let db = common::fresh_db("join").await;
@@ -209,6 +260,8 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
     commits.ready().await;
     let poller = a.pigeon();
     let writer = b.pigeon();
+    // the writer's first request makes its person row and warms its connections: its own cost is not the fan-out's
+    writer.person(ALICE).create_conversation(&empty("warm")).await.unwrap();
     let head = poller
         .person(ALICE)
         .changes(&q(After::Latest, None))
@@ -217,6 +270,7 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
         .head_seq;
     let mut after = head;
     let mut lags = Vec::new();
+    let mut from_write = Vec::new();
     for i in 0..7 {
         let poll = {
             let c = poller.clone();
@@ -238,6 +292,7 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
         };
         // the poll is held before the write
         tokio::time::sleep(Duration::from_millis(150)).await;
+        let write_started = Instant::now();
         writer
             .person(ALICE)
             .create_conversation(&empty(&format!("f{i}")))
@@ -247,13 +302,20 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
         let (woke, r) = poll.await.unwrap();
         assert_eq!(r.changes.len(), 1);
         after = r.head_seq;
+        // from before the write was sent: the write's own request and commit, Postgres's notify queue, B's LISTEN
+        // and the poll's answer all count (an upper bound on the lag from the commit)
+        from_write.push(woke.duration_since(write_started));
         // a poll answered before the test's listener saw the commit woke within no time of it
         lags.push(woke.checked_duration_since(committed).unwrap_or(Duration::ZERO));
     }
     commits.stop().await;
     assert!(
+        from_write.iter().all(|l| *l < Duration::from_millis(50)),
+        "every wake-up within 50 ms of the write: {from_write:?}"
+    );
+    assert!(
         lags.iter().all(|l| *l < Duration::from_millis(50)),
-        "every wake-up within 50 ms of the commit: {lags:?}"
+        "every wake-up within 50 ms of the commit as a listener sees it: {lags:?}"
     );
 }
 

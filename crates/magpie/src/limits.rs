@@ -58,6 +58,9 @@ pub const OUTBOX_FAILING_LOG_EVERY: Duration = Duration::from_hours(1);
 pub const OUTBOX_CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// The retention job: how often.
 pub const RETENTION_EVERY: Duration = Duration::from_hours(1);
+/// Retention deletes at most this many rows per statement, looping until nothing is due, so a pass after a long
+/// pause (or the first after the import) never runs one statement past the statement timeout.
+pub const RETENTION_BATCH: i64 = 5_000;
 
 /// Postgres pool: request connections per replica (R11; plus one LISTEN and one leader connection).
 pub const POOL_SIZE: usize = 12;

@@ -1,7 +1,8 @@
 //! Background jobs (magpie 15). One replica at a time holds the job leader lock
 //! (`pg_try_advisory_lock(hashtext('magpie.jobs'))` on a dedicated connection, retried every 10 s by the others);
 //! losing the connection releases it, and a draining replica releases it first. Every job is idempotent, so a
-//! takeover mid-pass is safe. Before each pass a leader job confirms the lock ([`aviary_pg::Leader::confirm`]).
+//! takeover mid-pass is safe. Before each pass a leader job confirms the lock ([`aviary_pg::Leader::confirm`]); the
+//! outbox, whose pass can run for minutes with hermit unreachable, confirms it again before each item.
 //!
 //! WP-11's jobs: purge, outbox, retention. The others of magpie 15 (hermit feed, blob GC, blob uploader,
 //! availability tick, limbo flush, live cleanup, turn sweeper) are added here by their packages.
@@ -69,11 +70,13 @@ impl Jobs {
             }
         }));
         let p = pool.clone();
+        let l = leader.clone();
         tasks.push(leader_loop(leader.clone(), "outbox", iv.outbox, move || {
             let p = p.clone();
             let d = deliver.clone();
+            let l = l.clone();
             async move {
-                let n = outbox::pass(&p, d.as_ref()).await?;
+                let n = outbox::pass_while(&p, d.as_ref(), || l.confirm()).await?;
                 Ok(if n == 0 { String::new() } else { format!("{n} done") })
             }
         }));
