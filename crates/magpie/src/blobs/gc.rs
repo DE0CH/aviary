@@ -4,7 +4,8 @@
 //! a sent file row) and its `last_ref_at` is older than 24 h; inserting a reference bumps `last_ref_at` under the
 //! same row lock, so a blob about to be referenced is never freed. The row goes first (committed), then its objects
 //! (the stored bytes, the thumbnail, the display copy), all under the blob's exclusive advisory lock, which every
-//! writer of the blob's object holds shared (see [`super`]).
+//! writer of the blob's object holds shared (see [`super`]). The GC only tries that lock, on its own lock session
+//! ([`super::locks`]): a blob a writer is putting is left for the next pass, and no wait pins a connection.
 //!
 //! The reconcile lists the bucket and deletes objects older than 24 h whose blob has no row (a `PUT` whose
 //! transaction then failed, a derived copy made after its blob was freed), each re-checked under the same lock.
@@ -12,11 +13,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use aviary_pg::{Conn, Pool};
+use aviary_pg::Pool;
 use tokio::sync::Mutex;
 
 use super::store::{self, StoreError};
-use super::{Blobs, LOCK_CLASS, Sha, from_hex, lock_obj, to_hex};
+use super::{Blobs, Sha, from_hex, to_hex};
 use crate::error::Result;
 use crate::limits;
 
@@ -26,26 +27,6 @@ const FREE: &str = "b.stored and b.last_ref_at < now() - make_interval(secs => $
     and not exists (select 1 from blob_staging s where s.sha256 = b.sha256)
     and not exists (select 1 from uploads u where u.blob = b.sha256 or u.model_blob = b.sha256)
     and not exists (select 1 from sent_files f where f.blob = b.sha256)";
-
-/// The blob's exclusive lock, on a connection of its own (released with [`unlock`]).
-async fn lock(pool: &Pool, sha: &Sha) -> Result<Conn> {
-    let conn = pool.get().await?;
-    conn.execute(
-        "select pg_advisory_lock($1::int4, $2::int4)",
-        &[&LOCK_CLASS, &lock_obj(sha)],
-    )
-    .await?;
-    Ok(conn)
-}
-
-async fn unlock(conn: Conn, sha: &Sha) {
-    let _ = conn
-        .execute(
-            "select pg_advisory_unlock($1::int4, $2::int4)",
-            &[&LOCK_CLASS, &lock_obj(sha)],
-        )
-        .await;
-}
 
 fn grace() -> f64 {
     limits::BLOB_GC_GRACE.as_secs_f64()
@@ -95,6 +76,7 @@ pub async fn free(pool: &Pool, blobs: &Arc<Blobs>) -> Result<u64> {
             )
             .await?;
         let batch = rows.len();
+        let before = n;
         for r in rows {
             let sha: Vec<u8> = r.get(0);
             let Ok(sha) = Sha::try_from(sha.as_slice()) else {
@@ -104,14 +86,18 @@ pub async fn free(pool: &Pool, blobs: &Arc<Blobs>) -> Result<u64> {
                 n += 1;
             }
         }
-        if batch < usize::try_from(limits::BLOB_GC_BATCH).unwrap_or(usize::MAX) {
+        // a full batch of which nothing went (writers held them all) is not selected again this pass
+        if batch < usize::try_from(limits::BLOB_GC_BATCH).unwrap_or(usize::MAX) || n == before {
             return Ok(n);
         }
     }
 }
 
 async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
-    let conn = lock(pool, sha).await?;
+    let Some(lock) = blobs.gc_locks().try_exclusive(sha).await? else {
+        // a writer is putting it: it is about to be referenced
+        return Ok(false);
+    };
     let deleted = aviary_pg::tx!(pool, |t| -> Result<bool> {
         let Some(_) = t
             .query_opt(
@@ -130,7 +116,7 @@ async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
     let deleted = match deleted {
         Ok(d) => d,
         Err(e) => {
-            unlock(conn, sha).await;
+            lock.release().await;
             return Err(e);
         }
     };
@@ -138,13 +124,18 @@ async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
         blobs.cache.invalidate(sha).await;
         let hex = to_hex(sha);
         for key in [store::blob_key(&hex), store::thumb_key(&hex), store::display_key(&hex)] {
+            if !lock.held().await {
+                // the lock session ended: a writer may be putting the object again (the reconcile deletes leftovers)
+                tracing::warn!(key = %key, "blob lock lost; freed blob's objects left for the reconcile");
+                break;
+            }
             if let Err(e) = blobs.bucket.delete(&key).await {
                 // the reconcile deletes it later
                 tracing::warn!(error = %e, key = %key, "freed blob's object not deleted");
             }
         }
     }
-    unlock(conn, sha).await;
+    lock.release().await;
     Ok(deleted)
 }
 
@@ -196,20 +187,22 @@ pub async fn reconcile_before(pool: &Pool, blobs: &Arc<Blobs>, cutoff: time::Off
                 if known.contains(sha.as_slice()) {
                     continue;
                 }
-                let conn = lock(pool, &sha).await?;
+                let Some(lock) = blobs.gc_locks().try_exclusive(&sha).await? else {
+                    continue;
+                };
                 let exists = pool
                     .get()
                     .await?
                     .query_opt("select 1 from blobs where sha256 = $1", &[&sha.as_slice()])
                     .await?
                     .is_some();
-                if !exists {
+                if !exists && lock.held().await {
                     match blobs.bucket.delete(&key).await {
                         Ok(()) => n += 1,
                         Err(e) => tracing::warn!(error = %e, key = %key, "orphan object not deleted"),
                     }
                 }
-                unlock(conn, &sha).await;
+                lock.release().await;
             }
             match next {
                 Some(t) => token = Some(t),

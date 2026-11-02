@@ -4,10 +4,11 @@
 //! Every function here is CPU-bound and synchronous; callers run them on the blocking pool under
 //! [`super::Blobs`]'s decode permit (at most [`limits::DECODES`] at once per replica).
 
+use std::borrow::Cow;
 use std::io::Cursor;
 
 use fast_image_resize as fr;
-use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
+use image::{DynamicImage, ImageDecoder as _, ImageFormat, RgbImage, RgbaImage};
 
 use crate::limits;
 
@@ -150,6 +151,35 @@ fn pixels(w: u32, h: u32) -> u64 {
     u64::from(w) * u64::from(h)
 }
 
+/// The memory a decode of `bytes` holds at its peak, estimated from the header (for the decode memory budget,
+/// [`limits::DECODE_MEMORY_BYTES`]): two full frames at the decoded pixel size (the decoded image and the one
+/// turned upright or the decoder's own planes) and one 8-bit RGBA frame (the conversion of a 16-bit or grey image
+/// before resizing). An image over [`limits::DECODE_MAX_PIXELS`] or one whose header does not parse costs only its
+/// bytes: it is refused before anything is decoded.
+#[must_use]
+pub fn decode_memory(bytes: &[u8], mime: &str) -> u64 {
+    let small = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let Ok((w, h)) = dimensions(bytes, mime) else {
+        return small;
+    };
+    let px = pixels(w, h);
+    if px > limits::DECODE_MAX_PIXELS {
+        return small;
+    }
+    let per_pixel: u64 = if heif_family(mime) {
+        4
+    } else {
+        format_of(mime)
+            .and_then(|f| {
+                image::ImageReader::with_format(Cursor::new(bytes), f)
+                    .into_decoder()
+                    .ok()
+            })
+            .map_or(8, |d| u64::from(d.color_type().bytes_per_pixel()))
+    };
+    px.saturating_mul(per_pixel.saturating_mul(2) + 4).saturating_add(small)
+}
+
 /// Decodes `bytes` (at most [`limits::DECODE_MAX_PIXELS`]), turned upright.
 ///
 /// # Errors
@@ -207,19 +237,14 @@ fn decode_heif(bytes: &[u8]) -> Result<DynamicImage, ImageError> {
     })
 }
 
-/// `img` turned by EXIF orientation `o`.
+/// `img` turned by EXIF orientation `o`: flips and half turns in place, quarter turns into one new frame (the old
+/// one is freed as soon as it is made).
 #[must_use]
-pub fn orient(img: DynamicImage, o: u32) -> DynamicImage {
-    match o {
-        2 => img.fliph(),
-        3 => img.rotate180(),
-        4 => img.flipv(),
-        5 => img.rotate90().fliph(),
-        6 => img.rotate90(),
-        7 => img.rotate270().fliph(),
-        8 => img.rotate270(),
-        _ => img,
+pub fn orient(mut img: DynamicImage, o: u32) -> DynamicImage {
+    if let Some(o) = u8::try_from(o).ok().and_then(image::metadata::Orientation::from_exif) {
+        img.apply_orientation(o);
     }
+    img
 }
 
 /// The size fitting `(w, h)` into a long edge of `edge` (unchanged when it already fits).
@@ -240,22 +265,32 @@ fn has_alpha(img: &DynamicImage) -> bool {
     img.color().has_alpha()
 }
 
-/// Whether any pixel of `img` is not opaque.
+/// Whether any pixel of `img` is not opaque (read in place for 8-bit images).
 #[must_use]
 pub fn is_transparent(img: &DynamicImage) -> bool {
-    has_alpha(img) && img.to_rgba8().pixels().any(|p| p.0[3] < 255)
+    match img {
+        DynamicImage::ImageRgba8(b) => b.as_raw().as_chunks::<4>().0.iter().any(|p| p[3] < 255),
+        DynamicImage::ImageLumaA8(b) => b.as_raw().as_chunks::<2>().0.iter().any(|p| p[1] < 255),
+        _ => has_alpha(img) && img.to_rgba8().pixels().any(|p| p.0[3] < 255),
+    }
 }
 
-/// `img` (8-bit RGB or RGBA) fitted into a long edge of `edge` with Lanczos3.
+/// `img` as 8-bit RGB or RGBA: itself when it is one already.
+fn eight_bit(img: &DynamicImage) -> Cow<'_, DynamicImage> {
+    match img {
+        DynamicImage::ImageRgb8(_) | DynamicImage::ImageRgba8(_) => Cow::Borrowed(img),
+        _ if has_alpha(img) => Cow::Owned(DynamicImage::ImageRgba8(img.to_rgba8())),
+        _ => Cow::Owned(DynamicImage::ImageRgb8(img.to_rgb8())),
+    }
+}
+
+/// `img` as 8-bit RGB or RGBA fitted into a long edge of `edge` with Lanczos3 (`img` itself when it is 8-bit and
+/// fits already: no copy).
 ///
 /// # Errors
 /// [`ImageError::Unsupported`] when the resizer refuses.
-pub fn fit(img: &DynamicImage, edge: u32) -> Result<DynamicImage, ImageError> {
-    let src = if has_alpha(img) {
-        DynamicImage::ImageRgba8(img.to_rgba8())
-    } else {
-        DynamicImage::ImageRgb8(img.to_rgb8())
-    };
+pub fn fit(img: &DynamicImage, edge: u32) -> Result<Cow<'_, DynamicImage>, ImageError> {
+    let src = eight_bit(img);
     let (w, h) = fitted(src.width(), src.height(), edge);
     if (w, h) == (src.width(), src.height()) {
         return Ok(src);
@@ -263,16 +298,19 @@ pub fn fit(img: &DynamicImage, edge: u32) -> Result<DynamicImage, ImageError> {
     let mut dst = DynamicImage::new(w, h, src.color());
     let opts = fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));
     fr::Resizer::new()
-        .resize(&src, &mut dst, &opts)
+        .resize(src.as_ref(), &mut dst, &opts)
         .map_err(|e| ImageError::Unsupported(format!("resize: {e}")))?;
-    Ok(dst)
+    Ok(Cow::Owned(dst))
 }
 
-/// `img` on white, without alpha.
+/// `img` on white, without alpha (itself when it is 8-bit RGB).
 #[must_use]
-pub fn on_white(img: &DynamicImage) -> RgbImage {
+pub fn on_white(img: &DynamicImage) -> Cow<'_, RgbImage> {
+    if let DynamicImage::ImageRgb8(b) = img {
+        return Cow::Borrowed(b);
+    }
     if !has_alpha(img) {
-        return img.to_rgb8();
+        return Cow::Owned(img.to_rgb8());
     }
     let rgba = img.to_rgba8();
     let mut out = RgbImage::new(rgba.width(), rgba.height());
@@ -283,7 +321,7 @@ pub fn on_white(img: &DynamicImage) -> RgbImage {
             o.0[c] = u8::try_from(v).unwrap_or(255);
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 fn encode(img: &DynamicImage, format: ImageFormat) -> Result<Vec<u8>, ImageError> {
@@ -347,8 +385,9 @@ pub fn model_copy(bytes: &[u8], mime: &str) -> Result<Option<Copy>, ImageError> 
             }
         }
         let white = on_white(&fit_);
+        let white = white.as_ref();
         for q in limits::MODEL_JPEG_QUALITIES {
-            let j = jpeg(&white, q)?;
+            let j = jpeg(white, q)?;
             if j.len() <= cap {
                 return Ok(Some(Copy {
                     bytes: j,
@@ -370,7 +409,8 @@ pub fn model_copy(bytes: &[u8], mime: &str) -> Result<Option<Copy>, ImageError> 
 /// # Errors
 /// [`ImageError`] from the decode.
 pub fn webp_fitted(bytes: &[u8], mime: &str, edge: u32) -> Result<Vec<u8>, ImageError> {
-    let img = fit(&decode(bytes, mime)?, edge)?;
+    let decoded = decode(bytes, mime)?;
+    let img = fit(&decoded, edge)?;
     let enc = webp::Encoder::from_image(&img).map_err(|e| ImageError::Unsupported(format!("webp: {e}")))?;
     Ok(enc.encode(limits::WEBP_QUALITY).to_vec())
 }

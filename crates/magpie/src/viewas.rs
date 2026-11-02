@@ -87,16 +87,16 @@ pub async fn start(db: &impl Db, req: &ViewAsRequest) -> Result<()> {
 }
 
 /// An admin's read of `conversation` through the admin routes (magpie 13): the first one per admin, conversation
-/// and day writes an `admin_read` row.
+/// and (UTC) day writes an `admin_read` row; a unique index makes concurrent first reads write one.
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn admin_read(db: &impl Db, admin: &str, person: &str, conversation: Uuid) -> Result<()> {
     db.execute(
         "insert into view_as_log (admin, person, session, event, conversation_id)
-         select $1, $2, 'admin', 'admin_read', $3
-         where not exists (select 1 from view_as_log where event = 'admin_read' and admin = $1
-                             and conversation_id = $3 and at >= date_trunc('day', now()))",
+         values ($1, $2, 'admin', 'admin_read', $3)
+         on conflict (admin, conversation_id, ((at at time zone 'UTC')::date)) where event = 'admin_read'
+         do nothing",
         &[&admin, &person, &conversation],
     )
     .await?;

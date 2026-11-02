@@ -35,6 +35,8 @@ pub const IDEMPOTENCY_RETENTION: Duration = Duration::from_hours(24);
 pub const SENT_STAGING_RETENTION: Duration = Duration::from_hours(1);
 /// `moved` limbo entries expire after this (the moved-limbo match window).
 pub const MOVED_LIMBO: Duration = Duration::from_mins(10);
+/// A clone recorded in `pending_workspaces` whose creating transaction never ran is given up after this long.
+pub const PENDING_WORKSPACE_EXPIRY: Duration = Duration::from_hours(1);
 
 /// cc write body, bytes (16 MiB; the supervisor splits larger writes).
 pub const CC_WRITE_MAX: usize = magpie_api::sandbox::CC_WRITE_MAX_BYTES;
@@ -114,6 +116,9 @@ pub const BUCKET_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 pub const BLOB_CACHE_BYTES: u64 = 256 << 20;
 /// Image decodes at once per replica.
 pub const DECODES: usize = 4;
+/// The memory image decodes may hold at once per replica (each takes its estimate, `images::decode_memory`; one over
+/// the budget runs alone). With the read cache and request bodies it keeps a replica inside its 1 GiB (magpie 18.2).
+pub const DECODE_MEMORY_BYTES: u64 = 384 << 20;
 /// An image decode over this many pixels answers 415 (40 megapixels).
 pub const DECODE_MAX_PIXELS: u64 = 40_000_000;
 /// Thumbnail: long edge, pixels.

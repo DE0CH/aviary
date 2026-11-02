@@ -189,7 +189,10 @@ impl Service {
             .build()
             .map_err(|e| StartError(aviary_pg::Error::Config(format!("http client: {e}"))))?;
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
-        let blobs = Arc::new(Blobs::new(&cfg.bucket));
+        let blobs = Arc::new(Blobs::new(&cfg.bucket, &cfg.database_url).map_err(|e| match e {
+            crate::error::Error::Db(d) => StartError(d),
+            other => StartError(aviary_pg::Error::Config(other.to_string())),
+        })?);
         let mut jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
         let driver = Driver {
             pool: pool.clone(),

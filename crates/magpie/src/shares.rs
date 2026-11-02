@@ -3,8 +3,14 @@
 //! copy-on-write clone in hermit (`workspace_id = uuidv5(SHARE_NS, "share:" + id)`). A later change, revoke or purge
 //! of the source never reaches the copy, and a continue copies the share, not the source.
 //!
-//! hermit's clone is made before the transaction (a transaction never calls out, platform 4.3); a transaction that
-//! then fails queues the clone's deletion in the outbox.
+//! hermit's clone is made before the transaction (a transaction never calls out, platform 4.3), with its workspace id
+//! recorded first in `pending_workspaces` so hermit's cleanup sees it as referenced; the transaction deletes that row,
+//! and one that fails queues the clone's deletion in the outbox.
+//!
+//! A frozen row is one whose source events are all within the share (`upto_seq`); a row of a finished turn that an
+//! event of the running turn has changed since is left out. A continue copies the share's rows and snapshot, the
+//! model recorded at the freeze, and from the source the bookkeeping of the share's own events (their seqs are at
+//! most `upto_seq`, and retractions made by later events are left out); the source must still be live.
 
 use aviary_pg::Tx;
 use base64::Engine as _;
@@ -132,9 +138,70 @@ async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid
     Ok(())
 }
 
+/// The rows whose source events are all at most `$N` (over `rows` or `share_rows`).
+fn within(n: u8) -> String {
+    format!("not exists (select 1 from unnest(source_seqs) x where x > ${n})")
+}
+
+/// Records `workspace` as a clone about to be made (before calling hermit).
+async fn pending(app: &Magpie, workspace: Uuid) -> Result<()> {
+    app.pool
+        .get()
+        .await?
+        .execute(
+            "insert into pending_workspaces (workspace_id) values ($1) on conflict do nothing",
+            &[&workspace],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn not_pending(t: &Tx<'_>, workspace: Uuid) -> Result<()> {
+    t.execute("delete from pending_workspaces where workspace_id = $1", &[&workspace])
+        .await?;
+    Ok(())
+}
+
+/// Retention (magpie 15): pending clones older than `age` whose creating replica went away; their clone's deletion
+/// is queued unless a conversation or a share references it after all. How many.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn expire_pending(pool: &aviary_pg::Pool, age: std::time::Duration) -> Result<u64> {
+    let secs = age.as_secs_f64();
+    aviary_pg::tx!(pool, |t| -> Result<u64> {
+        let rows = t
+            .query(
+                "delete from pending_workspaces where created_at < now() - make_interval(secs => $1)
+                 returning workspace_id",
+                &[&secs],
+            )
+            .await?;
+        let mut n = 0;
+        for r in rows {
+            let w: Uuid = r.get(0);
+            let referenced = t
+                .query_opt(
+                    "select 1 from conversations where id = $1 union all
+                     select 1 from shares where workspace_id = $1 and revoked_at is null limit 1",
+                    &[&w],
+                )
+                .await?
+                .is_some();
+            if !referenced {
+                outbox::enqueue(t, &Item::DeleteWorkspace { workspace_id: w }).await?;
+            }
+            n += 1;
+        }
+        Ok(n)
+    })
+    .await
+}
+
 /// Queues the deletion of a clone whose transaction failed.
 async fn drop_clone(app: &Magpie, workspace: Uuid) {
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
+        not_pending(t, workspace).await?;
         outbox::enqueue(
             t,
             &Item::DeleteWorkspace {
@@ -204,7 +271,10 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
     let f = freeze_point(&conn, conversation).await?;
     let any = conn
         .query_opt(
-            "select 1 from rows where conversation_id = $1 and kind = 'assistant' and source_seqs[1] <= $2 limit 1",
+            &format!(
+                "select 1 from rows where conversation_id = $1 and kind = 'assistant' and {} limit 1",
+                within(2)
+            ),
             &[&conversation, &f.upto],
         )
         .await?
@@ -216,8 +286,10 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
     let id = new_id()?;
     let workspace = workspace_of(&id);
     let clone = hermit_api::workspaces::CloneRequest { from: conversation };
+    pending(app, workspace).await?;
     if let Err(e) = app.hermit.clone_workspace(workspace, &clone).await {
         tracing::warn!(error = %e, conversation = %conversation, "share: hermit could not clone the workspace");
+        drop_clone(app, workspace).await;
         return Err(Error::code(ErrorCode::ShareFailed, "the workspace could not be copied"));
     }
     let snapshot = Uuid::new_v4();
@@ -231,25 +303,26 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
         let row = t
             .query_one(
                 "insert into shares (id, conversation_id, owner, owner_name, title, upto_seq, snapshot,
-                                     provider_session_id, workspace_id)
-                 select $1, c.id, c.person, $3, c.title, $4, $5, c.provider_session_id, $6
+                                     provider_session_id, workspace_id, model)
+                 select $1, c.id, c.person, $3, c.title, $4, $5, c.provider_session_id, $6, c.model
                  from conversations c where c.id = $2
                  returning created_at",
                 &[idr, &conversation, &owner_name, &f.upto, &snapshot, &workspace],
             )
             .await?;
-        t.execute(
+        let frozen = format!(
             "insert into share_rows (share_id, row_id, seq_end, kind, at, turn_id, item, seqs, source_seqs,
                                      tool_use_id, message_id, block_index, is_prompt)
              select $1, row_id, seq_end, kind, at, turn_id, item, seqs, source_seqs, tool_use_id, message_id,
                     block_index, is_prompt
-             from rows where conversation_id = $2 and source_seqs[1] <= $3",
-            &[idr, &conversation, &f.upto],
-        )
-        .await?;
+             from rows where conversation_id = $2 and {}",
+            within(3)
+        );
+        t.execute(&frozen, &[idr, &conversation, &f.upto]).await?;
         let cut = f.cut.as_ref().map(|(p, o)| (p.as_str(), *o));
         copy_scope(t, conversation, snapshot, cut).await?;
         copy_refs(t, conversation, snapshot, "share").await?;
+        not_pending(t, workspace).await?;
         Ok(row.get(0))
     })
     .await;
@@ -458,8 +531,10 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
     let s = live(&app.pool.get().await?, share_id).await?;
     let id = Uuid::new_v4();
     let clone = hermit_api::workspaces::CloneRequest { from: s.workspace };
+    pending(app, id).await?;
     if let Err(e) = app.hermit.clone_workspace(id, &clone).await {
         tracing::warn!(error = %e, "continue: hermit could not clone the share's workspace");
+        drop_clone(app, id).await;
         return Err(Error::code(
             ErrorCode::ContinueFailed,
             "the workspace could not be copied",
@@ -473,22 +548,24 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
     let sr = &s;
     let (main_r, origin_r) = (&main, &origin);
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
-        // the share as it is now, under its row lock (a revoke may have come first)
-        let still = t
+        // the share as it is now, under its row lock and its source's (a revoke, a delete or a purge may have come
+        // first; the source's lock keeps it live until this commits)
+        // the source first, as a delete or a purge locks it before its shares
+        t.query_opt(
+            "select 1 from conversations where id = $1 and deleted_at is null for share",
+            &[&sr.conversation],
+        )
+        .await?
+        .ok_or_else(Error::not_found)?;
+        let model = t
             .query_opt(
-                "select 1 from shares where id = $1 and revoked_at is null for update",
+                "select model from shares where id = $1 and revoked_at is null for update",
                 &[&sr.id],
             )
             .await?
-            .is_some();
-        if !still {
-            return Err(Error::not_found());
-        }
+            .ok_or_else(Error::not_found)?;
+        let model: Option<String> = model.get(0);
         ensure_person(t, &person.email).await?;
-        let model: Option<String> = t
-            .query_opt("select model from conversations where id = $1", &[&sr.conversation])
-            .await?
-            .and_then(|r| r.get(0));
         let row_head: i64 = t
             .query_one(
                 "select coalesce(max(seq_end), 0) from share_rows where share_id = $1",
@@ -537,8 +614,8 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
         )
         .await?;
         t.execute(
-            "insert into retracted (conversation_id, seq) select $1, seq from retracted
-             where conversation_id = $2 and seq <= $3",
+            "insert into retracted (conversation_id, seq, by_seq) select $1, seq, by_seq from retracted
+             where conversation_id = $2 and seq <= $3 and coalesce(by_seq, seq) <= $3",
             &[&id, &sr.conversation, &sr.upto],
         )
         .await?;
@@ -549,8 +626,8 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
         )
         .await?;
         t.execute(
-            "insert into cc_retracted (conversation_id, uuid, seq) select $1, uuid, seq from cc_retracted
-             where conversation_id = $2 and seq <= $3",
+            "insert into cc_retracted (conversation_id, uuid, seq, by_seq) select $1, uuid, seq, by_seq
+             from cc_retracted where conversation_id = $2 and seq <= $3 and coalesce(by_seq, seq) <= $3",
             &[&id, &sr.conversation, &sr.upto],
         )
         .await?;
@@ -579,6 +656,7 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
         .await?;
         copy_refs(t, sr.snapshot, id, "conversation").await?;
         changes::upserted(t, &person.email, id).await?;
+        not_pending(t, id).await?;
         Ok(())
     })
     .await;

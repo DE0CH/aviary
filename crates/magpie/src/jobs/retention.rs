@@ -84,5 +84,6 @@ pub async fn pass(pool: &Pool) -> Result<u64> {
     for (table, due, age) in DUE {
         n += delete_due(pool, table, due, *age).await?;
     }
+    n += crate::shares::expire_pending(pool, limits::PENDING_WORKSPACE_EXPIRY).await?;
     Ok(n)
 }

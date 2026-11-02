@@ -1,13 +1,15 @@
 //! Files magpie serves: blobs by id (M15) and to the sandbox, the sandbox's blob `PUT`s (magpie 5.4, 11.2).
 
 use axum::body::{Body, Bytes};
+use axum::http::HeaderMap;
+use axum::response::Response;
 use magpie_api::errors::ErrorCode;
 use magpie_api::server::Ctx;
 use magpie_api::uploads::{BlobVariant, SandboxBlobAs};
 use magpie_api::{Admitted, Empty};
 
 use crate::app::Magpie;
-use crate::blobs::read::Served;
+use crate::blobs::read::respond;
 use crate::blobs::{self, RawBlob, Sha, images};
 use crate::error::{Error, Result};
 use crate::sandbox;
@@ -41,11 +43,12 @@ async fn blob_row(app: &Magpie, hex: &str) -> Result<blobs::BlobRow> {
 }
 
 /// M15: the blob `hex` in `variant`, if anything references it (a purged conversation's unshared blobs disappear at
-/// once for readers, before the GC frees the bytes).
+/// once for readers, before the GC frees the bytes). A revalidation naming its etag gets 304 before anything is
+/// fetched or decoded.
 ///
 /// # Errors
 /// 404, 415, 503; a statement error.
-pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant) -> Result<(Sha, Served)> {
+pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant, request: &HeaderMap) -> Result<Response> {
     let row = blob_row(app, hex).await?;
     let conn = app.pool.get().await?;
     let referenced = conn
@@ -57,6 +60,16 @@ pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant) -> Result
         .is_some();
     if !referenced {
         return Err(Error::not_found());
+    }
+    let tag = match variant {
+        BlobVariant::Full => "full",
+        BlobVariant::Display => "display",
+        BlobVariant::Thumb => "thumb",
+    };
+    if (variant == BlobVariant::Full || blobs::read::is_image(&row))
+        && let Some(r) = blobs::read::not_modified(&row.sha, tag, request)
+    {
+        return Ok(r);
     }
     let model = if variant == BlobVariant::Display {
         let m = conn
@@ -77,14 +90,14 @@ pub async fn serve_blob(app: &Magpie, hex: &str, variant: BlobVariant) -> Result
     };
     drop(conn);
     let served = app.blobs.variant(&app.pool, &row, variant, model.as_ref()).await?;
-    Ok((row.sha, served))
+    Ok(respond(&row.sha, served, request))
 }
 
-/// `GET /v1/sandbox/blobs/{sha}`: a blob the sandbox's conversation references.
+/// `GET /v1/sandbox/blobs/{sha}`: a blob the sandbox's conversation references (304 before any fetch, as M15).
 ///
 /// # Errors
 /// 404, 415, 503; a statement error.
-pub async fn serve_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, as_: SandboxBlobAs) -> Result<(Sha, Served)> {
+pub async fn serve_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, as_: SandboxBlobAs) -> Result<Response> {
     let db = app.pool.get().await?;
     let conv = sandbox::conversation(&db, ctx, false).await?;
     drop(db);
@@ -102,8 +115,16 @@ pub async fn serve_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, as_: Sandbox
     if !referenced {
         return Err(Error::not_found());
     }
+    let (tag, fits) = match as_ {
+        SandboxBlobAs::Raw => ("raw", true),
+        SandboxBlobAs::Media => ("media", row.encoding != "json-string"),
+        SandboxBlobAs::Text => ("text", row.encoding == "json-string"),
+    };
+    if fits && let Some(r) = blobs::read::not_modified(&row.sha, tag, &ctx.headers) {
+        return Ok(r);
+    }
     let served = app.blobs.for_sandbox(&app.pool, &row, as_).await?;
-    Ok((row.sha, served))
+    Ok(respond(&row.sha, served, &ctx.headers))
 }
 
 /// A raw blob's facts from its bytes: `media` for images and PDF (with the image's dimensions), `file` otherwise.
@@ -138,7 +159,14 @@ pub async fn put_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, body: Body) ->
     {
         let conn = app.pool.get().await?;
         sandbox::conversation(&conn, ctx, true).await?;
-        if blobs::row(&conn, &sha).await?.is_some_and(|r| r.stored) {
+        // a blob magpie has: its last_ref_at bumped, so the GC leaves it for the send's commit (magpie 5.3)
+        let had = conn
+            .execute(
+                "update blobs set last_ref_at = now() where sha256 = $1 and stored",
+                &[&sha.as_slice()],
+            )
+            .await?;
+        if had > 0 {
             return Ok(Admitted::Repeat(Empty {}));
         }
     }
@@ -151,7 +179,12 @@ pub async fn put_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, body: Body) ->
     }
     let facts = raw_facts(sha, &bytes, None);
     let (_, lock) = app.blobs.put_bytes(&app.pool, bytes).await?;
-    let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> { blobs::record_stored(t, &facts).await }).await;
+    let held = &lock;
+    let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
+        blobs::record_stored(t, &facts).await?;
+        held.check(t).await
+    })
+    .await;
     lock.release().await;
     r?;
     Ok(Admitted::New(Empty {}))
@@ -524,6 +557,13 @@ pub async fn sent_files(
             "insert into sent_staging (conversation_id, tool_use_id, files, caption) values ($1, $2, $3, $4)
              on conflict (conversation_id, tool_use_id) do update set files = $3, caption = $4, created_at = now()",
             &[&conv.id, tool_use_id, &files, caption],
+        )
+        .await?;
+        // the blobs magpie has get their last_ref_at bumped under their row locks, so the GC (which needs 24 h
+        // without one) leaves them for the commit; a blob the GC freed before this is missing and put again
+        t.execute(
+            "update blobs set last_ref_at = now() where sha256 = any($1::bytea[])",
+            &[&shas],
         )
         .await?;
         let rows = t

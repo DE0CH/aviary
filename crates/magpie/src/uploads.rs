@@ -1,6 +1,7 @@
 //! Uploads (M13, magpie 10): a file or image a person attaches, stored as a blob before the turn that uses it.
 //!
-//! The body (at most 50 MiB) is read whole, hashed and put in the bucket; then the blob rows, the upload row and its
+//! The body (at most 50 MiB) is read whole (the blob's key is its sha256, and an image is decoded from the whole
+//! body: README "Where this differs"), hashed and put in the bucket; then the blob rows, the upload row and its
 //! `upload` blob references commit together. An image also gets its model copy (magpie 10.2), which is its `display`
 //! variant; when the original is already fit for the model it is its own model copy. Unattached uploads are deleted
 //! by retention after 24 h; admission (magpie 8.2) attaches them to a turn.
@@ -58,9 +59,10 @@ async fn image_facts(app: &Magpie, bytes: &Bytes, name: &str) -> Result<ImageFac
         .to_owned();
     let raw = bytes.clone();
     let ty = mime.clone();
+    let memory = images::decode_memory(bytes, &mime);
     let made = app
         .blobs
-        .decode(move || {
+        .decode(memory, move || {
             let (width, height) = images::dimensions(&raw, &ty)?;
             let turned = (5..=8).contains(&images::orientation(&raw, &ty));
             let copy = images::model_copy(&raw, &ty)?;
@@ -131,7 +133,7 @@ pub async fn upload(app: &Magpie, person: &Person, meta: UploadMeta, body: Body)
     };
     let size_i = i64::try_from(size).unwrap_or(i64::MAX);
     let (w, h) = dims.map_or((None, None), |(w, h)| (i32::try_from(w).ok(), i32::try_from(h).ok()));
-    let (name_r, mime_r, facts_r, model_r) = (&name, &mime, &facts, &model);
+    let (name_r, mime_r, facts_r, model_r, locks_r) = (&name, &mime, &facts, &model, &locks);
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
         ensure_person(t, &person.email).await?;
         blobs::record_stored(t, facts_r).await?;
@@ -161,6 +163,9 @@ pub async fn upload(app: &Magpie, person: &Person, meta: UploadMeta, body: Body)
             blobs::reference(t, id, "upload", &m.sha).await?;
         }
         viewas::record(t, person, ViewAsEvent::Upload, None, None, Some(size)).await?;
+        for l in locks_r {
+            l.check(t).await?;
+        }
         Ok(())
     })
     .await;

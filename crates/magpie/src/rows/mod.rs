@@ -368,7 +368,7 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
         // rule 9
         EventBody::Retract(r) => {
             let seqs = r.seqs.iter().filter_map(|s| i64::try_from(*s).ok()).collect();
-            retract(tx, &mut w, seqs).await?;
+            retract(tx, &mut w, seqs, ev.seq).await?;
         }
         // rule 10, sidechain lines and unknown kinds: no row
         _ => {}
@@ -458,8 +458,8 @@ async fn place(
         return Ok((pos, Vec::new(), false));
     }
     tx.execute(
-        "insert into retracted (conversation_id, seq) values ($1, $2) on conflict do nothing",
-        &[&conversation, &r],
+        "insert into retracted (conversation_id, seq, by_seq) values ($1, $2, $3) on conflict do nothing",
+        &[&conversation, &r, &seq],
     )
     .await?;
     Ok((pos, rows_of(tx, conversation, r).await?, true))
@@ -605,14 +605,15 @@ async fn insert_block(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, mid: &str, b: de
     Ok(())
 }
 
-/// Rule 9.
-async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>) -> Result<()> {
+/// Rule 9 (`by`: the retract event's seq).
+async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result<()> {
     if seqs.is_empty() {
         return Ok(());
     }
     tx.execute(
-        "insert into retracted (conversation_id, seq) select $1, unnest($2::bigint[]) on conflict do nothing",
-        &[&w.conversation, &seqs],
+        "insert into retracted (conversation_id, seq, by_seq) select $1, unnest($2::bigint[]), $3
+         on conflict do nothing",
+        &[&w.conversation, &seqs, &by],
     )
     .await?;
     let touched = tx

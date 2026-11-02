@@ -3,7 +3,8 @@
 //!
 //! An item is claimed by pushing its `next_at` out by the claim time in one statement (`for update skip locked`), so
 //! two replicas never upload the same blob at once and an item whose replica died is taken again after the claim
-//! lapses. The `PUT` runs outside any transaction under the blob's shared lock; then one transaction sets `stored`
+//! lapses. The `PUT` runs outside any transaction under the blob's shared lock (on the lock session, holding no pooled
+//! connection); then one transaction sets `stored`
 //! and deletes the staging row. A failed `PUT` backs off (1 s doubling to 5 min) and logs `blob upload failing` at
 //! most every 10 min per replica.
 
@@ -70,12 +71,14 @@ impl Uploader {
     }
 
     async fn upload(&self, pool: &Pool, blobs: &Arc<Blobs>, sha: Sha, bytes: Bytes, attempts: i32) -> Result<bool> {
-        let lock = blobs.shared(pool, &sha).await?;
+        let lock = blobs.shared(&sha).await?;
         let put = blobs.put(&lock, &sha, bytes).await;
+        let held = &lock;
         let outcome = match put {
             Ok(()) => aviary_pg::tx!(pool, |t| -> Result<()> {
                 t.execute("update blobs set stored = true where sha256 = $1", &[&sha.as_slice()])
                     .await?;
+                held.check(t).await?;
                 t.execute("delete from blob_staging where sha256 = $1", &[&sha.as_slice()])
                     .await?;
                 Ok(())

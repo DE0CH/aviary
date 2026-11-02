@@ -167,6 +167,7 @@ impl Blobs {
         key: String,
         make: impl FnOnce(Bytes) -> Result<Vec<u8>, images::ImageError> + Send + 'static,
     ) -> Result<Bytes> {
+        let mime = row.mime.clone().unwrap_or_default();
         let reachable = match self.bucket.get(&key).await {
             Ok(b) => return Ok(b),
             Err(StoreError::NotFound) => true,
@@ -176,7 +177,8 @@ impl Blobs {
             }
         };
         let original = self.original(pool, row).await?;
-        let copy = match self.decode(move || make(original)).await? {
+        let memory = images::decode_memory(&original, &mime);
+        let copy = match self.decode(memory, move || make(original)).await? {
             Ok(b) => Bytes::from(b),
             Err(e) => return Err(Error::code(ErrorCode::UnsupportedType, e.to_string())),
         };
@@ -282,35 +284,54 @@ pub fn inline_type(content_type: &str) -> bool {
     (base.starts_with("image/") && base != "image/svg+xml") || base == "application/pdf"
 }
 
+/// A blob read's etag: content-addressed, so known before the bytes are fetched.
+#[must_use]
+pub fn etag(sha: &Sha, tag: &str) -> String {
+    if tag == "full" {
+        format!("\"{}\"", to_hex(sha))
+    } else {
+        format!("\"{}-{tag}\"", to_hex(sha))
+    }
+}
+
+fn base_headers(etag: &str) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    for (k, v) in [
+        (header::CACHE_CONTROL, "private, max-age=31536000, immutable"),
+        (header::ETAG, etag),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox"),
+    ] {
+        if let Ok(v) = HeaderValue::from_str(v) {
+            h.insert(k, v);
+        }
+    }
+    h
+}
+
+/// 304 when the request's `If-None-Match` names this read's etag: answered before the blob is fetched or decoded.
+#[must_use]
+pub fn not_modified(sha: &Sha, tag: &str, request: &HeaderMap) -> Option<Response> {
+    let etag = etag(sha, tag);
+    request
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"))
+        .then(|| (StatusCode::NOT_MODIFIED, base_headers(&etag)).into_response())
+}
+
 /// The answer for a blob read (magpie 5.4's headers): immutable, content-addressed, never sniffed or run.
 #[must_use]
 pub fn respond(sha: &Sha, served: Served, request: &HeaderMap) -> Response {
-    let etag = format!(
-        "\"{}{}\"",
-        to_hex(sha),
-        if served.tag == "full" {
-            String::new()
-        } else {
-            format!("-{}", served.tag)
-        }
-    );
-    let mut h = HeaderMap::new();
+    if let Some(r) = not_modified(sha, served.tag, request) {
+        return r;
+    }
+    let mut h = base_headers(&etag(sha, served.tag));
     let set = |h: &mut HeaderMap, k: header::HeaderName, v: &str| {
         if let Ok(v) = HeaderValue::from_str(v) {
             h.insert(k, v);
         }
     };
-    set(&mut h, header::CACHE_CONTROL, "private, max-age=31536000, immutable");
-    set(&mut h, header::ETAG, &etag);
-    set(&mut h, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
-    set(&mut h, header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox");
-    if request
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|t| t.trim() == etag || t.trim() == "*"))
-    {
-        return (StatusCode::NOT_MODIFIED, h).into_response();
-    }
     set(&mut h, header::CONTENT_TYPE, &served.content_type);
     let disposition = if inline_type(&served.content_type) {
         "inline".to_owned()

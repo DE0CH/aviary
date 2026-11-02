@@ -512,3 +512,95 @@ async fn cc_writes_that_add_blobs_keep_working_while_the_bucket_is_unreachable()
     );
     assert_eq!(sb.read(path).await.unwrap(), want);
 }
+
+#[tokio::test]
+async fn a_hanging_bucket_pins_no_request_connection() {
+    // the bucket accepts connections and never answers: uploads and the uploader hang in their PUTs (60 s each),
+    // holding their blob locks; cc writes and every other request keep their latency, past the pool's 5 s timeout
+    let db = common::fresh_db("hang").await;
+    let t = common::Tokens::new();
+    let bucket = common::test_bucket(&db.url).await;
+    let s3: std::net::SocketAddr = bucket.endpoint.trim_start_matches("http://").parse().unwrap();
+    let proxy = common::CutProxy::start(s3).await;
+    let mut via_proxy = bucket.clone();
+    via_proxy.endpoint = format!("http://{}", proxy.addr);
+    let r = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::fast(), via_proxy).await;
+    let sb = common::cc::Sandbox::leased(&r, ALICE).await;
+    sb.mkdirs("projects/-workspace").await;
+    proxy.stall();
+    // staged images for the uploader (every 100 ms here) to hang on
+    let path = "projects/-workspace/side.jsonl";
+    let mut offset = 0u64;
+    for i in 0..6u32 {
+        let noise: Vec<u8> = (0..4096u32)
+            .flat_map(|j| blobs::sha256(&(i * 4096 + j).to_le_bytes()))
+            .collect();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, noise);
+        let line = format!(
+            "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"{b64}\"}}}}]}}}}\n"
+        );
+        sb.write(path, offset, line.as_bytes()).await.unwrap();
+        offset += u64::try_from(line.len()).unwrap();
+    }
+    // 16 image uploads, each with a model copy (2 blob locks), all hanging in their PUTs
+    let mut uploads = Vec::new();
+    for i in 0..16u32 {
+        let c = r.pigeon();
+        let bytes = png(2100 + i, 40, false);
+        uploads.push(tokio::spawn(async move {
+            c.person(ALICE)
+                .upload("wide.png", magpie_api::uploads::UploadKind::Image, "image/png", bytes)
+                .await
+        }));
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        uploads.iter().all(|u| !u.is_finished()),
+        "the uploads should hang in the bucket"
+    );
+    let claimed: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from blob_staging where next_at > now()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(claimed >= 1, "the uploader should be holding staged blobs");
+    // 7 s of cc writes and reads: longer than the pool's 5 s wait, so a pinned pool would show as 503s
+    let mut took = Vec::new();
+    let end = tokio::time::Instant::now() + Duration::from_secs(7);
+    let line = b"{\"type\":\"system\",\"subtype\":\"note\"}\n";
+    let other = "projects/-workspace/other.jsonl";
+    let mut at = 0u64;
+    while tokio::time::Instant::now() < end {
+        let t0 = std::time::Instant::now();
+        sb.write(other, at, line)
+            .await
+            .expect("a cc write while the bucket hangs");
+        at += u64::try_from(line.len()).unwrap();
+        r.pigeon()
+            .person(ALICE)
+            .list_conversations(&magpie_api::conversations::ListQuery::default())
+            .await
+            .expect("a list while the bucket hangs");
+        took.push(t0.elapsed());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    took.sort();
+    let p99 = took[took.len() * 99 / 100];
+    assert!(took.len() >= 20, "only {} rounds", took.len());
+    assert!(
+        p99 < Duration::from_millis(500),
+        "p99 of a cc write and a list: {p99:?}"
+    );
+    assert!(
+        uploads.iter().all(|u| !u.is_finished()),
+        "the uploads are still hanging"
+    );
+    for u in uploads {
+        u.abort();
+    }
+    proxy.restore();
+}

@@ -13,13 +13,15 @@
 //!
 //! **The bucket and the GC.** A transaction never calls the bucket (platform 4.3), so "the bytes are in the bucket"
 //! and "the row says so" cannot change together. One lock keeps them consistent: every write of a blob's object (an
-//! upload, a sent file, the uploader) holds the blob's shared advisory lock ([`Blobs::shared`], a session lock on a
-//! pooled connection) from before its `PUT` until its row commits; the GC holds the exclusive one from before it
-//! deletes a row until it has deleted the objects. A GC therefore never deletes an object a writer has just put, and
-//! a writer never commits a row whose object a GC is deleting.
+//! upload, a sent file, the uploader) holds the blob's shared advisory lock ([`Blobs::shared`]) from before its `PUT`
+//! until its row commits; the GC holds the exclusive one from before it deletes a row until it has deleted the
+//! objects. A GC therefore never deletes an object a writer has just put, and a writer never commits a row whose
+//! object a GC is deleting. The locks sit on lock sessions of their own ([`locks`]), never on a connection of the
+//! request pool, so a bucket that hangs pins no request connection.
 
 pub mod gc;
 pub mod images;
+pub mod locks;
 pub mod read;
 pub mod staging;
 pub mod store;
@@ -28,7 +30,7 @@ pub mod uploader;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aviary_pg::{Conn, Pool};
+use aviary_pg::Pool;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 
@@ -38,6 +40,8 @@ use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::limits;
 use store::{Bucket, BucketConfig};
+
+pub use locks::SharedLock;
 
 /// A blob's SHA-256.
 pub type Sha = [u8; 32];
@@ -186,87 +190,93 @@ pub async fn reference(db: &impl Db, owner: uuid::Uuid, owner_kind: &str, blob: 
     Ok(())
 }
 
-/// A held shared blob lock ([`Blobs::shared`]); [`SharedLock::release`] gives it back (dropping the connection
-/// gives it back too: the pool resets a connection's session locks before handing it out again).
-#[derive(Debug)]
-pub struct SharedLock {
-    conn: Conn,
-    sha: Sha,
-}
-
-impl SharedLock {
-    /// Releases the lock.
-    pub async fn release(self) {
-        let _ = self
-            .conn
-            .execute(
-                "select pg_advisory_unlock_shared($1::int4, $2::int4)",
-                &[&LOCK_CLASS, &lock_obj(&self.sha)],
-            )
-            .await;
-    }
-}
-
-/// The blob store of one replica: the bucket, the read cache, the decode permits.
+/// The blob store of one replica: the bucket, the read cache, the decode permits, the blob lock sessions.
 #[derive(Debug)]
 pub struct Blobs {
     /// The bucket.
     pub bucket: Bucket,
     cache: moka::future::Cache<Sha, axum::body::Bytes>,
     decodes: Arc<Semaphore>,
+    decode_memory: Arc<Semaphore>,
+    writer_locks: locks::LockSession,
+    gc_locks: locks::LockSession,
+}
+
+/// The decode memory budget in permits of 1 MiB.
+fn memory_permits(bytes: u64) -> u32 {
+    let budget = u32::try_from(limits::DECODE_MEMORY_BYTES >> 20).unwrap_or(u32::MAX);
+    u32::try_from(bytes.div_ceil(1 << 20))
+        .unwrap_or(u32::MAX)
+        .clamp(1, budget)
 }
 
 impl Blobs {
-    /// The store for `cfg` (no request is made: the bucket's reachability never decides readiness, magpie 16.5).
-    #[must_use]
-    pub fn new(cfg: &BucketConfig) -> Self {
-        Self {
+    /// The store for `cfg`, its blob locks on the database at `database_url` (no request or connection is made: the
+    /// bucket's reachability never decides readiness, magpie 16.5).
+    ///
+    /// # Errors
+    /// When the database URL does not parse.
+    pub fn new(cfg: &BucketConfig, database_url: &str) -> Result<Self> {
+        Ok(Self {
             bucket: Bucket::new(cfg),
             cache: moka::future::Cache::builder()
                 .max_capacity(limits::BLOB_CACHE_BYTES)
                 .weigher(|_, v: &axum::body::Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
                 .build(),
             decodes: Arc::new(Semaphore::new(limits::DECODES)),
-        }
+            decode_memory: Arc::new(Semaphore::new(
+                usize::try_from(limits::DECODE_MEMORY_BYTES >> 20).unwrap_or(usize::MAX),
+            )),
+            writer_locks: locks::LockSession::new(database_url, "magpie-blob-locks")?,
+            gc_locks: locks::LockSession::new(database_url, "magpie-gc-locks")?,
+        })
     }
 
-    /// Takes `sha`'s shared lock (writers of its object; see the module docs).
+    /// Takes `sha`'s shared lock (writers of its object; see the module docs), on the writers' lock session.
     ///
     /// # Errors
-    /// When Postgres cannot be reached.
-    pub async fn shared(&self, pool: &Pool, sha: &Sha) -> Result<SharedLock> {
-        let conn = pool.get().await?;
-        conn.execute(
-            "select pg_advisory_lock_shared($1::int4, $2::int4)",
-            &[&LOCK_CLASS, &lock_obj(sha)],
-        )
-        .await?;
-        Ok(SharedLock { conn, sha: *sha })
+    /// 503 `unavailable` when it cannot be had within [`locks::SHARED_WAIT`].
+    pub async fn shared(&self, sha: &Sha) -> Result<SharedLock> {
+        self.writer_locks.shared(sha).await
     }
 
-    /// Puts `bytes` (whose sha is `sha`) into the bucket under the blob's key, with `lock` held by the caller.
+    /// The GC's lock session.
+    pub(crate) fn gc_locks(&self) -> &locks::LockSession {
+        &self.gc_locks
+    }
+
+    /// Puts `bytes` (whose sha is `sha`) into the bucket under the blob's key, with `lock` held by the caller. The
+    /// bytes are not kept in the read cache (an upload or a sent file is rarely read back at once; reads fill it).
     ///
     /// # Errors
     /// 503 `unavailable` when the bucket cannot be reached.
     pub async fn put(&self, _lock: &SharedLock, sha: &Sha, bytes: axum::body::Bytes) -> Result<()> {
         self.bucket
-            .put(&store::blob_key(&to_hex(sha)), bytes.clone(), None)
+            .put(&store::blob_key(&to_hex(sha)), bytes, None)
             .await
-            .map_err(|e| unavailable(&e))?;
-        self.cache.insert(*sha, bytes).await;
-        Ok(())
+            .map_err(|e| unavailable(&e))
     }
 
     /// Makes `bytes` a stored object: takes its shared lock and puts it in the bucket, unless its row says it is
-    /// stored already. The caller records the row ([`record_stored`]) and its references in a transaction, then
-    /// releases the lock.
+    /// stored already. The caller records the row ([`record_stored`]) and its references in a transaction that also
+    /// runs [`SharedLock::check`], then releases the lock. No connection of `pool` is held across the `PUT`.
     ///
     /// # Errors
-    /// 503 `unavailable` when the bucket cannot be reached; a statement error.
+    /// 503 `unavailable` when the bucket cannot be reached or the lock not had; a statement error.
     pub async fn put_bytes(&self, pool: &Pool, bytes: axum::body::Bytes) -> Result<(Sha, SharedLock)> {
         let sha = sha256(&bytes);
-        let lock = self.shared(pool, &sha).await?;
-        let stored = row(&lock.conn, &sha).await?.is_some_and(|r| r.stored);
+        let lock = self.shared(&sha).await?;
+        let stored = match pool.get().await {
+            Ok(conn) => row(&conn, &sha).await.map(|r| r.is_some_and(|r| r.stored)),
+            Err(e) => Err(e.into()),
+        };
+        let stored = match stored {
+            Ok(s) => s,
+            Err(e) => {
+                lock.release().await;
+                return Err(e);
+            }
+        };
         if !stored && let Err(e) = self.put(&lock, &sha, bytes).await {
             lock.release().await;
             return Err(e);
@@ -274,20 +284,24 @@ impl Blobs {
         Ok((sha, lock))
     }
 
-    /// Runs `f` (CPU-bound image work) on the blocking pool under a decode permit.
+    /// Runs `f` (CPU-bound image work) on the blocking pool under a decode permit and `memory` bytes of the decode
+    /// memory budget ([`limits::DECODE_MEMORY_BYTES`]; [`images::decode_memory`] estimates it).
     ///
     /// # Errors
     /// What `f` answers; [`Error::Internal`] when the task panicked.
     pub async fn decode<T: Send + 'static>(
         &self,
+        memory: u64,
         f: impl FnOnce() -> Result<T, images::ImageError> + Send + 'static,
     ) -> Result<Result<T, images::ImageError>> {
-        let _permit = self
-            .decodes
+        let closed = |_| Error::Internal("decode permits closed".into());
+        let _memory = self
+            .decode_memory
             .clone()
-            .acquire_owned()
+            .acquire_many_owned(memory_permits(memory))
             .await
-            .map_err(|_| Error::Internal("decode permits closed".into()))?;
+            .map_err(closed)?;
+        let _permit = self.decodes.clone().acquire_owned().await.map_err(closed)?;
         tokio::task::spawn_blocking(f)
             .await
             .map_err(|e| Error::Internal(format!("image task: {e}")))

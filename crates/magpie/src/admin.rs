@@ -25,7 +25,10 @@ use crate::{rows, viewas};
 /// `POST /v1/hermit/persons/{person}/purge` (caller hermit; decision 7: an operator's purge of a leaver): refused
 /// with 409 `person_allowed` while hermit still allows the person (asked again here), otherwise every conversation
 /// of the person purged as magpie 9.6 (shares revoked `offboarded`) and their unattached uploads deleted.
-/// Idempotent; a conversation the importer holds is left for a later call (409 `conversation_migrating`).
+/// Idempotent; a conversation the importer holds is left for a later call (409 `conversation_migrating`). Each
+/// conversation is purged in its own short transaction; a leaver with many conversations takes about 10-50 ms per
+/// conversation (a few hundred take seconds), well inside hermit's call timeout, and a retry after a timeout carries
+/// on where the last call stopped.
 ///
 /// # Errors
 /// 409 `person_allowed` / `conversation_migrating`; 503 when hermit cannot be reached; a statement error.
@@ -59,8 +62,11 @@ pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeRespo
     for id in ids {
         let p = &person;
         let done = aviary_pg::tx!(&app.pool, |t| -> Result<bool> {
-            let Ok(l) = conversations::lock(t, p, id).await else {
-                return Ok(false);
+            // gone meanwhile (a purge of its own): skipped; any other error fails the purge
+            let l = match conversations::lock(t, p, id).await {
+                Ok(l) => l,
+                Err(e) if e.is(&ErrorCode::NotFound) => return Ok(false),
+                Err(e) => return Err(e),
             };
             let Locked { migrating, .. } = l;
             if migrating {
@@ -107,7 +113,8 @@ fn migrating_refusal() -> Error {
 }
 
 /// `POST /v1/hermit/workspaces/exists`: the ids among `ids` that magpie still references — every conversation not
-/// purged (Recently deleted included) and every live share's frozen workspace.
+/// purged (Recently deleted included), every live share's frozen workspace, and every clone made for a share or a
+/// continue whose row has not committed yet (`pending_workspaces`).
 ///
 /// # Errors
 /// 400 for more than 1,000 ids; a statement error.
@@ -118,7 +125,8 @@ pub async fn workspaces_exist(db: &impl Db, req: &WorkspacesExistsRequest) -> Re
     let rows = db
         .query(
             "select id from conversations where id = any($1)
-             union select workspace_id from shares where revoked_at is null and workspace_id = any($1)",
+             union select workspace_id from shares where revoked_at is null and workspace_id = any($1)
+             union select workspace_id from pending_workspaces where workspace_id = any($1)",
             &[&req.ids],
         )
         .await?;

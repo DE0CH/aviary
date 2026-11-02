@@ -310,8 +310,9 @@ impl Replica {
     }
 }
 
-/// A TCP proxy in front of Postgres that a test can cut (every connection closed, new ones refused) and restore:
-/// "Postgres became unreachable" for the replicas behind it only.
+/// A TCP proxy in front of Postgres (or the bucket) that a test can cut (every connection closed, new ones refused),
+/// stall (every connection closed, new ones accepted and then never answered: a server that hangs) and restore:
+/// "it became unreachable" for the replicas behind it only.
 pub struct CutProxy {
     pub addr: SocketAddr,
     state: Arc<Mutex<ProxyState>>,
@@ -321,7 +322,9 @@ pub struct CutProxy {
 #[derive(Default)]
 struct ProxyState {
     cut: bool,
+    stall: bool,
     conns: Vec<JoinHandle<()>>,
+    held: Vec<TcpStream>,
 }
 
 impl Drop for CutProxy {
@@ -348,6 +351,13 @@ impl CutProxy {
                     let _ = inbound.shutdown().await;
                     continue;
                 }
+                {
+                    let mut s = st.lock().unwrap();
+                    if s.stall {
+                        s.held.push(inbound);
+                        continue;
+                    }
+                }
                 let conn = tokio::spawn(async move {
                     if let Ok(mut outbound) = TcpStream::connect(target).await {
                         let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
@@ -367,8 +377,20 @@ impl CutProxy {
         }
     }
 
+    /// New connections are accepted and never answered (the open ones are closed, so clients reconnect into it).
+    pub fn stall(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.stall = true;
+        for c in s.conns.drain(..) {
+            c.abort();
+        }
+    }
+
     pub fn restore(&self) {
-        self.state.lock().unwrap().cut = false;
+        let mut s = self.state.lock().unwrap();
+        s.cut = false;
+        s.stall = false;
+        s.held.clear();
     }
 }
 

@@ -8,29 +8,16 @@ use magpie_api::{Admitted, Empty};
 
 use super::{Answer, answer};
 use crate::app::Magpie;
-use crate::blobs::read::respond;
 use crate::files;
 
 /// M15 `GET /v1/blobs/{blobId}`.
 pub async fn blob(app: &Magpie, ctx: Ctx, blob_id: String, q: BlobQuery) -> Answer<Response> {
-    answer(
-        async {
-            let (sha, served) = files::serve_blob(app, &blob_id, q.variant.unwrap_or_default()).await?;
-            Ok(respond(&sha, served, &ctx.headers))
-        }
-        .await,
-    )
+    answer(async { files::serve_blob(app, &blob_id, q.variant.unwrap_or_default(), &ctx.headers).await }.await)
 }
 
 /// `GET /v1/sandbox/blobs/{sha}`.
 pub async fn sandbox_get(app: &Magpie, ctx: Ctx, sha: String, q: SandboxBlobQuery) -> Answer<Response> {
-    answer(
-        async {
-            let (sha, served) = files::serve_sandbox_blob(app, &ctx, &sha, q.as_.unwrap_or_default()).await?;
-            Ok(respond(&sha, served, &ctx.headers))
-        }
-        .await,
-    )
+    answer(async { files::serve_sandbox_blob(app, &ctx, &sha, q.as_.unwrap_or_default()).await }.await)
 }
 
 /// `PUT /v1/sandbox/blobs/{sha}`.

@@ -212,18 +212,18 @@ pub async fn retract(tx: &Tx<'_>, conversation: Uuid, turn: Option<Uuid>, mut se
     if seqs.is_empty() {
         return Ok(());
     }
-    tx.execute(
-        "insert into cc_retracted (conversation_id, uuid, seq)
-         select conversation_id, data->>'uuid', seq from events
-          where conversation_id = $1 and seq = any($2) and data->>'uuid' is not null
-         on conflict do nothing",
-        &[&conversation, &seqs],
-    )
-    .await?;
     let body = EventBody::Retract(Retract {
         seqs: seqs.iter().filter_map(|s| u64::try_from(*s).ok()).collect(),
     });
-    events::append(tx, conversation, NewEvent::of(&body)?.turn(turn)).await?;
+    let by = events::append(tx, conversation, NewEvent::of(&body)?.turn(turn)).await?;
+    tx.execute(
+        "insert into cc_retracted (conversation_id, uuid, seq, by_seq)
+         select conversation_id, data->>'uuid', seq, $3 from events
+          where conversation_id = $1 and seq = any($2) and data->>'uuid' is not null
+         on conflict do nothing",
+        &[&conversation, &seqs, &by],
+    )
+    .await?;
     tracing::info!(conversation = %conversation, lines = seqs.len(), "transcript lines retracted");
     Ok(())
 }
