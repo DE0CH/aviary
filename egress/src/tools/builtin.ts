@@ -24,7 +24,7 @@ export const webSearch: ToolDef = {
     "event. Works in Traditional/Simplified Chinese and English; for Hong Kong topics search in Chinese too (e.g. 「李家超 施政報告」). " +
     "Narrow with `since`/`until` (YYYY-MM-DD) for recent news and `include_domains` (e.g. info.gov.hk, rthk.hk, " +
     "hk01.com, mingpao.com). Follow up with web_fetch to read a result in full. For Hong Kong print/newspaper archives " +
-    "use the WiseSearch tools when listed (yyc_wisers_search, then yyc_wisers_doc); for 小紅書/抖音/微博/X/Threads posts use social_search; for Facebook, LinkedIn and other " +
+    "use the WiseSearch tools when listed (the one ending in _wisers_search, then _wisers_doc); for 小紅書/抖音/微博/X/Threads posts use social_search; for Facebook, LinkedIn and other " +
     "platforms' data use anyapi_search then anyapi_run.",
   inputSchema: {
     type: "object",

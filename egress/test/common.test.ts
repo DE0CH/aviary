@@ -95,7 +95,7 @@ test("Claude Code in a sandbox: egress for the model and tools, SendUserFile on,
   assert.equal(env.ANTHROPIC_BASE_URL, "http://10.201.1.1:3128/x/claude");
   assert.equal(env.CLAUDE_CODE_ATTACHMENTS_BY_PATH, "1");
   const mcp = JSON.parse(Buffer.from(env.JARVIS_CLAUDE_MCP!, "base64").toString());
-  assert.equal(mcp.mcpServers.yyc.url, "http://10.201.1.1:3128/x/tools/mcp");
+  assert.equal(mcp.mcpServers.tools.url, "http://10.201.1.1:3128/x/tools/mcp");
   assert.match(Buffer.from(env.JARVIS_CLAUDE_MD!, "base64").toString(), /# Your computer/);
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, "no contextWindow: Claude Code's own idea");
 });

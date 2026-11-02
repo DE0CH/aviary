@@ -39,7 +39,7 @@ export async function managedClaudeMd(config: ChatConfig): Promise<string> {
 export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egressToken: string): Promise<Record<string, string>> {
   const mcp = {
     mcpServers: {
-      yyc: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: { Authorization: `Bearer ${egressToken}` } },
+      tools: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: { Authorization: `Bearer ${egressToken}` } },
     },
   };
   const contextWindow = config.models.find((m) => m.id === config.defaultModel)?.contextWindow;
