@@ -152,6 +152,33 @@ async fn unknown_kid_refetches_with_a_cooldown_and_rotation_works() {
     assert_eq!(h.get_as(me(), STAFF).await.status(), 200);
 }
 
+#[tokio::test]
+async fn a_stale_key_set_is_used_while_one_refresh_runs() {
+    let h = Harness::start_with(pigeon::Tuning {
+        jwks_ttl: Duration::from_millis(300),
+        token_cache: Duration::from_millis(1),
+        ..tuning()
+    })
+    .await;
+    let t1 = &h.teams[0];
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let before = t1.jwks_hits.load(Ordering::SeqCst);
+    let mut all = Vec::new();
+    for i in 0..10 {
+        let r = h.as_token(h.get(me()), &t1.token(&format!("p{i}@example.org")));
+        all.push(tokio::spawn(r.send()));
+    }
+    for r in all {
+        assert_eq!(r.await.unwrap().unwrap().status(), 200, "the stale set still verifies");
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        t1.jwks_hits.load(Ordering::SeqCst),
+        before + 1,
+        "one background refresh for the burst"
+    );
+}
+
 // ---- People (spec 4.4) ----
 
 #[tokio::test]

@@ -477,15 +477,30 @@ impl Identities {
         let mut all = true;
         for app in &facts.sign_in.access {
             let have = self.0.teams.lock().is_ok_and(|t| t.contains_key(&app.team_domain));
-            if !have && self.fetch_jwks(&app.team_domain).await.is_err() {
+            if !have && self.fetch_jwks(&app.team_domain, false).await.is_err() {
                 all = false;
             }
         }
         all
     }
 
-    async fn fetch_jwks(&self, team: &str) -> Result<(), String> {
+    /// Fetches `team`'s keys. `coalesce`: skip when the set is fresh again (background refreshes; an unknown kid
+    /// always asks, within its cooldown).
+    async fn fetch_jwks(&self, team: &str, coalesce: bool) -> Result<(), String> {
         let _one = self.0.fetching.lock().await;
+        // a background refresh of a set another fetch has just made fresh again does nothing (a burst of requests
+        // on a stale set makes one request)
+        let just_fetched = coalesce
+            && self
+                .0
+                .teams
+                .lock()
+                .ok()
+                .and_then(|t| t.get(team).map(|k| k.fetched.elapsed() < self.0.tuning.jwks_ttl))
+                .unwrap_or(false);
+        if just_fetched {
+            return Ok(());
+        }
         let url = format!("{}{JWKS_PATH}", (self.0.access_origin)(team));
         let res = tokio::time::timeout(JWKS_TIMEOUT, self.0.http.get(url).send())
             .await
@@ -560,7 +575,7 @@ impl Identities {
                     let me = self.clone();
                     let team = team.to_owned();
                     tokio::spawn(async move {
-                        if let Err(e) = me.fetch_jwks(&team).await {
+                        if let Err(e) = me.fetch_jwks(&team, true).await {
                             tracing::warn!(team = %team, error = %e, "access keys not refreshed");
                         }
                     });
@@ -569,7 +584,7 @@ impl Identities {
             }
             Next::Refuse => None,
             Next::Fetch => {
-                if let Err(e) = self.fetch_jwks(team).await {
+                if let Err(e) = self.fetch_jwks(team, false).await {
                     tracing::warn!(team = %team, error = %e, "access keys not fetched");
                 }
                 let t = self.0.teams.lock().ok()?;
