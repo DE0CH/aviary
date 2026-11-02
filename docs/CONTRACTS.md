@@ -156,11 +156,13 @@ its age; with no answer yet, admit on the verified token. A hermit problem never
 
 **Routes.** On a fixed name only the paths of the table above are routed (anything else, and any path with a dot
 segment, an empty segment or a percent-encoded `.`, `/` or `\`, is 403 `not_allowed`: `FixedName::allows`). Strip the
-client's `Authorization`, `Proxy-Authorization`, `x-api-key` and every `Aviary-*` header but `Aviary-Protocol`
-(forwarded unchanged: the callee requires the client's surface number on every call and it names no identity;
-`headers::FORWARDED`); add `Aviary-Sandbox-Id`,
+client's `Authorization`, `Proxy-Authorization`, `x-api-key` and every `Aviary-*` header but the two the sandbox
+role may set (platform 3.5), forwarded unchanged (`headers::FORWARDED`): `Aviary-Protocol` (the callee requires
+the client's surface number on every call) and `Aviary-Lease` (the supervisor's lease, which magpie requires on
+every state-changing `/v1/sandbox/**` call and the command poll and checks against hermit's current sandbox,
+magpie 6.9); neither names an identity. Add `Aviary-Sandbox-Id`,
 `Aviary-Sandbox-Conversation`, `Aviary-Sandbox-Person` (trimmed, lowercased) from the verified token
-(`headers::identity`), `Aviary-Request` (the client's if it is a uuid v7, else new) and the callee's credential: the
+(`headers::identity`), `Aviary-Request` (the client's if it is a lowercase RFC 4122 uuid v7, else new) and the callee's credential: the
 gateway→magpie, gateway→hermit or gateway→tools pair bearer, or the model's own credential.
 
 **Transport.** Bodies stream both ways without buffering (SSE, NDJSON); first byte within 200 ms of the upstream's.

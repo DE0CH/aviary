@@ -614,8 +614,10 @@ const FORGED: &[(&str, &str)] = &[
     ("aviary-viewer", "forged@example.org"),
     ("aviary-sandbox-id", "00000000-0000-7000-8000-000000000000"),
     ("aviary-sandbox-person", "forged@example.org"),
-    ("aviary-lease", "00000000-0000-4000-8000-000000000000"),
 ];
+
+/// The supervisor's lease (magpie 6.9): the sandbox role may set it, so it reaches magpie unchanged.
+const LEASE: &str = "0190f6c2-0000-4000-8000-00000000c0de";
 
 async fn route_magpie(s: &Suite) -> Outcome {
     let case = "route.magpie";
@@ -625,6 +627,7 @@ async fn route_magpie(s: &Suite) -> Outcome {
         (CASE, case),
         ("aviary-request", rid.as_str()),
         ("aviary-protocol", "magpie-sandbox=1"),
+        ("aviary-lease", LEASE),
     ];
     hdrs.extend_from_slice(FORGED);
     let (st, _, b) = s
@@ -645,7 +648,7 @@ async fn route_magpie(s: &Suite) -> Outcome {
         seen.path_and_query
     );
     check_identity(&seen, &sbx, &s.o.tokens.gateway_to_magpie)?;
-    for h in ["aviary-person", "aviary-admin", "aviary-viewer", "aviary-lease"] {
+    for h in ["aviary-person", "aviary-admin", "aviary-viewer"] {
         ensure!(seen.header(h).is_none(), "the client's {h} reached magpie");
     }
     ensure!(
@@ -657,6 +660,16 @@ async fn route_magpie(s: &Suite) -> Outcome {
         seen.header("aviary-protocol") == Some("magpie-sandbox=1"),
         "the client's Aviary-Protocol did not reach magpie: {:?}",
         seen.header("aviary-protocol")
+    );
+    let lease: Vec<&str> = seen
+        .headers
+        .get_all("aviary-lease")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    ensure!(
+        lease == [LEASE],
+        "the supervisor's Aviary-Lease did not reach magpie unchanged: {lease:?}"
     );
     Ok(())
 }

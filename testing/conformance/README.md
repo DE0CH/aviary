@@ -39,7 +39,7 @@ the gateway's 1 s timeout, 503); the drain (`--sigterm`), which ends the replica
 | `credential.new-kid` | a key published after the gateway's last fetch is learnt on the first token naming it (the refetch of an unknown kid) |
 | `liveness.revoked`, `liveness.unknown-sandbox` | `live: false` → 403 within 30 s; hermit's 404 → 403 |
 | `liveness.hermit-outage` | a token seen before and one never seen are admitted on every request for the whole outage |
-| `route.magpie`, `route.magpie-request-id`, `route.hermit` | the `Aviary-Sandbox-*` triple from the token (person lowercased), the callee's pair bearer alone, no client `Authorization`, `x-api-key`, `Proxy-Authorization` or `Aviary-*` (but `Aviary-Protocol`, see below), a valid v7 `Aviary-Request` kept, an invalid one replaced |
+| `route.magpie`, `route.magpie-request-id`, `route.hermit` | the `Aviary-Sandbox-*` triple from the token (person lowercased), the callee's pair bearer alone, no client `Authorization`, `x-api-key`, `Proxy-Authorization` or `Aviary-*` (but `Aviary-Protocol` and `Aviary-Lease`, which arrive unchanged; see below), a valid lowercase v7 `Aviary-Request` kept, an invalid one replaced |
 | `route.magpie-not-sandbox`, `route.hermit` | non-sandbox paths (and dot or encoded-dot paths) 403, not forwarded |
 | `route.model-stream` | the gateway's model credential, never the sandbox's; the SSE body byte-identical; first data byte within 200 ms of the upstream's; 30 s unbroken |
 | `route.model-messages`, `route.models`, `api.models` | messages and `count_tokens` relayed unchanged; the R18 models shape through the proxy and in-cluster with pigeon's bearer (401 without) |
@@ -100,6 +100,12 @@ binary never sets them, and `tests/gateway.rs` checks that the suite fails each.
   hermit and magpie refuse a call without `Aviary-Protocol` (400 `unsupported_protocol`, platform 3.4) and the
   supervisor sends it through the gateway; it names no identity. `gateway_api::headers::FORWARDED` keeps it, and
   `route.magpie` checks that it arrives.
+- **`Aviary-Lease` is forwarded.** For the same 3.11.3 sentence: platform 3.5 lists `Aviary-Lease` as set by the
+  supervisor, and its rule is to strip only the headers the caller role may not set. magpie requires the lease on
+  every state-changing `/v1/sandbox/**` call and on the command poll (magpie 3.3, 6.9), and R32 sends all of those
+  through the gateway, so a gateway that strips it makes magpie refuse every supervisor write. The lease grants no
+  identity: magpie checks it against hermit's current sandbox. `headers::FORWARDED` keeps it, and `route.magpie`
+  sends one and requires it to reach magpie unchanged.
 - **A new request on a kept-alive connection during the drain is served** with `Connection: close` (3.11.6 step 2),
   not refused with 503 `unavailable` (3.11.5's last sentence): the drain section is the specific rule.
 - **"The next request on the busy keep-alive connection carries `Connection: close`"** is checked as the answer to the
