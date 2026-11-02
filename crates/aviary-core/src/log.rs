@@ -10,7 +10,7 @@
 
 use std::fmt::{self, Write as _};
 use std::io::Write as _;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use ring::digest;
 use tracing::field::{Field, Visit};
@@ -113,12 +113,39 @@ impl Sink for Capture {
     }
 }
 
+/// The service name and Pod of this process once [`init`] (or [`init_in_pod`]) has named them, for lines written
+/// before or without the layer (the start failure line of [`crate::env`]).
+static SVC: OnceLock<String> = OnceLock::new();
+static POD: OnceLock<String> = OnceLock::new();
+
+/// The service name set by [`init`], if any.
+pub(crate) fn svc_name() -> Option<&'static str> {
+    SVC.get().map(String::as_str)
+}
+
+/// The Pod name set by [`init`], if any.
+pub(crate) fn pod_name() -> Option<&'static str> {
+    POD.get().map(String::as_str)
+}
+
 /// Installs the JSON layer (level `info` and above) as the global subscriber for service `build`.
 /// A second call is ignored.
 pub fn init(build: &Build, pod: Option<String>, output: Output) {
+    let _ = SVC.set(build.name().to_owned());
+    if let Some(p) = &pod {
+        let _ = POD.set(p.clone());
+    }
     let layer = JsonLayer::new(build.name(), version::sha12(), pod, output);
     let subscriber = tracing_subscriber::registry().with(layer.with_filter(LevelFilter::INFO));
     let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
+/// [`init`] for a service in a Pod: names the service first, then reads `POD_NAME` (the downward API) with
+/// [`crate::env::field`], so a missing `POD_NAME` aborts with a line that already carries `svc` and `ver`.
+pub fn init_in_pod(build: &Build, output: Output) {
+    let _ = SVC.set(build.name().to_owned());
+    let pod = crate::env::field("POD_NAME");
+    init(build, Some(pod), output);
 }
 
 /// A subscriber writing to `sink` at level `info` and above, for tests (`tracing::subscriber::with_default`).
@@ -345,23 +372,30 @@ pub fn person_key(email: &str) -> String {
     key
 }
 
-/// Removes what could be a credential from a string (platform 15.1; the port of jarvis3 `common/log.ts` `redact()`).
-/// Rules, in order:
-/// 1. `Bearer <x>`, `Basic <x>` (any case) → `Bearer [redacted]`, `Basic [redacted]`;
-/// 2. userinfo in a URL, `scheme://user:pass@host` or `scheme://token@host` → `scheme://[redacted]@host`;
-/// 3. a query or form parameter whose name contains `token`, `key`, `secret`, `password`, `sig` or `signature` (any
-///    case) → `<name>=[redacted]`;
-/// 4. hermit's tokens, `hst1.…` and `hct_…` → `[redacted]` (whole, however short);
-/// 5. any other run of 24 or more characters from `[A-Za-z0-9_\-+/=.]` → `[redacted]`, except UUIDs, person keys
-///    and RFC 3339 times, which are kept (inside a longer run they are kept and the pieces around them judged on
-///    their own length).
+/// Removes what could be a credential or an email from a string (platform 15.1; the port of jarvis3
+/// `common/log.ts` `redact()` with its rules, plus emails, which 3.8 and 15.1 keep out of logs). Rules, in order:
+/// 1. `Bearer <x>`, `Basic <x>` (any case) → `Bearer [redacted]`, `Basic [redacted]`, when `<x>` is token-shaped
+///    (token68 characters, and a digit, a symbol, mixed case or 20+ characters: `Basic info` is prose and stays);
+/// 2. userinfo in a URL, `scheme://user:pass@host` or `scheme://token@host` → `scheme://[redacted]@host`, up to the
+///    last `@` before the host (a raw `@` in a password does not leak the rest);
+/// 3. an email, `local@domain.tld` or its percent-encoded form `local%40domain.tld` → its [`person_key`] (the log
+///    identity of a person, so the line stays searchable);
+/// 4. a parameter, field or header whose name contains `token`, `key`, `secret`, `password`, `passwd`,
+///    `authorization`, `signature` or `sig` (any case), followed by `=` or `:` with optional quotes and whitespace
+///    (`api_key=…`, `{"password":"…"}`, `Config { token: "…" }`, `authorization: …`) → `<name><sep>[redacted]`;
+///    `person_key` is exempt (it is the log identity, not a credential);
+/// 5. hermit's tokens, `hst1.…` and `hct_…` → `[redacted]` (whole, however short);
+/// 6. any other run of 24 or more characters from `[A-Za-z0-9_\-+/=.]` and `%XX` escapes → `[redacted]`, except
+///    UUIDs, person keys and RFC 3339 times, which are kept (inside a longer run they are kept and the pieces around
+///    them judged on their own length).
 ///
-/// (15.1 lists the hermit-token rule fifth, as caught by the long-run rule anyway; it runs before it here so a short
-/// token is caught too.)
+/// (15.1 lists the hermit-token rule after the long-run rule, as caught by it anyway; it runs before it here so a
+/// short token is caught too.)
 #[must_use]
 pub fn redact(s: &str) -> String {
     let s = auth_schemes(s);
     let s = userinfo(&s);
+    let s = emails(&s);
     let s = secret_params(&s);
     let s = hermit_tokens(&s);
     long_runs(&s)
@@ -371,6 +405,23 @@ const REDACTED: &str = "[redacted]";
 
 fn is_word(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// A token68 character (RFC 9110 11.2).
+fn is_token68(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
+}
+
+/// Whether a word after `Bearer`/`Basic` looks like a credential rather than prose.
+fn token_shaped(t: &[u8]) -> bool {
+    if t.is_empty() || !t.iter().all(|b| is_token68(*b)) {
+        return false;
+    }
+    let digit = t.iter().any(u8::is_ascii_digit);
+    let symbol = t.iter().any(|b| !b.is_ascii_alphanumeric());
+    // mixed case past the first letter (a capitalised word is prose)
+    let mixed = t[1..].iter().any(u8::is_ascii_uppercase) && t.iter().any(u8::is_ascii_lowercase);
+    digit || symbol || mixed || t.len() >= 20
 }
 
 /// Rule 1.
@@ -398,7 +449,7 @@ fn auth_schemes(s: &str) -> String {
             while j < b.len() && !b[j].is_ascii_whitespace() && !matches!(b[j], b'"' | b'\'' | b',' | b';') {
                 j += 1;
             }
-            if j > ws_start && tok_start > ws_start && j > tok_start && &s[tok_start..j] != REDACTED {
+            if tok_start > ws_start && token_shaped(&b[tok_start..j]) {
                 out.push_str(&s[copied..tok_start]);
                 out.push_str(REDACTED);
                 copied = j;
@@ -428,19 +479,21 @@ fn userinfo(s: &str) -> String {
         if &b[i..i + 3] == b"://" {
             let start = i + 3;
             let mut j = start;
+            let mut last_at = None;
+            // the authority ends at the path, query or fragment; userinfo ends at its last `@`
             while j < b.len()
                 && !b[j].is_ascii_whitespace()
-                && !matches!(
-                    b[j],
-                    b'/' | b'?' | b'#' | b'@' | b'"' | b'\'' | b'<' | b'>' | b'[' | b']'
-                )
+                && !matches!(b[j], b'/' | b'?' | b'#' | b'"' | b'\'' | b'<' | b'>' | b'[' | b']')
             {
+                if b[j] == b'@' {
+                    last_at = Some(j);
+                }
                 j += 1;
             }
-            if j < b.len() && b[j] == b'@' && j > start {
+            if let Some(at) = last_at.filter(|at| *at > start && &s[start..*at] != REDACTED) {
                 out.push_str(&s[copied..start]);
                 out.push_str(REDACTED);
-                copied = j;
+                copied = at;
             }
             i = j.max(i + 3);
             continue;
@@ -451,41 +504,62 @@ fn userinfo(s: &str) -> String {
     out
 }
 
-fn is_param_name(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')
+fn is_local(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-')
 }
 
-const SECRET_NAMES: &[&str] = &["token", "key", "secret", "password", "sig"]; // `sig` covers `signature`
+fn is_domain(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-')
+}
+
+/// The end of a domain `label(.label)+` starting at `i` whose last label is two or more letters, if any.
+fn domain_end(b: &[u8], i: usize) -> Option<usize> {
+    let mut j = i;
+    while j < b.len() && is_domain(b[j]) {
+        j += 1;
+    }
+    // trailing dots and hyphens are punctuation, not the domain
+    while j > i && matches!(b[j - 1], b'.' | b'-') {
+        j -= 1;
+    }
+    let domain = &b[i..j];
+    let last_dot = domain.iter().rposition(|c| *c == b'.')?;
+    let tld = &domain[last_dot + 1..];
+    let labels_ok = domain.split(|c| *c == b'.').all(|l| !l.is_empty());
+    (labels_ok && last_dot > 0 && tld.len() >= 2 && tld.iter().all(u8::is_ascii_alphabetic)).then_some(j)
+}
 
 /// Rule 3.
-fn secret_params(s: &str) -> String {
+fn emails(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut copied = 0;
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'=' && i > 0 && is_param_name(b[i - 1]) {
-            let mut name_start = i;
-            while name_start > 0 && is_param_name(b[name_start - 1]) {
-                name_start -= 1;
+        let sep = if b[i] == b'@' {
+            1
+        } else if b[i] == b'%' && i + 3 <= b.len() && b[i + 1..i + 3].eq_ignore_ascii_case(b"40") {
+            3
+        } else {
+            0
+        };
+        if sep > 0 && i > copied {
+            let mut start = i;
+            while start > copied && is_local(b[start - 1]) {
+                start -= 1;
             }
-            let name = s[name_start..i].to_ascii_lowercase();
-            let mut j = i + 1;
-            while j < b.len()
-                && !b[j].is_ascii_whitespace()
-                && !matches!(b[j], b'&' | b'"' | b'\'' | b',' | b';' | b'}' | b')' | b'#')
-            {
-                j += 1;
+            // a local part does not start with a dot
+            while start < i && b[start] == b'.' {
+                start += 1;
             }
-            if name_start >= copied
-                && j > i + 1
-                && SECRET_NAMES.iter().any(|w| name.contains(w))
-                && &s[i + 1..j] != REDACTED
+            if start < i
+                && let Some(end) = domain_end(b, i + sep)
             {
-                out.push_str(&s[copied..=i]);
-                out.push_str(REDACTED);
-                copied = j;
-                i = j;
+                let email = format!("{}@{}", &s[start..i], &s[i + sep..end]);
+                out.push_str(&s[copied..start]);
+                out.push_str(&person_key(&email));
+                copied = end;
+                i = end;
                 continue;
             }
         }
@@ -495,11 +569,98 @@ fn secret_params(s: &str) -> String {
     out
 }
 
+fn is_param_name(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')
+}
+
+/// jarvis3's names; `sig` also covers `signature`.
+const SECRET_NAMES: &[&str] = &["token", "key", "secret", "password", "passwd", "authorization", "sig"];
+
+/// Names that contain a secret word but are not secrets.
+const NOT_SECRET_NAMES: &[&str] = &["person_key"];
+
+/// The end of a parameter separator at `i`: `["']?\s*[=:]\s*["']?` (jarvis3's), if one is there.
+fn separator_end(b: &[u8], mut i: usize) -> Option<usize> {
+    if i < b.len() && matches!(b[i], b'"' | b'\'') {
+        i += 1;
+    }
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || !matches!(b[i], b'=' | b':') {
+        return None;
+    }
+    i += 1;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i < b.len() && matches!(b[i], b'"' | b'\'') {
+        i += 1;
+    }
+    Some(i)
+}
+
+/// Rule 4.
+fn secret_params(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < b.len() {
+        // a name starts at a word boundary
+        if !is_param_name(b[i]) || (i > 0 && is_param_name(b[i - 1])) {
+            i += 1;
+            continue;
+        }
+        let name_start = i;
+        let mut name_end = i;
+        while name_end < b.len() && is_param_name(b[name_end]) {
+            name_end += 1;
+        }
+        let name = s[name_start..name_end].to_ascii_lowercase();
+        let secret = SECRET_NAMES.iter().any(|w| name.contains(w)) && !NOT_SECRET_NAMES.contains(&name.as_str());
+        if let Some(value_start) = secret.then(|| separator_end(b, name_end)).flatten() {
+            let mut j = value_start;
+            while j < b.len()
+                && !b[j].is_ascii_whitespace()
+                && !matches!(b[j], b'"' | b'\'' | b'&' | b',' | b';' | b'}')
+            {
+                j += 1;
+            }
+            let value = &s[value_start..j];
+            // already redacted, or an auth scheme rule 1 has dealt with (`authorization: Bearer [redacted]`)
+            let scheme_follows = (value.eq_ignore_ascii_case("bearer") || value.eq_ignore_ascii_case("basic"))
+                && b.get(j).is_some_and(u8::is_ascii_whitespace);
+            if j > value_start && !value.starts_with(REDACTED) && !scheme_follows {
+                out.push_str(&s[copied..value_start]);
+                out.push_str(REDACTED);
+                copied = j;
+                i = j;
+                continue;
+            }
+        }
+        i = name_end;
+    }
+    out.push_str(&s[copied..]);
+    out
+}
+
 fn is_run(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'+' | b'/' | b'=' | b'.')
 }
 
-/// Rule 4.
+/// The length of the run element at `i`: 1 for a run character, 3 for a `%XX` escape, 0 otherwise.
+fn run_step(b: &[u8], i: usize) -> usize {
+    if is_run(b[i]) {
+        1
+    } else if b[i] == b'%' && i + 3 <= b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit() {
+        3
+    } else {
+        0
+    }
+}
+
+/// Rule 5.
 fn hermit_tokens(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
@@ -557,13 +718,13 @@ fn is_uuid(t: &[u8]) -> bool {
         })
 }
 
-/// Rule 5. (An RFC 3339 time holds `:`, which ends a run, so no piece of one reaches 24 characters.)
+/// Rule 6. (An RFC 3339 time holds `:`, which ends a run, so no piece of one reaches 24 characters.)
 fn long_runs(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
-        if !is_run(b[i]) {
+        if run_step(b, i) == 0 {
             // copy one whole character (non-ASCII ones are never part of a run)
             let ch_len = s[i..].chars().next().map_or(1, char::len_utf8);
             out.push_str(&s[i..i + ch_len]);
@@ -571,8 +732,12 @@ fn long_runs(s: &str) -> String {
             continue;
         }
         let start = i;
-        while i < b.len() && is_run(b[i]) {
-            i += 1;
+        loop {
+            let step = if i < b.len() { run_step(b, i) } else { 0 };
+            if step == 0 {
+                break;
+            }
+            i += step;
         }
         let run = &s[start..i];
         if run.len() < 24 {
@@ -618,11 +783,19 @@ mod tests {
             redact("Authorization: Bearer abc.def"),
             "Authorization: Bearer [redacted]"
         );
-        assert_eq!(redact("authorization: bearer abc"), "authorization: bearer [redacted]");
+        assert_eq!(
+            redact("authorization: bearer abc123"),
+            "authorization: bearer [redacted]"
+        );
         assert_eq!(redact("BASIC c2J4OnRvaw=="), "BASIC [redacted]");
-        assert_eq!(redact(r#"{"h":"Bearer xyz"}"#), r#"{"h":"Bearer [redacted]"}"#);
+        assert_eq!(redact("Basic dXNlcjpwYXNz"), "Basic [redacted]");
+        assert_eq!(redact(r#"{"h":"Bearer xyz9"}"#), r#"{"h":"Bearer [redacted]"}"#);
+        assert_eq!(redact("Bearer abcdefghijklmnopqrst"), "Bearer [redacted]");
         // not a scheme: part of a longer word
-        assert_eq!(redact("unbearer x"), "unbearer x");
+        assert_eq!(redact("unbearer x1"), "unbearer x1");
+        // prose after the word stays: stable msg strings are not altered
+        assert_eq!(redact("Basic info about the person"), "Basic info about the person");
+        assert_eq!(redact("bearer Token refused"), "bearer Token refused");
     }
 
     #[test]
@@ -633,11 +806,46 @@ mod tests {
         );
         assert_eq!(redact("https://tok@example.com/x"), "https://[redacted]@example.com/x");
         assert_eq!(
-            redact("proxy http://sbx:hst1.abc.def@10.202.1.1:3128"),
-            "proxy http://[redacted]@10.202.1.1:3128"
+            redact("proxy http://sbx:hst1.abc.def@192.0.2.1:3128"),
+            "proxy http://[redacted]@192.0.2.1:3128"
         );
+        // a raw `@` in the password: everything up to the last `@` of the authority goes
+        assert_eq!(redact("postgresql://u:p@ss@host/db"), "postgresql://[redacted]@host/db");
+        assert_eq!(
+            redact("postgresql://u:p@ss@[2001:db8::1]:5432/db"),
+            "postgresql://[redacted]@[2001:db8::1]:5432/db"
+        );
+        // an `@` in the path is not userinfo
+        assert_eq!(redact("http://magpie/v1/x@y"), "http://magpie/v1/x@y");
         // no userinfo: unchanged
         assert_eq!(redact("http://magpie/v1/x"), "http://magpie/v1/x");
+    }
+
+    #[test]
+    fn redact_emails() {
+        let pk = person_key("alice@example.hk");
+        assert_eq!(redact("failed for alice@example.hk"), format!("failed for {pk}"));
+        assert_eq!(redact("failed for Alice@Example.HK."), format!("failed for {pk}."));
+        assert_eq!(
+            redact("GET /v1/people/alice%40example.hk"),
+            format!("GET /v1/people/{pk}")
+        );
+        assert_eq!(
+            redact("GET /v1/people/alice%40example.hk/x"),
+            format!("GET /v1/people/{pk}/x")
+        );
+        assert_eq!(
+            redact(r#"Request { person: "first.last+tag@mail.example.com" }"#),
+            format!(
+                r#"Request {{ person: "{}" }}"#,
+                person_key("first.last+tag@mail.example.com")
+            )
+        );
+        // not emails: no domain, no letters in the last label, nothing before the @
+        assert_eq!(redact("user@localhost"), "user@localhost");
+        assert_eq!(redact("v1@1.2"), "v1@1.2");
+        assert_eq!(redact("@everyone"), "@everyone");
+        assert!(!redact("to bob.smith@corp.example and carol@x.org").contains('@'));
     }
 
     #[test]
@@ -651,16 +859,46 @@ mod tests {
             "u?X-Amz-Signature=[redacted]&X-Amz-Date=1"
         );
         assert_eq!(
-            redact("api_key=zzz sig=1 password=p SECRET=q"),
-            "api_key=[redacted] sig=[redacted] password=[redacted] SECRET=[redacted]"
+            redact("api_key=zzz sig=1 password=p SECRET=q passwd=abc"),
+            "api_key=[redacted] sig=[redacted] password=[redacted] SECRET=[redacted] passwd=[redacted]"
         );
         // other parameters stay
         assert_eq!(redact("a=1&limit=20"), "a=1&limit=20");
     }
 
     #[test]
+    fn redact_secret_fields_in_json_debug_and_headers() {
+        assert_eq!(
+            redact(r#"{"password":"hunter2","api_key":"short1","n":1}"#),
+            r#"{"password":"[redacted]","api_key":"[redacted]","n":1}"#
+        );
+        assert_eq!(redact(r#"{"password": "hunter2"}"#), r#"{"password": "[redacted]"}"#);
+        assert_eq!(
+            redact(r#"Config { password: "hunter2", token: "abc123", port: 5432 }"#),
+            r#"Config { password: "[redacted]", token: "[redacted]", port: 5432 }"#
+        );
+        assert_eq!(redact("authorization: rawtok123"), "authorization: [redacted]");
+        assert_eq!(
+            redact("x-api-key: k1\nsecret='s'"),
+            "x-api-key: [redacted]\nsecret='[redacted]'"
+        );
+        // a scheme after the name is rule 1's
+        assert_eq!(
+            redact("Authorization: Bearer abc.def"),
+            "Authorization: Bearer [redacted]"
+        );
+        // person_key is the log identity, not a credential
+        let pk = person_key("a@b.example");
+        assert_eq!(redact(&format!("person_key={pk}")), format!("person_key={pk}"));
+        assert_eq!(
+            redact(&format!(r#"{{"person_key":"{pk}"}}"#)),
+            format!(r#"{{"person_key":"{pk}"}}"#)
+        );
+    }
+
+    #[test]
     fn redact_hermit_tokens() {
-        assert_eq!(redact("token hst1.short"), "token [redacted]");
+        assert_eq!(redact("got hst1.short"), "got [redacted]");
         assert_eq!(redact("control hct_abc,next"), "control [redacted],next");
         assert_eq!(redact("x=hst1.aaaa.bbbb"), "x=[redacted]");
     }
@@ -671,6 +909,9 @@ mod tests {
         assert_eq!(redact(&format!("got {tok} back")), "got [redacted] back");
         assert_eq!(redact("short_run_of_23_chars_x"), "short_run_of_23_chars_x");
         assert_eq!(redact("abcdefghijklmnopqrstuvwx"), "[redacted]");
+        // percent escapes do not split a run
+        assert_eq!(redact("got Zm9vYmFy%2BYmF6cXV4%2FcXV1eHh4 back"), "got [redacted] back");
+        assert_eq!(redact("a%2Bb"), "a%2Bb");
     }
 
     #[test]
@@ -697,7 +938,8 @@ mod tests {
 
     #[test]
     fn redact_is_idempotent() {
-        let once = redact("Bearer abc postgresql://u:p@h/x?token=t hst1.x Zm9vYmFyYmF6cXV4cXV1eHh4eXl5enp6");
+        let once =
+            redact("Bearer abc1 a@b.example postgresql://u:p@h/x?token=t hst1.x Zm9vYmFyYmF6cXV4cXV1eHh4eXl5enp6");
         assert_eq!(redact(&once), once);
     }
 
@@ -748,7 +990,7 @@ mod tests {
             let err = std::io::Error::other("connect postgresql://magpie:pw@pg:5432/magpie failed");
             tracing::warn!(
                 error = &err as &(dyn std::error::Error + 'static),
-                detail = "Bearer abc",
+                detail = "Bearer abc1",
                 url = %"https://x.test/?token=t1",
                 dbg = ?"hst1.secret",
                 "call failed with Basic dXNlcjpwYXNz"
@@ -763,6 +1005,25 @@ mod tests {
         assert_eq!(l["msg"], "call failed with Basic [redacted]");
         assert!(!c.text().contains("pw@"));
         assert!(!c.text().contains("dXNlcjpwYXNz"));
+    }
+
+    #[test]
+    fn emails_never_reach_a_line() {
+        let (c, s) = capture();
+        tracing::subscriber::with_default(s, || {
+            let err = std::io::Error::other("GET http://hermit/v1/people/alice%40example.hk: 404");
+            tracing::warn!(
+                error = &err as &(dyn std::error::Error + 'static),
+                who = "alice@example.hk",
+                "lookup failed for alice@example.hk"
+            );
+        });
+        let text = c.text();
+        assert!(!text.contains("alice"), "{text}");
+        let l = &c.lines()[0];
+        let pk = person_key("alice@example.hk");
+        assert_eq!(l["who"], pk);
+        assert_eq!(l["msg"], format!("lookup failed for {pk}"));
     }
 
     #[test]
@@ -783,7 +1044,7 @@ mod tests {
         let (c, s) = capture();
         let req = uuid::Uuid::now_v7();
         tracing::subscriber::with_default(s, || {
-            let outer = tracing::info_span!("request", request = %req, peer = "Bearer zzz");
+            let outer = tracing::info_span!("request", request = %req, peer = "Bearer zzz9");
             let _g = outer.enter();
             let inner = tracing::info_span!("work", sandbox = "s1");
             let _g2 = inner.enter();

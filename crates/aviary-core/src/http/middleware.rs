@@ -59,7 +59,7 @@ impl<S: Send + Sync> FromRequestParts<S> for RequestId {
     }
 }
 
-/// Middleware: takes the request's `Aviary-Request` (a UUID) or mints a v7 one, makes it the request's
+/// Middleware: takes the request's `Aviary-Request` when it is a version 7 UUID (platform 3.5) or mints a v7 one, makes it the request's
 /// [`RequestId`], the `request` field of every log line written while handling it, the value
 /// [`current_request_id`] returns (so outbound calls forward it) and the `aviary-request` header of the answer.
 pub async fn request_id(mut req: Request, next: Next) -> Response {
@@ -68,6 +68,7 @@ pub async fn request_id(mut req: Request, next: Next) -> Response {
         .get(&AVIARY_REQUEST)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| Uuid::parse_str(s.trim()).ok())
+        .filter(|id| id.get_version_num() == 7)
         .unwrap_or_else(Uuid::now_v7);
     if let Ok(v) = HeaderValue::from_str(&id.to_string()) {
         req.headers_mut().insert(AVIARY_REQUEST, v);
@@ -96,23 +97,19 @@ pub async fn defaults(req: Request, next: Next) -> Response {
     r
 }
 
-/// The envelope code for an error status that was not answered with an envelope.
+/// The envelope code for an error status that was not answered with an envelope: platform 3.6's codes, plus
+/// `method_not_allowed` (405) and `internal` (500 and any status a handler should have answered with its own
+/// envelope), the two codes hermit's contract also uses, which 3.6's list does not name.
 fn code_for(status: StatusCode) -> &'static str {
     match status.as_u16() {
-        400 | 422 => "bad_request",
+        400 | 411 | 422 => "bad_request",
         401 => "unauthenticated",
-        403 => "forbidden",
         404 => "not_found",
         405 => "method_not_allowed",
-        408 | 504 => "timeout",
-        409 => "conflict",
-        410 => "gone",
-        411 => "length_required",
         413 => "too_large",
         415 => "unsupported_type",
         429 => "rate_limited",
-        502 => "bad_gateway",
-        503 => "unavailable",
+        408 | 502 | 503 | 504 => "unavailable",
         507 => "quota_exceeded",
         _ => "internal",
     }
@@ -170,6 +167,10 @@ pub async fn strip_all_aviary(mut req: Request, next: Next) -> Response {
 
 /// Wraps a service's API router: [`request_id`] (outermost), [`defaults`], [`envelope`] and a request body limit
 /// of `body_limit` bytes (answered 413 `too_large`). Also answers unmatched routes with the 404 envelope.
+///
+/// Only for the `/v1` service APIs (platform 3.6). It rewrites every non-JSON error answer into the JSON envelope,
+/// so it must not wrap pigeon's public paths, which speak the frozen protocol of shipped apps and serve the public
+/// site with their own bodies (platform 3.4, pigeon 1.1); those routers use [`request_id`] and [`defaults`] alone.
 pub fn standard<S: Clone + Send + Sync + 'static>(router: Router<S>, body_limit: usize) -> Router<S> {
     router
         .fallback(fallback)
@@ -266,6 +267,20 @@ mod tests {
             .await
             .unwrap();
         assert!(Uuid::parse_str(r.headers()["aviary-request"].to_str().unwrap()).is_ok());
+
+        // a UUID that is not v7 (a v4 from an outside client): replaced by a minted v7, also downstream
+        let v4 = "9b2f6c1e-3d4a-4f5b-8c6d-7e8f90a1b2c3";
+        assert_eq!(Uuid::parse_str(v4).unwrap().get_version_num(), 4);
+        let r = c
+            .get(format!("{upstream}/call"))
+            .header("aviary-request", v4)
+            .send()
+            .await
+            .unwrap();
+        let echoed = r.headers()["aviary-request"].to_str().unwrap().to_owned();
+        assert_ne!(echoed, v4);
+        assert_eq!(Uuid::parse_str(&echoed).unwrap().get_version_num(), 7);
+        assert_eq!(r.text().await.unwrap(), format!("{echoed} {echoed}"));
 
         // outside any request, forward_request_id mints a fresh id
         assert_eq!(current_request_id(), None);
@@ -400,7 +415,7 @@ mod tests {
         let v: serde_json::Value = r.json().await.unwrap();
         assert_eq!(
             v,
-            serde_json::json!({"code": "bad_gateway", "message": "upstream said no"})
+            serde_json::json!({"code": "unavailable", "message": "upstream said no"})
         );
 
         // a handler's own envelope passes untouched

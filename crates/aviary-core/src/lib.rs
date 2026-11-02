@@ -18,14 +18,16 @@
 //! use std::time::Duration;
 //!
 //! let build = version::Build::new("magpie").surface("magpie-person", 1).surface("magpie-sandbox", 2);
-//! log::init(&build, Some(aviary_core::env::field("POD_NAME")), log::Output::Stdout);
+//! log::init_in_pod(&build, log::Output::Stdout);
 //! let callers = auth::Callers::from_env("MAGPIE", &[auth::Caller::Pigeon, auth::Caller::Admin]);
 //! let registry = ops::registry(&build);
 //! let ops = ops::Ops::new(build, registry);
-//! ops.spawn(ops::ADDR).await?;
-//! let started = ops.readiness().gate("migrations");
-//! // … migrations, the API listener …
-//! started.open();
+//! ops.spawn(ops::ADDR).await?; // `/readyz` 503 `["start"]` from here
+//! let migrations = ops.readiness().gate("migrations");
+//! // … migrations …
+//! migrations.open();
+//! // … the API listener …
+//! ops.readiness().started(); // `/readyz` 200 from here until draining
 //! let mut drain = drain::Drain::new(ops.readiness().clone());
 //! drain.hook("close listener", Duration::from_secs(5), || async {});
 //! let outcome = drain.run(&mut drain::Signals::os()?).await;

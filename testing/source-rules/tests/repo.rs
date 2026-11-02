@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use aviary_source_rules::{Violation, cargo_metadata, dependency_violations, env_var_violations, name_violations};
+use aviary_source_rules::{
+    Violation, cargo_metadata, dependency_violations, env_var_violations, name_violations, testing_feature_violations,
+};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -40,6 +42,15 @@ fn only_hermit_depends_on_ec2_and_kube() {
     assert_none(
         "EC2/Kubernetes dependencies outside hermit (platform 4.5)",
         &dependency_violations(&metadata).unwrap(),
+    );
+}
+
+#[test]
+fn no_service_enables_the_testing_feature() {
+    let metadata = cargo_metadata(env!("CARGO"), &root()).unwrap();
+    assert_none(
+        "aviary-core/testing outside [dev-dependencies] (platform 4.5)",
+        &testing_feature_violations(&metadata).unwrap(),
     );
 }
 

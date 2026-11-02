@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# env::test_only, for test code only: enable it from [dev-dependencies] (the source rules refuse it elsewhere)
+testing = []
+
 [dependencies]
 axum.workspace = true
 prometheus-client.workspace = true

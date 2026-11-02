@@ -229,6 +229,7 @@ mod tests {
     #[tokio::test]
     async fn hooks_run_in_order_after_draining_is_set() {
         let readiness = Readiness::detached();
+        readiness.started();
         let mut drain = Drain::new(readiness.clone());
         let seen = recorder();
         for name in ["close listeners", "end long-polls", "hand back leases", "wait for work"] {

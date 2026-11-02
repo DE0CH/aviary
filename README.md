@@ -70,24 +70,40 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
 ## The service runtime (`aviary-core`)
 
 Every service binary starts the same way: `version::Build` (name and protocol surfaces), `log::init` (JSON lines,
-every string field redacted), `auth::Callers::from_env` (`<CALLEE>_ACCEPT_<CALLER>`), `ops::Ops` on `:9090` with
-named readiness gates, the API router wrapped by `http::standard` and guarded per router by `auth::Guard`, then
+every string field redacted), `auth::Callers::from_env` (`<CALLEE>_ACCEPT_<CALLER>`), `ops::Ops` on `:9090`
+(`/readyz` 503 until `Readiness::started()`, with named gates for the parts still pending), the API router wrapped by
+`http::standard` and guarded per router by `auth::Guard::router` (a guard covers only the routes it was given), then
 `drain::Drain::run` on SIGTERM. The crate docs (`crates/aviary-core/src/lib.rs`) show the outline.
 
 Where it differs from the platform spec (sections 3, 4.3, 15.1):
 
-- Test code reads `AVIARY_TEST_*` variables with `env::test_only`, which refuses any other name; there is no other
-  optional read, so services still have no optional configuration. The source rules allow `std::env::var*` only in
+- Test code reads `AVIARY_TEST_*` variables with `env::test_only`, which refuses any other name and exists only
+  behind `aviary-core`'s `testing` feature; the source rules refuse that feature outside `[dev-dependencies]` of the
+  crates under `crates/`, so services still have no optional configuration. The source rules allow `std::env::var*` only in
   `aviary-core/src/env.rs`, and clippy's ban applies to tests too.
 - Pair tokens are compared with `subtle::ConstantTimeEq` on the SHA-256 digests. ring 0.17 deprecates
   `constant_time::verify_slices_are_equal` (named by the spec) as an internal function "with no promises regarding
   side channels".
 - `log::redact` runs the hermit-token rule (`hst1.`, `hct_`) before the long-run rule, so short tokens are caught too.
   Inside a long run, a UUID or person key is kept and the pieces around it are judged on their own length, so ids in
-  URLs stay searchable.
+  URLs stay searchable. Beyond 15.1's list it also turns emails (`a@b.tld`, `a%40b.tld`) into their `person_key`
+  (3.8: logs never carry emails), keeps jarvis3's parameter rule whole (`=` or `:`, optional quotes, the names
+  `passwd` and `authorization` too, so JSON bodies, `Debug` structs and header dumps are covered; `person_key` is
+  exempt), redacts after `Bearer`/`Basic` only a token-shaped word (so `Basic info` in a message stays), takes URL
+  userinfo up to the last `@` of the authority, and counts `%XX` escapes as part of a long run.
+- `/readyz` starts at 503 with `why: ["start"]` and is 200 only after `Readiness::started()`, so a process is never
+  ready before its own start is done, even before its first named gate exists.
+- A token configured for two different callers fails start (`CallersError::SharedToken`).
+- `Aviary-Request` is kept only when it is a v7 UUID; any other value, a v4 UUID included, is replaced by a minted v7.
 - Error answers that are not JSON (axum's extractor rejections, unmatched routes, wrong methods, a body over the
   limit) are rewritten into the envelope by `http::envelope`; axum's 422 for an unusable JSON body becomes 400
-  `bad_request`, since the platform's code list has no 422.
+  `bad_request`, since the platform's code list has no 422. The rewrite uses 3.6's codes, plus two that 3.6 does not
+  list and hermit's contract also uses: `method_not_allowed` (405) and `internal` (500, and any other status a
+  handler should have answered with its own envelope); 408/502/504 become `unavailable`, 411 `bad_request`.
+  `http::standard` is only for the `/v1` service APIs: pigeon's public paths (the frozen app protocol and the public
+  site) keep their own error bodies and use `http::request_id` and `http::defaults` alone.
+- The missing-env line carries `t`, `level`, `svc`, `ver` and (once known) `pod` before `msg`; `svc` is the name
+  given to `log::init`/`log::init_in_pod`, or the binary's name when the variable is read before that.
 - `/version` lists every surface in `accepts`, including a surface at number 1 (`[1]`); the spec's example omits it.
 - Exit codes, which the spec leaves open: 78 (`EX_CONFIG`) for a missing or empty variable, 0 after a drain, 143
   when a second signal cut the drain short.

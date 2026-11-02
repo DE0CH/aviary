@@ -19,6 +19,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum::routing::MethodRouter;
 use ring::digest;
 use subtle::ConstantTimeEq as _;
 
@@ -100,6 +101,9 @@ pub enum CallersError {
     EmptyToken(Caller),
     /// The same caller twice.
     Duplicate(Caller),
+    /// One token configured for two callers (a misconfigured Secret): it would identify only the first, so the two
+    /// could not be told apart.
+    SharedToken(Caller, Caller),
 }
 
 impl fmt::Display for CallersError {
@@ -108,6 +112,7 @@ impl fmt::Display for CallersError {
             Self::NoTokens(c) => write!(f, "caller {c} has no tokens"),
             Self::EmptyToken(c) => write!(f, "caller {c} has an empty token"),
             Self::Duplicate(c) => write!(f, "caller {c} listed twice"),
+            Self::SharedToken(a, b) => write!(f, "callers {a} and {b} share a token"),
         }
     }
 }
@@ -142,21 +147,21 @@ impl Callers {
     /// when any of them is missing or empty ([`env::required_list`]).
     ///
     /// # Panics
-    /// When `callers` names a caller twice (a programming error).
+    /// When `callers` names a caller twice (a programming error), or two callers are given the same token.
     #[must_use]
     pub fn from_env(callee: &str, callers: &[Caller]) -> Self {
         let lists = callers
             .iter()
             .map(|c| (*c, env::required_list(&format!("{callee}_ACCEPT_{}", c.env_name()))));
-        // required_list already refused empty lists and items, and a caller listed twice is a programming error
-        // the tests of each service catch
+        // required_list already refused empty lists and items; a caller listed twice is a programming error the
+        // tests of each service catch; a token shared by two callers is a misconfigured Secret and fails start
         Self::new(lists).unwrap_or_else(|e| panic!("{callee} callers: {e}"))
     }
 
     /// Callers from explicit token lists.
     ///
     /// # Errors
-    /// When a caller has no token or an empty one, or is listed twice.
+    /// When a caller has no token or an empty one, is listed twice, or shares a token with another caller.
     pub fn new<I, T>(lists: I) -> Result<Self, CallersError>
     where
         I: IntoIterator<Item = (Caller, T)>,
@@ -176,7 +181,11 @@ impl Callers {
                 if t.is_empty() {
                     return Err(CallersError::EmptyToken(caller));
                 }
-                accepted.push((caller, sha256(t)));
+                let d = sha256(t);
+                if let Some((other, _)) = accepted.iter().find(|(c, o)| *c != caller && *o == d) {
+                    return Err(CallersError::SharedToken(*other, caller));
+                }
+                accepted.push((caller, d));
             }
             if accepted.len() == before {
                 return Err(CallersError::NoTokens(caller));
@@ -239,8 +248,14 @@ struct Rule {
     headers: Vec<HeaderName>,
 }
 
-/// The callers one router admits, and which `Aviary-*` headers each may set. Apply it with [`Guard::apply`] (a
-/// route layer: unmatched paths still answer 404).
+/// The callers one router admits, and which `Aviary-*` headers each may set.
+///
+/// **A guard covers only the routes that exist when it is applied.** It is an axum route layer: a route added to
+/// the router after [`Guard::apply`] is not guarded, and nothing denies by default (a handler that does not extract
+/// [`Caller`] answers anyone). So build guarded routers with [`Guard::router`], which takes every route at once and
+/// returns a router to merge or nest, and add nothing to it afterwards; [`Guard::apply`] is for a router that is
+/// already finished. Each service's tests call every `/v1` route without a token and expect 401. Unmatched paths
+/// still answer 404 (not 401).
 #[derive(Debug, Clone)]
 pub struct Guard {
     callers: Callers,
@@ -263,7 +278,21 @@ impl Guard {
         }
     }
 
-    /// The router with this guard on every route.
+    /// A router of exactly `routes` (path, method router), every one guarded. Merge or nest the result; never add a
+    /// route to it afterwards (see [`Guard`]).
+    pub fn router<S, P>(self, routes: impl IntoIterator<Item = (P, MethodRouter<S>)>) -> Router<S>
+    where
+        S: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        let all = routes
+            .into_iter()
+            .fold(Router::new(), |acc, (path, method)| acc.route(path.as_ref(), method));
+        self.apply(all)
+    }
+
+    /// The finished `router` with this guard on every route it has now. A route added to the result later is not
+    /// guarded (see [`Guard`]); prefer [`Guard::router`].
     pub fn apply<S: Clone + Send + Sync + 'static>(self, router: Router<S>) -> Router<S> {
         router.route_layer(axum::middleware::from_fn_with_state(self, check))
     }
@@ -362,6 +391,20 @@ mod tests {
     }
 
     #[test]
+    fn a_token_shared_by_two_callers_is_refused() {
+        let e = Callers::new([
+            (Caller::Pigeon, vec!["t1", "shared"]),
+            (Caller::Admin, vec![" shared "]),
+        ])
+        .unwrap_err();
+        assert_eq!(e, CallersError::SharedToken(Caller::Pigeon, Caller::Admin));
+        assert_eq!(e.to_string(), "callers pigeon and admin share a token");
+        // one caller listing a token twice (a rotation to the same value) is fine
+        let c = Callers::new([(Caller::Pigeon, vec!["t1", "t1"]), (Caller::Admin, vec!["t2"])]).unwrap();
+        assert_eq!(c.identify("t1"), Some(Caller::Pigeon));
+    }
+
+    #[test]
     fn debug_never_shows_digests() {
         let s = format!("{:?}", callers());
         assert_eq!(s, r#"Callers { callers: ["pigeon", "admin", "gateway"] }"#);
@@ -396,7 +439,7 @@ mod tests {
             .guard()
             .allow(Caller::Pigeon, &[AVIARY_PERSON, AVIARY_VIEWER])
             .allow(Caller::Admin, &[AVIARY_ADMIN]);
-        let router = guard.apply(Router::new().route("/v1/x", get(echo)));
+        let router = guard.router([("/v1/x", get(echo)), ("/v1/y", get(echo))]);
         let router = crate::http::standard(router, 1 << 20);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -465,6 +508,10 @@ mod tests {
         let text = r.text().await.unwrap();
         assert!(text.starts_with("admin aviary-admin=op@b.c aviary-request="), "{text}");
         assert!(!text.contains("aviary-person"), "{text}");
+
+        // every route of the guarded router refuses an unknown caller
+        let r = c.get(format!("{base}/v1/y")).send().await.unwrap();
+        assert_eq!(r.status(), 401);
 
         // unmatched paths are 404, not 401 (the guard is a route layer)
         let r = c.get(format!("{base}/nope")).send().await.unwrap();

@@ -1,9 +1,11 @@
 //! The ops port, `:9090` (platform 3.1, 3.2, 15.7): `/healthz`, `/readyz`, `/version`, `/metrics`. Never in a
 //! Service.
 //!
-//! Readiness (decision 11): `/readyz` is 503 only while one of the service's named start gates is still closed or
-//! while draining. A gate is opened once, when that part of the start is done; nothing later closes it, so a
-//! dependency failing after start never empties a Service.
+//! Readiness (decision 11): `/readyz` is 503 until the process has finished its own start, and while draining.
+//! Readiness starts closed: the implicit [`START`] gate is open only once the service calls [`Readiness::started`]
+//! at the end of its start, so `/readyz` is 503 straight after [`Ops::spawn`] and between named gates made one after
+//! another. Named gates ([`Readiness::gate`]: `migrations`, `listen`…) say which part is still pending. A gate is
+//! opened once; nothing later closes it, so a dependency failing after start never empties a Service.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -35,6 +37,9 @@ pub const METRICS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8
 /// The reason `/readyz` gives while draining.
 pub const DRAINING: &str = "draining";
 
+/// The implicit gate every process starts with, opened by [`Readiness::started`].
+pub const START: &str = "start";
+
 /// The service's start gates and the draining flag.
 #[derive(Clone)]
 pub struct Readiness {
@@ -42,6 +47,7 @@ pub struct Readiness {
 }
 
 struct ReadinessInner {
+    started: AtomicBool,
     gates: Mutex<Vec<(String, bool)>>,
     draining: AtomicBool,
     draining_gauge: Gauge,
@@ -57,6 +63,7 @@ impl Readiness {
     fn new(draining_gauge: Gauge) -> Self {
         Self {
             inner: Arc::new(ReadinessInner {
+                started: AtomicBool::new(false),
                 gates: Mutex::new(Vec::new()),
                 draining: AtomicBool::new(false),
                 draining_gauge,
@@ -64,14 +71,15 @@ impl Readiness {
         }
     }
 
-    /// A readiness handle that is not attached to an ops server (tests of components that take one).
+    /// A readiness handle that is not attached to an ops server (tests of components that take one). Not ready
+    /// until [`Readiness::started`], like the one of [`Ops`].
     #[must_use]
     pub fn detached() -> Self {
         Self::new(Gauge::default())
     }
 
     /// A closed start gate named `name` (`migrations`, `listener`, `listen`, `config`…); `/readyz` is 503 with this
-    /// name in `why` until [`Gate::open`].
+    /// name in `why` until [`Gate::open`]. Made during start, before [`Readiness::started`].
     pub fn gate(&self, name: &str) -> Gate {
         let mut gates = self.inner.gates.lock().unwrap_or_else(PoisonError::into_inner);
         gates.push((name.to_owned(), false));
@@ -79,6 +87,12 @@ impl Readiness {
             readiness: self.clone(),
             index: gates.len() - 1,
         }
+    }
+
+    /// The process has finished its own start: opens the [`START`] gate. `/readyz` is 200 from now on once every
+    /// named gate is open, until draining. Called once, last in start.
+    pub fn started(&self) {
+        self.inner.started.store(true, Ordering::SeqCst);
     }
 
     /// Marks the process as draining: `/readyz` 503 from now on, `<svc>_draining` 1.
@@ -93,8 +107,8 @@ impl Readiness {
         self.inner.draining.load(Ordering::SeqCst)
     }
 
-    /// Why the process is not ready: `draining` first, then each closed gate in the order they were made. Empty when
-    /// ready.
+    /// Why the process is not ready: `draining` first, then each closed named gate in the order they were made, then
+    /// [`START`] until [`Readiness::started`]. Empty when ready.
     #[must_use]
     pub fn why(&self) -> Vec<String> {
         let mut why = Vec::new();
@@ -103,6 +117,9 @@ impl Readiness {
         }
         let gates = self.inner.gates.lock().unwrap_or_else(PoisonError::into_inner);
         why.extend(gates.iter().filter(|(_, open)| !open).map(|(n, _)| n.clone()));
+        if !self.inner.started.load(Ordering::SeqCst) {
+            why.push(START.to_owned());
+        }
         why
     }
 
@@ -321,17 +338,21 @@ mod tests {
             let r = c.get(format!("{base}/readyz")).send().await.unwrap();
             (r.status().as_u16(), r.json::<serde_json::Value>().await.unwrap())
         };
-        assert_eq!(get().await, (200, serde_json::json!({"ok": true})));
+        // straight after spawn: not ready, before any gate exists
+        assert_eq!(get().await, (503, serde_json::json!({"ok": false, "why": ["start"]})));
 
         let migrations = ops.readiness().gate("migrations");
-        let listen = ops.readiness().gate("listen");
         assert_eq!(
             get().await,
-            (503, serde_json::json!({"ok": false, "why": ["migrations", "listen"]}))
+            (503, serde_json::json!({"ok": false, "why": ["migrations", "start"]}))
         );
         migrations.open();
-        assert_eq!(get().await, (503, serde_json::json!({"ok": false, "why": ["listen"]})));
+        // between one gate opening and the next being made: still not ready
+        assert_eq!(get().await, (503, serde_json::json!({"ok": false, "why": ["start"]})));
+        let listen = ops.readiness().gate("listen");
         listen.open();
+        assert_eq!(get().await, (503, serde_json::json!({"ok": false, "why": ["start"]})));
+        ops.readiness().started();
         assert_eq!(get().await, (200, serde_json::json!({"ok": true})));
 
         ops.readiness().set_draining();
@@ -395,9 +416,11 @@ mod tests {
     #[test]
     fn detached_readiness_works() {
         let r = Readiness::detached();
-        assert!(r.is_ready());
-        let g = r.gate("config");
         assert!(!r.is_ready());
+        assert_eq!(r.why(), [START]);
+        let g = r.gate("config");
+        r.started();
+        assert_eq!(r.why(), ["config"]);
         g.open();
         assert!(r.is_ready());
     }

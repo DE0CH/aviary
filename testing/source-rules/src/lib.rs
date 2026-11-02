@@ -8,6 +8,8 @@
 //! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` (but `sandboxd-api`, see
 //!   [`NAMED_CONTRACT_CRATES`]) never name `yyc`, `juicefs`, `openrouter` or `gvisor`, and in `crates/pigeon` the literals `jarvis` and `yyc` appear only in
 //!   `src/paseo/compat.rs` ([`name_violations`]).
+//! - No crate under `crates/` turns on `aviary-core`'s `testing` feature (`env::test_only`, the one optional read)
+//!   outside `[dev-dependencies]` ([`testing_feature_violations`]), so no service gets optional configuration.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -263,6 +265,56 @@ pub fn dependency_violations(metadata: &serde_json::Value) -> Result<Vec<Violati
                 line: 0,
                 what: format!("depends on `{b}`"),
             });
+        }
+    }
+    Ok(found)
+}
+
+/// The crate whose test-only API sits behind [`TESTING_FEATURE`].
+pub const CORE_CRATE: &str = "aviary-core";
+
+/// `aviary-core`'s feature for test code (`env::test_only`).
+pub const TESTING_FEATURE: &str = "testing";
+
+/// Every crate under `crates/` that enables [`CORE_CRATE`]'s [`TESTING_FEATURE`] in a normal or build dependency,
+/// from `cargo metadata --format-version 1` output. `[dev-dependencies]` may; crates under `testing/` (test tooling)
+/// may.
+///
+/// # Errors
+/// When the metadata does not have the expected shape.
+pub fn testing_feature_violations(metadata: &serde_json::Value) -> Result<Vec<Violation>, String> {
+    let packages = metadata["packages"].as_array().ok_or("metadata has no packages")?;
+    let root = metadata["workspace_root"]
+        .as_str()
+        .ok_or("metadata has no workspace_root")?;
+    let crates_dir = Path::new(root).join("crates");
+    let members: BTreeSet<&str> = metadata["workspace_members"]
+        .as_array()
+        .ok_or("metadata has no workspace_members")?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let mut found = Vec::new();
+    for p in packages {
+        let id = p["id"].as_str().ok_or("package without id")?;
+        let manifest = p["manifest_path"].as_str().ok_or("package without manifest_path")?;
+        if !members.contains(id) || !Path::new(manifest).starts_with(&crates_dir) {
+            continue;
+        }
+        let name = p["name"].as_str().ok_or("package without name")?;
+        for dep in p["dependencies"].as_array().into_iter().flatten() {
+            let enables = dep["name"].as_str() == Some(CORE_CRATE)
+                && dep["kind"].as_str() != Some("dev")
+                && dep["features"]
+                    .as_array()
+                    .is_some_and(|f| f.iter().any(|x| x.as_str() == Some(TESTING_FEATURE)));
+            if enables {
+                found.push(Violation {
+                    place: name.to_owned(),
+                    line: 0,
+                    what: format!("enables `{CORE_CRATE}/{TESTING_FEATURE}` outside [dev-dependencies]"),
+                });
+            }
         }
     }
     Ok(found)

@@ -5,7 +5,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use aviary_source_rules::{clippy_rejects, dependency_violations, env_var_violations, name_violations};
+use aviary_source_rules::{
+    clippy_rejects, dependency_violations, env_var_violations, name_violations, testing_feature_violations,
+};
 use serde_json::json;
 
 fn repo_root() -> PathBuf {
@@ -152,6 +154,35 @@ fn metadata(root: &str, packages: &[(&str, &str)], deps: &[(&str, &[&str])], mem
             "dependencies": ds.iter().map(|d| format!("{d}-id")).collect::<Vec<_>>(),
         })).collect::<Vec<_>>()},
     })
+}
+
+#[test]
+fn testing_feature_rule_catches_a_normal_dependency() {
+    let pkg = |name: &str, dir: &str, kind: serde_json::Value, features: &[&str]| {
+        json!({
+            "id": format!("{name}-id"), "name": name, "manifest_path": format!("{dir}/Cargo.toml"),
+            "dependencies": [{"name": "aviary-core", "kind": kind, "features": features}],
+        })
+    };
+    let doc = json!({
+        "workspace_root": "/r",
+        "workspace_members": ["magpie-id", "hermit-id", "pigeon-id", "fakes-id"],
+        "packages": [
+            pkg("magpie", "/r/crates/magpie", serde_json::Value::Null, &["testing"]),
+            pkg("hermit", "/r/crates/hermit", json!("dev"), &["testing"]),
+            pkg("pigeon", "/r/crates/pigeon", json!("build"), &[]),
+            pkg("fakes", "/r/testing/fakes", serde_json::Value::Null, &["testing"]),
+        ],
+    });
+    let found: Vec<String> = testing_feature_violations(&doc)
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        found,
+        vec!["magpie: enables `aviary-core/testing` outside [dev-dependencies]"]
+    );
 }
 
 #[test]

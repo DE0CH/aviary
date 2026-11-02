@@ -13,7 +13,7 @@ use std::io::Write;
 /// Exit code of a start aborted by a missing or empty variable (`EX_CONFIG` of sysexits.h).
 pub const EXIT_CONFIG: i32 = 78;
 
-/// Prefix of the variables test code may read with [`test_only`].
+/// Prefix of the variables test code may read with `test_only` (feature `testing`).
 pub const TEST_PREFIX: &str = "AVIARY_TEST_";
 
 /// Why a required variable cannot be used. Carries the name only, never the value.
@@ -124,10 +124,13 @@ pub fn required_list_from(name: &str, get: impl Fn(&str) -> Option<OsString>) ->
 }
 
 /// A test-only variable (`AVIARY_TEST_DATABASE_URL`, `AVIARY_TEST_S3_*`, set by CI for the test job), `None` when
-/// unset or empty. Only for test code: a service never has optional configuration.
+/// unset or empty. Only for test code: a service never has optional configuration, so it exists only in this
+/// crate's own tests and behind the `testing` feature, which a crate enables from `[dev-dependencies]` only (the
+/// source rules refuse it in `[dependencies]`).
 ///
 /// # Panics
 /// When `name` does not start with [`TEST_PREFIX`], so it cannot become a way to read service configuration.
+#[cfg(any(test, feature = "testing"))]
 #[must_use]
 pub fn test_only(name: &str) -> Option<String> {
     assert!(
@@ -143,21 +146,32 @@ fn process_env(name: &str) -> Option<OsString> {
 }
 
 /// Writes the start failure line and exits with [`EXIT_CONFIG`]. Logging may not be set up yet, so the line is
-/// written directly, in the log line's shape (15.1), naming the variable and never a value.
+/// written directly, in the log line's shape (15.1): the fixed fields `t`, `level`, `svc`, `ver`, `pod` (when
+/// known) and `msg` in that order, then the variable's name and why, never a value. `svc` is the service named by
+/// [`crate::log::init`] or [`crate::log::init_in_pod`], or the binary's name (each binary is named after its
+/// service) when the variable is read before that.
 fn abort(e: &EnvError) -> ! {
-    // the fixed fields first, in the order of every log line
-    let q = |v: &str| serde_json::to_string(v).unwrap_or_default();
-    let line = format!(
-        r#"{{"t":{},"level":"error","svc":{},"msg":"missing env","name":{},"why":{}}}"#,
-        q(&crate::log::now()),
-        q(&crate::version::program()),
-        q(e.name()),
-        q(e.reason()),
-    );
+    let line = abort_line(e);
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{line}");
     let _ = out.flush();
     std::process::exit(EXIT_CONFIG)
+}
+
+fn abort_line(e: &EnvError) -> String {
+    let q = |v: &str| serde_json::to_string(v).unwrap_or_default();
+    let svc = crate::log::svc_name().map_or_else(crate::version::program, str::to_owned);
+    let pod = crate::log::pod_name()
+        .map(|p| format!(r#","pod":{}"#, q(p)))
+        .unwrap_or_default();
+    format!(
+        r#"{{"t":{},"level":"error","svc":{},"ver":{}{pod},"msg":"missing env","name":{},"why":{}}}"#,
+        q(&crate::log::now()),
+        q(&svc),
+        q(crate::version::sha12()),
+        q(e.name()),
+        q(e.reason()),
+    )
 }
 
 #[cfg(test)]
@@ -241,6 +255,11 @@ mod tests {
             Some("required") => drop(required(PROBE)),
             Some("required_list") => drop(required_list(PROBE)),
             Some("field") => drop(field(PROBE)),
+            Some("named") => {
+                let build = crate::version::Build::new("magpie");
+                crate::log::init(&build, Some("magpie-7c9".to_owned()), crate::log::Output::Stdout);
+                drop(required(PROBE));
+            }
             _ => {}
         }
         // reached only when the value was usable
@@ -250,6 +269,17 @@ mod tests {
     /// Runs [`abort_child`] in a child process with `PROBE` set to `probe` (or unset) and returns its exit code and
     /// the one JSON line it printed.
     fn run_child(mode: &str, probe: Option<&str>) -> (Option<i32>, serde_json::Value) {
+        let (code, raw) = run_child_raw(mode, probe);
+        let line = if raw.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&raw).unwrap()
+        };
+        (code, line)
+    }
+
+    /// [`run_child`], with the line as printed.
+    fn run_child_raw(mode: &str, probe: Option<&str>) -> (Option<i32>, String) {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
         cmd.args(["--exact", "env::tests::abort_child", "--nocapture", "--test-threads=1"])
             .env(CHILD, mode);
@@ -262,8 +292,8 @@ mod tests {
         let line = stdout
             .lines()
             // libtest may have written "test … " on the same line before the child exited
-            .find_map(|l| l.find("{\"").map(|at| &l[at..]))
-            .map_or(serde_json::Value::Null, |l| serde_json::from_str(l).unwrap());
+            .find_map(|l| l.find("{\"").map(|at| l[at..].to_owned()))
+            .unwrap_or_default();
         (out.status.code(), line)
     }
 
@@ -301,6 +331,47 @@ mod tests {
         let (code, line) = run_child("field", None);
         assert_eq!(code, Some(EXIT_CONFIG));
         assert_eq!(line["name"], PROBE);
+    }
+
+    /// The keys of a JSON object line, in order.
+    fn keys_in_order(line: &str) -> Vec<String> {
+        let v: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line).unwrap();
+        let mut keys: Vec<(usize, String)> = v
+            .keys()
+            .map(|k| (line.find(&format!("\"{k}\":")).unwrap(), k.clone()))
+            .collect();
+        keys.sort();
+        keys.into_iter().map(|(_, k)| k).collect()
+    }
+
+    #[test]
+    fn abort_line_has_the_fixed_fields_in_order() {
+        let line = abort_line(&EnvError::Missing("MAGPIE_DATABASE_URL".into()));
+        assert_eq!(
+            keys_in_order(&line),
+            ["t", "level", "svc", "ver", "msg", "name", "why"],
+            "{line}"
+        );
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["ver"], crate::version::sha12());
+        assert_eq!(v["msg"], "missing env");
+        assert_eq!(v["level"], "error");
+    }
+
+    #[test]
+    fn abort_line_names_the_service_and_pod_once_known() {
+        // only the child process names a service, so this process's globals stay unset
+        let (code, raw) = run_child_raw("named", None);
+        assert_eq!(code, Some(EXIT_CONFIG));
+        let line: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(line["svc"], "magpie");
+        assert_eq!(line["pod"], "magpie-7c9");
+        assert_eq!(line["ver"], crate::version::sha12());
+        assert_eq!(
+            keys_in_order(&raw),
+            ["t", "level", "svc", "ver", "pod", "msg", "name", "why"],
+            "{raw}"
+        );
     }
 
     #[test]
