@@ -121,6 +121,25 @@ token's unless that is 0.0.0.0. Any failure is definitive: 403 `{"code": "not_al
 http://hermit/v1/sandbox-token-keys` → `{"keys": [{"kid", "alg": "Ed25519", "publicKey": "<base64url 32 bytes>"}]}`,
 refetched every 5 min and at most every 10 s on an unknown kid, the last set kept on a failed fetch.
 
+**Known-answer vector** (`crates/hermit-api/vectors/token-v1.json`, computed from this description alone by
+`vectors/token-v1.py` with Python's `cryptography`, and asserted byte for byte by `tests/token_vector.rs`). Master key
+`1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc` (kid 1, 32 bytes of `0x07`); claims sandbox
+`0190f6c2-0000-7000-8000-000000000001`, conversation `0190f6c2-0000-7000-8000-000000000002`, source `192.0.2.7`,
+expiry `1800000000`, person `staff@example.org`:
+
+```text
+payload (hex)  010190f6c20000700080000000000000010190f6c2000070008000000000000002c0000207000000006b49d200
+               7374616666406578616d706c652e6f7267
+token          hst1.1.AQGQ9sIAAHAAgAAAAAAAAAEBkPbCAABwAIAAAAAAAAACwAACBwAAAABrSdIAc3RhZmZAZXhhbXBsZS5vcmc.
+               BshwBoZfSVF4vOt5b_NYB4A4SfZg0n8_WcFTMZ49NdtMjJA09IOVy6j6Enpa8MdylPirxw7DNv7sj8ioCrHLCg
+publicKey      {"kid": 1, "alg": "Ed25519", "publicKey": "p-Rs6z8KcdQsdkKo5b22-NQxDMOV-A1W1PEv19s0IRQ"}
+control token  hct_q4hwgtfUFXSnJjxhN7DXbpEhX5V6j_d5EmHr1L1Wh7Q   (for the sandbox id above)
+its SHA-256    2dd0d5a9a830a44f7384434f0272f6ac741e8d1d5a6107e86e51bee3c1188e12
+```
+
+(the payload and the token are one line each; they are wrapped here.) An implementation that reproduces these five
+values has the byte layout, the signing context, the HKDF salt and infos and the HMAC input right.
+
 **Liveness.** `GET http://hermit/v1/sandbox-tokens/{sandboxId}` (the gateway's pair bearer, 1 s timeout) →
 `{"sandboxId", "conversationId", "person", "state", "live", "expiresAt"}`; 404 `unknown_sandbox`. Cache 30 s and
 refresh in the background; `live: false` or 404 → 403. hermit unreachable, slow or 5xx: keep the last answer whatever
@@ -154,9 +173,18 @@ counted in `<gw>_drain_cut_total{kind}`.
 ## The hermit contract
 
 Crate `hermit-api`: the types (`fixtures/` pins the JSON of each), the route constants (`routes`), the caller table
-(`routes::RULES`), the token codec (`token`), a client (`Client`) and a `Server` trait with an axum `router` for it.
+(`routes::RULES`), the token codec (`token`), a client (`Client`) and a `Server` trait with two axum routers for it.
 Every method of the trait answers 501 `not_supported` by default; an implementation that lacks a call answers exactly
 that, and callers treat it as a normal answer. `aviary-conformance hermit` is the check.
+
+`guarded_router(server, RouteGuard::new(callers))` enforces hermit 3.2 before any handler runs, so no
+implementation or fake has to: the pair token (401 `unauthenticated` with `www-authenticate: Bearer`), the matched
+route's row of `routes::RULES` (403 `wrong_caller`; a method no caller may use, such as `HEAD` on `/v1/*`, is 405),
+the `Aviary-*` headers that caller may set (`server::identity_headers`; every other one is removed), and
+`Aviary-Protocol` (`hermit-sandbox` on `/v1/sandbox/**`, `hermit-core` elsewhere, the current or previous number;
+otherwise 400 `unsupported_protocol` with `surface` and `protocol`). The admitted caller is `Ctx::caller`. `router`
+is the same routes with none of this. `tests/guard.rs` proves that a (method, route) reaches a handler exactly when
+`RULES` lists it, in both directions.
 
 | Caller | Routes |
 |---|---|
@@ -190,7 +218,12 @@ What an implementation must do, beyond the shapes:
 - **Workspaces.** Ids are uuids (a conversation's is its id; a share's is `workspaces::share_workspace`). Paths are
   relative, no `.`/`..`/empty components, no NUL, ≤ 4096 bytes and 255 per component (`workspaces::valid_path`), and
   never resolve outside the workspace. `files` answers 200 or 206 for one `Range`, with `etag: "<size>-<mtime ns>"`,
-  `last-modified`, `accept-ranges: bytes`; there is no write route; `clone` copies `from` (after asking a ready
+  `last-modified`, `accept-ranges: bytes`, `content-length`; the body is streamed (`FileContent` holds an
+  `axum::body::Body`; the client's `FileDownload` is a stream with a 30 s limit for the headers and 30 s between
+  chunks, no total limit), so neither side holds a file in memory. A `Range` other than one `bytes=a-b` or
+  `bytes=a-` (a suffix range, a list, another unit, `b < a`) is ignored and the whole file served (RFC 9110 14.2);
+  416 `bad_range` with `content-range: bytes */<size>` only for `a >= size` (`ByteRange::resolve`,
+  `error::range_not_satisfiable`); there is no write route; `clone` copies `from` (after asking a ready
   sandbox of it to flush); `DELETE` releases the conversation's live sandbox first and answers 204 also when absent.
 - **The sandbox's own routes** answer only with the gateway's credential and three headers matching a live row (else
   404 `no_sandbox`). `GET /v1/sandbox/self` is the descriptor (at most 64 KiB; `etag` is `"` + the first 32 hex of
@@ -226,7 +259,11 @@ route (401 `unauthenticated` otherwise, 503 `unavailable` with `retry-after: 1` 
 | `POST /v1/exec {argv, cwd, stdin, timeoutMs, env}` | `{exitCode, signal, stdout, stderr, truncated}` (base64; uid 1000, ≤ 60 s) |
 
 `busy` is true in `starting`, `running`, `stopping` and `held`; false in `idle` and `released`.
-`ControlClient::release` and `prepare` read 409 `sandbox_busy` as `Outcome::Busy(run)`.
+`ControlClient::release` and `prepare` read 409 `sandbox_busy` as `Outcome::Busy(run)`, and a 200 `{"released":
+false}` or `{"ready": false}` as `ClientError::NotDone`. The release call's `code` is `ReleaseCallCode`
+(`sandbox_released` or `sandbox_lost`, nothing else, also in an activity reply's pending `release`);
+`ReleaseRequest::new(reason, force, deadlineMs)` takes the code from the reason and refuses a reason that makes no
+release call.
 
 **The local socket** `/run/supervisor/agent.sock` (HTTP over a Unix socket, no protocol number):
 `POST /v1/hooks/send-user-file {toolUseId, caption, files: [{path, size}]}` with the files' descriptors attached as
@@ -297,13 +334,25 @@ any wording difference"):
   15.1/15.3's variants. The report's `state` adds supervisor 15.3's `starting` and `released` to hermit's `running`,
   `stopping`, `held`, `idle`; `busy` is derived (true in `starting`, `running`, `stopping`, `held`), not sent.
 - `ActivityEvent.kind` is `memory_kill` (with `pid`, `comm`, `rss`) or `generation_exit` (with `pid`, `exitCode`,
-  `signal`); an unknown kind or `ReleaseReason` deserialises as `unknown`, so either enum can grow without breaking
-  older readers.
+  `signal`).
+- The contract grows additively (hermit 3.1), so every enum a reader decodes from the other side is open:
+  `SandboxState`, `SandboxPhase`, `ReleaseReason`, `ReleaseCode`, `ActivityState`, `ActivityReplyState` and
+  `ActivityEvent.kind` decode a value they do not know as `Unknown` (an unknown state is live, an unknown activity
+  state is busy). `Unknown` never goes on the wire: those enums' `Serialize` refuses it, so `"unknown"` is not a value
+  any side sends. The one closed enum is the release call's `ReleaseCallCode` (two values, hermit 3.10 and R35):
+  a third value would change what the supervisor does, so it takes a new `supervisor-control` and `hermit-sandbox`
+  number, and any other value is a 400.
+- `POST /v1/admin/sandboxes/{id}/exec` takes up to 2 MiB of JSON (`server::MAX_EXEC_BODY`, the same as the
+  supervisor's own listener), not hermit 3.1's 1 MiB: it carries supervisor 15.4's body, whose stdin of up to 1 MiB is
+  about 1.4 MiB as base64. Every other hermit route keeps 1 MiB.
+- No `Debug` form of the contract types writes a credential: `Client`, `ControlClient`, `Ctx` (`Authorization`,
+  `Proxy-Authorization`, cookies and every `Aviary-*` value but `Aviary-Request` and `Aviary-Protocol` are
+  `<redacted>`), `SecretValue` (the value) and `SandboxSelf` (the `env` values, which carry the sandbox token).
 - `:7070`'s `GET /v1/health` includes `state` and the release call's `reason` is `ReleaseReason` (DESIGN 12 D5);
   the `gen` field of `GET /v1/state` is `generation` in Rust.
 - The token signature covers the binary payload (not its base64 text); the control token's HMAC input is
   `"control\0"` followed by the sandbox id as lowercase hyphenated text; HKDF uses an empty salt.
-- 416 on `files` carries code `bad_range`; the hook route answers `{sent}`; `cpus` is an integer.
+- 416 on `files` carries code `bad_range` and `size`; the hook route answers `{sent}`; `cpus` is an integer.
 - The admin listings (`hosts`, `sandboxes`, `log`, `events`, and the answers of the admin writes other than purge
   and exec) and the ops snapshot are the implementation's own JSON (`serde_json::Value`): the spec names their content,
   not a shape, and no service reads them.
