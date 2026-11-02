@@ -12,6 +12,7 @@ mod sys;
 pub(crate) mod testing;
 #[cfg(test)]
 mod tests;
+pub mod watch;
 
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};

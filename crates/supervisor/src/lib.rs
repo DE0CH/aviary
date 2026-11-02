@@ -4,8 +4,13 @@
 //! Nothing in this crate knows a deployment: the same build runs everywhere, every limit is a constant in
 //! [`limits`], and everything a deployment decides comes from hermit's descriptor.
 
+pub mod boot;
 pub mod docker;
+pub mod hermit;
 pub mod keeper;
+pub mod lifecycle;
 pub mod limits;
+pub mod local;
+pub mod magpie;
 pub mod memguard;
 pub mod state;

@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 
 use crate::keeper::{self, SpawnSpec};
 use crate::limits::DOCKERD_START_WAIT;
+#[cfg(test)]
+use crate::local::serve_unix;
 
 /// `daemon.json` (4.6).
 pub const DAEMON_JSON: &str =
@@ -165,23 +167,6 @@ pub async fn ping(socket: &Path) -> bool {
         .ok()
         .flatten()
         .unwrap_or(false)
-}
-
-/// Serves `router` on a Unix socket at `path` with `mode` (an old socket removed first).
-///
-/// # Errors
-/// The bind error.
-pub fn serve_unix(path: &Path, mode: u32, router: Router) -> std::io::Result<tokio::task::JoinHandle<()>> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let _ = std::fs::remove_file(path);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let listener = tokio::net::UnixListener::bind(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
-    Ok(tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
-    }))
 }
 
 #[cfg(test)]
