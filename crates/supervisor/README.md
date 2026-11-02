@@ -36,7 +36,9 @@ client and exit stream, the boot environment, the agent cgroup), and the release
 `start_turn` goes through `Lifecycle::admit` before anything else. What the implementations must allow for:
 
 - `attach` runs under the lifecycle's boot gate: never after a release has begun, and a release's `stop` waits
-  for an attach in progress. Health turns `ready: true` only after `attach` returned (4.3 step 9).
+  for an attach in progress, so `attach` returns once the generation is spawned or re-attached and its loops are
+  started, without waiting for Claude Code's initialisation. Health turns `ready: true` only after `attach`
+  returned (4.3 step 9).
 - `mount(restart)` is `true` exactly when the keeper holds the `fuse` fd; a mount future is dropped when a release
   begins meanwhile, and `settle`/`unmount` are then called on a filesystem that never mounted.
 - `Reattach::Exited { exit: None }` is a generation whose exit code is unknown (`run.json` of another boot, or a

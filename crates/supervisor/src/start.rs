@@ -10,8 +10,9 @@
 //!    is read until it answers.
 //! 3. `:7070` (answering 503 until the descriptor is read, then `ready: false` until step 9), `agent.sock` and the
 //!    docker socket.
-//! 4. Unless a `run.json` of this boot exists (both writes are idempotent): `/etc/hosts` gets `localhost` and `sandbox` where missing (DESIGN 12 D2), apt's proxy
-//!    configuration from the descriptor's `env`; the managed Claude Code files are the driver's ([`Agent::attach`]).
+//! 4. Unless a `run.json` of this boot exists (both writes are idempotent): `/etc/hosts` gets `localhost` and
+//!    `sandbox` where missing (DESIGN 12 D2), apt's proxy configuration from the descriptor's `env`; the managed
+//!    Claude Code files are the driver's ([`Agent::attach`]).
 //! 5. The lease from magpie (30 s on `not_current_sandbox`, backoff on 503, never an exit).
 //! 6. `~/.claude` mounted ([`Filesystem::mount`]; a fresh connection or the keeper's fd).
 //! 7. Claude Code: re-attached to the live generation named in `run.json` (checked against the keeper's `STATUS`
@@ -421,8 +422,15 @@ impl Start {
             // `released` until hermit has it, answer every release `released`, admit nothing, then exit 0
             tracing::info!("released before this start: reporting released only");
             lifecycle.mark_released();
-            let _ = hermit.fetch_initial().await;
-            activity.run().await;
+            let report = async {
+                let _ = hermit.fetch_initial().await;
+                activity.run().await;
+            };
+            // bounded like a release (hermit destroys the sandbox by then in any case)
+            let bound = Duration::from_millis(u64::from(supervisor_api::control::RELEASE_DEADLINE_MS));
+            if tokio::time::timeout(bound, report).await.is_err() {
+                tracing::warn!("the released report was not accepted in time");
+            }
             tokio::time::sleep(ANSWER_GRACE).await;
             return 0;
         }
