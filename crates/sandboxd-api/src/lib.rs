@@ -21,6 +21,13 @@
 //! | `GET /v1/sandboxes/{name}/receive?wait=<ms>` | — | [`ReceiveResult`] |
 //! | `POST /v1/sandboxes/{name}/send` | [`SendRequest`] | [`SendResult`] (409: not moved, still running here) |
 //!
+//! **Answers only gain fields (expand-only).** A host runs the sandboxd of its AMI for hours while hermit rolls forward
+//! and back, so a client must read the answers of a newer sandboxd: the answer types ignore fields they do not know,
+//! every field added to an answer is an `Option` or has a serde default, and an enum that gains a value gains it with
+//! the `Unknown` catch-all already in place ([`SandboxState::Unknown`], [`ReceiveResult::Unknown`]). Exact shapes are
+//! checked by the tests instead (the fixtures round-trip, and `tests/live.rs` checks a real sandboxd's answers key for
+//! key). Removing or retyping a field is a contract change (docs/CONTRACTS.md).
+//!
 //! Every error is [`ErrorBody`] `{"error": "<message>"}` with its status: 400 bad request, 403 not the controller,
 //! 404, 409 conflict, 411 chunked body, 413 body too large, 500, 502 lost in a migration's stopped part, 503 a fixed
 //! table full or the shared filesystem not mounted.
@@ -34,7 +41,10 @@ use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub use client::{Client, Error, Tls};
+pub use client::{
+    CREATE_TIMEOUT, Client, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, IMAGE_TIMEOUT, MAX_CONNECTIONS, RECEIVE_TIMEOUT,
+    RECEIVE_WAIT_MS, SEND_TIMEOUT, TIMEOUT, Tls,
+};
 pub use server::{Answer, ApiError, Server, router};
 
 /// sandboxd's API port on the overlay address.
@@ -105,7 +115,7 @@ pub enum Role {
 
 /// `GET /v1/host`: the host's facts, capacity, network and sandboxes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Host {
     /// host.json `name`.
     pub name: String,
@@ -141,7 +151,7 @@ pub struct Host {
     pub cpu_features: String,
     /// `runsc --version`'s first line (empty on a gateway).
     pub runsc: String,
-    /// The installed runsc fork release (`gvisor-bin/.release`).
+    /// The installed runsc fork release (its `.release` file).
     pub gvisor_release: String,
     /// Unpacked image digests (64 hex).
     pub images: Vec<String>,
@@ -159,7 +169,7 @@ pub struct Host {
 
 /// `Host.sandboxd`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Daemon {
     /// `rust`.
     pub implementation: String,
@@ -173,7 +183,7 @@ pub struct Daemon {
 
 /// `Host.sandboxd.memory`: the budget and what is used of it, bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub struct DaemonMemory {
     pub budget: u64,
@@ -199,7 +209,7 @@ pub struct DaemonMemory {
 
 /// `Host.sandboxd.limits`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DaemonLimits {
     /// TLS connections served at once.
     pub max_connections: u64,
@@ -211,7 +221,7 @@ pub struct DaemonLimits {
 
 /// One of wg0's peers as the kernel has it (`wg show wg0 dump`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerStatus {
     /// The peer's public key.
     pub public_key: String,
@@ -246,7 +256,6 @@ pub struct SetPeers {
 
 /// The answer of `PUT /v1/peers`: wg0's peers afterwards.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Peers {
     /// wg0's peers.
     pub peers: Vec<PeerStatus>,
@@ -272,15 +281,23 @@ pub struct EnsureImage {
 
 /// The answer of `POST /v1/images`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ImageDigest {
     /// The unpacked image's digest (64 hex).
     pub digest: String,
 }
 
-/// A sandbox's environment, in the order given (sandboxd keeps it: the bundle's `process.env` follows it).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// A sandbox's environment, in the order given (sandboxd keeps it: the bundle's `process.env` follows it). Its values
+/// hold the sandbox's credentials (the proxy credential, tokens), so `Debug` shows the keys only.
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Env(pub Vec<(String, String)>);
+
+impl fmt::Debug for Env {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Env")
+            .field(&self.0.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>())
+            .finish()
+    }
+}
 
 impl Serialize for Env {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -354,11 +371,14 @@ pub enum SandboxState {
     Running,
     /// A migration target waiting for its sandbox.
     Receiving,
+    /// A state this version does not know (a newer sandboxd).
+    #[serde(other)]
+    Unknown,
 }
 
 /// One sandbox in a list, and the answer of a create.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Listed {
     /// Its name.
     pub name: String,
@@ -380,7 +400,6 @@ pub struct Listed {
 
 /// `GET /v1/sandboxes`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Sandboxes {
     /// The sandboxes on this host.
     pub sandboxes: Vec<Listed>,
@@ -388,7 +407,6 @@ pub struct Sandboxes {
 
 /// The answer of `DELETE /v1/sandboxes/{name}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Deleted {
     /// The name.
     pub deleted: String,
@@ -396,7 +414,6 @@ pub struct Deleted {
 
 /// The answer of `POST …/receive`: where the source sends to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Receiving {
     /// The migration relay's port.
     pub port: u16,
@@ -406,7 +423,7 @@ pub struct Receiving {
 
 /// The answer of `GET …/receive?wait=<ms>`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(tag = "state", rename_all = "lowercase")]
 pub enum ReceiveResult {
     /// Restored and running here.
     Running {
@@ -421,6 +438,9 @@ pub enum ReceiveResult {
         /// Why (`not here` when nothing is known).
         error: String,
     },
+    /// A state this version does not know (a newer sandboxd): ask again.
+    #[serde(other)]
+    Unknown,
 }
 
 /// `POST …/send`: move the sandbox to a receive.
@@ -442,7 +462,6 @@ pub struct SendRequest {
 
 /// The answer of `POST …/send`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SendResult {
     /// The whole send, ms.
     pub ms: u64,
@@ -452,7 +471,7 @@ pub struct SendResult {
 
 /// `SendResult.scratch`: the scratch copy's rounds while running and its final delta.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub struct ScratchStats {
     pub live_rounds: u64,
@@ -469,7 +488,6 @@ pub struct ScratchStats {
 
 /// Every error answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ErrorBody {
     /// The message.
     pub error: String,

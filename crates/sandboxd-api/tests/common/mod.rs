@@ -20,3 +20,16 @@ pub fn same(a: &Value, b: &Value) -> bool {
         _ => a == b,
     }
 }
+
+/// The same object keys at every level (arrays compared element by element): no field a type does not know, none it
+/// would add.
+pub fn same_keys(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same_keys(a, b)),
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same_keys(v, w)))
+        }
+        (Value::Object(_) | Value::Array(_), _) | (_, Value::Object(_) | Value::Array(_)) => false,
+        _ => true,
+    }
+}

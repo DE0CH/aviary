@@ -78,9 +78,30 @@ fn migration() {
 }
 
 #[test]
-fn unknown_answer_fields_are_refused() {
-    // sandboxd's answers are a closed set: a new field must come with a contract change (types, fixtures, fakes)
-    let mut v: Value = serde_json::from_str(&fixture("listed.json")).unwrap();
-    v["extra"] = Value::Bool(true);
-    assert!(serde_json::from_value::<Listed>(v).is_err());
+fn answers_of_a_newer_sandboxd_still_parse() {
+    // expand-only (lib.rs): a field or state an older client does not know is ignored, not an error
+    let mut listed: Value = serde_json::from_str(&fixture("listed.json")).unwrap();
+    listed["alive"] = Value::Bool(true);
+    listed["state"] = Value::from("paused");
+    let listed: Listed = serde_json::from_value(listed).unwrap();
+    assert_eq!(listed.state, sandboxd_api::SandboxState::Unknown);
+    let mut host: Value = serde_json::from_str(&fixture("host.json")).unwrap();
+    host["newFact"] = Value::from(1);
+    host["sandboxd"]["memory"]["newArena"] = Value::from(2);
+    host["sandboxes"][0]["alive"] = Value::Bool(false);
+    let _: Host = serde_json::from_value(host).unwrap();
+    let result: ReceiveResult = serde_json::from_value(serde_json::json!({"state": "none", "why": "x"})).unwrap();
+    assert_eq!(result, ReceiveResult::Unknown);
+    let mut sent: Value = serde_json::from_str(&fixture("send-response.json")).unwrap();
+    sent["scratch"]["extra"] = Value::from(0);
+    let _: SendResult = serde_json::from_value(sent).unwrap();
+}
+
+#[test]
+fn debug_hides_env_values() {
+    let s: Spec = serde_json::from_str(&fixture("spec.json")).unwrap();
+    let (k, v) = s.env.0[0].clone();
+    let shown = format!("{s:?}");
+    assert!(shown.contains(&k), "{shown}");
+    assert!(!shown.contains(&v), "{shown}");
 }

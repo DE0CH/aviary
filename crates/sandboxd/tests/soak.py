@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """sandboxd end-to-end and memory tests (docs/MEMORY.md "How it is checked"), with stand-ins for runsc/ip/nft/wg.
 
-Runs two daemons (A on 127.0.0.1, B on 127.0.0.2) as root (mlockall), then:
-  functional   every endpoint, 403 for a non-controller certificate, a migration A -> B, restart recovery
+Runs two daemons (A on 127.0.0.1, B on 127.0.0.2) and a gateway (G on 127.0.0.3, functional part only) as root
+(mlockall), then:
+  functional   every endpoint (egress on the gateway), 403 for a non-controller certificate, a migration A -> B, restart recovery
   soak         6 sandboxes on A + a slow migration A -> B in flight while every endpoint is hammered at more than
                the maximum concurrency, with hostile clients (slowloris, garbage, oversized bodies, deep JSON); RSS
                sampled throughout must stay flat and under the budget; the allocator must report no stray, overflow
@@ -31,7 +32,7 @@ def make_pki(d):
 
 
 class Daemon:
-    def __init__(self, base, name, ip, binary, pki, env_extra=None, limits=None, node=None):
+    def __init__(self, base, name, ip, binary, pki, env_extra=None, limits=None, node=None, gateway=False):
         self.ip, self.base = ip, f"{base}/{name}"
         self.root = f"{self.base}/root"
         img = f"{self.root}/var/lib/sbx/images/{DIGEST}"
@@ -41,8 +42,10 @@ class Daemon:
         lim = {"cgroups": False, "mlock": True}
         lim.update(limits or {})
         self.cfg = f"{self.base}/host.json"
-        json.dump({"name": name, "role": "burst", "wgAddress": ip, "hostCidr": "127.0.0.0/24", "apiPort": 17443,
-                   "hub": {"publicKey": GOOD_KEY, "endpoint": "1.2.3.4:51820", "allowedIps": ["10.201.0.1/32"]},
+        role = ({"role": "hub", "gateway": True, "egressVip": "10.201.1.1", "privateGateway": "10.0.0.1",
+                 "podCidr": "10.244.0.0/16", "reserveMemory": 0} if gateway else
+                {"role": "burst", "hub": {"publicKey": GOOD_KEY, "endpoint": "1.2.3.4:51820", "allowedIps": ["10.201.0.1/32"]}})
+        json.dump({"name": name, "wgAddress": ip, "hostCidr": "127.0.0.0/24", "apiPort": 17443, **role,
                    "tls": {"ca": f"{pki}/ca.crt", "cert": f"{pki}/gateway.crt", "key": f"{pki}/gateway.key"}, "limits": lim}, open(self.cfg, "w"))
         self.env = dict(SBX_ROOT=self.root, SBX_CONFIG=self.cfg, SBX_RUNSC=f"{FAKE}/runsc", SBX_FAKE=f"{self.base}/fake",
                         PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
@@ -125,7 +128,14 @@ def check(cond, what):
     print(f"ok  {what}")
 
 
-def functional(A, B, cl, intruder):
+def functional(A, B, G, cl, intruder):
+    s, h = cl.call(G.ip, "GET", "/v1/host")
+    check(s == 200 and h["role"] == "hub" and h["gateway"] and h["sandboxd"]["memory"]["budget"] > 0, "gateway: GET /v1/host")
+    s, r = cl.call(G.ip, "PUT", "/v1/egress", {"targets": ["10.244.0.6", "10.244.0.5", "10.244.0.5"]})
+    check(s == 200 and r == {"targets": ["10.244.0.5", "10.244.0.6"]}, f"gateway: PUT /v1/egress {s} {r}")
+    check(cl.call(G.ip, "GET", "/v1/host")[1]["egressTargets"] == ["10.244.0.5", "10.244.0.6"], "gateway: egress targets kept")
+    check(cl.call(G.ip, "GET", "/v1/sandboxes") == (200, {"sandboxes": []}), "gateway: no sandboxes")
+    check(cl.call(G.ip, "POST", "/v1/sandboxes", spec("g1", "10.200.0.21"))[0] == 409, "gateway: create is 409")
     s, h = cl.call(A.ip, "GET", "/v1/host")
     check(s == 200 and h["role"] == "burst" and h["images"] == [DIGEST] and h["cpuFeatures"] == "fpu,sse2,avx", "GET /v1/host")
     check(h["sandboxd"]["memory"]["budget"] > 0 and h["peers"][0]["allowedIps"] == ["10.201.0.1/32"], "host: memory + peers")
@@ -148,6 +158,9 @@ def functional(A, B, cl, intruder):
     check(cl.call(A.ip, "PUT", "/v1/peers", {"peers": [{"publicKey": "short"}]})[0] == 400, "PUT peers with a bad key: 400")
     check(cl.call(A.ip, "POST", "/v1/images", {"digest": DIGEST}) == (200, {"digest": DIGEST}), "images: have it")
     check(cl.call(A.ip, "GET", "/v1/nope")[0] == 404, "unknown path: 404")
+    check(cl.call(A.ip, "PATCH", "/v1/host") == (404, {"error": "not found"}), "another method on a known path: 404")
+    check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/receive?wait=abc") == (200, {"state": "failed", "error": "not here"}),
+          "a wait that is not a number is 0")
     check(cl.call(A.ip, "POST", "/v1/sandboxes", raw="x" * (70 << 10))[0] == 413, "body too large: 413")
     # migration A -> B
     s, sp = cl.call(A.ip, "GET", "/v1/sandboxes/sbx-f1/spec")
@@ -384,14 +397,16 @@ def main():
     cl, intruder = Client(pki), Client(pki, "intruder")
     A = Daemon(base, "a", "127.0.0.1", a.binary, pki, {"FAKE_MIGRATE_MS": "200"}).start()
     B = Daemon(base, "b", "127.0.0.2", a.binary, pki, {"FAKE_MIGRATE_MS": "200"}).start()
+    G = Daemon(base, "g", "127.0.0.3", a.binary, pki, gateway=True).start()
     try:
         idle = (A.rss(), B.rss())
         print(f"idle RSS: A {idle[0] / 2**20:.2f} MiB, B {idle[1] / 2**20:.2f} MiB (bound {rss_bound / 2**20:.2f} MiB)")
         if a.dump:
             os.makedirs(a.dump, exist_ok=True)
             cl.dump = a.dump
-        functional(A, B, cl, intruder)
+        functional(A, B, G, cl, intruder)
         cl.dump = None
+        G.stop()
         # the soak's migration takes ~20 s each way
         for d in (A, B):
             d.env["FAKE_MIGRATE_MS"] = "20000"
@@ -402,7 +417,7 @@ def main():
             node_soak(a.node, base, pki, min(a.seconds, 60))
         print("ALL OK")
     finally:
-        A.stop(); B.stop()
+        A.stop(); B.stop(); G.stop()
         print("logs and results in", base)
 
 

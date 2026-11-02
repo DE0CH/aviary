@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::same;
+use common::{same, same_keys};
 use sandboxd_api::{
     Deleted, EgressTargets, ErrorBody, Host, ImageDigest, Listed, Peers, ReceiveResult, Receiving, Sandboxes,
     SendResult, Spec,
@@ -15,11 +15,14 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-/// Parses `v` as `T`; every type but `Host` (whose numbers and peers move) must also serialize back to it.
+/// Parses `v` as `T` and serializes it back: the same keys at every level (the types ignore unknown fields, so this
+/// is where a field sandboxd writes but the types lack is caught), and with `exact` the same values too (every type
+/// but `Host`).
 fn check<T: DeserializeOwned + Serialize>(what: &str, v: &Value, exact: bool) {
     let t: T = serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("{what}: {e}: {v}"));
+    let back = serde_json::to_value(&t).unwrap();
+    assert!(same_keys(&back, v), "{what}: keys differ: {back} vs {v}");
     if exact {
-        let back = serde_json::to_value(&t).unwrap();
         assert!(same(&back, v), "{what}: {back} vs {v}");
     }
 }
@@ -107,6 +110,7 @@ fn answers_of_a_real_sandboxd() {
     let want = [
         "create",
         "delete",
+        "egress",
         "host",
         "images",
         "list",

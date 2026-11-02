@@ -1,6 +1,16 @@
 //! The typed client (hermit spec 13.15): HTTPS to `https://sandboxd:<port>` resolved to the host's overlay address, so
 //! the server certificate's name `sandboxd` is checked while connecting by address; TLS 1.3, the fabric CA, a client
 //! identity; keep-alive; at most [`MAX_CONNECTIONS`] requests at once per host (sandboxd serves 16).
+//!
+//! Of the [`MAX_CONNECTIONS`], one is kept for the heartbeat ([`Client::host`]) and the others are shared by every
+//! other call, so creates, sends and image pulls (minutes each) never make a heartbeat wait. A call's timeout covers
+//! its wait for a slot as well as the request: a call answers or fails within its timeout.
+//!
+//! Timeouts (hermit spec 13.15): heartbeat 5 s, create 15 min, send 15 min, receive wait 95 s, others 30 s, with two
+//! recorded deviations: `POST /v1/images` gets [`IMAGE_TIMEOUT`] (21 min) because sandboxd itself waits up to 20 min
+//! for a pull of the same digest (crates/sandboxd/src/images.rs) and a cold pull takes minutes, and
+//! `POST …/receive` gets [`CREATE_TIMEOUT`] because it prepares the sandbox's bundle as a create does (including the
+//! image pull). `GET …/log` (5 s) comes with that route (hermit spec 13.2 item 10).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -14,19 +24,27 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, Peer, Peers, RECEIVE_WAIT_MAX_MS,
-    ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
+    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, Peer, Peers, ReceiveResult, Receiving,
+    Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
 };
 
-/// Requests in flight per host at most.
+/// Requests in flight per host at most: [`HEARTBEAT_SLOTS`] for [`Client::host`], the rest for every other call.
 pub const MAX_CONNECTIONS: usize = 8;
+/// The slots kept for the heartbeat (`GET /v1/host`, one at a time per host).
+pub const HEARTBEAT_SLOTS: usize = 1;
 /// `GET /v1/host` (the heartbeat).
 pub const HOST_TIMEOUT: Duration = Duration::from_secs(5);
 /// A create (it may pull and unpack the image).
 pub const CREATE_TIMEOUT: Duration = Duration::from_mins(15);
 /// A send (a whole migration).
 pub const SEND_TIMEOUT: Duration = Duration::from_mins(15);
-/// Every other call (a receive's `wait` adds to it).
+/// `POST /v1/images`: at least sandboxd's own wait for a pull of the same digest (20 min).
+pub const IMAGE_TIMEOUT: Duration = Duration::from_mins(21);
+/// `GET …/receive?wait=<ms>`; the client asks sandboxd to wait at most [`RECEIVE_WAIT_MS`] of it.
+pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(95);
+/// The longest `wait` the client asks for: [`RECEIVE_TIMEOUT`] less 5 s for the answer to arrive.
+pub const RECEIVE_WAIT_MS: u64 = 90_000;
+/// Every other call.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The PEM files of the client's TLS identity.
@@ -57,9 +75,12 @@ pub enum Error {
         /// The message.
         body: String,
     },
-    /// No answer (connect, TLS, timeout, reset).
+    /// No answer (connect, TLS, reset).
     #[error("sandboxd unreachable: {0}")]
     Transport(#[from] reqwest::Error),
+    /// No answer within the call's timeout (the wait for a slot included).
+    #[error("sandboxd did not answer within {0:?}")]
+    Timeout(Duration),
     /// An answer that is not the route's type.
     #[error("sandboxd answered something unexpected: {0}")]
     Decode(#[from] serde_json::Error),
@@ -73,7 +94,10 @@ pub enum Error {
 pub struct Client {
     http: reqwest::Client,
     base: String,
+    /// Every call but the heartbeat.
     slots: Arc<Semaphore>,
+    /// The heartbeat's own.
+    beat: Arc<Semaphore>,
 }
 
 fn tls_config(tls: &Tls) -> Result<rustls::ClientConfig, Error> {
@@ -133,7 +157,8 @@ impl Client {
         Self {
             http,
             base,
-            slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+            slots: Arc::new(Semaphore::new(MAX_CONNECTIONS - HEARTBEAT_SLOTS)),
+            beat: Arc::new(Semaphore::new(HEARTBEAT_SLOTS)),
         }
     }
 
@@ -144,19 +169,34 @@ impl Client {
         body: Option<&B>,
         timeout: Duration,
     ) -> Result<T, Error> {
-        let _slot = self.slots.acquire().await.map_err(|e| Error::Tls(e.to_string()))?;
-        let mut req = self
-            .http
-            .request(method, format!("{}{path}", self.base))
-            .timeout(timeout);
+        self.call_in(&self.slots, method, path, body, timeout).await
+    }
+
+    async fn call_in<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        slots: &Semaphore,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        timeout: Duration,
+    ) -> Result<T, Error> {
+        let mut req = self.http.request(method, format!("{}{path}", self.base));
         if let Some(b) = body {
             req = req
                 .header("content-type", "application/json")
                 .body(serde_json::to_vec(b)?);
         }
-        let res = req.send().await?;
-        let status = res.status().as_u16();
-        let bytes = res.bytes().await?;
+        let exchange = async {
+            // the semaphore is never closed
+            let _slot = slots.acquire().await.map_err(|e| Error::Tls(e.to_string()))?;
+            let res = req.send().await?;
+            let status = res.status().as_u16();
+            let bytes = res.bytes().await?;
+            Ok::<_, Error>((status, bytes))
+        };
+        let (status, bytes) = tokio::time::timeout(timeout, exchange)
+            .await
+            .map_err(|_| Error::Timeout(timeout))??;
         if status >= 400 {
             let body = serde_json::from_slice::<ErrorBody>(&bytes)
                 .map_or_else(|_| String::from_utf8_lossy(&bytes).into_owned(), |e| e.error);
@@ -170,7 +210,8 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn host(&self) -> Result<Host, Error> {
-        self.call::<(), _>(Method::GET, routes::HOST, None, HOST_TIMEOUT).await
+        self.call_in::<(), _>(&self.beat, Method::GET, routes::HOST, None, HOST_TIMEOUT)
+            .await
     }
 
     /// `PUT /v1/peers`: wg0's peers, exactly these.
@@ -196,7 +237,7 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn ensure_image(&self, image: &EnsureImage) -> Result<ImageDigest, Error> {
-        self.call(Method::POST, routes::IMAGES, Some(image), CREATE_TIMEOUT)
+        self.call(Method::POST, routes::IMAGES, Some(image), IMAGE_TIMEOUT)
             .await
     }
 
@@ -249,15 +290,15 @@ impl Client {
         .await
     }
 
-    /// `GET /v1/sandboxes/{name}/receive?wait=<ms>`: the receive's result, waiting up to `wait_ms` for it to end.
+    /// `GET /v1/sandboxes/{name}/receive?wait=<ms>`: the receive's result, waiting up to `wait_ms` (at most
+    /// [`RECEIVE_WAIT_MS`]) for it to end.
     ///
     /// # Errors
     /// [`Error`].
     pub async fn receive_result(&self, name: &str, wait_ms: u64) -> Result<ReceiveResult, Error> {
-        let wait = wait_ms.min(RECEIVE_WAIT_MAX_MS);
+        let wait = wait_ms.min(RECEIVE_WAIT_MS);
         let path = format!("{}?wait={wait}", routes::sandbox_part(name, "receive"));
-        self.call::<(), _>(Method::GET, &path, None, TIMEOUT + Duration::from_millis(wait))
-            .await
+        self.call::<(), _>(Method::GET, &path, None, RECEIVE_TIMEOUT).await
     }
 
     /// `POST /v1/sandboxes/{name}/send`: move it to a receive.

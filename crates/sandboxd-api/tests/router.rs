@@ -121,7 +121,7 @@ async fn every_route_through_the_client() {
             "peers 1",
             "create sbx-0a1b2c env 3",
             "receive sbx-0a1b2c",
-            "result sbx-0a1b2c 120000", // the client clamps the wait as sandboxd does
+            "result sbx-0a1b2c 90000", // the client asks for at most RECEIVE_WAIT_MS
             "send sbx-0a1b2c 10.202.0.11:7142",
         ]
     );
@@ -159,6 +159,19 @@ async fn errors_have_sandboxd_shape() {
         .body(big)
         .send();
     assert_eq!(r.await.unwrap().status().as_u16(), 413);
+    // another method on a known path: sandboxd answers 404 `not found` (crates/sandboxd/src/api.rs, the soak checks it)
+    for (m, p) in [
+        (reqwest::Method::PATCH, "/v1/host"),
+        (reqwest::Method::GET, "/v1/egress"),
+        (reqwest::Method::PUT, "/v1/sandboxes/sbx-0a1b2c"),
+    ] {
+        let r = http.request(m.clone(), format!("{base}{p}")).send().await.unwrap();
+        assert_eq!(
+            (r.status().as_u16(), r.text().await.unwrap()),
+            (404, r#"{"error":"not found"}"#.to_owned()),
+            "{m} {p}"
+        );
+    }
     let mut spec: Spec = load("spec.json");
     spec.name = "sbx-other".into();
     let r = http
@@ -170,5 +183,44 @@ async fn errors_have_sandboxd_shape() {
     assert_eq!(
         (r.status().as_u16(), r.text().await.unwrap()),
         (400, r#"{"error":"name mismatch"}"#.to_owned())
+    );
+}
+
+#[tokio::test]
+async fn receive_wait_is_read_as_sandboxd_reads_it() {
+    // the first `wait=` as a number, clamped to [0, 120000]; anything else is 0, never a 400
+    let (fake, _, base) = serve().await;
+    let http = reqwest::Client::new();
+    for q in [
+        "wait=abc",
+        "",
+        "wait=",
+        "wait=-5",
+        "wait=inf",
+        "wait=1e9",
+        "x=1&wait=250.7&wait=9",
+    ] {
+        let r = http
+            .get(format!("{base}/v1/sandboxes/sbx-0a1b2c/receive?{q}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            (r.status().as_u16(), r.text().await.unwrap()),
+            (200, r#"{"state":"receiving"}"#.to_owned()),
+            "{q}"
+        );
+    }
+    assert_eq!(
+        *fake.calls.lock().unwrap(),
+        [
+            "result sbx-0a1b2c 0",
+            "result sbx-0a1b2c 0",
+            "result sbx-0a1b2c 0",
+            "result sbx-0a1b2c 0",
+            "result sbx-0a1b2c 0",
+            "result sbx-0a1b2c 120000",
+            "result sbx-0a1b2c 250",
+        ]
     );
 }

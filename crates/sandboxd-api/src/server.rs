@@ -5,12 +5,11 @@ use std::future::Future;
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, RawQuery, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use serde::Deserialize;
 
 use crate::{
     Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, MAX_BODY, Peers, RECEIVE_WAIT_MAX_MS,
@@ -92,20 +91,24 @@ fn name_ok(name: String) -> Answer<String> {
     }
 }
 
-#[derive(Deserialize)]
-struct Wait {
-    wait: Option<f64>,
-}
-
+/// The `wait` of `GET …/receive` as sandboxd reads it: the first `wait=` of the query as a number, clamped to
+/// [0, [`RECEIVE_WAIT_MAX_MS`]]; missing, not a number or not finite is 0 (never a 400).
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to [0, RECEIVE_WAIT_MAX_MS] first
-fn wait_ms(w: Option<f64>) -> u64 {
+fn wait_ms(query: Option<&str>) -> u64 {
     #[allow(clippy::cast_precision_loss)] // 120000 is exact
     let max = RECEIVE_WAIT_MAX_MS as f64;
-    w.filter(|x| x.is_finite()).unwrap_or(0.0).clamp(0.0, max) as u64
+    query
+        .unwrap_or("")
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("wait="))
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| x.is_finite())
+        .unwrap_or(0.0)
+        .clamp(0.0, max) as u64
 }
 
-/// sandboxd's routes over `server`, with its 64 KiB body limit and `{"error"}` answers (404 `not found` for any other
-/// path).
+/// sandboxd's routes over `server`, with its 64 KiB body limit and `{"error"}` answers: 404 `not found` for any other
+/// path and for a known path with another method, as sandboxd answers both.
 pub fn router<S: Server>(server: Arc<S>) -> Router {
     Router::new()
         .route(routes::HOST, get(|State(s): State<Arc<S>>| async move { s.host().await.map(Json) }))
@@ -161,8 +164,8 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                     s.receive(spec).await.map(Json)
                 },
             )
-            .get(|State(s): State<Arc<S>>, Path(name): Path<String>, Query(w): Query<Wait>| async move {
-                s.receive_result(name_ok(name)?, wait_ms(w.wait)).await.map(Json)
+            .get(|State(s): State<Arc<S>>, Path(name): Path<String>, RawQuery(q): RawQuery| async move {
+                s.receive_result(name_ok(name)?, wait_ms(q.as_deref())).await.map(Json)
             }),
         )
         .route(
@@ -176,6 +179,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
             ),
         )
         .fallback(|| async { ApiError::new(404, "not found") })
+        .method_not_allowed_fallback(|| async { ApiError::new(404, "not found") })
         .layer(DefaultBodyLimit::max(MAX_BODY))
         .with_state(server)
 }

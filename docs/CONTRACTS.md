@@ -268,6 +268,25 @@ What a caller can rely on, beyond the shapes:
 - **Skew.** An unknown event kind, row kind, change type, command type or code reads as `Unknown`/`Other` and is
   skipped (an unknown command is acked `{"result": {"error": "unsupported"}}`).
 
+## The sandboxd contract
+
+Crate `sandboxd-api`: the types of every route of sandboxd (the host agent of hermit's fabric), the route constants,
+a mutual-TLS client (hermit spec 13.15), a `Server` trait with an axum router (what `fake-sandboxd` serves), and the
+golden fixtures. sandboxd is not an aviary-core service: HTTPS on the host's overlay address, port 7443, TLS 1.3, a
+client certificate with CN `hermit`, no protocol number, and its own error body `{"error": "<message>"}` (also for an
+unknown path and for a known path with another method: 404 `not found`).
+
+- **Answers only gain fields (expand-only).** A host keeps the sandboxd of its AMI for hours while hermit rolls
+  forward and back, so every client reads the answers of a newer sandboxd: the answer types ignore unknown fields, a
+  new answer field is an `Option` or has a serde default, and the enums of answers (`SandboxState`, `ReceiveResult`)
+  have an `Unknown` catch-all for a value added later. Removing, renaming or retyping an answer field is a breaking
+  change: it waits until no host runs a sandboxd that writes the old shape (a full AMI roll).
+- The exact shapes are checked by the tests, not by the types: the fixtures round-trip, sandboxd's own parsers and
+  writers are checked against them (`crates/sandboxd/src/contract.rs`), and `tests/live.rs` checks every route's
+  answer of a running sandboxd key for key (the soak job).
+- Client timeouts and slots: hermit spec 13.15, with the deviations in the crate's `client` module docs (image
+  pulls 21 min, a receive's prepare 15 min); one of the 8 per-host slots is kept for the heartbeat.
+
 ## Points the crates settle
 
 Where the specs left a detail open or disagreed, the crates decide (platform R35: "the crates' golden fixtures settle
