@@ -3,8 +3,10 @@
 //! the sandbox hermit's feed recorded (`hermit_sandbox`, `starting` or `ready`), else hermit's own answer to
 //! `GET /v1/conversations/{id}/sandbox` (no wait, 2 s), which is then recorded. hermit naming another sandbox, or
 //! none, answers 409 `not_current_sandbox`; hermit unreachable answers 503 (the supervisor retries and never takes a
-//! lease on missing evidence). Granting makes every earlier lease dead at once; the answer carries `resync` and
-//! clears `cc_resync` (6.12).
+//! lease on missing evidence). hermit is asked outside the transaction, so its answer is recorded only when the
+//! feed has recorded nothing since it was asked; a feed record made in between wins (it is at least as new), and the
+//! caller gets the lease only if that record names it. Granting makes every earlier lease dead at once; the answer
+//! carries `resync` and clears `cc_resync` (6.12).
 
 use hermit_api::sandbox::SandboxQuery;
 use magpie_api::errors::ErrorCode;
@@ -58,7 +60,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
         .get()
         .await?
         .query_opt(
-            "select person, migrating, hermit_sandbox, hermit_state from conversations where id = $1",
+            "select person, migrating, hermit_sandbox, hermit_state, hermit_version from conversations where id = $1",
             &[&caller.conversation],
         )
         .await?
@@ -72,6 +74,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
     }
     let recorded: Option<Uuid> = row.get(2);
     let state: Option<String> = row.get(3);
+    let asked_at: (Option<Uuid>, Option<i64>) = (recorded, row.get(4));
     // the feed's record first; hermit's own answer (outside any transaction) only when it does not name the caller
     let hermit = if recorded == Some(caller.sandbox) && live(state.as_deref()) {
         None
@@ -92,27 +95,39 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
     let grant = aviary_pg::tx!(&app.pool, |t| -> Result<LeaseResponse> {
         let conv = lock(t, caller).await?;
         conv.refuse_migrating()?;
-        if let Some((id, state, version)) = &hermit {
-            t.execute(
-                "update conversations set hermit_sandbox = $2, hermit_state = $3, hermit_version = $4
-                      where id = $1 and (hermit_sandbox is distinct from $2 or hermit_version is null
-                                         or hermit_version < $4)",
-                &[&caller.conversation, id, state, version],
+        // re-read under the lock: the feed may have recorded something since the read above
+        let row = t
+            .query_one(
+                "select hermit_sandbox, hermit_state, hermit_version from conversations where id = $1",
+                &[&caller.conversation],
             )
             .await?;
-        } else {
-            // re-checked under the lock: the feed may have moved on since the read above
-            let row = t
-                .query_one(
-                    "select hermit_sandbox, hermit_state from conversations where id = $1",
-                    &[&caller.conversation],
+        let now: (Option<Uuid>, Option<i64>) = (row.get(0), row.get(2));
+        let now_state: Option<String> = row.get(1);
+        let feed_names_caller = now.0 == Some(caller.sandbox) && live(now_state.as_deref());
+        match &hermit {
+            Some((id, state, version)) if now == asked_at => {
+                // nothing recorded since hermit was asked: its answer is the newest evidence (the feed's rule)
+                t.execute(
+                    "update conversations set hermit_sandbox = $2, hermit_state = $3, hermit_version = $4
+                      where id = $1
+                        and ((hermit_sandbox is distinct from $2 and $3 <> 'gone')
+                             or (hermit_sandbox = $2 and coalesce(hermit_version, -1) < $4))",
+                    &[&caller.conversation, id, state, version],
                 )
                 .await?;
-            let id: Option<Uuid> = row.get(0);
-            let state: Option<String> = row.get(1);
-            if id != Some(caller.sandbox) || !live(state.as_deref()) {
+            }
+            // the feed recorded something after hermit answered: never write the older answer over it
+            _ if !feed_names_caller => {
+                tracing::info!(
+                    conversation = %caller.conversation,
+                    caller = %caller.sandbox,
+                    recorded = ?now.0,
+                    "lease refused: the feed recorded another sandbox"
+                );
                 return Err(not_current());
             }
+            _ => {}
         }
         let lease = Uuid::new_v4();
         let row = t

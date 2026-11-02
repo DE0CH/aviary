@@ -3,11 +3,17 @@
 //! gate's recorded calls (its `calls.log`): a session whose transcript starts in another project directory, the
 //! relocation onto an occupied main path (set-aside, rename of the transcript and of its session folder), the
 //! subagent's transcript and its meta file written by temp file and rename, appends in the recorded sizes (up to
-//! 1 MiB), a tombstone removal, the compaction's temp file renamed over the transcript, and the turns after it.
+//! 1 MiB), a tombstone removal, the compaction's temp file renamed over the transcript, and the turns after it. Every
+//! prompt line is a person's: written as the echo of a new person-origin turn (the earlier turn's end flushes its
+//! limbo), so the echo path runs through the promotion, the tombstone, the compaction and the appends.
 //!
 //! It passes when every file reads back byte for byte, the events equal the classification of the final
-//! transcript's lines (no duplicate, none missing, each event one line), the counts are the pinned ones (a classifier
-//! change for 2.1.304's lines shows here), and the subagent transcript made no event.
+//! transcript's lines without the echoes (no duplicate, none missing, each event one line, no prompt event ever made
+//! for an echo), the counts are the pinned ones (a classifier change for 2.1.304's lines shows here), and the
+//! subagent transcript made no event.
+//!
+//! This is a replay of the gate's files in the shape of its calls, not a run of the binary: the run of Claude Code
+//! itself against a mock Messages API through a FUSE supervisor and magpie (magpie 20) is WP-28's harness.
 
 #![allow(
     clippy::unwrap_used,
@@ -22,7 +28,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::cc::{SID, Sandbox, main_path, set_main};
+use common::cc::{SID, Sandbox, flush_turn, main_path, person_turn, set_main};
 use magpie::ccfs::classify::{Class, Context, classify};
 use serde_json::{Value, json};
 
@@ -49,18 +55,55 @@ fn line(v: &Value) -> Vec<u8> {
     b
 }
 
+/// `(kind, uuid)` of the events `b`'s lines classify into, the prompts left out (each is a person turn's echo).
 fn classified(b: &[u8]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = lines_of(b)
         .into_iter()
         .filter_map(
             |l| match classify(serde_json::from_slice::<Value>(l).ok().as_ref(), Context::default()) {
-                Class::Event(e) => Some((e.kind.to_owned(), e.uuid.unwrap_or_default())),
+                Class::Event(e) if !e.is_prompt => Some((e.kind.to_owned(), e.uuid.unwrap_or_default())),
                 _ => None,
             },
         )
         .collect();
     out.sort();
     out
+}
+
+/// A prompt a person typed (the echo of a turn's `user.sent` when its turn's echo is pending).
+fn is_prompt(l: &[u8]) -> bool {
+    matches!(classify(serde_json::from_slice::<Value>(l).ok().as_ref(), Context::default()),
+        Class::Event(e) if e.is_prompt)
+}
+
+/// Appends `bytes` like [`append`]; each prompt line starts a new person turn (the earlier turn's end flushes its
+/// limbo) and is written as its echo, in that turn's writes.
+async fn append_turns(
+    s: &mut Sandbox,
+    sql: &aviary_pg::Pool,
+    path: &str,
+    at: &mut usize,
+    bytes: &[u8],
+    sizes: &[usize],
+    turn: &mut Option<uuid::Uuid>,
+) {
+    let mut cuts = vec![0];
+    let mut off = 0;
+    for l in bytes.split_inclusive(|&c| c == b'\n') {
+        if off > 0 && l.ends_with(b"\n") && is_prompt(l) {
+            cuts.push(off);
+        }
+        off += l.len();
+    }
+    cuts.push(bytes.len());
+    for w in cuts.windows(2) {
+        let seg = &bytes[w[0]..w[1]];
+        if seg.split_inclusive(|&c| c == b'\n').next().is_some_and(is_prompt) {
+            flush_turn(sql, s.conversation, *turn).await;
+            *turn = Some(person_turn(sql, s).await);
+        }
+        append(s, path, at, seg, sizes).await;
+    }
 }
 
 async fn append(s: &Sandbox, path: &str, at: &mut usize, bytes: &[u8], sizes: &[usize]) {
@@ -82,7 +125,8 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     let t = common::Tokens::new();
     let r = common::replica(&db.url, &t).await;
     let sql = common::sql(&db.url);
-    let s = Sandbox::leased(&r, ALICE).await;
+    let mut s = Sandbox::leased(&r, ALICE).await;
+    let mut turn = None;
     let conv = s.conversation;
     let main = main_path();
     let old_dir = "projects/-old";
@@ -120,7 +164,7 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     }
     let mut at = 0;
     s.write(&old, 0, &[]).await.unwrap();
-    append(&s, &old, &mut at, &pre, &[141_646, 437, 116_065]).await;
+    append_turns(&mut s, &sql, &old, &mut at, &pre, &[141_646, 437, 116_065], &mut turn).await;
 
     // the subagent: its folder, the meta file by temp + rename, its transcript in two writes
     let agent_dir = format!("{old_dir}/{SID}/subagents");
@@ -154,8 +198,8 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
         .unwrap();
     let promoted = super_events(&sql, conv).await;
     assert_eq!(
-        promoted, 10,
-        "the moved transcript's lines are classified once, on arrival"
+        promoted, 5,
+        "the moved transcript's lines are classified once, on arrival, its prompts as their turns' echoes"
     );
 
     // more turns, with a tombstone removal in the middle (truncate at its start, the tail written back)
@@ -170,7 +214,16 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     for k in &kept {
         more.extend(*k);
     }
-    append(&s, &main, &mut at, &more, &[5200, 13_258, 7411, 5230, 1216, 1_048_576]).await;
+    append_turns(
+        &mut s,
+        &sql,
+        &main,
+        &mut at,
+        &more,
+        &[5200, 13_258, 7411, 5230, 1216, 1_048_576],
+        &mut turn,
+    )
+    .await;
     let full = [pre.clone(), more.clone()].concat();
     assert_eq!(s.read(&main).await.unwrap(), full);
     let cut = full
@@ -183,13 +236,7 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     let full = [&full[..cut], &tail[..]].concat();
     assert_eq!(s.read(&main).await.unwrap(), full);
     // that turn ends: the removed line is retracted
-    aviary_pg::tx!(&sql, |t| -> magpie::error::Result<usize> {
-        t.execute("select 1 from conversations where id = $1 for update", &[&conv])
-            .await?;
-        magpie::ccfs::limbo::flush_scope(t, conv, None).await
-    })
-    .await
-    .unwrap();
+    assert_eq!(flush_turn(&sql, conv, turn).await, 1);
 
     // the compaction: the temp file (create, O_TRUNC, one write), renamed over the transcript
     let tmp = format!("projects/-workspace/{SID}.jsonl.compact.tmp.c966ffe5");
@@ -201,7 +248,7 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
 
     // the turns after it, in the gate's write sizes (the torn line among them)
     let mut at = COMPACTED;
-    append(&s, &main, &mut at, &MAIN[COMPACTED..], SIZES).await;
+    append_turns(&mut s, &sql, &main, &mut at, &MAIN[COMPACTED..], SIZES, &mut turn).await;
     // the cleanup sweep cannot delete history; the set-aside occupant can go
     assert_eq!(common::cc::code(&s.unlink(&main).await.unwrap_err()), "protected");
     s.unlink(&aside).await.unwrap();
@@ -219,14 +266,9 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
         AGENT_META
     );
 
-    // the turn's end flushes the tombstone's limbo
-    aviary_pg::tx!(&sql, |t| -> magpie::error::Result<usize> {
-        t.execute("select 1 from conversations where id = $1 for update", &[&conv])
-            .await?;
-        magpie::ccfs::limbo::flush_scope(t, conv, None).await
-    })
-    .await
-    .unwrap();
+    // the last turn ends
+    flush_turn(&sql, conv, turn).await;
+    flush_turn(&sql, conv, None).await;
 
     let c = sql.get().await.unwrap();
     let visible = c
@@ -244,7 +286,7 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     assert_eq!(
         got,
         classified(MAIN),
-        "the visible events are the final transcript's, once each"
+        "the visible events are the final transcript's, once each, no echo among them"
     );
     let seqs: BTreeSet<i64> = visible.iter().map(|r| r.get(0)).collect();
     let line_seqs: Vec<i64> = c
@@ -278,11 +320,30 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
         (PINNED_USER, PINNED_ASSISTANT),
         "2.1.304's classification moved"
     );
-    // every history line, the tombstone and each final line made exactly one event; kept lines made none twice
+    // every history reply, the tombstone and each final line made exactly one event; kept lines made none twice
     assert_eq!(
         kinds("cc.user") + kinds("cc.assistant"),
-        31 + final_user + final_assistant
+        16 + final_user + final_assistant
     );
+    // no prompt event was made for an echo, through the promotion, the tombstone, the compaction or the appends
+    let prompts: i64 = c
+        .query_one(
+            "select count(*) from events where conversation_id = $1 and is_prompt",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(prompts, 0);
+    let turns: i64 = c
+        .query_one(
+            "select count(*) from turns where conversation_id = $1 and origin = 'person' and echo_matched",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(turns, 15 + PINNED_PROMPTS, "every person turn's echo was matched");
     // the compaction's retract (the history) and the tombstone's
     assert_eq!(kinds("retract"), 2);
     let retracted: i64 = c
@@ -294,7 +355,7 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(retracted, 31);
+    assert_eq!(retracted, 16);
     let subagent_events: i64 = c
         .query_one(
             "select count(*) from events where conversation_id = $1 and data->>'agentId' is not null",
@@ -306,8 +367,11 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
     assert_eq!(subagent_events, 0, "the subagent transcript is not the main transcript");
 }
 
-/// The classification of the fixture's final transcript: its `cc.user` and `cc.assistant` lines.
-const PINNED_USER: i64 = 7;
+/// The classification of the fixture's final transcript: its `cc.user` and `cc.assistant` lines that are not
+/// prompts, and its prompts (each a person turn's echo here).
+const PINNED_USER: i64 = 2;
+/// See [`PINNED_USER`].
+const PINNED_PROMPTS: i64 = 5;
 /// See [`PINNED_USER`].
 const PINNED_ASSISTANT: i64 = 5;
 

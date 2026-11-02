@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Start a 2-node Postgres with synchronous replication (magpie 6.10's write acceptance: a commit returns only after a
 # synchronous standby has the WAL, as magpie-pg's CNPG cluster does): the production image, TLS on, scram passwords,
-# fsync on, a primary and one streaming standby named in synchronous_standby_names. Prints the primary's URL.
+# fsync on, a primary and one streaming standby named in synchronous_standby_names, at magpie-pg's WAL sizes
+# (min_wal_size 1GB, max_wal_size 2GB: a required parameter of the production cluster, crates/magpie/README.md).
+# Prints the primary's URL.
 #   postgres-sync.sh <image> <host port>
 set -euo pipefail
 image=$1
@@ -22,7 +24,7 @@ docker run -d --name aviary-ci-pg-primary --network "$net" -p "127.0.0.1:$port:5
     > /tmp/pgdata/pg_hba.conf
   exec "$bin/postgres" -D /tmp/pgdata -c listen_addresses="*" -c ssl=on -c max_connections=200 \
     -c wal_level=replica -c max_wal_senders=4 -c synchronous_standby_names=standby1 -c synchronous_commit=on \
-    -c min_wal_size=2GB -c max_wal_size=4GB
+    -c min_wal_size=1GB -c max_wal_size=2GB
 ' >/dev/null
 for _ in $(seq 1 60); do
   docker exec aviary-ci-pg-primary pg_isready -q -h 127.0.0.1 2>/dev/null && break
@@ -36,7 +38,7 @@ docker run -d --name aviary-ci-pg-standby --network "$net" -v "$dir:/ci:ro" "$im
     -d "application_name=standby1 sslmode=disable" >/dev/null
   chmod 0700 /tmp/pgdata
   exec "$bin/postgres" -D /tmp/pgdata -c hot_standby=on -c ssl=on -c max_connections=200 -c max_wal_senders=4 \
-    -c min_wal_size=2GB -c max_wal_size=4GB
+    -c min_wal_size=1GB -c max_wal_size=2GB
 ' >/dev/null
 for _ in $(seq 1 60); do
   state=$(docker exec aviary-ci-pg-primary psql -U postgres -tAc \

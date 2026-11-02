@@ -36,8 +36,8 @@ fn not_found(what: &str) -> Error {
 /// `POST /v1/sandbox/cc/write`.
 ///
 /// # Errors
-/// 400 `bad_path` / `bad_request`, 404, 409 `offset_beyond_eof` / `lease_lost` / `conversation_migrating`, 413, 503,
-/// 507; a statement error.
+/// 400 `bad_path` / `bad_request`, 404, 409 `offset_beyond_eof` / `offset_mismatch` (an append whose offset is not
+/// the size) / `lease_lost` / `conversation_migrating`, 413, 503, 507; a statement error.
 pub async fn write(app: &Magpie, caller: &Caller, q: &CcWriteQuery, data: &[u8]) -> Result<CcSizeVersion> {
     check_path(&q.path)?;
     if data.len() > limits::CC_WRITE_MAX {
@@ -84,7 +84,14 @@ pub async fn write(app: &Magpie, caller: &Caller, q: &CcWriteQuery, data: &[u8])
                 "the offset is past the end of the file",
             ));
         }
-        if end.max(f.size) > limits::CC_FILE_MAX {
+        // an append expects the file's size (6.10): a stale retry with other bytes cannot write twice
+        if q.append && offset != f.size {
+            return Err(Error::code(
+                ErrorCode::OffsetMismatch,
+                "the append's offset is not the file's size",
+            ));
+        }
+        if f.kind == Kind::Bytes && end.max(f.size) > limits::CC_FILE_MAX {
             return Err(Error::code(ErrorCode::TooLarge, "the file is over 256 MiB"));
         }
         op.credit(t, q.turn_id).await?;
@@ -127,9 +134,11 @@ pub async fn truncate(app: &Magpie, caller: &Caller, b: &CcTruncate) -> Result<C
                 "the size is past the end of the file",
             ));
         }
-        if size > limits::CC_FILE_MAX {
+        if f.kind == Kind::Bytes && size > limits::CC_FILE_MAX {
             return Err(Error::code(ErrorCode::TooLarge, "the file is over 256 MiB"));
         }
+        // the limbo a truncate makes belongs to the turn running it (6.7)
+        op.credit(t, None).await?;
         if f.kind == Kind::Lines {
             lines::truncate(t, &mut op, &mut f, size).await?;
         } else {
@@ -149,6 +158,9 @@ pub async fn truncate(app: &Magpie, caller: &Caller, b: &CcTruncate) -> Result<C
 
 /// Stores a file's content again in the form its new name asks for.
 async fn convert(t: &Tx<'_>, op: &mut Op<'_>, f: &mut File, to: Kind) -> Result<()> {
+    if to == Kind::Bytes && f.size > limits::CC_FILE_MAX {
+        return Err(Error::code(ErrorCode::TooLarge, "the file is over 256 MiB"));
+    }
     let before = stored_bytes(t, f).await?;
     let content = if f.kind == Kind::Lines {
         lines::read_all(t, op, f).await?

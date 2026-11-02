@@ -71,11 +71,14 @@ supervisor (the sweeper's passes are called directly, deadlines aged in SQL).
 
 The ccfs suite (WP-12): `tests/ccfs.rs` (files, byte files, directories, renames, errno codes, `opId` replays,
 rule 0, the lease with and without hermit, quota and staging limits, blobs, events, promotion, tombstones,
-rewrites, `meta.replaces`, compaction, set-aside, away-and-back, the limbo debounce, overwrites, streamed reads);
-`tests/ccfs_model.rs` (random operation sequences against a byte-vector model: the file after every step, and the
-visible events against the classification of the model's lines); `tests/ccfs_claude_code.rs` (Claude Code
-2.1.304's real transcripts from the FUSE gate, replayed in the shape of the gate's recorded calls, with pinned
-event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
+rewrites, `meta.replaces`, compaction, set-aside, away-and-back, the limbo debounce, overwrites, streamed reads,
+a person's echo through every rewrite, the per-turn flush, appends' `offset_mismatch`, the lease against a newer
+feed record, a 30,000-line transcript in bounded time); `tests/ccfs_model.rs` (random operation sequences with
+person turns against a byte-vector model, 64 cases from a seed that changes every run and is printed,
+`AVIARY_TEST_CCFS_SEED`/`AVIARY_TEST_CCFS_CASES` to repeat one: the file and the visible events plus limbo against the
+classification of the model's lines after every step); `tests/ccfs_claude_code.rs` (Claude Code 2.1.304's
+transcripts from the FUSE gate, product text replaced by same-length placeholders, replayed in the shape of the
+gate's recorded calls with every prompt a person turn's echo, with pinned event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
 `.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
 for a 1 MiB image line). The scanner, extraction and classification have unit and property tests in the crate.
 
@@ -198,18 +201,38 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 
 ### Claude Code state (WP-12)
 
-- No answer is `offset_mismatch`: a write's query has no append flag, and magpie 6.6 rule 4 makes a write inside
-  the file an overwrite (as `pwrite`; the contract's fake does the same). A lost acknowledged append shows as the
-  next append's offset past magpie's end, answered `offset_beyond_eof`, which the supervisor repairs the same way
-  (supervisor 9.5 item 6).
+- An append carries the expected offset as `append=1` on `cc/write` (a contract addition, magpie 16.2 names no
+  field for it): after rule 0, an append whose offset is not the file's size answers 409 `offset_mismatch`, so a
+  stale retry with other bytes under a new `opId` cannot write twice (6.10). A write without it is an overwrite
+  inside the file (6.6 rule 4, as `pwrite`). The supervisor sends `append=0` today; setting it on its appends (and
+  on the repair's suffix writes) is the supervisor's change.
 - A truncate cannot grow a lines file (`offset_beyond_eof`, rule 1); a byte file grows and a write past its end
-  zero-fills (6.8). The 256 MiB file cap applies to lines files too (the supervisor caches files of up to 256 MiB
-  whole).
+  zero-fills (6.8). The 256 MiB cap is a byte file's (magpie 17); a lines file is bounded by the 2 GiB quota, and a
+  lines file over 256 MiB renamed to a byte name answers 413.
 - Only the main transcript's lines go to limbo or are retracted: a file renamed away from the main path keeps its
   lines' events (`moved` limbo) and a later truncate of it retracts nothing. `moved` limbo is matched by sha256
-  (the earliest event with that sha), not in order first.
-- The end report's flush (`limbo::flush_scope`) flushes the conversation's whole `truncated` limbo: limbo rows carry
-  no turn, and one turn runs at a time.
+  (the earliest entry with that sha), not in order first.
+- Limbo holds every classified line, not only lines with events (migration `0009_cc_limbo.sql`: a nullable
+  `event_seq`, the line's `turn_id`, the truncate's `op_turn`): a line written again takes its entry back (its
+  event, its turn, its classification) and is never classified a second time, so the echo of a person's prompt
+  stays an echo through a rewrite, a tombstone, a compaction (a rename-over matches the target's classified lines
+  the same way) or a set-aside, and an old prompt is never taken as a pending turn's echo. Entries without an event
+  are dropped at a flush.
+- The end report's flush (`limbo::flush_scope(turn)`) flushes only the limbo that turn's truncates made (a truncate
+  is credited to the active turn); the rest waits for its own turn's end or the sweeper's 10 s quiet rule.
+- A line taken back from limbo keeps the turn it was first credited to (6.3), so a promotion credits it there.
+- Every lines operation works in bounded batches (6.6): reads and seeks take 256 lines at a time through
+  `cc_lines_off`; a truncate deletes its suffix and puts it in limbo in one statement; new lines are inserted 512 at
+  a time, their limbo candidates fetched and the taken ones deleted in one statement each; an overwrite reads only
+  the lines it touches; a promotion and a rename-over walk the file in batches with set-based updates. Measured
+  (`a_large_transcript_reads_and_rewrites_in_bounded_time`, debug build): 30,000 lines read in 0.7 s, `truncate(0)`
+  in 0.3 s, the rewrite of the whole file in 1 MiB writes in under 3 s. The cost left is per event (an event and
+  its row are made one at a time: about 8 ms each in a debug build, so a 1 MiB write of 2,000 new event lines takes
+  seconds there).
+- A read that answers in one batch compares the file's version after it and reads again (at most 3 times, then 503)
+  when a write landed between its statements; a streamed read compares it at its end.
+- The lease records hermit's answer only when the feed has recorded nothing since hermit was asked; a feed record
+  made in between wins, and the caller gets the lease only if that record names it (6.9).
 - A `type: "user"` line with `isCompactSummary` is a `cc.user` event that is not a prompt and never the echo (the
   table of 6.5 has no row for it; it is no message a person sent).
 - A `custom-title`/`ai-title` record sets the provisional title cut to 200 characters; a title or model change
@@ -232,9 +255,13 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - The 2.1.304 acceptance replays the real binary's transcripts from the FUSE gate through the routes, in the shape
   of the gate's recorded calls; the real binary against a mock Messages API through a FUSE supervisor is the e2e
   harness's (WP-28). The latency figures are measured at the client over loopback HTTP (they include the round
-  trip), with a 2-node synchronously replicated Postgres in CI whose WAL is warmed first (segments written once and
-  recycled, as on a cluster that has run for a while; on a fresh cluster each new 16 MiB segment file costs one
-  write about 150 ms on a CI runner's disk).
+  trip), with a 2-node synchronously replicated Postgres in CI at `min_wal_size=1GB`, `max_wal_size=2GB` and its WAL
+  warmed first (segments written once and recycled, as on a cluster that has run for a while). Those two settings
+  are a required parameter of `magpie-pg` (handed to WP-32): creating a new 16 MiB segment file costs one write
+  about 150-200 ms, and Postgres's defaults (80MB / 1GB) recycle too few segments for a burst of image lines.
+  Measured on the shared build runner (2026-11-02): at the defaults on a fresh cluster, p50 7.9-9.7 ms for a 10 KiB
+  append and p99 129-134 ms for a 1 MiB image line (inside the bound, with little margin); at 1GB / 2GB warmed,
+  p50 9.4 ms and p99 47-53 ms.
 - An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
   its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.

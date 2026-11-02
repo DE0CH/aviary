@@ -40,7 +40,7 @@ pub const MOVED_LIMBO: Duration = Duration::from_mins(10);
 pub const CC_WRITE_MAX: usize = magpie_api::sandbox::CC_WRITE_MAX_BYTES;
 /// A JSONL line, including a tail being built, bytes.
 pub const CC_LINE_MAX: i64 = 64 << 20;
-/// A file (a byte file; a lines file too, so the supervisor can always cache it whole), bytes.
+/// A byte file, bytes (magpie 17; a lines file is bounded by the quota, [`CC_QUOTA`]).
 pub const CC_FILE_MAX: i64 = 256 << 20;
 /// Claude Code state per conversation (`cc_bytes`).
 pub const CC_QUOTA: i64 = 2 << 30;
@@ -62,6 +62,8 @@ pub const LEASE_HERMIT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CC_SHA_SAMPLE: u64 = 1000;
 /// A file read streams lines in batches of this many.
 pub const CC_READ_BATCH: i64 = 256;
+/// A read that answers at once is made again at most this many times when the file changed under it (6.11).
+pub const CC_READ_RETRIES: u32 = 3;
 
 /// The job leader lock is retried this often by the replicas that do not hold it (magpie 15).
 pub const LEADER_RETRY: Duration = Duration::from_secs(10);

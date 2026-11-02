@@ -1,14 +1,20 @@
 //! Retraction and limbo (magpie 6.7, 6.2).
 //!
-//! Lines with events that a truncate removes from the main transcript wait in `cc_limbo` (reason `truncated`): a
-//! later write whose new line has the same sha256 takes the event back, so Claude Code's truncate-then-rewrite
-//! patterns retract nothing. Limbo is flushed into one `retract` event only when the file has had no operation for
-//! 10 s (the sweeper, [`sweep`]) or at the end of the turn ([`flush_scope`], called by the end report), never in the
-//! middle of a rewrite. Lines an overwrite or a rename-over drops are retracted at once ([`retract`]).
+//! Every classified line a truncate removes from the main transcript waits in `cc_limbo` (reason `truncated`), with
+//! its event when it has one, the turn it was credited to, and the turn of the truncate (`op_turn`): a later write
+//! whose new line has the same sha256 takes the entry back (the event, the turn, and the fact that the line was
+//! classified), so Claude Code's truncate-then-rewrite patterns retract nothing and never classify a line twice (an
+//! internal line such as the echo of a person's prompt stays internal; 6.5). Limbo is flushed only when the file has
+//! had no operation for 10 s (the sweeper, [`sweep`]) or at the end of the turn whose operations put it there
+//! ([`flush_scope`], called by the end report), never in the middle of a rewrite: the entries with events become one
+//! `retract` event, the others are dropped. Lines an overwrite or a rename-over drops are retracted at once
+//! ([`retract`]).
 //!
-//! A main transcript renamed away puts its lines with events in limbo with reason `moved` (no file): a file created
-//! at the main path within 10 min takes them back by sha256; they are never retracted (the set-aside file still has
+//! A main transcript renamed away puts its classified lines in limbo with reason `moved` (no file): a file created at
+//! the main path within 10 min takes them back by sha256; they are never retracted (the set-aside file still has
 //! them) and expire (retention).
+
+use std::collections::{HashMap, VecDeque};
 
 use aviary_pg::{Pool, Tx};
 use magpie_api::events::{EventBody, Retract};
@@ -19,43 +25,37 @@ use crate::error::Result;
 use crate::events::{self, NewEvent};
 use crate::limits;
 
-/// `(sha256, event seq)` of a line with an event.
-pub type Entry = (Sha, i64);
+/// A classified line in limbo or in a file: its sha256, its event (none for an internal line) and its turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Entry {
+    /// SHA-256 of the line.
+    pub sha: Sha,
+    /// Its event.
+    pub event_seq: Option<i64>,
+    /// The turn it was credited to.
+    pub turn_id: Option<Uuid>,
+}
 
-/// Puts lines a truncate removed from `file` (the main transcript) in limbo.
+/// The `moved` limbo of `scope` from the classified lines of `file` (the main transcript renamed away), in one
+/// statement.
 ///
 /// # Errors
-/// When a statement fails.
-pub async fn put_truncated(tx: &Tx<'_>, scope: Uuid, file: i64, lines: &[Entry]) -> Result<()> {
-    for (sha, seq) in lines {
-        tx.execute(
-            "insert into cc_limbo (scope, file_id, reason, sha256, event_seq) values ($1, $2, 'truncated', $3, $4)
-             on conflict do nothing",
-            &[&scope, &file, &sha.as_slice(), seq],
-        )
-        .await?;
-    }
+/// When the statement fails.
+pub async fn put_moved(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<()> {
+    tx.execute(
+        "insert into cc_limbo (scope, file_id, reason, sha256, event_seq, turn_id)
+         select $1, null, 'moved', sha256, event_seq, turn_id from cc_lines where file_id = $2 and classified
+          order by ord
+         on conflict (scope, reason, event_seq) where event_seq is not null
+           do update set sha256 = excluded.sha256, turn_id = excluded.turn_id, removed_at = now()",
+        &[&scope, &file],
+    )
+    .await?;
     Ok(())
 }
 
-/// Puts the lines of a main transcript renamed away in limbo (`moved`).
-///
-/// # Errors
-/// When a statement fails.
-pub async fn put_moved(tx: &Tx<'_>, scope: Uuid, lines: &[Entry]) -> Result<()> {
-    for (sha, seq) in lines {
-        tx.execute(
-            "insert into cc_limbo (scope, file_id, reason, sha256, event_seq) values ($1, null, 'moved', $2, $3)
-             on conflict (scope, reason, event_seq) do update set sha256 = excluded.sha256, removed_at = now()",
-            &[&scope, &sha.as_slice(), seq],
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-/// What limbo `file` (and, at the main path, the scope's `moved` limbo) holds, so the write path asks per line only
-/// when there is something to match.
+/// What limbo `file` (and, at the main path, the scope's `moved` limbo) holds, so the write path looks only when
+/// there is something to match.
 ///
 /// # Errors
 /// When the statement fails.
@@ -71,65 +71,120 @@ pub async fn present(tx: &Tx<'_>, scope: Uuid, file: i64, main: bool) -> Result<
     Ok((row.get(0), row.get(1)))
 }
 
-/// Takes back the earliest `truncated` limbo line of `file` with `sha`: its event seq.
-///
-/// # Errors
-/// When the statement fails.
-pub async fn take_truncated(tx: &Tx<'_>, scope: Uuid, file: i64, sha: &Sha) -> Result<Option<i64>> {
-    let row = tx
-        .query_opt(
-            "delete from cc_limbo where scope = $1 and reason = 'truncated' and event_seq =
-               (select min(event_seq) from cc_limbo
-                 where scope = $1 and reason = 'truncated' and file_id = $2 and sha256 = $3)
-             returning event_seq",
-            &[&scope, &file, &sha.as_slice()],
-        )
-        .await?;
-    Ok(row.map(|r| r.get(0)))
+/// Limbo entries a batch of new lines may take back, fetched in one statement; the ones taken are deleted in one
+/// statement by [`Candidates::commit`].
+#[derive(Debug, Default)]
+pub struct Candidates {
+    by_sha: HashMap<Sha, VecDeque<(i64, Entry)>>,
+    /// Ids taken and not yet deleted.
+    pub used: Vec<i64>,
 }
 
-/// Takes back the earliest `moved` limbo line of the scope with `sha` still inside the match window.
-///
-/// # Errors
-/// When the statement fails.
-pub async fn take_moved(tx: &Tx<'_>, scope: Uuid, sha: &Sha) -> Result<Option<i64>> {
-    let row = tx
-        .query_opt(
-            "delete from cc_limbo where scope = $1 and reason = 'moved' and event_seq =
-               (select min(event_seq) from cc_limbo
-                 where scope = $1 and reason = 'moved' and sha256 = $2
-                   and removed_at > now() - make_interval(secs => $3))
-             returning event_seq",
-            &[&scope, &sha.as_slice(), &limits::MOVED_LIMBO.as_secs_f64()],
-        )
-        .await?;
-    Ok(row.map(|r| r.get(0)))
-}
-
-/// Drops `moved` limbo entries for events that are back on the main path (a rename back onto it).
-///
-/// # Errors
-/// When the statement fails.
-pub async fn drop_moved(tx: &Tx<'_>, scope: Uuid, seqs: &[i64]) -> Result<()> {
-    if !seqs.is_empty() {
-        tx.execute(
-            "delete from cc_limbo where scope = $1 and reason = 'moved' and event_seq = any($2)",
-            &[&scope, &seqs],
-        )
-        .await?;
+impl Candidates {
+    /// The `truncated` limbo of `file` with one of `shas`, earliest first.
+    ///
+    /// # Errors
+    /// When the statement fails.
+    pub async fn truncated(tx: &Tx<'_>, scope: Uuid, file: i64, shas: &[Sha]) -> Result<Self> {
+        let shas: Vec<&[u8]> = shas.iter().map(<[u8; 32]>::as_slice).collect();
+        let rows = tx
+            .query(
+                "select id, sha256, event_seq, turn_id from cc_limbo
+                  where scope = $1 and reason = 'truncated' and file_id = $2 and sha256 = any($3) order by id",
+                &[&scope, &file, &shas],
+            )
+            .await?;
+        Ok(Self::of(&rows))
     }
+
+    /// The `moved` limbo of `scope` with one of `shas` still inside the match window, earliest first.
+    ///
+    /// # Errors
+    /// When the statement fails.
+    pub async fn moved(tx: &Tx<'_>, scope: Uuid, shas: &[Sha]) -> Result<Self> {
+        let shas: Vec<&[u8]> = shas.iter().map(<[u8; 32]>::as_slice).collect();
+        let rows = tx
+            .query(
+                "select id, sha256, event_seq, turn_id from cc_limbo
+                  where scope = $1 and reason = 'moved' and sha256 = any($2)
+                    and removed_at > now() - make_interval(secs => $3)
+                  order by id",
+                &[&scope, &shas, &limits::MOVED_LIMBO.as_secs_f64()],
+            )
+            .await?;
+        Ok(Self::of(&rows))
+    }
+
+    fn of(rows: &[aviary_pg::Row]) -> Self {
+        let mut by_sha: HashMap<Sha, VecDeque<(i64, Entry)>> = HashMap::new();
+        for r in rows {
+            let sha: Vec<u8> = r.get(1);
+            let Ok(sha) = Sha::try_from(sha.as_slice()) else {
+                continue;
+            };
+            by_sha.entry(sha).or_default().push_back((
+                r.get(0),
+                Entry {
+                    sha,
+                    event_seq: r.get(2),
+                    turn_id: r.get(3),
+                },
+            ));
+        }
+        Self {
+            by_sha,
+            used: Vec::new(),
+        }
+    }
+
+    /// Takes the earliest entry with `sha`.
+    pub fn take(&mut self, sha: &Sha) -> Option<Entry> {
+        let (id, e) = self.by_sha.get_mut(sha)?.pop_front()?;
+        self.used.push(id);
+        Some(e)
+    }
+
+    /// Deletes the entries taken.
+    ///
+    /// # Errors
+    /// When the statement fails.
+    pub async fn commit(&mut self, tx: &Tx<'_>) -> Result<()> {
+        if !self.used.is_empty() {
+            tx.execute("delete from cc_limbo where id = any($1)", &[&self.used])
+                .await?;
+            self.used.clear();
+        }
+        Ok(())
+    }
+}
+
+/// Drops the `moved` limbo of lines that are back on the main path in `file` (a rename back onto it): entries with
+/// the events its lines have, and entries without one whose sha256 one of its classified lines without an event has.
+///
+/// # Errors
+/// When the statement fails.
+pub async fn drop_moved(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<()> {
+    tx.execute(
+        "delete from cc_limbo l where l.scope = $1 and l.reason = 'moved'
+           and (l.event_seq in (select event_seq from cc_lines where file_id = $2 and event_seq is not null)
+                or (l.event_seq is null and l.sha256 in
+                     (select sha256 from cc_lines where file_id = $2 and classified and event_seq is null)))",
+        &[&scope, &file],
+    )
+    .await?;
     Ok(())
 }
 
-/// Takes every `truncated` limbo entry of `file` out (a rename-over replacing it matches them itself).
+/// Takes every `truncated` limbo entry of `file` out (a rename-over replacing it matches them itself), earliest first.
 ///
 /// # Errors
 /// When the statement fails.
 pub async fn take_all_truncated(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<Vec<Entry>> {
     let rows = tx
         .query(
-            "delete from cc_limbo where scope = $1 and reason = 'truncated' and file_id = $2
-             returning sha256, event_seq",
+            "with d as (delete from cc_limbo where scope = $1 and reason = 'truncated' and file_id = $2
+                        returning id, sha256, event_seq, turn_id)
+             select sha256, event_seq, turn_id from d order by id",
             &[&scope, &file],
         )
         .await?;
@@ -137,7 +192,11 @@ pub async fn take_all_truncated(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<V
         .iter()
         .filter_map(|r| {
             let sha: Vec<u8> = r.get(0);
-            Some((Sha::try_from(sha.as_slice()).ok()?, r.get(1)))
+            Some(Entry {
+                sha: Sha::try_from(sha.as_slice()).ok()?,
+                event_seq: r.get(1),
+                turn_id: r.get(2),
+            })
         })
         .collect())
 }
@@ -183,30 +242,38 @@ pub async fn replaced(tx: &Tx<'_>, conversation: Uuid, uuid: &str) -> Result<Opt
     Ok(row.get(0))
 }
 
-/// Flushes `file`'s `truncated` limbo into one `retract` (the conversation is locked).
+/// Flushes `file`'s `truncated` limbo: its events into one `retract` (the conversation is locked), the entries
+/// without one dropped. How many lines were retracted.
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn flush_file(tx: &Tx<'_>, scope: Uuid, file: i64, turn: Option<Uuid>) -> Result<usize> {
-    let entries = take_all_truncated(tx, scope, file).await?;
-    let n = entries.len();
-    retract(tx, scope, turn, entries.into_iter().map(|e| e.1).collect()).await?;
+    let seqs: Vec<i64> = take_all_truncated(tx, scope, file)
+        .await?
+        .into_iter()
+        .filter_map(|e| e.event_seq)
+        .collect();
+    let n = seqs.len();
+    retract(tx, scope, turn, seqs).await?;
     Ok(n)
 }
 
-/// Flushes every `truncated` limbo line of the conversation into one `retract` (the end of the turn the truncates
-/// belonged to; the conversation is locked). For the turn package's end report.
+/// Flushes the `truncated` limbo that `turn`'s operations put there (`None`: operations credited to no turn) into
+/// one `retract` (the conversation is locked): the end of that turn, for the turn package's end report. Limbo of
+/// other turns' operations (a rewrite still running after this turn's end) waits for its own end or the sweeper.
+/// How many lines were retracted.
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn flush_scope(tx: &Tx<'_>, conversation: Uuid, turn: Option<Uuid>) -> Result<usize> {
     let rows = tx
         .query(
-            "delete from cc_limbo where scope = $1 and reason = 'truncated' returning event_seq",
-            &[&conversation],
+            "delete from cc_limbo where scope = $1 and reason = 'truncated' and op_turn is not distinct from $2
+             returning event_seq",
+            &[&conversation, &turn],
         )
         .await?;
-    let seqs: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+    let seqs: Vec<i64> = rows.iter().filter_map(|r| r.get::<_, Option<i64>>(0)).collect();
     let n = seqs.len();
     retract(tx, conversation, turn, seqs).await?;
     Ok(n)

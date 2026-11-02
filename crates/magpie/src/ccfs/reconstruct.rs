@@ -5,7 +5,8 @@
 //! [`limits::CC_SHA_SAMPLE`] in a release build. The first batch is made before the answer starts, so a mismatch or
 //! a missing blob there answers 500 / 503; a later one ends the body early (the supervisor's read fails rather than
 //! seeing wrong bytes). The file's version is compared at the end: a file changed while it streamed ends the body
-//! early too.
+//! early too; a read that fits in one batch compares it before it answers, and reads again when a write landed
+//! between its statements.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,11 +102,10 @@ async fn batch(app: &Magpie, db: &impl Db, f: &File, off: i64, to: i64) -> Resul
     let mut out = Vec::new();
     let mut base = off;
     if off < tail_start {
-        let rows: Vec<Row> = rows_from(db, f.id, off)
+        let rows: Vec<Row> = rows_from(db, f.id, off, Some(limits::CC_READ_BATCH))
             .await?
             .into_iter()
             .take_while(|r| r.start_off < to)
-            .take(nus(limits::CC_READ_BATCH))
             .collect();
         if let Some(first) = rows.first() {
             base = first.start_off;
@@ -145,36 +145,59 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     check_path(&q.path)?;
     let conn = app.pool.get().await?;
     owned(&conn, caller).await?;
-    let f = load_file(&conn, caller.conversation, &q.path)
-        .await?
-        .filter(|f| f.kind != Kind::Dir)
-        .ok_or_else(Error::not_found)?;
-    let start = i64::try_from(q.offset.unwrap_or(0)).unwrap_or(i64::MAX).min(f.size);
-    let end = q.length.map_or(f.size, |l| {
-        start.saturating_add(i64::try_from(l).unwrap_or(i64::MAX)).min(f.size)
-    });
     let ranged = q.offset.is_some() || q.length.is_some();
-    let size = f.size;
     let status = if ranged {
         StatusCode::PARTIAL_CONTENT
     } else {
         StatusCode::OK
     };
-    let body = if f.kind == Kind::Bytes {
-        Body::from(pages::read(&conn, f.id, f.size, start, end).await?)
-    } else if start >= end {
-        Body::empty()
-    } else {
-        let (first, next) = batch(&app, &conn, &f, start, end).await?;
-        match next {
-            None => Body::from(first),
-            Some(next) => {
-                drop(conn);
-                let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(4);
-                let _ = tx.send(Ok(Bytes::from(first))).await;
-                tokio::spawn(stream(app.clone(), f, next, end, tx));
-                Body::from_stream(tokio_stream_of(rx))
-            }
+    // the file's row and its lines (or pages) are separate statements: a write committed between them would mix two
+    // versions, so a read that answers at once checks the version afterwards and reads again
+    let mut attempt = 0;
+    let (f, start, end, body) = loop {
+        let f = load_file(&conn, caller.conversation, &q.path)
+            .await?
+            .filter(|f| f.kind != Kind::Dir)
+            .ok_or_else(Error::not_found)?;
+        let start = i64::try_from(q.offset.unwrap_or(0)).unwrap_or(i64::MAX).min(f.size);
+        let end = q.length.map_or(f.size, |l| {
+            start.saturating_add(i64::try_from(l).unwrap_or(i64::MAX)).min(f.size)
+        });
+        let (first, next) = if f.kind == Kind::Bytes {
+            (pages::read(&conn, f.id, f.size, start, end).await?, None)
+        } else if start >= end {
+            (Vec::new(), None)
+        } else {
+            batch(&app, &conn, &f, start, end).await?
+        };
+        if let Some(next) = next {
+            // a streamed read compares the version at its end (`stream`)
+            break (f, start, end, Err((first, next)));
+        }
+        let now = conn
+            .query_opt("select version from cc_files where id = $1", &[&f.id])
+            .await?
+            .map(|r| r.get::<_, i64>(0));
+        if now == Some(f.version) {
+            break (f, start, end, Ok(first));
+        }
+        attempt += 1;
+        if attempt >= limits::CC_READ_RETRIES {
+            return Err(Error::code(
+                magpie_api::errors::ErrorCode::Unavailable,
+                "the file kept changing while it was read",
+            ));
+        }
+    };
+    let size = f.size;
+    let body = match body {
+        Ok(bytes) => Body::from(bytes),
+        Err((first, next)) => {
+            drop(conn);
+            let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(4);
+            let _ = tx.send(Ok(Bytes::from(first))).await;
+            tokio::spawn(stream(app.clone(), f, next, end, tx));
+            Body::from_stream(tokio_stream_of(rx))
         }
     };
     let mut res = (status, body).into_response();

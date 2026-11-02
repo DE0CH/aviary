@@ -58,6 +58,45 @@ pub async fn set_main(pool: &aviary_pg::Pool, conversation: Uuid, path: &str) {
     .unwrap();
 }
 
+/// Starts a person-origin turn (its `user.sent` echo not matched yet) as the conversation's active turn, the earlier
+/// ones completed; `s`'s writes name it.
+pub async fn person_turn(pool: &aviary_pg::Pool, s: &mut Sandbox) -> Uuid {
+    let id = Uuid::new_v4();
+    let c = pool.get().await.unwrap();
+    c.execute(
+        "update turns set state = 'completed' where conversation_id = $1",
+        &[&s.conversation],
+    )
+    .await
+    .unwrap();
+    c.execute(
+        "insert into turns (id, conversation_id, origin, state) values ($1, $2, 'person', 'running')",
+        &[&id, &s.conversation],
+    )
+    .await
+    .unwrap();
+    c.execute(
+        "update conversations set active_turn = $2 where id = $1",
+        &[&s.conversation, &id],
+    )
+    .await
+    .unwrap();
+    s.turn = Some(id);
+    id
+}
+
+/// The end report of `turn` (`None`: operations credited to no turn): its limbo flushed; how many lines were
+/// retracted.
+pub async fn flush_turn(pool: &aviary_pg::Pool, conv: Uuid, turn: Option<Uuid>) -> usize {
+    aviary_pg::tx!(pool, |t| -> magpie::error::Result<usize> {
+        t.execute("select 1 from conversations where id = $1 for update", &[&conv])
+            .await?;
+        magpie::ccfs::limbo::flush_scope(t, conv, turn).await
+    })
+    .await
+    .unwrap()
+}
+
 /// One sandbox's supervisor.
 pub struct Sandbox {
     pub client: Client,

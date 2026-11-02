@@ -9,8 +9,14 @@
 //! extracted (its blobs staged) and, on the main transcript, classified into an event. The normal case (an append at
 //! the end with an empty tail) matches against nothing and touches no other row.
 //!
-//! Lines removed by a truncate go to limbo (6.7); lines an overwrite or a rename-over drops are retracted at once.
-//! Only the main transcript has visible events, so only its lines are put in limbo or retracted.
+//! Classified lines removed by a truncate go to limbo (6.7), events or not, so a line written again is never
+//! classified a second time; lines an overwrite or a rename-over drops are retracted at once. Only the main
+//! transcript has visible events, so only its lines are put in limbo or retracted.
+//!
+//! Every operation works on the lines it touches in bounded batches: a read seeks with `cc_lines_off` and takes
+//! [`limits::CC_READ_BATCH`] lines at a time, a truncate removes its suffix (into limbo) in one statement, new lines
+//! are inserted in batches with their limbo matches fetched and deleted in one statement each, and a promotion walks
+//! the file in batches (6.6: never the whole suffix in memory, no statement per line beyond the events themselves).
 
 use std::collections::{HashMap, VecDeque};
 
@@ -95,30 +101,46 @@ fn row_of(r: &aviary_pg::Row) -> Result<Row> {
     })
 }
 
-/// The lines of `file` from the first one that ends after `off`, in order.
+/// Up to `limit` lines of `file` (every one with `None`) from the first one that ends after `off`, in file order: a
+/// seek on `cc_lines_off`, then that index in offset order (6.11).
 ///
 /// # Errors
 /// When a statement fails.
-pub async fn rows_from(db: &impl crate::db::Db, file: i64, off: i64) -> Result<Vec<Row>> {
+pub async fn rows_from(db: &impl crate::db::Db, file: i64, off: i64, limit: Option<i64>) -> Result<Vec<Row>> {
     let rows = db
         .query(
             &format!(
                 "select {ROW_COLS} from cc_lines
                   where file_id = $1 and start_off >= coalesce(
                     (select max(start_off) from cc_lines where file_id = $1 and start_off <= $2), 0)
-                  order by ord"
+                    and start_off + len > $2
+                  order by start_off
+                  limit $3"
             ),
-            &[&file, &off],
+            &[&file, &off, &limit],
         )
         .await?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let row = row_of(r)?;
-        if row.start_off + row.len > off {
-            out.push(row);
-        }
-    }
-    Ok(out)
+    rows.iter().map(row_of).collect()
+}
+
+/// The lines of `file` holding a byte of `[from, to)`, in file order.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn rows_between(db: &impl crate::db::Db, file: i64, from: i64, to: i64) -> Result<Vec<Row>> {
+    let rows = db
+        .query(
+            &format!(
+                "select {ROW_COLS} from cc_lines
+                  where file_id = $1 and start_off >= coalesce(
+                    (select max(start_off) from cc_lines where file_id = $1 and start_off <= $2), 0)
+                    and start_off + len > $2 and start_off < $3
+                  order by start_off"
+            ),
+            &[&file, &from, &to],
+        )
+        .await?;
+    rows.iter().map(row_of).collect()
 }
 
 /// The bytes of `rows`, reconstructed with their blobs (loaded into `op.blobs`; a blob only in the bucket fails the
@@ -221,27 +243,54 @@ struct Writer {
     limbo_moved: bool,
     /// Events of the old lines this operation replaces (retracted at its end unless a new line takes them back).
     pending: Vec<i64>,
+    /// The file's `truncated` limbo the new lines may take back.
+    trunc: limbo::Candidates,
+    /// The scope's `moved` limbo the new lines may take back (at the main path).
+    moved: limbo::Candidates,
+    /// New lines not inserted yet.
+    rows: Vec<Row>,
 }
 
-async fn insert_row(tx: &Tx<'_>, w: &Writer, r: &Row) -> Result<()> {
-    let len = i32::try_from(r.len).map_err(|_| Error::Internal("line length".into()))?;
+/// New lines are inserted this many at a time.
+const INSERT_BATCH: usize = 512;
+
+/// Inserts the writer's buffered lines in one statement.
+async fn flush_rows(tx: &Tx<'_>, w: &mut Writer) -> Result<()> {
+    if w.rows.is_empty() {
+        return Ok(());
+    }
+    let ords: Vec<i64> = w.rows.iter().map(|r| r.ord).collect();
+    let offs: Vec<i64> = w.rows.iter().map(|r| r.start_off).collect();
+    let lens = w
+        .rows
+        .iter()
+        .map(|r| i32::try_from(r.len).map_err(|_| Error::Internal("line length".into())))
+        .collect::<Result<Vec<i32>>>()?;
+    let shas: Vec<&[u8]> = w.rows.iter().map(|r| r.sha.as_slice()).collect();
+    let stubs: Vec<&[u8]> = w.rows.iter().map(|r| r.stub.as_slice()).collect();
+    let spans: Vec<Option<Value>> = w.rows.iter().map(|r| spans_json(&r.spans)).collect();
+    let events: Vec<Option<i64>> = w.rows.iter().map(|r| r.event_seq).collect();
+    let turns: Vec<Option<Uuid>> = w.rows.iter().map(|r| r.turn_id).collect();
+    let classified: Vec<bool> = w.rows.iter().map(|r| r.classified).collect();
     tx.execute(
         "insert into cc_lines (file_id, ord, start_off, len, sha256, stub, spans, event_seq, turn_id, classified)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+         select $1, * from unnest($2::bigint[], $3::bigint[], $4::integer[], $5::bytea[], $6::bytea[], $7::jsonb[],
+                                  $8::bigint[], $9::uuid[], $10::boolean[])",
         &[
             &w.file,
-            &w.ord,
-            &w.off,
-            &len,
-            &r.sha.as_slice(),
-            &r.stub,
-            &spans_json(&r.spans),
-            &r.event_seq,
-            &r.turn_id,
-            &r.classified,
+            &ords,
+            &offs,
+            &lens,
+            &shas,
+            &stubs,
+            &spans,
+            &events,
+            &turns,
+            &classified,
         ],
     )
     .await?;
+    w.rows.clear();
     Ok(())
 }
 
@@ -405,11 +454,13 @@ async fn replaces(tx: &Tx<'_>, op: &Op<'_>, uuid: &str, w: Option<&Writer>) -> R
         }
     }
     if w.limbo_truncated {
+        // limbo entries another new line of this operation took back are not replaced
         let row = tx
             .query_one(
                 "select max(e.seq) from cc_limbo l join events e on e.conversation_id = l.scope and e.seq = l.event_seq
-                  where l.scope = $1 and l.reason = 'truncated' and l.file_id = $2 and e.data->>'uuid' = $3",
-                &[&op.conv.id, &w.file, &uuid],
+                  where l.scope = $1 and l.reason = 'truncated' and l.file_id = $2 and e.data->>'uuid' = $3
+                    and l.id <> all($4)",
+                &[&op.conv.id, &w.file, &uuid, &w.trunc.used],
             )
             .await?;
         return Ok(row.get(0));
@@ -441,13 +492,10 @@ async fn title_record(tx: &Tx<'_>, op: &mut Op<'_>, title: &str) -> Result<()> {
     op.upserted(tx).await
 }
 
-/// Stores one new complete line at the writer's position: matched (keeping its stub, spans and event) or extracted,
-/// its blobs staged and, on the main transcript, classified.
-async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], m: &mut Matcher) -> Result<()> {
-    if n64(line.len()) > limits::CC_LINE_MAX {
-        return Err(too_large("a line"));
-    }
-    let sha = extract::sha(line);
+/// Stores one new complete line at the writer's position: matched (keeping its stub, spans, event, turn and
+/// classification) or extracted, its blobs staged, then taken back from limbo (its event, turn and classification)
+/// or, on the main transcript, classified.
+async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], sha: Sha, m: &mut Matcher) -> Result<()> {
     let row = if let Some(old) = m.take(&sha) {
         Row {
             ord: w.ord,
@@ -494,16 +542,17 @@ async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], m: 
                 },
             );
         }
-        let mut event_seq = None;
-        if w.limbo_truncated {
-            event_seq = limbo::take_truncated(tx, op.conv.id, w.file, &sha).await?;
-        }
-        if event_seq.is_none() && w.limbo_moved {
-            event_seq = limbo::take_moved(tx, op.conv.id, &sha).await?;
-        }
-        if event_seq.is_none() && w.main {
-            event_seq = apply(tx, op, &x.stub, &x.spans, &meta, Some(&*w)).await?;
-        }
+        let back = w.trunc.take(&sha).or_else(|| w.moved.take(&sha));
+        let (event_seq, turn_id, classified) = match back {
+            // a line set aside comes back as it was: its event, its own turn (6.3), never classified again (6.5)
+            Some(e) => (e.event_seq, e.turn_id, true),
+            None if w.main => (
+                apply(tx, op, &x.stub, &x.spans, &meta, Some(&*w)).await?,
+                op.turn_id(),
+                true,
+            ),
+            None => (None, op.turn_id(), false),
+        };
         Row {
             ord: w.ord,
             start_off: w.off,
@@ -512,29 +561,50 @@ async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], m: 
             stub: x.stub,
             spans: x.spans,
             event_seq,
-            turn_id: op.turn_id(),
-            classified: w.main || event_seq.is_some(),
+            turn_id,
+            classified,
         }
     };
-    insert_row(tx, w, &row).await?;
     op.cc_delta += n64(row.stub.len());
     w.ord += 1;
     w.off += row.len;
+    w.rows.push(row);
+    if w.rows.len() >= INSERT_BATCH {
+        flush_rows(tx, w).await?;
+    }
     Ok(())
 }
 
 /// Stores the complete lines of `bytes` at the writer's position; the bytes after the last `\n` (the new tail).
 async fn put_lines(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, bytes: &[u8], m: &mut Matcher) -> Result<Vec<u8>> {
+    let mut lines = Vec::new();
     let mut at = 0;
     while let Some(nl) = bytes[at..].iter().position(|&b| b == b'\n') {
         let end = at + nl + 1;
-        put_line(tx, op, w, &bytes[at..end], m).await?;
+        if n64(end - at) > limits::CC_LINE_MAX {
+            return Err(too_large("a line"));
+        }
+        lines.push(&bytes[at..end]);
         at = end;
     }
     let rest = bytes[at..].to_vec();
     if n64(rest.len()) > limits::CC_LINE_MAX {
         return Err(too_large("a line being written"));
     }
+    let shas: Vec<Sha> = lines.iter().map(|l| extract::sha(l)).collect();
+    // limbo is fetched once for every new line (a superset of the lines the old suffix does not take)
+    if w.limbo_truncated && !shas.is_empty() {
+        w.trunc = limbo::Candidates::truncated(tx, op.conv.id, w.file, &shas).await?;
+    }
+    if w.limbo_moved && !shas.is_empty() {
+        w.moved = limbo::Candidates::moved(tx, op.conv.id, &shas).await?;
+    }
+    for (line, sha) in lines.iter().zip(shas) {
+        put_line(tx, op, w, line, sha, m).await?;
+    }
+    flush_rows(tx, w).await?;
+    w.trunc.commit(tx).await?;
+    w.moved.commit(tx).await?;
     Ok(rest)
 }
 
@@ -553,6 +623,9 @@ async fn writer(tx: &Tx<'_>, op: &Op<'_>, f: &File) -> Result<Writer> {
         limbo_truncated,
         limbo_moved,
         pending: Vec::new(),
+        trunc: limbo::Candidates::default(),
+        moved: limbo::Candidates::default(),
+        rows: Vec::new(),
     })
 }
 
@@ -586,18 +659,29 @@ pub async fn write(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, offset: i64, data
         f.size = tail_start + n64(suffix.len());
         return Ok(());
     }
-    let old = rows_from(tx, f.id, offset).await?;
+    // the lines the write touches (and the one it ends at); the lines after them keep their bytes
     let end = offset + n64(data.len());
-    let take = old.iter().take_while(|l| l.start_off <= end).count().max(1);
-    let (region, later) = old.split_at(take);
-    let region_start = region[0].start_off;
-    let with_tail = later.is_empty();
+    let region = rows_between(tx, f.id, offset, end + 1).await?;
+    let (Some(first_row), Some(last_row)) = (region.first(), region.last()) else {
+        return Err(Error::Internal("no line at the write's offset".into()));
+    };
+    let region_start = first_row.start_off;
+    let (first_ord, last_ord) = (first_row.ord, last_row.ord);
+    let later = tx
+        .query_one(
+            "select min(ord), max(ord) from cc_lines where file_id = $1 and start_off > $2",
+            &[&f.id, &last_row.start_off],
+        )
+        .await?;
+    let later: Option<(i64, i64)> = later.get::<_, Option<i64>>(0).zip(later.get::<_, Option<i64>>(1));
+    let with_tail = later.is_none();
+    let region = region.as_slice();
     let mut bytes = bytes_of(tx, op, region).await?;
     if with_tail {
         bytes.extend_from_slice(&f.tail);
     }
     overwrite(&mut bytes, nus(offset - region_start), data);
-    delete_rows(tx, f.id, region[0].ord, Some(region[take - 1].ord)).await?;
+    delete_rows(tx, f.id, first_ord, Some(last_ord)).await?;
     op.cc_delta -= region.iter().map(|r| n64(r.stub.len())).sum::<i64>();
     if with_tail {
         op.cc_delta -= tail_len;
@@ -614,14 +698,14 @@ pub async fn write(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, offset: i64, data
             "an overwrite inside the file left a partial line".into(),
         ));
     }
-    if let (Some(first), Some(last)) = (later.first(), later.last()) {
+    if let Some((first, last)) = later {
         // the unchanged lines after the region keep their bytes and offsets and follow the new lines in order
         tx.execute(
             "update cc_lines set ord = ord - $2 + $3 where file_id = $1 and ord between $2 and $4",
-            &[&f.id, &first.ord, &w.ord, &last.ord],
+            &[&f.id, &first, &w.ord, &last],
         )
         .await?;
-        w.ord += last.ord - first.ord + 1;
+        w.ord += last - first + 1;
     }
     f.next_ord = w.ord;
     f.size = f.size.max(end);
@@ -631,7 +715,8 @@ pub async fn write(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, offset: i64, data
     Ok(())
 }
 
-/// A truncate of a lines file to `size` (<= its size). Removed main-transcript lines with events go to limbo.
+/// A truncate of a lines file to `size` (<= its size). On the main transcript the removed classified lines go to
+/// limbo, in the same statement that removes them, with the truncate's turn (6.7).
 ///
 /// # Errors
 /// A statement error; 503 when a partial line's blob is only in the bucket and was not fetched.
@@ -645,24 +730,34 @@ pub async fn truncate(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, size: i64) -> 
         f.size = size;
         return Ok(());
     }
-    let old = rows_from(tx, f.id, size).await?;
-    let first = old
-        .first()
+    let first = rows_from(tx, f.id, size, Some(1))
+        .await?
+        .into_iter()
+        .next()
         .ok_or_else(|| Error::Internal("no line at the cut".into()))?;
     let new_tail = if first.start_off < size {
-        let mut b = bytes_of(tx, op, std::slice::from_ref(first)).await?;
+        let mut b = bytes_of(tx, op, std::slice::from_ref(&first)).await?;
         b.truncate(nus(size - first.start_off));
         b
     } else {
         Vec::new()
     };
-    delete_rows(tx, f.id, first.ord, None).await?;
-    op.cc_delta -= old.iter().map(|r| n64(r.stub.len())).sum::<i64>() + tail_len;
+    let main = op.conv.is_main(&f.path);
+    let removed: i64 = tx
+        .query_one(
+            "with d as (delete from cc_lines where file_id = $1 and ord >= $2
+                        returning ord, sha256, event_seq, turn_id, classified, octet_length(stub) as n),
+                  l as (insert into cc_limbo (scope, file_id, reason, sha256, event_seq, turn_id, op_turn)
+                        select $3, $1, 'truncated', sha256, event_seq, turn_id, $5 from d
+                         where $4::boolean and classified order by ord
+                        on conflict do nothing)
+             select coalesce(sum(n), 0)::bigint from d",
+            &[&f.id, &first.ord, &op.conv.id, &main, &op.turn_id()],
+        )
+        .await?
+        .get(0);
+    op.cc_delta -= removed + tail_len;
     op.cc_delta += n64(new_tail.len());
-    if op.conv.is_main(&f.path) {
-        let removed: Vec<limbo::Entry> = old.iter().filter_map(|r| Some((r.sha, r.event_seq?))).collect();
-        limbo::put_truncated(tx, op.conv.id, f.id, &removed).await?;
-    }
     f.tail = new_tail;
     f.size = size;
     Ok(())
@@ -673,7 +768,7 @@ pub async fn truncate(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, size: i64) -> 
 /// # Errors
 /// As [`bytes_of`].
 pub async fn read_all(tx: &Tx<'_>, op: &mut Op<'_>, f: &File) -> Result<Vec<u8>> {
-    let rows = rows_from(tx, f.id, 0).await?;
+    let rows = rows_from(tx, f.id, 0, None).await?;
     let mut b = bytes_of(tx, op, &rows).await?;
     b.extend_from_slice(&f.tail);
     Ok(b)
@@ -686,11 +781,7 @@ pub async fn read_all(tx: &Tx<'_>, op: &mut Op<'_>, f: &File) -> Result<Vec<u8>>
 pub async fn read_range(tx: &Tx<'_>, op: &mut Op<'_>, f: &File, from: i64, to: i64) -> Result<Vec<u8>> {
     let tail_start = f.size - n64(f.tail.len());
     let (base, mut out) = if from < tail_start {
-        let rows: Vec<Row> = rows_from(tx, f.id, from)
-            .await?
-            .into_iter()
-            .take_while(|r| r.start_off < to)
-            .collect();
+        let rows = rows_between(tx, f.id, from, to).await?;
         let base = rows.first().map_or(tail_start, |r| r.start_off);
         (base, bytes_of(tx, op, &rows).await?)
     } else {
@@ -714,66 +805,86 @@ pub async fn fill(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, bytes: &[u8]) -> R
     write(tx, op, f, 0, bytes).await
 }
 
-/// `(sha, event seq)` of the file's lines with events, in order.
-async fn event_lines(tx: &Tx<'_>, file: i64) -> Result<Vec<limbo::Entry>> {
-    let rows = tx
-        .query(
-            "select sha256, event_seq from cc_lines where file_id = $1 and event_seq is not null order by ord",
-            &[&file],
-        )
-        .await?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| {
-            let sha: Vec<u8> = r.get(0);
-            Some((Sha::try_from(sha.as_slice()).ok()?, r.get(1)))
-        })
-        .collect())
-}
-
-/// The main transcript renamed away (a relocation, a set-aside): its lines keep their events and enter `moved` limbo
-/// (6.2).
+/// The main transcript renamed away (a relocation, a set-aside): its classified lines keep their events and enter
+/// `moved` limbo (6.2).
 ///
 /// # Errors
 /// A statement error.
 pub async fn moved_away(tx: &Tx<'_>, op: &Op<'_>, file: i64) -> Result<()> {
-    let lines = event_lines(tx, file).await?;
-    limbo::put_moved(tx, op.conv.id, &lines).await
+    limbo::put_moved(tx, op.conv.id, file).await
 }
 
-/// A lines file that now sits at the main path (renamed onto a free main path, or the main path set): its lines with
-/// events are back (their `moved` limbo goes), its lines without events are classified in file order.
+/// Lines that change their event, turn and classification (`(ord, event, turn)`), set in one statement.
+async fn set_classified(tx: &Tx<'_>, file: i64, ups: &[(i64, Option<i64>, Option<Uuid>)]) -> Result<()> {
+    if ups.is_empty() {
+        return Ok(());
+    }
+    let ords: Vec<i64> = ups.iter().map(|u| u.0).collect();
+    let seqs: Vec<Option<i64>> = ups.iter().map(|u| u.1).collect();
+    let turns: Vec<Option<Uuid>> = ups.iter().map(|u| u.2).collect();
+    tx.execute(
+        "update cc_lines c set event_seq = u.seq, turn_id = coalesce(u.turn, c.turn_id), classified = true
+           from unnest($2::bigint[], $3::bigint[], $4::uuid[]) as u(ord, seq, turn)
+          where c.file_id = $1 and c.ord = u.ord",
+        &[&file, &ords, &seqs, &turns],
+    )
+    .await?;
+    Ok(())
+}
+
+/// A lines file that now sits at the main path (renamed onto a free main path, or the main path set): its classified
+/// lines are back (their `moved` limbo goes), the others are taken back from `moved` limbo or classified, in file
+/// order and in batches, each credited to its own turn (6.3).
 ///
 /// # Errors
 /// A statement error.
 pub async fn promote(tx: &Tx<'_>, op: &mut Op<'_>, file: i64) -> Result<()> {
-    let back: Vec<i64> = event_lines(tx, file).await?.into_iter().map(|e| e.1).collect();
-    limbo::drop_moved(tx, op.conv.id, &back).await?;
-    let rows = tx
-        .query(
-            &format!("select {ROW_COLS} from cc_lines where file_id = $1 and not classified order by ord"),
-            &[&file],
-        )
-        .await?;
+    limbo::drop_moved(tx, op.conv.id, file).await?;
     let saved = op.turn;
-    for r in &rows {
-        let row = row_of(r)?;
-        let shas: Vec<Sha> = row.spans.iter().map(|s| s.1).collect();
-        let meta = blobs::meta(tx, &shas).await?;
-        op.turn = None;
-        if let Some(t) = row.turn_id {
-            op.credit(tx, Some(t)).await?;
-        }
-        // a line a set-aside took off the main path comes back with its event (6.2)
-        let seq = match limbo::take_moved(tx, op.conv.id, &row.sha).await? {
-            Some(seq) => Some(seq),
-            None => apply(tx, op, &row.stub, &row.spans, &meta, None).await?,
+    let mut credited: Option<Option<Uuid>> = None;
+    let mut after = -1i64;
+    loop {
+        let rows = tx
+            .query(
+                &format!(
+                    "select {ROW_COLS} from cc_lines where file_id = $1 and not classified and ord > $2
+                      order by ord limit $3"
+                ),
+                &[&file, &after, &limits::CC_READ_BATCH],
+            )
+            .await?
+            .iter()
+            .map(row_of)
+            .collect::<Result<Vec<Row>>>()?;
+        let Some(last) = rows.last() else {
+            break;
         };
-        tx.execute(
-            "update cc_lines set event_seq = $3, classified = true where file_id = $1 and ord = $2",
-            &[&file, &row.ord, &seq],
-        )
-        .await?;
+        after = last.ord;
+        let shas: Vec<Sha> = rows.iter().map(|r| r.sha).collect();
+        let mut moved = limbo::Candidates::moved(tx, op.conv.id, &shas).await?;
+        let mut blob_shas: Vec<Sha> = rows.iter().flat_map(|r| r.spans.iter().map(|s| s.1)).collect();
+        blob_shas.sort_unstable();
+        blob_shas.dedup();
+        let meta = blobs::meta(tx, &blob_shas).await?;
+        let mut ups = Vec::with_capacity(rows.len());
+        for row in &rows {
+            // a line a set-aside took off the main path comes back with its event (6.2)
+            if let Some(e) = moved.take(&row.sha) {
+                ups.push((row.ord, e.event_seq, e.turn_id));
+                continue;
+            }
+            if credited != Some(row.turn_id) {
+                op.turn = None;
+                if let Some(t) = row.turn_id {
+                    op.credit(tx, Some(t)).await?;
+                }
+                credited = Some(row.turn_id);
+            }
+            let seq = apply(tx, op, &row.stub, &row.spans, &meta, None).await?;
+            ups.push((row.ord, seq, None));
+        }
+        moved.commit(tx).await?;
+        set_classified(tx, file, &ups).await?;
     }
     op.turn = saved;
     Ok(())
@@ -831,26 +942,45 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
 }
 
 /// A lines file renamed over another lines file (compaction's rename-over, 6.6): the source's rows become the
-/// target's content; source lines whose sha matches a target line with an event take that event; on the main path
-/// the target's other events are retracted at once and the source's lines without events are classified.
+/// target's content. A source line not classified yet whose sha matches a classified target line (or the target's
+/// `truncated` limbo) takes that line's event, turn and classification, so it is not classified again; on the main
+/// path the target's other events are retracted at once and the source's remaining lines are classified (the
+/// promotion that follows).
 ///
 /// # Errors
 /// A statement error.
 pub async fn rename_over(tx: &Tx<'_>, op: &mut Op<'_>, source: &File, target: &File) -> Result<()> {
     let target_main = op.conv.is_main(&target.path);
-    let mut pool: HashMap<Sha, VecDeque<i64>> = HashMap::new();
-    let mut targets = event_lines(tx, target.id).await?;
+    let rows = tx
+        .query(
+            "select sha256, event_seq, turn_id from cc_lines where file_id = $1 and classified order by ord",
+            &[&target.id],
+        )
+        .await?;
+    let mut targets: Vec<limbo::Entry> = rows
+        .iter()
+        .filter_map(|r| {
+            let sha: Vec<u8> = r.get(0);
+            Some(limbo::Entry {
+                sha: Sha::try_from(sha.as_slice()).ok()?,
+                event_seq: r.get(1),
+                turn_id: r.get(2),
+            })
+        })
+        .collect();
     targets.extend(limbo::take_all_truncated(tx, op.conv.id, target.id).await?);
-    for (sha, seq) in &targets {
-        pool.entry(*sha).or_default().push_back(*seq);
+    let mut pool: HashMap<Sha, VecDeque<limbo::Entry>> = HashMap::new();
+    for e in &targets {
+        pool.entry(e.sha).or_default().push_back(*e);
     }
     let src = tx
         .query(
-            "select ord, sha256, event_seq from cc_lines where file_id = $1 order by ord",
+            "select ord, sha256, event_seq, classified from cc_lines where file_id = $1 order by ord",
             &[&source.id],
         )
         .await?;
     let mut taken = std::collections::HashSet::new();
+    let mut ups = Vec::new();
     for r in &src {
         let ord: i64 = r.get(0);
         let sha: Vec<u8> = r.get(1);
@@ -858,30 +988,35 @@ pub async fn rename_over(tx: &Tx<'_>, op: &mut Op<'_>, source: &File, target: &F
             continue;
         };
         let has: Option<i64> = r.get(2);
+        let classified: bool = r.get(3);
         let Some(q) = pool.get_mut(&sha) else {
             continue;
         };
         match has {
             Some(seq) => {
-                if let Some(i) = q.iter().position(|s| *s == seq) {
+                if let Some(i) = q.iter().position(|e| e.event_seq == Some(seq)) {
                     q.remove(i);
                     taken.insert(seq);
                 }
             }
-            None => {
-                if let Some(seq) = q.pop_front() {
-                    taken.insert(seq);
-                    tx.execute(
-                        "update cc_lines set event_seq = $3, classified = true where file_id = $1 and ord = $2",
-                        &[&source.id, &ord, &seq],
-                    )
-                    .await?;
+            None if !classified => {
+                if let Some(e) = q.pop_front() {
+                    if let Some(seq) = e.event_seq {
+                        taken.insert(seq);
+                    }
+                    ups.push((ord, e.event_seq, e.turn_id));
                 }
             }
+            None => {}
         }
     }
+    set_classified(tx, source.id, &ups).await?;
     if target_main {
-        let dropped: Vec<i64> = targets.iter().map(|t| t.1).filter(|s| !taken.contains(s)).collect();
+        let dropped: Vec<i64> = targets
+            .iter()
+            .filter_map(|t| t.event_seq)
+            .filter(|s| !taken.contains(s))
+            .collect();
         limbo::retract(tx, op.conv.id, op.turn_id(), dropped).await?;
     }
     Ok(())

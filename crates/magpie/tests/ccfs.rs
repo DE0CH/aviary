@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use base64::Engine as _;
-use common::cc::{Sandbox, code, conversation, hermit_names, main_path, set_main};
+use common::cc::{Sandbox, code, conversation, flush_turn, hermit_names, main_path, person_turn, set_main};
 use magpie_api::sandbox::CcKind;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -774,4 +774,252 @@ async fn a_long_streamed_read() {
     let (_, part) = s.read_range(&p, 1000, 50_000).await.unwrap();
     assert_eq!(part, &content[1000..51_000]);
     let _ = Duration::ZERO;
+}
+
+/// `(turn_id, has an event)` of each main-transcript line, in order.
+async fn line_turns(pool: &aviary_pg::Pool, conv: Uuid) -> Vec<(Option<Uuid>, bool)> {
+    let rows = pool
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select l.turn_id, l.event_seq is not null from cc_lines l join cc_files f on f.id = l.file_id
+              where f.scope = $1 and f.path = $2 order by l.ord",
+            &[&conv, &main_path()],
+        )
+        .await
+        .unwrap();
+    rows.iter().map(|r| (r.get(0), r.get(1))).collect()
+}
+
+#[tokio::test]
+async fn a_persons_prompt_echo_is_never_a_prompt_again() {
+    let (db, _r, mut s) = setup("cc_echo").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    // a person's turn: Claude Code writes the prompt (the echo of user.sent: no event) and the reply
+    let t1 = person_turn(&sql, &mut s).await;
+    let content = [prompt("p1", "hello"), assistant("a1", "hi")].concat();
+    s.write(&p, 0, &content).await.unwrap();
+    let only_reply = vec![("cc.assistant".to_owned(), Some("a1".to_owned()))];
+    let names = |v: Vec<(i64, String, Option<String>)>| v.into_iter().map(|e| (e.1, e.2)).collect::<Vec<_>>();
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+
+    // a whole-file rewrite (O_TRUNC, the same bytes again in chunks): the echo stays an echo
+    s.truncate(&p, 0).await.unwrap();
+    for (i, chunk) in content.chunks(13).enumerate() {
+        s.write(&p, (i * 13) as u64, chunk).await.unwrap();
+    }
+    assert_eq!(s.read(&p).await.unwrap(), content);
+    assert_eq!(flush_turn(&sql, conv, Some(t1)).await, 0);
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+
+    // the next turn's echo is pending while an old prompt is written again: the old one is not taken as its echo
+    let t2 = person_turn(&sql, &mut s).await;
+    s.truncate(&p, 0).await.unwrap();
+    s.write(&p, 0, &content).await.unwrap();
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+    // the rewritten lines keep the turn they were first credited to (6.3)
+    assert_eq!(line_turns(&sql, conv).await, vec![(Some(t1), false), (Some(t1), true)]);
+    let p2 = prompt("p2", "and then");
+    let all = [content.clone(), p2.clone()].concat();
+    s.write(&p, content.len() as u64, &p2).await.unwrap();
+    assert_eq!(names(visible(&sql, conv).await), only_reply, "p2 is t2's echo");
+    let matched: bool = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one("select echo_matched from turns where id = $1", &[&t2])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched);
+
+    // a tombstone-style truncate before the echo, the rest written back
+    let cut = prompt("p1", "hello").len();
+    s.truncate(&p, cut as u64).await.unwrap();
+    s.write(&p, cut as u64, &all[cut..]).await.unwrap();
+    assert_eq!(flush_turn(&sql, conv, Some(t2)).await, 0);
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+
+    // a compaction that keeps both prompts: the temp file renamed over the transcript classifies neither again
+    let tmp = format!("projects/-workspace/{}.jsonl.compact.tmp.e1", common::cc::SID);
+    let compacted = [
+        line(&json!({"type": "system", "subtype": "compact_boundary"})),
+        all.clone(),
+    ]
+    .concat();
+    s.write(&tmp, 0, &compacted).await.unwrap();
+    s.rename(&tmp, &p).await.unwrap();
+    assert_eq!(s.read(&p).await.unwrap(), compacted);
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+
+    // a set-aside and a fresh file with the same content, and away and back
+    let aside = format!("projects/-workspace/{}.jsonl.superseded-1", common::cc::SID);
+    s.rename(&p, &aside).await.unwrap();
+    s.write(&p, 0, &compacted).await.unwrap();
+    s.unlink(&aside).await.unwrap();
+    let away = format!("projects/-workspace/{}.jsonl.bak", common::cc::SID);
+    s.rename(&p, &away).await.unwrap();
+    s.rename(&away, &p).await.unwrap();
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+    let prompts: i64 = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from events where conversation_id = $1 and kind = 'cc.user'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(prompts, 0, "no cc.user prompt event was ever made for an echo");
+}
+
+#[tokio::test]
+async fn the_end_of_a_turn_flushes_only_its_own_limbo() {
+    let (db, _r, mut s) = setup("cc_flush_turn").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let t1 = person_turn(&sql, &mut s).await;
+    let lines: Vec<Vec<u8>> = (0..4).map(|i| assistant(&format!("a{i}"), "x")).collect();
+    s.write(&p, 0, &lines.concat()).await.unwrap();
+    // turn 1 cuts the last line; turn 2 starts before anything flushed and cuts another
+    let keep = lines[..3].concat().len() as u64;
+    s.truncate(&p, keep).await.unwrap();
+    let t2 = person_turn(&sql, &mut s).await;
+    s.truncate(&p, lines[..2].concat().len() as u64).await.unwrap();
+    // turn 1's end retracts only what turn 1's truncate removed
+    assert_eq!(flush_turn(&sql, conv, Some(t1)).await, 1);
+    assert_eq!(visible(&sql, conv).await.len(), 3);
+    // turn 2's line can still come back
+    s.write(&p, lines[..2].concat().len() as u64, &lines[2]).await.unwrap();
+    assert_eq!(flush_turn(&sql, conv, Some(t2)).await, 0);
+    assert_eq!(visible(&sql, conv).await.len(), 3);
+}
+
+#[tokio::test]
+async fn an_append_expects_the_files_size() {
+    let (_db, _r, s) = setup("cc_append").await;
+    let p = main_path();
+    let a = internal(1);
+    s.write(&p, 0, &a).await.unwrap();
+    let append = |off: u64| magpie_api::sandbox::CcWriteQuery {
+        append: true,
+        ..s.wq(&p, off, Uuid::new_v4())
+    };
+    // a stale append (its offset is no longer the size) with other bytes: refused, nothing written
+    let b = internal(2);
+    s.calls().cc_write(&append(a.len() as u64), b.clone()).await.unwrap();
+    let both = [a.clone(), b.clone()].concat();
+    let e = s
+        .calls()
+        .cc_write(&append(a.len() as u64), internal(3))
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), "offset_mismatch");
+    assert_eq!(s.read(&p).await.unwrap(), both);
+    // the same append resent under a new opId: rule 0 answers it first
+    let r = s.calls().cc_write(&append(a.len() as u64), b.clone()).await.unwrap();
+    assert_eq!(r.size, both.len() as u64);
+    // past the end is still offset_beyond_eof; a plain write inside the file still overwrites
+    let e = s.calls().cc_write(&append(1000), internal(4)).await.unwrap_err();
+    assert_eq!(code(&e), "offset_beyond_eof");
+    s.write(&p, 2, b" ").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_lease_never_records_hermits_answer_over_a_newer_feed_record() {
+    use aviary_fakes::fault::{FaultKind, Hold};
+    let db = common::fresh_db("cc_lease_race").await;
+    let hermit = aviary_fakes::hermit::FakeHermit::unguarded(aviary_fakes::hermit::HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let conv = conversation(&r, ALICE).await;
+    let hc = hermit_api::client::Client::new(common::http(), running.url()).bearer("any");
+    hc.put_sandbox(conv, &hermit_api::sandbox::PutSandboxRequest { person: ALICE.into() })
+        .await
+        .unwrap();
+    let a = hermit.live(conv).unwrap();
+    // hermit answers `a`, but before the grant locks the row the feed records `b` (a migration)
+    let hold = Hold::new();
+    hermit.faults().times("get_sandbox", FaultKind::Hold(hold.clone()), 1);
+    let mut sa = Sandbox::new(&r, conv, a.id, ALICE);
+    let asking = tokio::spawn(async move { sa.take_lease().await });
+    assert!(hold.wait_held(1, Duration::from_secs(5)).await);
+    let b = Uuid::new_v4();
+    hermit_names(r.pool(), conv, Some(b), "ready").await;
+    hold.release();
+    let got = asking.await.unwrap();
+    assert_eq!(code(&got.unwrap_err()), "not_current_sandbox");
+    let row = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select hermit_sandbox, lease_sandbox from conversations where id = $1",
+            &[&conv],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<Uuid>>(0), Some(b), "the feed's newer record stays");
+    assert_eq!(row.get::<_, Option<Uuid>>(1), None, "nobody got the lease");
+    // the sandbox the feed names takes it without asking hermit
+    let mut sb = Sandbox::new(&r, conv, b, ALICE);
+    sb.take_lease().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_large_transcript_reads_and_rewrites_in_bounded_time() {
+    let (db, _r, s) = setup("cc_large").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    set_main(&sql, s.conversation, &p).await;
+    // 30,000 lines (Claude Code's transcripts reach tens of thousands), every 100th an image, every 30th a reply
+    let png = png_b64(3000);
+    let mut content = Vec::new();
+    for i in 0..30_000u32 {
+        let l = if i % 100 == 0 {
+            image_result(&format!("i{i}"), &png)
+        } else if i % 30 == 1 {
+            assistant(&format!("a{i}"), &format!("reply {i}"))
+        } else {
+            internal(i)
+        };
+        content.extend(l);
+    }
+    for (i, chunk) in content.chunks(1 << 20).enumerate() {
+        s.write(&p, (i << 20) as u64, chunk).await.unwrap();
+    }
+    let events = visible(&sql, s.conversation).await.len();
+    // a whole read: batches seek with the index (a read that fetched every row to the end per batch took seconds)
+    let t0 = std::time::Instant::now();
+    assert_eq!(s.read(&p).await.unwrap(), content);
+    let read = t0.elapsed();
+    // Claude Code's whole-file rewrite: O_TRUNC (one statement), then the same bytes in 1 MiB writes
+    let t0 = std::time::Instant::now();
+    s.truncate(&p, 0).await.unwrap();
+    let truncate = t0.elapsed();
+    for (i, chunk) in content.chunks(1 << 20).enumerate() {
+        s.write(&p, (i << 20) as u64, chunk).await.unwrap();
+    }
+    let rewrite = t0.elapsed();
+    assert_eq!(s.read(&p).await.unwrap(), content);
+    assert_eq!(flush(&sql, s.conversation).await, 0);
+    assert_eq!(visible(&sql, s.conversation).await.len(), events);
+    eprintln!(
+        "{} lines, {} bytes: read {read:?}, truncate(0) {truncate:?}, truncate and rewrite {rewrite:?}",
+        30_000,
+        content.len()
+    );
+    assert!(read < Duration::from_secs(10), "read {read:?}");
+    assert!(truncate < Duration::from_secs(3), "truncate {truncate:?}");
+    assert!(rewrite < Duration::from_secs(60), "rewrite {rewrite:?}");
 }
