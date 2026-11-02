@@ -16,15 +16,39 @@ const REREAD_MS = 30_000;
 const REFUSED_LOG_MS = 300_000;
 const MAX_BYTES = 1 << 20;
 const MAX_ENTRIES = 10_000;
-const EMAIL = /^[^\s@]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
-const DOMAIN = /^@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+// Unicode White_Space and the Cc control characters, as hermit's Rust (`char::is_whitespace`, `char::is_control`)
+// sees them; JavaScript's `\s` and `trim()` differ (U+0085 is not `\s`, U+FEFF is)
+const WHITE = "\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000";
+const WHITE_OR_CONTROL = new RegExp(`[${WHITE}\u0000-\u001f\u007f-\u009f]`, "u");
+const EDGES = new RegExp(`^[${WHITE}]+|[${WHITE}]+$`, "gu");
 
 export interface Staff {
-  users: string[];
-  admins: string[];
+  /** explicit addresses, normalised */
+  users: Set<string>;
+  /** `@domain` entries, without the `@`, lowercased */
+  domains: Set<string>;
+  admins: Set<string>;
 }
 
-/** hermit 3.4.1's validation; returns the reason a file is refused, or the catalogue. */
+const trim = (s: string): string => s.replace(EDGES, "");
+
+/** hermit_api::people::normalise_email: trimmed and lowercased, at most 254 bytes, no whitespace or control
+ * characters, exactly one `@` with something on both sides; null when it is not an address. */
+export function normaliseEmail(raw: string): string | null {
+  const e = trim(raw).toLowerCase();
+  if (!e || Buffer.byteLength(e) > 254 || WHITE_OR_CONTROL.test(e)) return null;
+  const parts = e.split("@");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return e;
+}
+
+/** hermit's hostname_ok for an `@domain` entry (without the `@`). */
+function hostnameOk(d: string): boolean {
+  return d.length > 0 && d.length <= 253 && /^[A-Za-z0-9.-]+$/.test(d) && !d.startsWith(".") && !d.endsWith(".") && !d.includes("..");
+}
+
+/** hermit 3.4.1's validation, rule for rule (aviary crates/hermit/src/catalogue.rs `Loaded::parse`; the shared cases
+ * are test/fixtures/catalogue-cases.json); returns the reason a file is refused, or the catalogue. */
 export function parseCatalogue(text: string): Staff | { refused: string } {
   if (Buffer.byteLength(text) > MAX_BYTES) return { refused: "the file is over 1 MiB" };
   let raw: unknown;
@@ -34,35 +58,48 @@ export function parseCatalogue(text: string): Staff | { refused: string } {
     return { refused: "not valid JSON" };
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { refused: "not a JSON object" };
-  const { users, admins = [] } = raw as { users?: unknown; admins?: unknown };
-  if (!Array.isArray(users) || !users.length) return { refused: "users must be a non-empty list" };
-  if (!Array.isArray(admins)) return { refused: "admins must be a list" };
-  if (users.length + admins.length > MAX_ENTRIES) return { refused: "more than 10000 entries" };
-  const u: string[] = [];
+  const obj = raw as Record<string, unknown>;
+  const strings = (key: string): string[] | { refused: string } => {
+    const v = obj[key];
+    if (v === undefined) return { refused: `${key} is missing` };
+    if (!Array.isArray(v)) return { refused: `${key} is not a list` };
+    if (v.some((x) => typeof x !== "string")) return { refused: `${key} has an entry that is not a string` };
+    return v as string[];
+  };
+  const users = strings("users");
+  if ("refused" in users) return users;
+  const admins = strings("admins");
+  if ("refused" in admins) return admins;
+  if (!users.length) return { refused: "users is empty" };
+  if (users.length + admins.length > MAX_ENTRIES) return { refused: `more than ${MAX_ENTRIES} entries` };
+  const staff: Staff = { users: new Set(), domains: new Set(), admins: new Set() };
   for (const x of users) {
-    if (typeof x !== "string") return { refused: "users must hold strings" };
-    const v = x.trim().toLowerCase();
-    if (!EMAIL.test(v) && !DOMAIN.test(v)) return { refused: `users: ${JSON.stringify(x)} is neither an email nor @domain` };
-    u.push(v);
+    const t = trim(x);
+    if (t.startsWith("@")) {
+      const d = t.slice(1).toLowerCase();
+      if (!hostnameOk(d)) return { refused: `users: ${JSON.stringify(x)} is neither an email nor @domain` };
+      staff.domains.add(d);
+    } else {
+      const e = normaliseEmail(t);
+      if (!e) return { refused: `users: ${JSON.stringify(x)} is neither an email nor @domain` };
+      staff.users.add(e);
+    }
   }
-  const staff: Staff = { users: u, admins: [] };
   for (const x of admins) {
-    if (typeof x !== "string") return { refused: "admins must hold strings" };
-    const v = x.trim().toLowerCase();
-    if (!EMAIL.test(v)) return { refused: `admins: ${JSON.stringify(x)} is not an email` };
-    if (!allowedBy(staff, v)) return { refused: `admins: ${JSON.stringify(x)} is not matched by users` };
-    staff.admins.push(v);
+    const e = normaliseEmail(x);
+    if (!e) return { refused: `admins: ${JSON.stringify(x)} is not an email` };
+    if (!allowedBy(staff, e)) return { refused: `admins: ${JSON.stringify(x)} is not matched by users` };
+    staff.admins.add(e);
   }
   return staff;
 }
 
-/** Exact match in `users`, or `@<domain>` with the part after the last `@` (no subdomain matching). */
+/** Exact match in `users`, or `@<domain>` for the part after the one `@` (no subdomain matching); the address is
+ * normalised first, so anything that is not an address is not allowed. */
 export function allowedBy(staff: Staff, email: string): boolean {
-  const e = email.trim().toLowerCase();
-  if (!e || e.startsWith("@")) return false;
-  if (staff.users.includes(e)) return true;
-  const at = e.lastIndexOf("@");
-  return at > 0 && staff.users.includes(e.slice(at));
+  const e = normaliseEmail(email);
+  if (!e) return false;
+  return staff.users.has(e) || staff.domains.has(e.slice(e.indexOf("@") + 1));
 }
 
 export class Catalogue {
@@ -105,7 +142,7 @@ export class Catalogue {
     }
     this.#staff = r;
     this.#sha = sha;
-    log("catalogue loaded", { users: r.users.length, admins: r.admins.length, sha256: sha.slice(0, 12) });
+    log("catalogue loaded", { users: r.users.size, domains: r.domains.size, admins: r.admins.size, sha256: sha.slice(0, 12) });
     return true;
   }
 

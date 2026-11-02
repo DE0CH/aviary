@@ -9,7 +9,7 @@
 //
 // hermit answering 401 or 403 is this pod's configuration fault (TOOLS_TOKEN_HERMIT wrong, or hermit not yet accepting
 // it), not an outage: it is logged (once a minute) and counted under its own reason, and /metrics shows
-// tools_liveness_auth_fault 1 while it lasts. Calls are still served stale as in an outage, because platform 3.11.2
+// tools_liveness_auth_fault 1 until hermit next answers 200 or 404 (another failure in between leaves it set). Calls are still served stale as in an outage, because platform 3.11.2
 // says a hermit problem never turns a valid token into a refusal, and the pod stays ready (an unready pod is an outage
 // of tools for every turn).
 import { logError } from "../common/log.ts";
@@ -36,6 +36,8 @@ interface Entry {
   answer: Answer | null;
   at: number;
   pending: Promise<void> | null;
+  /** a lookup has finished (answered or failed) */
+  tried: boolean;
   retryAt: number;
   used: number;
 }
@@ -59,7 +61,7 @@ export class Liveness {
   #sweeper: NodeJS.Timeout | null = null;
   /** lookups that got no usable answer, by reason (for /metrics) */
   readonly failuresBy: Record<FailReason, number> = { unreachable: 0, unavailable: 0, auth: 0, bad_answer: 0 };
-  /** hermit's latest answer was 401/403 (a configuration fault) */
+  /** hermit answered 401/403 and has not answered 200/404 since (a configuration fault) */
   authFault = false;
   #authLoggedAt = -Infinity;
   /** calls served on an answer older than the TTL, or on none (hermit not answering) */
@@ -86,23 +88,22 @@ export class Liveness {
     if (this.#sweeper) clearInterval(this.#sweeper);
   }
 
-  /** Whether a call for this sandbox, conversation and person is served now. The first call for a sandbox waits for
-   * one lookup (at most 1 s), and so does every call while the sandbox has no answer and a lookup is running (calls
-   * that arrive together all wait for the same lookup); with an answer, calls use the cache and refresh it in the
-   * background. */
+  /** Whether a call for this sandbox, conversation and person is served now. Only the sandbox's first lookup is
+   * waited for (at most 1 s), by the first call and by any that arrive while it runs, so calls that arrive together
+   * all get its answer. Once a lookup has finished, calls never wait: with an answer they use the cache (refreshed in
+   * the background after the TTL); with none (hermit failed), they are admitted on the gateway's verification and the
+   * lookup is retried in the background (platform 3.11.2 step 3). */
   async check(sandboxId: string, conversationId: string, person: string): Promise<Verdict> {
     const now = this.#now();
     let e = this.#entries.get(sandboxId);
     if (!e) {
-      e = { answer: null, at: 0, pending: null, retryAt: 0, used: now };
+      e = { answer: null, at: 0, pending: null, tried: false, retryAt: 0, used: now };
       this.#entries.set(sandboxId, e);
       await this.#refresh(sandboxId, e);
     } else {
       e.used = now;
-      // no answer yet: wait for the running lookup, or start one (none while in the retry pause after a failure); it is
-      // bounded by the 1 s timeout
-      if (!e.answer) await this.#refresh(sandboxId, e);
-      else if (now - e.at >= TTL_MS) void this.#refresh(sandboxId, e);
+      if (!e.tried) await this.#refresh(sandboxId, e); // the first lookup is still running: join it
+      else if (!e.answer || now - e.at >= TTL_MS) void this.#refresh(sandboxId, e);
     }
     const v = judge(e.answer, conversationId, person);
     if (!v.ok) return v;
@@ -118,7 +119,8 @@ export class Liveness {
       .then((a) => {
         if (typeof a === "string") {
           this.failuresBy[a]++;
-          this.#noteAuth(a === "auth", id);
+          // only a good answer clears an auth fault: hermit also being unreachable for a moment says nothing about it
+          if (a === "auth") this.#noteAuth(true, id);
           e.retryAt = this.#now() + RETRY_MS;
           return;
         }
@@ -127,14 +129,17 @@ export class Liveness {
         e.at = this.#now();
         e.retryAt = 0;
       })
-      .finally(() => (e.pending = null));
+      .finally(() => {
+        e.pending = null;
+        e.tried = true;
+      });
     return e.pending;
   }
 
   #noteAuth(fault: boolean, id: string): void {
     this.authFault = fault;
     if (!fault) return;
-    const now = Date.now();
+    const now = this.#now();
     if (now - this.#authLoggedAt < AUTH_LOG_MS) return;
     this.#authLoggedAt = now;
     logError(

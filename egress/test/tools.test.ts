@@ -5,7 +5,7 @@
 // logging (dropped, never waited on, while the database is away) and the drain.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import pg from "pg";
 import { hermitGetter } from "../src/egress/tokens.ts";
-import { Catalogue, parseCatalogue } from "../src/tools/catalogue.ts";
+import { allowedBy, Catalogue, parseCatalogue } from "../src/tools/catalogue.ts";
 import { checkConfigEnv, parseToolsConfig } from "../src/tools/config.ts";
 import { CallLog, connect, migrate, MIGRATIONS } from "../src/tools/db.ts";
 import { Liveness } from "../src/tools/liveness.ts";
@@ -307,6 +307,38 @@ test("liveness: calls that arrive together for a sandbox not yet looked up all w
   }
 });
 
+test("liveness: while hermit hangs, only a sandbox's first lookup is waited for; later calls are admitted at once and retry in the background", async () => {
+  const s = sandbox();
+  hermit.outage = "hang";
+  const failed = () => liveness.failuresBy.unreachable;
+  const before = failed();
+  try {
+    let t0 = Date.now();
+    assert.equal((await rpc("tools/list", {}, s)).status, 200, "admitted on the gateway's verification");
+    assert.ok(Date.now() - t0 >= 900, "the first lookup is waited for, up to its 1 s timeout");
+    assert.equal(failed() - before, 1);
+    for (let i = 0; i < 4; i++) {
+      clock += 2500; // past the retry pause: the first of these calls starts a retry, the rest find it running
+      t0 = Date.now();
+      assert.equal((await rpc("tools/call", { name: "slow_wait", arguments: { ms: 0 } }, s)).status, 200);
+      assert.ok(Date.now() - t0 < 300, `call ${i + 2} does not wait for hermit (${Date.now() - t0} ms)`);
+    }
+    await new Promise((r) => setTimeout(r, 1100)); // the background retries time out
+    assert.equal(failed() - before, 2, "one retry, none started while it runs");
+  } finally {
+    hermit.outage = "up";
+  }
+  // hermit back: the next retry lands and the answer is used
+  clock += 2500;
+  await rpc("tools/list", {}, s);
+  await new Promise((r) => setTimeout(r, 200));
+  hermit.answers.set(s.id, { state: "releasing", live: true, conversationId: s.conversationId, person: s.person });
+  clock += 31_000;
+  await rpc("tools/list", {}, s);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await rpc("tools/list", {}, s)).status, 403);
+});
+
 test("liveness: hermit refusing tools' bearer (401/403) is a configuration fault, counted apart; calls are still served", async () => {
   const s = sandbox();
   const before = liveness.failuresBy.auth;
@@ -315,6 +347,11 @@ test("liveness: hermit refusing tools' bearer (401/403) is a configuration fault
     assert.equal((await rpc("tools/list", {}, s)).status, 200, "a hermit problem never refuses a call the gateway verified");
     assert.equal(liveness.failuresBy.auth, before + 1);
     assert.equal(liveness.authFault, true);
+    // hermit also unreachable for a moment: still a fault (only a 200/404 answer clears it)
+    hermit.outage = "reset";
+    clock += 2500;
+    assert.equal((await rpc("tools/list", {}, sandbox())).status, 200);
+    assert.equal(liveness.authFault, true, "an outage does not clear it");
   } finally {
     hermit.outage = "up";
   }
@@ -415,6 +452,23 @@ test("upstreams: the first tool-list read is bounded, so an upstream that hangs 
   }
 });
 
+// hermit's own cases, byte for byte (aviary crates/hermit/fixtures/catalogue-cases.json; chat.yml checks the copy), so
+// tools and hermit (and YYC's CI, `hermit catalogue-check`) accept and refuse the same files
+test("catalogue: hermit's shared cases", () => {
+  type Case = { name: string; file?: unknown; text?: string; allowed?: string[]; denied?: string[]; admins?: string[] };
+  const cases = JSON.parse(readFileSync(new URL("./fixtures/catalogue-cases.json", import.meta.url), "utf8")) as { accept: Case[]; refuse: Case[] };
+  const text = (c: Case) => c.text ?? JSON.stringify(c.file);
+  assert.ok(cases.accept.length > 5 && cases.refuse.length > 20);
+  for (const c of cases.accept) {
+    const r = parseCatalogue(text(c));
+    assert.ok(!("refused" in r), `${c.name}: refused: ${"refused" in r ? r.refused : ""}`);
+    for (const e of c.allowed!) assert.ok(allowedBy(r, e), `${c.name}: ${JSON.stringify(e)} should be allowed`);
+    for (const e of c.denied!) assert.ok(!allowedBy(r, e), `${c.name}: ${JSON.stringify(e)} should be denied`);
+    assert.deepEqual([...r.admins].sort(), [...c.admins!].sort(), c.name);
+  }
+  for (const c of cases.refuse) assert.ok("refused" in parseCatalogue(text(c)), `${c.name}: accepted`);
+});
+
 test("config, catalogue and migrations", async () => {
   assert.throws(() => parseToolsConfig({ upstreams: [{ prefix: "y", url: "http://u", headers: {} }] }), /listAs/);
   assert.throws(() => parseToolsConfig({ upstreams: [{ prefix: "y", url: "http://u", headers: {}, listAs: "a@b.c" }, { prefix: "y", url: "http://v", headers: {}, listAs: "a@b.c" }] }), /twice/);
@@ -423,10 +477,13 @@ test("config, catalogue and migrations", async () => {
   assert.throws(() => checkConfigEnv(deps.config, { ...deps.env, UP_TOKEN: "" }), /UP_TOKEN/);
   checkConfigEnv(deps.config, deps.env);
 
-  assert.deepEqual(parseCatalogue('{"users": ["@example.com", "A@x.org"], "admins": ["a@x.org"]}'), { users: ["@example.com", "a@x.org"], admins: ["a@x.org"] });
-  assert.ok("refused" in parseCatalogue('{"users": []}'));
-  assert.ok("refused" in parseCatalogue('{"users": ["@example.com"], "admins": ["b@x.org"]}'), "an admin users does not match");
-  assert.ok("refused" in parseCatalogue("not json"));
+  assert.deepEqual(parseCatalogue('{"users": ["@example.com", "A@x.org"], "admins": ["a@x.org"]}'), {
+    users: new Set(["a@x.org"]),
+    domains: new Set(["example.com"]),
+    admins: new Set(["a@x.org"]),
+  });
+  const many = Array.from({ length: 10_001 }, (_, i) => `u${i}@example.org`);
+  assert.ok("refused" in parseCatalogue(JSON.stringify({ users: many, admins: [] })), "more than 10000 entries");
   // a refused file keeps the last good catalogue
   const c = new Catalogue(catalogueFile());
   assert.equal(await c.reload(), true);
