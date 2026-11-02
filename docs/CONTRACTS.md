@@ -3,9 +3,8 @@
 For implementers of another hermit or another sandbox gateway. The contract crates are the text of record for the
 types, route constants and protocol numbers; this page states the conventions around them.
 
-Status: the conventions, the endpoint names, the gateway contract and the hermit and supervisor contracts are
-complete (`hermit-api`, `supervisor-api`, `gateway-api`); magpie's and sandboxd's are filled in with `magpie-api` and
-`sandboxd-api`.
+Status: the conventions, the endpoint names, the gateway contract and the hermit, supervisor and magpie contracts are
+complete (`hermit-api`, `supervisor-api`, `gateway-api`, `magpie-api`); sandboxd's is filled in with `sandboxd-api`.
 
 ## Conventions (every service)
 
@@ -94,6 +93,8 @@ Protocol surfaces and their numbers (each crate's constants; a server accepts th
 | `hermit-sandbox` | 1 | `hermit_api::SANDBOX` | the supervisor (fixed for a sandbox's life) |
 | `supervisor-control` | 1 | `supervisor_api::CONTROL` | hermit, to `:7070` |
 | `gateway` | 1 | `gateway_api::GATEWAY` | callers of the models route |
+| `magpie-person` | 1 | `magpie_api::PROTOCOL_PERSON` | pigeon; hermit, the ops tools and admin on their routes |
+| `magpie-sandbox` | 1 | `magpie_api::PROTOCOL_SANDBOX` | the supervisor (fixed for a sandbox's life) |
 
 ## The sandbox gateway contract
 
@@ -232,6 +233,41 @@ route (401 `unauthenticated` otherwise, 503 `unavailable` with `retry-after: 1` 
 `SCM_RIGHTS` to the first message (at most 100), 200 `{sent}`; `GET /v1/secrets/{key}` → `{key, value}` or 404
 `not_granted`.
 
+## The magpie contract
+
+Crate `magpie-api`: the types (one module per area: `conversations`, `turns`, `events`, `rows`, `live`, `changes`,
+`uploads`, `files`, `shares`, `sandbox`, `ops`, `errors`), the route table (`routes::ROUTES`: id, method, path,
+callers, success statuses, required headers, surface), a client (`client::Client` with the scopes `person`,
+`viewing_as`, `sandbox`, `service`) and a `Server` trait with an axum `router` (`server`). Every method of the trait
+answers 501 `not_supported` by default. `fixtures/` pins the JSON of every route (success and error bodies), every
+event kind, row kind, change type and command type (`fixtures/README.md`). magpie is part of aviary; the contract is
+written down for its other callers (another gateway forwards `/v1/sandbox/**` to it unchanged).
+
+| Caller | Routes | Headers |
+|---|---|---|
+| pigeon | `/v1/conversations/**`, `/v1/creations/{key}`, `/v1/changes`, `/v1/uploads`, `/v1/shares/**` | `Aviary-Person` (and, viewing as, `Aviary-Viewer`, `Aviary-View-Session`) |
+| pigeon | `GET /v1/blobs/{blobId}` (pigeon checked its signed URL), `POST /v1/view-as` | none |
+| gateway | `/v1/sandbox/**` | the three `Aviary-Sandbox-*`; the supervisor adds `Aviary-Lease` on every state change and the command poll |
+| hermit | `/v1/hermit/**`, `/v1/ops/**` | none |
+| admin | `/v1/ops/**`, `/v1/admin/**` | `Aviary-Admin` on `/v1/admin/**` |
+
+What a caller can rely on, beyond the shapes:
+
+- **Idempotency.** M3 by (person, `idempotencyKey`) and M7 by (conversation, `clientMessageId`), for ever: a repeat
+  answers 200 with the same body (201/202 the first time; the client returns `Admitted::New` or `Admitted::Repeat`).
+  Every cc operation by `opId` (24 h), task events by `id`, asks by `askId`, agent turns by `turnId`, blob PUTs by
+  content.
+- **Ownership.** Another person's conversation, share or blob answers 404 `not_found`, never 403.
+- **Rows.** Every new row and every row update takes the next row seq of the conversation, and nothing else does;
+  `epoch` (a decimal string) changes only when a retract removes or rebuilds a visible row, with a
+  `timeline_replaced` change. A `turn` change's `timelineSeq` is at or past the turn's last row.
+- **Long-polls.** `waitMs` up to 25,000 on M9 (`after` only), M12 and the command poll; the answer comes as soon as
+  something is past `after`, else empty at `waitMs`, and at once when the replica drains.
+- **Errors as data.** Turn and row error codes are dotted (`sandbox.lost`, `model.budget`, `errors::DataCode`); HTTP
+  codes are lower_snake_case (`errors::ErrorCode`, each with its status). magpie returns codes, never sentences.
+- **Skew.** An unknown event kind, row kind, change type, command type or code reads as `Unknown`/`Other` and is
+  skipped (an unknown command is acked `{"result": {"error": "unsupported"}}`).
+
 ## Points the crates settle
 
 Where the specs left a detail open or disagreed, the crates decide (platform R35: "the crates' golden fixtures settle
@@ -256,3 +292,31 @@ any wording difference"):
   re-exports them.
 - The contract crates use `aviary-core`'s error envelope, caller enum and header names, so there is one envelope type
   in the workspace. Their clients read a refusal into their own `Refusal` (status, envelope, `retry-after`).
+
+For magpie (`magpie-api`), where magpie spec 16 and pigeon spec 14.1 (the person surface's single definition,
+platform R3) differ, or a detail was open:
+
+- A `Row` carries every row seq it took twice: `seqs` (pigeon 14.1.0) and the same list as `sourceSeqRanges` with
+  `updated` (magpie 7.3, the Paseo field). `seqStart`/`seqEnd` are as magpie 7.4 (in an `after` page, `seqEnd` is the
+  entry's own seq).
+- M6 soft delete answers the Conversation (with `deletedAt` and `purgeAt`, pigeon 14.1), not `{deletedAt}`; M11
+  answers 202 `{}` (pigeon), not 200; the share view carries `epoch` (pigeon); `conversation_removed.reason` reads
+  `deleted` as well as `purged` (magpie writes `purged`; a soft delete is `conversation_upserted` with `deletedAt`).
+- Turn origins are `person`, `agent`, `import` (DESIGN 12 D4), never pigeon 14.1.0's `user`/`cli`. `legacy.cut` is
+  not a code (DESIGN 12 D14); `sandbox.lost` is also the supervisor's code for a forced release (supervisor 11.6).
+- `ErrorInfo` is `{code, message, status?, detail?, retryAfterS?}` (pigeon's `status` for model errors, magpie 8.3's
+  retry time for `sandbox.busy`); an assistant row may carry `error` (the model error tag, pigeon 14.1.18).
+- `Ask.toolUseId` is nullable (magpie 7.2) and an ask may carry `title` and `description` (pigeon).
+- 409 `conversation_migrating` carries `retryAfterMs`, and `route: "legacy"` in the switch window (platform R37);
+  409 `bad_transition` carries the turn's `state` as a type-specific field.
+- Routes that answer nothing but must be JSON answer `{}`: M11 (202), M17 (201), `POST /v1/sandbox/asks` (201), agent
+  turns (201, 200 for a repeat) and blob PUTs (201, 200 when stored already).
+- `GET /v1/ops/view-as?before=` is an RFC 3339 time (platform 15.3; magpie 13 said an id). The admin list is
+  `{conversations: [AdminConversation]}`, where an `AdminConversation` is the Conversation plus `person`, `lease`,
+  `heartbeat` (with `gen`, `supervisor`, `cc`) and `hermitSandbox` (magpie 13 names these, no shape).
+- hermit's, the ops and the admin routes speak `magpie-person` (platform 3.4 names only two magpie surfaces).
+- The only snake_case keys are Claude Code's and Anthropic's own: the `data` of `cc.*` events, a tool row's `input`,
+  an ask's `input` and `updatedInput`, and the Messages API `response` of a title ack (`tests/shapes.rs`).
+- A live `status` frame carries `attempt` and `retryInMs` (supervisor 8.3) beside `status`; `mtimeNs` is a signed
+  64-bit integer; the `gen` field of a heartbeat is `generation` in Rust.
+- The switch window's routes (tickets, fence, `import_uploads`) are WP-51's and are added to this crate with it.
