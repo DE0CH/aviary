@@ -4,7 +4,7 @@
 //! takeover mid-pass is safe. Before each pass a leader job confirms the lock ([`aviary_pg::Leader::confirm`]); the
 //! outbox, whose pass can run for minutes with hermit unreachable, confirms it again before each item.
 //!
-//! WP-11's jobs: purge, outbox, retention. The others of magpie 15 (hermit feed, blob GC, blob uploader,
+//! WP-11's jobs: purge, outbox, retention; WP-12's: the limbo sweeper. The others of magpie 15 (hermit feed, blob GC, blob uploader,
 //! availability tick, limbo flush, live cleanup, turn sweeper) are added here by their packages.
 
 pub mod outbox;
@@ -92,6 +92,18 @@ impl Jobs {
                 })
             }
         }));
+        let p = pool.clone();
+        tasks.push(leader_loop(leader.clone(), "limbo", iv.limbo, move || {
+            let p = p.clone();
+            async move {
+                let n = crate::ccfs::limbo::sweep(&p).await?;
+                Ok(if n == 0 {
+                    String::new()
+                } else {
+                    format!("{n} lines retracted")
+                })
+            }
+        }));
         Self { leader, tasks }
     }
 
@@ -128,6 +140,8 @@ pub struct Intervals {
     pub outbox: Duration,
     /// Retention.
     pub retention: Duration,
+    /// The limbo sweeper (magpie 6.7).
+    pub limbo: Duration,
     /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
     /// from a notification or a reconnect).
     pub requery: Duration,
@@ -140,6 +154,7 @@ impl Default for Intervals {
             purge: limits::PURGE_EVERY,
             outbox: limits::OUTBOX_EVERY,
             retention: limits::RETENTION_EVERY,
+            limbo: limits::LIMBO_SWEEP_EVERY,
             requery: limits::REQUERY,
         }
     }

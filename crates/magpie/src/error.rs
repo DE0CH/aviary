@@ -20,6 +20,10 @@ pub enum Error {
     /// Anything else that is magpie's own fault (a row that does not decode).
     #[error("internal: {0}")]
     Internal(String),
+    /// A cc transaction needs the bytes of blobs that are only in the bucket: the route fetches them outside the
+    /// transaction and runs it again (`crate::blobs::Bytes`). Answered 503 if it ever reaches a response.
+    #[error("needs {} blob(s) from the bucket", .0.len())]
+    NeedBlobs(Vec<[u8; 32]>),
 }
 
 /// Shorthand.
@@ -115,6 +119,10 @@ impl From<Error> for ApiError {
             Error::Internal(m) => {
                 tracing::error!(error = %m, "internal error");
                 ApiError::internal("internal error")
+            }
+            Error::NeedBlobs(shas) => {
+                tracing::warn!(blobs = shas.len(), "blobs needed from the bucket were not fetched");
+                ApiError::unavailable("blob bytes unavailable", limits::UNAVAILABLE_RETRY_AFTER_S)
             }
         }
     }

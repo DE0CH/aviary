@@ -3,6 +3,8 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 
+pub mod cc;
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -130,6 +132,7 @@ pub fn fast() -> Intervals {
         purge: Duration::from_millis(200),
         outbox: Duration::from_millis(200),
         retention: Duration::from_millis(200),
+        limbo: Duration::from_millis(200),
         requery: magpie::limits::REQUERY,
     }
 }
@@ -141,6 +144,7 @@ pub fn idle() -> Intervals {
         purge: Duration::from_secs(3600),
         outbox: Duration::from_secs(3600),
         retention: Duration::from_secs(3600),
+        limbo: Duration::from_secs(3600),
         requery: magpie::limits::REQUERY,
     }
 }

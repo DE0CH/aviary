@@ -7,6 +7,8 @@
 
 pub mod app;
 pub mod auth;
+pub mod blobs;
+pub mod ccfs;
 pub mod changes;
 pub mod conversations;
 pub mod db;

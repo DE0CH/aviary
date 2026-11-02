@@ -10,6 +10,8 @@ pub mod conversations;
 pub mod creations;
 #[allow(clippy::missing_errors_doc)]
 pub mod ops;
+#[allow(clippy::missing_errors_doc)]
+pub mod sandbox_cc;
 
 use aviary_core::http::ApiError;
 

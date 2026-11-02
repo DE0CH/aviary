@@ -36,6 +36,33 @@ pub const SENT_STAGING_RETENTION: Duration = Duration::from_hours(1);
 /// `moved` limbo entries expire after this (the moved-limbo match window).
 pub const MOVED_LIMBO: Duration = Duration::from_mins(10);
 
+/// cc write body, bytes (16 MiB; the supervisor splits larger writes).
+pub const CC_WRITE_MAX: usize = magpie_api::sandbox::CC_WRITE_MAX_BYTES;
+/// A JSONL line, including a tail being built, bytes.
+pub const CC_LINE_MAX: i64 = 64 << 20;
+/// A file (a byte file; a lines file too, so the supervisor can always cache it whole), bytes.
+pub const CC_FILE_MAX: i64 = 256 << 20;
+/// Claude Code state per conversation (`cc_bytes`).
+pub const CC_QUOTA: i64 = 2 << 30;
+/// Paths: at most this many bytes, components at most [`CC_COMPONENT_MAX`].
+pub const CC_PATH_MAX: usize = 4096;
+/// See [`CC_PATH_MAX`].
+pub const CC_COMPONENT_MAX: usize = 255;
+/// Byte files are stored in pages of this many bytes.
+pub const CC_PAGE: i64 = 256 * 1024;
+/// Blob staging total: past it, cc writes that add a blob answer 503 until the uploader drains it.
+pub const STAGING_MAX: i64 = 2 << 30;
+/// Limbo of a truncate is retracted after the file has had no operation for this long (or at the turn's end).
+pub const LIMBO_QUIET: Duration = Duration::from_secs(10);
+/// The limbo sweeper runs this often.
+pub const LIMBO_SWEEP_EVERY: Duration = Duration::from_secs(2);
+/// The lease's question to hermit (no wait): its timeout.
+pub const LEASE_HERMIT_TIMEOUT: Duration = Duration::from_secs(2);
+/// One in this many reconstructed lines has its sha256 checked in a release build (every line in a debug build).
+pub const CC_SHA_SAMPLE: u64 = 1000;
+/// A file read streams lines in batches of this many.
+pub const CC_READ_BATCH: i64 = 256;
+
 /// The job leader lock is retried this often by the replicas that do not hold it (magpie 15).
 pub const LEADER_RETRY: Duration = Duration::from_secs(10);
 /// The purge job: how often, and how many conversations per pass.

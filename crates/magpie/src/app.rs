@@ -17,6 +17,10 @@ use magpie_api::Admitted;
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery};
+use magpie_api::sandbox::{
+    CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery,
+    LeaseResponse,
+};
 use magpie_api::server::{Ctx, Server};
 use uuid::Uuid;
 
@@ -54,9 +58,21 @@ pub struct Magpie {
     pub pod: String,
     /// hermit, for calls outside the outbox.
     pub hermit: hermit_api::client::Client,
+    /// This replica's state itself, for work that outlives a request (a streamed cc file read).
+    this: std::sync::Weak<Magpie>,
 }
 
 impl Magpie {
+    /// The shared state as an `Arc` (it always lives in one: [`Service::start`] makes it so).
+    ///
+    /// # Panics
+    /// Never while a request is served (the service holds the `Arc`).
+    #[must_use]
+    pub fn me(&self) -> Arc<Magpie> {
+        #[allow(clippy::expect_used)] // the Service owns the Arc for as long as requests are served
+        self.this.upgrade().expect("magpie's state outlives its requests")
+    }
+
     /// What the change feed needs.
     #[must_use]
     pub fn read(&self) -> Read<'_> {
@@ -143,12 +159,13 @@ impl Service {
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
         let jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), intervals);
         Ok(Self {
-            app: Arc::new(Magpie {
+            app: Arc::new_cyclic(|this| Magpie {
                 pool,
                 fanout,
                 draining,
                 pod: cfg.pod,
                 hermit,
+                this: this.clone(),
             }),
             callers: cfg.callers,
             jobs: Some(jobs),
@@ -247,5 +264,45 @@ impl Server for Magpie {
 
     async fn ops_stats(&self, ctx: Ctx) -> Answer<OpsStats> {
         http::ops::stats(self, ctx).await
+    }
+
+    async fn lease(&self, ctx: Ctx) -> Answer<LeaseResponse> {
+        http::sandbox_cc::lease(self, ctx).await
+    }
+
+    async fn cc_tree(&self, ctx: Ctx) -> Answer<CcTree> {
+        http::sandbox_cc::tree(self, ctx).await
+    }
+
+    async fn cc_file(&self, ctx: Ctx, query: CcFileQuery) -> Answer<axum::response::Response> {
+        http::sandbox_cc::file(self.me(), ctx, query).await
+    }
+
+    async fn cc_write(&self, ctx: Ctx, query: CcWriteQuery, body: axum::body::Body) -> Answer<CcSizeVersion> {
+        http::sandbox_cc::write(self, ctx, query, body).await
+    }
+
+    async fn cc_truncate(&self, ctx: Ctx, body: CcTruncate) -> Answer<CcSizeVersion> {
+        http::sandbox_cc::truncate(self, ctx, body).await
+    }
+
+    async fn cc_rename(&self, ctx: Ctx, body: CcRename) -> Answer<CcVersion> {
+        http::sandbox_cc::rename(self, ctx, body).await
+    }
+
+    async fn cc_unlink(&self, ctx: Ctx, body: CcPathOp) -> Answer<()> {
+        http::sandbox_cc::unlink(self, ctx, body).await
+    }
+
+    async fn cc_mkdir(&self, ctx: Ctx, body: CcMkdir) -> Answer<()> {
+        http::sandbox_cc::mkdir(self, ctx, body).await
+    }
+
+    async fn cc_rmdir(&self, ctx: Ctx, body: CcPathOp) -> Answer<()> {
+        http::sandbox_cc::rmdir(self, ctx, body).await
+    }
+
+    async fn cc_setattr(&self, ctx: Ctx, body: CcSetattr) -> Answer<CcVersion> {
+        http::sandbox_cc::setattr(self, ctx, body).await
     }
 }
