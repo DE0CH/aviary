@@ -22,7 +22,7 @@ pub mod time;
 pub mod token;
 pub mod workspaces;
 
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, Refusal};
 pub use error::{ApiError, ErrorBody};
 pub use server::{Ctx, SandboxIdentity, SelfAnswer, Server, router};
 pub use time::Timestamp;

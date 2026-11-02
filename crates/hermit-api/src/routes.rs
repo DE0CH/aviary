@@ -54,34 +54,8 @@ pub const ADMIN_RECYCLE: &str = "/v1/admin/recycle";
 pub const ADMIN_PERSON_PURGE: &str = "/v1/admin/people/{email}/purge";
 pub const ADMIN_EVENTS: &str = "/v1/admin/events";
 
-/// The callers of hermit (3.2). The pair token decides which one is calling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Caller {
-    Pigeon,
-    Magpie,
-    /// The sandbox gateway, also on the forwarded `/v1/sandbox/**`.
-    Gateway,
-    Tools,
-    /// A read-only monitor (`/ops/snapshot` only).
-    Monitor,
-    /// The operator (Claude, runbooks); needs `Aviary-Admin`.
-    Admin,
-}
-
-impl Caller {
-    /// The suffix of the callee's accept variable, e.g. `HERMIT_ACCEPT_PIGEON`.
-    #[must_use]
-    pub fn env_suffix(self) -> &'static str {
-        match self {
-            Self::Pigeon => "PIGEON",
-            Self::Magpie => "MAGPIE",
-            Self::Gateway => "GATEWAY",
-            Self::Tools => "TOOLS",
-            Self::Monitor => "MONITOR",
-            Self::Admin => "ADMIN",
-        }
-    }
-}
+/// The callers of hermit (3.2) are the platform's (`aviary_core::auth::Caller`); hermit never calls itself.
+pub use aviary_core::auth::Caller;
 
 /// One row of the route-to-caller table: a method, a route constant and who may call it.
 #[derive(Clone, Copy, Debug)]
@@ -232,6 +206,7 @@ mod tests {
 
     #[test]
     fn caller_table() {
+        assert!(!RULES.iter().any(|r| r.callers.contains(&Caller::Hermit)));
         assert!(allowed(Caller::Magpie, "PUT", SANDBOX));
         assert!(!allowed(Caller::Pigeon, "PUT", SANDBOX));
         assert!(allowed(Caller::Monitor, "HEAD", OPS_SNAPSHOT));

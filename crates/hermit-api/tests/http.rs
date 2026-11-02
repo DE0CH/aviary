@@ -190,7 +190,7 @@ impl Server for Stub {
         if key == "EXAMPLE_TOKEN" {
             Ok(fx("secret-value"))
         } else {
-            Err(ApiError::not_found(
+            Err(hermit_api::error::not_found(
                 hermit_api::error::codes::NOT_GRANTED,
                 "key not granted",
             ))
@@ -514,7 +514,7 @@ async fn errors_carry_status_retry_after_and_extra_fields() {
     struct Busy;
     impl Server for Busy {
         async fn put_sandbox(&self, _: Ctx, _: Uuid, _: PutSandboxRequest) -> Answer<PutSandbox> {
-            Err(ApiError::sandboxes_disabled())
+            Err(hermit_api::error::sandboxes_disabled())
         }
         async fn deployment(&self, _: Ctx) -> Answer<Deployment> {
             Err(ApiError::unauthenticated())
@@ -527,6 +527,7 @@ async fn errors_carry_status_retry_after_and_extra_fields() {
         panic!("{e}")
     };
     assert_eq!(api.status, 503);
+    assert!(api.is("sandbox_busy"));
     assert_eq!(api.retry_after, Some(300));
     let want: hermit_api::ErrorBody = fx("error-sandboxes-disabled");
     assert_eq!(api.body, want);

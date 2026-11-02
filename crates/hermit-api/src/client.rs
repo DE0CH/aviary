@@ -16,7 +16,7 @@ use crate::admin::{
     SandboxesEnabled,
 };
 use crate::deployment::Deployment;
-use crate::error::{ApiError, ErrorBody};
+use crate::error::ErrorBody;
 use crate::exec::{ExecRequest, ExecResult};
 use crate::people::{People, Person, WarmReply, WarmRequest};
 use crate::routes::{self as r, fill, query};
@@ -50,7 +50,7 @@ pub enum ClientError {
     Transport(#[from] reqwest::Error),
     /// A non-2xx answer with the platform's envelope (or a synthesised one when the body was not JSON).
     #[error("{0}")]
-    Api(ApiError),
+    Api(Refusal),
     /// A 2xx answer whose body did not decode.
     #[error("decode {status}: {message}")]
     Decode { status: u16, message: String },
@@ -61,7 +61,7 @@ impl ClientError {
     #[must_use]
     pub fn code(&self) -> Option<&str> {
         match self {
-            Self::Api(e) => Some(e.code()),
+            Self::Api(e) => Some(&e.body.code),
             _ => None,
         }
     }
@@ -73,6 +73,28 @@ impl ClientError {
             Self::Decode { status, .. } => Some(*status),
             Self::Transport(e) => e.status().map(|s| s.as_u16()),
         }
+    }
+}
+
+/// A non-2xx answer as the client saw it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Refusal {
+    pub status: u16,
+    pub body: ErrorBody,
+    /// `retry-after` in seconds.
+    pub retry_after: Option<u64>,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}: {}", self.status, self.body.code, self.body.message)
+    }
+}
+
+impl Refusal {
+    #[must_use]
+    pub fn is(&self, code: &str) -> bool {
+        self.body.code == code
     }
 }
 
@@ -110,9 +132,8 @@ impl Client {
         self
     }
 
-    fn header(mut self, name: &'static str, value: &str) -> Self {
+    fn header(mut self, name: HeaderName, value: &str) -> Self {
         if let Ok(v) = HeaderValue::from_str(value) {
-            let name = HeaderName::from_static(name);
             self.extra.retain(|(n, _)| *n != name);
             self.extra.push((name, v));
         }
@@ -168,7 +189,7 @@ impl Client {
         if status.is_success() || status == StatusCode::NOT_MODIFIED {
             Ok((status, headers, bytes))
         } else {
-            Err(ClientError::Api(api_error(status, &headers, &bytes)))
+            Err(ClientError::Api(refusal(status, &headers, &bytes)))
         }
     }
 
@@ -660,19 +681,19 @@ impl Client {
     }
 }
 
-/// Builds the [`ApiError`] of a non-2xx answer; a body that is not the envelope gives code `http_<status>`.
+/// Reads a non-2xx answer; a body that is not the envelope gives code `http_<status>`.
 #[must_use]
-pub fn api_error(status: StatusCode, headers: &reqwest::header::HeaderMap, bytes: &[u8]) -> ApiError {
+pub fn refusal(status: StatusCode, headers: &reqwest::header::HeaderMap, bytes: &[u8]) -> Refusal {
     let body = serde_json::from_slice::<ErrorBody>(bytes).unwrap_or_else(|_| ErrorBody {
         code: format!("http_{}", status.as_u16()),
         message: String::from_utf8_lossy(&bytes[..bytes.len().min(300)]).into_owned(),
-        extra: serde_json::Map::new(),
+        fields: serde_json::Map::new(),
     });
     let retry_after = headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse().ok());
-    ApiError {
+    Refusal {
         status: status.as_u16(),
         body,
         retry_after,

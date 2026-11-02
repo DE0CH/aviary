@@ -11,7 +11,7 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, PathRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use serde::Serialize;
@@ -24,7 +24,7 @@ use crate::admin::{
     SandboxesEnabled,
 };
 use crate::deployment::Deployment;
-use crate::error::{ApiError, codes};
+use crate::error::{self, ApiError, codes};
 use crate::exec::{ExecRequest, ExecResult};
 use crate::headers;
 use crate::ops::SnapshotQuery;
@@ -66,47 +66,47 @@ impl Ctx {
         Self { method, route, headers }
     }
 
-    fn header(&self, name: &str) -> Option<&str> {
+    fn header(&self, name: &HeaderName) -> Option<&str> {
         self.headers.get(name).and_then(|v| v.to_str().ok())
     }
 
     /// The `Authorization: Bearer` token.
     #[must_use]
     pub fn bearer(&self) -> Option<&str> {
-        self.header(header::AUTHORIZATION.as_str())
+        self.header(&header::AUTHORIZATION)
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(str::trim)
     }
 
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
-        self.header(headers::REQUEST)
+        self.header(&headers::REQUEST)
     }
 
     /// `Aviary-Protocol` parsed as `(surface, number)`.
     #[must_use]
     pub fn protocol(&self) -> Option<(&str, u32)> {
-        let (surface, n) = self.header(headers::PROTOCOL)?.split_once('=')?;
+        let (surface, n) = self.header(&headers::PROTOCOL)?.split_once('=')?;
         Some((surface.trim(), n.trim().parse().ok()?))
     }
 
     #[must_use]
     pub fn person(&self) -> Option<&str> {
-        self.header(headers::PERSON)
+        self.header(&headers::PERSON)
     }
 
     #[must_use]
     pub fn admin(&self) -> Option<&str> {
-        self.header(headers::ADMIN)
+        self.header(&headers::ADMIN)
     }
 
     /// The three `Aviary-Sandbox-*` headers, when all are present and well-formed.
     #[must_use]
     pub fn sandbox(&self) -> Option<SandboxIdentity> {
         Some(SandboxIdentity {
-            id: self.header(headers::SANDBOX_ID)?.parse().ok()?,
-            conversation: self.header(headers::SANDBOX_CONVERSATION)?.parse().ok()?,
-            person: self.header(headers::SANDBOX_PERSON)?.to_owned(),
+            id: self.header(&headers::SANDBOX_ID)?.parse().ok()?,
+            conversation: self.header(&headers::SANDBOX_CONVERSATION)?.parse().ok()?,
+            person: self.header(&headers::SANDBOX_PERSON)?.to_owned(),
         })
     }
 }
@@ -122,7 +122,7 @@ pub enum SelfAnswer {
 pub type Answer<T> = Result<T, ApiError>;
 
 fn unsupported<T: Send>() -> impl Future<Output = Answer<T>> + Send {
-    std::future::ready(Err(ApiError::not_supported()))
+    std::future::ready(Err(error::not_supported()))
 }
 
 /// Every hermit route (hermit 3, 16, 26). Default: 501 `not_supported`.
@@ -278,22 +278,6 @@ pub trait Server: Send + Sync + 'static {
     }
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let mut res = (status, json_bytes(&self.body)).into_response();
-        set_json(&mut res);
-        if let Some(s) = self.retry_after {
-            res.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from(s));
-        }
-        if status == StatusCode::UNAUTHORIZED {
-            res.headers_mut()
-                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-        }
-        res
-    }
-}
-
 fn json_bytes<T: Serialize>(v: &T) -> Vec<u8> {
     serde_json::to_vec(v).unwrap_or_else(|_| b"{}".to_vec())
 }
@@ -323,7 +307,7 @@ fn reply<T: Serialize>(status: u16, r: Answer<T>) -> Response {
 fn body<T: DeserializeOwned>(b: Result<Bytes, BytesRejection>) -> Answer<T> {
     let b = b.map_err(|e| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            ApiError::too_large()
+            ApiError::too_large("request body over 1 MiB")
         } else {
             ApiError::bad_request(e.body_text())
         }
@@ -503,7 +487,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                     None => Ok(None),
                     Some(v) => ByteRange::parse(v)
                         .map(Some)
-                        .ok_or_else(|| ApiError::new(416, codes::BAD_RANGE, "one byte range only")),
+                        .ok_or_else(|| error::api(416, codes::BAD_RANGE, "one byte range only")),
                 };
                 let r = async {
                     let range = range?;
@@ -681,9 +665,9 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                 reply(200, r)
             }),
         )
-        .fallback(|| async { ApiError::not_found(codes::NOT_FOUND, "no such route").into_response() })
+        .fallback(|| async { ApiError::not_found("no such route").into_response() })
         .method_not_allowed_fallback(|| async {
-            ApiError::new(405, codes::METHOD_NOT_ALLOWED, "method not allowed").into_response()
+            error::api(405, codes::METHOD_NOT_ALLOWED, "method not allowed").into_response()
         })
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY))
         .layer(axum::middleware::map_response(common_headers))

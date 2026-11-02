@@ -1109,6 +1109,7 @@ version = "0.0.0"
 name = "hermit-api"
 version = "0.0.0"
 dependencies = [
+ "aviary-core",
  "axum",
  "base64 0.23.1",
  "proptest",
