@@ -227,6 +227,11 @@ while True:
             d.start().await.unwrap();
             let st = crate::keeper::Client::new(&dir.join("run")).status().unwrap();
             assert_eq!(st.children.iter().filter(|(_, n)| n == "dockerd").count(), 1);
+            // ci.yml's root step looks for this line
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("dockerd spawned as root and answered _ping");
+            }
         } else {
             // not root: the keeper refuses uid 0, and the answer says why
             let e = d.start().await.unwrap_err();

@@ -4,8 +4,9 @@
 //! Code and a stand-in filesystem. The test drives `:7070` (health, state, exec with 256 KiB of stdin, snapshot
 //! prepares) and the local socket (secrets), kills the supervisor with SIGKILL (the keeper restarts it and it re-attaches),
 //! and takes hermit's activity route and magpie's lease route away for a while (the reports are retried, the lease
-//! waited for). It samples the current supervisor's `VmRSS` and checks the peak and that it stays flat after the
-//! warm-up. The 24 h soak with synthetic turns and 1 MiB lines needs the Claude Code driver (WP-23); `soak_long`
+//! waited for). It samples the current supervisor's `VmRSS` and checks the peak, and that each supervisor process
+//! stays flat after its own warm-up (a restart starts a fresh process, so growth is compared within one pid). The
+//! 24 h soak with synthetic turns and 1 MiB lines needs the Claude Code driver (WP-23); `soak_long`
 //! (1 h) is for `nightly.yml` (WP-28).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
@@ -38,8 +39,11 @@ async fn soak(duration: Duration, restart_every: Duration) {
     let (mut cc, mut pid) = k.ready(&fakes).await;
 
     let started = Instant::now();
-    let warm = duration / 4;
-    let (mut peak, mut after_warmup, mut n, mut restarts) = (0u64, 0u64, 0u64, 0u32);
+    // each process's warm-up: half of the time between restarts
+    let warm = (duration / 4).min(restart_every / 2);
+    let (mut peak, mut n, mut restarts) = (0u64, 0u64, 0u32);
+    let mut segment = Segment::new(pid);
+    let mut segments: Vec<Segment> = Vec::new();
     let mut next_restart = started + restart_every;
     let payload = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; 256 * 1024]);
     while started.elapsed() < duration {
@@ -58,6 +62,7 @@ async fn soak(duration: Duration, restart_every: Duration) {
             fakes.hermit.faults().remove(a);
             fakes.magpie.faults().remove(l);
             (cc, pid) = k.ready(&fakes).await;
+            segments.push(std::mem::replace(&mut segment, Segment::new(pid)));
             restarts += 1;
             next_restart = Instant::now() + restart_every;
         }
@@ -86,19 +91,20 @@ async fn soak(duration: Duration, restart_every: Duration) {
         n += 1;
         let r = rss(pid.cast_unsigned());
         peak = peak.max(r);
-        if after_warmup == 0 && started.elapsed() >= warm {
-            after_warmup = r;
-        }
+        segment.sample(r, warm);
     }
-    let end = rss(pid.cast_unsigned());
+    segment.sample(rss(pid.cast_unsigned()), warm);
+    segments.push(segment);
     let agent = common::lines(&dir, "agent.log");
     drop(k);
     let _ = std::fs::remove_dir_all(&dir);
     eprintln!(
-        "soak: {n} rounds in {duration:?}, {restarts} restarts, peak {} KiB, after warm-up {} KiB, end {} KiB",
+        "soak: {n} rounds in {duration:?}, {restarts} restarts, peak {} KiB, per process (after warm-up, end) KiB: {:?}",
         peak / 1024,
-        after_warmup / 1024,
-        end / 1024
+        segments
+            .iter()
+            .map(|s| (s.pid, s.baseline / 1024, s.last / 1024))
+            .collect::<Vec<_>>()
     );
     assert!(n > 10, "only {n} rounds");
     assert!(restarts >= 1);
@@ -106,8 +112,47 @@ async fn soak(duration: Duration, restart_every: Duration) {
     assert_eq!(agent.len(), 1 + restarts as usize, "{agent:?}");
     assert!(agent[1..].iter().all(|l| l.starts_with("attach alive 1 ")), "{agent:?}");
     assert!(peak > 0 && peak < SUPERVISOR_RSS_BUDGET, "peak RSS {} KiB", peak / 1024);
-    // flat: no more than 8 MiB of growth after the warm-up
-    assert!(end <= after_warmup + 8 * MIB, "RSS grew from {after_warmup} to {end}");
+    // flat: no supervisor process grew more than 8 MiB after its own warm-up, and every one was measured
+    assert!(
+        segments.iter().all(|s| s.baseline > 0),
+        "a segment shorter than the warm-up"
+    );
+    for s in &segments {
+        assert!(
+            s.last <= s.baseline + 8 * MIB,
+            "supervisor {} grew from {} to {}",
+            s.pid,
+            s.baseline,
+            s.last
+        );
+    }
+}
+
+/// One supervisor process's RSS: the sample after its warm-up and the last one.
+#[derive(Debug)]
+struct Segment {
+    pid: i32,
+    since: Instant,
+    baseline: u64,
+    last: u64,
+}
+
+impl Segment {
+    fn new(pid: i32) -> Self {
+        Self {
+            pid,
+            since: Instant::now(),
+            baseline: 0,
+            last: 0,
+        }
+    }
+
+    fn sample(&mut self, r: u64, warm: Duration) {
+        if self.baseline == 0 && self.since.elapsed() >= warm {
+            self.baseline = r;
+        }
+        self.last = r;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
