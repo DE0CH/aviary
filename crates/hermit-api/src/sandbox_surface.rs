@@ -8,11 +8,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::sandbox::{ReleaseCode, ReleaseReason};
+use crate::sandbox::{ReleaseCallCode, ReleaseReason};
 use crate::time::Timestamp;
+use crate::wire::wire_enum;
 
-/// `GET /v1/sandbox/self` (3.7.1): at most 64 KiB, `If-None-Match` honoured.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `GET /v1/sandbox/self` (3.7.1): at most 64 KiB, `If-None-Match` honoured. Its `Debug` form shows the `env` and
+/// `envPrivate` names but no `env` value (they carry the sandbox token in the proxy URLs and package-index URLs).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxSelf {
     pub sandbox: SelfSandbox,
@@ -29,6 +31,24 @@ pub struct SandboxSelf {
     pub secrets: SecretKeys,
     /// `"` + the first 32 hex of SHA-256 over the canonical JSON of every other field + `"` (also the `ETag`).
     pub etag: String,
+}
+
+impl std::fmt::Debug for SandboxSelf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let env: BTreeMap<&str, &str> = self.env.keys().map(|k| (k.as_str(), "<redacted>")).collect();
+        f.debug_struct("SandboxSelf")
+            .field("sandbox", &self.sandbox)
+            .field("control", &self.control)
+            .field("claude", &self.claude)
+            .field("title", &self.title)
+            .field("env", &env)
+            .field("env_private", &self.env_private)
+            .field("resources", &self.resources)
+            .field("lifecycle", &self.lifecycle)
+            .field("secrets", &self.secrets)
+            .field("etag", &self.etag)
+            .finish()
+    }
 }
 
 /// The descriptor's size bound.
@@ -178,12 +198,21 @@ pub struct SecretKeys {
     pub keys: Vec<String>,
 }
 
-/// `GET /v1/sandbox/secrets/{key}` 200 (404 `not_granted` otherwise).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `GET /v1/sandbox/secrets/{key}` 200 (404 `not_granted` otherwise). `Debug` shows the key, never the value.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretValue {
     pub key: String,
     pub value: String,
+}
+
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretValue")
+            .field("key", &self.key)
+            .field("value", &"<redacted>")
+            .finish()
+    }
 }
 
 /// A secret key: `[A-Z][A-Z0-9_]{0,63}`.
@@ -198,8 +227,10 @@ pub fn valid_secret_key(key: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == b'_')
 }
 
-/// The supervisor's run state as reported (3.7.3; `starting` and `released` from supervisor 15.3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The supervisor's run state as reported (3.7.3; `starting` and `released` from supervisor 15.3). A state this
+/// build does not know (a newer supervisor's) decodes as [`ActivityState::Unknown`] and counts as busy, so hermit
+/// never takes it for an idle point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivityState {
     /// A `start_turn` received and not yet running.
@@ -213,13 +244,27 @@ pub enum ActivityState {
     Idle,
     /// The release sequence has finished: hermit may destroy the sandbox.
     Released,
+    #[serde(other)]
+    Unknown,
 }
 
+wire_enum!(ActivityState {
+    Starting => "starting",
+    Running => "running",
+    Stopping => "stopping",
+    Held => "held",
+    Idle => "idle",
+    Released => "released",
+});
+
 impl ActivityState {
-    /// `starting`, `running`, `stopping` and `held` are busy; `idle` and `released` are not.
+    /// `starting`, `running`, `stopping`, `held` and an unknown state are busy; `idle` and `released` are not.
     #[must_use]
     pub fn is_busy(self) -> bool {
-        matches!(self, Self::Starting | Self::Running | Self::Stopping | Self::Held)
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::Stopping | Self::Held | Self::Unknown
+        )
     }
 }
 
@@ -265,7 +310,8 @@ pub struct MemoryUse {
     pub used: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A kind this build does not know decodes as [`ActivityEventKind::Unknown`] (and is skipped).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityEventKind {
     /// The memory guard killed a process (hermit records a `memory-kill` host event).
@@ -275,6 +321,11 @@ pub enum ActivityEventKind {
     #[serde(other)]
     Unknown,
 }
+
+wire_enum!(ActivityEventKind {
+    MemoryKill => "memory_kill",
+    GenerationExit => "generation_exit",
+});
 
 /// One entry of `events[]`. Fields beyond `kind` and `at` depend on the kind.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,12 +346,21 @@ pub struct ActivityEvent {
     pub signal: Option<i32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// hermit's view in an activity reply. A state this build does not know decodes as
+/// [`ActivityReplyState::Unknown`]; the supervisor then acts only on `release`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivityReplyState {
     Ready,
     Releasing,
+    #[serde(other)]
+    Unknown,
 }
+
+wire_enum!(ActivityReplyState {
+    Ready => "ready",
+    Releasing => "releasing",
+});
 
 /// 200 answer to a report. A non-null `release` repeats a pending release in case hermit's direct call to :7070 was
 /// lost; the supervisor acts on it exactly as on `POST /v1/lifecycle/release` with the same fields.
@@ -315,7 +375,8 @@ pub struct ActivityReply {
 #[serde(rename_all = "camelCase")]
 pub struct PendingRelease {
     pub reason: ReleaseReason,
-    pub code: ReleaseCode,
+    /// `sandbox_released` or `sandbox_lost` only (the release call's code).
+    pub code: ReleaseCallCode,
     pub force: bool,
     pub deadline_at: Timestamp,
 }
@@ -345,9 +406,49 @@ mod tests {
             (S::Held, true),
             (S::Idle, false),
             (S::Released, false),
+            (S::Unknown, true),
         ] {
             assert_eq!(s.is_busy(), busy, "{s:?}");
         }
+    }
+
+    #[test]
+    fn open_enums() {
+        for &s in ActivityState::KNOWN {
+            assert_eq!(serde_json::to_value(s).unwrap(), serde_json::Value::from(s.as_str()));
+            assert_eq!(serde_json::from_value::<ActivityState>(s.as_str().into()).unwrap(), s);
+        }
+        assert_eq!(
+            serde_json::from_str::<ActivityState>("\"paused\"").unwrap(),
+            ActivityState::Unknown
+        );
+        assert!(serde_json::to_value(ActivityState::Unknown).is_err());
+        assert_eq!(
+            serde_json::from_str::<ActivityReplyState>("\"migrating\"").unwrap(),
+            ActivityReplyState::Unknown
+        );
+        assert_eq!(
+            serde_json::to_value(ActivityEventKind::MemoryKill).unwrap(),
+            "memory_kill"
+        );
+        assert_eq!(
+            serde_json::from_str::<ActivityEventKind>("\"oom_score\"").unwrap(),
+            ActivityEventKind::Unknown
+        );
+        // a pending release names only the two call codes
+        let p = serde_json::json!({"reason": "idle", "code": "sandbox_busy", "force": false,
+            "deadlineAt": "2026-11-02T04:05:06.789Z"});
+        assert!(serde_json::from_value::<PendingRelease>(p).is_err());
+    }
+
+    #[test]
+    fn debug_never_shows_secret_values() {
+        let v = SecretValue {
+            key: "EXAMPLE_TOKEN".into(),
+            value: "s3cr3t-value-0000".into(),
+        };
+        let d = format!("{v:?}");
+        assert!(d.contains("EXAMPLE_TOKEN") && !d.contains("s3cr3t"), "{d}");
     }
 
     #[test]

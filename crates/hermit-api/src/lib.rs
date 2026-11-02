@@ -1,6 +1,7 @@
 //! hermit's contract (hermit spec 3, 6, 13.13; platform 3, R33-R35): the request, response and event types, the
 //! route constants and caller table, the protocol numbers, the sandbox and control token codec, a typed [`Client`]
-//! and a [`Server`] trait with an HTTP [`router`] for it. Golden fixtures in `fixtures/` pin every type's JSON.
+//! and a [`Server`] trait with HTTP routers for it ([`guarded_router`] enforces the caller table). Golden fixtures in
+//! `fixtures/` pin every type's JSON; `vectors/` holds the token formats' known-answer vector.
 //!
 //! Surfaces: `hermit-core` (pigeon, magpie, the gateway's lookups, tools, monitor, admin) and `hermit-sandbox` (the
 //! supervisor through the gateway). `supervisor-api` re-exports the sandbox-surface types; `gateway-api`
@@ -20,11 +21,12 @@ pub mod sandbox_surface;
 pub mod server;
 pub mod time;
 pub mod token;
+mod wire;
 pub mod workspaces;
 
-pub use client::{Client, ClientError, Refusal};
+pub use client::{Client, ClientError, FileDownload, Refusal};
 pub use error::{ApiError, ErrorBody};
-pub use server::{Ctx, SandboxIdentity, SelfAnswer, Server, router};
+pub use server::{Ctx, RouteGuard, SandboxIdentity, SelfAnswer, Server, guarded_router, router};
 pub use time::Timestamp;
 
 /// A protocol surface and its current number (platform 3.4).

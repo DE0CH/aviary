@@ -451,7 +451,7 @@ mod tests {
         Claims {
             sandbox_id: Uuid::from_u128(0x0190_f6c2_0000_7000_8000_0000_0000_0001),
             conversation_id: Uuid::from_u128(0x0190_f6c2_0000_7000_8000_0000_0000_0002),
-            source: Ipv4Addr::new(10, 203, 1, 7),
+            source: Ipv4Addr::new(192, 0, 2, 7),
             expires_at: 1_800_000_000,
             person: "staff@example.org".into(),
         }
@@ -465,14 +465,14 @@ mod tests {
         let set = KeySet::from_keys(&TokenKeys {
             keys: vec![k.public_key()],
         });
-        let from = IpAddr::V4(Ipv4Addr::new(10, 203, 1, 7));
+        let from = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7));
         assert_eq!(set.verify(&t, 1_700_000_000, from).unwrap(), claims());
-        // ::ffff:10.203.1.7
-        let mapped: IpAddr = "::ffff:10.203.1.7".parse().unwrap();
+        // ::ffff:192.0.2.7
+        let mapped: IpAddr = "::ffff:192.0.2.7".parse().unwrap();
         assert!(set.verify(&t, 1_700_000_000, mapped).is_ok());
         assert_eq!(set.verify(&t, 1_800_000_000, from), Err(VerifyError::Expired));
         assert_eq!(
-            set.verify(&t, 1, IpAddr::V4(Ipv4Addr::new(10, 203, 1, 8))),
+            set.verify(&t, 1, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 8))),
             Err(VerifyError::WrongSource)
         );
         assert_eq!(KeySet::default().verify(&t, 1, from), Err(VerifyError::UnknownKid(1)));

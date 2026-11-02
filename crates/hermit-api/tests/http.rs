@@ -29,7 +29,7 @@ use hermit_api::sandbox_surface::{ActivityReply, ActivityReport, SandboxSelf, Se
 use hermit_api::server::{Answer, Ctx, SandboxIdentity, SelfAnswer, Server};
 use hermit_api::token::{TokenKeys, TokenLiveness};
 use hermit_api::workspaces::{
-    ByteRange, CloneRequest, Entries, EntriesQuery, FileContent, FilesQuery, PutWorkspace, Workspace,
+    ByteRange, CloneRequest, Entries, EntriesQuery, FileContent, FileMeta, FilesQuery, PutWorkspace, Workspace,
 };
 use hermit_api::{ApiError, Client, Timestamp, routes};
 use serde::de::DeserializeOwned;
@@ -133,27 +133,22 @@ impl Server for Stub {
     async fn workspace_file(&self, ctx: Ctx, _: Uuid, q: FilesQuery, range: Option<ByteRange>) -> Answer<FileContent> {
         self.saw(&ctx, format!("{} {range:?}", q.path));
         let all = b"hello, workspace";
-        let mtime = Timestamp::parse("2026-11-02T04:00:00Z").unwrap();
-        let etag = FileContent::etag_for(all.len() as u64, 1_793_592_000_000_000_000);
+        let size = all.len() as u64;
+        let meta = |served| FileMeta {
+            size,
+            mtime: Timestamp::parse("2026-11-02T04:00:00Z").unwrap(),
+            etag: FileMeta::etag_for(size, 1_793_592_000_000_000_000),
+            served,
+        };
         Ok(match range {
-            None => FileContent {
-                size: all.len() as u64,
-                mtime,
-                etag,
-                served: None,
-                body: Bytes::from_static(all),
-            },
+            None => FileContent::from_bytes(meta(None), Bytes::from_static(all)),
             Some(r) => {
-                let last = r.end.unwrap_or(all.len() as u64 - 1);
+                let (first, last) = r
+                    .resolve(size)
+                    .ok_or_else(|| hermit_api::error::range_not_satisfiable(size))?;
                 let slice =
-                    Bytes::copy_from_slice(&all[usize::try_from(r.start).unwrap()..=usize::try_from(last).unwrap()]);
-                FileContent {
-                    size: all.len() as u64,
-                    mtime,
-                    etag,
-                    served: Some((r.start, last)),
-                    body: slice,
-                }
+                    Bytes::copy_from_slice(&all[usize::try_from(first).unwrap()..=usize::try_from(last).unwrap()]);
+                FileContent::from_bytes(meta(Some((first, last))), slice)
             }
         })
     }
@@ -340,20 +335,21 @@ async fn every_route_through_client_and_router() {
         path: "uploads/a&b.txt".into(),
     };
     let whole = c.workspace_file(cid(), &fq, None).await.unwrap();
-    assert_eq!(
-        (whole.size, whole.served, &whole.body[..]),
-        (16, None, &b"hello, workspace"[..])
-    );
-    assert_eq!(whole.mtime, Timestamp::parse("2026-11-02T04:00:00Z").unwrap());
-    assert_eq!(whole.etag, "\"16-1793592000000000000\"");
+    assert_eq!((whole.meta.size, whole.meta.served), (16, None));
+    assert_eq!(whole.meta.mtime, Timestamp::parse("2026-11-02T04:00:00Z").unwrap());
+    assert_eq!(whole.meta.etag, "\"16-1793592000000000000\"");
+    assert_eq!(&whole.bytes().await.unwrap()[..], b"hello, workspace");
     let part = c
         .workspace_file(cid(), &fq, Some(ByteRange { start: 7, end: None }))
         .await
         .unwrap();
-    assert_eq!(
-        (part.size, part.served, &part.body[..]),
-        (16, Some((7, 15)), &b"workspace"[..])
-    );
+    assert_eq!((part.meta.size, part.meta.served), (16, Some((7, 15))));
+    assert_eq!(&part.bytes().await.unwrap()[..], b"workspace");
+    let e = c
+        .workspace_file(cid(), &fq, Some(ByteRange { start: 16, end: None }))
+        .await
+        .unwrap_err();
+    assert_eq!((e.status(), e.code()), (Some(416), Some("bad_range")));
     assert_eq!(
         c.clone_workspace(cid(), &fx("clone-request")).await.unwrap(),
         fx::<Workspace>("workspace")
@@ -547,4 +543,39 @@ fn the_client_builds_paths_only_from_route_constants() {
             i + 1
         );
     }
+}
+
+#[tokio::test]
+async fn unsupported_ranges_are_ignored_and_unsatisfiable_ones_are_416() {
+    let base = serve(Arc::new(Stub::default())).await;
+    let http = reqwest::Client::new();
+    let url = format!(
+        "{base}{}?path=a.txt",
+        routes::fill(routes::WORKSPACE_FILES, &[&cid().to_string()])
+    );
+    let get = |range: &'static str| {
+        http.get(&url)
+            .bearer_auth(TOKEN)
+            .header("aviary-protocol", "hermit-core=1")
+            .header("aviary-request", "0190f6c2-0000-7000-8000-00000000000a")
+            .header("range", range)
+            .send()
+    };
+    // a suffix range, a list, another unit, last < first, bad syntax: the whole file
+    for range in ["bytes=-5", "bytes=0-1,4-5", "items=0-1", "bytes=9-1", "bytes=x-"] {
+        let res = get(range).await.unwrap();
+        assert_eq!(res.status(), 200, "{range}");
+        assert_eq!(res.headers()["content-length"], "16", "{range}");
+        assert_eq!(&res.bytes().await.unwrap()[..], b"hello, workspace", "{range}");
+    }
+    let res = get("bytes=2-3").await.unwrap();
+    assert_eq!(res.status(), 206);
+    assert_eq!(res.headers()["content-range"], "bytes 2-3/16");
+    assert_eq!(res.headers()["content-length"], "2");
+    assert_eq!(&res.bytes().await.unwrap()[..], b"ll");
+    let res = get("bytes=16-").await.unwrap();
+    assert_eq!(res.status(), 416);
+    assert_eq!(res.headers()["content-range"], "bytes */16");
+    let v: Value = res.json().await.unwrap();
+    assert_eq!(v["code"], "bad_range");
 }

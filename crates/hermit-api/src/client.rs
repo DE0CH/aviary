@@ -29,8 +29,7 @@ use crate::server::{SandboxIdentity, SelfAnswer};
 use crate::time::Timestamp;
 use crate::token::{TokenKeys, TokenLiveness};
 use crate::workspaces::{
-    ByteRange, CloneRequest, Entries, EntriesQuery, FileContent, FilesQuery, PutWorkspace, PutWorkspaceRequest,
-    Workspace,
+    ByteRange, CloneRequest, Entries, EntriesQuery, FileMeta, FilesQuery, PutWorkspace, PutWorkspaceRequest, Workspace,
 };
 use crate::{CORE, SANDBOX, headers};
 
@@ -42,6 +41,11 @@ pub const WAIT_SLACK: Duration = Duration::from_secs(10);
 pub const DELETE_WORKSPACE_TIMEOUT: Duration = Duration::from_secs(75);
 /// The admin exec route forwards a call of up to 65 s.
 pub const ADMIN_EXEC_TIMEOUT: Duration = Duration::from_secs(70);
+/// A file read: the time to the response headers. The body has no total limit (a 1 GiB file over a slow link takes
+/// as long as it takes), only [`FILE_IDLE_TIMEOUT`] between chunks.
+pub const FILE_HEADERS_TIMEOUT: Duration = Duration::from_secs(30);
+/// A file read's longest wait for the next chunk of the body.
+pub const FILE_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What a call can fail with.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +58,12 @@ pub enum ClientError {
     /// A 2xx answer whose body did not decode.
     #[error("decode {status}: {message}")]
     Decode { status: u16, message: String },
+    /// A 2xx answer that says the call did not happen (`{"released": false}`, `{"ready": false}`).
+    #[error("not done {status}: {message}")]
+    NotDone { status: u16, message: String },
+    /// No response headers, or no next chunk of a streamed body, in time.
+    #[error("timed out: {0}")]
+    Timeout(&'static str),
 }
 
 impl ClientError {
@@ -70,8 +80,9 @@ impl ClientError {
     pub fn status(&self) -> Option<u16> {
         match self {
             Self::Api(e) => Some(e.status),
-            Self::Decode { status, .. } => Some(*status),
+            Self::Decode { status, .. } | Self::NotDone { status, .. } => Some(*status),
             Self::Transport(e) => e.status().map(|s| s.as_u16()),
+            Self::Timeout(_) => None,
         }
     }
 }
@@ -98,13 +109,84 @@ impl Refusal {
     }
 }
 
-/// hermit's client. Cheap to clone; the builder methods return a modified copy.
-#[derive(Clone, Debug)]
+/// hermit's client. Cheap to clone; the builder methods return a modified copy. Its `Debug` form shows the base URL
+/// and header names only: the pair token and the identity headers' values are redacted.
+#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base: String,
     bearer: Option<String>,
     extra: Vec<(HeaderName, HeaderValue)>,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let extra: Vec<(&str, &str)> = self
+            .extra
+            .iter()
+            .map(|(n, v)| {
+                let shown = if crate::server::is_sensitive_header(n) {
+                    "<redacted>"
+                } else {
+                    v.to_str().unwrap_or("<binary>")
+                };
+                (n.as_str(), shown)
+            })
+            .collect();
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .field("bearer", &self.bearer.as_ref().map(|_| "<redacted>"))
+            .field("headers", &extra)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A file read in progress (`GET /v1/workspaces/{wid}/files`): the typed headers and the body as a stream, never
+/// buffered by the client. Read it with [`FileDownload::chunk`] or [`FileDownload::bytes`] (each chunk within
+/// [`FILE_IDLE_TIMEOUT`]), or relay it with [`FileDownload::into_response`] (`bytes_stream()`, under the
+/// `reqwest::Client`'s own `read_timeout`).
+pub struct FileDownload {
+    pub meta: FileMeta,
+    response: reqwest::Response,
+}
+
+impl std::fmt::Debug for FileDownload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileDownload")
+            .field("meta", &self.meta)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FileDownload {
+    /// The next chunk of the body, `None` at the end.
+    ///
+    /// # Errors
+    /// Transport failures; [`ClientError::Timeout`] after [`FILE_IDLE_TIMEOUT`] without a chunk.
+    pub async fn chunk(&mut self) -> R<Option<axum::body::Bytes>> {
+        tokio::time::timeout(FILE_IDLE_TIMEOUT, self.response.chunk())
+            .await
+            .map_err(|_| ClientError::Timeout("file body"))?
+            .map_err(ClientError::from)
+    }
+
+    /// The whole body in memory (small files and tests; a relay uses [`FileDownload::into_response`]).
+    ///
+    /// # Errors
+    /// As [`FileDownload::chunk`].
+    pub async fn bytes(mut self) -> R<axum::body::Bytes> {
+        let mut out = Vec::with_capacity(usize::try_from(self.meta.content_length()).unwrap_or(0).min(1 << 20));
+        while let Some(c) = self.chunk().await? {
+            out.extend_from_slice(&c);
+        }
+        Ok(out.into())
+    }
+
+    /// The response itself, for relaying its body as a stream.
+    #[must_use]
+    pub fn into_response(self) -> reqwest::Response {
+        self.response
+    }
 }
 
 type R<T> = Result<T, ClientError>;
@@ -167,10 +249,14 @@ impl Client {
     }
 
     fn build(&self, method: Method, path: &str, surface: (&str, u32), timeout: Duration) -> reqwest::RequestBuilder {
+        self.build_untimed(method, path, surface).timeout(timeout)
+    }
+
+    /// A request with no total timeout (a streamed file read).
+    fn build_untimed(&self, method: Method, path: &str, surface: (&str, u32)) -> reqwest::RequestBuilder {
         let mut rb = self
             .http
             .request(method, format!("{}{path}", self.base))
-            .timeout(timeout)
             .header(headers::PROTOCOL, format!("{}={}", surface.0, surface.1));
         if let Some(t) = &self.bearer {
             rb = rb.bearer_auth(t);
@@ -401,21 +487,31 @@ impl Client {
         Ok(self.call(self.build(Method::GET, &p, CORE, DEFAULT_TIMEOUT)).await?.1)
     }
 
-    /// `GET /v1/workspaces/{wid}/files?path=` with an optional single range.
+    /// `GET /v1/workspaces/{wid}/files?path=` with an optional single range. Waits at most
+    /// [`FILE_HEADERS_TIMEOUT`] for the headers; the body is a stream with no total timeout.
     ///
     /// # Errors
-    /// As [`Client::deployment`]; 404 `no_path`, 409 `not_a_file`, 416.
-    pub async fn workspace_file(&self, wid: Uuid, q: &FilesQuery, range: Option<ByteRange>) -> R<FileContent> {
+    /// As [`Client::deployment`]; 404 `no_path`, 409 `not_a_file`, 416 `bad_range`; [`ClientError::Timeout`].
+    pub async fn workspace_file(&self, wid: Uuid, q: &FilesQuery, range: Option<ByteRange>) -> R<FileDownload> {
         let p = format!(
             "{}{}",
             fill(r::WORKSPACE_FILES, &[&wid.to_string()]),
             query(&[("path", Some(q.path.clone()))])
         );
-        let mut rb = self.build(Method::GET, &p, CORE, DEFAULT_TIMEOUT);
+        let mut rb = self.build_untimed(Method::GET, &p, CORE);
         if let Some(range) = range {
             rb = rb.header(reqwest::header::RANGE, range.header());
         }
-        let (status, h, body) = Self::send(rb).await?;
+        let res = tokio::time::timeout(FILE_HEADERS_TIMEOUT, rb.send())
+            .await
+            .map_err(|_| ClientError::Timeout("file headers"))??;
+        let status = res.status();
+        if !status.is_success() {
+            let headers = res.headers().clone();
+            let bytes = res.bytes().await?;
+            return Err(ClientError::Api(refusal(status, &headers, &bytes)));
+        }
+        let h = res.headers();
         let text = |name: reqwest::header::HeaderName| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
         let decode = |message: &str| ClientError::Decode {
             status: status.as_u16(),
@@ -429,14 +525,19 @@ impl Client {
             let cr = text(reqwest::header::CONTENT_RANGE).ok_or_else(|| decode("content-range"))?;
             parse_content_range(&cr).ok_or_else(|| decode("content-range"))?
         } else {
-            (body.len() as u64, None)
+            let len = text(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.trim().parse().ok())
+                .ok_or_else(|| decode("content-length"))?;
+            (len, None)
         };
-        Ok(FileContent {
-            size,
-            mtime,
-            etag,
-            served,
-            body,
+        Ok(FileDownload {
+            meta: FileMeta {
+                size,
+                mtime,
+                etag,
+                served,
+            },
+            response: res,
         })
     }
 

@@ -74,7 +74,7 @@ fn claims() -> Claims {
     Claims {
         sandbox_id: "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e".parse().unwrap(),
         conversation_id: "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f".parse().unwrap(),
-        source: Ipv4Addr::new(10, 203, 4, 9),
+        source: Ipv4Addr::new(192, 0, 2, 9),
         expires_at: 1_900_000_000,
         person: "staff@example.org".into(),
     }
@@ -99,7 +99,7 @@ fn a_sandbox_request_from_boot_environment_to_identity_headers() {
         keys: vec![signing.public_key()],
     });
     let verified = set
-        .verify(&presented, 1_800_000_000, IpAddr::V4(Ipv4Addr::new(10, 203, 4, 9)))
+        .verify(&presented, 1_800_000_000, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 9)))
         .unwrap();
     assert_eq!(verified, claims());
 

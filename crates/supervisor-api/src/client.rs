@@ -23,13 +23,23 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type R<T> = Result<T, ClientError>;
 
-/// One sandbox's `:7070`.
-#[derive(Clone, Debug)]
+/// One sandbox's `:7070`. Its `Debug` form never shows the control token (hermit 6.2: it never leaves hermit).
+#[derive(Clone)]
 pub struct ControlClient {
     http: reqwest::Client,
     base: String,
     token: String,
     request_id: Option<String>,
+}
+
+impl std::fmt::Debug for ControlClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ControlClient")
+            .field("base", &self.base)
+            .field("token", &"<redacted>")
+            .field("request_id", &self.request_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ControlClient {
@@ -131,13 +141,14 @@ impl ControlClient {
     /// `POST /v1/lifecycle/prepare` (15 s, or the deadline plus 5 s if longer).
     ///
     /// # Errors
-    /// As [`ControlClient::health`]; a 409 `sandbox_busy` is `Ok(Outcome::Busy)`.
+    /// As [`ControlClient::health`]; a 409 `sandbox_busy` is `Ok(Outcome::Busy)`; a 200 `{"ready": false}` is
+    /// [`ClientError::NotDone`].
     pub async fn prepare(&self, body: &PrepareRequest) -> R<Outcome> {
         let timeout = PREPARE_TIMEOUT.max(Duration::from_millis(body.deadline_ms.into()) + RELEASE_SLACK);
         busy_or(
             self.post::<_, PrepareAnswer>(routes::PREPARE, body, timeout)
                 .await
-                .map(|_| ()),
+                .and_then(|a| done(a.ready, "ready: false")),
         )
     }
 
@@ -154,13 +165,15 @@ impl ControlClient {
     /// `POST /v1/lifecycle/release` (`deadlineMs` + 5 s).
     ///
     /// # Errors
-    /// As [`ControlClient::health`]; a 409 `sandbox_busy` is `Ok(Outcome::Busy)`.
+    /// As [`ControlClient::health`]; a 409 `sandbox_busy` is `Ok(Outcome::Busy)`; a 200 `{"released": false}`
+    /// is [`ClientError::NotDone`]; a body with an unknown reason is refused before sending (a transport error:
+    /// build it with [`ReleaseRequest::new`]).
     pub async fn release(&self, body: &ReleaseRequest) -> R<Outcome> {
         let timeout = Duration::from_millis(body.deadline_ms.into()) + RELEASE_SLACK;
         busy_or(
             self.post::<_, ReleaseAnswer>(routes::RELEASE, body, timeout)
                 .await
-                .map(|_| ()),
+                .and_then(|a| done(a.released, "released: false")),
         )
     }
 
@@ -170,6 +183,18 @@ impl ControlClient {
     /// As [`ControlClient::health`].
     pub async fn exec(&self, body: &ExecRequest) -> R<ExecResult> {
         self.post(routes::EXEC, body, EXEC_TIMEOUT).await
+    }
+}
+
+/// A 200 whose flag says the call did not happen is an error, not [`Outcome::Done`].
+fn done(flag: bool, what: &str) -> R<()> {
+    if flag {
+        Ok(())
+    } else {
+        Err(ClientError::NotDone {
+            status: 200,
+            message: what.to_owned(),
+        })
     }
 }
 

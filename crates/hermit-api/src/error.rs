@@ -15,6 +15,9 @@ pub mod codes {
     /// An implementation that lacks a call (hermit 3.1): a normal answer.
     pub const NOT_SUPPORTED: &str = "not_supported";
     pub const METHOD_NOT_ALLOWED: &str = "method_not_allowed";
+    /// 400: `Aviary-Protocol` missing, of another surface, or a number the server no longer accepts (platform 3.4,
+    /// 13.4).
+    pub const UNSUPPORTED_PROTOCOL: &str = "unsupported_protocol";
     pub const INTERNAL: &str = "internal";
     // the codes magpie maps to turn codes and pigeon renders (hermit 3.1)
     pub const NOT_ALLOWED: &str = "not_allowed";
@@ -35,7 +38,7 @@ pub mod codes {
     pub const NOT_A_DIR: &str = "not_a_dir";
     pub const NOT_A_FILE: &str = "not_a_file";
     pub const EXISTS: &str = "exists";
-    /// 416 on `GET /v1/workspaces/{wid}/files` (the spec names only the status).
+    /// 416 on `GET /v1/workspaces/{wid}/files` for `start >= size` (the spec names only the status).
     pub const BAD_RANGE: &str = "bad_range";
     // secrets (3.7.2)
     pub const NOT_GRANTED: &str = "not_granted";
@@ -75,6 +78,13 @@ pub fn not_allowed() -> ApiError {
 #[must_use]
 pub fn not_found(code: &str, message: impl Into<String>) -> ApiError {
     api(404, code, message)
+}
+
+/// 416 `bad_range` for a range that starts at or past the end of a file of `size` bytes (`size` in the body; the
+/// router adds `content-range: bytes */<size>`). An unparseable `Range` is never an error: it is ignored.
+#[must_use]
+pub fn range_not_satisfiable(size: u64) -> ApiError {
+    api(416, codes::BAD_RANGE, "range starts past the end of the file").with("size", size)
 }
 
 /// 503 `sandbox_busy` while the operator has sandboxes disabled (hermit 3.6.2):

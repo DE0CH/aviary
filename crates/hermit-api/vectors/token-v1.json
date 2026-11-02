@@ -1,0 +1,19 @@
+{
+  "masterKey": "1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+  "claims": {
+    "sandboxId": "0190f6c2-0000-7000-8000-000000000001",
+    "conversationId": "0190f6c2-0000-7000-8000-000000000002",
+    "source": "192.0.2.7",
+    "expiresAt": 1800000000,
+    "person": "staff@example.org"
+  },
+  "payloadHex": "010190f6c20000700080000000000000010190f6c2000070008000000000000002c0000207000000006b49d2007374616666406578616d706c652e6f7267",
+  "token": "hst1.1.AQGQ9sIAAHAAgAAAAAAAAAEBkPbCAABwAIAAAAAAAAACwAACBwAAAABrSdIAc3RhZmZAZXhhbXBsZS5vcmc.BshwBoZfSVF4vOt5b_NYB4A4SfZg0n8_WcFTMZ49NdtMjJA09IOVy6j6Enpa8MdylPirxw7DNv7sj8ioCrHLCg",
+  "publicKey": {
+    "kid": 1,
+    "alg": "Ed25519",
+    "publicKey": "p-Rs6z8KcdQsdkKo5b22-NQxDMOV-A1W1PEv19s0IRQ"
+  },
+  "controlToken": "hct_q4hwgtfUFXSnJjxhN7DXbpEhX5V6j_d5EmHr1L1Wh7Q",
+  "controlTokenSha256": "2dd0d5a9a830a44f7384434f0272f6ac741e8d1d5a6107e86e51bee3c1188e12"
+}

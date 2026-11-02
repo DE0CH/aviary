@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{ActivityState, PendingRelease, ReleaseCode, ReleaseReason, Timestamp};
+use crate::{ActivityState, PendingRelease, ReleaseCallCode, ReleaseReason, Timestamp};
 
 /// `GET /v1/health`. `ok: true, ready: false` = alive and starting (never unhealthy); hermit marks a sandbox
 /// `ready` only on `ready: true`, and decides "unhealthy" only from two failed checks 5 s apart.
@@ -149,12 +149,15 @@ pub struct Resumed {
 }
 
 /// `POST /v1/lifecycle/release`: `reason` is hermit's [`ReleaseReason`] (DESIGN 12 D5); `code` is
-/// `sandbox_released` or `sandbox_lost` (how the supervisor reports a turn it ends: `canceled` or failed).
+/// `sandbox_released` or `sandbox_lost` only ([`ReleaseCallCode`]: how the supervisor reports a turn it ends,
+/// `canceled` or failed; any other code is a 400). A reason the supervisor does not know decodes as
+/// [`ReleaseReason::Unknown`] and is handled like any other (only `code` and `force` change what it does); hermit
+/// can never send one, since `Unknown` does not serialise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseRequest {
     pub reason: ReleaseReason,
-    pub code: ReleaseCode,
+    pub code: ReleaseCallCode,
     pub force: bool,
     pub deadline_ms: u32,
 }
@@ -163,6 +166,18 @@ pub struct ReleaseRequest {
 pub const RELEASE_DEADLINE_MS: u32 = 30_000;
 
 impl ReleaseRequest {
+    /// The release hermit asks for with `reason` (its code from 13.13). `None` for a reason that makes no release
+    /// call: one of a sandbox that never became ready, `stuck`, or an unknown value.
+    #[must_use]
+    pub fn new(reason: ReleaseReason, force: bool, deadline_ms: u32) -> Option<Self> {
+        Some(Self {
+            reason,
+            code: reason.call_code()?,
+            force,
+            deadline_ms,
+        })
+    }
+
     /// The same release as a pending one repeated in an activity reply (hermit 3.7.3), with the time left until its
     /// `deadlineAt` (at least 1 s).
     #[must_use]
@@ -230,7 +245,7 @@ mod tests {
         let now = Timestamp::parse("2026-11-02T12:05:06.789Z").unwrap();
         let p = PendingRelease {
             reason: ReleaseReason::Lifetime,
-            code: ReleaseCode::SandboxReleased,
+            code: ReleaseCallCode::SandboxReleased,
             force: false,
             deadline_at: Timestamp::parse("2026-11-02T12:05:36.789Z").unwrap(),
         };
@@ -241,6 +256,31 @@ mod tests {
         );
         let late = Timestamp::parse("2026-11-02T13:00:00Z").unwrap();
         assert_eq!(ReleaseRequest::from_pending(&p, late).deadline_ms, 1000);
+    }
+
+    #[test]
+    fn release_requests() {
+        let r = ReleaseRequest::new(ReleaseReason::HostLost, true, RELEASE_DEADLINE_MS).unwrap();
+        assert_eq!(r.code, ReleaseCallCode::SandboxLost);
+        assert_eq!(
+            ReleaseRequest::new(ReleaseReason::Idle, false, 1).unwrap().code,
+            ReleaseCallCode::SandboxReleased
+        );
+        for reason in [
+            ReleaseReason::PoolFull,
+            ReleaseReason::StartFailed,
+            ReleaseReason::Stuck,
+            ReleaseReason::Unknown,
+        ] {
+            assert_eq!(ReleaseRequest::new(reason, true, 1), None, "{reason}");
+        }
+        // only the two call codes decode; an unknown reason decodes but never encodes
+        let body = |code: &str, reason: &str| serde_json::json!({"reason": reason, "code": code, "force": true, "deadlineMs": 30000});
+        assert!(serde_json::from_value::<ReleaseRequest>(body("sandbox_busy", "idle")).is_err());
+        assert!(serde_json::from_value::<ReleaseRequest>(body("sandbox_failed", "idle")).is_err());
+        let r: ReleaseRequest = serde_json::from_value(body("sandbox_lost", "a_newer_reason")).unwrap();
+        assert_eq!(r.reason, ReleaseReason::Unknown);
+        assert!(serde_json::to_value(r).is_err());
     }
 
     #[test]

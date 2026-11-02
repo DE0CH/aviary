@@ -110,7 +110,7 @@ fn release_requests_use_the_shared_reasons() {
     for name in ["release-idle", "release-host-lost"] {
         let r: ReleaseRequest = round_trip(name);
         assert_ne!(r.reason, ReleaseReason::Unknown);
-        assert_eq!(r.reason.code(), Some(r.code), "{name}");
+        assert_eq!(r.reason.call_code(), Some(r.code), "{name}");
     }
 }
 

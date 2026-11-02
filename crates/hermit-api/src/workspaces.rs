@@ -125,8 +125,9 @@ pub struct ByteRange {
 }
 
 impl ByteRange {
-    /// Parses a single-range `Range` header (`bytes=0-99`, `bytes=100-`). Suffix ranges and lists are not part of
-    /// the contract (`None`).
+    /// Parses a single-range `Range` header (`bytes=0-99`, `bytes=100-`). Anything else (a suffix range
+    /// `bytes=-5`, a list, another unit, `last < first`, bad syntax) is `None`, and the router then ignores the
+    /// header and asks for the whole file (RFC 9110 14.2: a server may ignore a `Range` it does not support).
     #[must_use]
     pub fn parse(header: &str) -> Option<Self> {
         let spec = header.trim().strip_prefix("bytes=")?;
@@ -153,11 +154,22 @@ impl ByteRange {
             None => format!("bytes={}-", self.start),
         }
     }
+
+    /// The bytes served from a file of `size` bytes: `Some((first, last))` inclusive, `last` clamped to the end, or
+    /// `None` when the range is unsatisfiable (`start >= size`): answer 416 ([`crate::error::range_not_satisfiable`]).
+    #[must_use]
+    pub fn resolve(self, size: u64) -> Option<(u64, u64)> {
+        if self.start >= size {
+            return None;
+        }
+        let last = self.end.map_or(size - 1, |e| e.min(size - 1));
+        Some((self.start, last))
+    }
 }
 
-/// A file read: 200 with the whole file, or 206 with `served` set.
+/// The headers of a file read (3.8): everything but the bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileContent {
+pub struct FileMeta {
     /// The file's full size.
     pub size: u64,
     /// Modification time (`last-modified`, second resolution on the wire).
@@ -166,14 +178,55 @@ pub struct FileContent {
     pub etag: String,
     /// `Some((first, last))` inclusive when this is a 206.
     pub served: Option<(u64, u64)>,
-    pub body: axum::body::Bytes,
 }
 
-impl FileContent {
+impl FileMeta {
     /// The etag rule of 3.8: `"<size>-<mtime ns>"`.
     #[must_use]
     pub fn etag_for(size: u64, mtime_ns: i128) -> String {
         format!("\"{size}-{mtime_ns}\"")
+    }
+
+    /// The number of bytes the body carries (`content-length`): the whole size, or the served range.
+    #[must_use]
+    pub fn content_length(&self) -> u64 {
+        match self.served {
+            Some((first, last)) => last.saturating_sub(first) + 1,
+            None => self.size,
+        }
+    }
+}
+
+/// A file read as a [`crate::Server`] answers it: the headers and a streamed body of exactly
+/// [`FileMeta::content_length`] bytes (a 200 with the whole file, or a 206 with `served` set). The router never
+/// buffers it: a 1 GiB download costs the server one read buffer, not 1 GiB.
+pub struct FileContent {
+    pub meta: FileMeta,
+    pub body: axum::body::Body,
+}
+
+impl FileContent {
+    /// A body from bytes in memory (tests, fakes, small files).
+    #[must_use]
+    pub fn from_bytes(meta: FileMeta, bytes: impl Into<axum::body::Bytes>) -> Self {
+        Self {
+            meta,
+            body: axum::body::Body::from(bytes.into()),
+        }
+    }
+
+    /// A streamed body, e.g. `Body::from_stream(tokio_util::io::ReaderStream::new(file))`.
+    #[must_use]
+    pub fn streamed(meta: FileMeta, body: axum::body::Body) -> Self {
+        Self { meta, body }
+    }
+}
+
+impl std::fmt::Debug for FileContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileContent")
+            .field("meta", &self.meta)
+            .finish_non_exhaustive()
     }
 }
 
@@ -232,6 +285,26 @@ mod tests {
         assert_eq!(ByteRange::parse("bytes=-5"), None);
         assert_eq!(ByteRange::parse("bytes=0-1,4-5"), None);
         assert_eq!(ByteRange::parse("bytes=9-1"), None);
+        assert_eq!(ByteRange::parse("items=0-1"), None);
         assert_eq!(ByteRange { start: 3, end: None }.header(), "bytes=3-");
+        let r = |start, end| ByteRange { start, end };
+        assert_eq!(r(0, None).resolve(16), Some((0, 15)));
+        assert_eq!(r(7, Some(99)).resolve(16), Some((7, 15)));
+        assert_eq!(r(2, Some(3)).resolve(16), Some((2, 3)));
+        assert_eq!(r(16, None).resolve(16), None);
+        assert_eq!(r(0, None).resolve(0), None);
+    }
+
+    #[test]
+    fn content_length() {
+        let mut m = FileMeta {
+            size: 16,
+            mtime: Timestamp::parse("2026-11-02T04:00:00Z").unwrap(),
+            etag: FileMeta::etag_for(16, 1),
+            served: None,
+        };
+        assert_eq!(m.content_length(), 16);
+        m.served = Some((7, 15));
+        assert_eq!(m.content_length(), 9);
     }
 }

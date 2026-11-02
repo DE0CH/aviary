@@ -13,7 +13,7 @@ pub mod local;
 pub mod server;
 
 pub use hermit_api::exec::{ExecRequest, ExecResult};
-pub use hermit_api::sandbox::{ReleaseCode, ReleaseReason};
+pub use hermit_api::sandbox::{ReleaseCallCode, ReleaseCode, ReleaseReason};
 pub use hermit_api::sandbox_surface::{
     ActivityEvent, ActivityEventKind, ActivityReply, ActivityReplyState, ActivityReport, ActivityState, MemoryUse,
     PendingRelease, SandboxSelf, SecretKeys, SecretValue,

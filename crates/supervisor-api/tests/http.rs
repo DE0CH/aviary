@@ -201,3 +201,38 @@ async fn the_local_router_hands_over_descriptors() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["code"], "not_granted");
 }
+
+#[tokio::test]
+async fn a_200_that_says_not_done_is_an_error() {
+    struct Half;
+    impl ControlServer for Half {
+        async fn release(&self, _: Ctx, _: ReleaseRequest) -> Answer<ReleaseAnswer> {
+            Ok(ReleaseAnswer { released: false })
+        }
+        async fn prepare(&self, _: Ctx, _: PrepareRequest) -> Answer<PrepareAnswer> {
+            Ok(PrepareAnswer { ready: false })
+        }
+    }
+    let base = serve(control_router(Arc::new(Half))).await;
+    let c = ControlClient::new(reqwest::Client::new(), base, CONTROL_TOKEN);
+    let release = ReleaseRequest::new(supervisor_api::ReleaseReason::Deleted, true, 1000).unwrap();
+    let e = c.release(&release).await.unwrap_err();
+    assert!(
+        matches!(&e, supervisor_api::client::ClientError::NotDone { status: 200, message } if message == "released: false"),
+        "{e}"
+    );
+    let e = c.prepare(&PrepareRequest::flush()).await.unwrap_err();
+    assert!(
+        matches!(&e, supervisor_api::client::ClientError::NotDone { status: 200, .. }),
+        "{e}"
+    );
+}
+
+#[test]
+fn the_control_token_never_shows_in_debug() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let c = ControlClient::new(reqwest::Client::new(), "http://192.0.2.7:7070", CONTROL_TOKEN).request_id("r1");
+    let d = format!("{c:?}");
+    assert!(!d.contains(CONTROL_TOKEN), "{d}");
+    assert!(d.contains("192.0.2.7:7070") && d.contains("r1"), "{d}");
+}

@@ -183,5 +183,5 @@ fn release_codes_agree_with_reasons() {
     }
     let reply: ActivityReply = round_trip("activity-reply-releasing");
     let r = reply.release.unwrap();
-    assert_eq!(r.reason.code(), Some(r.code));
+    assert_eq!(r.reason.call_code(), Some(r.code));
 }
