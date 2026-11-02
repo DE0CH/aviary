@@ -81,8 +81,12 @@ impl Env {
     }
 
     fn drain(&self, jitter: Duration, rpc_wait: Duration) -> tokio::task::JoinHandle<()> {
+        self.drain_bound(jitter, rpc_wait, Duration::from_secs(30))
+    }
+
+    fn drain_bound(&self, jitter: Duration, rpc_wait: Duration, bound: Duration) -> tokio::task::JoinHandle<()> {
         let socket = self.h.app.socket();
-        tokio::spawn(async move { socket.drain(jitter, rpc_wait).await })
+        tokio::spawn(async move { socket.drain(jitter, rpc_wait, bound).await })
     }
 }
 
@@ -349,9 +353,57 @@ async fn the_1012_follows_the_reply_the_drain_waited_for() {
     drain.await.unwrap();
 }
 
+/// Reads every socket for `wait` (answering pings), asserting nothing arrives and none closes.
+async fn idle_all(socks: Vec<Ws>, wait: Duration) -> Vec<Ws> {
+    let tasks: Vec<_> = socks
+        .into_iter()
+        .map(|mut h| {
+            tokio::spawn(async move {
+                let got = h.drain_for(wait).await;
+                (h, got)
+            })
+        })
+        .collect();
+    let mut out = Vec::new();
+    for t in tasks {
+        let (h, got) = t.await.unwrap();
+        assert_eq!(got, Vec::<Value>::new());
+        assert!(h.closed.is_none(), "{:?}", h.closed);
+        out.push(h);
+    }
+    out
+}
+
+/// Sends `frame` as one WebSocket message in `chunk`-byte pieces, `gap` apart, starting the drain (`jitter`,
+/// `rpc_wait`, transfer bound 30 s) once `drain_after` bytes are in; returns the drain.
+async fn send_slowly(
+    e: &Env,
+    ws: &mut Ws,
+    frame: &str,
+    chunk: usize,
+    gap: Duration,
+    drain_after: usize,
+    (jitter, rpc_wait): (Duration, Duration),
+) -> tokio::task::JoinHandle<()> {
+    let mut bytes = Ws::text_header(frame.len() as u64);
+    bytes.extend_from_slice(frame.as_bytes());
+    let mut drain = None;
+    let mut sent = 0;
+    for piece in bytes.chunks(chunk) {
+        ws.raw_bytes(piece).await;
+        sent += piece.len();
+        if drain.is_none() && sent >= drain_after {
+            drain = Some(e.drain(jitter, rpc_wait));
+        }
+        tokio::time::sleep(gap).await;
+    }
+    drain.unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_send_arriving_across_the_drain_is_answered_before_its_1012() {
-    // 18.3's 40 MiB image send, scaled: 12 MiB arriving over about 2 s as one WebSocket message
+    // 18.3's 40 MiB image send, scaled: 12 MiB arriving over about 5 s as one WebSocket message, with the in-flight
+    // request wait at 1 s: the send outlasts jitter + rpc_wait (2.2 s) by far, and has the transfer bound instead
     let e = env_with(fast()).await;
     let c = e.m.add(STAFF, None);
     let mut ws = e.ws(STAFF).await;
@@ -359,63 +411,192 @@ async fn a_large_send_arriving_across_the_drain_is_answered_before_its_1012() {
     tokio::time::sleep(Duration::from_millis(400)).await;
     let rid = ws.rid();
     let frame = image_send(&rid, c, "m-big", 12 << 20);
-    let mut bytes = Ws::text_header(frame.len() as u64);
-    bytes.extend_from_slice(frame.as_bytes());
-    let chunks: Vec<&[u8]> = bytes.chunks(256 << 10).collect();
-    let mut drain = None;
-    for (i, chunk) in chunks.iter().enumerate() {
-        ws.raw_bytes(chunk).await;
-        if i == 8 {
-            // SIGTERM with 2 MiB of the message in
-            drain = Some(e.drain(Duration::from_millis(1200), Duration::from_secs(4)));
-        }
-        tokio::time::sleep(Duration::from_millis(40)).await;
-    }
+    let started = Instant::now();
+    let drain = send_slowly(
+        &e,
+        &mut ws,
+        &frame,
+        256 << 10,
+        Duration::from_millis(100),
+        2 << 20,
+        (Duration::from_millis(1200), Duration::from_secs(1)),
+    )
+    .await;
+    assert!(started.elapsed() > Duration::from_secs(4), "{:?}", started.elapsed());
+    // the socket drain is still waiting (so the process does not exit under the send)
+    assert!(!drain.is_finished());
     // the request-free socket went in the first half; the arriving one was not cut
     assert_eq!(idle.closed_code(Duration::from_secs(3)).await, Some(1012));
     let r = ws.next_session("send_agent_message_response").await;
     assert_eq!(r["requestId"], rid.as_str());
     assert_eq!(r["accepted"], true);
     assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
-    drain.unwrap().await.unwrap();
+    drain.await.unwrap();
     let uploads = e.m.st().uploads.clone();
     assert_eq!(uploads.len(), 1);
     assert_eq!(uploads[0].1, (12 << 20) / 4 * 3);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
-    let e = env_with(fast()).await;
-    let held = e.m.hold("send_turn");
-    // three large sends hold the replica's three large-message slots (their handlers wait at magpie)
-    let mut holders = Vec::new();
-    for i in 0..pigeon::feeds::LARGE_AT_ONCE {
-        let c = e.m.add(STAFF, None);
-        let mut ws = e.ws(STAFF).await;
-        let rid = ws.rid();
-        ws.text(&image_send(&rid, c, &format!("h{i}"), 9 << 20)).await;
-        holders.push(ws);
-    }
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    // the fourth waits for a slot, its message read but not handled
+#[ignore = "spec scale: about 170 s"]
+async fn a_40_mib_image_send_at_2_mbit_s_across_the_drain_gets_its_reply_before_its_1012() {
+    // spec 18.3 at its own scale and pigeon's own drain times (jitter 15 s, in-flight requests 10 s, transfers 300 s,
+    // pings every 30 s): 40 MiB at 2 Mbit/s, SIGTERM 10 s in
+    let e = env_with(Tuning {
+        drain_jitter: Duration::from_secs(15),
+        drain_rpc_wait: Duration::from_secs(10),
+        socket_quiet: Duration::from_secs(5),
+        socket_ping: Duration::from_secs(30),
+        ..fast()
+    })
+    .await;
     let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    let rid = ws.rid();
+    let frame = image_send(&rid, c, "m-40", 40 << 20);
+    let started = Instant::now();
+    // 2 Mbit/s = 250 000 bytes/s: 25 000 bytes every 100 ms; SIGTERM after 2.5 MB (10 s)
+    let drain = {
+        let mut bytes = Ws::text_header(frame.len() as u64);
+        bytes.extend_from_slice(frame.as_bytes());
+        let mut drain = None;
+        let mut sent = 0;
+        let mut next = tokio::time::Instant::now();
+        for piece in bytes.chunks(25_000) {
+            ws.raw_bytes(piece).await;
+            sent += piece.len();
+            if drain.is_none() && sent >= 2_500_000 {
+                let socket = e.h.app.socket();
+                drain = Some(tokio::spawn(async move {
+                    socket
+                        .drain(
+                            Duration::from_secs(15),
+                            Duration::from_secs(10),
+                            Duration::from_secs(300),
+                        )
+                        .await;
+                }));
+            }
+            next += Duration::from_millis(100);
+            tokio::time::sleep_until(next).await;
+        }
+        drain.unwrap()
+    };
+    let sending = started.elapsed();
+    assert!(sending > Duration::from_secs(150), "{sending:?}");
+    assert!(!drain.is_finished());
+    let r = ws.next_session("send_agent_message_response").await;
+    assert_eq!(r["requestId"], rid.as_str());
+    assert_eq!(r["accepted"], true);
+    assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
+    drain.await.unwrap();
+    println!(
+        "sent in {sending:?}; drain ended {:?} after the start",
+        started.elapsed()
+    );
+    assert_eq!(e.m.st().uploads[0].1, (40 << 20) / 4 * 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_send_whose_first_bytes_arrived_just_before_its_1012_is_not_cut() {
+    // the drain sees a message arriving from its first frame header, not after some threshold of bytes
+    let e = env_with(fast()).await;
+    let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    let mut idle = e.ws(STAFF).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let rid = ws.rid();
+    let frame = image_send(&rid, c, "m-start", 1 << 20);
+    // 4 KiB in, then the drain with no jitter: a request-free socket would be closed at once
+    let drain = send_slowly(
+        &e,
+        &mut ws,
+        &frame,
+        4 << 10,
+        Duration::from_millis(5),
+        4 << 10,
+        (Duration::ZERO, Duration::from_secs(1)),
+    )
+    .await;
+    assert_eq!(idle.closed_code(Duration::from_secs(2)).await, Some(1012));
+    let r = ws.next_session("send_agent_message_response").await;
+    assert_eq!(r["requestId"], rid.as_str());
+    assert_eq!(r["accepted"], true);
+    assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
+    drain.await.unwrap();
+    assert_eq!(e.m.st().uploads.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_socket_sending_one_long_frame_is_not_dropped_for_the_pongs_it_cannot_send() {
+    // a client part-way through one frame cannot send a pong until the frame ends
+    let e = env_with(Tuning {
+        socket_ping: Duration::from_millis(200),
+        ..fast()
+    })
+    .await;
+    let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    let rid = ws.rid();
+    let frame = image_send(&rid, c, "m-long", 2 << 20);
+    let mut bytes = Ws::text_header(frame.len() as u64);
+    bytes.extend_from_slice(frame.as_bytes());
+    // about 1.6 s: eight ping periods
+    for piece in bytes.chunks(bytes.len() / 32 + 1) {
+        ws.raw_bytes(piece).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let r = ws.next_session("send_agent_message_response").await;
+    assert_eq!(r["accepted"], true);
+    assert!(ws.closed.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
+    // pings every 400 ms: the parked socket reads no pong for about 3.5 s and must not be dropped for it; the
+    // in-flight request wait (1 s) is shorter than the wait for a slot: a large send has the transfer bound
+    let e = env_with(Tuning {
+        socket_ping: Duration::from_millis(400),
+        ..fast()
+    })
+    .await;
+    let held = e.m.hold("send_turn");
+    let convs: Vec<Uuid> = (0..=pigeon::feeds::LARGE_AT_ONCE)
+        .map(|_| e.m.add(STAFF, None))
+        .collect();
+    // the 9 MiB frames are built before any socket opens, so no client goes unread for a ping period meanwhile
+    let frames: Vec<String> = convs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| image_send(&format!("req-{}", 1), *c, &format!("h{i}"), 9 << 20))
+        .collect();
+    // three large sends hold the replica's three large-message slots (their handlers wait at magpie); every client
+    // keeps reading (answering pings) while the test waits
+    let mut socks = Vec::new();
+    for frame in &frames[..pigeon::feeds::LARGE_AT_ONCE] {
+        let mut ws = e.ws(STAFF).await;
+        let _ = ws.rid();
+        ws.text(frame).await;
+        socks = idle_all(socks, Duration::from_millis(1)).await;
+        socks.push(ws);
+    }
+    socks = idle_all(socks, Duration::from_millis(500)).await;
+    // the fourth waits for a slot, its message read but not handled
     let mut waiting = e.ws(STAFF).await;
     let rid = waiting.rid();
-    waiting.text(&image_send(&rid, c, "w", 9 << 20)).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(4));
-    // past the whole jitter: still open
-    assert_eq!(
-        waiting.drain_for(Duration::from_millis(1500)).await,
-        Vec::<Value>::new()
-    );
-    assert!(waiting.closed.is_none());
+    waiting.text(&frames[pigeon::feeds::LARGE_AT_ONCE]).await;
+    socks.push(waiting);
+    socks = idle_all(socks, Duration::from_millis(500)).await;
+    let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(1));
+    // past the whole jitter and the in-flight wait: all still open
+    socks = idle_all(socks, Duration::from_millis(2500)).await;
+    let mut waiting = socks.pop().unwrap();
     held.notify_waiters();
     let r = waiting.next_session("send_agent_message_response").await;
     assert_eq!(r["requestId"], rid.as_str());
     assert_eq!(r["accepted"], true);
     assert_eq!(waiting.closed_code(Duration::from_secs(5)).await, Some(1012));
-    for mut h in holders {
+    for mut h in socks {
         assert_eq!(h.next_session("send_agent_message_response").await["accepted"], true);
         assert_eq!(h.closed_code(Duration::from_secs(5)).await, Some(1012));
     }
@@ -593,4 +774,28 @@ async fn the_socket_metrics_carry_spec_19s_names_and_labels() {
     ] {
         assert!(text.contains(want), "no {want} in\n{text}");
     }
+}
+
+#[tokio::test]
+async fn an_expired_change_cursor_whose_head_read_fails_backs_off_before_the_resync() {
+    // 410 on the cursor, then the head read fails four times: the poller retries the head with its backoff (50,
+    // 100, 200, 200 ms), never the expired cursor in a hot loop, and only then makes the sockets re-snapshot
+    let e = env_with(fast()).await;
+    let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.refuse_once("changes", Refusal::new(ErrorCode::CursorExpired, "expired"));
+    for _ in 0..4 {
+        e.m.refuse_once("changes", Refusal::new(ErrorCode::Unavailable, "down"));
+    }
+    let before = e.m.calls_to("changes");
+    let started = Instant::now();
+    // a change ends the long-poll in flight; the next poll meets the 410
+    e.m.edit(c, |conv| conv.title = Some("x".into()));
+    assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
+    let took = started.elapsed();
+    assert!(took >= Duration::from_millis(500), "{took:?}");
+    // the poll, the 410, four failed head reads and the one that worked
+    let calls = e.m.calls_to("changes") - before;
+    assert!(calls <= 8, "{calls} calls");
 }

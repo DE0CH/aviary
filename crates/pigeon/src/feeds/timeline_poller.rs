@@ -49,6 +49,8 @@ pub enum Ctl {
 
 const PAGE: u32 = 200;
 
+type PollFut = std::pin::Pin<Box<dyn std::future::Future<Output = Poll> + Send>>;
+
 enum Poll {
     Rows(TimelinePage),
     Gone,
@@ -108,7 +110,7 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
         pending: VecDeque::new(),
     };
     let wait_ms = u64::try_from(tuning.poll_wait.as_millis()).unwrap_or(25_000);
-    let mut fut = Box::pin(poll(p.app.clone(), p.person.clone(), c, tail(), false));
+    let mut fut: PollFut = Box::pin(poll(p.app.clone(), p.person.clone(), c, tail(), false));
     let mut tick = tokio::time::interval(
         tuning
             .poller_linger
@@ -138,25 +140,32 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
                 }
                 None => return,
             },
-            r = &mut fut => {
-                let q = match r {
+            answer = &mut fut => {
+                // after an error the backoff is a delay inside the next poll's future: turn events, restarts and
+                // replacements are handled meanwhile (8.4's 2 s hold still applies)
+                let (query, delay) = match answer {
                     Poll::Rows(page) => {
                         backoff.reset();
-                        p.page(page)
+                        (p.page(page), None)
                     }
                     Poll::Gone => {
                         p.hub.timeline_poller_gone(&p.person, c);
                         return;
                     }
-                    Poll::Failed(e) => {
-                        tracing::warn!(error = %e, "timeline poll failed");
-                        tokio::time::sleep(backoff.wait()).await;
-                        p.next_query()
+                    Poll::Failed(error) => {
+                        tracing::warn!(%error, "timeline poll failed");
+                        (p.next_query(), Some(backoff.wait()))
                     }
                 };
-                let wait = q.after.is_some();
-                let q = if wait { TimelineQuery { wait_ms: Some(wait_ms), ..q } } else { q };
-                fut = Box::pin(poll(p.app.clone(), p.person.clone(), c, q, wait));
+                let wait = query.after.is_some();
+                let query = if wait { TimelineQuery { wait_ms: Some(wait_ms), ..query } } else { query };
+                let (app, person) = (p.app.clone(), p.person.clone());
+                fut = Box::pin(async move {
+                    if let Some(delay) = delay {
+                        tokio::time::sleep(delay).await;
+                    }
+                    poll(app, person, c, query, wait).await
+                });
             }
             () = sleep_until(next_deadline) => p.release(true),
             _ = tick.tick() => {

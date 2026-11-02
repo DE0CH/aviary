@@ -10,7 +10,7 @@
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -75,24 +75,141 @@ impl Transfers {
     }
 }
 
-/// The bytes read so far from the connection a request came on (a request extension): a socket upgraded on it keeps
-/// counting, so the drain sees a large message arriving before its last byte.
+/// The WebSocket frames arriving on the connection a request came on (a request extension). The listener reads every
+/// byte through [`Counted`], which, once the socket upgrade has [started](Self::start) the tracking, follows the
+/// client's frame headers (opcode, FIN, payload length): so the drain knows a message is arriving from its first
+/// bytes on, before tungstenite has the whole message (spec 11.2 step 3: a deploy never cuts a send in the middle).
 #[derive(Debug, Clone, Default)]
-pub struct InboundBytes(pub Arc<AtomicU64>);
+pub struct InboundBytes(pub Arc<std::sync::Mutex<WsFrames>>);
 
-/// A connection's IO that counts the bytes read.
+impl InboundBytes {
+    fn lock(&self) -> std::sync::MutexGuard<'_, WsFrames> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// From now on the bytes read are WebSocket frames (called by the upgrade: the request head has been read and a
+    /// client sends no frame before the 101).
+    pub fn start(&self) {
+        self.lock().on = true;
+    }
+
+    /// Data messages whose last byte has been read.
+    #[must_use]
+    pub fn complete(&self) -> u64 {
+        self.lock().complete
+    }
+
+    /// Whether a data message has begun and its last byte has not been read yet.
+    #[must_use]
+    pub fn open(&self) -> bool {
+        self.lock().open
+    }
+
+    /// Bytes of frames read so far (for tests and logs).
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        self.lock().bytes
+    }
+}
+
+/// A parser of the client's frame headers (RFC 6455 5.2) that skips the payloads: it counts whole data messages and
+/// says whether one is part-way in. Control frames (ping, pong, close) may come between a message's fragments; they
+/// count as nothing.
+#[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // a parser's state flags
+pub struct WsFrames {
+    on: bool,
+    hdr: [u8; 14],
+    hdr_len: usize,
+    left: u64,
+    data: bool,
+    fin: bool,
+    open: bool,
+    complete: u64,
+    bytes: u64,
+}
+
+impl WsFrames {
+    /// Feeds bytes read from the connection.
+    pub fn feed(&mut self, mut b: &[u8]) {
+        if !self.on {
+            return;
+        }
+        self.bytes += b.len() as u64;
+        while !b.is_empty() {
+            if self.left > 0 {
+                let n = usize::try_from(self.left).unwrap_or(usize::MAX).min(b.len());
+                self.left -= n as u64;
+                b = &b[n..];
+                if self.left == 0 {
+                    self.frame_done();
+                }
+                continue;
+            }
+            self.hdr[self.hdr_len] = b[0];
+            self.hdr_len += 1;
+            b = &b[1..];
+            if self.hdr_len < 2 {
+                continue;
+            }
+            let len7 = self.hdr[1] & 0x7f;
+            let ext = match len7 {
+                126 => 2,
+                127 => 8,
+                _ => 0,
+            };
+            let mask = if self.hdr[1] & 0x80 == 0 { 0 } else { 4 };
+            if self.hdr_len < 2 + ext + mask {
+                continue;
+            }
+            let len = match ext {
+                2 => u64::from(u16::from_be_bytes([self.hdr[2], self.hdr[3]])),
+                8 => u64::from_be_bytes([
+                    self.hdr[2],
+                    self.hdr[3],
+                    self.hdr[4],
+                    self.hdr[5],
+                    self.hdr[6],
+                    self.hdr[7],
+                    self.hdr[8],
+                    self.hdr[9],
+                ]),
+                _ => u64::from(len7),
+            };
+            let opcode = self.hdr[0] & 0x0f;
+            self.fin = self.hdr[0] & 0x80 != 0;
+            self.data = opcode < 8;
+            if self.data {
+                self.open = true;
+            }
+            self.hdr_len = 0;
+            self.left = len;
+            if len == 0 {
+                self.frame_done();
+            }
+        }
+    }
+
+    fn frame_done(&mut self) {
+        if self.data && self.fin {
+            self.open = false;
+            self.complete += 1;
+        }
+    }
+}
+
+/// A connection's IO that feeds the bytes read to its [`InboundBytes`].
 struct Counted<T> {
     io: T,
-    read: Arc<AtomicU64>,
+    read: InboundBytes,
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for Counted<T> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         let before = buf.filled().len();
         let r = Pin::new(&mut self.io).poll_read(cx, buf);
-        let n = buf.filled().len().saturating_sub(before);
-        if n > 0 {
-            self.read.fetch_add(n as u64, Ordering::SeqCst);
+        if buf.filled().len() > before {
+            self.read.lock().feed(&buf.filled()[before..]);
         }
         r
     }
@@ -202,7 +319,7 @@ async fn connection(stream: tokio::net::TcpStream, router: Router, mut stop: wat
     let inbound = InboundBytes::default();
     let io = Counted {
         io: stream,
-        read: inbound.0.clone(),
+        read: inbound.clone(),
     };
     let svc = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
         let mut router = router.clone();
@@ -236,5 +353,87 @@ async fn connection(stream: tokio::net::TcpStream, router: Router, mut stop: wat
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WsFrames;
+
+    fn header(fin: bool, opcode: u8, len: u64) -> Vec<u8> {
+        let mut h = vec![if fin { 0x80 } else { 0 } | opcode];
+        if len < 126 {
+            h.push(0x80 | u8::try_from(len).unwrap_or(0));
+        } else if len <= 0xffff {
+            h.push(0x80 | 0x7e);
+            h.extend_from_slice(&u16::try_from(len).unwrap_or(0).to_be_bytes());
+        } else {
+            h.push(0x80 | 0x7f);
+            h.extend_from_slice(&len.to_be_bytes());
+        }
+        h.extend_from_slice(&[1, 2, 3, 4]);
+        h
+    }
+
+    fn on() -> WsFrames {
+        WsFrames {
+            on: true,
+            ..WsFrames::default()
+        }
+    }
+
+    #[test]
+    fn a_message_is_open_from_its_first_header_byte_to_its_last_payload_byte() {
+        let mut f = on();
+        let h = header(true, 1, 70_000);
+        f.feed(&h[..1]);
+        assert!(!f.open, "one byte is not a header yet");
+        f.feed(&h[1..]);
+        assert!(f.open);
+        f.feed(&vec![0u8; 69_999]);
+        assert!(f.open);
+        assert_eq!(f.complete, 0);
+        f.feed(&[0u8; 1]);
+        assert!(!f.open);
+        assert_eq!(f.complete, 1);
+    }
+
+    #[test]
+    fn small_messages_in_one_read_count_one_each_and_pings_count_nothing() {
+        let mut f = on();
+        let mut b = Vec::new();
+        for _ in 0..3 {
+            b.extend(header(true, 1, 5));
+            b.extend_from_slice(b"hello");
+        }
+        b.extend(header(true, 0xA, 0)); // a pong
+        b.extend(header(true, 0x9, 2)); // a ping
+        b.extend_from_slice(b"hi");
+        f.feed(&b);
+        assert_eq!(f.complete, 3);
+        assert!(!f.open);
+    }
+
+    #[test]
+    fn a_fragmented_message_with_a_control_frame_between_its_fragments_stays_open_until_its_final_fragment() {
+        let mut f = on();
+        let mut b = header(false, 1, 3);
+        b.extend_from_slice(b"abc");
+        b.extend(header(true, 0xA, 0));
+        f.feed(&b);
+        assert!(f.open);
+        let mut b = header(true, 0, 2);
+        b.extend_from_slice(b"de");
+        f.feed(&b);
+        assert!(!f.open);
+        assert_eq!(f.complete, 1);
+    }
+
+    #[test]
+    fn bytes_before_the_upgrade_are_not_frames() {
+        let mut f = WsFrames::default();
+        f.feed(b"GET /paseo-ws HTTP/1.1\r\n\r\n");
+        assert!(!f.open);
+        assert_eq!(f.bytes, 0);
     }
 }

@@ -44,9 +44,9 @@ pub const MAX_TIMELINE_AGENTS: usize = 64;
 const CLOSE_MARKER: &str = "\u{0}close:";
 /// The longest one frame write may take before the socket is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
-/// Bytes received past the last whole message beyond which a message is arriving (the socket is not request-free;
-/// above any read-ahead of small frames).
-pub const ARRIVING: u64 = 256 << 10;
+/// An inbound message at least this big is a transfer (spec 13: "a large inbound send"): while it arrives and until
+/// its handler ends, the drain waits for it up to the transfer bound rather than the in-flight request bound.
+pub const LARGE_SEND: usize = 256 << 10;
 
 /// Which list a subscription is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,10 +100,14 @@ pub struct Conn {
     pong: AtomicBool,
     quiet: Duration,
     metrics: crate::metrics::Metrics,
-    /// Bytes read from the socket's connection so far (`server::InboundBytes`), when the listener counts them.
-    inbound: Option<Arc<AtomicU64>>,
-    /// [`Self::inbound`] when the reader last had a whole message.
-    consumed: AtomicU64,
+    /// The client's frames as the listener reads them (`server::InboundBytes`), when the listener tracks them.
+    frames: Option<crate::server::InboundBytes>,
+    /// Data messages the reader has had whole.
+    delivered: AtomicU64,
+    /// Large sends ([`LARGE_SEND`]) read and not yet handled.
+    transfers: AtomicUsize,
+    /// The reader waits for a large-message slot (it reads nothing meanwhile, pongs included).
+    parked: AtomicBool,
 }
 
 impl std::fmt::Debug for Conn {
@@ -122,6 +126,26 @@ impl Drop for InFlight {
             self.0.idle.notify_waiters();
         }
     }
+}
+
+/// A large send read and not yet handled; the drain waits for it up to the transfer bound.
+#[derive(Debug)]
+pub struct Transfer(Arc<Conn>);
+
+impl Drop for Transfer {
+    fn drop(&mut self) {
+        if self.0.transfers.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.0.idle.notify_waiters();
+        }
+    }
+}
+
+/// What an inbound message's handler holds until it ends: its large-message slot (7.5.4) and, for a large send, its
+/// [`Transfer`].
+#[derive(Debug, Default)]
+pub struct Hold {
+    _permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    _transfer: Option<Transfer>,
 }
 
 impl Conn {
@@ -217,15 +241,13 @@ impl Conn {
         self.inflight.load(Ordering::SeqCst)
     }
 
-    /// Whether a message is arriving: more than [`ARRIVING`] bytes came in since the reader last had a whole
-    /// message (a large send in transfer).
+    /// Whether a message is arriving: its first frame header has been read and the reader does not have it whole
+    /// yet (or has not taken it: a message whose last byte is in counts until the reader has it).
     #[must_use]
     pub fn arriving(&self) -> bool {
-        self.inbound.as_ref().is_some_and(|n| {
-            n.load(Ordering::SeqCst)
-                .saturating_sub(self.consumed.load(Ordering::SeqCst))
-                > ARRIVING
-        })
+        self.frames
+            .as_ref()
+            .is_some_and(|f| f.open() || f.complete() > self.delivered.load(Ordering::SeqCst))
     }
 
     /// A request in flight or a message arriving.
@@ -234,33 +256,50 @@ impl Conn {
         self.requests() > 0 || self.arriving()
     }
 
+    /// A message arriving, or a large send read and not yet handled (a transfer: the drain waits for it up to the
+    /// transfer bound).
+    #[must_use]
+    pub fn transferring(&self) -> bool {
+        self.arriving() || self.transfers.load(Ordering::SeqCst) > 0
+    }
+
+    /// Bytes of frames read from the client so far (0 when the listener does not track them).
+    fn inbound_bytes(&self) -> u64 {
+        self.frames.as_ref().map_or(0, crate::server::InboundBytes::bytes)
+    }
+
+    fn transfer(self: &Arc<Self>) -> Transfer {
+        self.transfers.fetch_add(1, Ordering::SeqCst);
+        Transfer(self.clone())
+    }
+
     /// Not [`Self::busy`] and nothing but heartbeats for the quiet time (5 s, DESIGN 9.3).
     #[must_use]
     pub fn request_free(&self) -> bool {
         !self.busy() && self.st().last_request.elapsed() >= self.quiet
     }
 
-    /// Waits until no request is in flight and no message is arriving (its handler then counts as in flight), at
-    /// most `bound`.
-    pub async fn wait_requests(&self, bound: Duration) {
-        let deadline = tokio::time::Instant::now() + bound;
+    /// Waits until no request is in flight and no message is arriving (its handler then counts as in flight): an
+    /// ordinary request at most `rpc_wait`, a transfer (a large send arriving or being handled) until
+    /// `transfer_deadline` (spec 11.2 step 3: "that wait has the transfer bound of step 4").
+    pub async fn wait_requests(&self, rpc_wait: Duration, transfer_deadline: tokio::time::Instant) {
+        let rpc_deadline = (tokio::time::Instant::now() + rpc_wait).min(transfer_deadline);
         loop {
             let idle = self.idle.notified();
             if !self.busy() {
                 return;
             }
-            let step = (tokio::time::Instant::now() + Duration::from_millis(50)).min(deadline);
-            let _ = tokio::time::timeout_at(step, idle).await;
-            if tokio::time::Instant::now() >= deadline {
+            let now = tokio::time::Instant::now();
+            if now >= transfer_deadline || (now >= rpc_deadline && !self.transferring()) {
                 return;
             }
+            let step = (now + Duration::from_millis(50)).min(transfer_deadline);
+            let _ = tokio::time::timeout_at(step, idle).await;
         }
     }
 
     fn received_message(&self) {
-        if let Some(n) = &self.inbound {
-            self.consumed.store(n.load(Ordering::SeqCst), Ordering::SeqCst);
-        }
+        self.delivered.fetch_add(1, Ordering::SeqCst);
     }
 
     /// The socket's stable timeline subscription id.
@@ -330,6 +369,14 @@ impl Conn {
         match kind {
             ListKind::Agents => st.agents_floor,
             ListKind::Workspaces => st.workspaces_floor,
+        }
+    }
+
+    pub(crate) fn clear_floor(&self, kind: ListKind) {
+        let mut st = self.st();
+        match kind {
+            ListKind::Agents => st.agents_floor = None,
+            ListKind::Workspaces => st.workspaces_floor = None,
         }
     }
 
@@ -428,19 +475,24 @@ impl SocketHandler for PaseoSocket {
                 Err(r) => return r.into_response(),
             };
             hub.set_app(&app);
-            let inbound = parts
-                .extensions
-                .get::<crate::server::InboundBytes>()
-                .map(|b| b.0.clone());
+            let inbound = parts.extensions.get::<crate::server::InboundBytes>().cloned();
+            if let Some(f) = &inbound {
+                f.start();
+            }
             ws.max_message_size(MAX_INBOUND)
                 .max_frame_size(MAX_INBOUND)
                 .on_upgrade(move |socket| run(app, hub, socket, id, inbound))
         })
     }
 
-    fn drain(&self, jitter: Duration, rpc_wait: Duration) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    fn drain(
+        &self,
+        jitter: Duration,
+        rpc_wait: Duration,
+        transfer_bound: Duration,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         let hub = self.hub.clone();
-        Box::pin(async move { hub.drain(jitter, rpc_wait).await })
+        Box::pin(async move { hub.drain(jitter, rpc_wait, transfer_bound).await })
     }
 
     fn hub(&self) -> Option<Hub> {
@@ -463,7 +515,7 @@ fn person_of(id: &Identity) -> Option<(String, Option<Viewer>, i64)> {
     }
 }
 
-async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, inbound: Option<Arc<AtomicU64>>) {
+async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, frames: Option<crate::server::InboundBytes>) {
     let Some((person, viewer, exp)) = person_of(&id) else {
         return;
     };
@@ -496,8 +548,10 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, inbound: Optio
         pong: AtomicBool::new(true),
         quiet: app.0.tuning.socket_quiet,
         metrics: app.0.metrics.clone(),
-        consumed: AtomicU64::new(inbound.as_ref().map_or(0, |n| n.load(Ordering::SeqCst))),
-        inbound,
+        delivered: AtomicU64::new(frames.as_ref().map_or(0, crate::server::InboundBytes::complete)),
+        frames,
+        transfers: AtomicUsize::new(0),
+        parked: AtomicBool::new(false),
     });
     hub.register(&conn);
     app.0.metrics.socket_opened(conn.viewer.is_some());
@@ -564,6 +618,7 @@ async fn write_loop(
 ) -> WriterEnd {
     let mut ping = tokio::time::interval(ping_every);
     ping.tick().await;
+    let mut inbound = conn.inbound_bytes();
     loop {
         tokio::select! {
             biased;
@@ -599,7 +654,14 @@ async fn write_loop(
                 }
             }
             _ = ping.tick() => {
-                if !conn.pong.swap(false, Ordering::SeqCst) {
+                // a client part-way through sending one large frame cannot send a pong until the frame ends (a 40 MiB
+                // image at 2 Mbit/s takes 160 s), and a reader parked on a large-message slot reads none: bytes
+                // arriving and the parked wait count as alive
+                let now = conn.inbound_bytes();
+                let moving = now > inbound;
+                inbound = now;
+                let alive = conn.pong.swap(false, Ordering::SeqCst) || moving || conn.parked.load(Ordering::SeqCst);
+                if !alive {
                     tracing::info!(conn = %conn.id, "socket missed a ping");
                     return GONE;
                 }
@@ -691,9 +753,11 @@ async fn read_loop(
         };
         let Some(msg) = msg else { return };
         // busy from the moment the message is in until its handler (which counts itself) has started: taken before
-        // the arriving count resets, so the drain never sees the socket idle in between
+        // the message counts as delivered, so the drain never sees the socket idle in between
         let busy = conn.in_flight();
-        conn.received_message();
+        if matches!(msg, Ok(Message::Text(_) | Message::Binary(_))) {
+            conn.received_message();
+        }
         let text = match msg {
             Ok(Message::Text(t)) => t,
             Ok(Message::Pong(_)) => {
@@ -720,12 +784,27 @@ async fn read_loop(
             app.0.metrics.frame_dropped("rate");
             continue;
         }
-        let large = text.len() > LARGE_MESSAGE;
-        let permit = if large {
-            // pauses reading this socket until one of the large-message slots is free (the socket stays busy)
-            hub.large().acquire_owned().await.ok()
+        let transfer = (text.len() >= LARGE_SEND).then(|| conn.transfer());
+        let permit = if text.len() > LARGE_MESSAGE {
+            // pauses reading this socket until one of the large-message slots is free (the socket stays busy, and
+            // is not dropped for the pongs it does not read meanwhile); a close asked for meanwhile ends the wait
+            conn.parked.store(true, Ordering::SeqCst);
+            let permit = tokio::select! {
+                p = hub.large().acquire_owned() => p.ok(),
+                _ = close_rx.changed() => None,
+            };
+            conn.pong.store(true, Ordering::SeqCst);
+            conn.parked.store(false, Ordering::SeqCst);
+            if permit.is_none() {
+                return;
+            }
+            permit
         } else {
             None
+        };
+        let hold = Hold {
+            _permit: permit,
+            _transfer: transfer,
         };
         let Ok(frame) = serde_json::from_str::<Value>(text.as_str()) else {
             continue;
@@ -734,7 +813,7 @@ async fn read_loop(
         if !handshake::is_heartbeat(&frame) {
             conn.touched();
         }
-        handshake::frame(app, hub, conn, &frame, permit);
+        handshake::frame(app, hub, conn, &frame, hold);
         drop(busy);
     }
 }

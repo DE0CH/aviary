@@ -489,7 +489,9 @@ impl App {
                 let started = std::time::Instant::now();
                 // step 3 (sockets, request-free first) runs beside steps 2 and 4 (the listener and transfers)
                 let tuning = &app.0.tuning;
-                let sockets = app.0.socket.drain(tuning.drain_jitter, tuning.drain_rpc_wait);
+                // the socket drain resolves only when its sockets are gone: a large send arriving across the drain
+                // keeps the process up to the transfer bound like an upload does
+                let sockets = app.0.socket.drain(tuning.drain_jitter, tuning.drain_rpc_wait, bound);
                 let ((), ()) = tokio::join!(sockets, server.drain(bound));
                 let left = bound.saturating_sub(started.elapsed());
                 if tokio::time::timeout(left, app.transfers().idle()).await.is_err() {

@@ -50,13 +50,16 @@ pub trait SocketHandler: Send + Sync {
     fn upgrade(&self, app: App, req: Request, id: Identity) -> Pin<Box<dyn Future<Output = Response> + Send>>;
 
     /// Spec 11.2 step 3: closes every open socket 1012 within `jitter` (request-free ones first), each after its
-    /// in-flight requests answered or `rpc_wait` passed. The default has no sockets to close.
+    /// in-flight requests answered or `rpc_wait` passed; a socket with a large send arriving or being handled after
+    /// that send, up to `transfer_bound` from the start. Resolves when the sockets are gone (at most
+    /// `transfer_bound`). The default has no sockets to close.
     fn drain(
         &self,
         jitter: std::time::Duration,
         rpc_wait: std::time::Duration,
+        transfer_bound: std::time::Duration,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        let _ = (jitter, rpc_wait);
+        let _ = (jitter, rpc_wait, transfer_bound);
         Box::pin(async {})
     }
 

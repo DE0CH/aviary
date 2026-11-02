@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::sync::OwnedSemaphorePermit;
 
 use super::dispatch;
 use super::messages::{self, PONG, PROTOCOLS, hello_rejected, server_info, str_field};
@@ -26,8 +25,8 @@ pub fn is_heartbeat(frame: &Value) -> bool {
     }
 }
 
-/// Handles one inbound frame. `permit` is held until the frame's handler ends (large messages, 7.5.4).
-pub fn frame(app: &App, hub: &Hub, conn: &Arc<Conn>, frame: &Value, permit: Option<OwnedSemaphorePermit>) {
+/// Handles one inbound frame. `hold` is held until the frame's handler ends (large messages, 7.5.4; transfers, 11.2).
+pub fn frame(app: &App, hub: &Hub, conn: &Arc<Conn>, frame: &Value, hold: crate::paseo::transport::Hold) {
     match str_field(frame, "type") {
         Some("ping") => {
             conn.send("pong", PONG.to_owned());
@@ -41,7 +40,7 @@ pub fn frame(app: &App, hub: &Hub, conn: &Arc<Conn>, frame: &Value, permit: Opti
             let Some(message) = frame.get("message").filter(|m| m.is_object()).cloned() else {
                 return;
             };
-            dispatch::message(app, hub, conn, message, permit);
+            dispatch::message(app, hub, conn, message, hold);
         }
         _ => {}
     }

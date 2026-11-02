@@ -175,22 +175,29 @@ impl Hub {
     }
 
     /// Adds a socket; the person's change poller starts if it is not running. Beyond [`MAX_PERSON_SOCKETS`] the
-    /// person's oldest socket is closed 1008.
+    /// person's oldest socket is closed 1008. A socket whose upgrade was in flight when the drain began (after the
+    /// drain listed the sockets to close) is closed 1012 at once: it has nothing in flight yet.
     pub(crate) fn register(&self, conn: &Arc<Conn>) {
-        let oldest = {
+        let (oldest, draining) = {
             let mut st = self.st();
+            let draining = st.draining;
             st.conns.insert(conn.id, conn.clone());
             let list = st.by_person.entry(conn.person.clone()).or_default();
             list.push(conn.id);
-            if list.len() > MAX_PERSON_SOCKETS {
+            let oldest = if list.len() > MAX_PERSON_SOCKETS {
                 let id = list.remove(0);
                 st.conns.get(&id).cloned()
             } else {
                 None
-            }
+            };
+            (oldest, draining)
         };
         if let Some(old) = oldest {
             old.close(1008, "too many connections");
+        }
+        if draining {
+            conn.close_after_queued(1012, "service restart");
+            return;
         }
         self.ensure_change_poller(&conn.person);
     }
@@ -414,19 +421,18 @@ impl Hub {
         linger: Duration,
     ) -> bool {
         let key = (person.to_owned(), conversation);
-        let watched = {
-            let st = self.st();
-            if st.drained {
-                return true;
-            }
-            st.timeline.contains_key(&key)
-        };
-        // the owner decision is read without the hub's lock: an `Owners` may consult the hub
-        if watched && self.0.owners.delegate(person, &conversation).is_none() {
+        // the owner decision is read without the hub's lock (an `Owners` may consult the hub); whether anybody
+        // watches is read under the same lock as the removal, so a subscription that lands meanwhile either keeps
+        // this poller or finds it gone and starts a new one
+        let delegated = self.0.owners.delegate(person, &conversation).is_some();
+        let mut st = self.st();
+        if st.drained {
+            return true;
+        }
+        if st.timeline.contains_key(&key) && !delegated {
             *idle_since = None;
             return false;
         }
-        let mut st = self.st();
         let since = *idle_since.get_or_insert_with(Instant::now);
         if since.elapsed() >= linger {
             st.timeline_pollers.remove(&key);
@@ -488,15 +494,19 @@ impl Hub {
     /// within `jitter`, request-free sockets first (no request in flight, no message arriving, nothing but
     /// heartbeats for 5 s) in the first half, the rest in the second half once their in-flight requests have
     /// answered and their arriving messages have been handled (or `rpc_wait` passed). The 1012 follows every frame
-    /// already queued for the socket (the reply it waited for, rows). Until the sockets are gone the pollers keep
-    /// feeding them; then the pollers stop (step 5). Returns when every socket is gone, or at `jitter + rpc_wait`.
-    pub async fn drain(&self, jitter: Duration, rpc_wait: Duration) {
+    /// already queued for the socket (the reply it waited for, rows). A socket with a transfer (a large send arriving,
+    /// or read and not yet handled) is waited for up to `transfer_bound` from the start of the drain instead (spec
+    /// 11.2 step 3, 13). Until the sockets are gone the pollers keep feeding them; then the pollers stop (step 5).
+    /// Returns when every socket is gone, or at `transfer_bound`; a socket that registers after the drain began is
+    /// closed 1012 at once ([`Self::register`]).
+    pub async fn drain(&self, jitter: Duration, rpc_wait: Duration, transfer_bound: Duration) {
         let conns: Vec<Arc<Conn>> = {
             let mut st = self.st();
             st.draining = true;
             st.conns.values().cloned().collect()
         };
         let started = Instant::now();
+        let transfer_deadline = tokio::time::Instant::now() + transfer_bound;
         let half = jitter / 2;
         let mut first: Vec<Arc<Conn>> = Vec::new();
         let mut later: Vec<Arc<Conn>> = Vec::new();
@@ -513,7 +523,7 @@ impl Hub {
             tasks.spawn(async move {
                 tokio::time::sleep(at).await;
                 if !c.request_free() {
-                    c.wait_requests(rpc_wait).await;
+                    c.wait_requests(rpc_wait, transfer_deadline).await;
                 }
                 c.close_after_queued(1012, "service restart");
             });
@@ -522,12 +532,15 @@ impl Hub {
             let at = half + random_within(jitter.saturating_sub(half));
             tasks.spawn(async move {
                 tokio::time::sleep(at).await;
-                c.wait_requests(rpc_wait).await;
+                c.wait_requests(rpc_wait, transfer_deadline).await;
                 c.close_after_queued(1012, "service restart");
             });
         }
         while tasks.join_next().await.is_some() {}
-        let deadline = started + jitter + rpc_wait;
+        // every socket has been asked to close: give the last ones a moment to answer, never past the bound
+        let deadline = (started + jitter + rpc_wait)
+            .max(Instant::now() + Duration::from_secs(3))
+            .min(started + transfer_bound);
         while self.sockets() > 0 && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

@@ -171,8 +171,10 @@ impl Ws {
     }
 
     async fn read(&mut self, wait: Duration) -> Option<Value> {
+        // one deadline for the whole read: pings (answered and skipped) do not extend it
+        let deadline = tokio::time::Instant::now() + wait;
         loop {
-            let m = tokio::time::timeout(wait, self.stream.next()).await.ok()??;
+            let m = tokio::time::timeout_at(deadline, self.stream.next()).await.ok()??;
             match m {
                 Ok(Message::Text(t)) => {
                     let v: Value = serde_json::from_str(t.as_str()).unwrap();

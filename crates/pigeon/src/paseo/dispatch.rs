@@ -16,7 +16,6 @@ use magpie_api::rows::{TIMELINE_DEFAULT, TIMELINE_MAX, TimelineQuery};
 use magpie_api::turns::{AgentPermissionResponse, FileRef, ImageRef, SendRequest};
 use magpie_api::uploads::UploadKind;
 use serde_json::{Map, Value, json};
-use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
 
 use super::ProjectCtx;
@@ -133,7 +132,7 @@ fn view_as_refused(kind: &str) -> bool {
 }
 
 /// Dispatches one session message (7.3).
-pub fn message(app: &App, hub: &Hub, conn: &Arc<Conn>, m: Value, permit: Option<OwnedSemaphorePermit>) {
+pub fn message(app: &App, hub: &Hub, conn: &Arc<Conn>, m: Value, hold: crate::paseo::transport::Hold) {
     let kind = str_field(&m, "type").unwrap_or("").to_owned();
     let rid = str_field(&m, "requestId").unwrap_or("").to_owned();
     match kind.as_str() {
@@ -185,7 +184,7 @@ pub fn message(app: &App, hub: &Hub, conn: &Arc<Conn>, m: Value, permit: Option<
     };
     tokio::spawn(async move {
         let _guard = guard;
-        let _permit = permit;
+        let _hold = hold;
         let (conn, kind, rid) = (h.conn.clone(), h.kind.clone(), h.rid.clone());
         let started = std::time::Instant::now();
         let app = h.app.clone();
@@ -320,6 +319,11 @@ impl Handler {
     async fn fetch_list(&self, kind: ListKind) {
         let (limit, cursor) = self.page(magpie_api::conversations::LIST_MAX);
         let first = cursor.is_none();
+        if first && messages::subscribe(&self.m).is_some() {
+            // a subscription made again: no live change goes out until the new snapshot's join sets the floor, so
+            // no change older than the snapshot follows it (8.3)
+            self.conn.clear_floor(kind);
+        }
         let Ok(list) = self.hub.list(&self.app, &self.conn, cursor, limit).await else {
             return self.rpc_failed(self.locale().unreachable());
         };

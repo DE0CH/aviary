@@ -96,7 +96,7 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
         generation: start.generation,
         preparing: HashSet::new(),
     };
-    let mut poll = Box::pin(fetch_owned(p.app.clone(), p.person.clone(), p.pos));
+    let mut poll = step(p.app.clone(), p.person.clone(), Next::Poll(p.pos), None);
     let mut tick = tokio::time::interval(
         tuning
             .poller_linger
@@ -109,28 +109,36 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
                 Some(Ctl::Join { conn, kind, head }) => p.join(&conn, kind, head).await,
                 None => return,
             },
-            r = &mut poll => {
-                match r {
-                    Ok(page) => {
+            (next, r) = &mut poll => {
+                // the backoff after an error is a delay inside the next step's future, so joins are served
+                // meanwhile
+                let (next, delay) = match (next, r) {
+                    (Next::Poll(_), Ok(page)) => {
                         backoff.reset();
                         p.deliver(&page);
+                        (Next::Poll(p.pos), None)
                     }
-                    Err(e) if e.code() == Some(&ErrorCode::CursorExpired) => {
-                        // after a long outage: restart at the head, and make every socket re-snapshot
+                    (Next::Poll(_), Err(e)) if e.code() == Some(&ErrorCode::CursorExpired) => {
+                        // after a long outage: restart at the head, then make every socket re-snapshot
                         tracing::warn!("change feed: cursor expired; sockets re-snapshot");
-                        if let Ok(r) = fetch(&p.app, &p.person, After::Latest, false).await {
-                            p.pos = r.head_seq;
-                        }
+                        (Next::Head, None)
+                    }
+                    (Next::Head, Ok(head)) => {
+                        backoff.reset();
+                        p.pos = head.head_seq;
                         for conn in p.hub.conns_of(&p.person) {
                             conn.close_after_queued(1012, "resync");
                         }
+                        (Next::Poll(p.pos), None)
                     }
-                    Err(e) => {
+                    (next, Err(e)) => {
                         tracing::warn!(error = %e, "change feed poll failed");
-                        tokio::time::sleep(backoff.wait()).await;
+                        // a failed head read is retried (never the expired cursor again)
+                        let next = if matches!(next, Next::Head) { Next::Head } else { Next::Poll(p.pos) };
+                        (next, Some(backoff.wait()))
                     }
-                }
-                poll = Box::pin(fetch_owned(p.app.clone(), p.person.clone(), p.pos));
+                };
+                poll = step(p.app.clone(), p.person.clone(), next, delay);
             }
             _ = tick.tick() => {
                 if p.hub.change_poller_done(&p.person, &mut idle_since, tuning.poller_linger) {
@@ -141,8 +149,29 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
     }
 }
 
-async fn fetch_owned(app: App, person: String, pos: u64) -> Result<ChangesResponse, ClientError> {
-    fetch(&app, &person, After::Seq(pos), true).await
+/// What the poller's next call is.
+#[derive(Debug, Clone, Copy)]
+enum Next {
+    /// A long-poll after this position.
+    Poll(u64),
+    /// A read of the head (after the cursor expired).
+    Head,
+}
+
+type Step = std::pin::Pin<Box<dyn std::future::Future<Output = (Next, Result<ChangesResponse, ClientError>)> + Send>>;
+
+/// The next call, after `delay` (the backoff after an error).
+fn step(app: App, person: String, next: Next, delay: Option<std::time::Duration>) -> Step {
+    Box::pin(async move {
+        if let Some(d) = delay {
+            tokio::time::sleep(d).await;
+        }
+        let r = match next {
+            Next::Poll(pos) => fetch(&app, &person, After::Seq(pos), true).await,
+            Next::Head => fetch(&app, &person, After::Latest, false).await,
+        };
+        (next, r)
+    })
 }
 
 impl Poller {

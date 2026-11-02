@@ -632,7 +632,13 @@ async fn the_drain_closes_request_free_sockets_first() {
     tokio::time::sleep(Duration::from_millis(400)).await;
     let socket = e.h.app.socket();
     let drain = tokio::spawn(async move {
-        socket.drain(Duration::from_millis(1200), Duration::from_secs(3)).await;
+        socket
+            .drain(
+                Duration::from_millis(1200),
+                Duration::from_secs(3),
+                Duration::from_secs(30),
+            )
+            .await;
     });
     // the idle socket closes 1012 in the first half; the busy one waits for its send
     assert_eq!(idle.closed_code(Duration::from_secs(3)).await, Some(1012));

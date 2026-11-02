@@ -48,9 +48,11 @@ WP-50 plugs into `feeds`:
   that replacement counted as sent.
 - **Request-free first**: `Hub::drain` closes sockets with no request in flight, no message arriving and nothing but
   heartbeats for 5 s (`Tuning::socket_quiet`) in the first half of the 15 s jitter; the rest in the second half once
-  their requests have answered and their arriving messages have been handled (at most 10 s). Each 1012 follows the
-  frames already queued (the reply it waited for). The pollers keep feeding open sockets until the drain ends.
-  `Conn::request_free` is the same test for the move.
+  their requests have answered (at most 10 s) and their transfers have ended (a large send arriving, or read and not
+  yet handled: up to the 300 s transfer bound from SIGTERM, spec 11.2 step 3 and 13). Each 1012 follows the frames
+  already queued (the reply it waited for). The pollers keep feeding open sockets until the drain ends, and the drain
+  (so the process) ends only when the sockets are gone or at the transfer bound. A socket whose upgrade was in
+  flight at SIGTERM is closed 1012 as it registers. `Conn::request_free` is the same test for the move.
 
 ## Deviations (recorded)
 
@@ -76,7 +78,11 @@ WP-50 plugs into `feeds`:
   404 on every path, and `/ops` forwards the checked path encoded again, so hermit sees exactly the path pigeon
   checked (no dot segment, `?` or `#` appears on the way).
 - **Drain test at CI scale** (spec 18.3): the upload across a drain is 4 MiB at about 2 MiB/s with the drain
-  0.5 s in, not 50 MiB at 2 Mbit/s (210 s).
+  0.5 s in, not 50 MiB at 2 Mbit/s (210 s). The image send across a drain runs in CI as 12 MiB over about 5 s with the
+  request wait at 1 s (so the send outlasts jitter + request wait), and at the spec's scale as an ignored test:
+  `cargo test -p pigeon --test transport a_40_mib -- --ignored --nocapture` (40 MiB at 2 Mbit/s, SIGTERM 10 s in,
+  pigeon's own 15 s / 10 s / 300 s): on the shared build runner (2026-11-02) the send took 168.1 s, its reply came,
+  then its 1012, and the drain ended 170.5 s after the send began.
 
 - **Socket message types** (spec 18.1): pigeon's frames are built as JSON in the app's schema shapes, not
   hand-written serde types checked with the `jsonschema` crate. The drift protection is the frame corpus instead:
@@ -103,10 +109,14 @@ WP-50 plugs into `feeds`:
   scripted answer (`testing/fakes/tests/timeline_query.rs`).
 - **Updated rows**: a tool row updated before the poll read it is sent once, with its latest `seqEnd` (M9 `after`
   returns rows by `seqEnd`); the app sees a gap and fetches, as spec 8.3 describes for joins.
-- **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so the listener counts
-  the bytes read on each connection (`server::InboundBytes`): a socket with more than 256 KiB received past its last
-  whole message is busy (a message arriving), and so is one whose message waits for a large-message slot, until its
-  handler ends (bounded by the 10 s request wait).
+- **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so the listener reads
+  each upgraded connection's bytes through a parser of the client's frame headers (`server::InboundBytes`,
+  `server::WsFrames`: opcode, FIN and payload length, payloads skipped): a message is arriving from its first header
+  byte until the reader has it whole. A socket with a message arriving, or with a large send (256 KiB or more) read
+  and not yet handled (waiting for a large-message slot included), has a transfer: the drain waits for it up to the
+  transfer bound, not the 10 s request bound. While a client sends one long frame it cannot send a pong, and a reader
+  parked on a large-message slot reads none, so inbound bytes and the parked wait count as alive at the ping check;
+  a close asked for while parked ends the wait.
 
 ## Throughput (spec 8.6)
 
