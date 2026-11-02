@@ -3,7 +3,7 @@
 //! name of up to 255 bytes still fits beside it; created `O_EXCL|O_NOFOLLOW` as the agent, so the file is the
 //! agent's), checked against its sha256, and renamed onto its name. The bytes are written on blocking threads whose
 //! filesystem ids are root's: the workspace quota still applies because it is the workspace directory's own
-//! (hermit's `JuiceFS` directory quota, hermit 15.5), which counts every writer; a per-uid quota would not bind those
+//! (hermit's directory quota, hermit 15.5), which counts every writer; a per-uid quota would not bind those
 //! writes. The tests inject `EDQUOT` rather than run on a quota-enabled filesystem. A symlinked `/workspace` or `/workspace/uploads` is refused. A blob read that fails in a
 //! way a retry may cure (no answer, a reset mid-stream, 429 or 5xx: a magpie or gateway replica draining, spec 19)
 //! is retried with the reports' backoff until the start's deadline (inside magpie's 120 s `starting` watchdog),
