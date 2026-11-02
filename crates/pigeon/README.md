@@ -132,10 +132,14 @@ WP-50 plugs into `feeds`:
 
 ## Throughput (spec 8.6)
 
-`cargo test --release -p pigeon --test socket bench -- --ignored --nocapture`, on the shared build runner pinned to
-two CPUs (`taskset -c 0,1`) that also run the 5 000 client sockets and the in-memory magpie: 5 000 sockets open in
-1.8 s; 20 000 frames to 1 000 watching sockets in 10 s (2 000 frames/s): latency p50 21.3 ms, p99 73.4 ms, max
-123.5 ms (2026-11-02). Unpinned (16 CPUs): p50 12.2 ms, p99 59.1 ms.
+`taskset -c 1-15 cargo test --release -p pigeon --test socket bench_fanout -- --ignored --nocapture` on the shared
+build runner (16 CPUs), with pigeon alone on CPU 0 (spec 13: a replica's CPU limit is 1): its whole tokio runtime (one
+worker, its blocking threads, the listener, every socket and poller) is pinned there, while the 5 000 client sockets
+and the in-memory magpie run on the other 15. 5 000 sockets open in 2.0-2.2 s; 20 000 frames (a row every 0.5 s to
+each of 20 conversations, each watched by 50 sockets: 2 000 frames/s of fan-out, with 100 change pollers and 20
+timeline pollers running) reach 1 000 sockets in 10.0 s: latency p50 16.6 / 19.4 ms, p99 170.4 / 161.9 ms, max
+208.7 / 201.1 ms over two runs (2026-11-02). The spec's target is p99 ≤ 300 ms. In CI, `fan_out_latency_guard`
+(200 sockets, 500 frames/s, debug build) fails if a frame is lost or the p99 reaches 1 s.
 
 ## Tests
 

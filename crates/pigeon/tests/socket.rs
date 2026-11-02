@@ -1457,15 +1457,58 @@ fn merge_frame_corpus() {
     println!("{} shapes added", common::corpus::merge_missing());
 }
 
+/// Pins the calling thread to the CPUs `cpus` names (`taskset` on the thread's own id).
+fn pin_thread(cpus: &str) {
+    let me = std::fs::read_link("/proc/thread-self").unwrap();
+    let tid = me.file_name().unwrap().to_string_lossy().into_owned();
+    let out = std::process::Command::new("taskset")
+        .args(["-pc", cpus, &tid])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// [`env`] with pigeon alone on one CPU (spec 8.6 and 13: a replica has a CPU limit of 1): its whole runtime (one
+/// worker, its blocking threads, the listener, every socket and poller) runs on threads pinned to `cpu`, while the
+/// in-memory magpie and the clients run on the test's own runtime, which the caller keeps off that CPU.
+async fn env_pinned(cpu: &'static str) -> Env {
+    let m = Model::default();
+    let served = model::serve(&m).await;
+    let url = served.url();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        pin_thread(cpu);
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .on_thread_start(move || pin_thread(cpu))
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let h = Harness::start_opts(Opts {
+                tuning: fast(),
+                magpie: Some(url),
+                ..Opts::default()
+            })
+            .await;
+            let _ = tx.send(h);
+            std::future::pending::<()>().await;
+        });
+    });
+    let h = rx.await.unwrap();
+    Env { h, m, _served: served }
+}
+
 /// Spec 8.6's throughput target, recorded in the crate README: 5 000 open sockets on one replica (100 people, 50
 /// sockets each, under the 64 per person), 1 000 of them (20 people) watching their person's conversation, a row
-/// appended to each of the 20 conversations every 0.5 s for 10 s: 2 000 frames/s of fan-out. Run with
-/// `cargo test --release -p pigeon --test socket bench -- --ignored --nocapture` (file descriptor limit above
-/// 12 000).
+/// appended to each of the 20 conversations every 0.5 s for 10 s: 2 000 frames/s of fan-out. pigeon runs alone on
+/// CPU 0 (`env_pinned`); the clients and magpie on the others. Run with
+/// `taskset -c 1-15 cargo test --release -p pigeon --test socket bench_fanout -- --ignored --nocapture` (file
+/// descriptor limit above 12 000).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "benchmark"]
 async fn bench_fanout() {
-    let e = env().await;
+    let e = env_pinned("0").await;
     let started = std::time::Instant::now();
     let mut idle = Vec::new();
     let mut readers = Vec::new();
@@ -1545,5 +1588,70 @@ async fn bench_fanout() {
         p(1.0)
     );
     assert_eq!(all.len(), 20_000);
+    let (change, timeline) = e.h.app.hub().unwrap().pollers();
+    eprintln!("pollers: {change} change, {timeline} timeline");
+    drop(idle);
+}
+
+/// A small guard on the fan-out path in CI: 200 sockets, 50 of them watching 5 conversations, 10 rows each, a row
+/// every 50 ms to every conversation (500 frames/s): every frame arrives, and the 99th percentile latency stays under
+/// 1 s on a debug build (the benchmark's own figures are in the README).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fan_out_latency_guard() {
+    let e = env().await;
+    let rows = 10u64;
+    let mut readers = Vec::new();
+    let mut idle = Vec::new();
+    let mut convs = Vec::new();
+    for person in 0..5 {
+        let email = format!("g{person}@example.org");
+        let c = e.m.add(&email, None);
+        let token = e.h.token(&email);
+        for i in 0..40 {
+            let mut ws = Ws::hello(&e.h.url, &token, "").await.0;
+            if i < 10 {
+                watch(&mut ws, &[c]).await;
+                readers.push(tokio::spawn(async move {
+                    let mut lat = Vec::new();
+                    for _ in 0..rows {
+                        let v = ws.wait_for("row", |v| is_stream(v, c)).await;
+                        let sent: u128 = v["message"]["payload"]["event"]["item"]["text"]
+                            .as_str()
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_micros();
+                        lat.push(now - sent);
+                    }
+                    lat
+                }));
+            } else {
+                idle.push(ws);
+            }
+        }
+        convs.push(c);
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    for _ in 0..rows {
+        for c in &convs {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_micros();
+            e.m.row(*c, None, assistant(&now.to_string()));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let mut all = Vec::new();
+    for r in readers {
+        all.extend(r.await.unwrap());
+    }
+    all.sort_unstable();
+    assert_eq!(all.len(), 500);
+    let p99 = all[all.len() * 99 / 100 - 1];
+    assert!(p99 < 1_000_000, "p99 {p99} us");
     drop(idle);
 }
