@@ -57,10 +57,10 @@ export interface ExaSearchArgs {
   textChars?: number;
 }
 
-const exaBase = (deps: Deps) => (deps.config.tools.exa as { baseUrl?: string } | undefined)?.baseUrl ?? "https://api.exa.ai";
+const exaBase = (deps: Deps) => deps.config.exa?.baseUrl ?? "https://api.exa.ai";
 
 export async function exaSearch(deps: Deps, a: ExaSearchArgs): Promise<{ hits: ExaHit[]; costUsd?: number }> {
-  const k = key(deps, deps.config.tools.exa?.keyEnv, "Web search (Exa)");
+  const k = key(deps, deps.config.exa?.keyEnv, "Web search (Exa)");
   const body: Record<string, unknown> = {
     query: a.query,
     type: "auto",
@@ -90,7 +90,7 @@ export async function exaSearch(deps: Deps, a: ExaSearchArgs): Promise<{ hits: E
 
 /** Exa /contents: the page's text from Exa's crawl; `fresh` asks for a live crawl. Null when Exa has no text for it. */
 export async function exaContents(deps: Deps, url: string, fresh: boolean): Promise<{ title: string; url: string; text: string; publishedDate?: string; costUsd?: number } | null> {
-  const k = key(deps, deps.config.tools.exa?.keyEnv, "Page reading (Exa)");
+  const k = key(deps, deps.config.exa?.keyEnv, "Page reading (Exa)");
   const r = await callJson<ExaResponse>(deps.fetch, "Exa", `${exaBase(deps)}/contents`, {
     method: "POST",
     headers: { "x-api-key": k, "content-type": "application/json" },
@@ -333,8 +333,8 @@ function dedupeNewest(items: SocialPost[]): SocialPost[] {
 }
 
 export async function tikhubSearch(deps: Deps, platform: string, keyword: string): Promise<{ posts: SocialPost[]; costUsd: number }> {
-  const k = key(deps, deps.config.tools.tikhub?.keyEnv, "Social platform search (TikHub)");
-  const base = (deps.config.tools.tikhub as { baseUrl?: string } | undefined)?.baseUrl ?? "https://api.tikhub.io";
+  const k = key(deps, deps.config.tikhub?.keyEnv, "Social platform search (TikHub)");
+  const base = deps.config.tikhub?.baseUrl ?? "https://api.tikhub.io";
   let ad: Adapter | undefined = ADAPTERS[platform];
   if (!ad) throw new Error(`unknown platform ${platform}`);
   let lastErr: Error | null = null;
@@ -366,12 +366,12 @@ export async function tikhubSearch(deps: Deps, platform: string, keyword: string
 export const ANYAPI_SKU = /^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_.-]*$/;
 
 function anyapiBase(deps: Deps): string {
-  return (deps.config.tools.anyapi?.baseUrl ?? "https://api.getanyapi.com").replace(/\/$/, "");
+  return (deps.config.anyapi?.baseUrl ?? "https://api.getanyapi.com").replace(/\/$/, "");
 }
 
 /** AnyAPI's refusals in words the model can pass on (its JSON error body: {error, code}). */
 async function anyapiCall<T>(deps: Deps, path: string, init: RequestInit, timeoutMs: number): Promise<T> {
-  const k = key(deps, deps.config.tools.anyapi?.keyEnv, "AnyAPI");
+  const k = key(deps, deps.config.anyapi?.keyEnv, "AnyAPI");
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {

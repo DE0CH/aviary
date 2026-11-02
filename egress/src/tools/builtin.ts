@@ -151,12 +151,12 @@ export const webFetch: ToolDef = {
     const max = int(args, "max_chars", 20000, 1000, 200000);
     const cut = (s: string) => (s.length > max ? `${s.slice(0, max)}\n\n[… cut at ${max} characters of ${s.length}; ask with a larger max_chars for more]` : s);
     let costUsd: number | undefined;
-    const own = ctx.deps.config.tools.capture;
+    const own = ctx.deps.config.capture;
     if (own && !args.raw_html && args.original !== true) {
       const c = await ownCapture(ctx.deps, own, u.toString()).catch(() => null);  // unreachable or failed: read the page as before
       if (c && (c.kind === "cache" || c.kind === "capture")) return ownCaptureResult(c, own.name, u.toString(), cut);
     }
-    if (!args.raw_html && ctx.deps.config.tools.exa) {
+    if (!args.raw_html && ctx.deps.config.exa) {
       try {
         const p = await exaContents(ctx.deps, u.toString(), args.fresh === true);
         if (p) {
@@ -213,7 +213,7 @@ export const socialSearch: ToolDef = {
   annotations: { title: "Search social platforms", readOnlyHint: true, openWorldHint: true },
   async run(args, ctx) {
     const platform = str(args, "platform", true).toLowerCase();
-    const allowed = (ctx.deps.config.tools.tikhub as { platforms?: string[] } | undefined)?.platforms ?? Object.keys(PLATFORMS);
+    const allowed = ctx.deps.config.tikhub?.platforms ?? Object.keys(PLATFORMS);
     if (!PLATFORMS[platform] || !allowed.includes(platform)) throw new ToolInputError(`platform must be one of ${allowed.join(", ")}`);
     const r = await tikhubSearch(ctx.deps, platform, str(args, "query", true));
     const posts = r.posts.slice(0, int(args, "limit", 15, 1, 30));
@@ -266,7 +266,7 @@ function priceText(p: unknown): string {
 function skuOf(args: Record<string, unknown>, deps: Deps): string {
   const sku = str(args, "api", true).trim().toLowerCase();
   if (!ANYAPI_SKU.test(sku)) throw new ToolInputError("api is a catalog id like facebook.search_posts (find one with anyapi_search)");
-  if ((deps.config.tools.anyapi?.denySkus ?? []).includes(sku)) throw new ToolInputError(`${sku} is not offered here`);
+  if ((deps.config.anyapi?.denySkus ?? []).includes(sku)) throw new ToolInputError(`${sku} is not offered here`);
   return sku;
 }
 
@@ -308,7 +308,7 @@ export const anyapiSearchTool: ToolDef = {
   annotations: { title: "Find a data API (AnyAPI)", readOnlyHint: true, openWorldHint: true },
   async run(args, ctx) {
     const r = await anyapiSearch(ctx.deps, { query: str(args, "query", true), platform: str(args, "platform") || undefined, limit: int(args, "limit", 10, 1, 30) });
-    const deny = new Set(ctx.deps.config.tools.anyapi?.denySkus ?? []);
+    const deny = new Set(ctx.deps.config.anyapi?.denySkus ?? []);
     const hits = r.results.filter((h) => !deny.has(String(h.id ?? h.sku ?? h.slug ?? "")));
     if (!hits.length) return text("No matching API. Try other words, or a wider description of the data.");
     const lines = hits.map((h, i) => {

@@ -1,108 +1,380 @@
-// The tools role end to end on the real local Postgres, with every outside service faked (test/fakes/tools-upstreams.ts):
-// auth by a live sandbox's egress token (what Claude Code sends through egress), the MCP methods, each built-in tool,
-// upstream proxying with its read-only allowlist, and tool_calls logging.
+// The tools role on the new contract (aviary platform spec 17.2 tools), end to end on the real local Postgres (its own
+// `tools` database), with every outside service faked (test/fakes/tools-upstreams.ts; hermit's liveness here): only
+// the gateway's bearers, the owner from Aviary-Sandbox-Person, the staff catalogue, hermit's liveness with its stale
+// view during an outage, the MCP methods, each built-in tool, upstream proxying with its read-only allowlist, tool_calls
+// logging (dropped, never waited on, while the database is away) and the drain.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { parseConfig } from "../src/common/config.ts";
-import { newToken, sha256hex } from "../src/common/tokens.ts";
+import pg from "pg";
+import { hermitGetter } from "../src/egress/tokens.ts";
+import { Catalogue, parseCatalogue } from "../src/tools/catalogue.ts";
+import { checkConfigEnv, parseToolsConfig } from "../src/tools/config.ts";
+import { CallLog, connect, migrate, MIGRATIONS } from "../src/tools/db.ts";
+import { Liveness } from "../src/tools/liveness.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
-import { createToolsServer, toolList } from "../src/tools/server.ts";
-import type { Deps } from "../src/tools/types.ts";
+import { acceptList, createToolsServer, DRAIN_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
+import type { Deps, ToolDef } from "../src/tools/types.ts";
 import { pickResponse, readOnlyAllowed, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
-import { freshDb } from "./pg.ts";
 
-let t: Awaited<ReturnType<typeof freshDb>>;
+const GW = "gateway-pair-token-current";
+const GW_NEXT = "gateway-pair-token-next";
+const HERMIT_BEARER = "tools-to-hermit";
+const owner = "staff@yyc.hk";
+
+/** A fresh, migrated `tools` database on the local Postgres (TEST_DATABASE_URL). */
+async function freshToolsDb(name: string): Promise<{ db: pg.Pool; url: string; drop(): Promise<void> }> {
+  const admin = process.env.TEST_DATABASE_URL || "postgres://claude:dev@127.0.0.1:5432/postgres";
+  const dbName = `tools_test_${name}_${process.pid}`;
+  const c = new pg.Client({ connectionString: admin });
+  await c.connect();
+  await c.query(`drop database if exists ${dbName} with (force)`);
+  await c.query(`create database ${dbName}`);
+  await c.end();
+  const u = new URL(admin);
+  u.pathname = `/${dbName}`;
+  const db = connect(u.toString());
+  await migrate(db);
+  return {
+    db,
+    url: u.toString(),
+    async drop() {
+      await db.end();
+      const c2 = new pg.Client({ connectionString: admin });
+      await c2.connect();
+      await c2.query(`drop database if exists ${dbName} with (force)`);
+      await c2.end();
+    },
+  };
+}
+
+type Live = { state: string; live: boolean; conversationId: string; person: string } | "unknown";
+
+/** hermit's `GET /v1/sandbox-tokens/{id}` (hermit-api TokenLiveness), with an outage switch. */
+class FakeHermit {
+  readonly answers = new Map<string, Live>();
+  readonly lookups = new Map<string, number>();
+  outage: "up" | "reset" | "hang" | "unavailable" = "up";
+  server: Server;
+  url = "";
+  constructor() {
+    this.server = createServer((req, res) => {
+      if (this.outage === "reset") return void req.socket.destroy();
+      if (this.outage === "hang") return;
+      if (this.outage === "unavailable") return void res.writeHead(503).end('{"code":"unavailable"}');
+      if (req.headers.authorization !== `Bearer ${HERMIT_BEARER}`) return void res.writeHead(401).end('{"code":"unauthenticated"}');
+      const m = /^\/v1\/sandbox-tokens\/([0-9a-f-]{36})$/.exec(req.url ?? "");
+      if (!m) return void res.writeHead(404).end();
+      const id = m[1]!;
+      this.lookups.set(id, (this.lookups.get(id) ?? 0) + 1);
+      const a = this.answers.get(id);
+      if (!a || a === "unknown") return void res.writeHead(404, { "content-type": "application/json" }).end('{"code":"unknown_sandbox"}');
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ sandboxId: id, ...a, expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+    });
+  }
+  async listen(): Promise<void> {
+    await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
+    this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
+  }
+}
+
+interface Sbx {
+  id: string;
+  conversationId: string;
+  person: string;
+}
+
+let t: Awaited<ReturnType<typeof freshToolsDb>>;
 let fakes: Fakes;
+let hermit: FakeHermit;
 let deps: Deps;
 let url = "";
-let close: () => Promise<void>;
-const owner = "staff@yyc.hk";
-let conv = "";
-let token = "";
+let srv: ToolsServer;
+let clock = Date.now();
+let liveness: Liveness;
+let calls: CallLog;
+let dir = "";
+let sbx: Sbx;
 
-/** A sandbox row as the web role makes one (status, owner); returns its egress token. */
-async function newSandbox(status = "ready", who: string | null = owner, conversation = conv): Promise<string> {
-  const id = randomUUID();
-  const tok = newToken();
-  await t.db.query(
-    "insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at, owner, user_key) values ($1,$2,$3,$4,'x',$5,now() + interval '1 hour',$6,'u1')",
-    [id, conversation, `sbx-${id.slice(0, 8)}`, sha256hex(tok), status, who],
-  );
-  return tok;
+/** A sandbox hermit knows (ready unless said otherwise). */
+function sandbox(o: Partial<Sbx> & { state?: string; live?: boolean } = {}): Sbx {
+  const s = { id: o.id ?? randomUUID(), conversationId: o.conversationId ?? randomUUID(), person: o.person ?? owner };
+  hermit.answers.set(s.id, { state: o.state ?? "ready", live: o.live ?? (o.state ?? "ready") !== "gone", conversationId: s.conversationId, person: s.person });
+  return s;
 }
 
-async function rpc(method: string, params: Record<string, unknown> = {}, tok = token): Promise<{ status: number; body: any }> {
-  const r = await fetch(`${url}/mcp`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const s = await r.text();
-  return { status: r.status, body: s ? JSON.parse(s) : null };
+/** The headers the gateway sends on a `tools` call for a verified sandbox (platform 3.11.3). */
+function gw(s: Sbx, bearer = GW, request = "0190f6c2-0000-7000-8000-000000000001"): Record<string, string> {
+  return {
+    authorization: `Bearer ${bearer}`,
+    "aviary-sandbox-id": s.id,
+    "aviary-sandbox-conversation": s.conversationId,
+    "aviary-sandbox-person": s.person,
+    "aviary-request": request,
+    "content-type": "application/json",
+  };
 }
 
+async function rpc(method: string, params: Record<string, unknown> = {}, s: Sbx = sbx, headers?: Record<string, string>): Promise<{ status: number; body: any }> {
+  const r = await fetch(`${url}/mcp`, { method: "POST", headers: headers ?? gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  const text = await r.text();
+  return { status: r.status, body: text ? JSON.parse(text) : null };
+}
+
+/** A query on the tools database once the tool_calls rows in flight are written. */
+const q = async (sql: string) => {
+  await calls.flush();
+  return t.db.query(sql);
+};
 const call = async (name: string, args: Record<string, unknown>) => (await rpc("tools/call", { name, arguments: args })).body.result;
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("");
 
-before(async () => {
-  t = await freshDb("tools");
-  fakes = await startFakes();
-  conv = randomUUID();
-  token = await newSandbox();
-  const config = parseConfig({
-    product: { name: "YYC AI" },
-    publicUrl: "https://ai.example.org",
-    access: { teamDomain: "t.cloudflareaccess.com", audience: "aud" },
-    users: [owner],
-    admins: ["admin@yyc.hk"],
-    models: [{ id: "m", label: "M" }],
-    defaultModel: "m",
-    systemPromptFile: "/x",
-    sandbox: { image: "img" },
-    egress: { defaultAllowedHosts: ["pypi.org", ".githubusercontent.com"] },
-    tools: {
-      exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
-      tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
-      anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
-      capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
-      upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"] }],
+/** A slow tool (for the drain tests): answers after `ms`. */
+const slowUpstream = {
+  cfg: { prefix: "slow" },
+  tools: (): ToolDef[] => [
+    {
+      name: "slow_wait",
+      description: "waits",
+      inputSchema: { type: "object" },
+      run: async (args) => {
+        await new Promise((r) => setTimeout(r, Number(args.ms ?? 0)));
+        return { content: [{ type: "text", text: "waited" }] };
+      },
     },
+  ],
+} as unknown as Upstream;
+
+const catalogueFile = () => join(dir, "catalogue.json");
+
+async function startServer(o: { calls?: CallLog } = {}): Promise<{ srv: ToolsServer; url: string }> {
+  const catalogue = new Catalogue(catalogueFile());
+  assert.equal(await catalogue.reload(), true);
+  const ups = deps.config.upstreams.map((u) => new Upstream(u, deps));
+  for (const u of ups) await u.refresh();
+  const s = createToolsServer(deps, [...ups, slowUpstream], { accept: acceptList({ TOOLS_ACCEPT_GATEWAY: `${GW},${GW_NEXT}` }), liveness, catalogue, calls: o.calls ?? calls });
+  await new Promise<void>((r) => s.server.listen(0, "127.0.0.1", r));
+  return { srv: s, url: `http://127.0.0.1:${(s.server.address() as AddressInfo).port}` };
+}
+
+before(async () => {
+  t = await freshToolsDb("main");
+  fakes = await startFakes();
+  hermit = new FakeHermit();
+  await hermit.listen();
+  dir = mkdtempSync(join(tmpdir(), "tools-test-"));
+  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@yyc.hk", "guest@example.org"], admins: ["admin@yyc.hk"] }));
+  const config = parseToolsConfig({
+    exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
+    tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
+    anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
+    capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
+    upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"], listAs: "Lister@yyc.hk" }],
   });
   deps = {
     config,
-    db: t.db,
     env: { EXA_KEY: "exa-key", TIK_KEY: "tik-key", ANY_KEY: "any-key", UP_TOKEN: "up", CAP: "cap-token" },
     fetch: globalThis.fetch,
     resolve: async () => ({ address: "127.0.0.1", family: 4 }),
     fetchPorts: "any",
   };
-  const ups = config.tools.upstreams.map((u) => new Upstream(u, deps));
-  for (const u of ups) await u.refresh("admin@yyc.hk");
-  const s = createToolsServer(deps, ups);
-  await new Promise<void>((r) => s.server.listen(0, "127.0.0.1", r));
-  url = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
-  close = () => s.drain(1000);
+  liveness = new Liveness(hermitGetter(hermit.url, HERMIT_BEARER), () => clock);
+  calls = new CallLog(t.db);
+  ({ srv, url } = await startServer());
+  sbx = sandbox();
 });
 
 after(async () => {
-  await close();
+  await srv.drain(1000);
+  await calls.flush();
   await fakes.close();
+  hermit.server.closeAllConnections();
+  hermit.server.close();
   await t.drop();
+  rmSync(dir, { recursive: true, force: true });
 });
 
-test("auth: a live sandbox's egress token only", async () => {
-  assert.equal((await rpc("tools/list", {}, "")).status, 401);
-  assert.equal((await rpc("tools/list", {}, "nope")).status, 401);
-  assert.equal((await rpc("tools/list", {}, await newSandbox("gone"))).status, 401, "a released sandbox");
-  assert.equal((await rpc("tools/list", {}, await newSandbox("ready", null, randomUUID()))).status, 401, "a row from before Claude Code (no owner)");
+test("caller: only the gateway's bearers (either during a rotation); the Aviary-Sandbox-* headers are required", async () => {
+  const h = gw(sbx);
+  assert.equal((await rpc("tools/list", {}, sbx, { ...h, authorization: "" })).status, 401);
+  const wrong = await rpc("tools/list", {}, sbx, { ...h, authorization: "Bearer nope" });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.body.code, "unauthenticated");
+  // the old credential (a sandbox's own egress token) is not a gateway bearer
+  assert.equal((await rpc("tools/list", {}, sbx, { ...h, authorization: `Bearer ${randomUUID()}` })).status, 401);
   assert.equal((await rpc("tools/list")).status, 200);
-  await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } });
-  const { rows } = await t.db.query("select conversation_id, user_email, turn_id from tool_calls order by id desc limit 1");
-  assert.deepEqual(rows[0], { conversation_id: conv, user_email: owner, turn_id: null });
+  assert.equal((await rpc("tools/list", {}, sbx, gw(sbx, GW_NEXT))).status, 200, "the next bearer of a rotation");
+  for (const k of ["aviary-sandbox-id", "aviary-sandbox-conversation", "aviary-sandbox-person"]) {
+    const { [k]: _, ...rest } = h;
+    const r = await rpc("tools/list", {}, sbx, rest);
+    assert.equal(r.status, 400, k);
+    assert.equal(r.body.code, "bad_request");
+  }
+  assert.throws(() => acceptList({}), /TOOLS_ACCEPT_GATEWAY is not set/);
+  assert.throws(() => acceptList({ TOOLS_ACCEPT_GATEWAY: "a," }), /empty entry/);
+});
+
+test("owner: Aviary-Sandbox-Person (lowercased) fills tool_calls; the catalogue and hermit's state decide who is served", async () => {
+  const s = sandbox({ person: owner });
+  const request = "0190f6c2-0000-7000-8000-0000000000aa";
+  const r = await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } }, s, { ...gw(s, GW, request), "aviary-sandbox-person": "Staff@YYC.hk" });
+  assert.equal(r.status, 200);
+  await calls.flush();
+  const { rows } = await q("select conversation_id, sandbox_id, user_email, request, turn_id from tool_calls order by id desc limit 1");
+  assert.deepEqual(rows[0], { conversation_id: s.conversationId, sandbox_id: s.id, user_email: owner, request, turn_id: null });
+
+  // only starting and ready sandboxes are served
+  assert.equal((await rpc("tools/list", {}, sandbox({ state: "starting" }))).status, 200);
+  for (const state of ["releasing", "paused", "gone"]) {
+    const res = await rpc("tools/list", {}, sandbox({ state, live: state !== "gone" }));
+    assert.equal(res.status, 403, state);
+    assert.equal(res.body.code, "not_allowed");
+    assert.match(res.body.message, new RegExp(state));
+  }
+  // hermit does not know the sandbox (404), or it says another conversation or person
+  const unknown = sandbox();
+  hermit.answers.set(unknown.id, "unknown");
+  assert.equal((await rpc("tools/list", {}, unknown)).status, 403);
+  const theirs = sandbox();
+  assert.equal((await rpc("tools/list", {}, { ...theirs, person: "staff2@yyc.hk" })).status, 403, "another person");
+  assert.equal((await rpc("tools/list", {}, { ...theirs, conversationId: randomUUID() })).status, 403, "another conversation");
+  // a person the catalogue does not list
+  const outsider = sandbox({ person: "someone@else.example" });
+  const res = await rpc("tools/list", {}, outsider);
+  assert.equal(res.status, 403);
+  assert.match(res.body.message, /may not use/);
+  assert.equal((await rpc("tools/list", {}, sandbox({ person: "guest@example.org" }))).status, 200, "an explicit address");
+});
+
+test("liveness: cached 30 s; a hermit outage serves the last answer whatever its age; revocation lands after the TTL", async () => {
+  const s = sandbox();
+  assert.equal((await rpc("tools/list", {}, s)).status, 200);
+  assert.equal(hermit.lookups.get(s.id), 1);
+  assert.equal((await rpc("tools/list", {}, s)).status, 200);
+  assert.equal(hermit.lookups.get(s.id), 1, "cached");
+  for (const outage of ["reset", "unavailable", "hang"] as const) {
+    hermit.outage = outage;
+    clock += 3_600_000; // far past the TTL: the stale answer is served, a refresh runs in the background and fails
+    const t0 = Date.now();
+    const r = await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } }, s);
+    assert.equal(r.status, 200, outage);
+    assert.ok(Date.now() - t0 < 900, `${outage}: the call does not wait for hermit`);
+    await new Promise((r) => setTimeout(r, 1100)); // let the background lookup time out
+    clock += 2500; // past the retry pause
+  }
+  // a sandbox first seen during the outage: admitted on the gateway's verification (the lookup times out at 1 s)
+  hermit.outage = "reset";
+  assert.equal((await rpc("tools/list", {}, sandbox())).status, 200);
+  hermit.outage = "up";
+  // hermit back, the sandbox released: refused once the TTL has passed and the background refresh has landed
+  hermit.answers.set(s.id, { state: "releasing", live: true, conversationId: s.conversationId, person: s.person });
+  clock += 31_000;
+  await rpc("tools/list", {}, s); // starts the refresh (served on the old answer)
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await rpc("tools/list", {}, s)).status, 403);
+  assert.ok(liveness.failures >= 3);
+});
+
+test("tool_calls: a database outage drops the row and never delays the call", async () => {
+  const dead = connect("postgres://tools:x@127.0.0.1:1/tools");
+  const deadLog = new CallLog(dead);
+  const other = await startServer({ calls: deadLog });
+  try {
+    const s = sandbox();
+    const t0 = Date.now();
+    const r = await fetch(`${other.url}/mcp`, { method: "POST", headers: gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 0 } } }) });
+    assert.equal(r.status, 200);
+    assert.equal(textOf(((await r.json()) as any).result), "waited");
+    assert.ok(Date.now() - t0 < 1000);
+    await deadLog.flush();
+    assert.equal(deadLog.dropped, 1);
+  } finally {
+    await other.srv.drain(1000);
+    await dead.end();
+  }
+});
+
+/** One request on a kept-alive connection of `agent` (node:http, so Connection headers are visible). */
+function post(base: string, s: Sbx, body: unknown, agent: import("node:http").Agent): Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string }> {
+  const u = new URL(`${base}/mcp`);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST", headers: gw(s), agent }, (res) => {
+      let b = "";
+      res.on("data", (c) => (b += c));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: b }));
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
+test("drain: 150 s bound; in-flight calls finish, a kept-alive request is answered with Connection: close, the rest is cut", async () => {
+  assert.equal(DRAIN_MS, 150_000);
+  const { Agent } = await import("node:http");
+  const s = sandbox();
+  const one = await startServer();
+  const agent = new Agent({ keepAlive: true, maxSockets: 2 });
+  try {
+    const slowCall = (ms: number) => ({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms } } });
+    // two kept-alive connections: one busy with a 600 ms call, one idle after a quick call
+    await post(one.url, s, slowCall(0), agent);
+    const inflight = post(one.url, s, slowCall(600), agent);
+    await new Promise((r) => setTimeout(r, 50));
+    const drained = one.srv.drain(5000);
+    const r = await inflight;
+    assert.equal(r.status, 200);
+    assert.match(r.body, /waited/);
+    assert.equal(r.headers.connection, "close", "the answer during the drain closes its connection");
+    assert.equal(await drained, 0, "nothing cut");
+    await assert.rejects(fetch(`${one.url}/mcp`, { method: "POST", headers: gw(s), body: "{}" }), "no new connections after the drain");
+  } finally {
+    agent.destroy();
+  }
+  // a call longer than the bound is cut and counted
+  const two = await startServer();
+  const p = fetch(`${two.url}/mcp`, { method: "POST", headers: gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 5000 } } }) }).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await two.srv.drain(300), 1);
+  assert.ok((await p) instanceof Error);
+  assert.ok(two.srv.metrics().includes("tools_drain_cut_total 1"));
+});
+
+test("config, catalogue and migrations", async () => {
+  assert.throws(() => parseToolsConfig({ upstreams: [{ prefix: "y", url: "http://u", headers: {} }] }), /listAs/);
+  assert.throws(() => parseToolsConfig({ upstreams: [{ prefix: "y", url: "http://u", headers: {}, listAs: "a@b.c" }, { prefix: "y", url: "http://v", headers: {}, listAs: "a@b.c" }] }), /twice/);
+  assert.equal(parseToolsConfig({ upstreams: [{ prefix: "y", url: "http://u", headers: {}, listAs: " A@B.c " }] }).upstreams[0]!.listAs, "a@b.c");
+  assert.throws(() => checkConfigEnv(deps.config, {}), /EXA_KEY/);
+  assert.throws(() => checkConfigEnv(deps.config, { ...deps.env, UP_TOKEN: "" }), /UP_TOKEN/);
+  checkConfigEnv(deps.config, deps.env);
+
+  assert.deepEqual(parseCatalogue('{"users": ["@yyc.hk", "A@x.org"], "admins": ["a@x.org"]}'), { users: ["@yyc.hk", "a@x.org"], admins: ["a@x.org"] });
+  assert.ok("refused" in parseCatalogue('{"users": []}'));
+  assert.ok("refused" in parseCatalogue('{"users": ["@yyc.hk"], "admins": ["b@x.org"]}'), "an admin users does not match");
+  assert.ok("refused" in parseCatalogue("not json"));
+  // a refused file keeps the last good catalogue
+  const c = new Catalogue(catalogueFile());
+  assert.equal(await c.reload(), true);
+  writeFileSync(catalogueFile(), '{"users": []}');
+  assert.equal(await c.reload(), true);
+  assert.equal(c.allowed(owner), true);
+  assert.equal(c.refused, 1);
+  assert.equal(c.allowed("x@sub.yyc.hk"), false, "no subdomain matching");
+  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@yyc.hk", "guest@example.org"], admins: ["admin@yyc.hk"] }));
+  assert.equal(new Catalogue(join(dir, "missing.json")).loaded, false);
+  assert.equal(await new Catalogue(join(dir, "missing.json")).reload(), false);
+
+  // migrations: applied once, idempotent, an edited history refused, a newer database accepted
+  assert.deepEqual(await migrate(t.db), []);
+  await assert.rejects(migrate(t.db, [MIGRATIONS[0] + "-- edited"]), /was edited/);
+  assert.deepEqual(await migrate(t.db, []), []);
 });
 
 test("MCP: initialize, ping, list, unknown method, notifications, batch", async () => {
@@ -113,13 +385,13 @@ test("MCP: initialize, ping, list, unknown method, notifications, batch", async 
   assert.deepEqual((await rpc("ping")).body.result, {});
   assert.equal((await rpc("nope/nope")).body.error.code, -32601);
   const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
-  assert.deepEqual(names, ["web_search", "web_fetch", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search", "slow_wait"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names");
-  const note = await fetch(`${url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
+  const note = await fetch(`${url}/mcp`, { method: "POST", headers: gw(sbx), body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
   const batch = await fetch(`${url}/mcp`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}` },
+    headers: gw(sbx),
     body: JSON.stringify([{ jsonrpc: "2.0", id: 7, method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }]),
   });
   assert.deepEqual(await batch.json(), [{ jsonrpc: "2.0", id: 7, result: {} }]);
@@ -131,11 +403,11 @@ test("web_search: Exa results as text, cost logged in tool_calls", async () => {
   const req = fakes.seen.filter((s) => s.path === "/exa/search").at(-1)!;
   assert.equal(req.body.startPublishedDate, "2026-10-01T00:00:00.000Z");
   assert.deepEqual(req.body.includeDomains, ["www.info.gov.hk"]);
-  const { rows } = await t.db.query("select * from tool_calls where tool = 'web_search' order by id desc limit 1");
+  const { rows } = await q("select * from tool_calls where tool = 'web_search' order by id desc limit 1");
   assert.equal(rows[0].user_email, owner);
   assert.equal(rows[0].ok, true);
   assert.equal(Number(rows[0].cost_usd), 0.007);
-  assert.equal(rows[0].conversation_id, conv);
+  assert.equal(rows[0].conversation_id, sbx.conversationId);
   const bad = await call("web_search", { query: "x", since: "yesterday" });
   assert.equal(bad.isError, true);
   assert.match(textOf(bad), /YYYY-MM-DD/);
@@ -194,12 +466,12 @@ test("anyapi: find an API, read its input, run it (cost logged), re-read the res
   const run = fakes.seen.findLast((x) => x.path.startsWith("/anyapi/v1/run/"))!;
   assert.equal(run.path, "/anyapi/v1/run/facebook.profile_posts?max_items=2");
   assert.deepEqual(run.body, { url: "https://facebook.com/hkgov" });
-  const { rows } = await t.db.query("select cost_usd, ok from tool_calls where tool = 'anyapi_run' order by id desc limit 1");
+  const { rows } = await q("select cost_usd, ok from tool_calls where tool = 'anyapi_run' order by id desc limit 1");
   assert.deepEqual(rows[0], { cost_usd: "0.0012", ok: true });
   const again = await call("anyapi_result", { result_id: "res_123", fields: "text" });
   assert.match(textOf(again), /re-read, free/);
   assert.doesNotMatch(textOf(again), /Cost:/, "a re-read costs nothing and is not counted again");
-  assert.equal((await t.db.query("select cost_usd from tool_calls where tool = 'anyapi_result' order by id desc limit 1")).rows[0].cost_usd, null);
+  assert.equal((await q("select cost_usd from tool_calls where tool = 'anyapi_result' order by id desc limit 1")).rows[0].cost_usd, null);
   // refusals: a bad id, a denied API, AnyAPI's own input error, an empty balance
   assert.equal((await call("anyapi_run", { api: "../v1/balance", input: {} })).isError, true);
   assert.match(textOf(await call("anyapi_run", { api: "facebook.marketplace", input: {} })), /not offered here/);
@@ -218,15 +490,24 @@ test("social_search: TikHub posts, fallback endpoint, platform check", async () 
   const wb = await call("social_search", { platform: "weibo", query: "香港" });
   assert.match(textOf(wb), /博主 · 2026-10-15 02:00 UTC[\s\S]*微博 內容[\s\S]*likes 12000/);
   assert.equal((await call("social_search", { platform: "myspace", query: "x" })).isError, true);
-  const { rows } = await t.db.query("select cost_usd from tool_calls where tool = 'social_search' and ok order by id desc limit 1");
+  const { rows } = await q("select cost_usd from tool_calls where tool = 'social_search' and ok order by id desc limit 1");
   assert.equal(Number(rows[0].cost_usd), 0.001);
 });
 
 test("upstream MCP: listed read-only tools are proxied with the staff member's identity; everything else is hidden", async () => {
   const r = await call("yyc_posts_search", { query: "x" });
+  // the owner the gateway named (Aviary-Sandbox-Person) reaches yyc-mcp as X-YYC-User
   assert.equal(textOf(r), `called posts_search for ${owner}`);
   const up = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/call").at(-1)!;
   assert.equal(up.headers.authorization, "Bearer up");
+  assert.equal(up.headers["x-yyc-user"], owner);
+  // another person's sandbox: their own email, never the listing identity or another caller's
+  const other = sandbox({ person: "other@yyc.hk" });
+  const r2 = (await rpc("tools/call", { name: "yyc_posts_search", arguments: { query: "y" } }, other)).body.result;
+  assert.equal(textOf(r2), "called posts_search for other@yyc.hk");
+  // the tool list is read as the upstream's listAs
+  const listing = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/list").at(-1)!;
+  assert.equal(listing.headers["x-yyc-user"], "lister@yyc.hk");
 
   // not listed (Send-Mail, a new read-only tool) or listed but marked as writing (post_delete): never offered, never run
   const before = fakes.seen.filter((s) => s.body?.method === "tools/call").length;
@@ -238,7 +519,7 @@ test("upstream MCP: listed read-only tools are proxied with the staff member's i
   assert.equal(fakes.seen.filter((s) => s.body?.method === "tools/call").length, before, "never forwarded");
 
   // default deny: an upstream without a `tools` list offers nothing
-  const bare = { prefix: "z", url: "http://x", headers: {} };
+  const bare: { tools?: string[] } = {};
   assert.equal(readOnlyAllowed(bare, { name: "posts_search", annotations: { readOnlyHint: true } }), false);
   const listed = { ...bare, tools: ["a"] };
   assert.equal(readOnlyAllowed(listed, { name: "a" }), true);
@@ -257,5 +538,5 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("garbage"), null);
   assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
-  assert.deepEqual(toolList({ ...deps, config: { ...deps.config, tools: { upstreams: [] } } }, []).map((d) => d.name), ["web_fetch"]);
+  assert.deepEqual(toolList({ ...deps, config: { upstreams: [] } }, []).map((d) => d.name), ["web_fetch"]);
 });

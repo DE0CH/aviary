@@ -16,19 +16,3 @@ export function bearerOf(header: string | string[] | undefined): string {
   const m = /^Bearer\s+(\S+)$/i.exec(h || "");
   return m ? m[1]! : "";
 }
-
-/**
- * The sandbox an egress token belongs to, with its conversation and owner (docs/CLAUDE-CODE.md: Claude Code calls our
- * MCP tools through egress with its sandbox's token, which egress passes on).
- */
-export async function sandboxForToken(
-  db: { query: (q: string, v: unknown[]) => Promise<{ rows: any[] }> },
-  token: string,
-): Promise<{ conversation_id: string; owner: string } | null> {
-  if (!token) return null;
-  const { rows } = await db.query(
-    `select conversation_id, owner from sandboxes where egress_token_hash = $1 and status in ('starting','ready') and owner is not null`,
-    [sha256hex(token)],
-  );
-  return rows[0] ? { conversation_id: rows[0].conversation_id, owner: rows[0].owner } : null;
-}

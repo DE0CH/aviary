@@ -3,7 +3,8 @@
 // `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The tool list is read at startup and every
 // 10 minutes (a failed refresh keeps the last good list). Streamable HTTP client: JSON or SSE answers, a session id
 // when the server hands one out.
-import { expandEnv, type UpstreamMcp } from "../common/config.ts";
+import { expandEnv } from "../common/config.ts";
+import type { UpstreamMcp } from "./config.ts";
 import { logError, log } from "../common/log.ts";
 import type { Annotations, Content, Deps, ToolDef, ToolResult } from "./types.ts";
 
@@ -107,8 +108,8 @@ export class Upstream {
       .catch(() => {});
   }
 
-  /** Re-read the tool list (as `listUser`: the identity used for listing). */
-  async refresh(listUser: string): Promise<void> {
+  /** Re-read the tool list (as `listUser`, default the upstream's `listAs`). */
+  async refresh(listUser = this.cfg.listAs): Promise<void> {
     const tools: UpstreamTool[] = [];
     let cursor: string | undefined;
     for (let i = 0; i < 20; i++) {
@@ -132,7 +133,7 @@ export class Upstream {
       ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}),
       ...(t.annotations ? { annotations: t.annotations } : {}),
       run: async (args, ctx): Promise<ToolResult> => {
-        const r = await this.#rpc(ctx.caller.owner, "tools/call", { name: t.name, arguments: args });
+        const r = await this.#rpc(ctx.caller.person, "tools/call", { name: t.name, arguments: args });
         return {
           content: (Array.isArray(r?.content) ? r.content : [{ type: "text", text: JSON.stringify(r ?? null) }]) as Content[],
           ...(r?.isError ? { isError: true } : {}),
@@ -144,15 +145,16 @@ export class Upstream {
 }
 
 /** Is an upstream tool offered: named in the upstream's `tools` list and not marked as writing by the upstream. */
-export function readOnlyAllowed(cfg: UpstreamMcp, t: { name: string; annotations?: Annotations }): boolean {
+export function readOnlyAllowed(cfg: Pick<UpstreamMcp, "tools">, t: { name: string; annotations?: Annotations }): boolean {
   if (!(cfg.tools ?? []).includes(t.name)) return false;
   return t.annotations?.readOnlyHint !== false && t.annotations?.destructiveHint !== true;
 }
 
-/** Keep every upstream's list fresh: now, then every `everyMs`; a failure is logged and the old list stays. */
-export function startRefresh(ups: Upstream[], listUser: string, everyMs = 600_000): { stop(): void; ready: Promise<void> } {
+/** Keep every upstream's list fresh (each read as its `listAs`): now, then every `everyMs`; a failure is logged and the
+ * old list stays. */
+export function startRefresh(ups: Upstream[], everyMs = 600_000): { stop(): void; ready: Promise<void> } {
   const once = () =>
-    Promise.all(ups.map((u) => u.refresh(listUser).catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix })))).then(() => {});
+    Promise.all(ups.map((u) => u.refresh().catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix })))).then(() => {});
   const ready = once();
   const t = setInterval(once, everyMs);
   t.unref();

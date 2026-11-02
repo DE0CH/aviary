@@ -1,12 +1,16 @@
 // What every tool of the tools server is (docs/CHAT.md, "tools"): an MCP tool definition plus the function that runs it
 // for one call. Results are MCP content; costUsd (when the provider reports one) goes into tool_calls.
-import type { ChatConfig } from "../common/config.ts";
-import type { Db } from "../common/db.ts";
+import type { ToolsConfig } from "./config.ts";
 
-/** Who is calling: Claude Code in a sandbox, identified by its sandbox's egress token (docs/CLAUDE-CODE.md). */
+/** Who is calling: Claude Code in a sandbox, as the gateway verified it (its pair bearer plus the `Aviary-Sandbox-*`
+ * headers, aviary platform spec 3.11.3). */
 export interface Caller {
-  conversation_id: string;
-  owner: string;
+  sandboxId: string;
+  conversationId: string;
+  /** the owner's trimmed, lowercased email (`Aviary-Sandbox-Person`): ${USER_EMAIL} in upstream headers */
+  person: string;
+  /** `Aviary-Request` */
+  request: string | null;
 }
 
 export type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | Record<string, unknown>;
@@ -37,8 +41,7 @@ export interface ToolDef {
 }
 
 export interface Deps {
-  config: ChatConfig;
-  db: Db;
+  config: ToolsConfig;
   env: Record<string, string | undefined>;
   fetch: typeof fetch;
   /** Address check for web_fetch's direct path (tests reach local fakes through it). */
