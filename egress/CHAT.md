@@ -527,7 +527,10 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   the page as before (Exa, then directly). YYC: its news monitor (news-stream webfetch.py). `tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
   every 10 minutes as the upstream's `listAs` (`${USER_EMAIL}` = that address while listing, the sandbox's owner on
-  calls); a failed read keeps the last list.
+  calls); a failed read keeps the last list. An upstream with no list yet (its first read failed or hung) is read
+  again after 5 s, 10 s, 30 s, 1, 2 and 5 minutes, then every 10 minutes: Claude Code reads the tool list once per
+  conversation, so a conversation started meanwhile never sees that upstream's tools (`tools_upstream_tools{prefix}`
+  shows each upstream's count; alert on 0).
 - Config `/etc/tools/tools.json` (ConfigMap `tools-config`), the old shared config's `tools` section plus `listAs`:
 
   ```json
@@ -542,21 +545,27 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   config names.
 - Health on 9090: `/healthz`, `/readyz` (503 until migrations are applied, the catalogue has been read once and the
   first upstream refresh has run (bounded at 10 s per upstream: one that fails or hangs offers no tools until a later
-  refresh works), and while draining; never for a database or hermit outage later), `/metrics`
+  read, with the backoff above, works), and while draining; never for a database or hermit outage later), `/metrics`
   (`tools_requests_total{status}`, `tools_calls_total{ok}`,
   `tools_liveness_lookup_failures_total{reason="unreachable"|"unavailable"|"auth"|"bad_answer"}`,
   `tools_liveness_auth_fault`, `tools_liveness_stale_served_total`, `tools_catalogue_refused_total`,
-  `tools_tool_calls_dropped_total`, `tools_drain_cut_total`), `/version`.
-- Liveness: calls for a sandbox with no answer yet wait for the one lookup in flight (at most 1 s), so calls that
-  arrive together are judged on the same answer. hermit answering 401 or 403 is a configuration fault
+  `tools_tool_calls_dropped_total`, `tools_drain_cut_total`, `tools_upstream_tools{prefix}`), `/version`.
+- The catalogue (`/etc/tools/catalogue/catalogue.json`) is validated by hermit's rules exactly (hermit 3.4.1; the
+  cases are aviary's `crates/hermit/fixtures/catalogue-cases.json`, copied byte for byte to
+  `chat/test/fixtures/` and compared in chat.yml), so a file `hermit catalogue-check` passes is never refused here.
+- A request body over 2 MB is answered 413 `too_large` with `Connection: close` once the body has been read.
+- Liveness: only a sandbox's first lookup is waited for (at most 1 s), by the first call and those that arrive while
+  it runs, so calls that arrive together are judged on the same answer; after a failed lookup, calls are admitted at
+  once on the gateway's verification and the lookup is retried in the background (platform 3.11.2 step 3). hermit answering 401 or 403 is a configuration fault
   (`TOOLS_TOKEN_HERMIT`, or hermit not yet accepting it): logged once a minute, counted under `reason="auth"`,
-  `tools_liveness_auth_fault 1` while it lasts. Calls are then served as in a hermit outage (platform 3.11.2: a
+  `tools_liveness_auth_fault 1` until hermit next answers 200 or 404 (an outage in between leaves it set). Calls are then served as in a hermit outage (platform 3.11.2: a
   hermit problem never refuses a token the gateway verified) and the pod stays ready; alert on the gauge.
 - Drain (SIGTERM after the 10 s preStop): `/readyz` 503, no new connections, a request on a kept-alive connection is
   served with `Connection: close`, in-flight calls finish up to 150 s (an upstream call's own timeout is 120 s), what
   is left is cut and counted (each cut tool call is aborted and its `tool_calls` row written, `ok` false, error "cut by
-  the drain"), exit 0 with log `drained`. `terminationGracePeriodSeconds` 180. The bound is code, not
-  configuration.
+  the drain"), the pending rows are written within 8 s (rows still unwritten count as dropped), the pool closes within
+  2 s, exit 0 with log `drained`. `terminationGracePeriodSeconds` 180: 10 + 150 + 8 + 2 = 170 s even with the database
+  blackholed. The bounds are code, not configuration.
 
 ## Deploying an instance
 
