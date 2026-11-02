@@ -768,6 +768,35 @@ fn lease_lost_and_not_current_without_a_restart_loop() {
 }
 
 #[test]
+fn the_quota_is_edquot_and_reported() {
+    let w = world();
+    let fs = w.fs(fast());
+    let core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    w.magpie.set_quota(4);
+    assert_eq!(
+        s.call(op::WRITE, t, PID, &body::write(fh, 0, b"12345\n")).errno,
+        libc::EDQUOT
+    );
+    assert!(core.quota_exceeded());
+    w.magpie.set_quota(1 << 30);
+    ok(
+        &s.call(op::WRITE, t, PID, &body::write(fh, 0, b"12345\n")),
+        "under the quota",
+    );
+    assert!(!core.quota_exceeded());
+    // a line over the cap (the fake refuses a body over 16 MiB with too_large) would be EFBIG: the map is unit-tested
+}
+
+#[test]
 fn boot_id_per_connection() {
     let dir = std::env::temp_dir().join(format!("boot-{}", Uuid::new_v4()));
     assert!(matches!(

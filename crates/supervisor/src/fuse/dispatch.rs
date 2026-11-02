@@ -112,6 +112,8 @@ pub struct Core {
     idle: (Mutex<()>, Condvar),
     hooks: RwLock<Hooks>,
     relocking: AtomicBool,
+    /// A write answered EDQUOT (the heartbeat's `cc.quotaExceeded`, 9.10).
+    quota_exceeded: AtomicBool,
     dead: AtomicBool,
     stopped: AtomicBool,
     started_ns: i64,
@@ -183,6 +185,7 @@ impl Core {
             idle: (Mutex::new(()), Condvar::new()),
             hooks: RwLock::new(a.hooks),
             relocking: AtomicBool::new(false),
+            quota_exceeded: AtomicBool::new(false),
             dead: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             started_ns: now_ns(),
@@ -238,6 +241,12 @@ impl Core {
     #[must_use]
     pub fn boot(&self) -> Uuid {
         self.boot
+    }
+
+    /// Whether the last state change magpie answered was refused for the quota (the heartbeat reports it).
+    #[must_use]
+    pub fn quota_exceeded(&self) -> bool {
+        self.quota_exceeded.load(Ordering::SeqCst)
     }
 
     #[must_use]
@@ -1059,6 +1068,11 @@ impl Core {
             *effect = true;
         }
         match &r {
+            Ok(_) => self.quota_exceeded.store(false, Ordering::SeqCst),
+            Err(CallError::Errno(e)) if *e == libc::EDQUOT => {
+                tracing::warn!(what, "magpie quota exceeded");
+                self.quota_exceeded.store(true, Ordering::SeqCst);
+            }
             Err(CallError::LeaseLost) => self.on_lease_lost(),
             Err(CallError::Stuck(msg)) => {
                 (self.hooks().write_stuck)(StuckOp {
