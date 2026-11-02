@@ -151,6 +151,9 @@ pub const CLOCK_TICK: Duration = Duration::from_secs(1);
 /// The part of a release's deadline kept for the final `released` activity report: the stop and the settle end
 /// this long before it.
 pub const RELEASE_FINAL_RESERVE: Duration = Duration::from_secs(1);
+/// The end of [`RELEASE_FINAL_RESERVE`] kept for the unmount: the final report's attempts end this long before the
+/// deadline.
+pub const RELEASE_UNMOUNT_RESERVE: Duration = Duration::from_millis(200);
 /// What the SIGTERM release leaves of [`KEEPER_STOP_GRACE`] for the exit itself.
 pub const SIGTERM_MARGIN: Duration = Duration::from_secs(2);
 /// The deadline of the forced release a SIGTERM starts (4.7): it ends before the keeper's SIGKILL. A running turn's

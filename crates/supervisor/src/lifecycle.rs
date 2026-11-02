@@ -29,9 +29,12 @@ use uuid::Uuid;
 use hermit_api::sandbox::{ReleaseCallCode, ReleaseReason};
 
 use crate::limits::{
-    CLOCK_JUMP, CLOCK_TICK, INTERRUPT_GRACE, KILL_AFTER_TERM, RELEASE_FINAL_RESERVE, SIGTERM_RELEASE_DEADLINE,
-    STDIN_CLOSE_GRACE,
+    CLOCK_JUMP, CLOCK_TICK, INTERRUPT_GRACE, KILL_AFTER_TERM, RELEASE_FINAL_RESERVE, RELEASE_UNMOUNT_RESERVE,
+    SIGTERM_RELEASE_DEADLINE, STDIN_CLOSE_GRACE,
 };
+
+/// How often `RELEASED` is retried when the keeper did not take it.
+const KEEPER_TELL_RETRY: Duration = Duration::from_millis(100);
 
 /// A boxed future (the traits are used as objects).
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -110,7 +113,8 @@ impl std::fmt::Debug for AttachContext {
 /// The Claude Code driver (WP-23), as the lifecycle needs it.
 pub trait Agent: Send + Sync + 'static {
     /// Writes the managed files on a first start, re-attaches to the live generation on a restart (or pre-spawns
-    /// one), and starts the command poll and the heartbeat (4.3 steps 4, 8, 9).
+    /// one), and starts the command poll and the heartbeat (4.3 steps 4, 8, 9). The future is dropped when a release
+    /// begins meanwhile: `end_turn` and `stop` then end whatever it had started (a spawned generation included).
     fn attach(&self, ctx: AttachContext) -> BoxFuture<'_, ()>;
     /// The run state, updated on every change.
     fn status(&self) -> watch::Receiver<RunStatus>;
@@ -220,12 +224,15 @@ pub fn sigterm_release() -> ReleaseRequest {
 }
 
 /// When each step of a release must be done, from its deadline `D` (15.5): the final `released` report gets
-/// [`RELEASE_FINAL_RESERVE`] before `D`; the stop and the settle end by then; a running turn's interrupt gets at
-/// most [`INTERRUPT_GRACE`] and never more than leaves the stop its 5 s + 3 s.
+/// [`RELEASE_FINAL_RESERVE`] before `D`, less [`RELEASE_UNMOUNT_RESERVE`] at the end for the unmount; the stop and
+/// the settle end by then; a running turn's interrupt gets at most [`INTERRUPT_GRACE`] and never more than leaves
+/// the stop its 5 s + 3 s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReleaseTimes {
     pub interrupt_by: Instant,
     pub settle_by: Instant,
+    /// The final report's last attempt ends here.
+    pub report_by: Instant,
     pub deadline: Instant,
 }
 
@@ -236,9 +243,14 @@ impl ReleaseTimes {
         let settle_by = deadline.checked_sub(RELEASE_FINAL_RESERVE).unwrap_or(now).max(now);
         let stop = STDIN_CLOSE_GRACE + KILL_AFTER_TERM;
         let interrupt_by = (now + INTERRUPT_GRACE).min(settle_by.checked_sub(stop).unwrap_or(now).max(now));
+        let report_by = deadline
+            .checked_sub(RELEASE_UNMOUNT_RESERVE)
+            .unwrap_or(now)
+            .max(settle_by);
         Self {
             interrupt_by,
             settle_by,
+            report_by,
             deadline,
         }
     }
@@ -260,13 +272,15 @@ pub struct Lifecycle {
     /// woken with `notify_one`, so a wake while a report is in flight is kept for the next wait.
     pub(crate) activity_now: Notify,
     /// Held by the start sequence while it checks the phase and attaches the agent; a release takes it before it
-    /// stops the agent, so `attach` never runs once a release has begun (and a stop never overtakes an attach).
+    /// stops the agent, so `attach` never runs once a release has begun (an attach in progress is dropped first,
+    /// and a stop never runs beside it).
     boot_gate: tokio::sync::Mutex<()>,
     /// `true` once a release sequence has finished (the process may exit).
     done: watch::Sender<bool>,
-    /// The released marker the keeper reads ([`crate::keeper::RELEASED_NAME`]), written when the phase becomes
-    /// `released`.
-    marker: Mutex<Option<std::path::PathBuf>>,
+    /// Tells the keeper the release is final (`RELEASED`), when the phase becomes `released`.
+    tell_keeper: Mutex<Option<Hook>>,
+    /// `true` once the keeper has it: only then may the process exit 0 (an exit 0 it does not know of is restarted).
+    keeper_told: watch::Sender<bool>,
     /// The epoch of the lease the start sequence took (4.3 step 5).
     lease_epoch: Mutex<Option<u64>>,
     /// The descriptor re-read hook (set by the start sequence).
@@ -277,6 +291,9 @@ pub struct Lifecycle {
 
 /// The hook that re-reads hermit's descriptor.
 pub type Refresh = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// A hook that tells the keeper the release is final; `true` once the keeper answered.
+pub type Hook = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// The hook that sends the final `released` activity report, retried until the deadline it is given.
 pub type FinalReport = Arc<dyn Fn(Instant) -> BoxFuture<'static, ()> + Send + Sync>;
@@ -304,7 +321,8 @@ impl Lifecycle {
             activity_now: Notify::new(),
             boot_gate: tokio::sync::Mutex::new(()),
             done: watch::channel(false).0,
-            marker: Mutex::new(None),
+            tell_keeper: Mutex::new(None),
+            keeper_told: watch::channel(false).0,
             lease_epoch: Mutex::new(None),
             refresh: Mutex::new(None),
             final_report: Mutex::new(None),
@@ -371,9 +389,30 @@ impl Lifecycle {
         s
     }
 
-    /// Where the released marker goes.
-    pub fn set_released_marker(&self, path: std::path::PathBuf) {
-        *self.marker.lock().unwrap_or_else(PoisonError::into_inner) = Some(path);
+    /// Sets how the keeper is told the release is final (without one, the process may exit as soon as released).
+    pub fn on_released(&self, f: Hook) {
+        *self.tell_keeper.lock().unwrap_or_else(PoisonError::into_inner) = Some(f);
+    }
+
+    /// Tells the keeper, retrying until it answers ([`KEEPER_TELL_RETRY`]); the process does not exit before that.
+    fn tell_keeper(&self) {
+        let hook = self.tell_keeper.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let Some(f) = hook else {
+            self.keeper_told.send_replace(true);
+            return;
+        };
+        let told = self.keeper_told.clone();
+        tokio::spawn(async move {
+            let mut logged = false;
+            while !f().await {
+                if !logged {
+                    tracing::error!("the keeper did not take RELEASED: retrying; the supervisor does not exit before");
+                    logged = true;
+                }
+                tokio::time::sleep(KEEPER_TELL_RETRY).await;
+            }
+            told.send_replace(true);
+        });
     }
 
     /// The lease the start sequence took.
@@ -386,28 +425,31 @@ impl Lifecycle {
         *self.lease_epoch.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A supervisor started after its predecessor finished a release (the marker is there): released at once, no
-    /// turn admitted, nothing to stop.
+    /// A supervisor started after its predecessor finished a release (the keeper says so): released at once, no
+    /// turn admitted, nothing to stop; the keeper knows already.
     pub fn mark_released(&self) {
         *self.admission.lock().unwrap_or_else(PoisonError::into_inner) = false;
         self.phase.send_replace(Phase::Released);
         self.done.send_replace(true);
+        self.keeper_told.send_replace(true);
     }
 
-    /// Waits until a release sequence has finished.
+    /// Waits until a release sequence has finished and the keeper knows it is final.
     pub async fn wait_released(&self) {
-        let mut rx = self.done.subscribe();
-        let _ = rx.wait_for(|d| *d).await;
+        let _ = self.done.subscribe().wait_for(|d| *d).await;
+        let _ = self.keeper_told.subscribe().wait_for(|d| *d).await;
     }
 
-    /// Runs `attach` (4.3 steps 8-9) unless a release has begun; `false` (and `attach` not run) when one has.
+    /// Runs `attach` (4.3 steps 8-9) unless a release has begun; `false` when one has, before it or meanwhile (an
+    /// attach in progress is then dropped, so a release never waits on a slow attach).
     pub async fn attach_unless_released(&self, attach: impl Future<Output = ()>) -> bool {
         let _gate = self.boot_gate.lock().await;
-        if matches!(self.phase(), Phase::Releasing | Phase::Released) {
-            return false;
+        let mut phases = self.phases();
+        tokio::select! {
+            biased;
+            _ = phases.wait_for(|p| matches!(p, Phase::Releasing | Phase::Released)) => false,
+            () = attach => true,
         }
-        attach.await;
-        true
     }
 
     /// Sets the hook that re-reads hermit's descriptor (after a restore).
@@ -464,8 +506,14 @@ impl Lifecycle {
         tracing::info!(reason = %req.reason, force = req.force, "lifecycle release");
         let times = ReleaseTimes::new(Instant::now(), req.deadline_ms);
         self.phase.send_replace(Phase::Releasing);
-        // an attach in progress finishes first; none starts after this
-        drop(self.boot_gate.lock().await);
+        // an attach in progress sees the phase and is dropped; none starts after this. Bounded all the same: the
+        // stop must keep its time whatever an attach does
+        if tokio::time::timeout_at(times.interrupt_by, self.boot_gate.lock())
+            .await
+            .is_err()
+        {
+            tracing::warn!("release: the attach did not give way in time");
+        }
         if req.force && status.state.is_busy() {
             self.agent
                 .end_turn(req.reason.as_str().to_owned(), times.interrupt_by)
@@ -476,16 +524,11 @@ impl Lifecycle {
             tracing::warn!("release: FUSE operations still blocked at the deadline");
         }
         self.phase.send_replace(Phase::Released);
-        let marker = self.marker.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        if let Some(m) = marker
-            && let Err(e) = std::fs::write(&m, b"released\n")
-        {
-            tracing::error!(error = %e, path = %m.display(), "released marker not written");
-        }
+        self.tell_keeper();
         self.activity_now.notify_one();
         let report = self.final_report.lock().unwrap_or_else(PoisonError::into_inner).clone();
         if let Some(f) = report {
-            f(times.deadline).await;
+            f(times.report_by).await;
         }
         self.fs.unmount().await;
         self.done.send_replace(true);
@@ -509,9 +552,18 @@ impl Lifecycle {
                 Outcome::Done
             }
             PrepareKind::Pause => {
+                // a release in progress: not quiesced yet, so not ready (409 sandbox_busy); a finished release
+                // has stopped everything and unmounted, so a checkpoint of it is safe
+                match self.phase() {
+                    Phase::Releasing => return Outcome::Busy(self.agent.status().borrow().summary()),
+                    Phase::Released => return Outcome::Done,
+                    _ => {}
+                }
                 let _one = self.release_lock.lock().await;
-                if matches!(self.phase(), Phase::Releasing | Phase::Released) {
-                    return Outcome::Done;
+                match self.phase() {
+                    Phase::Releasing => return Outcome::Busy(self.agent.status().borrow().summary()),
+                    Phase::Released => return Outcome::Done,
+                    _ => {}
                 }
                 if let Err(busy) = self.close_admission_if(req.force) {
                     return Outcome::Busy(busy.summary());
@@ -889,24 +941,71 @@ pub(crate) mod tests {
         assert_eq!(l.phase(), Phase::Serving);
     }
 
-    #[tokio::test]
-    async fn no_attach_once_a_release_has_begun_and_no_stop_before_an_attach_ends() {
+    #[tokio::test(start_paused = true)]
+    async fn no_attach_once_a_release_has_begun_and_an_attach_in_progress_gives_way() {
         // a release first: attach is not run
         let agent = FakeAgent::new();
         let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
         assert_eq!(l.release(release(false)).await, Outcome::Done);
         assert!(!l.attach_unless_released(agent.attach_ctx_free()).await);
         assert_eq!(agent.log(), vec!["stop"]);
-        // an attach in progress: the release waits for it, then stops
+        // an attach that hangs (a transcript prefetch, magpie away): a SIGTERM release drops it and still ends
+        // within its deadline; the stop runs after the attach is gone, never beside it
         let agent = FakeAgent::new();
-        agent.attach_ms.store(300, Ordering::SeqCst);
+        agent.attach_ms.store(u32::MAX, Ordering::SeqCst);
         let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
         let (l2, a2) = (l.clone(), agent.clone());
         let attach = tokio::spawn(async move { l2.attach_unless_released(a2.attach_ctx_free()).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(l.release(release(true)).await, Outcome::Done);
-        assert!(attach.await.unwrap());
-        assert_eq!(agent.log(), vec!["attach", "stop"]);
+        let t0 = Instant::now();
+        assert_eq!(l.release(sigterm_release()).await, Outcome::Done);
+        assert!(t0.elapsed() < SIGTERM_RELEASE_DEADLINE, "{:?}", t0.elapsed());
+        assert!(!attach.await.unwrap(), "the attach was dropped");
+        assert_eq!(agent.log(), vec!["stop"]);
+    }
+
+    #[tokio::test]
+    async fn the_process_exits_only_once_the_keeper_took_released() {
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        let tries = Arc::new(AtomicU32::new(0));
+        let t = tries.clone();
+        // the keeper refuses twice (its connections full, say)
+        l.on_released(Arc::new(move || {
+            let t = t.clone();
+            Box::pin(async move { t.fetch_add(1, Ordering::SeqCst) >= 2 })
+        }));
+        assert_eq!(l.release(release(false)).await, Outcome::Done);
+        assert_eq!(l.phase(), Phase::Released);
+        tokio::time::timeout(Duration::from_secs(5), l.wait_released())
+            .await
+            .unwrap();
+        assert_eq!(tries.load(Ordering::SeqCst), 3);
+        // never taken: no exit
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        l.on_released(Arc::new(|| Box::pin(async { false })));
+        assert_eq!(l.release(release(false)).await, Outcome::Done);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), l.wait_released())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pause_during_a_release_is_busy_and_after_it_ready() {
+        let agent = FakeAgent::new();
+        agent.slow.store(true, Ordering::SeqCst);
+        let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
+        ready(&l);
+        let l2 = l.clone();
+        let rel = tokio::spawn(async move { l2.release(release(false)).await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(l.phase(), Phase::Releasing);
+        assert!(matches!(l.prepare(pause(false)).await, Outcome::Busy(_)));
+        assert!(matches!(l.prepare(pause(true)).await, Outcome::Busy(_)));
+        assert!(!agent.log().contains(&"quiesce".to_owned()));
+        assert_eq!(rel.await.unwrap(), Outcome::Done);
+        assert_eq!(l.prepare(pause(false)).await, Outcome::Done);
     }
 
     #[test]
@@ -919,6 +1018,7 @@ pub(crate) mod tests {
         assert_eq!(t.deadline - now, Duration::from_secs(18));
         assert_eq!(t.settle_by - now, Duration::from_secs(17));
         assert_eq!(t.interrupt_by - now, Duration::from_secs(9));
+        assert_eq!(t.report_by - now, Duration::from_millis(17_800));
         // a deadline shorter than the stop: everything at once, nothing before now
         let t = ReleaseTimes::new(now, 500);
         assert_eq!((t.interrupt_by, t.settle_by), (now, now));

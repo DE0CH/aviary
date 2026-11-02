@@ -1,10 +1,12 @@
 //! The supervisor's start, on every start, first or after a restart (supervisor 4.3), and its shutdown (4.7).
 //!
-//! 0. SIGTERM is handled from the first moment: a forced release at any step.
+//! 0. SIGTERM and SIGINT are handled from the first moment: a forced release at any step. The keeper starts the
+//!    supervisor with both blocked; [`Start::spawn`] installs the handlers and then unblocks them, so one sent
+//!    before is delivered then, never the default action.
 //! 1. `oom_score_adj -1000`; `boot_id`; `run.json` if present; the keeper's `STATUS` and held `fuse` fd. A restart
 //!    is a readable `run.json` of this boot, or a keeper that has restarted a supervisor, holds the `fuse` fd or runs
 //!    a `claude` ([`Started::classify`]): an unreadable `run.json` never makes a restart look like a first start.
-//!    The released marker ([`keeper::RELEASED_NAME`]) means the predecessor finished a release: this supervisor
+//!    A keeper that says `released` (a predecessor finished a release and told it `RELEASED`): this supervisor
 //!    only reports `released` and exits 0.
 //! 2. The sandbox token is the boot proxy's credential (DESIGN 12 D1); the descriptor `GET http://hermit/v1/sandbox/self`
 //!    is read until it answers.
@@ -24,8 +26,9 @@
 //!
 //! Every waiting step (the descriptor, the lease, the mount retry, the attach) gives way to a release: once one has
 //! begun the sequence stops, `attach` is never called, and the process exits 0 when the release has finished
-//! (hermit's call, the activity reply's repeat, or SIGTERM, which is always a forced release). 70 on an internal
-//! error (the keeper restarts it).
+//! (hermit's call, the activity reply's repeat, or SIGTERM, which is always a forced release) and the keeper has
+//! taken `RELEASED` (until then it does not exit: an exit 0 the keeper does not know as final is restarted). 70 on
+//! an internal error (the keeper restarts it).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -308,7 +311,8 @@ pub struct Running {
 }
 
 impl Start {
-    /// Runs the start sequence in the background; the lifecycle is returned at once.
+    /// Runs the start sequence in the background; the lifecycle is returned at once. The SIGTERM and SIGINT
+    /// handlers are in place when it returns (call it inside the runtime, first).
     #[must_use]
     pub fn spawn(self) -> (Running, tokio::task::JoinHandle<i32>) {
         let lifecycle = Lifecycle::new(self.agent.clone(), self.fs.clone());
@@ -316,6 +320,8 @@ impl Start {
             lifecycle: lifecycle.clone(),
             hermit: self.hermit.clone(),
         };
+        // 0
+        stop_signals(&lifecycle);
         let h = tokio::spawn(self.run(lifecycle));
         (running, h)
     }
@@ -333,8 +339,6 @@ impl Start {
             fs,
             control,
         } = self;
-        // 0
-        tokio::spawn(sigterm(lifecycle.clone()));
         // 1
         if let Err(e) = std::fs::write(&paths.oom_score_adj, "-1000") {
             tracing::info!(error = %e, "oom_score_adj not set");
@@ -342,9 +346,17 @@ impl Start {
         let boot_id = std::fs::read_to_string(paths.run_dir.join(keeper::BOOT_ID_NAME))
             .map(|s| s.trim().to_owned())
             .unwrap_or_default();
-        let marker = paths.run_dir.join(keeper::RELEASED_NAME);
-        let released_before = marker.exists();
-        lifecycle.set_released_marker(marker);
+        {
+            let k = keeper.clone();
+            lifecycle.on_released(Arc::new(move || {
+                let k = k.clone();
+                Box::pin(async move {
+                    tokio::task::spawn_blocking(move || k.released())
+                        .await
+                        .is_ok_and(|r| r.is_ok())
+                })
+            }));
+        }
         let file = StateFile::new(&paths.state_dir);
         let prior = match file.load() {
             Ok(p) => p,
@@ -353,6 +365,14 @@ impl Start {
                 return EXIT_INTERNAL;
             }
         };
+        // the exit counter before STATUS: a process STATUS finds alive exits after it
+        let k = keeper.clone();
+        let after = tokio::task::spawn_blocking(move || k.exits(0))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|l| l.last().map(|e| e.n))
+            .unwrap_or(0);
         let k = keeper.clone();
         let (status, fuse_held) = tokio::task::spawn_blocking(move || {
             let held = k.get_fd(keeper::FUSE_FD).ok().flatten().is_some();
@@ -360,6 +380,7 @@ impl Start {
         })
         .await
         .unwrap_or((None, false));
+        let released_before = status.as_ref().is_some_and(|s| s.released);
         let started = Started::classify(prior.as_ref(), &boot_id, status.as_ref(), fuse_held);
         if prior.is_some() && !started.same_boot {
             tracing::warn!("run state is from another boot: its generation is not re-attached");
@@ -376,13 +397,6 @@ impl Start {
         if !released_before {
             tokio::spawn(persisted.clone().writer(file));
         }
-        let k = keeper.clone();
-        let after = tokio::task::spawn_blocking(move || k.exits(0))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .and_then(|l| l.last().map(|e| e.n))
-            .unwrap_or(0);
         let exits = Exits::new(keeper.clone(), after);
         tokio::spawn(exits.clone().run());
         tracing::info!(version = %crate::hermit::version(), boot_id = %boot_id, restart = started.restart, "supervisor started");
@@ -613,18 +627,47 @@ async fn kill_strays(keeper: &keeper::Client, exits: &Exits, strays: &[i32]) {
             k.signal(pid, libc::SIGKILL)
         })
         .await;
-        let _ = tokio::time::timeout(Duration::from_secs(5), exits.wait(pid)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), exits.wait(pid, exits.origin())).await;
     }
 }
 
 /// SIGTERM (the keeper forwarding a runtime stop) is always a forced release (4.7), within the keeper's grace.
-async fn sigterm(lifecycle: Arc<Lifecycle>) {
-    let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) else {
-        return;
-    };
-    if s.recv().await.is_some() {
-        tracing::info!("SIGTERM: forced release");
-        let _ = lifecycle.release(sigterm_release()).await;
+/// SIGINT, which the keeper forwards too (4.2), is the same (A0.F30: a graceful drain on SIGTERM or SIGINT), never
+/// the default action that would make it a crash. The handlers are installed here, synchronously, and only then
+/// are the two unblocked (the keeper starts the supervisor with them blocked).
+fn stop_signals(lifecycle: &Arc<Lifecycle>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    for (kind, name) in [
+        (SignalKind::terminate(), "SIGTERM"),
+        (SignalKind::interrupt(), "SIGINT"),
+    ] {
+        match signal(kind) {
+            Ok(mut s) => {
+                let l = lifecycle.clone();
+                tokio::spawn(async move {
+                    if s.recv().await.is_some() {
+                        tracing::info!(signal = name, "forced release");
+                        let _ = l.release(sigterm_release()).await;
+                    }
+                });
+            }
+            Err(e) => tracing::error!(error = %e, signal = name, "no handler"),
+        }
+    }
+    unblock_stop_signals();
+}
+
+/// Unblocks SIGTERM and SIGINT in this thread (the one that installed the handlers; a process-directed signal goes
+/// to a thread that does not block it).
+fn unblock_stop_signals() {
+    // SAFETY: building a signal set in a local and changing this thread's mask; no memory effects.
+    #[allow(unsafe_code)]
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, libc::SIGTERM);
+        libc::sigaddset(&raw mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, std::ptr::null_mut());
     }
 }
 

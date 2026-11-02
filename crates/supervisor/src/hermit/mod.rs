@@ -18,7 +18,14 @@ use hermit_api::sandbox_surface::{SandboxSelf, SecretValue};
 use hermit_api::server::SelfAnswer;
 use tokio::sync::watch;
 
-use crate::limits::{DESCRIPTOR_REFRESH, DESCRIPTOR_RETRY_FIRST, DESCRIPTOR_RETRY_MAX};
+use crate::limits::{DESCRIPTOR_REFRESH, DESCRIPTOR_RETRY_FIRST, DESCRIPTOR_RETRY_MAX, HERMIT_TIMEOUT};
+
+/// One call to hermit, given at most [`HERMIT_TIMEOUT`] (20).
+async fn bounded<T>(f: impl std::future::Future<Output = Result<T, ClientError>>) -> Result<T, ClientError> {
+    tokio::time::timeout(HERMIT_TIMEOUT, f)
+        .await
+        .unwrap_or(Err(ClientError::Timeout("hermit call")))
+}
 
 /// The fixed name.
 pub const BASE: &str = "http://hermit";
@@ -87,7 +94,7 @@ impl Hermit {
     /// hermit's or the transport's error; the last descriptor stays in place.
     pub async fn refresh(&self) -> Result<Arc<SandboxSelf>, ClientError> {
         let etag = self.descriptor().map(|d| d.etag.clone());
-        match self.client.sandbox_self(etag.as_deref()).await? {
+        match bounded(self.client.sandbox_self(etag.as_deref())).await? {
             SelfAnswer::Fresh(d) => {
                 let d: Arc<SandboxSelf> = Arc::from(d);
                 let old = self.descriptor.send_replace(Some(d.clone()));
@@ -120,7 +127,7 @@ impl Hermit {
     /// hermit's answer (404 `not_granted`) or the transport's.
     pub async fn secret(&self, key: &str) -> Result<SecretValue, ClientError> {
         tracing::info!(key = %key, "secret asked");
-        self.client.sandbox_secret(key).await
+        bounded(self.client.sandbox_secret(key)).await
     }
 }
 

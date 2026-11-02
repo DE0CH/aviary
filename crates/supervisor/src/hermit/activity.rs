@@ -14,7 +14,7 @@ use supervisor_api::control::{Memory, ReleaseRequest, SupervisorFacts};
 
 use super::Hermit;
 use crate::lifecycle::{BoxFuture, Lifecycle, Phase};
-use crate::limits::{ACTIVITY_EVERY_MAX, ACTIVITY_RETRY};
+use crate::limits::{ACTIVITY_EVERY_MAX, ACTIVITY_RETRY, HERMIT_TIMEOUT};
 use crate::memguard::{self, Proc};
 
 /// The supervisor's own facts every report carries.
@@ -120,12 +120,17 @@ impl Activity {
         )
     }
 
-    /// Sends one report; on success drops the events it carried and acts on a pending release. Whether it was
-    /// accepted, and the state it carried.
-    async fn send(self: &Arc<Self>) -> (bool, ActivityState) {
+    /// Sends one report, given at most `limit` (never more than [`HERMIT_TIMEOUT`]); on success drops the events it
+    /// carried and acts on a pending release. Whether it was accepted, and the state it carried.
+    async fn send(self: &Arc<Self>, limit: Duration) -> (bool, ActivityState) {
         let (report, n) = self.report();
         let state = report.state;
-        match self.hermit.client().sandbox_activity(&report).await {
+        let limit = limit.min(HERMIT_TIMEOUT);
+        let answer = match tokio::time::timeout(limit, self.hermit.client().sandbox_activity(&report)).await {
+            Ok(r) => r.map_err(|e| e.to_string()),
+            Err(_) => Err(format!("no answer within {limit:?}")),
+        };
+        match answer {
             Ok(reply) => {
                 {
                     let mut q = self.events.lock().unwrap_or_else(PoisonError::into_inner);
@@ -151,15 +156,21 @@ impl Activity {
         }
     }
 
-    /// The final `released` report of a release (retried until `deadline`).
+    /// The final `released` report of a release: retried until `deadline`, and every attempt ends by it (a hermit
+    /// that holds the request never keeps the release past its deadline).
     pub fn final_report(self: &Arc<Self>, deadline: tokio::time::Instant) -> BoxFuture<'static, ()> {
         let me = self.clone();
         Box::pin(async move {
-            while tokio::time::Instant::now() < deadline {
-                if me.send().await.0 {
+            loop {
+                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if left.is_zero() {
+                    tracing::warn!("the final released report was not accepted by the release's deadline");
                     return;
                 }
-                tokio::time::sleep(ACTIVITY_RETRY).await;
+                if me.send(left).await.0 {
+                    return;
+                }
+                tokio::time::sleep_until((tokio::time::Instant::now() + ACTIVITY_RETRY).min(deadline)).await;
             }
         })
     }
@@ -179,7 +190,7 @@ impl Activity {
         let mut phases = self.lifecycle.phases();
         loop {
             // the state this report carried: a change while it was in flight is a change to send at once
-            let (ok, sent_state) = self.send().await;
+            let (ok, sent_state) = self.send(HERMIT_TIMEOUT).await;
             if ok && sent_state == ActivityState::Released {
                 return;
             }

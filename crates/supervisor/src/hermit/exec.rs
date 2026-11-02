@@ -157,7 +157,7 @@ impl Exec {
             stdin_pipe: stdin.is_some(),
         };
         let k = self.keeper.clone();
-        let pid = tokio::task::spawn_blocking(move || k.spawn(&spec))
+        let keeper::Spawned { pid, since } = tokio::task::spawn_blocking(move || k.spawn_tracked(&spec))
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
             .map_err(|e| ApiError::internal(format!("spawn: {e}")))?;
@@ -169,12 +169,12 @@ impl Exec {
                 let _ = k.close_stdin(pid);
             });
         }
-        let exit = if let Ok(e) = tokio::time::timeout(timeout, self.exits.wait(pid)).await {
+        let exit = if let Ok(e) = tokio::time::timeout(timeout, self.exits.wait(pid, since)).await {
             e
         } else {
             let k = self.keeper.clone();
             let _ = tokio::task::spawn_blocking(move || k.signal(-pid, libc::SIGKILL)).await;
-            tokio::time::timeout(Duration::from_secs(10), self.exits.wait(pid))
+            tokio::time::timeout(Duration::from_secs(10), self.exits.wait(pid, since))
                 .await
                 .map_err(|_| ApiError::internal("exec did not end after SIGKILL"))?
         };

@@ -254,7 +254,12 @@ fn the_supervisor_is_restarted_with_backoff() {
 
 #[test]
 fn sigterm_stops_the_supervisor_then_everything() {
-    let mut k = Running::start(Some(vec!["/bin/sleep".into(), "100".into()]));
+    // SIGTERM is blocked across the supervisor's exec: a stand-in ends on it only with a trap
+    let mut k = Running::start(Some(vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "trap 'exit 0' TERM; while :; do sleep 0.02; done".into(),
+    ]));
     std::thread::sleep(Duration::from_millis(200));
     let st = k.client.status().unwrap();
     let sup = st.children.iter().find(|(_, n)| n == "supervisor").unwrap().0;
@@ -322,25 +327,32 @@ fn boot_id_survives_a_keeper_restart() {
 
 #[test]
 fn a_supervisor_that_exits_0_after_a_release_is_not_restarted() {
-    // released: the marker, then exit 0
-    let k = Running::start_with(|d| {
-        let marker = d.join("run").join(super::RELEASED_NAME);
+    // the fake supervisor waits for `go` (the test has told the keeper RELEASED by then), then exits 0
+    let waits = |d: &std::path::Path, then: &str| {
+        let go = d.join("go");
         Some(vec![
             "/bin/sh".into(),
             "-c".into(),
-            format!("touch '{}'; exit 0", marker.display()),
+            format!("while [ ! -e '{}' ]; do sleep 0.02; done; {then}", go.display()),
         ])
-    });
-    std::thread::sleep(Duration::from_millis(800));
+    };
     let sup = |k: &Running| {
         k.client
             .exits(0)
             .unwrap()
             .into_iter()
             .filter(|e| e.name == "supervisor")
-            .count()
+            .map(|e| e.code)
+            .collect::<Vec<_>>()
     };
-    assert_eq!(sup(&k), 1);
+    let k = Running::start_with(|d| waits(d, "exit 0"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!k.client.status().unwrap().released);
+    k.client.released().unwrap();
+    assert!(k.client.status().unwrap().released);
+    std::fs::write(k.dir.join("go"), "").unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(sup(&k), vec![Some(0)]);
     assert!(
         !k.client
             .status()
@@ -349,32 +361,74 @@ fn a_supervisor_that_exits_0_after_a_release_is_not_restarted() {
             .iter()
             .any(|(_, n)| n == "supervisor")
     );
-    // exit 0 without the marker is not a release: restarted
+    // exit 0 without RELEASED is not a release: restarted
     let k2 = Running::start(Some(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]));
     std::thread::sleep(Duration::from_millis(800));
-    assert!(sup(&k2) >= 3, "{}", sup(&k2));
-    // a crash after the marker (exit 70) is restarted too: the new supervisor finds the marker and only reports
+    assert!(sup(&k2).len() >= 3, "{:?}", sup(&k2));
+    // a crash after RELEASED (exit 70) is restarted too: the new supervisor sees `released` and only reports
     let k3 = Running::start_with(|d| {
-        let marker = d.join("run").join(super::RELEASED_NAME);
+        let done = d.join("done");
+        waits(
+            d,
+            &format!("if [ -e '{0}' ]; then exit 0; fi; touch '{0}'; exit 70", done.display()),
+        )
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    k3.client.released().unwrap();
+    std::fs::write(k3.dir.join("go"), "").unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(sup(&k3), vec![Some(70), Some(0)]);
+}
+
+#[test]
+fn a_sigterm_while_no_supervisor_runs_starts_one_at_once_and_hands_it_the_stop() {
+    // the supervisor crashes four times (backoff 0.1, 0.2, 0.5, then 1 s); the fifth records the SIGTERM it gets.
+    // A SIGTERM sent during the 1 s backoff starts it at once, and it gets the SIGTERM (blocked across its exec,
+    // so even one sent before its trap exists is delivered)
+    let mut k = Running::start_with(|d| {
+        let count = d.join("count");
+        let got = d.join("got-term");
         Some(vec![
             "/bin/sh".into(),
             "-c".into(),
             format!(
-                "if [ -e '{0}' ]; then exit 0; fi; touch '{0}'; exit 70",
-                marker.display()
+                "echo x >> '{0}'; if [ $(wc -l < '{0}') -le 4 ]; then exit 3; fi; trap 'touch {1}; exit 0' TERM; \
+                 while :; do sleep 0.02; done",
+                count.display(),
+                got.display()
             ),
         ])
     });
-    std::thread::sleep(Duration::from_millis(800));
-    let codes: Vec<_> = k3
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while k
         .client
         .exits(0)
         .unwrap()
-        .into_iter()
+        .iter()
         .filter(|e| e.name == "supervisor")
-        .map(|e| e.code)
-        .collect();
-    assert_eq!(codes, vec![Some(70), Some(0)]);
+        .count()
+        < 4
+    {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let t = Instant::now();
+    assert_eq!(k.stop(), 0);
+    // no backoff (1 s) waited out, and no grace (20 s)
+    assert!(t.elapsed() < Duration::from_millis(900), "{:?}", t.elapsed());
+    assert!(
+        k.dir.join("got-term").exists(),
+        "the started supervisor never got the SIGTERM"
+    );
+}
+
+#[test]
+fn spawn_answers_the_exit_counter_at_the_fork() {
+    let k = Running::start(None);
+    let a = k.client.spawn_tracked(&k.spec("exec", &["/bin/true"])).unwrap();
+    k.wait_exit(a.pid);
+    let b = k.client.spawn_tracked(&k.spec("exec", &["/bin/true"])).unwrap();
+    assert_eq!((a.since, b.since), (0, 1));
 }
 
 #[test]

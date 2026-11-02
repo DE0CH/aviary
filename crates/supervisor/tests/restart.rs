@@ -76,7 +76,7 @@ async fn restart_reattaches_and_a_release_is_final() {
     );
     assert_eq!(lines(&dir, "agent.log").len(), 3, "{:?}", lines(&dir, "agent.log"));
     assert_eq!(lines(&dir, "agent.log")[2], "stop");
-    assert!(dir.join("run").join(supervisor::keeper::RELEASED_NAME).exists());
+    assert!(k.client.status().unwrap().released, "the keeper was told RELEASED");
     // hermit was told `released`
     let last = fakes.hermit.script().calls_to("sandbox_activity").pop().unwrap();
     assert_eq!(last.body.unwrap()["state"], "released");

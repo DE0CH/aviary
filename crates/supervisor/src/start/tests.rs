@@ -406,7 +406,7 @@ async fn a_release_while_waiting_for_the_lease_exits_without_attaching() {
     );
     assert_eq!(agent.log(), vec!["stop"], "attach never ran");
     assert!(fs.mounts.lock().unwrap().is_empty());
-    assert!(w.dir.join("run").join(keeper::RELEASED_NAME).exists());
+    assert!(w.keeper.status().unwrap().released, "the keeper was told RELEASED");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -466,7 +466,7 @@ async fn a_state_change_during_an_in_flight_report_is_sent_at_once() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn released_before_this_start_reports_released_and_takes_no_lease() {
     let w = world().await;
-    std::fs::write(w.dir.join("run").join(keeper::RELEASED_NAME), "released\n").unwrap();
+    w.keeper.released().unwrap();
     let agent = FakeAgent::new();
     let fs = Arc::new(FakeFs::default());
     let (running, done, cc, _) = w.start(agent.clone(), fs.clone()).await;
@@ -529,6 +529,7 @@ fn a_start_is_classified_from_run_json_and_the_keeper() {
         started_at_ms: 0,
         children: children.iter().map(|(p, n)| (*p, (*n).to_owned())).collect(),
         orphans: 0,
+        released: false,
     };
     let prior = |boot: &str, pid| RunState {
         boot_id: boot.into(),
@@ -560,4 +561,35 @@ fn a_start_is_classified_from_run_json_and_the_keeper() {
     assert_eq!(s.strays, vec![10]);
     let s = Started::classify(Some(&prior("b0", 10)), "b1", Some(&st(0, &[])), false);
     assert!(!s.same_boot && !s.restart);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_sigterm_release_ends_in_time_while_hermit_holds_every_report() {
+    let w = world().await;
+    let agent = FakeAgent::new();
+    let fs = Arc::new(FakeFs::default());
+    let (running, done, _cc, _) = w.start(agent.clone(), fs.clone()).await;
+    let l = running.lifecycle.clone();
+    until("ready", || l.is_ready()).await;
+    // hermit accepts the connection and never answers (an activity route that hangs)
+    let hold = aviary_fakes::Hold::new();
+    let _f = w
+        .hermit
+        .faults()
+        .on("sandbox_activity", aviary_fakes::FaultKind::Hold(hold.clone()));
+    let t = Instant::now();
+    assert_eq!(l.release(sigterm_release()).await, Outcome::Done);
+    let took = t.elapsed();
+    // the final report gave up at the release's deadline, so the unmount ran before the keeper's SIGKILL
+    assert!(took < crate::limits::SIGTERM_RELEASE_DEADLINE, "{took:?}");
+    assert!(fs.unmounted.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert!(t.elapsed() < crate::limits::KEEPER_STOP_GRACE, "{:?}", t.elapsed());
+    hold.release();
 }

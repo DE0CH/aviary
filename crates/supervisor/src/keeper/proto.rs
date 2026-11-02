@@ -7,7 +7,7 @@
 //!
 //! | Op | Fields | Answer |
 //! |---|---|---|
-//! | `SPAWN` | name, argv[], env[], cwd, uid, gid, setsid, `oom_score_adj`, cgroup (empty: none), stdout, stderr, stdin (0 null, 1 pipe) | `OK pid` |
+//! | `SPAWN` | name, argv[], env[], cwd, uid, gid, setsid, `oom_score_adj`, cgroup (empty: none), stdout, stderr, stdin (0 null, 1 pipe) | `OK pid since` (the exit counter at the fork) |
 //! | `STDIN` | pid, `msg_id` (16), total, then the first bytes | after `total` bytes (this and `STDIN_MORE` packets): `OK msg_id` once written, `ALREADY msg_id` when nothing was written |
 //! | `STDIN_MORE` | bytes | (none until the message is complete) |
 //! | `CLOSE_STDIN` | pid | `OK` |
@@ -15,7 +15,8 @@
 //! | `PUT_FD` | name, one fd as `SCM_RIGHTS` | `OK` |
 //! | `GET_FD` | name | `OK` with the fd, or `NONE` |
 //! | `EXITS` | after | `OK` count, then {n, pid, name, code?, signal?, `at_ms`} |
-//! | `STATUS` | | `OK` `boot_id`, restarts, `started_at_ms`, count, then {pid, name} |
+//! | `STATUS` | | `OK` `boot_id`, restarts, `started_at_ms`, count, then {pid, name}, orphans, released |
+//! | `RELEASED` | | `OK`: the supervisor finished a release; its exit 0 is final |
 //!
 //! Every request may also be answered `ERR errno message`.
 
@@ -32,6 +33,7 @@ pub enum Op {
     GetFd = 7,
     Exits = 8,
     Status = 9,
+    Released = 10,
 }
 
 impl Op {
@@ -47,6 +49,7 @@ impl Op {
             7 => Self::GetFd,
             8 => Self::Exits,
             9 => Self::Status,
+            10 => Self::Released,
             _ => return None,
         })
     }

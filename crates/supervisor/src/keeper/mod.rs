@@ -28,10 +28,6 @@ pub const RUN_DIR: &str = "/run/supervisor";
 pub const KEEPER_SOCKET_NAME: &str = "keeper.sock";
 /// The boot id's file name in [`RUN_DIR`].
 pub const BOOT_ID_NAME: &str = "boot_id";
-/// The marker the supervisor writes in [`RUN_DIR`] once a release has finished: the keeper does not start a
-/// supervisor again after it exits 0, and a supervisor that finds it (it crashed after the release) only reports
-/// `released` and exits 0. The tmpfs is part of a checkpoint, so a restored released sandbox stays released.
-pub const RELEASED_NAME: &str = "released";
 /// Where stdin messages larger than a pooled buffer are staged (the scratch disk).
 pub const SPOOL_DIR: &str = "/var/lib/supervisor/keeper";
 /// The supervisor binary the keeper starts as `supervisor run`.
@@ -125,6 +121,18 @@ pub struct KeeperStatus {
     pub children: Vec<(i32, String)>,
     /// Reparented processes the keeper reaped (not in the exits ring).
     pub orphans: u64,
+    /// A supervisor said `RELEASED`: a release has finished in this sandbox (a supervisor that starts after it only
+    /// reports `released`).
+    pub released: bool,
+}
+
+/// A child `SPAWN` started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spawned {
+    pub pid: i32,
+    /// The keeper's exit counter at the fork: wait for the exit with [`watch::Exits::wait`]`(pid, since)`, so a
+    /// reused pid never matches an older exit.
+    pub since: u64,
 }
 
 /// The supervisor's client of the keeper.
@@ -202,6 +210,14 @@ impl Client {
     /// # Errors
     /// The socket's error, or the keeper's (fork or exec failed, table full).
     pub fn spawn(&self, s: &SpawnSpec) -> R<i32> {
+        self.spawn_tracked(s).map(|c| c.pid)
+    }
+
+    /// `SPAWN`: the child's pid and the exit counter to wait from.
+    ///
+    /// # Errors
+    /// As [`Client::spawn`].
+    pub fn spawn_tracked(&self, s: &SpawnSpec) -> R<Spawned> {
         let mut buf = vec![0u8; KEEPER_PACKET];
         let len = {
             let mut w = Writer::new(&mut buf);
@@ -227,7 +243,18 @@ impl Client {
         };
         let (b, _) = self.call(&buf[..len], None)?;
         let (_, mut r) = status(&b)?;
-        Ok(r.i32()?)
+        Ok(Spawned {
+            pid: r.i32()?,
+            since: r.u64()?,
+        })
+    }
+
+    /// `RELEASED`: a release has finished; the supervisor's exit 0 after it is final.
+    ///
+    /// # Errors
+    /// The socket's or the keeper's error.
+    pub fn released(&self) -> R<()> {
+        self.simple(&[Op::Released as u8])
     }
 
     /// `STDIN`: writes `data` to `pid`'s stdin whole, at most once per `msg_id`. Blocks until the last byte is in
@@ -359,12 +386,14 @@ impl Client {
             children.push((r.i32()?, String::from_utf8_lossy(r.bytes()?).into_owned()));
         }
         let orphans = r.u64()?;
+        let released = r.u8()? != 0;
         Ok(KeeperStatus {
             boot_id,
             supervisor_restarts,
             started_at_ms,
             children,
             orphans,
+            released,
         })
     }
 }

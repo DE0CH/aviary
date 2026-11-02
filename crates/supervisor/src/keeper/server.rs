@@ -3,7 +3,8 @@
 //! Code), owns their stdin pipes (a message is written whole or not at all, and at most once per `msg_id`), keeps
 //! the `/dev/fuse` descriptor across supervisor restarts, reaps, and remembers the last exits of its own children
 //! (reparented orphans are reaped and only counted, so a burst of them never pushes a tracked exit out of the ring).
-//! A supervisor that exits 0 after writing the released marker ([`super::RELEASED_NAME`]) is not started again.
+//! A supervisor that exits 0 after it told the keeper `RELEASED` is not started again; a SIGTERM that arrives while
+//! no supervisor runs (a restart backoff) starts one at once, so the runtime stop is always a forced release.
 //!
 //! One thread, `poll(2)` over a fixed set of descriptors, every table and buffer allocated by [`Keeper::new`]
 //! before the loop; the loop itself does not allocate. A stdin message is staged whole before its first byte
@@ -117,6 +118,9 @@ struct Child {
     spawn_conn: Option<usize>,
     /// Its exec failed: it exits 127, and is reaped without an exit record.
     failed: bool,
+    /// The exit counter when it was forked: its exit record is the first one with its pid above this (a pid the
+    /// kernel reuses never matches an older record).
+    since: u64,
 }
 
 impl Child {
@@ -132,6 +136,7 @@ impl Child {
         ring_next: 0,
         msg: None,
         spawn_err: -1,
+        since: 0,
         spawn_conn: None,
         failed: false,
     };
@@ -222,6 +227,7 @@ enum Slot {
 }
 
 /// The keeper's state; every buffer is allocated here.
+#[allow(clippy::struct_excessive_bools)] // independent facts of the supervisor's lifecycle
 pub struct Keeper {
     cfg: Config,
     listener: RawFd,
@@ -238,8 +244,11 @@ pub struct Keeper {
     backoff: usize,
     next_start_mono: Option<u64>,
     stopping_since: Option<u64>,
-    /// `run_dir/released`: the supervisor finished a release; once it has exited 0 it is not started again.
-    released_marker: CString,
+    /// The stop's SIGTERM has reached a supervisor: its exit (any) ends the stop.
+    stop_delivered: bool,
+    /// The supervisor said `RELEASED`: once it has exited 0 it is not started again. Kept in memory, which a
+    /// checkpoint keeps, so a restored released sandbox stays released and no file write can lose it.
+    released: bool,
     supervisor_done: bool,
     /// Reparented processes reaped (PID 1 only); counted, never in the exits ring.
     orphans: u64,
@@ -409,7 +418,6 @@ impl Keeper {
             .collect::<io::Result<_>>()?;
         let mut supervisor_ptrs: Vec<*const libc::c_char> = supervisor_argv.iter().map(|a| a.as_ptr()).collect();
         supervisor_ptrs.push(std::ptr::null());
-        let released_marker = cstr(&cfg.run_dir.join(super::RELEASED_NAME))?;
         let spool_paths = (0..STDIN_BUFFERS)
             .map(|i| cstr(&cfg.spool_dir.join(format!("stdin-{i}.spool"))))
             .collect::<io::Result<Vec<_>>>()?;
@@ -429,7 +437,8 @@ impl Keeper {
             supervisor_restarts: 0,
             backoff: 0,
             stopping_since: None,
-            released_marker,
+            stop_delivered: false,
+            released: false,
             supervisor_done: false,
             orphans: 0,
             children: Box::new([Child::EMPTY; MAX_CHILDREN]),
@@ -460,6 +469,11 @@ impl Keeper {
     /// was killed).
     pub fn run(&mut self) -> i32 {
         log("keeper started", &[("pid", i64::from(sys::getpid()))]);
+        // SIGTERM and SIGINT blocked in the loop's thread (PID 1 has them on the signalfd already; a test keeper on a
+        // thread gets them through its pipe): a supervisor forked from it has them blocked from the first instant
+        let stop = stop_set();
+        // SAFETY: changing this thread's mask with a local set.
+        unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &raw const stop, std::ptr::null_mut()) };
         loop {
             let now = sys::mono_ms();
             self.reap_children(now);
@@ -564,8 +578,10 @@ impl Keeper {
                 if self.stopping_since.is_none() {
                     self.stopping_since = Some(sys::mono_ms());
                 }
+                // no supervisor running (a restart backoff): the loop starts one at once and hands it the SIGTERM
                 if let Some(pid) = self.supervisor_pid {
                     let _ = sys::kill(pid, libc::SIGTERM);
+                    self.stop_delivered = true;
                 }
             }
             libc::SIGINT => {
@@ -581,10 +597,13 @@ impl Keeper {
     fn check_stop(&mut self, now: u64) -> Option<i32> {
         let since = self.stopping_since?;
         let grace = KEEPER_STOP_GRACE.as_millis() as u64;
-        if self.supervisor_pid.is_some() && now.saturating_sub(since) < grace {
+        // over when the supervisor that got the SIGTERM has exited (or a released one is gone), or at the grace
+        let finished =
+            self.supervisor_pid.is_none() && (self.stop_delivered || self.supervisor_done || !self.has_supervisor());
+        if !finished && now.saturating_sub(since) < grace {
             return None;
         }
-        if self.supervisor_pid.is_some() {
+        if !finished {
             log("stop grace over, killing everything", &[]);
         }
         if self.reap_all {
@@ -602,25 +621,39 @@ impl Keeper {
         Some(0)
     }
 
+    fn has_supervisor(&self) -> bool {
+        !self.supervisor_argv.is_empty()
+    }
+
     fn maybe_start_supervisor(&mut self, now: u64) {
-        if self.stopping_since.is_some() || self.supervisor_pid.is_some() || self.supervisor_done {
+        if self.supervisor_pid.is_some() || self.supervisor_done || !self.has_supervisor() {
             return;
         }
-        let Some(at) = self.next_start_mono else { return };
-        if now < at {
-            return;
+        let stopping = self.stopping_since.is_some();
+        if stopping {
+            // a SIGTERM no supervisor got: start one now, skipping the backoff, so the stop is a forced release
+            if self.stop_delivered {
+                return;
+            }
+        } else {
+            let Some(at) = self.next_start_mono else { return };
+            if now < at {
+                return;
+            }
         }
         self.next_start_mono = None;
         let ptrs = self.supervisor_ptrs.as_ptr();
         let exe = self.supervisor_argv[0].as_ptr();
+        let stop = stop_set();
         // SAFETY: fork; the child only calls async-signal-safe functions (sigprocmask, signal, execv, _exit) on
         // memory prepared before the fork.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
             // SAFETY: the child after fork: restore the signal state and exec the supervisor with the keeper's own
-            // environment (hermit's boot environment).
+            // environment (hermit's boot environment). SIGTERM and SIGINT stay blocked across the exec: one that
+            // arrives before the supervisor's handlers exist waits as pending instead of killing it.
             unsafe {
-                child_signals();
+                supervisor_child_signals(&stop);
                 libc::execv(exe, ptrs);
                 libc::_exit(127);
             }
@@ -632,6 +665,10 @@ impl Keeper {
         }
         self.supervisor_pid = Some(pid);
         self.supervisor_started_mono = now;
+        if stopping {
+            let _ = sys::kill(pid, libc::SIGTERM);
+            self.stop_delivered = true;
+        }
         log(
             "supervisor started",
             &[
@@ -686,9 +723,8 @@ impl Keeper {
                     ("signal", i64::from(r.signal.unwrap_or(0))),
                 ],
             );
-            // exit 0 after the release's marker: the release is final (4.3, 15.5); anything else is restarted
-            // SAFETY: access(2) on a NUL-terminated path prepared before the loop.
-            let released = r.code == Some(0) && unsafe { libc::access(self.released_marker.as_ptr(), libc::F_OK) } == 0;
+            // exit 0 after `RELEASED`: the release is final (4.3, 15.5); anything else is restarted
+            let released = r.code == Some(0) && self.released;
             if released {
                 self.supervisor_done = true;
                 log("supervisor released, not restarted", &[]);
@@ -969,10 +1005,18 @@ impl Keeper {
                     for ch in self.children.iter().filter(live) {
                         w.i32(ch.pid).bytes(ch.name.get());
                     }
-                    w.u64(self.orphans);
+                    w.u64(self.orphans).u8(u8::from(self.released));
                     w.len()
                 };
                 self.reply(c, len, None);
+                Ok(())
+            }
+            Some(Op::Released) => {
+                if !self.released {
+                    log("supervisor released", &[]);
+                }
+                self.released = true;
+                self.reply_status(c, Status::Ok);
                 Ok(())
             }
             Some(Op::StdinMore) | None => Err(Malformed),
@@ -1044,6 +1088,7 @@ impl Keeper {
             stdin,
             spawn_err: err_r,
             spawn_conn: Some(c),
+            since: self.exit_n,
             ..Child::EMPTY
         };
         self.conn_state[c] = ConnState::Spawning(slot);
@@ -1083,10 +1128,10 @@ impl Keeper {
         }
         if let Some(c) = conn {
             self.conn_state[c] = ConnState::Idle;
-            let pid = self.children[i].pid;
+            let (pid, since) = (self.children[i].pid, self.children[i].since);
             let len = {
                 let mut w = Writer::new(&mut self.tx[..]);
-                w.u8(Status::Ok as u8).i32(pid);
+                w.u8(Status::Ok as u8).i32(pid).u64(since);
                 w.len()
             };
             self.reply(c, len, None);
@@ -1478,6 +1523,31 @@ unsafe fn exec_child(s: &Spawn, stdin_r: Option<RawFd>, err_w: RawFd) -> ! {
         }
         libc::execve(s.argv[0], s.argv.as_ptr(), s.envp.as_ptr());
         fail(libc::ENOEXEC)
+    }
+}
+
+/// The set of SIGTERM and SIGINT.
+fn stop_set() -> libc::sigset_t {
+    // SAFETY: an all-zero sigset_t is a valid argument to sigemptyset; sigaddset on a local.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, libc::SIGTERM);
+        libc::sigaddset(&raw mut set, libc::SIGINT);
+        set
+    }
+}
+
+/// The supervisor's child half: only SIGTERM and SIGINT blocked (inherited blocked from the keeper, so they never
+/// are unblocked between the fork and the supervisor's handlers), SIGPIPE back to its default.
+///
+/// # Safety
+/// Only between fork and exec (async-signal-safe calls only); `set` is prepared before the fork.
+unsafe fn supervisor_child_signals(set: &libc::sigset_t) {
+    // SAFETY: async-signal-safe calls on a set prepared before the fork.
+    unsafe {
+        libc::sigprocmask(libc::SIG_SETMASK, set, std::ptr::null_mut());
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }
 

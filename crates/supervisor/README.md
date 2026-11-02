@@ -16,7 +16,7 @@ hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code drive
 | Module | Spec |
 |---|---|
 | `limits` | 20: every constant, nothing configurable |
-| `keeper::{proto, server, watch}` and `keeper::Client` | 4.1, 4.2: the protocol (SPAWN, STDIN/STDIN_MORE, CLOSE_STDIN, SIGNAL, PUT_FD, GET_FD, EXITS, STATUS), the keeper, the async exit stream |
+| `keeper::{proto, server, watch}` and `keeper::Client` | 4.1, 4.2: the protocol (SPAWN, STDIN/STDIN_MORE, CLOSE_STDIN, SIGNAL, PUT_FD, GET_FD, EXITS, STATUS, RELEASED), the keeper, the async exit stream |
 | `state` | 4.4: `run.json`, atomic, at once on a state change, at most every 100 ms otherwise |
 | `memguard` | 5.2, 5.3: the agent cgroup (v2 or v1) and the user-space guard |
 | `docker` | 4.6: dockerd on demand |
@@ -35,10 +35,14 @@ and the lifecycle call: `Filesystem::mount` at step 6, `Agent::attach` at step 7
 client and exit stream, the boot environment, the agent cgroup), and the release, pause and resume hooks. A
 `start_turn` goes through `Lifecycle::admit` before anything else. What the implementations must allow for:
 
-- `attach` runs under the lifecycle's boot gate: never after a release has begun, and a release's `stop` waits
-  for an attach in progress, so `attach` returns once the generation is spawned or re-attached and its loops are
-  started, without waiting for Claude Code's initialisation. Health turns `ready: true` only after `attach`
-  returned (4.3 step 9).
+- `attach` runs under the lifecycle's boot gate: never after a release has begun, and an attach in progress is
+  dropped when one begins (the release waits for the gate at most until its interrupt time), so `end_turn` and
+  `stop` must end whatever a dropped attach had started, a spawned generation included. `attach` returns once the
+  generation is spawned or re-attached and its loops are started, without waiting for Claude Code's
+  initialisation. Health turns `ready: true` only after `attach` returned (4.3 step 9).
+- Wait for an exit with `Exits::wait(pid, since)`: `since` is `Client::spawn_tracked`'s (the keeper's exit counter
+  at the fork) for a process spawned now, `Exits::origin()` for one found alive at start (a re-attached
+  generation), so a reused pid never matches an older exit.
 - `mount(restart)` is `true` exactly when the keeper holds the `fuse` fd; a mount future is dropped when a release
   begins meanwhile, and `settle`/`unmount` are then called on a filesystem that never mounted.
 - `Reattach::Exited { exit: None }` is a generation whose exit code is unknown (`run.json` of another boot, or a
@@ -57,31 +61,39 @@ rather than claim a `~/.claude` it does not have.
   read holding up nothing else, a child exiting mid-message, the fd store across clients, the exits ring, signals to
   children only, the supervisor's restart backoff, the SIGTERM stop, `boot_id` kept; a released exit 0 not restarted; a child stalled
   before exec (a FIFO stdout) holding up only its own SPAWN; a resend while the original is still being written
-  (`ALREADY`); orphans counted, not in the ring; the exits gap reported `lost`; the keeper answering (but spawning
-  nothing) during its stop grace.
+  (`ALREADY`); orphans counted, not in the ring; the exits gap reported `lost`, and not passed while the `STATUS`
+  after it fails; a reused pid never matching an older exit; the keeper answering (but spawning nothing) during its
+  stop grace; a SIGTERM during the restart backoff starting a supervisor at once and handing it the stop;
+  `RELEASED` making exit 0 final.
 - Lifecycle (`src/lifecycle.rs`): not ready until descriptor, lease, mount and workspace; unforced release and pause
   refused while busy or with an ask open (nothing changed); a forced release ends the turn first; a second release
   waits for the first; a `start_turn` racing a release is either refused or makes it busy; a blocked write refuses an
-  unforced pause; clock jumps; ready only after `attach`; no `attach` once a release has begun; the release
-  deadlines (a SIGTERM during a stuck turn finishes within 18 s, on paused time).
+  unforced pause; clock jumps; ready only after `attach`; no `attach` once a release has begun and a hanging
+  attach dropped by a SIGTERM release that still ends within 18 s; the release deadlines (a SIGTERM during a stuck
+  turn finishes within 18 s, on paused time); no exit before the keeper took `RELEASED`; a pause during a release
+  answered busy.
 - Memory guard on a fake `/proc` (`src/memguard.rs`), `run.json` (`src/state.rs`), exec (`src/hermit/exec.rs`), dockerd
   with a stand-in daemon (`src/docker.rs`, as root) and a running one reused after a supervisor restart.
 - Start sequence (`src/start/tests.rs`) through fake hermit and fake magpie behind `test-gateway`, the sandbox token in
   `HTTP_PROXY`: ready, reported, 401/503, not ready without the lease, release refused while busy, a forced release
   exiting 0, a pending release in the activity reply; a release while waiting for the lease or retrying the mount
-  (exit 0, no attach); a state change during an in-flight report sent at once; a start after the released marker
-  (reports `released`, takes no lease); restart detection without `run.json` (held `fuse` fd, a stray `claude`
+  (exit 0, no attach); a state change during an in-flight report sent at once; a start after a release
+  (the keeper says `released`: reports `released`, takes no lease); a SIGTERM release that ends within 18 s while
+  hermit holds every activity report unanswered; restart detection without `run.json` (held `fuse` fd, a stray `claude`
   killed); the re-attach check against a real keeper.
 - `tests/restart.rs`: real supervisor processes under a keeper (`tests/common`): the first start pre-spawns a
   stand-in Claude Code and records it in `run.json`; a supervisor killed with SIGKILL is restarted, takes the
   `fuse` fd back and re-attaches to the live generation; a release over `:7070` exits 0 and nothing is started or
   leased again; a runtime stop (SIGTERM to the keeper) is a clean forced release in well under the 20 s grace.
 - `tests/soak.rs`: the same harness under `:7070`, exec and socket load for 20 s, with a supervisor restart while
-  hermit's activity route and magpie's lease route answer 503: RSS under 64 MiB and flat after warm-up (debug build:
-  23 MiB peak), every restart re-attached. `soak_long` (1 h, a restart with outages every 10 min, ignored) is for
+  hermit's activity route and magpie's lease route answer 503: RSS under 64 MiB, and each supervisor process flat
+  after its own warm-up (debug build: 23 MiB peak), every restart re-attached. `soak_long` (1 h, a restart with outages every 10 min, ignored) is for
   `nightly.yml`: `cargo test -p supervisor --test soak soak_long -- --ignored`.
 - Test supervisors read a `/proc` of their own and run no memory guard (it starts only when the parent is PID 1):
-  the guard must never kill a test host's processes.
+  the guard must never kill a test host's processes. The guard's decisions are tested on a fake `/proc`; the guard
+  running live under the keeper as PID 1 is left to the image smoke test (WP-24).
+- `ci.yml` runs as a user, so the dockerd test there only sees the keeper refuse uid 0; a step after the suite runs
+  it again under `sudo` (dockerd spawned as root, `daemon.json`, the `_ping` wait).
 
 ## Deviations from the spec text (WP-21)
 
@@ -102,11 +114,12 @@ rather than claim a `~/.claude` it does not have.
    `soak_long` (1 h, restarts and outages every 10 min). Open items: WP-23 adds turns and 1 MiB lines to the soak;
    WP-28 runs `soak_long` in `nightly.yml`; the keeper's 4 MiB RSS needs it as PID 1 with root (its fixed paths),
    so it is left to the image smoke test (WP-24).
-7. **The released marker.** 4.3 says exit 0 means a requested shutdown; the keeper (4.2) restarts the supervisor
-   whenever it exits. Both hold with `/run/supervisor/released`: the supervisor writes it when a release reaches
-   `released`, the keeper does not restart a supervisor that exits 0 with it present, and a supervisor that starts
-   with it (a crash after the release) only reports `released` and exits 0. The tmpfs is in a checkpoint, so a
-   restored released sandbox stays released.
+7. **`RELEASED`.** 4.3 says exit 0 means a requested shutdown; the keeper (4.2) restarts the supervisor whenever it
+   exits. Both hold with a keeper op the table does not have: when a release reaches `released` the supervisor
+   sends `RELEASED` (retried every 100 ms; the process does not exit before the keeper took it), the keeper keeps it
+   in memory, does not restart a supervisor that exits 0 after it, and says `released` in `STATUS`, so a supervisor
+   that starts after it (a crash after the release) only reports `released` and exits 0. No file write is involved,
+   and a checkpoint keeps the keeper's memory, so a restored released sandbox stays released.
 8. **The exits ring holds tracked children only.** PID 1 reaps every reparented process; those are counted
    (`STATUS` gains `orphans`) and kept out of the 64-entry ring, so a burst of them cannot push out a Claude Code,
    exec or dockerd exit. If more than 64 tracked exits land between two polls, `keeper::watch::Exits` sees the gap,
@@ -127,3 +140,19 @@ rather than claim a `~/.claude` it does not have.
     `boot_id` is not the keeper's is not re-attached. The first-start files (`/etc/hosts`, apt) are idempotent and
     are written unless a `run.json` of this boot exists.
 13. **`GET /v1/state`'s `leaseEpoch`** is the filesystem's, else the lease the start sequence took.
+14. **SIGTERM with no supervisor running** (the restart backoff, or a supervisor just forked): the keeper starts
+    one at once, skipping the backoff, and hands it the SIGTERM; the supervisor is forked with SIGTERM and SIGINT
+    blocked and unblocks them once its handlers are installed (`Start::spawn`), so a stop is always a forced
+    release within the 20 s grace, never the default action. The stop ends when the supervisor that got the
+    SIGTERM exits, or at the grace.
+15. **SIGINT**, which the keeper forwards (4.2), is a forced release like SIGTERM (A0.F30, a graceful drain on
+    SIGTERM or SIGINT); the keeper itself does not stop on it (4.2 stops only on SIGTERM), so the sandbox stays up,
+    released, until the runtime stops it.
+16. **`prepare pause` during a release** (15.5 has no row): `409 sandbox_busy` while the release runs (nothing is
+    quiesced yet), `ready: true` once it has finished (everything is stopped and unmounted, a checkpoint is safe).
+17. **`SPAWN` answers `OK pid since`**, the keeper's exit counter at the fork (4.2: `OK pid`), so a wait matches only
+    exits after it (`Exits::wait(pid, since)`). `start::reattach` reads the newest exit of `run.json`'s generation
+    pid, since `run.json` (4.4) records no counter.
+18. **Every call to hermit is bounded by `HERMIT_TIMEOUT` (10 s)** (the client's default is 30 s), and each attempt
+    of a release's final `released` report by what is left of the release's deadline: a hermit that holds the
+    request never keeps the release past it.
