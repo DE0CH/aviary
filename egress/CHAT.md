@@ -524,7 +524,7 @@ administrator). There is no automatic reset. To reset or raise: edit `budget` in
                         {"name": "tools", "upstream": "http://tools.jarvis.svc.cluster.local:8080", "keepAuth": true,
                          "inject": {}, "allowPaths": ["/mcp"]}], "cacheGiB": 5},
   "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
-            "upstreams": [{"prefix": "yyc", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
+            "upstreams": [{"prefix": "data", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
                            // read-only tools to offer (default deny; "tools" above): the upstream's own names
                            "tools": ["posts_search", "post_get", "streams_list"]}]},
