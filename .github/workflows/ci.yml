@@ -93,6 +93,27 @@ jobs:
           grep -q 'kernel fuse mount served real syscalls' "$RUNNER_TEMP/fuse.log"
           grep -q '1 passed' "$RUNNER_TEMP/fuse.log"
 
+  magpie-perf:
+    # magpie 6.10 / WP-12: cc write latency with synchronous replication (a primary and a synchronous standby, fsync
+    # on), measured with a release build (thin LTO off and more codegen units, to keep the build short)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: postgres, synchronously replicated (the production version, TLS on)
+        run: |
+          url=$(.github/ci/postgres-sync.sh ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3 5432)
+          echo "::add-mask::$url"
+          echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - name: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms for a 1 MiB image line
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo test --release --locked -p magpie --test ccfs_perf -- --ignored --nocapture
+
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,
     # RSS flat and under the budget; then every answer of the functional part parsed as sandboxd-api's types

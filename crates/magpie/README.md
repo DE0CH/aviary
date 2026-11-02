@@ -22,6 +22,8 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/fanout.rs` | the LISTEN hub (four channels) and the long-poll loop every held request uses |
 | `src/jobs/` | the job leader, purge, outbox (hermit calls), retention |
 | `src/stats.rs` | the ops reads (`/v1/ops/people`, `/v1/ops/view-as`, `/v1/ops/stats`) |
+| `src/ccfs/` | Claude Code state behind the FUSE layer (magpie 6): `scan`/`extract` (a JSONL line into stub and blobs), `classify` (main-transcript lines into events), `lines` (the rewrite algorithm, main-path rules, promotion, rename-over), `limbo` (retraction, the quiet-file sweeper), `pages` (byte files), `reconstruct` (tree and streamed reads), `lease`, `ops` (the state-changing routes) |
+| `src/blobs/` | `staging` (blobs a cc write introduces, staged in its transaction); the bucket is WP-15's |
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (WP-14); today only the seam the create route calls |
 
@@ -37,6 +39,15 @@ The packages after the core build on these, all inside one `aviary_pg::tx!` tran
 - `fanout::notify(tx, channel, key, head)`, `Fanout::hold(channel, key, wait, draining, query, empty)` and
   `Fanout::hold_until(&[(channel, key)…], wait, draining, query)` (several watches; the last answer on timeout).
 - `jobs::outbox::enqueue(tx, &Item)` queues a hermit call made by the job leader after the commit.
+- `ccfs::lines::set_main_transcript(tx, conversation, path)`: the supervisor's `running` report (WP-14) sets the
+  main path in its transaction; lines already written there are classified then (6.2).
+- `ccfs::limbo::flush_scope(tx, conversation, turn)`: an accepted end report flushes the turn's limbo (6.7).
+- `ccfs::set_resync(tx, conversation)`: a `cc.write_stuck` report; the next lease answers `resync: true`.
+- Classification fills `tool_links` (`use_seq` for each `tool_use`, `result_seq` for each result, magpie 6.5), so the
+  projection (WP-13) reads it rather than writing it.
+- A cc transaction never calls the bucket: `cc_tx!`/`cc_op!` run it, and when it needs bytes of a blob that is only
+  in the bucket (`Error::NeedBlobs`) they fetch those through `blobs::fetch_stored` (WP-15 fills it; until then it
+  answers 503) and run it again.
 
 ## Tests
 
@@ -49,6 +60,16 @@ every projection rule from events to rows, the epoch, the pages, the M9 long-pol
 connection held, drain), the E6-style cost test, prompts and search; `tests/projection.rs` the property test
 (random event sequences against an in-memory reference projector, `row_seqs` density, `after` from every seq);
 `tests/live.rs` live frames.
+
+The ccfs suite (WP-12): `tests/ccfs.rs` (files, byte files, directories, renames, errno codes, `opId` replays,
+rule 0, the lease with and without hermit, quota and staging limits, blobs, events, promotion, tombstones,
+rewrites, `meta.replaces`, compaction, set-aside, away-and-back, the limbo debounce, overwrites, streamed reads);
+`tests/ccfs_model.rs` (random operation sequences against a byte-vector model: the file after every step, and the
+visible events against the classification of the model's lines); `tests/ccfs_claude_code.rs` (Claude Code
+2.1.304's real transcripts from the FUSE gate, replayed in the shape of the gate's recorded calls, with pinned
+event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
+`.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
+for a 1 MiB image line). The scanner, extraction and classification have unit and property tests in the crate.
 
 ## Deviations from the spec text
 
@@ -97,3 +118,41 @@ connection held, drain), the E6-style cost test, prompts and search; `tests/proj
     text starts at that delta's offset; a frame of a block whose durable row exists is ignored.
   - Search counts occurrences in the `user`/`assistant` rows an event made (events' `text` holds only those); its
     cursor is the event seq after which the next page starts.
+
+### Claude Code state (WP-12)
+
+- No answer is `offset_mismatch`: a write's query has no append flag, and magpie 6.6 rule 4 makes a write inside
+  the file an overwrite (as `pwrite`; the contract's fake does the same). A lost acknowledged append shows as the
+  next append's offset past magpie's end, answered `offset_beyond_eof`, which the supervisor repairs the same way
+  (supervisor 9.5 item 6).
+- A truncate cannot grow a lines file (`offset_beyond_eof`, rule 1); a byte file grows and a write past its end
+  zero-fills (6.8). The 256 MiB file cap applies to lines files too (the supervisor caches files of up to 256 MiB
+  whole).
+- Only the main transcript's lines go to limbo or are retracted: a file renamed away from the main path keeps its
+  lines' events (`moved` limbo) and a later truncate of it retracts nothing. `moved` limbo is matched by sha256
+  (the earliest event with that sha), not in order first.
+- The end report's flush (`limbo::flush_scope`) flushes the conversation's whole `truncated` limbo: limbo rows carry
+  no turn, and one turn runs at a time.
+- A `type: "user"` line with `isCompactSummary` is a `cc.user` event that is not a prompt and never the echo (the
+  table of 6.5 has no row for it; it is no message a person sent).
+- A `custom-title`/`ai-title` record sets the provisional title cut to 200 characters; a title or model change
+  emits `conversation_upserted`, a context-token change alone does not (the next turn change carries it). The
+  model `<synthetic>` (Claude Code's own API error lines) is not recorded as the conversation's model.
+- `meta.replaces` also names the event of an old line that this operation's rewrite replaces, or that waits in the
+  file's limbo (a truncate-then-rewrite of a changed line retracts it only at the flush, after the new line).
+- Migration `0004_ccfs.sql` adds the blob's preview and line count (an event for a stored line is made without
+  its bytes), `cc_lines.classified` (a promotion classifies only lines never classified, so an echo or an
+  internal line is never classified twice), `cc_retracted` (uuids of retracted lines, for `meta.replaces` by index)
+  and two limbo indexes.
+- `GET /v1/sandbox/cc/tree` and `/cc/file` need the sandbox identity, not the lease (they change nothing).
+- A read's first batch of lines is made before the answer starts (a sha mismatch or a missing blob there answers
+  500 / 503); a later failure, or the file changing while it streams, ends the body early. Every reconstructed
+  line's sha256 is checked in a debug build and inside a transaction; one in 1,000 in a release build's reads.
+  Blobs of a batch are read from staging in one query; the read cache, the 16-blob prefetch and bucket reads come
+  with WP-15's store, and with them the 87 MB read target.
+- The lease asks hermit only when its feed's record does not name the caller as `starting` or `ready`; hermit's 404
+  is "no sandbox" (`not_current_sandbox`), any other failure or 2 s without an answer 503.
+- The 2.1.304 acceptance replays the real binary's transcripts from the FUSE gate through the routes, in the shape
+  of the gate's recorded calls; the real binary against a mock Messages API through a FUSE supervisor is the e2e
+  harness's (WP-28). The latency figures are measured at the client over loopback HTTP (they include the round
+  trip), with a 2-node synchronously replicated Postgres in CI.
