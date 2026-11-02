@@ -13,6 +13,8 @@ members = [
   "testing/source-rules",
   "testing/tls-canary",
 ]
+# throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
+exclude = ["crates/supervisor/spikes"]
 
 [workspace.package]
 edition = "2024"
