@@ -445,6 +445,7 @@ impl Core {
                 create: false,
                 mode: e.mode,
                 turn_id: None,
+                append: false,
             };
             let r = self.rt.block_on(self.remote.call(
                 &ctl,
@@ -1370,6 +1371,7 @@ impl Core {
                     create: true,
                     mode,
                     turn_id: *lock(&self.turn),
+                    append: false,
                 };
                 let sv = self
                     .mcall(h, ctl, effect, "cc/write (create)", |c| {
@@ -1476,6 +1478,7 @@ impl Core {
                     create: false,
                     mode: e.mode,
                     turn_id: *lock(&self.turn),
+                    append: false,
                 };
                 let bytes = Bytes::copy_from_slice(data);
                 let sv = self.with_repair(h, &p, |s| {

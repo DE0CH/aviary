@@ -14,7 +14,7 @@ use crate::uploads::BlobId;
 pub const CC_WRITE_MAX_BYTES: usize = 16 << 20;
 /// JSONL line cap (including a tail being built), bytes.
 pub const CC_LINE_MAX_BYTES: u64 = 64 << 20;
-/// Byte file cap.
+/// Byte file cap (a `bytes` file; a `lines` file is bounded by the quota, magpie 17).
 pub const CC_FILE_MAX_BYTES: u64 = 256 << 20;
 /// Claude Code state per conversation (`ccBytes` quota).
 pub const CC_QUOTA_BYTES: u64 = 2 << 30;
@@ -119,6 +119,11 @@ pub struct CcWriteQuery {
     /// The turn the supervisor was running when it read the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<Uuid>,
+    /// An append (`1`): `offset` is the size the writer expects the file to have. After rule 0 (magpie 6.6), a file
+    /// of any other size answers 409 `offset_mismatch`, so a stale retry under a new `opId` cannot write twice
+    /// (magpie 6.10). Without it a write inside the file is an overwrite (`pwrite`).
+    #[serde(default, with = "crate::flag01", skip_serializing_if = "crate::flag01::is_false")]
+    pub append: bool,
 }
 
 /// `cc/write` and `cc/truncate` → 200.

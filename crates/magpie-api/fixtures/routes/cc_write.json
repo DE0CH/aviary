@@ -7,7 +7,8 @@
     "opId": "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d",
     "create": "0",
     "mode": 384,
-    "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f"
+    "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+    "append": "1"
   },
   "requestBytes": "{\"type\":\"assistant\"}\n",
   "responses": [

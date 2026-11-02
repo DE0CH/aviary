@@ -58,6 +58,7 @@ fn write(path: &str, offset: u64, create: bool) -> CcWriteQuery {
         create,
         mode: 0o600,
         turn_id: None,
+        append: false,
     }
 }
 
@@ -106,6 +107,16 @@ async fn magpie_lease_and_cc_files() {
     let b = s.cc_write(&q, b"{\"c\":3}\n".to_vec()).await.unwrap();
     assert_eq!(a, b);
     assert_eq!(fake.node(CONV, t).unwrap().data.len(), 24);
+    // an append expects the file's size: a stale one is refused unless its bytes are already there (rule 0)
+    let stale = CcWriteQuery {
+        append: true,
+        ..write(t, 8, false)
+    };
+    assert_eq!(
+        code(s.cc_write(&stale, b"{\"x\":9}\n".to_vec()).await).1,
+        "offset_mismatch"
+    );
+    assert_eq!(s.cc_write(&stale, b"{\"b\":2}\n".to_vec()).await.unwrap().size, 24);
     assert_eq!(fake.node(CONV, t).unwrap().kind, CcKind::Lines);
 
     // read back, whole and ranged

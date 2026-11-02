@@ -127,6 +127,7 @@ impl Sandbox {
             create: true,
             mode: 0o600,
             turn_id: self.turn,
+            append: false,
         }
     }
 

@@ -724,9 +724,17 @@ impl FakeMagpie {
             if q.offset > size {
                 return Err(refuse(ErrorCode::OffsetBeyondEof, "the offset is past the end"));
             }
+            // an append expects the file's size (magpie 6.10)
+            if q.append && q.offset != size {
+                return Err(refuse(
+                    ErrorCode::OffsetMismatch,
+                    "the append's offset is not the file's size",
+                ));
+            }
             let end = q.offset + data.len() as u64;
             let new_size = end.max(size);
-            if new_size > CC_FILE_MAX_BYTES {
+            // the 256 MiB cap is a byte file's; a lines file is bounded by the quota (magpie 17)
+            if kind_of(&q.path) == CcKind::Bytes && new_size > CC_FILE_MAX_BYTES {
                 return Err(refuse(ErrorCode::TooLarge, "the file is over 256 MiB"));
             }
             if c.cc_bytes() - size + new_size > quota {
