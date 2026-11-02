@@ -212,10 +212,15 @@ impl Guard {
         (None, if fast { MEM_SAMPLE_FAST } else { MEM_SAMPLE })
     }
 
-    /// The guard's task.
+    /// The guard's task. Each tick reads `/proc` on the blocking pool: under memory pressure `/proc` is slow, and the
+    /// runtime's two workers must stay free for the activity loop and `:7070`.
     pub async fn run(self, host: Arc<dyn GuardHost>) {
+        let me = Arc::new(self);
         loop {
-            let (_, wait) = self.tick(host.as_ref());
+            let (g, h) = (me.clone(), host.clone());
+            let wait = tokio::task::spawn_blocking(move || g.tick(h.as_ref()).1)
+                .await
+                .unwrap_or(MEM_SAMPLE);
             tokio::time::sleep(wait).await;
         }
     }

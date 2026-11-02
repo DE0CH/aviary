@@ -63,11 +63,12 @@ impl Control {
                 state: s.state,
                 turn_id: s.turn_id,
                 origin: s.origin,
-                tasks: Vec::new(),
-                asks: Vec::new(),
+                tasks: self.lifecycle.agent().tasks(),
+                asks: self.lifecycle.agent().asks(),
             },
             generation: self.lifecycle.agent().generation(),
-            lease_epoch: fs.lease_epoch,
+            // the filesystem's (it re-takes a lost lease), else the one the start sequence took
+            lease_epoch: fs.lease_epoch.or_else(|| self.lifecycle.lease_epoch()),
             fuse: Fuse {
                 inflight: fs.inflight,
                 blocked: fs.blocked,

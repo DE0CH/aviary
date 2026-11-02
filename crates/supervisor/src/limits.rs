@@ -148,5 +148,15 @@ pub const KEEPER_EXITS: usize = 64;
 pub const CLOCK_JUMP: Duration = Duration::from_secs(30);
 /// The clock-jump check's tick.
 pub const CLOCK_TICK: Duration = Duration::from_secs(1);
+/// The part of a release's deadline kept for the final `released` activity report: the stop and the settle end
+/// this long before it.
+pub const RELEASE_FINAL_RESERVE: Duration = Duration::from_secs(1);
+/// What the SIGTERM release leaves of [`KEEPER_STOP_GRACE`] for the exit itself.
+pub const SIGTERM_MARGIN: Duration = Duration::from_secs(2);
+/// The deadline of the forced release a SIGTERM starts (4.7): it ends before the keeper's SIGKILL. A running turn's
+/// interrupt is cut to what leaves the stop its 5 s + 3 s (`lifecycle::ReleaseTimes`).
+pub const SIGTERM_RELEASE_DEADLINE: Duration =
+    Duration::from_secs(KEEPER_STOP_GRACE.as_secs() - SIGTERM_MARGIN.as_secs());
+
 /// The deadline of a lifecycle call that names none.
 pub const PREPARE_DEADLINE_DEFAULT: Duration = Duration::from_secs(10);

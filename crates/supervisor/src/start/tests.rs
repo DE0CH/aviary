@@ -29,7 +29,7 @@ struct World {
     gateway: test_gateway::Running,
     cid: Uuid,
     sandbox: Uuid,
-    _keeper: crate::keeper::testing::Running,
+    running_keeper: crate::keeper::testing::Running,
     keeper: keeper::Client,
 }
 
@@ -83,7 +83,7 @@ async fn world() -> World {
     World {
         dir: k.dir.clone(),
         keeper: k.client.clone(),
-        _keeper: k,
+        running_keeper: k,
         hermit,
         magpie,
         _served: (hs, ms),
@@ -206,7 +206,8 @@ async fn boots_through_the_gateway_reports_and_releases() {
 
     // state
     let st = cc.state().await.unwrap();
-    assert_eq!(st.lease_epoch, Some(7));
+    // the filesystem reports none: the lease the start sequence took
+    assert_eq!(st.lease_epoch, Some(w.magpie.lease_epoch(w.cid)));
     assert!(st.magpie_reachable);
     assert!(st.supervisor.rss_bytes > 0);
 
@@ -255,7 +256,7 @@ async fn a_pending_release_in_the_activity_reply_is_acted_on() {
     until("ready", || l.is_ready()).await;
     // the direct call was lost; the next reply repeats it (unforced, idle: released)
     w.hermit.request_release(w.cid, ReleaseReason::Lifetime, false);
-    l.activity_now.notify_waiters();
+    l.activity_now.notify_one();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(20), done)
             .await
@@ -331,12 +332,17 @@ fn a_restart_reattaches_to_a_live_generation_and_sees_one_that_died() {
     };
     // a new supervisor (a new client) reads run.json and finds it alive
     let again = keeper::Client::new(&k.dir.join("run"));
-    assert_eq!(reattach(&again, Some(&state(pid))), Reattach::Alive { n: 3, pid });
-    assert_eq!(reattach(&again, None), Reattach::Nothing);
+    assert_eq!(reattach(&again, Some(&state(pid)), true), Reattach::Alive { n: 3, pid });
+    assert_eq!(reattach(&again, None, true), Reattach::Nothing);
+    // a run.json of another boot names no live process, whatever the pid
+    assert_eq!(
+        reattach(&again, Some(&state(pid)), false),
+        Reattach::Exited { n: 3, exit: None }
+    );
     // it dies while no supervisor runs
     again.signal(pid, libc::SIGKILL).unwrap();
     k.wait_exit(pid);
-    match reattach(&again, Some(&state(pid))) {
+    match reattach(&again, Some(&state(pid)), true) {
         Reattach::Exited { n: 3, exit: Some(e) } => assert_eq!(e.signal, Some(libc::SIGKILL)),
         other => panic!("{other:?}"),
     }
@@ -373,4 +379,184 @@ fn hosts_and_apt_files() {
         0o644
     );
     let _ = std::fs::remove_dir_all(d);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_release_while_waiting_for_the_lease_exits_without_attaching() {
+    let w = world().await;
+    let agent = FakeAgent::new();
+    let _f = w
+        .magpie
+        .faults()
+        .on("lease", aviary_fakes::FaultKind::Unavailable { retry_after_secs: 1 });
+    let fs = Arc::new(FakeFs::default());
+    let (running, done, cc, _) = w.start(agent.clone(), fs.clone()).await;
+    let l = running.lifecycle.clone();
+    until("the descriptor", || l.readiness().descriptor).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let rel = ReleaseRequest::new(ReleaseReason::Idle, false, 30_000).unwrap();
+    assert_eq!(cc.release(&rel).await.unwrap(), Outcome::Done);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(agent.log(), vec!["stop"], "attach never ran");
+    assert!(fs.mounts.lock().unwrap().is_empty());
+    assert!(w.dir.join("run").join(keeper::RELEASED_NAME).exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_release_while_the_mount_is_retried_exits() {
+    let w = world().await;
+    let fs: Arc<dyn Filesystem> = Arc::new(crate::lifecycle::UnbuiltFilesystem);
+    let agent = FakeAgent::new();
+    let (running, done, cc, _) = w.start(agent.clone(), fs).await;
+    let l = running.lifecycle.clone();
+    until("the lease", || l.readiness().lease).await;
+    let rel = ReleaseRequest::new(ReleaseReason::Deleted, true, 30_000).unwrap();
+    assert_eq!(cc.release(&rel).await.unwrap(), Outcome::Done);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(agent.log(), vec!["stop"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_state_change_during_an_in_flight_report_is_sent_at_once() {
+    let w = world().await;
+    let agent = FakeAgent::new();
+    let (running, _done, _cc, _) = w.start(agent.clone(), Arc::new(FakeFs::default())).await;
+    let l = running.lifecycle.clone();
+    until("ready", || l.is_ready()).await;
+    let states = |w: &World| -> Vec<String> {
+        w.hermit
+            .script()
+            .calls_to("sandbox_activity")
+            .into_iter()
+            .filter_map(|c| c.body?.get("state")?.as_str().map(str::to_owned))
+            .collect()
+    };
+    until("an idle report", || states(&w).iter().any(|s| s == "idle")).await;
+    // hold the next report in flight, change the state while it is held
+    let hold = aviary_fakes::Hold::new();
+    let f = w
+        .hermit
+        .faults()
+        .on("sandbox_activity", aviary_fakes::FaultKind::Hold(hold.clone()));
+    l.activity_now.notify_one();
+    until("a report in flight", || hold.waiting() == 1).await;
+    agent.set(ActivityState::Running);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    w.hermit.faults().remove(f);
+    hold.release();
+    let t = Instant::now();
+    until("the running report", || states(&w).iter().any(|s| s == "running")).await;
+    // at once, not at the next 15 s tick
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn released_before_this_start_reports_released_and_takes_no_lease() {
+    let w = world().await;
+    std::fs::write(w.dir.join("run").join(keeper::RELEASED_NAME), "released\n").unwrap();
+    let agent = FakeAgent::new();
+    let fs = Arc::new(FakeFs::default());
+    let (running, done, cc, _) = w.start(agent.clone(), fs.clone()).await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(running.lifecycle.phase(), Phase::Released);
+    let reported = w.hermit.script().calls_to("sandbox_activity");
+    assert!(
+        reported
+            .iter()
+            .all(|c| c.body.as_ref().and_then(|b| b.get("state")?.as_str()) == Some("released")),
+        "{reported:?}"
+    );
+    assert!(!reported.is_empty());
+    assert_eq!(w.magpie.lease_epoch(w.cid), 0, "no lease taken");
+    assert!(agent.log().is_empty() && fs.mounts.lock().unwrap().is_empty());
+    drop(cc);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn without_run_json_a_held_fuse_fd_and_a_live_claude_still_mean_a_restart() {
+    let w = world().await;
+    // a predecessor mounted and spawned Claude Code, then died before run.json reached the disk
+    let (r, wr) = std::os::unix::net::UnixStream::pair().unwrap();
+    w.keeper
+        .put_fd(keeper::FUSE_FD, std::os::fd::AsRawFd::as_raw_fd(&r))
+        .unwrap();
+    let mut spec = w.running_keeper.spec("claude", &["/bin/sleep", "100"]);
+    spec.setsid = true;
+    let stray = w.keeper.spawn(&spec).unwrap();
+    let agent = FakeAgent::new();
+    let fs = Arc::new(FakeFs::default());
+    let (running, _done, _cc, _) = w.start(agent.clone(), fs.clone()).await;
+    let l = running.lifecycle.clone();
+    until("ready", || l.is_ready()).await;
+    assert_eq!(*fs.mounts.lock().unwrap(), vec![true], "the keeper's fd is taken back");
+    // the claude no run.json names was killed before the agent attached (so no second generation beside it)
+    let e = w.running_keeper.wait_exit(stray);
+    assert_eq!(e.signal, Some(libc::SIGKILL));
+    assert_eq!(agent.log(), vec!["attach Nothing"]);
+    // hosts was still written (idempotent) since no run.json of this boot said so
+    assert!(
+        std::fs::read_to_string(w.dir.join("hosts"))
+            .unwrap()
+            .contains("sandbox")
+    );
+    drop(wr);
+}
+
+#[test]
+fn a_start_is_classified_from_run_json_and_the_keeper() {
+    let st = |restarts, children: &[(i32, &str)]| KeeperStatus {
+        boot_id: "b1".into(),
+        supervisor_restarts: restarts,
+        started_at_ms: 0,
+        children: children.iter().map(|(p, n)| (*p, (*n).to_owned())).collect(),
+        orphans: 0,
+    };
+    let prior = |boot: &str, pid| RunState {
+        boot_id: boot.into(),
+        generation: Some(GenState {
+            n: 1,
+            pid,
+            ..GenState::default()
+        }),
+        ..RunState::default()
+    };
+    // a first start
+    let s = Started::classify(None, "b1", Some(&st(0, &[])), false);
+    assert!(!s.restart && !s.same_boot && s.strays.is_empty());
+    // a restart with run.json: its generation is not a stray, another claude is
+    let s = Started::classify(
+        Some(&prior("b1", 10)),
+        "b1",
+        Some(&st(1, &[(10, "claude"), (11, "claude"), (12, "dockerd")])),
+        true,
+    );
+    assert!(s.restart && s.same_boot && s.fuse_held);
+    assert_eq!(s.strays, vec![11]);
+    // run.json unreadable (moved aside), the keeper restarted a supervisor: still a restart
+    let s = Started::classify(None, "b1", Some(&st(2, &[])), false);
+    assert!(s.restart);
+    // run.json of another boot: its pid means nothing; the start is a first one for this keeper
+    let s = Started::classify(Some(&prior("b0", 10)), "b1", Some(&st(0, &[(10, "claude")])), false);
+    assert!(!s.same_boot && s.restart);
+    assert_eq!(s.strays, vec![10]);
+    let s = Started::classify(Some(&prior("b0", 10)), "b1", Some(&st(0, &[])), false);
+    assert!(!s.same_boot && !s.restart);
 }

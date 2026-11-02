@@ -77,21 +77,25 @@ impl Docker {
     /// The reason, as the `500` body says it.
     pub async fn start(&self) -> Result<(), String> {
         let mut pid = self.pid.lock().await;
-        if pid.is_some() && ping(&self.paths.api_socket).await {
+        // one that answers (a predecessor's, after a supervisor restart) is used as it is
+        if ping(&self.paths.api_socket).await {
             return Ok(());
         }
-        let alive = match *pid {
-            Some(p) => {
-                let k = self.keeper.clone();
-                tokio::task::spawn_blocking(move || k.status())
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-                    .is_some_and(|s| s.children.iter().any(|(c, n)| *c == p && n == "dockerd"))
-            }
-            None => false,
-        };
-        if !alive {
+        // one the keeper runs (this supervisor's or a predecessor's) is still starting: wait for it
+        let k = self.keeper.clone();
+        let live = tokio::task::spawn_blocking(move || k.status())
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|s| {
+                s.children
+                    .into_iter()
+                    .find(|(c, n)| n == "dockerd" && pid.is_none_or(|p| p == *c))
+                    .map(|(c, _)| c)
+            });
+        if let Some(p) = live {
+            *pid = Some(p);
+        } else {
             if let Some(dir) = self.paths.daemon_json.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("daemon.json: {e}"))?;
             }
@@ -229,5 +233,34 @@ while True:
             assert!(e.contains("spawn dockerd"), "{e}");
         }
         assert!(!ping(&dir.join("nothing.sock")).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn after_a_supervisor_restart_the_running_dockerd_is_used() {
+        let k = crate::keeper::testing::Running::start(None);
+        let dir = k.dir.clone();
+        let script = dir.join("dockerd.py");
+        std::fs::write(&script, FAKE_DOCKERD).unwrap();
+        let api = dir.join("docker.sock");
+        // a predecessor's dockerd, still starting (it answers after 1 s)
+        let mut spec = k.spec(
+            "dockerd",
+            &["/usr/bin/python3", script.to_str().unwrap(), api.to_str().unwrap(), "1"],
+        );
+        spec.setsid = true;
+        k.client.spawn(&spec).unwrap();
+        // the new supervisor's Docker knows no pid; the spawn it would make (uid 0) is not needed
+        let paths = DockerPaths {
+            dockerd: vec!["/nonexistent/dockerd".into()],
+            daemon_json: dir.join("etc/daemon.json"),
+            log: dir.join("dockerd.log"),
+            api_socket: api.clone(),
+        };
+        let d = Docker::new(k.client.clone(), paths, vec![]);
+        d.start().await.unwrap();
+        d.start().await.unwrap();
+        let st = k.client.status().unwrap();
+        assert_eq!(st.children.iter().filter(|(_, n)| n == "dockerd").count(), 1);
+        assert!(!dir.join("etc/daemon.json").exists(), "nothing was spawned");
     }
 }

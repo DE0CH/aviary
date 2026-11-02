@@ -78,7 +78,7 @@ impl Activity {
             q.pop_front();
         }
         drop(q);
-        self.lifecycle.activity_now.notify_waiters();
+        self.lifecycle.activity_now.notify_one();
     }
 
     /// The report as of now, and how many queued events it carries.
@@ -120,9 +120,11 @@ impl Activity {
         )
     }
 
-    /// Sends one report; on success drops the events it carried and acts on a pending release.
-    async fn send(self: &Arc<Self>) -> bool {
+    /// Sends one report; on success drops the events it carried and acts on a pending release. Whether it was
+    /// accepted, and the state it carried.
+    async fn send(self: &Arc<Self>) -> (bool, ActivityState) {
         let (report, n) = self.report();
+        let state = report.state;
         match self.hermit.client().sandbox_activity(&report).await {
             Ok(reply) => {
                 {
@@ -140,11 +142,11 @@ impl Activity {
                         let _ = l.release(req).await;
                     });
                 }
-                true
+                (true, state)
             }
             Err(e) => {
                 tracing::info!(error = %e, "activity report failed");
-                false
+                (false, state)
             }
         }
     }
@@ -154,7 +156,7 @@ impl Activity {
         let me = self.clone();
         Box::pin(async move {
             while tokio::time::Instant::now() < deadline {
-                if me.send().await {
+                if me.send().await.0 {
                     return;
                 }
                 tokio::time::sleep(ACTIVITY_RETRY).await;
@@ -176,8 +178,8 @@ impl Activity {
         let mut status = self.lifecycle.agent().status();
         let mut phases = self.lifecycle.phases();
         loop {
-            let ok = self.send().await;
-            let sent_state = self.lifecycle.reported().state;
+            // the state this report carried: a change while it was in flight is a change to send at once
+            let (ok, sent_state) = self.send().await;
             if ok && sent_state == ActivityState::Released {
                 return;
             }

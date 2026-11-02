@@ -45,6 +45,7 @@ aviary-fakes = { path = "../../testing/fakes" }
 gateway-api = { path = "../gateway-api" }
 prometheus-client.workspace = true
 test-gateway = { path = "../../testing/test-gateway" }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

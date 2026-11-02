@@ -1,6 +1,11 @@
 //! The supervisor's start, on every start, first or after a restart (supervisor 4.3), and its shutdown (4.7).
 //!
-//! 1. `oom_score_adj -1000`; `boot_id`; `run.json` if present (a restart).
+//! 0. SIGTERM is handled from the first moment: a forced release at any step.
+//! 1. `oom_score_adj -1000`; `boot_id`; `run.json` if present; the keeper's `STATUS` and held `fuse` fd. A restart
+//!    is a readable `run.json` of this boot, or a keeper that has restarted a supervisor, holds the `fuse` fd or runs
+//!    a `claude` ([`Started::classify`]): an unreadable `run.json` never makes a restart look like a first start.
+//!    The released marker ([`keeper::RELEASED_NAME`]) means the predecessor finished a release: this supervisor
+//!    only reports `released` and exits 0.
 //! 2. The sandbox token is the boot proxy's credential (DESIGN 12 D1); the descriptor `GET http://hermit/v1/sandbox/self`
 //!    is read until it answers.
 //! 3. `:7070` (answering 503 until the descriptor is read, then `ready: false` until step 9), `agent.sock` and the
@@ -11,10 +16,15 @@
 //! 6. `~/.claude` mounted ([`Filesystem::mount`]; a fresh connection or the keeper's fd).
 //! 7. Claude Code: re-attached to the live generation named in `run.json` (checked against the keeper's `STATUS`
 //!    and `EXITS`), or pre-spawned, by the driver.
-//! 8. The activity loop, the memory guard, the clock-jump detector; health `ready: true` once `/workspace` is there.
+//!    A live `claude` that `run.json` does not name (no `run.json`, or a crash between spawn and record) is
+//!    killed first, so a second generation never runs beside it.
+//! 8. The clock-jump detector; health `ready: true` once that is done and `/workspace` is there (the activity loop
+//!    and the memory guard run from step 2 on).
 //!
-//! The process exits 0 once a release has finished (hermit's call, the activity reply's repeat, or SIGTERM, which
-//! is always a forced release), 70 on an internal error (the keeper restarts it).
+//! Every waiting step (the descriptor, the lease, the mount retry, the attach) gives way to a release: once one has
+//! begun the sequence stops, `attach` is never called, and the process exits 0 when the release has finished
+//! (hermit's call, the activity reply's repeat, or SIGTERM, which is always a forced release). 70 on an internal
+//! error (the keeper restarts it).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -22,9 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aviary_core::version::Build;
-use hermit_api::sandbox::{ReleaseCallCode, ReleaseReason};
 use hermit_api::sandbox_surface::{ActivityEvent, ActivityEventKind, SandboxSelf};
-use supervisor_api::control::{RELEASE_DEADLINE_MS, ReleaseRequest};
 use supervisor_api::server::{control_router, local_router};
 
 use crate::boot::{BootEnv, ROOT_HOME};
@@ -34,8 +42,8 @@ use crate::hermit::activity::{Activity, Facts};
 use crate::hermit::control::Control;
 use crate::hermit::exec::Exec;
 use crate::keeper::watch::Exits;
-use crate::keeper::{self, ExitRecord};
-use crate::lifecycle::{Agent, AttachContext, Filesystem, Lifecycle, Phase};
+use crate::keeper::{self, ExitRecord, KeeperStatus};
+use crate::lifecycle::{Agent, AttachContext, Filesystem, Lifecycle, Phase, sigterm_release};
 use crate::local::{Local, serve_unix};
 use crate::magpie::{self, LeaseWait};
 use crate::memguard::{self, Guard, GuardHost, Kill, Proc};
@@ -104,12 +112,57 @@ pub enum Reattach {
     Exited { n: u32, exit: Option<ExitRecord> },
 }
 
-/// Looks up the generation `prior` names in the keeper (4.3 step 8).
+/// What step 1 found: whether this start is a restart, and what to make of `run.json`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Started {
+    /// Anything a previous supervisor of this boot left: `run.json`, a restart count, the `fuse` fd, a `claude`.
+    pub restart: bool,
+    /// `run.json` was written in this boot (its `boot_id` is the keeper's): its generation pid means something.
+    pub same_boot: bool,
+    /// The keeper holds the `fuse` fd: the mount takes it back (`Filesystem::mount(restart = true)`).
+    pub fuse_held: bool,
+    /// Live `claude` children `run.json` does not name: killed before the agent attaches.
+    pub strays: Vec<i32>,
+}
+
+impl Started {
+    /// Classifies a start from `run.json`, the keeper's `boot_id`, its `STATUS` and whether it holds `fuse`.
+    #[must_use]
+    pub fn classify(prior: Option<&RunState>, boot_id: &str, status: Option<&KeeperStatus>, fuse_held: bool) -> Self {
+        let same_boot = prior.is_some_and(|p| p.boot_id.is_empty() || boot_id.is_empty() || p.boot_id == boot_id);
+        let named = prior
+            .filter(|_| same_boot)
+            .and_then(|p| p.generation.as_ref())
+            .map(|g| g.pid);
+        let claude: Vec<i32> = status
+            .map(|s| {
+                s.children
+                    .iter()
+                    .filter(|(_, n)| n == "claude")
+                    .map(|(p, _)| *p)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let keeper_state = status.is_some_and(|s| s.supervisor_restarts > 0) || fuse_held || !claude.is_empty();
+        Self {
+            restart: same_boot || keeper_state,
+            same_boot,
+            fuse_held,
+            strays: claude.into_iter().filter(|p| Some(*p) != named).collect(),
+        }
+    }
+}
+
+/// Looks up the generation `prior` names in the keeper (4.3 step 8). A `run.json` of another boot names no live
+/// process: its generation is reported exited.
 #[must_use]
-pub fn reattach(keeper: &keeper::Client, prior: Option<&RunState>) -> Reattach {
+pub fn reattach(keeper: &keeper::Client, prior: Option<&RunState>, same_boot: bool) -> Reattach {
     let Some(g) = prior.and_then(|s| s.generation.as_ref()) else {
         return Reattach::Nothing;
     };
+    if !same_boot {
+        return Reattach::Exited { n: g.n, exit: None };
+    }
     let alive = keeper
         .status()
         .is_ok_and(|s| s.children.iter().any(|(pid, name)| *pid == g.pid && name == "claude"));
@@ -279,6 +332,8 @@ impl Start {
             fs,
             control,
         } = self;
+        // 0
+        tokio::spawn(sigterm(lifecycle.clone()));
         // 1
         if let Err(e) = std::fs::write(&paths.oom_score_adj, "-1000") {
             tracing::info!(error = %e, "oom_score_adj not set");
@@ -286,6 +341,9 @@ impl Start {
         let boot_id = std::fs::read_to_string(paths.run_dir.join(keeper::BOOT_ID_NAME))
             .map(|s| s.trim().to_owned())
             .unwrap_or_default();
+        let marker = paths.run_dir.join(keeper::RELEASED_NAME);
+        let released_before = marker.exists();
+        lifecycle.set_released_marker(marker);
         let file = StateFile::new(&paths.state_dir);
         let prior = match file.load() {
             Ok(p) => p,
@@ -294,19 +352,29 @@ impl Start {
                 return EXIT_INTERNAL;
             }
         };
-        let restart = prior.is_some();
-        let persisted = Persisted::new(prior.clone().unwrap_or_else(|| RunState {
+        let k = keeper.clone();
+        let (status, fuse_held) = tokio::task::spawn_blocking(move || {
+            let held = k.get_fd(keeper::FUSE_FD).ok().flatten().is_some();
+            (k.status().ok(), held)
+        })
+        .await
+        .unwrap_or((None, false));
+        let started = Started::classify(prior.as_ref(), &boot_id, status.as_ref(), fuse_held);
+        if prior.is_some() && !started.same_boot {
+            tracing::warn!("run state is from another boot: its generation is not re-attached");
+        }
+        if prior.is_none() && started.restart {
+            tracing::warn!(fuse_held, strays = ?started.strays, "no run state, but the keeper has a previous supervisor's state");
+        }
+        let restarts = status.as_ref().map_or(0, |s| s.supervisor_restarts);
+        let persisted = Persisted::new(RunState {
             version: VERSION,
             boot_id: boot_id.clone(),
-            ..RunState::default()
-        }));
-        tokio::spawn(persisted.clone().writer(file));
-        let k = keeper.clone();
-        let status = tokio::task::spawn_blocking(move || k.status())
-            .await
-            .ok()
-            .and_then(Result::ok);
-        let restarts = status.as_ref().map_or(0, |s| s.supervisor_restarts);
+            ..prior.clone().unwrap_or_default()
+        });
+        if !released_before {
+            tokio::spawn(persisted.clone().writer(file));
+        }
         let k = keeper.clone();
         let after = tokio::task::spawn_blocking(move || k.exits(0))
             .await
@@ -316,7 +384,7 @@ impl Start {
             .unwrap_or(0);
         let exits = Exits::new(keeper.clone(), after);
         tokio::spawn(exits.clone().run());
-        tracing::info!(version = %crate::hermit::version(), boot_id = %boot_id, restart, "supervisor started");
+        tracing::info!(version = %crate::hermit::version(), boot_id = %boot_id, restart = started.restart, "supervisor started");
 
         // 3 (before 2, so :7070 answers 503 while the descriptor is read)
         let proc = Proc::new(&paths.proc);
@@ -346,9 +414,23 @@ impl Start {
         tokio::spawn(async move {
             let _ = axum::serve(control, router).await;
         });
+        let activity = Activity::new(hermit.clone(), lifecycle.clone(), facts);
+
+        if released_before {
+            // the predecessor finished a release (and crashed before its exit, or the keeper restarted it): report
+            // `released` until hermit has it, answer every release `released`, admit nothing, then exit 0
+            tracing::info!("released before this start: reporting released only");
+            lifecycle.mark_released();
+            let _ = hermit.fetch_initial().await;
+            activity.run().await;
+            tokio::time::sleep(ANSWER_GRACE).await;
+            return 0;
+        }
 
         // 2
-        let descriptor = hermit.fetch_initial().await;
+        let Some(descriptor) = unless_released(&lifecycle, hermit.fetch_initial()).await else {
+            return finish(&lifecycle).await;
+        };
         lifecycle.set_ready(|r| r.descriptor = true);
         tokio::spawn(hermit.clone().refresh_loop());
         {
@@ -360,6 +442,22 @@ impl Start {
                 })
             }));
         }
+        // the activity loop (hermit sees `booting` sandboxes as alive) and the memory guard run from here: exec and
+        // dockerd can run before the mount
+        tokio::spawn(activity.clone().run());
+        {
+            let a = activity.clone();
+            lifecycle.on_final_report(Arc::new(move |deadline| a.final_report(deadline)));
+        }
+        let guard = Guard::new(
+            proc.clone(),
+            descriptor.resources.memory_bytes,
+            std::process::id().cast_signed(),
+        );
+        tokio::spawn(guard.run(Arc::new(GuardLink {
+            agent: agent.clone(),
+            activity,
+        })));
         let local = Arc::new(Local { hermit: hermit.clone() });
         if let Err(e) = serve_unix(&paths.agent_socket, 0o666, local_router(local)) {
             tracing::error!(error = %e, "agent socket");
@@ -373,8 +471,8 @@ impl Start {
             tracing::error!(error = %e, "docker socket");
         }
 
-        // 4
-        if !restart {
+        // 4 (idempotent: done unless a run.json of this boot says a predecessor did it)
+        if !(prior.is_some() && started.same_boot) {
             if let Err(e) = write_hosts(&paths.etc_hosts) {
                 tracing::warn!(error = %e, "/etc/hosts not written");
             }
@@ -403,95 +501,113 @@ impl Start {
             });
         }
 
-        // the activity loop runs from here (hermit sees `booting` sandboxes as alive)
-        let activity = Activity::new(hermit.clone(), lifecycle.clone(), facts);
-        tokio::spawn(activity.clone().run());
-        {
-            let a = activity.clone();
-            lifecycle.on_final_report(Arc::new(move |deadline| a.final_report(deadline)));
-        }
-        tokio::spawn(sigterm(lifecycle.clone()));
-
         // 5
-        let lease = magpie::take_lease(&magpie, descriptor.sandbox.conversation_id, |w| {
+        let take = magpie::take_lease(&magpie, descriptor.sandbox.conversation_id, |w| {
             if w != LeaseWait::Unavailable {
                 tracing::info!(wait = ?w, "lease not granted yet");
             }
-        })
-        .await;
+        });
+        let Some(lease) = unless_released(&lifecycle, take).await else {
+            return finish(&lifecycle).await;
+        };
         persisted.update(Change::State, |s| s.lease_epoch = Some(lease.epoch));
+        lifecycle.set_lease_epoch(lease.epoch);
         lifecycle.set_ready(|r| r.lease = true);
 
         // 6
-        loop {
-            match fs.mount(&lease, &keeper, restart).await {
-                Ok(()) => break,
-                Err(e) => {
-                    tracing::warn!(error = %e, "mount failed");
-                    tokio::time::sleep(MOUNT_RETRY).await;
+        let mount = async {
+            loop {
+                match fs.mount(&lease, &keeper, started.fuse_held).await {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mount failed");
+                        tokio::time::sleep(MOUNT_RETRY).await;
+                    }
                 }
             }
+        };
+        if unless_released(&lifecycle, mount).await.is_none() {
+            return finish(&lifecycle).await;
         }
         tracing::info!("fuse mounted");
         lifecycle.set_ready(|r| r.mounted = true);
 
         // 7
-        let k = keeper.clone();
-        let p = prior.clone();
-        let generation = tokio::task::spawn_blocking(move || reattach(&k, p.as_ref()))
-            .await
-            .unwrap_or(Reattach::Nothing);
-        let limit = memguard::limit(descriptor.resources.memory_bytes, proc.meminfo());
-        let cgroup = memguard::agent_cgroup(&paths.sys_cgroup, limit);
-        agent
-            .attach(AttachContext {
-                prior,
-                generation,
-                lease,
-                descriptor: descriptor.clone(),
-                persisted,
-                keeper,
-                exits,
-                boot,
-                cgroup,
-            })
-            .await;
+        let attach = async {
+            kill_strays(&keeper, &exits, &started.strays).await;
+            let k = keeper.clone();
+            let p = prior.clone();
+            let same = started.same_boot;
+            let generation = tokio::task::spawn_blocking(move || reattach(&k, p.as_ref(), same))
+                .await
+                .unwrap_or(Reattach::Nothing);
+            let limit = memguard::limit(descriptor.resources.memory_bytes, proc.meminfo());
+            let cgroup = memguard::agent_cgroup(&paths.sys_cgroup, limit);
+            agent
+                .attach(AttachContext {
+                    prior: prior.clone(),
+                    generation,
+                    lease: lease.clone(),
+                    descriptor: descriptor.clone(),
+                    persisted: persisted.clone(),
+                    keeper: keeper.clone(),
+                    exits: exits.clone(),
+                    boot: boot.clone(),
+                    cgroup,
+                })
+                .await;
+        };
+        if !lifecycle.attach_unless_released(attach).await {
+            return finish(&lifecycle).await;
+        }
 
         // 8
-        let guard = Guard::new(
-            proc,
-            descriptor.resources.memory_bytes,
-            std::process::id().cast_signed(),
-        );
-        tokio::spawn(guard.run(Arc::new(GuardLink {
-            agent: agent.clone(),
-            activity,
-        })));
         tokio::spawn(lifecycle.clone().watch_clock());
-
-        let mut phases = lifecycle.phases();
-        let _ = phases.wait_for(|p| *p == Phase::Released).await;
-        tokio::time::sleep(ANSWER_GRACE).await;
-        tracing::info!("supervisor released");
-        0
+        lifecycle.set_ready(|r| r.attached = true);
+        finish(&lifecycle).await
     }
 }
 
-/// SIGTERM (the keeper forwarding a runtime stop) is always a forced release (4.7).
+/// Runs `f` unless a release begins first (then `None`).
+async fn unless_released<T>(lifecycle: &Lifecycle, f: impl std::future::Future<Output = T>) -> Option<T> {
+    let mut phases = lifecycle.phases();
+    tokio::select! {
+        biased;
+        _ = phases.wait_for(|p| matches!(p, Phase::Releasing | Phase::Released)) => None,
+        v = f => Some(v),
+    }
+}
+
+/// Waits for the release to finish, lets its answer reach hermit, and gives the exit code (0).
+async fn finish(lifecycle: &Lifecycle) -> i32 {
+    lifecycle.wait_released().await;
+    tokio::time::sleep(ANSWER_GRACE).await;
+    tracing::info!("supervisor released");
+    0
+}
+
+/// Kills the `claude` processes no `run.json` names (a crash between spawn and record), and waits for their exits.
+async fn kill_strays(keeper: &keeper::Client, exits: &Exits, strays: &[i32]) {
+    for &pid in strays {
+        tracing::warn!(pid, "a claude no run state names: killed");
+        let k = keeper.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = k.signal(-pid, libc::SIGKILL);
+            k.signal(pid, libc::SIGKILL)
+        })
+        .await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), exits.wait(pid)).await;
+    }
+}
+
+/// SIGTERM (the keeper forwarding a runtime stop) is always a forced release (4.7), within the keeper's grace.
 async fn sigterm(lifecycle: Arc<Lifecycle>) {
     let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) else {
         return;
     };
     if s.recv().await.is_some() {
         tracing::info!("SIGTERM: forced release");
-        let _ = lifecycle
-            .release(ReleaseRequest {
-                reason: ReleaseReason::Requested,
-                code: ReleaseCallCode::SandboxLost,
-                force: true,
-                deadline_ms: RELEASE_DEADLINE_MS,
-            })
-            .await;
+        let _ = lifecycle.release(sigterm_release()).await;
     }
 }
 
