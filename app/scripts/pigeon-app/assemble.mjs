@@ -4,22 +4,34 @@
 // fetching its own lazy chunks from pigeon.
 //
 //   node assemble.mjs --dist DIR --sw FILE --commit SHA --out DIR [--previous DIR] [--seeds DIR --seed TAG=COMMIT]...
-//                     [--now ISO]
+//                     [--served-build COMMIT]... [--budget-mib N] [--now ISO]
 //
-// --dist      the export (scripts/build-paseo-ui.mjs writes dist/)
-// --sw        public/sw.js, served at /sw.js (the old service worker's kill switch)
-// --previous  the filesystem of the previous pigeon-app image (its app/ and meta/), absent on the first build
-// --seeds     a directory of fetch-seeds.sh output, one <tag>/ per yyc-ai-ui image; --seed names each image served
-//             within the Access session lifetime with its claudecodeui commit
-// --out       writes <out>/app (served, copied by the image's /cp into pigeon's /srv/app) and <out>/meta (not served):
-//             assets-history.json {file: firstSeenISO}, builds.json (the builds whose assets are kept, newest first,
-//             each with its own hashed files and the seeds it listed) and seeds.json (each seed's files and sha256)
+// --dist          the export (scripts/build-paseo-ui.mjs writes dist/)
+// --sw            public/sw.js, served at /sw.js (the old service worker's kill switch)
+// --previous      the filesystem of the previous pigeon-app image (its app/ and meta/), absent on the first build
+// --seeds         a directory of fetch-seeds.mjs output, one <tag>/ per yyc-ai-ui image; --seed names each image served
+//                 within the Access session lifetime with its claudecodeui commit
+// --served-build  the commit of a pigeon-app image served within the Access session lifetime (DE0CH/YYC's pigeon-app
+//                 pin history); its build stays whatever its age
+// --budget-mib    the most the served tree may take, counted as the filesystem stores it (4 KiB blocks, one per
+//                 directory too); over it the assembly fails and prints what takes the space
+// --out           writes <out>/app (served, copied by the image's /cp into pigeon's /srv/app) and <out>/meta (not served):
+//                 assets-history.json {file: firstSeenISO}, builds.json (the builds whose assets are kept, newest first,
+//                 each with its own hashed files) and seeds.json (each seed listed now: its commit, image digest and
+//                 files with their sha256, and under `older` the files of earlier digests of the same tag)
 //
-// Hashed assets are the files under _expo/static/ and assets/ (their names carry a content hash). Kept: every file of
-// the new build, of every seed listed now, and of every build among the last 5 or built within the last 30 days (with
-// the seeds those builds listed). A kept path whose bytes differ between two sources (a chunk name reused for other
-// content) fails the assembly: no tab could be served both. Finally every js/css/html/json/svg/wasm file gets a .br
-// (quality 11) and a .gz (level 9) sibling, reused from the previous image when the file's bytes are unchanged.
+// Hashed assets are the files under _expo/static/ and assets/ (their names carry a content hash). Kept:
+// - every file of the new build;
+// - every file of each earlier build among the last 5, built within the last 30 days (pigeon spec 17.1), or served
+//   within the Access session lifetime (--served-build);
+// - every file of each seed listed now (a yyc-ai-ui image served within the Access session lifetime, cutover D13), and
+//   of the earlier digests of a listed tag (a re-pushed tag: tabs from the old digest may still be open).
+// A seed leaves when its tag leaves the list: a tab loaded from an image last served more than 720 h ago holds no live
+// Access session. A kept path whose bytes differ between two sources (a chunk name reused for other content) fails the
+// assembly: no tab could be served both. Finally every js/css/html/json/svg/wasm file of a pigeon-app build, and the
+// unhashed files, get a .br (quality 11) and a .gz (level 9) sibling, reused from the previous image when the file's
+// bytes are unchanged. Files kept only for seeds get none (pigeon serves the file itself when a sibling is missing,
+// pigeon spec 5.2.1): they are the old ui builds' chunks, about a quarter of their size again in siblings.
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -31,9 +43,12 @@ export const KEEP_BUILDS = 5;
 export const KEEP_DAYS = 30;
 const COMPRESSIBLE = /\.(js|css|html|json|svg|wasm)$/;
 const SIBLING = /\.(br|gz)$/;
+const BLOCK = 4096;
 
 const isHashed = (rel) => HASHED_TREES.some((tree) => rel.startsWith(tree));
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const mib = (bytes) => `${(bytes / 1048576).toFixed(1)} MiB`;
+const blocks = (bytes) => Math.max(1, Math.ceil(bytes / BLOCK)) * BLOCK;
 
 // relative paths of the regular files under dir, '/'-separated, sorted
 export function walk(dir) {
@@ -49,9 +64,32 @@ export function walk(dir) {
   return out.sort();
 }
 
+// what a tree takes on disk: its files in 4 KiB blocks and one block per directory (what kubelet counts against the
+// emptyDir's sizeLimit, whatever filesystem this runs on)
+export function diskUsage(dir) {
+  const dirs = new Set(['']);
+  let bytes = 0;
+  for (const rel of walk(dir)) {
+    bytes += blocks(statSync(path.join(dir, rel)).size);
+    for (let parent = path.posix.dirname(rel); parent !== '.'; parent = path.posix.dirname(parent)) dirs.add(parent);
+  }
+  return bytes + dirs.size * BLOCK;
+}
+
 const readJson = (file, fallback) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fallback);
 
-export function assemble({ dist, sw, previous = null, seedsDir = null, seeds = [], commit, now = new Date(), out }) {
+export function assemble({
+  dist,
+  sw,
+  previous = null,
+  seedsDir = null,
+  seeds = [],
+  servedBuilds = [],
+  budgetBytes = null,
+  commit,
+  now = new Date(),
+  out,
+}) {
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`--commit ${commit}: not a 40-hex commit`);
   const nowIso = now.toISOString();
   const app = path.join(out, 'app');
@@ -71,34 +109,40 @@ export function assemble({ dist, sw, previous = null, seedsDir = null, seeds = [
   const prevSeeds = previous ? readJson(path.join(prevMeta, 'seeds.json'), {}) : {};
   const prevHistory = previous ? readJson(path.join(prevMeta, 'assets-history.json'), {}) : {};
 
-  // the seeds listed now, from the fetched images
-  const seedsNow = {};
+  // the seeds listed now, from the fetched images, with the earlier digests of the same tags from the previous image
+  const seedsMeta = {};
   for (const { tag, commit: seedCommit } of seeds) {
     const dir = path.join(seedsDir, tag);
     if (!existsSync(path.join(dir, '.digest'))) throw new Error(`seed ${tag}: not fetched (${dir}/.digest missing)`);
     const files = {};
     for (const rel of walk(dir).filter(isHashed)) files[rel] = sha256(path.join(dir, rel));
-    seedsNow[tag] = { commit: seedCommit, digest: readFileSync(path.join(dir, '.digest'), 'utf8').trim(), files };
-  }
-
-  // the builds whose assets stay: the newest KEEP_BUILDS and any built within KEEP_DAYS
-  const cutoff = now.getTime() - KEEP_DAYS * 86400 * 1000;
-  const builds = [
-    { commit, builtAt: nowIso, files: own, seeds: seeds.map((seed) => seed.tag) },
-    ...prevBuilds.filter((build) => build.commit !== commit),
-  ].filter((build, index) => index < KEEP_BUILDS || new Date(build.builtAt).getTime() >= cutoff);
-
-  const seedsMeta = {};
-  for (const build of builds) {
-    for (const tag of build.seeds) {
-      const seed = seedsNow[tag] ?? prevSeeds[tag];
-      if (!seed) throw new Error(`build ${build.commit.slice(0, 12)} lists seed ${tag}, which is neither fetched nor in the previous image's seeds.json`);
-      seedsMeta[tag] = seed;
+    const digest = readFileSync(path.join(dir, '.digest'), 'utf8').trim();
+    const before = prevSeeds[tag];
+    const older = [];
+    if (before) {
+      for (const earlier of [{ digest: before.digest, files: before.files }, ...(before.older ?? [])]) {
+        if (earlier.digest !== digest && !older.some((o) => o.digest === earlier.digest)) older.push(earlier);
+      }
     }
+    seedsMeta[tag] = { commit: seedCommit, digest, files, ...(older.length ? { older } : {}) };
   }
+
+  // the builds whose assets stay: the newest KEEP_BUILDS, any built within KEEP_DAYS, any served now or recently
+  const cutoff = now.getTime() - KEEP_DAYS * 86400 * 1000;
+  const served = new Set(servedBuilds);
+  const known = new Set([commit, ...prevBuilds.map((build) => build.commit)]);
+  const lost = [...served].filter((sha) => !known.has(sha));
+  if (lost.length) {
+    throw new Error(`pigeon-app builds served within the Access session lifetime but not in the previous image's builds.json: ${lost.join(', ')}`);
+  }
+  const builds = [
+    { commit, builtAt: nowIso, files: own },
+    ...prevBuilds.filter((build) => build.commit !== commit).map(({ commit: c, builtAt, files }) => ({ commit: c, builtAt, files })),
+  ].filter((build, index) => index < KEEP_BUILDS || new Date(build.builtAt).getTime() >= cutoff || served.has(build.commit));
 
   // every kept path with the sources that hold it
   const ownSet = new Set(own);
+  const buildFiles = new Set(own);
   const kept = new Map(); // rel -> [{label, file, hash?}]
   const add = (rel, source) => {
     if (!kept.has(rel)) kept.set(rel, []);
@@ -106,12 +150,16 @@ export function assemble({ dist, sw, previous = null, seedsDir = null, seeds = [
   };
   for (const rel of own) add(rel, { label: `this build ${commit.slice(0, 12)}`, file: path.join(app, rel) });
   for (const [tag, seed] of Object.entries(seedsMeta)) {
-    for (const [rel, hash] of Object.entries(seed.files)) {
-      add(rel, { label: `yyc-ai-ui:${tag}`, file: seedsNow[tag] ? path.join(seedsDir, tag, rel) : null, hash });
+    for (const [rel, hash] of Object.entries(seed.files)) add(rel, { label: `yyc-ai-ui:${tag}`, file: path.join(seedsDir, tag, rel), hash });
+    for (const earlier of seed.older ?? []) {
+      for (const [rel, hash] of Object.entries(earlier.files)) add(rel, { label: `yyc-ai-ui:${tag}@${earlier.digest.slice(0, 19)}`, file: null, hash });
     }
   }
   for (const build of builds.slice(1)) {
-    for (const rel of build.files) add(rel, { label: `build ${build.commit.slice(0, 12)}`, file: null });
+    for (const rel of build.files) {
+      add(rel, { label: `build ${build.commit.slice(0, 12)}`, file: null });
+      buildFiles.add(rel);
+    }
   }
 
   const conflicts = [];
@@ -142,11 +190,13 @@ export function assemble({ dist, sw, previous = null, seedsDir = null, seeds = [
   const history = {};
   for (const rel of [...kept.keys()].sort()) history[rel] = prevHistory[rel] ?? nowIso;
 
-  // .br and .gz siblings, reused when the previous image has them for the same bytes
+  // .br and .gz siblings for the builds' files and the unhashed ones, reused when the previous image has them for the
+  // same bytes
   let compressed = 0;
   let reused = 0;
   for (const rel of walk(app)) {
     if (!COMPRESSIBLE.test(rel) || SIBLING.test(rel)) continue;
+    if (isHashed(rel) && !buildFiles.has(rel)) continue;
     const file = path.join(app, rel);
     const prev = prevApp ? path.join(prevApp, rel) : null;
     if (
@@ -178,13 +228,57 @@ export function assemble({ dist, sw, previous = null, seedsDir = null, seeds = [
   writeFileSync(path.join(meta, 'assets-history.json'), `${JSON.stringify(history, null, 1)}\n`);
   writeFileSync(path.join(meta, 'builds.json'), `${JSON.stringify(builds, null, 1)}\n`);
   writeFileSync(path.join(meta, 'seeds.json'), `${JSON.stringify(seedsMeta, null, 1)}\n`);
-  const bytes = walk(app).reduce((sum, rel) => sum + statSync(path.join(app, rel)).size, 0);
-  return { own: own.length, kept: kept.size, copied, builds: builds.length, seeds: Object.keys(seedsMeta).length, compressed, reused, bytes };
+
+  // what takes the space: each file (with its siblings) counted once, under the first of: this build, the earlier
+  // builds newest first, the seeds newest pin first (the order of --seed), the rest (index.html, sw.js, icons)
+  const size = (rel) => (existsSync(path.join(app, rel)) ? blocks(statSync(path.join(app, rel)).size) : 0);
+  const withSiblings = (rel) => size(rel) + size(`${rel}.br`) + size(`${rel}.gz`);
+  const counted = new Set();
+  const usage = [];
+  const charge = (label, rels) => {
+    let bytes = 0;
+    for (const rel of rels) {
+      if (counted.has(rel)) continue;
+      counted.add(rel);
+      bytes += withSiblings(rel);
+    }
+    usage.push({ label, bytes });
+  };
+  charge(`this build ${commit.slice(0, 12)}`, own);
+  for (const build of builds.slice(1)) charge(`build ${build.commit.slice(0, 12)} (${build.builtAt.slice(0, 10)})`, build.files);
+  for (const [tag, seed] of Object.entries(seedsMeta).reverse()) {
+    charge(`yyc-ai-ui:${tag}`, [...Object.keys(seed.files), ...(seed.older ?? []).flatMap((earlier) => Object.keys(earlier.files))]);
+  }
+  charge('unhashed files', walk(app).filter((rel) => !SIBLING.test(rel) && !isHashed(rel)));
+  const bytes = diskUsage(app);
+  const result = {
+    own: own.length,
+    kept: kept.size,
+    copied,
+    builds: builds.length,
+    seeds: Object.keys(seedsMeta).length,
+    compressed,
+    reused,
+    bytes,
+    usage,
+  };
+  if (budgetBytes !== null && bytes > budgetBytes) {
+    const lines = usage.filter((entry) => entry.bytes).map((entry) => `  ${mib(entry.bytes).padStart(10)}  ${entry.label}`);
+    const error = new Error(
+      `/app takes ${mib(bytes)} on disk, over the ${mib(budgetBytes)} budget (pigeon's emptyDir, pigeon spec 17.1). What takes it:\n${lines.join('\n')}\n` +
+        'Seeds leave 720 h after their image was last served and earlier builds after 30 days (when not among the last 5 ' +
+        'or still served), so a later run fits again without a change; to ship sooner, the emptyDir sizeLimit and this ' +
+        'budget are the lever.',
+    );
+    error.result = result;
+    throw error;
+  }
+  return result;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
-  const opts = { seeds: [] };
+  const opts = { seeds: [], servedBuilds: [] };
   for (let i = 0; i < args.length; i++) {
     const value = args[++i];
     if (value === undefined) throw new Error(`${args[i - 1]} needs a value`);
@@ -199,6 +293,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         opts.seeds.push({ tag, commit: seedCommit });
         break;
       }
+      case '--served-build':
+        if (!/^[0-9a-f]{40}$/.test(value)) throw new Error(`--served-build ${value}: not a 40-hex commit`);
+        opts.servedBuilds.push(value);
+        break;
+      case '--budget-mib': opts.budgetBytes = Number(value) * 1048576; break;
       case '--commit': opts.commit = value; break;
       case '--now': opts.now = new Date(value); break;
       case '--out': opts.out = value; break;
@@ -207,10 +306,18 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   }
   for (const required of ['dist', 'sw', 'commit', 'out']) if (!opts[required]) throw new Error(`--${required} is required`);
   if (opts.seeds.length && !opts.seedsDir) throw new Error('--seed needs --seeds');
-  const result = assemble(opts);
+  let result;
+  try {
+    result = assemble(opts);
+  } catch (error) {
+    console.error(`::error::${error.message.split('\n')[0]}`);
+    console.error(error.message);
+    process.exit(1);
+  }
   console.log(
     `pigeon-app: ${result.own} hashed files of this build, ${result.kept} kept in all (${result.copied} from seeds and earlier builds), ` +
       `${result.builds} builds and ${result.seeds} seeds kept; ${result.compressed} compressed, ${result.reused} reused; ` +
-      `${(result.bytes / 1048576).toFixed(1)} MiB`,
+      `${mib(result.bytes)} on disk${opts.budgetBytes ? ` of the ${mib(opts.budgetBytes)} budget` : ''}`,
   );
+  for (const entry of result.usage) if (entry.bytes) console.log(`  ${mib(entry.bytes).padStart(10)}  ${entry.label}`);
 }

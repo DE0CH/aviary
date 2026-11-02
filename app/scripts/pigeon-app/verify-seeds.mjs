@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Checks that a pigeon-app tree holds every hashed asset of each seeded yyc-ai-ui image byte for byte (WP-27
-// acceptance, cutover D13 and its checklist): every file of <seeds>/<tag>/ (fetch-seeds.sh output: the image's
+// acceptance, cutover D13 and its checklist): every file of <seeds>/<tag>/ (fetch-seeds.mjs output: the image's
 // /app/dist/_expo/static/** and /app/dist/assets/**) must exist at the same path under <app> with the same sha256.
 //
 //   node verify-seeds.mjs <app dir> <seeds dir> <tag>...

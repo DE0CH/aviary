@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// The yyc-ai-ui images served within a time window, from the ui pin history in a deploy repository's git log (pigeon
-// spec 17.1 step 6, cutover D13, DESIGN 9.6). Every commit of the deploy repository's first-parent history that
-// touched the deploy tree is read; the `yyc-ai-ui` image's `newTag` in its kustomizations at that commit is the pin
-// from that commit until the next change. An image counts as served within the window when its pin interval overlaps
-// [now - hours, now]: the pin in force at the window start counts too.
+// The images of one name served within a time window, from the pin history in a deploy repository's git log (pigeon
+// spec 17.1 step 6, cutover D13, DESIGN 9.6): `yyc-ai-ui` (the seeds of pigeon-app) and `pigeon-app` itself (its
+// builds stay while served). Every commit of the deploy repository's first-parent history that touched the deploy
+// tree is read; the image's `newTag` in its kustomizations at that commit is the pin from that commit until the next
+// change. An image counts as served within the window when its pin interval overlaps [now - hours, now]: the pin in
+// force at the window start counts too.
 //
-//   node ui-pins.mjs --repo DIR [--ref REF] [--hours 720] [--now ISO] [--tree yyc-ai/deploy] [--json]
+//   node pins.mjs --repo DIR [--image yyc-ai-ui] [--ref REF] [--hours 720] [--now ISO] [--tree yyc-ai/deploy] [--json]
 //
 // Prints one line per image, oldest pin first: `<tag> <first pinned, ISO> <last served, ISO or "now">`; with --json,
 // a JSON array of {tag, from, until}. A pin that is not a 12-40 character lowercase hex tag is an error (the tag names
@@ -13,19 +14,17 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const IMAGE = 'yyc-ai-ui';
-
 function git(repo, args) {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
-// The newTag values of every `images:` entry named yyc-ai-ui in a kustomization's text
-export function pinsInKustomization(text) {
+// The newTag values of every `images:` entry with this name in a kustomization's text
+export function pinsInKustomization(text, image = 'yyc-ai-ui') {
   const tags = [];
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const start = lines[i].match(/^(\s*)-\s+name:\s*["']?([^"'\s#]+)["']?\s*(#.*)?$/);
-    if (!start || start[2] !== IMAGE) continue;
+    if (!start || start[2] !== image) continue;
     const indent = start[1].length;
     for (let j = i + 1; j < lines.length; j++) {
       const line = lines[j];
@@ -43,18 +42,18 @@ export function pinsInKustomization(text) {
   return tags;
 }
 
-function pinsAt(repo, commit, tree) {
+function pinsAt(repo, commit, tree, image) {
   const files = git(repo, ['ls-tree', '-r', '--name-only', commit, '--', tree])
     .split('\n')
     .filter((file) => /(^|\/)kustomization\.ya?ml$/.test(file));
   const tags = new Set();
   for (const file of files) {
-    for (const tag of pinsInKustomization(git(repo, ['show', `${commit}:${file}`]))) tags.add(tag);
+    for (const tag of pinsInKustomization(git(repo, ['show', `${commit}:${file}`]), image)) tags.add(tag);
   }
   return [...tags].sort();
 }
 
-export function servedImages({ repo, ref = 'HEAD', hours = 720, now = new Date(), tree = 'yyc-ai/deploy' }) {
+export function servedImages({ repo, image = 'yyc-ai-ui', ref = 'HEAD', hours = 720, now = new Date(), tree = 'yyc-ai/deploy' }) {
   const windowStart = now.getTime() - hours * 3600 * 1000;
   const log = git(repo, ['log', '--first-parent', '--format=%H %cI', ref, '--', tree])
     .split('\n')
@@ -67,8 +66,8 @@ export function servedImages({ repo, ref = 'HEAD', hours = 720, now = new Date()
   const served = new Map();
   let until = now.getTime();
   for (const { commit, time } of log) {
-    for (const tag of pinsAt(repo, commit, tree)) {
-      if (!/^[0-9a-f]{12,40}$/.test(tag)) throw new Error(`${commit}: ${IMAGE} tag ${tag} is not a commit hash`);
+    for (const tag of pinsAt(repo, commit, tree, image)) {
+      if (!/^[0-9a-f]{12,40}$/.test(tag)) throw new Error(`${commit}: ${image} tag ${tag} is not a commit hash`);
       const entry = served.get(tag);
       const last = until === now.getTime() ? null : until;
       if (!entry) served.set(tag, { tag, from: time, until: last });
@@ -80,7 +79,7 @@ export function servedImages({ repo, ref = 'HEAD', hours = 720, now = new Date()
   return [...served.values()].sort((a, b) => a.from - b.from || a.tag.localeCompare(b.tag));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const opt = (name, fallback) => {
     const i = args.indexOf(name);
@@ -88,11 +87,12 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   };
   const repo = opt('--repo');
   if (!repo) {
-    console.error('usage: node ui-pins.mjs --repo DIR [--ref REF] [--hours 720] [--now ISO] [--tree yyc-ai/deploy] [--json]');
+    console.error('usage: node pins.mjs --repo DIR [--image yyc-ai-ui] [--ref REF] [--hours 720] [--now ISO] [--tree yyc-ai/deploy] [--json]');
     process.exit(2);
   }
   const images = servedImages({
     repo,
+    image: opt('--image', 'yyc-ai-ui'),
     ref: opt('--ref', 'HEAD'),
     hours: Number(opt('--hours', '720')),
     now: new Date(opt('--now', new Date().toISOString())),

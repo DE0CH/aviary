@@ -1,6 +1,7 @@
 // Tests of the pigeon-app bundle scripts (.github/workflows/pigeon-app.yml): node --test scripts/pigeon-app/test/
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +9,10 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 
-import { assemble, walk } from '../assemble.mjs';
-import { pinsInKustomization, servedImages } from '../ui-pins.mjs';
+import { assemble, diskUsage, walk } from '../assemble.mjs';
+import { missingClients } from '../clients-missing.mjs';
+import { cachedCopyValid, takeHashedTrees } from '../fetch-seeds.mjs';
+import { pinsInKustomization, servedImages } from '../pins.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), 'pigeon-app-test-'));
@@ -20,7 +23,7 @@ const write = (file, text) => {
 const sha = (n) => n.toString(16).padStart(40, 'a');
 const DAY = 86400 * 1000;
 
-// ---------- ui-pins
+// ---------- pins
 
 const kustomization = (tag) => `resources: [ui.yaml]
 images:
@@ -57,6 +60,20 @@ test('pinsInKustomization reads only the yyc-ai-ui entry', () => {
   assert.deepEqual(pinsInKustomization(kustomization('488a7736ef2c')), ['488a7736ef2c']);
   assert.deepEqual(pinsInKustomization('images:\n  - name: yyc-ai-ui\n    newName: x\n  - name: other\n    newTag: abc\n'), []);
   assert.deepEqual(pinsInKustomization('images:\n- name: "yyc-ai-ui"\n  newTag: "0123456789ab"  # pin\n'), ['0123456789ab']);
+  assert.deepEqual(pinsInKustomization(kustomization('488a7736ef2c'), 'jarvis3-chat'), ['52c9b8c498b6']);
+});
+
+test('servedImages reads the pigeon-app pins the same way', () => {
+  const withApp = (ui, app) => `${kustomization(ui)}  - name: pigeon-app\n    newName: ghcr.io/de0ch/pigeon-app\n    newTag: ${app}\n`.replace('configMapGenerator:\n  - name: jarvis-config\n', '');
+  const repo = deployRepo([
+    { date: '2026-11-01T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': withApp('aaaaaaaaaaa1', 'bbbbbbbbbbb1') } },
+    { date: '2026-11-03T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': withApp('aaaaaaaaaaa1', 'bbbbbbbbbbb2') } },
+  ]);
+  const now = new Date('2026-11-04T00:00:00Z');
+  assert.deepEqual(servedImages({ repo, image: 'pigeon-app', now }).map((image) => image.tag), ['bbbbbbbbbbb1', 'bbbbbbbbbbb2']);
+  assert.deepEqual(servedImages({ repo, image: 'pigeon-app', now, hours: 12 }).map((image) => image.tag), ['bbbbbbbbbbb2']);
+  assert.deepEqual(servedImages({ repo, now }).map((image) => image.tag), ['aaaaaaaaaaa1']);
+  rmSync(repo, { recursive: true, force: true });
 });
 
 test('servedImages: every image whose pin overlaps the window, including the one in force at its start', () => {
@@ -159,6 +176,10 @@ test('assemble: the first build holds its export, the seeds, sw.js and compresse
   assert.equal(gunzipSync(readFileSync(`${entry}.gz`)).toString(), readFileSync(entry, 'utf8'));
   assert.ok(existsSync(path.join(out, 'app', 'index.html.br')));
   assert.ok(!existsSync(path.join(out, 'app', 'assets/assets/images/logo.11.png.br')));
+  // files kept only for seeds are served without siblings; a seed file this build also has keeps its siblings
+  assert.ok(!existsSync(path.join(out, 'app', '_expo/static/js/web/reply-00.js.br')));
+  assert.ok(!existsSync(path.join(out, 'app', '_expo/static/js/web/entry-00.js.gz')));
+  assert.ok(existsSync(path.join(out, 'app', '_expo/static/css/a-11.css.br')));
   const history = JSON.parse(readFileSync(path.join(out, 'meta', 'assets-history.json'), 'utf8'));
   assert.equal(history['_expo/static/js/web/entry-00.js'], now.toISOString());
   assert.ok(!('index.html' in history));
@@ -174,15 +195,14 @@ test('assemble: the first build holds its export, the seeds, sw.js and compresse
   rmSync(root, { recursive: true, force: true });
 });
 
-test('assemble: earlier builds stay for the last 5 builds or 30 days; seeds stay while listed and with the builds that listed them', () => {
+test('assemble: earlier builds stay for the last 5 builds, 30 days, or while served; seeds stay while listed', () => {
   const root = tmp();
   const sw = path.join(root, 'sw.js');
   write(sw, 'sw');
   const seeds = seedDir(root, '3de3f5d8771b', { '_expo/static/js/web/seed-00.js': 'seed' });
   let previous = null;
   const start = new Date('2026-11-01T00:00:00Z').getTime();
-  const outs = [];
-  // builds 1..8, one a day; the seed is listed by builds 1-2 only
+  // builds 1..8, one a day; the seed is listed for builds 1-2 only
   for (let n = 1; n <= 8; n++) {
     const dist = exportDir(root, `dist${n}`, { [`_expo/static/js/web/entry-${n}.js`]: `entry ${n}`, '_expo/static/js/web/shared-0.js': 'shared' });
     const out = path.join(root, `out${n}`);
@@ -196,43 +216,64 @@ test('assemble: earlier builds stay for the last 5 builds or 30 days; seeds stay
       now: new Date(start + n * DAY),
       out,
     });
+    if (n === 2) assert.ok(walk(path.join(out, 'app')).includes('_expo/static/js/web/seed-00.js'));
     // the next build reads this image's filesystem
     previous = out;
-    outs.push(out);
   }
-  // within 30 days every build is kept
+  // within 30 days every build is kept, with the siblings of its files; the seed left with its listing
   let files = walk(path.join(previous, 'app'));
-  for (let n = 1; n <= 8; n++) assert.ok(files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n}`);
-  assert.ok(files.includes('_expo/static/js/web/seed-00.js'));
+  for (let n = 1; n <= 8; n++) {
+    assert.ok(files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n}`);
+    assert.ok(files.includes(`_expo/static/js/web/entry-${n}.js.br`), `entry ${n}.br`);
+  }
+  assert.ok(!files.includes('_expo/static/js/web/seed-00.js'), 'a seed no longer listed is dropped');
   const history = JSON.parse(readFileSync(path.join(previous, 'meta', 'assets-history.json'), 'utf8'));
   assert.equal(history['_expo/static/js/web/shared-0.js'], new Date(start + DAY).toISOString(), 'first seen is kept');
-  // 40 days later: only the last 5 builds; the seed went with builds 1-2
+  // 40 days later: the last 5 builds, and build 2, which YYC still serves (or served within 720 h)
   const dist = exportDir(root, 'dist9', { '_expo/static/js/web/entry-9.js': 'entry 9' });
   const out = path.join(root, 'out9');
-  assemble({ dist, sw, previous, commit: sha(9), now: new Date(start + 48 * DAY), out });
+  assemble({ dist, sw, previous, servedBuilds: [sha(2)], commit: sha(9), now: new Date(start + 48 * DAY), out });
   files = walk(path.join(out, 'app'));
-  for (let n = 1; n <= 4; n++) assert.ok(!files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n} pruned`);
-  for (let n = 5; n <= 9; n++) assert.ok(files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n} kept`);
-  assert.ok(!files.includes('_expo/static/js/web/seed-00.js'));
+  for (const n of [1, 3, 4]) assert.ok(!files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n} pruned`);
   assert.ok(!files.includes('_expo/static/js/web/entry-1.js.br'));
+  for (const n of [2, 5, 6, 7, 8, 9]) assert.ok(files.includes(`_expo/static/js/web/entry-${n}.js`), `entry ${n} kept`);
   const builds = JSON.parse(readFileSync(path.join(out, 'meta', 'builds.json'), 'utf8'));
-  assert.deepEqual(builds.map((build) => build.commit), [sha(9), sha(8), sha(7), sha(6), sha(5)]);
+  assert.deepEqual(builds.map((build) => build.commit), [sha(9), sha(8), sha(7), sha(6), sha(5), sha(2)]);
+  assert.deepEqual(Object.keys(builds[0]).sort(), ['builtAt', 'commit', 'files']);
   assert.deepEqual(JSON.parse(readFileSync(path.join(out, 'meta', 'seeds.json'), 'utf8')), {});
+  // a served build the previous image no longer holds cannot be restored: an error, not a silent gap
+  assert.throws(
+    () => assemble({ dist, sw, previous: out, servedBuilds: [sha(3)], commit: sha(10), now: new Date(start + 49 * DAY), out: path.join(root, 'out10') }),
+    /served within the Access session lifetime but not in the previous image's builds\.json: a+3/,
+  );
   rmSync(root, { recursive: true, force: true });
 });
 
-test('assemble: a seed listed by a kept build is restored from the previous image after the seed leaves the list', () => {
+test('assemble: a re-pushed ui tag keeps the files of its earlier digest from the previous image', () => {
   const root = tmp();
   const sw = path.join(root, 'sw.js');
   write(sw, 'sw');
-  const seeds = seedDir(root, '3de3f5d8771b', { '_expo/static/js/web/seed-00.js': 'seed' });
+  const tag = '3de3f5d8771b';
+  const seeds = seedDir(root, tag, { '_expo/static/js/web/lazy-aa.js': 'first export' });
   const first = path.join(root, 'out1');
-  assemble({ dist: exportDir(root, 'd1', { '_expo/static/js/web/e-1.js': '1' }), sw, seedsDir: seeds, seeds: [{ tag: '3de3f5d8771b', commit: sha(99) }], commit: sha(1), now: new Date('2026-11-02T00:00:00Z'), out: first });
-  rmSync(path.join(root, 'seeds'), { recursive: true });
+  assemble({ dist: exportDir(root, 'd1', { '_expo/static/js/web/e-1.js': '1' }), sw, seedsDir: seeds, seeds: [{ tag, commit: sha(99) }], commit: sha(1), now: new Date('2026-11-02T00:00:00Z'), out: first });
+  // jarvis-image re-run for the same commit: a new digest, a different export
+  rmSync(path.join(seeds, tag), { recursive: true });
+  seedDir(root, tag, { '_expo/static/js/web/lazy-bb.js': 'second export' });
+  write(path.join(seeds, tag, '.digest'), `sha256:${'1'.repeat(64)}\n`);
   const second = path.join(root, 'out2');
-  assemble({ dist: exportDir(root, 'd2', { '_expo/static/js/web/e-2.js': '2' }), sw, previous: first, commit: sha(2), now: new Date('2026-11-03T00:00:00Z'), out: second });
-  assert.equal(readFileSync(path.join(second, 'app', '_expo/static/js/web/seed-00.js'), 'utf8'), 'seed');
-  assert.ok(existsSync(path.join(second, 'app', '_expo/static/js/web/seed-00.js.br')));
+  assemble({ dist: exportDir(root, 'd2', { '_expo/static/js/web/e-2.js': '2' }), sw, previous: first, seedsDir: seeds, seeds: [{ tag, commit: sha(99) }], commit: sha(2), now: new Date('2026-11-03T00:00:00Z'), out: second });
+  assert.equal(readFileSync(path.join(second, 'app', '_expo/static/js/web/lazy-aa.js'), 'utf8'), 'first export');
+  assert.equal(readFileSync(path.join(second, 'app', '_expo/static/js/web/lazy-bb.js'), 'utf8'), 'second export');
+  const recorded = JSON.parse(readFileSync(path.join(second, 'meta', 'seeds.json'), 'utf8'))[tag];
+  assert.equal(recorded.digest, `sha256:${'1'.repeat(64)}`);
+  assert.deepEqual(recorded.older.map((older) => older.digest), [`sha256:${'0'.repeat(64)}`]);
+  // the earlier digest's file altered in the previous image: refused
+  write(path.join(second, 'app', '_expo/static/js/web/lazy-aa.js'), 'tampered');
+  assert.throws(
+    () => assemble({ dist: exportDir(root, 'd3', { '_expo/static/js/web/e-3.js': '3' }), sw, previous: second, seedsDir: seeds, seeds: [{ tag, commit: sha(99) }], commit: sha(3), out: path.join(root, 'out3') }),
+    /lazy-aa\.js: yyc-ai-ui:3de3f5d8771b@sha256:0+ recorded/,
+  );
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -259,4 +300,185 @@ test('assemble: a seed that was not fetched, or a previous image without its man
   mkdirSync(path.join(root, 'prev', 'app'), { recursive: true });
   assert.throws(() => assemble({ dist, sw, previous: path.join(root, 'prev'), commit: sha(3), out: path.join(root, 'out') }), /no meta\/builds\.json/);
   rmSync(root, { recursive: true, force: true });
+});
+
+test('assemble: over the budget it fails and names what takes the space', () => {
+  const root = tmp();
+  const sw = path.join(root, 'sw.js');
+  write(sw, 'sw');
+  const seeds = seedDir(root, '3de3f5d8771b', { '_expo/static/js/web/big-00.js': 'x'.repeat(300000) });
+  const dist = exportDir(root, 'dist', { '_expo/static/js/web/entry-11.js': 'entry' });
+  const args = { dist, sw, seedsDir: seeds, seeds: [{ tag: '3de3f5d8771b', commit: sha(2) }], commit: sha(3), out: path.join(root, 'out') };
+  const ok = assemble({ ...args, budgetBytes: 1048576 });
+  assert.equal(ok.bytes, diskUsage(path.join(root, 'out', 'app')));
+  // 300000 bytes in 4 KiB blocks, no siblings (a seed-only file)
+  assert.equal(ok.usage.find((entry) => entry.label === 'yyc-ai-ui:3de3f5d8771b').bytes, 74 * 4096);
+  assert.throws(() => assemble({ ...args, budgetBytes: 200000 }), (error) => {
+    assert.match(error.message, /over the 0\.2 MiB budget/);
+    assert.match(error.message, /0\.3 MiB {2}yyc-ai-ui:3de3f5d8771b/);
+    return true;
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+// The first image as pushed (sizes of every file of pigeon-app:0b3a5c6f5028, its build and its 39 seeds), then a
+// second build in which every file of the build changed (the worst case: a new entry chunk, new lazy chunks). Seeds get
+// incompressible filler (they are only copied); the builds' files get text that brotli and gzip shrink about as much as
+// the real chunks (0.19 and 0.22 of their size, against 0.19 and 0.23 for the real build).
+test('assemble at the real sizes: the second build fits the budget, and so would three more like it', { timeout: 600000 }, () => {
+  const BUDGET = 480 * 1048576;
+  const inventory = JSON.parse(readFileSync(path.join(here, 'sizes-0b3a5c6f5028.json'), 'utf8'));
+  const root = tmp();
+  const sw = path.join(root, 'sw.js');
+  write(sw, 'self.registration.unregister();');
+  const words = 'const let function return this props state value index chunk module export import default async await undefined null true false object string number length children className style onPress useState useEffect'.split(' ');
+  const text = (size, seed) => {
+    const parts = [];
+    let length = 0;
+    for (let i = 0; length < size; i++) {
+      const r = createHash('sha256').update(`${seed}:${i}`).digest();
+      for (let k = 0; k + 3 < r.length && length < size; k += 3) {
+        const word = words[r[k] % words.length] + (r[k + 1] < 60 ? `_${r[k + 2].toString(36)}` : '') + (r[k + 2] % 4 ? ' ' : ';');
+        parts.push(word);
+        length += word.length;
+      }
+    }
+    return parts.join('').slice(0, size);
+  };
+  const filler = (size, seed) => {
+    const block = createHash('sha512').update(seed).digest();
+    const buffer = Buffer.alloc(size);
+    for (let i = 0; i < size; i += block.length) block.copy(buffer, i);
+    return buffer;
+  };
+  const [names, sizes] = [inventory.files.map(([name]) => name), inventory.files.map(([, size]) => size)];
+  const seedsDir = path.join(root, 'seeds');
+  const seeds = [];
+  for (const [tag, seed] of Object.entries(inventory.seeds)) {
+    for (const i of seed.files) write(path.join(seedsDir, tag, names[i]), inventory.build.files.includes(i) ? text(sizes[i], names[i]) : filler(sizes[i], names[i]));
+    write(path.join(seedsDir, tag, '.digest'), `sha256:${createHash('sha256').update(tag).digest('hex')}\n`);
+    seeds.push({ tag, commit: seed.commit });
+  }
+  const dist1 = path.join(root, 'dist1');
+  for (const i of inventory.build.files) write(path.join(dist1, names[i]), text(sizes[i], names[i]));
+  write(path.join(dist1, 'index.html'), '<html></html>');
+  const first = assemble({ dist: dist1, sw, seedsDir, seeds, commit: inventory.build.commit, budgetBytes: BUDGET, now: new Date('2026-11-02T15:50:00Z'), out: path.join(root, 'out1') });
+  // the real image took 429.7 MiB with the seeds' siblings; without them about 110 MiB less
+  assert.ok(first.bytes < 330 * 1048576, `first build ${(first.bytes / 1048576).toFixed(1)} MiB`);
+  const dist2 = path.join(root, 'dist2');
+  for (const i of inventory.build.files) {
+    const renamed = names[i].replace(/[0-9a-f]{32}/, (hash) => createHash('md5').update(hash).digest('hex'));
+    write(path.join(dist2, renamed), text(sizes[i], renamed));
+  }
+  write(path.join(dist2, 'index.html'), '<html>2</html>');
+  const second = assemble({ dist: dist2, sw, previous: path.join(root, 'out1'), seedsDir, seeds, commit: sha(7), budgetBytes: BUDGET, now: new Date('2026-11-03T15:50:00Z'), out: path.join(root, 'out2') });
+  const perBuild = second.bytes - first.bytes;
+  console.log(`first ${(first.bytes / 1048576).toFixed(1)} MiB, second ${(second.bytes / 1048576).toFixed(1)} MiB (+${(perBuild / 1048576).toFixed(1)} MiB), budget ${BUDGET / 1048576} MiB`);
+  assert.ok(second.bytes <= BUDGET);
+  assert.equal(second.builds, 2);
+  // the last 5 builds, all within 30 days, all with every file changed, and all 39 seeds still listed
+  assert.ok(first.bytes + 4 * perBuild <= BUDGET, `five such builds: ${((first.bytes + 4 * perBuild) / 1048576).toFixed(1)} MiB`);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// ---------- fetch-seeds
+
+test('fetch-seeds trusts a cached seed only at the current digest and with the files the previous image recorded', () => {
+  const root = tmp();
+  const dir = path.join(root, '3de3f5d8771b');
+  const digest = `sha256:${'2'.repeat(64)}`;
+  write(path.join(dir, '_expo/static/js/web/a-1.js'), 'a');
+  write(path.join(dir, 'assets/x.1.png'), 'png');
+  write(path.join(dir, '.digest'), `${digest}\n`);
+  const hash = (text) => createHash('sha256').update(text).digest('hex');
+  const record = { digest, files: { '_expo/static/js/web/a-1.js': hash('a'), 'assets/x.1.png': hash('png') } };
+  assert.deepEqual(cachedCopyValid(dir, digest, record), { ok: true });
+  assert.deepEqual(cachedCopyValid(dir, digest, { digest: `sha256:${'3'.repeat(64)}`, files: {}, older: [record] }), { ok: true });
+  assert.match(cachedCopyValid(dir, `sha256:${'4'.repeat(64)}`, record).why, /is not the tag's/);
+  assert.match(cachedCopyValid(dir, digest, undefined).why, /no trusted manifest/);
+  assert.match(cachedCopyValid(path.join(root, 'none'), digest, record).why, /not cached/);
+  // a poisoned cache: altered bytes, an added file, a missing file
+  write(path.join(dir, '_expo/static/js/web/a-1.js'), 'evil');
+  assert.match(cachedCopyValid(dir, digest, record).why, /a-1\.js differs/);
+  write(path.join(dir, '_expo/static/js/web/a-1.js'), 'a');
+  write(path.join(dir, '_expo/static/js/web/extra-1.js'), 'evil');
+  assert.match(cachedCopyValid(dir, digest, record).why, /file list differs/);
+  rmSync(path.join(dir, '_expo/static/js/web/extra-1.js'));
+  rmSync(path.join(dir, 'assets/x.1.png'));
+  assert.match(cachedCopyValid(dir, digest, record).why, /file list differs/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('fetch-seeds keeps a Paseo image\'s hashed trees and nothing of a pre-Paseo one', () => {
+  const root = tmp();
+  write(path.join(root, 'paseo/app/dist/_expo/static/js/web/a-1.js'), 'a');
+  write(path.join(root, 'paseo/app/dist/assets/x.1.png'), 'png');
+  write(path.join(root, 'paseo/app/dist/index.html'), 'html');
+  takeHashedTrees(path.join(root, 'paseo'), path.join(root, 'out1'));
+  assert.deepEqual(walk(path.join(root, 'out1')), ['_expo/static/js/web/a-1.js', 'assets/x.1.png']);
+  write(path.join(root, 'old/app/dist/assets/index-1.js'), 'cloudcli');
+  write(path.join(root, 'out2/stale.js'), 'stale');
+  takeHashedTrees(path.join(root, 'old'), path.join(root, 'out2'));
+  assert.deepEqual(walk(path.join(root, 'out2')), []);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// ---------- check-frames
+
+test('unpack-harness: a harness at the tarball root, in package/, in ./package/ with dotfiles; one without it is refused', () => {
+  const root = tmp();
+  const script = path.join(here, '..', 'unpack-harness.sh');
+  const layouts = {
+    root: { dir: 'src', files: { 'validate-frames.mjs': 'v', 'package.json': '{}', 'lib/protocol.mjs': 'p' }, args: ['-C', 'src', '.'] },
+    package: { dir: 'src', files: { 'package/validate-frames.mjs': 'v', 'package/package.json': '{}', 'package/lib/protocol.mjs': 'p' }, args: ['-C', 'src', 'package'] },
+    dotfiles: { dir: 'src', files: { 'package/validate-frames.mjs': 'v', 'package/.npmrc': 'x', 'package/lib/protocol.mjs': 'p' }, args: ['-C', 'src', './package'] },
+  };
+  for (const [name, layout] of Object.entries(layouts)) {
+    const src = path.join(root, name, layout.dir);
+    for (const [rel, text] of Object.entries(layout.files)) write(path.join(src, rel), text);
+    const tgz = path.join(root, `${name}.tgz`);
+    execFileSync('tar', ['-czf', tgz, '-C', path.join(root, name), ...layout.args]);
+    const dest = path.join(root, `${name}-out`);
+    const result = spawnSync('bash', [script, tgz, dest], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+    assert.equal(readFileSync(path.join(dest, 'validate-frames.mjs'), 'utf8'), 'v', name);
+    assert.ok(existsSync(path.join(dest, 'lib/protocol.mjs')), name);
+    if (name === 'dotfiles') assert.ok(existsSync(path.join(dest, '.npmrc')));
+  }
+  write(path.join(root, 'none/src/package.json'), '{}');
+  execFileSync('tar', ['-czf', path.join(root, 'none.tgz'), '-C', path.join(root, 'none/src'), '.']);
+  const refused = spawnSync('bash', [script, path.join(root, 'none.tgz'), path.join(root, 'none-out')], { encoding: 'utf8' });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /no validate-frames\.mjs/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('self-test-verdict: only a run that rejected the seeded frame and nothing else passes', () => {
+  const root = tmp();
+  const script = path.join(here, '..', 'self-test-verdict.sh');
+  const verdict = (status, log) => {
+    write(path.join(root, 'log'), log);
+    return spawnSync('bash', [script, String(status), path.join(root, 'log')], { encoding: 'utf8' });
+  };
+  const seeded = '     /w/scripts/pigeon-app/test/incompatible-frame.ndjson:1 out hello.rejected (seeded incompatible frame: hello.rejected with a reason no client knows): reason: invalid enum value\n';
+  const rejected = `check-frames: corpus\nFAIL protocol 0123456789 (zod 4.1.0 + zod-aot 0.4.0) of this checkout: 412 server frames, 37 client frames, 1 invalid\n${seeded}`;
+  assert.equal(verdict(1, rejected).status, 0, verdict(1, rejected).stdout);
+  // a crash under set -e, npm ci failing, node throwing: exit 1 with no verdict
+  assert.equal(verdict(1, 'npm ERR! code E404\n').status, 1);
+  assert.match(verdict(1, 'npm ERR! code E404\n').stdout, /printed no verdict/);
+  assert.match(verdict(0, rejected).stdout, /answered 0/);
+  assert.match(verdict(2, rejected).stdout, /answered 2/);
+  // another frame rejected as well, or instead
+  const other = '     /w/frames/corpus/pigeon-frames.ndjson:9 out session.update: bad\n';
+  assert.match(verdict(1, rejected.replace('1 invalid', '2 invalid') + other).stdout, /exactly one frame/);
+  assert.match(verdict(1, rejected.replace(seeded, other)).stdout, /other than the seeded one/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// ---------- clients-missing
+
+test('clients-missing: the dispatched commits clients.txt does not list yet', () => {
+  const listed = `# header ${sha(1)}\n${sha(2)} web-legacy 2026-10-21T14:19:07Z\n${sha(3)} web,ios    2026-10-27T01:06:40Z\n`;
+  assert.deepEqual(missingClients(listed, [sha(2), sha(3)]), []);
+  assert.deepEqual(missingClients(listed, [sha(1), sha(3), sha(4)]), [sha(1), sha(4)]);
 });

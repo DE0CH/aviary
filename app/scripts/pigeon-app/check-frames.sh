@@ -41,16 +41,7 @@ if [ ! -f "$work/harness/validate-frames.mjs" ]; then
       curl -sSfL -o "$work/$asset" "$url"
     done
     mv "$work/pigeon-frames.ndjson" "$work/corpus/"
-    tar -xzf "$work/paseo-contract.tgz" -C "$work/harness"
-    # the tarball holds the harness at its root or in one top directory
-    if [ ! -f "$work/harness/validate-frames.mjs" ]; then
-      inner=$(dirname "$(find "$work/harness" -maxdepth 3 -name validate-frames.mjs -print -quit)")
-      [ "$inner" != . ] || { echo "check-frames: $tag's paseo-contract.tgz has no validate-frames.mjs" >&2; exit 2; }
-      tmp=$(mktemp -d "$work/h.XXXXXX")
-      mv "$inner"/* "$inner"/.[!.]* "$tmp"/ 2>/dev/null || mv "$inner"/* "$tmp"/
-      rm -rf "$work/harness"
-      mv "$tmp" "$work/harness"
-    fi
+    bash "$repo/scripts/pigeon-app/unpack-harness.sh" "$work/paseo-contract.tgz" "$work/harness"
     echo "check-frames: pigeon's frame corpus and harness of DE0CH/aviary $tag"
   else
     head=$(curl -sSf "${auth[@]}" "$api/commits/main" | jq -r .sha)
