@@ -32,6 +32,8 @@ jobs:
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+      - name: libheif (magpie's HEIF/AVIF decoder; ubuntu 24.04's 1.17 is libheif-rs's minimum, feature v1_17)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev
       - name: gitleaks 8.30.1
         run: |
           curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
@@ -69,6 +71,8 @@ jobs:
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-nextest@0.9.150
+      - name: libheif with its HEVC decoder (magpie's HEIC uploads and previews)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev libheif-plugin-libde265
       - name: postgres (the production version, TLS on)
         # the digest production's Cluster db/pg runs (the tag is rebuilt upstream)
         run: |
@@ -213,13 +217,14 @@ jobs:
           echo "$out"
           test "$code" = 78
           grep -q '"name":"PIGEON_TOKEN_MAGPIE"' <<< "$out"
-      - name: magpie (glibc, debian bookworm + libheif-dev)
-        # a docker run of the pinned bookworm image + libheif-dev rather than a job container, so it shares this job's
-        # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh)
+      - name: magpie (glibc, debian trixie + libheif-dev)
+        # a docker run of the pinned trixie image + libheif-dev rather than a job container, so it shares this job's
+        # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh). Trixie, not bookworm: libheif-rs
+        # needs libheif >= 1.17 and bookworm has 1.15 (README "Where this differs")
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          .github/ci/build-magpie.sh rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b
-          cp target/bookworm/release/magpie dist/
+          .github/ci/build-magpie.sh rust:1.99.1-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137
+          cp target/trixie/release/magpie dist/
       - name: SHA256SUMS
         run: cd dist && sha256sum * | tee SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

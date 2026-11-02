@@ -337,6 +337,7 @@ async fn readiness_waits_for_migrations_and_listen() {
         hermit_url: "http://127.0.0.1:1".into(),
         hermit_token: "x".into(),
         pod: "p".into(),
+        bucket: common::bucket_config("unused"),
     };
     let start = {
         let readiness = readiness.clone();

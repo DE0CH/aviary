@@ -1,21 +1,305 @@
-//! Blobs (magpie 5). WP-12 ships the staging writer ([`staging`]) and what the cc store needs to read blob bytes;
-//! WP-15 adds the S3 store, the uploader, the read cache, previews and the GC here.
+//! Blobs and the bucket (magpie 5): the S3 store ([`store`]), the staging writer of cc writes ([`staging`]), the
+//! read cache, reads of every variant ([`read`]), the uploader of staged blobs ([`uploader`]), image facts and
+//! derived copies ([`images`]), and the GC ([`gc`]).
+//!
+//! Blobs are content-addressed: a blob's id is the SHA-256 of its stored bytes. Its row (`blobs`) says what the bytes
+//! are; the bytes are in the bucket (`stored`), or in `blob_staging` while a cc write's new blob waits for the
+//! uploader (magpie 5.2).
 //!
 //! A transaction never calls the bucket (platform 4.3). The cc store reads blob bytes inside its transaction only
 //! from `blob_staging` or from bytes fetched before the transaction ([`Bytes`]); when it needs a blob that is only
 //! in the bucket it fails with [`crate::error::Error::NeedBlobs`], and the route fetches those ([`fetch_stored`])
 //! and runs the transaction again.
+//!
+//! **The bucket and the GC.** A transaction never calls the bucket (platform 4.3), so "the bytes are in the bucket"
+//! and "the row says so" cannot change together. One lock keeps them consistent: every write of a blob's object (an
+//! upload, a sent file, the uploader) holds the blob's shared advisory lock ([`Blobs::shared`], a session lock on a
+//! pooled connection) from before its `PUT` until its row commits; the GC holds the exclusive one from before it
+//! deletes a row until it has deleted the objects. A GC therefore never deletes an object a writer has just put, and
+//! a writer never commits a row whose object a GC is deleting.
 
+pub mod gc;
+pub mod images;
+pub mod read;
 pub mod staging;
+pub mod store;
+pub mod uploader;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use magpie_api::errors::ErrorCode;
+use aviary_pg::{Conn, Pool};
+use sha2::{Digest as _, Sha256};
+use tokio::sync::Semaphore;
 
 use crate::app::Magpie;
-use crate::ccfs::extract::{Sha, hex};
+use crate::ccfs::extract::hex;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::limits;
+use store::{Bucket, BucketConfig};
+
+/// A blob's SHA-256.
+pub type Sha = [u8; 32];
+
+/// The SHA-256 of `bytes`.
+#[must_use]
+pub fn sha256(bytes: &[u8]) -> Sha {
+    Sha256::digest(bytes).into()
+}
+
+/// Lowercase hex (a blob's public id).
+#[must_use]
+pub fn to_hex(sha: &Sha) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in sha {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// A blob id from its hex form (64 lowercase or uppercase hex digits).
+#[must_use]
+pub fn from_hex(s: &str) -> Option<Sha> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// The classid of the blobs' advisory locks (the two-key space; the objid is the sha's first four bytes).
+const LOCK_CLASS: i32 = 0x6d62_6c62; // "mblb"
+
+fn lock_obj(sha: &Sha) -> i32 {
+    i32::from_be_bytes([sha[0], sha[1], sha[2], sha[3]])
+}
+
+/// A blob's row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobRow {
+    /// The sha.
+    pub sha: Sha,
+    /// Stored bytes.
+    pub size: i64,
+    /// `media`, `text` or `file`.
+    pub kind: String,
+    /// `base64-json`, `json-string` or `raw`.
+    pub encoding: String,
+    /// MIME type.
+    pub mime: Option<String>,
+    /// Image width.
+    pub width: Option<i32>,
+    /// Image height.
+    pub height: Option<i32>,
+    /// The bytes are in the bucket.
+    pub stored: bool,
+}
+
+/// The row of blob `sha`.
+///
+/// # Errors
+/// When the statement fails.
+pub async fn row(db: &impl Db, sha: &Sha) -> Result<Option<BlobRow>> {
+    let r = db
+        .query_opt(
+            "select size, kind, encoding, mime, width, height, stored from blobs where sha256 = $1",
+            &[&sha.as_slice()],
+        )
+        .await?;
+    Ok(r.map(|r| BlobRow {
+        sha: *sha,
+        size: r.get(0),
+        kind: r.get(1),
+        encoding: r.get(2),
+        mime: r.get(3),
+        width: r.get(4),
+        height: r.get(5),
+        stored: r.get(6),
+    }))
+}
+
+/// A new raw blob (an upload, a model copy, a sent file) to record.
+#[derive(Debug, Clone)]
+pub struct RawBlob {
+    /// Its sha.
+    pub sha: Sha,
+    /// Its size.
+    pub size: i64,
+    /// `media` or `file`.
+    pub kind: &'static str,
+    /// MIME type.
+    pub mime: Option<String>,
+    /// Image width.
+    pub width: Option<u32>,
+    /// Image height.
+    pub height: Option<u32>,
+}
+
+fn i32_of(n: Option<u32>) -> Option<i32> {
+    n.and_then(|n| i32::try_from(n).ok())
+}
+
+/// Records `blob`, whose bytes are in the bucket (a writer holding [`Blobs::shared`] put them), in `db`: inserted as
+/// stored, or an existing row's `last_ref_at` bumped (which takes the row lock the GC needs). A staged row stays as
+/// it is: the uploader stores it.
+///
+/// # Errors
+/// When the statement fails.
+pub async fn record_stored(db: &impl Db, blob: &RawBlob) -> Result<()> {
+    db.execute(
+        "insert into blobs (sha256, size, kind, encoding, mime, width, height, stored)
+         values ($1, $2, $3, 'raw', $4, $5, $6, true)
+         on conflict (sha256) do update set last_ref_at = now()",
+        &[
+            &blob.sha.as_slice(),
+            &blob.size,
+            &blob.kind,
+            &blob.mime,
+            &i32_of(blob.width),
+            &i32_of(blob.height),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// References `blob` from `owner` (`conversation`, `share` or `upload`), bumping its `last_ref_at` (magpie 5.3).
+///
+/// # Errors
+/// When a statement fails (the blob row must exist).
+pub async fn reference(db: &impl Db, owner: uuid::Uuid, owner_kind: &str, blob: &Sha) -> Result<()> {
+    db.execute(
+        "update blobs set last_ref_at = now() where sha256 = $1",
+        &[&blob.as_slice()],
+    )
+    .await?;
+    db.execute(
+        "insert into blob_refs (owner, owner_kind, blob) values ($1, $2, $3) on conflict do nothing",
+        &[&owner, &owner_kind, &blob.as_slice()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// A held shared blob lock ([`Blobs::shared`]); [`SharedLock::release`] gives it back (dropping the connection
+/// gives it back too: the pool resets a connection's session locks before handing it out again).
+#[derive(Debug)]
+pub struct SharedLock {
+    conn: Conn,
+    sha: Sha,
+}
+
+impl SharedLock {
+    /// Releases the lock.
+    pub async fn release(self) {
+        let _ = self
+            .conn
+            .execute(
+                "select pg_advisory_unlock_shared($1::int4, $2::int4)",
+                &[&LOCK_CLASS, &lock_obj(&self.sha)],
+            )
+            .await;
+    }
+}
+
+/// The blob store of one replica: the bucket, the read cache, the decode permits.
+#[derive(Debug)]
+pub struct Blobs {
+    /// The bucket.
+    pub bucket: Bucket,
+    cache: moka::future::Cache<Sha, axum::body::Bytes>,
+    decodes: Arc<Semaphore>,
+}
+
+impl Blobs {
+    /// The store for `cfg` (no request is made: the bucket's reachability never decides readiness, magpie 16.5).
+    #[must_use]
+    pub fn new(cfg: &BucketConfig) -> Self {
+        Self {
+            bucket: Bucket::new(cfg),
+            cache: moka::future::Cache::builder()
+                .max_capacity(limits::BLOB_CACHE_BYTES)
+                .weigher(|_, v: &axum::body::Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
+                .build(),
+            decodes: Arc::new(Semaphore::new(limits::DECODES)),
+        }
+    }
+
+    /// Takes `sha`'s shared lock (writers of its object; see the module docs).
+    ///
+    /// # Errors
+    /// When Postgres cannot be reached.
+    pub async fn shared(&self, pool: &Pool, sha: &Sha) -> Result<SharedLock> {
+        let conn = pool.get().await?;
+        conn.execute(
+            "select pg_advisory_lock_shared($1::int4, $2::int4)",
+            &[&LOCK_CLASS, &lock_obj(sha)],
+        )
+        .await?;
+        Ok(SharedLock { conn, sha: *sha })
+    }
+
+    /// Puts `bytes` (whose sha is `sha`) into the bucket under the blob's key, with `lock` held by the caller.
+    ///
+    /// # Errors
+    /// 503 `unavailable` when the bucket cannot be reached.
+    pub async fn put(&self, _lock: &SharedLock, sha: &Sha, bytes: axum::body::Bytes) -> Result<()> {
+        self.bucket
+            .put(&store::blob_key(&to_hex(sha)), bytes.clone(), None)
+            .await
+            .map_err(|e| unavailable(&e))?;
+        self.cache.insert(*sha, bytes).await;
+        Ok(())
+    }
+
+    /// Makes `bytes` a stored object: takes its shared lock and puts it in the bucket, unless its row says it is
+    /// stored already. The caller records the row ([`record_stored`]) and its references in a transaction, then
+    /// releases the lock.
+    ///
+    /// # Errors
+    /// 503 `unavailable` when the bucket cannot be reached; a statement error.
+    pub async fn put_bytes(&self, pool: &Pool, bytes: axum::body::Bytes) -> Result<(Sha, SharedLock)> {
+        let sha = sha256(&bytes);
+        let lock = self.shared(pool, &sha).await?;
+        let stored = row(&lock.conn, &sha).await?.is_some_and(|r| r.stored);
+        if !stored && let Err(e) = self.put(&lock, &sha, bytes).await {
+            lock.release().await;
+            return Err(e);
+        }
+        Ok((sha, lock))
+    }
+
+    /// Runs `f` (CPU-bound image work) on the blocking pool under a decode permit.
+    ///
+    /// # Errors
+    /// What `f` answers; [`Error::Internal`] when the task panicked.
+    pub async fn decode<T: Send + 'static>(
+        &self,
+        f: impl FnOnce() -> Result<T, images::ImageError> + Send + 'static,
+    ) -> Result<Result<T, images::ImageError>> {
+        let _permit = self
+            .decodes
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::Internal("decode permits closed".into()))?;
+        tokio::task::spawn_blocking(f)
+            .await
+            .map_err(|e| Error::Internal(format!("image task: {e}")))
+    }
+}
+
+/// 503 `unavailable` for a bucket that cannot be reached.
+#[must_use]
+pub fn unavailable(e: &store::StoreError) -> Error {
+    tracing::warn!(error = %e, "bucket call failed");
+    Error::code(magpie_api::errors::ErrorCode::Unavailable, "the bucket is unreachable")
+}
 
 /// A blob's metadata, as an event's blob reference shows it (magpie 6.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,15 +412,36 @@ impl<'p> Bytes<'p> {
     }
 }
 
-/// Fetches blobs stored in the bucket, outside any transaction. The bucket is WP-15's; until it exists every stored
-/// blob answers 503 `unavailable` (a cc write never needs one: what it introduces is staged, and nothing uploads yet).
+/// Fetches the bytes of blobs stored in the bucket, outside any transaction (the cc store's reads of blobs a
+/// transaction needs, [`Error::NeedBlobs`]).
 ///
 /// # Errors
-/// 503 `unavailable`.
-#[allow(clippy::unused_async)] // WP-15's S3 reads are awaited
-pub async fn fetch_stored(_app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
-    Err(Error::code(
-        ErrorCode::Unavailable,
-        format!("{} blob(s) are in the bucket, which is not readable yet", shas.len()),
-    ))
+/// 404 for a blob the bucket lost, 503 when it cannot be reached; a statement error.
+pub async fn fetch_stored(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
+    let mut out = HashMap::with_capacity(shas.len());
+    for sha in shas {
+        let conn = app.pool.get().await?;
+        let Some(r) = row(&conn, sha).await? else {
+            return Err(Error::Internal(format!("blob {} has no row", hex(sha))));
+        };
+        drop(conn);
+        out.insert(*sha, app.blobs.stored_bytes(&app.pool, &r).await?.to_vec());
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_round_trip() {
+        let s = sha256(b"abc");
+        let h = to_hex(&s);
+        assert_eq!(h, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(from_hex(&h), Some(s));
+        assert_eq!(from_hex(&h.to_uppercase()), Some(s));
+        assert_eq!(from_hex("zz"), None);
+        assert_eq!(from_hex(&format!("{}g", &h[..63])), None);
+    }
 }

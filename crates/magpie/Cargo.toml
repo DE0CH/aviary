@@ -9,12 +9,21 @@ publish.workspace = true
 [dependencies]
 aviary-core = { path = "../aviary-core" }
 aviary-pg = { path = "../aviary-pg" }
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-http-client.workspace = true
 axum.workspace = true
 base64.workspace = true
 chrono-tz.workspace = true
 futures-util.workspace = true
+fast_image_resize = { workspace = true, features = ["image"] }
+http-body-util.workspace = true
 hermit-api = { path = "../hermit-api" }
+image = { workspace = true, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp"] }
+kamadak-exif.workspace = true
+libheif-rs = { workspace = true, default-features = false, features = ["v1_17"] }
 magpie-api = { path = "../magpie-api" }
+moka.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -23,6 +32,7 @@ time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+webp.workspace = true
 
 [dev-dependencies]
 aviary-core = { path = "../aviary-core", features = ["testing"] }

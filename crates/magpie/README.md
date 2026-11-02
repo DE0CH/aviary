@@ -21,9 +21,13 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/changes.rs` | the per-person change feed (M12): `emit`/`upserted` in a transaction, `read` with its long-poll |
 | `src/fanout.rs` | the LISTEN hub (four channels) and the long-poll loop every held request uses |
 | `src/jobs/` | the job leader, purge, outbox (hermit calls), retention |
+| `src/files.rs` | blob reads (M15, the sandbox's), the sandbox's blob `PUT` |
+| `src/uploads.rs` | M13: uploads, image facts and the model copy |
+| `src/viewas.rs` | M17 and the view-as audit rows written with each change |
+| `src/sandbox.rs` | the conversation behind a gateway call, and its lease |
 | `src/stats.rs` | the ops reads (`/v1/ops/people`, `/v1/ops/view-as`, `/v1/ops/stats`) |
 | `src/ccfs/` | Claude Code state behind the FUSE layer (magpie 6): `scan`/`extract` (a JSONL line into stub and blobs), `classify` (main-transcript lines into events), `lines` (the rewrite algorithm, main-path rules, promotion, rename-over), `limbo` (retraction, the quiet-file sweeper), `pages` (byte files), `reconstruct` (tree and streamed reads), `lease`, `ops` (the state-changing routes) |
-| `src/blobs/` | `staging` (blobs a cc write introduces, staged in its transaction); the bucket is WP-15's |
+| `src/blobs/` | the bucket (`store`), `staging` (blobs a cc write introduces, staged in its transaction), the read cache and every variant (`read`), images and their copies (`images`), the uploader of staged blobs (`uploader`), the GC and the bucket reconcile (`gc`) |
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (WP-14); today only the seam the create route calls |
 
@@ -70,6 +74,12 @@ visible events against the classification of the model's lines); `tests/ccfs_cla
 event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
 `.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
 for a 1 MiB image line). The scanner, extraction and classification have unit and property tests in the crate.
+
+Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
+`tests/blobs.rs` (staged blobs served before the uploader stores them, a bucket outage, the GC's rules and the
+reconcile, M15's variants and headers, the sandbox's blob routes) and `tests/uploads.rs` (M13's limits and types,
+the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording, retention).
+`tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text
 
@@ -158,3 +168,20 @@ for a 1 MiB image line). The scanner, extraction and classification have unit an
   trip), with a 2-node synchronously replicated Postgres in CI whose WAL is warmed first (segments written once and
   recycled, as on a cluster that has run for a while; on a fresh cluster each new 16 MiB segment file costs one
   write about 150 ms on a CI runner's disk).
+- An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
+  its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
+  No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.
+- The bucket and the GC are kept consistent by an advisory lock per blob (the two-key space, classid `mblb`):
+  every writer of a blob's object holds it shared from before its `PUT` until its row commits (uploads, sent files,
+  the uploader); the GC holds it exclusively from before it deletes a row until it has deleted the objects, and the
+  reconcile re-checks each orphan under it. Without it a GC deleting an old unreferenced blob could delete the
+  object a concurrent writer had just put again (magpie 5.3 names only the row lock, which no bucket call can sit
+  inside, platform 4.3).
+- The GC also keeps a blob that a staging row, an upload row or a sent-file row names (their foreign keys), on top
+  of magpie 5.3's references.
+- The `display` and `thumb` variants have their own etags (`"<sha>-display"`, `"<sha>-thumb"`); `full` is
+  `"<sha>"`. `display` of a media blob that is not an image (a PDF) answers 415 like `thumb`.
+- A derived copy (thumbnail, display copy) is served without being kept while the bucket cannot be reached.
+- Until WP-12's lease lands, the sandbox routes of this package check `Aviary-Lease` against `conversations.lease_id`
+  themselves (`src/sandbox.rs`).
+- An image upload's `width`/`height` are the upright dimensions (swapped for EXIF orientations 5-8).

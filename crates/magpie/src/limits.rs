@@ -103,3 +103,48 @@ pub const MIGRATING_RETRY_AFTER_MS: u64 = 2_000;
 pub const BODY_MAX: usize = 64 << 20;
 /// Drain: in-flight requests are given this long to finish (magpie 18.3).
 pub const DRAIN_IN_FLIGHT: Duration = Duration::from_secs(30);
+
+// Blobs, uploads, files and shares (magpie 5, 10-12, 17).
+
+/// The bucket: overall timeout of one call.
+pub const BUCKET_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The blob read cache per replica, bytes.
+pub const BLOB_CACHE_BYTES: u64 = 256 << 20;
+/// Image decodes at once per replica.
+pub const DECODES: usize = 4;
+/// An image decode over this many pixels answers 415 (40 megapixels).
+pub const DECODE_MAX_PIXELS: u64 = 40_000_000;
+/// Thumbnail: long edge, pixels.
+pub const THUMB_EDGE: u32 = 512;
+/// Display copy: long edge, pixels.
+pub const DISPLAY_EDGE: u32 = 2_000;
+/// The model copy of an image: long edge, pixels.
+pub const MODEL_IMAGE_EDGE: u32 = 2_000;
+/// The model copy of an image: at most this many bytes.
+pub const MODEL_IMAGE_MAX_BYTES: usize = 3_932_160;
+/// The model copy's JPEG qualities, tried in order.
+pub const MODEL_JPEG_QUALITIES: [u8; 3] = [85, 70, 55];
+/// Thumbnails and display copies: WebP quality.
+pub const WEBP_QUALITY: f32 = 80.0;
+/// The uploader: how often each replica looks for staged blobs.
+pub const UPLOAD_EVERY: Duration = Duration::from_secs(1);
+/// The uploader: blobs in flight per replica.
+pub const UPLOAD_IN_FLIGHT: usize = 4;
+/// See [`UPLOAD_IN_FLIGHT`].
+pub const UPLOAD_IN_FLIGHT_I64: i64 = 4;
+/// The uploader: an item's claim (another replica takes it after this).
+pub const UPLOAD_CLAIM: Duration = Duration::from_secs(120);
+/// The uploader's backoff: first retry after this, doubling to [`UPLOAD_BACKOFF_MAX`].
+pub const UPLOAD_BACKOFF_FIRST: Duration = Duration::from_secs(1);
+/// See [`UPLOAD_BACKOFF_FIRST`].
+pub const UPLOAD_BACKOFF_MAX: Duration = Duration::from_mins(5);
+/// `blob upload failing` is logged at most this often per replica.
+pub const UPLOAD_FAILING_LOG_EVERY: Duration = Duration::from_mins(10);
+/// The blob GC: how often.
+pub const BLOB_GC_EVERY: Duration = Duration::from_hours(1);
+/// The blob GC: an unreferenced blob is freed only this long after its last reference.
+pub const BLOB_GC_GRACE: Duration = Duration::from_hours(24);
+/// The blob GC: candidates per query.
+pub const BLOB_GC_BATCH: i64 = 500;
+/// The bucket reconcile: how often.
+pub const BUCKET_RECONCILE_EVERY: Duration = Duration::from_hours(7 * 24);

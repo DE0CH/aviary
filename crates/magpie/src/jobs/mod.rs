@@ -18,6 +18,9 @@ use std::time::Duration;
 use aviary_pg::{Leader, Pool};
 use tokio::task::JoinHandle;
 
+use crate::blobs::Blobs;
+use crate::blobs::gc::Gc;
+use crate::blobs::uploader::Uploader;
 use crate::conversations::delete;
 use crate::limits;
 
@@ -73,12 +76,12 @@ where
 
 impl Jobs {
     /// Starts bidding for the leader lock and the leader loops; `deliver` makes the outbox's hermit calls.
-    pub fn start<D: outbox::Deliver>(pool: &Pool, deliver: D) -> Self {
-        Self::start_with(pool, deliver, Intervals::default())
+    pub fn start<D: outbox::Deliver>(pool: &Pool, deliver: D, blobs: Arc<Blobs>) -> Self {
+        Self::start_with(pool, deliver, blobs, Intervals::default())
     }
 
     /// [`Jobs::start`] with other intervals (tests).
-    pub fn start_with<D: outbox::Deliver>(pool: &Pool, deliver: D, iv: Intervals) -> Self {
+    pub fn start_with<D: outbox::Deliver>(pool: &Pool, deliver: D, blobs: Arc<Blobs>, iv: Intervals) -> Self {
         let leader = Arc::new(Leader::start_with(pool, crate::db::jobs_key(), iv.leader_retry));
         let deliver = Arc::new(deliver);
         let mut tasks = Vec::new();
@@ -138,6 +141,27 @@ impl Jobs {
                 })
             },
         ));
+        let p = pool.clone();
+        let b = blobs.clone();
+        let gc = Arc::new(Gc::default());
+        tasks.push(leader_loop(leader.clone(), "blob gc", iv.blob_gc, move || {
+            let p = p.clone();
+            let b = b.clone();
+            let gc = gc.clone();
+            async move {
+                let n = gc.pass(&p, &b).await?;
+                Ok(if n == 0 { String::new() } else { format!("{n} freed") })
+            }
+        }));
+        let up = Arc::new(Uploader::default());
+        tasks.push(every_replica("blob uploader", iv.upload, pool.clone(), move |p| {
+            let b = blobs.clone();
+            let up = up.clone();
+            async move {
+                let n = up.pass(&p, &b).await?;
+                Ok(if n == 0 { String::new() } else { format!("{n} stored") })
+            }
+        }));
         Self { leader, tasks }
     }
 
@@ -176,6 +200,10 @@ pub struct Intervals {
     pub retention: Duration,
     /// The limbo sweeper (magpie 6.7).
     pub limbo: Duration,
+    /// The blob uploader (every replica).
+    pub upload: Duration,
+    /// The blob GC.
+    pub blob_gc: Duration,
     /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
     /// from a notification or a reconnect).
     pub requery: Duration,
@@ -189,6 +217,8 @@ impl Default for Intervals {
             outbox: limits::OUTBOX_EVERY,
             retention: limits::RETENTION_EVERY,
             limbo: limits::LIMBO_SWEEP_EVERY,
+            upload: limits::UPLOAD_EVERY,
+            blob_gc: limits::BLOB_GC_EVERY,
             requery: limits::REQUERY,
         }
     }

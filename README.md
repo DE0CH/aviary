@@ -52,8 +52,11 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   gone, quay.io/minio/minio refuses anonymous pulls, and dl.min.io answers 410 (checked 2026-11-02).
 - The musl build needs `musl-gcc` for C dependencies. The spec says "no musl-gcc needed", which is true only for
   linking.
-- magpie is built by a `docker run` of the pinned bookworm image plus `libheif-dev`, as the runner's uid, rather than
-  in a job container, so it shares the build job's `dist/` and cargo cache.
+- magpie is built by a `docker run` of the pinned Rust image plus `libheif-dev`, as the runner's uid, rather than
+  in a job container, so it shares the build job's `dist/` and cargo cache. That image is Debian trixie, not bookworm:
+  libheif-rs (HEIC/HEIF/AVIF uploads) needs libheif 1.17 or later, and bookworm has 1.15, so magpie's runtime image
+  is `debian:trixie-slim` with `libheif1` and `libheif-plugin-libde265` (the HEVC decoder libheif loads as a plugin).
+  The lint and test jobs install Ubuntu 24.04's `libheif-dev` (1.17).
 - `cargo deny` checks platform 4.5's EC2/Kubernetes ban with `deny-hermit-only.toml`, a second config run with hermit
   and the harness crates excluded, instead of wrappers in `deny.toml`. cargo-deny warns "unmatched wrapper" for every
   wrapper that is not in the graph.

@@ -14,6 +14,7 @@ use aviary_core::auth::{Caller, Callers};
 use aviary_core::drain::{Drain, Signals};
 use aviary_core::ops::Readiness;
 use magpie::app::{Config, Service};
+use magpie::blobs::store::BucketConfig;
 use magpie::jobs::Intervals;
 use magpie_api::client::Client;
 use tokio::io::AsyncWriteExt as _;
@@ -134,6 +135,8 @@ pub fn fast() -> Intervals {
         outbox: Duration::from_millis(200),
         retention: Duration::from_millis(200),
         limbo: Duration::from_millis(200),
+        upload: Duration::from_millis(100),
+        blob_gc: Duration::from_millis(200),
         requery: magpie::limits::REQUERY,
     }
 }
@@ -146,6 +149,8 @@ pub fn idle() -> Intervals {
         outbox: Duration::from_secs(3600),
         retention: Duration::from_secs(3600),
         limbo: Duration::from_secs(3600),
+        upload: Duration::from_secs(3600),
+        blob_gc: Duration::from_secs(3600),
         requery: magpie::limits::REQUERY,
     }
 }
@@ -184,8 +189,52 @@ fn init_logs() {
     );
 }
 
+/// The CI S3 server (`AVIARY_TEST_S3_*`, platform 6.1) with `bucket`.
+pub fn bucket_config(bucket: &str) -> BucketConfig {
+    let env = |n: &str| {
+        aviary_core::env::test_only(n).unwrap_or_else(|| panic!("{n} is not set (ci.yml's test job sets it)"))
+    };
+    BucketConfig {
+        endpoint: env("AVIARY_TEST_S3_ENDPOINT"),
+        region: env("AVIARY_TEST_S3_REGION"),
+        bucket: bucket.to_owned(),
+        access_key_id: env("AVIARY_TEST_S3_ACCESS_KEY_ID"),
+        secret_access_key: env("AVIARY_TEST_S3_SECRET_ACCESS_KEY"),
+    }
+}
+
+/// The bucket of a test database (made on first use; every replica of the test shares it).
+pub async fn test_bucket(db_url: &str) -> BucketConfig {
+    let name = db_url
+        .rsplit('/')
+        .next()
+        .and_then(|t| t.split('?').next())
+        .unwrap_or("magpie")
+        .replace('_', "-");
+    let name: String = name.chars().take(63).collect();
+    let cfg = bucket_config(&name);
+    let bucket = magpie::blobs::store::Bucket::new(&cfg);
+    // replicas of one test start together: a create that lost the race finds the bucket there
+    if bucket.list("", None).await.is_err() && bucket.create().await.is_err() {
+        bucket.list("", None).await.unwrap();
+    }
+    cfg
+}
+
 /// Starts a replica on `db_url` (hermit at `hermit_url`).
 pub async fn replica_with(db_url: &str, tokens: &Tokens, hermit_url: &str, iv: Intervals) -> Replica {
+    let bucket = test_bucket(db_url).await;
+    replica_full(db_url, tokens, hermit_url, iv, bucket).await
+}
+
+/// Starts a replica on `db_url` with `bucket`.
+pub async fn replica_full(
+    db_url: &str,
+    tokens: &Tokens,
+    hermit_url: &str,
+    iv: Intervals,
+    bucket: BucketConfig,
+) -> Replica {
     init_logs();
     let readiness = Readiness::detached();
     let drain = Drain::new(readiness.clone());
@@ -195,6 +244,7 @@ pub async fn replica_with(db_url: &str, tokens: &Tokens, hermit_url: &str, iv: I
         hermit_url: hermit_url.to_owned(),
         hermit_token: "test-magpie-hermit".to_owned(),
         pod: format!("magpie-test-{}", Uuid::new_v4().simple()),
+        bucket,
     };
     let service = Service::start_with(cfg, &readiness, drain.draining(), iv)
         .await

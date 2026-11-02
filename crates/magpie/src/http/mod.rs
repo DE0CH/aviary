@@ -3,6 +3,8 @@
 
 // a handler's error is its answer: the route tables (magpie 16) list them
 #[allow(clippy::missing_errors_doc)]
+pub mod blobs;
+#[allow(clippy::missing_errors_doc)]
 pub mod changes;
 #[allow(clippy::missing_errors_doc)]
 pub mod conversations;
@@ -16,6 +18,10 @@ pub mod sandbox_cc;
 pub mod sandbox_live;
 #[allow(clippy::missing_errors_doc)]
 pub mod timeline;
+#[allow(clippy::missing_errors_doc)]
+pub mod uploads;
+#[allow(clippy::missing_errors_doc)]
+pub mod viewas;
 
 use aviary_core::http::ApiError;
 

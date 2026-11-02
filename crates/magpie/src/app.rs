@@ -13,19 +13,24 @@ use aviary_core::drain::Draining;
 use aviary_core::ops::Readiness;
 use aviary_pg::Pool;
 use axum::Router;
-use magpie_api::Admitted;
+use axum::body::Body;
+use axum::response::Response;
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::live::{LiveFramesRequest, LiveState};
-use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery};
+use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest};
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
     CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery,
     LeaseResponse,
 };
 use magpie_api::server::{Ctx, Server};
+use magpie_api::uploads::{BlobQuery, SandboxBlobQuery, UploadMeta, UploadResponse};
+use magpie_api::{Admitted, Empty};
 use uuid::Uuid;
 
+use crate::blobs::Blobs;
+use crate::blobs::store::BucketConfig;
 use crate::changes::Read;
 use crate::fanout::Fanout;
 use crate::http::{self, Answer};
@@ -45,6 +50,8 @@ pub struct Config {
     pub hermit_token: String,
     /// This replica's name (the downward API's `POD_NAME`): driver claims and logs.
     pub pod: String,
+    /// The bucket (`MAGPIE_S3_*`).
+    pub bucket: BucketConfig,
 }
 
 /// The shared state of one replica.
@@ -62,6 +69,8 @@ pub struct Magpie {
     pub hermit: hermit_api::client::Client,
     /// This replica's state itself, for work that outlives a request (a streamed cc file read).
     this: std::sync::Weak<Magpie>,
+    /// The blob store (bucket, read cache, decode permits).
+    pub blobs: Arc<Blobs>,
 }
 
 impl Magpie {
@@ -169,7 +178,8 @@ impl Service {
             .build()
             .map_err(|e| StartError(aviary_pg::Error::Config(format!("http client: {e}"))))?;
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
-        let jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), intervals);
+        let blobs = Arc::new(Blobs::new(&cfg.bucket));
+        let jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
         Ok(Self {
             app: Arc::new_cyclic(|this| Magpie {
                 pool,
@@ -178,6 +188,7 @@ impl Service {
                 pod: cfg.pod,
                 hermit,
                 this: this.clone(),
+                blobs,
             }),
             callers: cfg.callers,
             jobs: Some(jobs),
@@ -336,5 +347,25 @@ impl Server for Magpie {
 
     async fn cc_setattr(&self, ctx: Ctx, body: CcSetattr) -> Answer<CcVersion> {
         http::sandbox_cc::setattr(self, ctx, body).await
+    }
+
+    async fn blob(&self, ctx: Ctx, blob_id: String, query: BlobQuery) -> Answer<Response> {
+        http::blobs::blob(self, ctx, blob_id, query).await
+    }
+
+    async fn sandbox_blob_get(&self, ctx: Ctx, sha: String, query: SandboxBlobQuery) -> Answer<Response> {
+        http::blobs::sandbox_get(self, ctx, sha, query).await
+    }
+
+    async fn upload(&self, ctx: Ctx, meta: UploadMeta, body: Body) -> Answer<UploadResponse> {
+        http::uploads::upload(self, ctx, meta, body).await
+    }
+
+    async fn view_as(&self, ctx: Ctx, body: ViewAsRequest) -> Answer<()> {
+        http::viewas::start(self, ctx, body).await
+    }
+
+    async fn sandbox_blob_put(&self, ctx: Ctx, sha: String, body: Body) -> Answer<Admitted<Empty>> {
+        http::blobs::sandbox_put(self, ctx, sha, body).await
     }
 }

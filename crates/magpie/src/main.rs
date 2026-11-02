@@ -51,6 +51,13 @@ async fn serve() -> ExitCode {
         hermit_url: HERMIT_URL.to_owned(),
         hermit_token: aviary_core::auth::outbound_token("MAGPIE", "HERMIT"),
         pod: env::field("POD_NAME"),
+        bucket: magpie::blobs::store::BucketConfig {
+            endpoint: env::required("MAGPIE_S3_ENDPOINT"),
+            region: env::required("MAGPIE_S3_REGION"),
+            bucket: env::required("MAGPIE_S3_BUCKET"),
+            access_key_id: env::required("MAGPIE_S3_ACCESS_KEY_ID"),
+            secret_access_key: env::required("MAGPIE_S3_SECRET_ACCESS_KEY"),
+        },
     };
     let registry = ops::registry(&build);
     let ops = ops::Ops::new(build, registry);
