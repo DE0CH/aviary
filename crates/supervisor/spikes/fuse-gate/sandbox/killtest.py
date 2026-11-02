@@ -5,8 +5,9 @@ timed; then the file is checked: every chunk present exactly once, in order. usa
 import json, os, sys, time
 
 mode, path = sys.argv[1], sys.argv[2]
-if mode == "write":
+if mode in ("write", "append-existing"):
     n, size = int(sys.argv[3]), int(sys.argv[4])
+    pre = open(path, "rb").read() if mode == "append-existing" else b""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     lat = []
     for i in range(n):
@@ -16,7 +17,7 @@ if mode == "write":
         lat.append({"i": i, "returned": w, "ms": round((time.perf_counter() - t) * 1000, 1)})
     os.close(fd)
     data = open(path, "rb").read()
-    exp = b"".join(bytes([65 + i]) * (size - 1) + b"\n" for i in range(n))
+    exp = pre + b"".join(bytes([65 + i]) * (size - 1) + b"\n" for i in range(n))
     print(json.dumps({"writes": lat, "file_size": len(data), "expected_size": len(exp), "exact": data == exp}))
 else:
     size = int(sys.argv[3])

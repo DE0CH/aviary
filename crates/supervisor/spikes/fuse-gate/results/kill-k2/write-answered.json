@@ -1,0 +1,1 @@
+{"writes": [{"i": 0, "returned": 1048576, "ms": 8.3}, {"i": 1, "returned": 1048576, "ms": 83.5}, {"i": 2, "returned": 1048576, "ms": 8.3}], "file_size": 3145728, "expected_size": 3145728, "exact": true}

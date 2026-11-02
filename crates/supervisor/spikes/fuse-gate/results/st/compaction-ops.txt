@@ -1,0 +1,11 @@
+LOOKUP	projects/-home-sandbox	15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659	2
+CREATE	projects/-home-sandbox	15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659 flags=0o1101 mode=600	0
+SETATTR	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659	valid=0x8 size=0	0
+WRITE	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659	off=0 size=30505	0
+FSYNC	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659		0
+FLUSH	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659		0
+RELEASE	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659		0
+RENAME	projects/-home-sandbox	projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl.compact.tmp.6af3e659 -> projects/-home-sandbox/15592904-0ea9-45e6-8a18-f9d8a4856523.jsonl	0
+
+main transcript create parent ino: 8
+largest offset written per main-transcript inode: {'10': 15099189, '21': 375836}

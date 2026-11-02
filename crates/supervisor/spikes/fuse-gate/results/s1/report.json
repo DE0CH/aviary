@@ -1,0 +1,65 @@
+{
+ "files": [
+  {
+   "path": ".last-cleanup",
+   "size": 24,
+   "equal_to_magpie": true,
+   "sha256": "97b7d9f9c4373083"
+  },
+  {
+   "path": "backups/.claude.json.backup.1793618393531",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "af1e76fc174a2d4b"
+  },
+  {
+   "path": "projects/-home-sandbox/9773da5d-4074-4722-8912-02cdebacca72.jsonl",
+   "size": 375716,
+   "equal_to_magpie": true,
+   "sha256": "8015c0650ff8f131",
+   "lines": 55,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/-home-sandbox/9773da5d-4074-4722-8912-02cdebacca72/subagents/agent-a4ba0b5990000c182.jsonl",
+   "size": 146388,
+   "equal_to_magpie": true,
+   "sha256": "2ee50fd6ca25d420",
+   "lines": 20,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/-home-sandbox/9773da5d-4074-4722-8912-02cdebacca72/subagents/agent-a4ba0b5990000c182.meta.json",
+   "size": 178,
+   "equal_to_magpie": true,
+   "sha256": "81ec1862a945ffeb"
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 124,
+  "LOOKUP": 892,
+  "MKDIR": 10,
+  "OPENDIR": 54,
+  "READDIR": 108,
+  "RELEASEDIR": 54,
+  "CREATE": 15,
+  "WRITE": 126,
+  "SETATTR": 38,
+  "FLUSH": 202,
+  "RELEASE": 176,
+  "RENAME": 5,
+  "OPEN": 161,
+  "READ": 629,
+  "LISTXATTR": 7,
+  "RMDIR": 3,
+  "FSYNC": 1,
+  "UNLINK": 8
+ },
+ "errors": {
+  "LOOKUP errno 2": 830,
+  "RMDIR errno 39": 3
+ }
+}

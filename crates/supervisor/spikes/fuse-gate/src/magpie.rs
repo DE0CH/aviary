@@ -66,8 +66,12 @@ fn seed(dir: &std::path::Path, rel: &str, files: &mut BTreeMap<String, Entry>) {
     }
 }
 
-fn wait_ctl(ctl: &std::path::Path) -> u64 {
+fn wait_ctl(ctl: &std::path::Path, st: &Mutex<St>, what: &str) -> u64 {
     let t = Instant::now();
+    if ctl.join("hold").exists() {
+        let line = format!("{} HOLDING {what}\n", now_us());
+        let _ = st.lock().unwrap().log.write_all(line.as_bytes());
+    }
     while ctl.join("hold").exists() {
         thread::sleep(Duration::from_millis(20));
     }
@@ -122,7 +126,7 @@ fn handle(st: &Mutex<St>, data: &PathBuf, ctl: &PathBuf, req: Request) -> Reply 
             _ => r(404, "no route"),
         };
     }
-    let waited = wait_ctl(ctl);
+    let waited = wait_ctl(ctl, st, &format!("{} {}", req.path, path));
     let op = req.q("op").to_string();
     let mut s = st.lock().unwrap();
     s.calls += 1;

@@ -1,0 +1,3295 @@
+{
+  "rows": [
+    {
+      "program": "bash",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 29
+    },
+    {
+      "program": "bash",
+      "syscall": "dup2",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 44
+    },
+    {
+      "program": "bash",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "bash",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 5
+    },
+    {
+      "program": "bash",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "bash",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "bash",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 2
+    },
+    {
+      "program": "bash",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "bash",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 29
+    },
+    {
+      "program": "bash",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 3
+    },
+    {
+      "program": "bash",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 18
+    },
+    {
+      "program": "cat",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 8
+    },
+    {
+      "program": "cat",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 8
+    },
+    {
+      "program": "cat",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "access",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "chmod",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 412
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "backups",
+      "count": 12
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 84
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 7
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 33
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 46
+    },
+    {
+      "program": "claude",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 33
+    },
+    {
+      "program": "claude",
+      "syscall": "copy_file_range",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "plugins/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "fchmod",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "fsync",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 25
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 16
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "backups",
+      "count": 20
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 14
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "inotify_add_watch",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "ioctl",
+      "answer": "errno 95 (operation not supported on transport endpoint)",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "backups",
+      "count": 7
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "projects/<sid>//",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "sessions",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 17 (file exists)",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>//",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "mkdir",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 7
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid>//",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 17 (file exists)",
+      "path": "projects/<main transcript>",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": ".credentials.json",
+      "count": 77
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "AGENTS.md",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "backups",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cache/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cowork_plugins",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon/",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "debug",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "dev-mods",
+      "count": 20
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "dev-mods/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "dump-prompts",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "feedback-bundles",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "feedback/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "file-history",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "file-transfers",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "image-cache",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "jobs",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "jobs/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "keybindings.json",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "mcp-discovery-cache",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "mcp-skill-archives",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "paste-cache",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plans",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plans/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plugins",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plugins/",
+      "count": 31
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<main transcript>",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>//",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/remote-agents/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "remote-control/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "rules",
+      "count": 40
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "scheduled_tasks.json",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "settings.json",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "settings.local.json",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "shares",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "skills",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "startup-perf",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "state/",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "tasks",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "tasks/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "teams",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "telemetry",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "themes",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "traces",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "uploads",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "usage-data",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "usage-data/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "workflows",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 412
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 12
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 84
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>//",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 33
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 46
+    },
+    {
+      "program": "claude",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 33
+    },
+    {
+      "program": "claude",
+      "syscall": "pread64",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 104
+    },
+    {
+      "program": "claude",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 464
+    },
+    {
+      "program": "claude",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 42
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 404
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "backups",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "projects",
+      "count": 5
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 32
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "readlink",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 32
+    },
+    {
+      "program": "claude",
+      "syscall": "rename",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "rename",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "rename",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "rename",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "rename",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "rmdir",
+      "answer": "errno 39 (directory not empty)",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "rmdir",
+      "answer": "errno 39 (directory not empty)",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "rmdir",
+      "answer": "errno 39 (directory not empty)",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": ".config.json",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": ".credentials.json",
+      "count": 34
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "AGENTS.md",
+      "count": 10
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "CLAUDE.md",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "access-audit",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "agents",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "bridge-spawn",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cache/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "commands",
+      "count": 7
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cowork_plugins",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cowork_plugins/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "cowork_settings.json",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon",
+      "count": 48
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon.json",
+      "count": 48
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon.log",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon.log.1",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "daemon/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "dev-mods",
+      "count": 38
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "hfi-auth.json",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "jobs",
+      "count": 48
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "jobs/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "logs",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "mcp-needs-auth-cache.json",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "output-styles",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plugins",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "plugins/",
+      "count": 20
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/MEMORY.md/",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/mcp-tasks/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/proposals/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "projects/<sid>/tool-results/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "rules",
+      "count": 38
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "seed-admin",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "session-env",
+      "count": 18
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "sessions/",
+      "count": 7
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "settings.json",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "settings.local.json",
+      "count": 8
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "shares",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "shell-snapshots",
+      "count": 18
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "skills",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "skills/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "state",
+      "count": 96
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "state/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "statsig",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "telemetry",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "todos",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "usage-data",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 4
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 449
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "backups",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects",
+      "count": 19
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 31
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 38
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 9
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 38
+    },
+    {
+      "program": "claude",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 3
+    },
+    {
+      "program": "claude",
+      "syscall": "symlink",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "unlink",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "jobs/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "unlink",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "sessions/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "unlink",
+      "answer": "errno 2 (no such file or directory)",
+      "path": "state/",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "unlink",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 6
+    },
+    {
+      "program": "claude",
+      "syscall": "unlink",
+      "answer": "ok",
+      "path": "shell-snapshots/",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "utimensat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "projects/<compact tmp>",
+      "count": 1
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 53
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "claude",
+      "syscall": "write",
+      "answer": "ok",
+      "path": "sessions/",
+      "count": 25
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 8
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "backups",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 5
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 6
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 9
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "backups",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects",
+      "count": 5
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 6
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 8
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 5
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "fstatfs",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "backups",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 4
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 7
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 3
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 6
+    },
+    {
+      "program": "find",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "find",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "find",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "init.sh",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "ls",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": ".",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "..",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "llistxattr",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": ".",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "..",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "ls",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 4
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 5
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "backups",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 4
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "ioctl",
+      "answer": "errno 25 (not a typewriter)",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "ioctl",
+      "answer": "errno 25 (not a typewriter)",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "ioctl",
+      "answer": "errno 25 (not a typewriter)",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "ioctl",
+      "answer": "errno 25 (not a typewriter)",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "ioctl",
+      "answer": "errno 25 (not a typewriter)",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "backups",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 4
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "session-env",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "sessions",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "shell-snapshots",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "pread64",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 4
+    },
+    {
+      "program": "python3",
+      "syscall": "pwrite64",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": ".last-cleanup",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 3
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "python3",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "sh",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "sh",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "sh",
+      "syscall": "execve",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 3
+    },
+    {
+      "program": "sh",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "sh",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "sh",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "sh",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": ".last-cleanup\\nd",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "backups/",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "backups\\nf",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents\\nf/",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects\\nd",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "session-env/",
+      "count": 1
+    },
+    {
+      "program": "sort",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "session-env\\nd",
+      "count": 1
+    },
+    {
+      "program": "stat",
+      "syscall": "statx",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "supervisor",
+      "syscall": "mount",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "tail",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "tail",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "tail",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "tail",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 4
+    },
+    {
+      "program": "tar",
+      "syscall": "fcntl",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 3
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 3
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 6
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 3
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "fstat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 4
+    },
+    {
+      "program": "tar",
+      "syscall": "getdents64",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 3
+    },
+    {
+      "program": "tar",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "newfstatat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/",
+      "count": 3
+    },
+    {
+      "program": "tar",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid dir or other>",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*",
+      "count": 2
+    },
+    {
+      "program": "tar",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "<root>",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 38
+    },
+    {
+      "program": "tar",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/`./",
+      "count": 1
+    },
+    {
+      "program": "tar",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.jsonl",
+      "count": 15
+    },
+    {
+      "program": "tar",
+      "syscall": "read",
+      "answer": "ok",
+      "path": "projects/<sid>/subagents/*.meta.json",
+      "count": 1
+    },
+    {
+      "program": "truncate",
+      "syscall": "close",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "truncate",
+      "syscall": "ftruncate",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    },
+    {
+      "program": "truncate",
+      "syscall": "openat",
+      "answer": "ok",
+      "path": "projects/<main transcript>",
+      "count": 1
+    }
+  ],
+  "flagged": [
+    {
+      "program": "claude",
+      "syscall": "ioctl",
+      "answer": "errno 95 (operation not supported on transport endpoint)",
+      "path": "backups/",
+      "count": 1,
+      "example": "Bun Pool 1 X ioctl(0x8 /home/sandbox/.claude/backups/.claude.json.backup.1793618418494, 0x40049409, 0x7) = -1 errno=95 (operation not supported on transport endpoint) (941ns)"
+    }
+  ],
+  "syscalls": [
+    "access",
+    "chmod",
+    "close",
+    "copy_file_range",
+    "execve",
+    "fchmod",
+    "fsync",
+    "ftruncate",
+    "getdents64",
+    "inotify_add_watch",
+    "ioctl",
+    "mkdir",
+    "newfstatat",
+    "openat",
+    "pread64",
+    "read",
+    "readlink",
+    "rename",
+    "rmdir",
+    "statx",
+    "symlink",
+    "unlink",
+    "utimensat",
+    "write"
+  ]
+}

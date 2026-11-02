@@ -1,0 +1,4 @@
+0 {"tokens": 200, "missing": 0, "token_latency_ms": {"p50": 1.4, "p99": 16.5, "max": 24.8}, "token_gap_ms": {"p50": 21.1, "p99": 35.5, "max": 45.4}, "tool_roundtrip_ms": {"n": 10, "p50": 82.4, "p99": 121.6, "max": 121.6}}
+50 {"tokens": 200, "missing": 32, "token_latency_ms": {"p50": 1.4, "p99": 20.8, "max": 21.3}, "token_gap_ms": {"p50": 21.0, "p99": 39.3, "max": 41.0}, "tool_roundtrip_ms": {"n": 10, "p50": 66.3, "p99": 205.2, "max": 205.2}}
+500 {"tokens": 200, "missing": 0, "token_latency_ms": {"p50": 1.4, "p99": 22.1, "max": 25.5}, "token_gap_ms": {"p50": 21.1, "p99": 39.5, "max": 42.6}, "tool_roundtrip_ms": {"n": 10, "p50": 70.6, "p99": 635.1, "max": 635.1}}
+hold {"tokens": 200, "missing": 0, "token_latency_ms": {"p50": 1.4, "p99": 17.9, "max": 26.1}, "token_gap_ms": {"p50": 21.0, "p99": 30.3, "max": 44.4}, "tool_roundtrip_ms": {"n": 10, "p50": 77.5, "p99": 157.0, "max": 157.0}}
