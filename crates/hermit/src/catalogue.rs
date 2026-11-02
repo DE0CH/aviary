@@ -1,6 +1,7 @@
 //! The staff catalogue (hermit 3.4.1): `{"users": [...], "admins": [...]}`, re-read every 30 s from the mounted
 //! `ConfigMap`; a file that fails validation is refused and the last good one kept. The same rules run in YYC's CI as
-//! `hermit catalogue-check`.
+//! `hermit catalogue-check`. The rules as cases are `fixtures/catalogue-cases.json`, which every other reader of the file
+//! (Jarvis 3's tools) runs too.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -368,6 +369,39 @@ mod tests {
         assert!(parse(&serde_json::json!({"users": many, "admins": []})).is_err());
         // an admin matched by domain is allowed
         assert!(parse(&serde_json::json!({"users": ["@example.org"], "admins": ["a@example.org"]})).is_ok());
+    }
+
+    /// The shared cases (`fixtures/catalogue-cases.json`), which Jarvis 3's tools runs too.
+    #[test]
+    fn shared_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../fixtures/catalogue-cases.json")).unwrap();
+        let bytes = |c: &serde_json::Value| match c.get("text") {
+            Some(t) => t.as_str().unwrap().as_bytes().to_vec(),
+            None => c["file"].to_string().into_bytes(),
+        };
+        let strs = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_owned())
+                .collect()
+        };
+        for c in cases["accept"].as_array().unwrap() {
+            let name = &c["name"];
+            let l = Loaded::parse(&bytes(c)).unwrap_or_else(|e| panic!("{name}: refused: {e}"));
+            let allowed = |e: &str| normalise_email(e).is_some_and(|e| l.allowed(&e));
+            for e in strs(&c["allowed"]) {
+                assert!(allowed(&e), "{name}: {e:?} should be allowed");
+            }
+            for e in strs(&c["denied"]) {
+                assert!(!allowed(&e), "{name}: {e:?} should be denied");
+            }
+            let admins: BTreeSet<String> = strs(&c["admins"]).into_iter().collect();
+            assert_eq!(l.admins, admins, "{name}");
+        }
+        for c in cases["refuse"].as_array().unwrap() {
+            assert!(Loaded::parse(&bytes(c)).is_err(), "{}: accepted", c["name"]);
+        }
     }
 
     #[test]
