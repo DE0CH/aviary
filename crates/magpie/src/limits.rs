@@ -148,3 +148,60 @@ pub const BLOB_GC_GRACE: Duration = Duration::from_hours(24);
 pub const BLOB_GC_BATCH: i64 = 500;
 /// The bucket reconcile: how often.
 pub const BUCKET_RECONCILE_EVERY: Duration = Duration::from_hours(7 * 24);
+/// Turns (magpie 8.8): an admitted or preparing turn whose sandbox is not ready this long after admission fails
+/// `sandbox.timeout`.
+pub const ADMIT_TIMEOUT: Duration = Duration::from_mins(15);
+/// The driver shows `sandbox.preparing` when no answer said ready this long after admission.
+pub const PREPARING_AFTER: Duration = Duration::from_secs(1);
+/// A starting turn whose `start_turn` is not acked this long after ready fails `sandbox.unreachable`.
+pub const START_ACK_TIMEOUT: Duration = Duration::from_secs(120);
+/// An acked `start_turn` (the `running` report in flight) gets this much more, each time.
+pub const START_ACK_GRACE: Duration = Duration::from_secs(30);
+/// A running turn's deadline: this long after the later of its last heartbeat and magpie's availability.
+pub const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(90);
+/// A running turn silent this long while hermit still says alive fails `sandbox.unreachable`.
+pub const SILENCE_MAX: Duration = Duration::from_mins(5);
+/// hermit's `lastActiveAt` within this counts as alive for the watchdog.
+pub const HERMIT_ALIVE_WITHIN: Duration = Duration::from_secs(90);
+/// A stop not confirmed this long after it was asked for is forced (`stop.forced`).
+pub const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+/// A driver's claim on a turn lasts this long and is renewed every [`DRIVER_RENEW`].
+pub const DRIVER_CLAIM: Duration = Duration::from_secs(30);
+/// See [`DRIVER_CLAIM`].
+pub const DRIVER_RENEW: Duration = Duration::from_secs(10);
+/// hermit's get-or-start (`PUT`): timeout per call.
+pub const HERMIT_PUT_TIMEOUT: Duration = Duration::from_millis(2_500);
+/// hermit's long-poll: `waitMs`, and the client timeout per call.
+pub const HERMIT_WAIT_MS: u32 = 25_000;
+/// See [`HERMIT_WAIT_MS`].
+pub const HERMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(35);
+/// hermit's sandbox read without a wait (the watchdog, the feed's recovery): timeout per call.
+pub const HERMIT_READ_TIMEOUT: Duration = Duration::from_millis(2_500);
+/// The driver's retry after a hermit error: this long first, doubling to [`HERMIT_BACKOFF_MAX`].
+pub const HERMIT_BACKOFF_FIRST: Duration = Duration::from_millis(500);
+/// See [`HERMIT_BACKOFF_FIRST`].
+pub const HERMIT_BACKOFF_MAX: Duration = Duration::from_secs(10);
+/// The turn sweeper (lapsed claims, deadlines) and the availability tick run this often on every replica.
+pub const SWEEP_EVERY: Duration = Duration::from_secs(5);
+/// Turns the sweeper handles per pass.
+pub const SWEEP_BATCH: i64 = 50;
+/// An availability tick that finds the last one older than this starts a new available period (magpie 8.8).
+pub const AVAILABILITY_GAP: Duration = Duration::from_secs(20);
+/// hermit's sandbox-events feed: page size, `waitMs`, client timeout.
+pub const FEED_LIMIT: u32 = 500;
+/// See [`FEED_LIMIT`].
+pub const FEED_WAIT_MS: u32 = 25_000;
+/// See [`FEED_LIMIT`].
+pub const FEED_TIMEOUT: Duration = Duration::from_secs(35);
+/// The feed follower's pause after a failed call.
+pub const FEED_RETRY: Duration = Duration::from_secs(2);
+/// The title command: attempts per conversation, characters of the first message, `maxTokens`, the cleaned title.
+pub const TITLE_ATTEMPTS: i16 = 3;
+/// See [`TITLE_ATTEMPTS`].
+pub const TITLE_PROMPT_CHARS: usize = 2_000;
+/// See [`TITLE_ATTEMPTS`].
+pub const TITLE_MAX_TOKENS: u32 = 100;
+/// See [`TITLE_ATTEMPTS`].
+pub const TITLE_MAX_CHARS: usize = 80;
+/// An attached upload's workspace name: at most this many characters.
+pub const WORKSPACE_NAME_MAX_CHARS: usize = 200;

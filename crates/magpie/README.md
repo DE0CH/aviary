@@ -29,7 +29,8 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/ccfs/` | Claude Code state behind the FUSE layer (magpie 6): `scan`/`extract` (a JSONL line into stub and blobs), `classify` (main-transcript lines into events), `lines` (the rewrite algorithm, main-path rules, promotion, rename-over), `limbo` (retraction, the quiet-file sweeper), `pages` (byte files), `reconstruct` (tree and streamed reads), `lease`, `ops` (the state-changing routes) |
 | `src/blobs/` | the bucket (`store`), `staging` (blobs a cc write introduces, staged in its transaction), the read cache and every variant (`read`), images and their copies (`images`), the uploader of staged blobs (`uploader`), the GC and the bucket reconcile (`gc`) |
 | `src/http/` | the handlers, one module per route group (no SQL) |
-| `src/turns/` | turns (WP-14); today only the seam the create route calls |
+| `src/turns/` | turns (magpie 8): admission (M7, M3's first message), the driver (hermit's get-or-start and long-poll), the command queue and acks, the supervisor's reports and heartbeat reconciliation, cancel (M8) and ask answers (M11), titles, the sweeper (deadlines, watchdog, lapsed claims, availability tick), and `end::end`, the one way a turn ends |
+| `src/hermit/` | the hermit sandbox-events feed follower (magpie 8.7, R8), run by the job leader |
 
 ## The internal seam
 
@@ -63,7 +64,8 @@ the conversation routes; `tests/changes.rs` the change feed and the fan-out acro
 every projection rule from events to rows, the epoch, the pages, the M9 long-poll (50 ms across replicas, no
 connection held, drain), the E6-style cost test, prompts and search; `tests/projection.rs` the property test
 (random event sequences against an in-memory reference projector, `row_seqs` density, `after` from every seq);
-`tests/live.rs` live frames.
+`tests/live.rs` live frames; `tests/turns.rs` the turn state machine with fake-hermit and a scripted
+supervisor (the sweeper's passes are called directly, deadlines aged in SQL).
 
 The ccfs suite (WP-12): `tests/ccfs.rs` (files, byte files, directories, renames, errno codes, `opId` replays,
 rule 0, the lease with and without hermit, quota and staging limits, blobs, events, promotion, tombstones,
@@ -104,8 +106,6 @@ the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, vi
   sandbox; the release names only the conversation, so a late one would release the restored conversation's live
   sandbox). A release already in flight when the restore commits still lands; the window is one hermit call
   (10 s at most); a turn caught by it fails `sandbox.lost` (magpie 8.8) and the next turn gets a new sandbox.
-- Until WP-14's admission, a create whose first message has text or attachments answers 501 `not_supported` and
-  commits nothing; an empty first message creates the conversation without a turn.
 - Timeline rows (WP-13):
   - A row's block index counts the blocks of earlier lines of the same `message.id` that are not retracted; a line
     with `meta.replaces` counts from the replaced line's position, so a rewritten line keeps its `(messageId,
@@ -128,6 +128,34 @@ the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, vi
     text starts at that delta's offset; a frame of a block whose durable row exists is ignored.
   - Search counts occurrences in the `user`/`assistant` rows an event made (events' `text` holds only those); its
     cursor is the event seq after which the next page starts.
+
+- Turns (magpie 8), where the spec text leaves a case open:
+  - A sandbox that goes away (released or lost) before the supervisor acknowledged `start_turn` sends the turn back
+    to preparing and gets a new sandbox (hermit spec 28, magpie item 1), in the driver's long-poll and in the feed;
+    only `sandbox_busy` / `sandbox_failed` (a start that failed), a release of a conversation in Recently deleted,
+    or a sandbox lost after the acknowledgement fail it. A replacement's deadline is 15 min from the replacement.
+  - A `running` report may arrive while the turn is still `admitted`/`preparing` (the supervisor takes
+    `start_turn` as soon as it boots, before hermit's ready reaches the driver): it is the turn's ready too.
+  - A cancel stops a turn whose `start_turn` a supervisor has received (`delivered_at` set) by `interrupt`, in any
+    state; only an undelivered `start_turn` ends the turn `canceled` at once (8.6 names the states, not the
+    delivery, which is what decides whether Claude Code may already run it).
+  - The end of a turn cancels every unacknowledged command of the turn except a `kill` (8.3 says "undelivered"): a
+    delivered but unacknowledged `start_turn` or `interrupt` of an ended turn must not reach the conversation's next
+    supervisor, which polls from `after=0`.
+  - The `starting` and `stopping` deadlines count, like the running one, from the later of their start and
+    `availability.available_since`, so an outage of magpie never fails a turn whose supervisor's ack or report was
+    only waiting for magpie.
+  - An agent-started turn reported while another turn is active answers 409 `bad_transition` (with the active
+    turn's state).
+  - M11 queues one `answer_ask` per ask (a second answer is 409 `already_resolved`); the command's stored payload
+    also keeps the person's whole answer, which `ask.resolved` carries; the supervisor receives the typed command.
+  - `title` is queued only while no `title` command is pending.
+  - The heartbeat's extra fields (`gen`, `supervisor`, `cc`) are logged; the admin reads that show them are WP-15's.
+  - Old asset paths in `files[].path` (the switch window's legacy uploads) answer `unknown_upload` until WP-51's
+    window routes resolve them.
+  - The end report's `transcript_pending` check reads the conversation's `cc.*` events and the last 2,000 lines of
+    its main transcript (`cc_lines` stubs, which keep each line's `uuid`).
+  - The sandbox routes check the lease as the cc routes do: the current `lease_id`, held by the calling sandbox.
 
 ### Claude Code state (WP-12)
 

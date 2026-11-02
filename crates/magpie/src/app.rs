@@ -21,10 +21,12 @@ use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest};
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
-    CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery,
-    LeaseResponse,
+    AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
+    CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
+    LeaseResponse, TasksReport, TurnStateReport,
 };
 use magpie_api::server::{Ctx, Server};
+use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use magpie_api::uploads::{BlobQuery, SandboxBlobQuery, UploadMeta, UploadResponse};
 use magpie_api::{Admitted, Empty};
 use uuid::Uuid;
@@ -35,6 +37,7 @@ use crate::changes::Read;
 use crate::fanout::Fanout;
 use crate::http::{self, Answer};
 use crate::jobs::{self, Jobs, outbox};
+use crate::turns::{self, driver::Driver};
 use crate::{auth, db, limits};
 
 /// What a replica needs to start: bindings and credentials only (magpie 1: no behaviour switches).
@@ -179,7 +182,15 @@ impl Service {
             .map_err(|e| StartError(aviary_pg::Error::Config(format!("http client: {e}"))))?;
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
         let blobs = Arc::new(Blobs::new(&cfg.bucket));
-        let jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
+        let mut jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
+        let driver = Driver {
+            pool: pool.clone(),
+            hermit: hermit.clone(),
+            pod: cfg.pod.clone(),
+            draining: draining.clone(),
+        };
+        jobs.push(turns::sweeper::start(driver.clone()));
+        jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
         Ok(Self {
             app: Arc::new_cyclic(|this| Magpie {
                 pool,
@@ -367,5 +378,49 @@ impl Server for Magpie {
 
     async fn sandbox_blob_put(&self, ctx: Ctx, sha: String, body: Body) -> Answer<Admitted<Empty>> {
         http::blobs::sandbox_put(self, ctx, sha, body).await
+    }
+
+    async fn send_turn(&self, ctx: Ctx, id: Uuid, body: SendRequest) -> Answer<Admitted<SendResponse>> {
+        http::turns::send(self, ctx, id, body).await
+    }
+
+    async fn cancel_turn(&self, ctx: Ctx, id: Uuid) -> Answer<CancelResponse> {
+        http::turns::cancel(self, ctx, id).await
+    }
+
+    async fn answer_ask(&self, ctx: Ctx, id: Uuid, ask_id: String, body: AgentPermissionResponse) -> Answer<()> {
+        http::turns::answer_ask(self, ctx, id, ask_id, body).await
+    }
+
+    async fn commands(&self, ctx: Ctx, query: CommandsQuery) -> Answer<CommandsResponse> {
+        http::sandbox_turns::commands(self, ctx, query).await
+    }
+
+    async fn ack_command(&self, ctx: Ctx, cmd_seq: u64, body: AckRequest) -> Answer<()> {
+        http::sandbox_turns::ack(self, ctx, cmd_seq, body).await
+    }
+
+    async fn agent_turn(&self, ctx: Ctx, body: AgentTurnRequest) -> Answer<Admitted<Empty>> {
+        http::sandbox_turns::agent_turn(self, ctx, body).await
+    }
+
+    async fn turn_state(&self, ctx: Ctx, turn_id: Uuid, body: TurnStateReport) -> Answer<()> {
+        http::sandbox_turns::turn_state(self, ctx, turn_id, body).await
+    }
+
+    async fn tasks(&self, ctx: Ctx, body: TasksReport) -> Answer<()> {
+        http::sandbox_turns::tasks(self, ctx, body).await
+    }
+
+    async fn ask_open(&self, ctx: Ctx, body: AskReport) -> Answer<()> {
+        http::sandbox_turns::ask_open(self, ctx, body).await
+    }
+
+    async fn ask_resolved(&self, ctx: Ctx, ask_id: String, body: AskResolvedReport) -> Answer<()> {
+        http::sandbox_turns::ask_resolved(self, ctx, ask_id, body).await
+    }
+
+    async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Answer<()> {
+        http::sandbox_turns::heartbeat(self, ctx, body).await
     }
 }

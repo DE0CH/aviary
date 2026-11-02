@@ -19,9 +19,20 @@ pub async fn get(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
     answer(async { list::get(&app.pool, &Person::from_ctx(&ctx)?, id).await }.await)
 }
 
-/// M3.
+/// M3 (and the first turn's driver on this replica, when the create admitted one).
 pub async fn create(app: &Magpie, ctx: Ctx, body: CreateRequest) -> Answer<Admitted<CreateResponse>> {
-    answer(async { create::create(&app.pool, &Person::from_ctx(&ctx)?, body).await }.await)
+    answer(
+        async {
+            let r = create::create(&app.pool, &Person::from_ctx(&ctx)?, body).await?;
+            if let Admitted::New(c) = &r
+                && let Some(turn) = &c.turn
+            {
+                crate::turns::driver::spawn(crate::turns::driver::Driver::of(app), turn.id);
+            }
+            Ok(r)
+        }
+        .await,
+    )
 }
 
 /// M5.

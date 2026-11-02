@@ -117,21 +117,18 @@ async fn concurrent_creates_with_one_key_make_one_conversation() {
 }
 
 #[tokio::test]
-async fn a_first_message_with_content_waits_for_admission_and_commits_nothing() {
+async fn a_first_message_with_content_is_admitted_as_the_first_turn() {
     let db = common::fresh_db("create_text").await;
     let t = common::Tokens::new();
     let a = common::replica(&db.url, &t).await;
     let mut req = empty("draft-2");
     req.message.text = "幫我整理今日有關港珠澳大橋嘅新聞，越詳細越好".to_owned();
-    let e = a.pigeon().person(ALICE).create_conversation(&req).await.unwrap_err();
-    assert_eq!(code(&e), ErrorCode::NotSupported, "admission is WP-14's");
-    let list = a
-        .pigeon()
-        .person(ALICE)
-        .list_conversations(&ListQuery::default())
-        .await
-        .unwrap();
-    assert!(list.conversations.is_empty(), "the create rolled back");
+    let r = a.pigeon().person(ALICE).create_conversation(&req).await.unwrap();
+    assert!(r.is_new());
+    assert!(
+        r.get().turn.is_some(),
+        "the first turn (magpie 8.2, turns.rs tests the rest)"
+    );
 }
 
 #[tokio::test]

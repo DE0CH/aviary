@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod fanout;
 pub mod files;
+pub mod hermit;
 pub mod http;
 pub mod jobs;
 pub mod limits;

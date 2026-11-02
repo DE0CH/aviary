@@ -165,6 +165,17 @@ impl Jobs {
         Self { leader, tasks }
     }
 
+    /// The leader lock, for leader work that runs outside the interval loops (the hermit feed follower).
+    #[must_use]
+    pub fn leader(&self) -> Arc<Leader> {
+        self.leader.clone()
+    }
+
+    /// Adds a task the jobs own: stopped with them (the turn sweeper, the hermit feed follower).
+    pub fn push(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
     /// Whether this replica leads now.
     #[must_use]
     pub fn is_leader(&self) -> bool {
