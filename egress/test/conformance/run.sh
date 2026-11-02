@@ -25,7 +25,7 @@ if [ "$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start)" -gt 80 ]; then
   if [ "$(id -u)" = 0 ]; then sysctl -qw net.ipv4.ip_unprivileged_port_start=80; else sudo sysctl -qw net.ipv4.ip_unprivileged_port_start=80; fi
 fi
 
-# throwaway credentials, generated per run
+# throwaway credentials, generated per run (passed as --flag=value: a base64url token may start with "-")
 tok() { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'; }
 MAGPIE=$(tok) HERMIT=$(tok) TOOLS=$(tok) MODEL=$(tok) PIGEON=$(tok) HERMIT_IN=$(tok) ADMIN=$(tok) PGPW=$(tok)
 cat > "$work/tokens.json" <<JSON
@@ -73,8 +73,8 @@ docker run -d --name conf-hermit --network host -v "$chat/test:/app/test:ro" -v 
 for _ in $(seq 50); do [ -s "$work/hermit/sandbox-token" ] && break; sleep 0.2; done
 ip=$(start_egress conf-egress-model "$here/egress-model.json" egress_model)
 for _ in $(seq 60); do curl -fs "http://$ip:9090/readyz" >/dev/null && break; sleep 1; done
-"$bin/aviary-conformance" --junit "$out/model.xml" model --target "http://$ip:8082" --token "$PIGEON" \
-  --proxy "http://$ip:3128" --sandbox-token "$(cat "$work/hermit/sandbox-token")" || status=1
+"$bin/aviary-conformance" --junit "$out/model.xml" model --target "http://$ip:8082" --token="$PIGEON" \
+  --proxy "http://$ip:3128" --sandbox-token="$(cat "$work/hermit/sandbox-token")" || status=1
 docker logs conf-egress-model > "$out/egress-model.log" 2>&1 || true
 docker logs conf-hermit > "$out/fake-hermit.log" 2>&1 || true
 exit "$status"
