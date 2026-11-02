@@ -167,6 +167,8 @@ pub struct FakeFabric {
     pub settled: AtomicBool,
     /// A create that fails with this class.
     pub fail_create: Mutex<Option<String>>,
+    /// Every supervisor ever made, by sandbox id (their call logs outlive the destroy).
+    pub all: Mutex<Vec<(Uuid, Arc<FakeSupervisor>)>>,
 }
 
 impl FakeFabric {
@@ -186,6 +188,7 @@ impl FakeFabric {
             launch: Mutex::new(Launch::Full),
             settled: AtomicBool::new(true),
             fail_create: Mutex::new(None),
+            all: Mutex::new(Vec::new()),
         })
     }
 
@@ -202,6 +205,23 @@ impl FakeFabric {
     pub fn sandbox_by_name(&self, name: &str) -> Option<Arc<FakeSandbox>> {
         let ip = *self.by_name.lock().unwrap().get(name)?;
         self.by_ip.lock().unwrap().get(&ip).cloned()
+    }
+
+    /// The bodies of the release calls sandbox `id`'s supervisor received.
+    pub fn release_bodies(&self, id: Uuid) -> Vec<serde_json::Value> {
+        self.all
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(i, _)| *i == id)
+            .flat_map(|(_, s)| s.script().calls_to("release"))
+            .filter_map(|c| c.body)
+            .collect()
+    }
+
+    /// The sandbox's supervisor stops answering (its address leads nowhere).
+    pub fn silence(&self, ip: IpAddr) {
+        self.by_ip.lock().unwrap().remove(&ip);
     }
 
     pub fn live_count(&self) -> usize {
@@ -265,6 +285,7 @@ impl Fabric for FakeFabric {
                 });
             }
             let running = sup.serve().await.unwrap();
+            self.all.lock().unwrap().push((spec.sandbox_id, sup.clone()));
             let sbx = Arc::new(FakeSandbox {
                 supervisor: sup,
                 running,

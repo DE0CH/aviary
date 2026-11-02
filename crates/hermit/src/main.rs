@@ -180,7 +180,9 @@ async fn serve() -> ExitCode {
         d.hook(
             "hand back claims and leadership",
             Duration::from_secs(10),
-            move || async move { app.begin_drain().await },
+            move || async move {
+                let _ = app.begin_drain().await;
+            },
         );
     }
     d.hook("in-flight requests", Duration::from_secs(35), move || async move {

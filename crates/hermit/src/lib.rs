@@ -138,6 +138,9 @@ pub struct Core {
     pub timings: Timings,
     pub draining: watch::Receiver<bool>,
     pub tasks: tasks::TaskSet,
+    /// Held by a sweep pass and by the drain's hand-back, so a pass in flight when the drain starts cannot claim a
+    /// row after the claims were handed back.
+    pub sweep_lock: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for Core {

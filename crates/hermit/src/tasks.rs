@@ -120,6 +120,9 @@ impl Claim {
 /// # Errors
 /// A database error.
 pub async fn take(core: &Arc<Core>, id: Uuid, kind: Kind) -> Result<Option<Claim>, aviary_pg::Error> {
+    if core.is_draining() {
+        return Ok(None);
+    }
     let n = core
         .pool
         .get()
@@ -138,6 +141,9 @@ pub async fn take(core: &Arc<Core>, id: Uuid, kind: Kind) -> Result<Option<Claim
 /// # Errors
 /// A database error.
 pub async fn take_in(t: &Tx<'_>, core: &Core, id: Uuid, kind: Kind) -> Result<bool, aviary_pg::Error> {
+    if core.is_draining() {
+        return Ok(false);
+    }
     let n = t
         .execute(
             "update sandboxes set task = $2, task_owner = $3, task_until = now() + $4::bigint * interval '1 millisecond'
@@ -249,6 +255,7 @@ pub fn run(core: &Arc<Core>, claim: Claim) {
 /// # Errors
 /// A database error.
 pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary_pg::Error> {
+    let _pass = core.sweep_lock.lock().await;
     if core.is_draining() {
         return Ok(None);
     }
@@ -277,23 +284,38 @@ pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary
     Ok(Some((id, kind)))
 }
 
-/// Drain step 3: hands back every claim this replica holds (`task_until = now()`, owner cleared so a late write of
-/// this replica's tasks finds nothing), then stops its tasks.
+/// Drain step 3: stops this replica's tasks, then hands back every claim it holds (`task_until = now()`, owner
+/// cleared so a late write of a stopped task finds nothing); another replica's sweep resumes them. Retried a few
+/// times: a claim not handed back lapses on its own 15 s after its last renewal.
 ///
 /// # Errors
-/// A database error.
+/// The last database error.
 pub async fn hand_back(core: &Core) -> Result<u64, aviary_pg::Error> {
-    let n = core
-        .pool
-        .get()
-        .await?
-        .execute(
-            "update sandboxes set task_owner = null, task_until = now() where task_owner = $1",
-            &[&core.pod],
-        )
-        .await?;
+    // a sweep pass in flight finishes first; the next ones see the drain
+    let _pass = core.sweep_lock.lock().await;
     core.tasks.abort_all();
-    Ok(n)
+    let mut last = None;
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let res = async {
+            core.pool
+                .get()
+                .await?
+                .execute(
+                    "update sandboxes set task_owner = null, task_until = now() where task_owner = $1",
+                    &[&core.pod],
+                )
+                .await
+        }
+        .await;
+        match res {
+            Ok(n) => return Ok(n),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or(aviary_pg::Error::Closed))
 }
 
 /// `$n * interval '1 millisecond'` argument of a duration.

@@ -28,6 +28,16 @@ database per test, a fake fabric whose sandboxes are `aviary-fakes` supervisors 
 and replicas started in-process with short timings (`Timings` is code, not configuration).
 
 - `tests/conformance.rs`: `aviary-conformance hermit` (24.1) against a replica, every check passing, none skipped.
+- `tests/lifecycle.rs`: hermit 24.2's ported tests for the core: one sandbox per conversation, the `PUT`
+  reservation, the janitor's idle and lifetime rules (busy never idled, 9 h forced), release refusal restarting the
+  idle clock, forced delete, a requested release carried in the activity reply and done at the idle report, a `PUT`
+  cancelling a pending soft release, the pool victim (least recently active, a refusing one skipped, `pool_full`
+  otherwise), the silence rule (`ok:true, ready:false` alive; never while the gateway settles), a start and a
+  release resumed by another replica after a kill (same token), liveness, token keys, people and the descriptor
+  answered with the database closed, the descriptor's ETag/304 identical across replicas, secrets `not_granted`,
+  a removed person not live and released, a drain handing claims and leadership over, tasks completing under a
+  1 s `idle_in_transaction_session_timeout` while calls are held, start failures (`start_failed` with its class,
+  `hosts_full`, `supervisor_timeout`), the operator's off switch, and the caller table.
 
 ## Not here yet
 

@@ -124,6 +124,7 @@ impl App {
             timings: o.timings,
             draining,
             tasks: TaskSet::default(),
+            sweep_lock: tokio::sync::Mutex::new(()),
         });
         let leader = Arc::new(Leader::start_many(
             &pool,
@@ -180,17 +181,24 @@ impl App {
     /// released; the loops stopped and the pool closed. The caller waits for in-flight requests (step 5) between
     /// [`App::begin_drain`] and [`App::finish_drain`]; `drain` does both with no wait.
     pub async fn drain(&self) {
-        self.begin_drain().await;
+        let _ = self.begin_drain().await;
         self.finish_drain().await;
     }
 
     /// Steps 2-4.
-    pub async fn begin_drain(&self) {
+    /// Returns how many claims were handed back (`None` when the database refused: they lapse in 15 s).
+    pub async fn begin_drain(&self) -> Option<u64> {
         let _ = self.draining.send(true);
-        match tasks::hand_back(&self.core).await {
-            Ok(n) => tracing::info!(claims = n, "claims handed back"),
-            Err(e) => tracing::warn!(error = %e, "claims not handed back (they lapse in 15 s)"),
-        }
+        let handed = match tasks::hand_back(&self.core).await {
+            Ok(n) => {
+                tracing::info!(claims = n, "claims handed back");
+                Some(n)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "claims not handed back (they lapse in 15 s)");
+                None
+            }
+        };
         let janitor = self.loops.lock().unwrap_or_else(PoisonError::into_inner).pop();
         if let Some(h) = janitor {
             h.abort();
@@ -212,15 +220,18 @@ impl App {
                 Err(l) => drop(l),
             }
         }
+        handed
     }
 
     /// Step 6: the loops stopped, the pool closed.
-    #[allow(clippy::unused_async)] // the drain hook awaits it with the others
     pub async fn finish_drain(&self) {
         for h in self.loops.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
             h.abort();
         }
-        self.core.tasks.abort_all();
+        // a claim taken by a request that began before the drain is handed back too
+        if let Err(e) = tasks::hand_back(&self.core).await {
+            tracing::warn!(error = %e, "late claims not handed back (they lapse in 15 s)");
+        }
         self.core.pool.close();
     }
 
