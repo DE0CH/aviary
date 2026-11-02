@@ -92,7 +92,7 @@ pub struct PersonRow {
 /// When a statement fails.
 pub async fn ensure_person(db: &impl Db, person: &str) -> Result<PersonRow> {
     db.execute(
-        "insert into persons (person, person_key) values ($1, $2) on conflict (person) do nothing",
+        "insert into persons (person, person_key) values ($1, $2) on conflict do nothing",
         &[&person, &aviary_core::log::person_key(person)],
     )
     .await?;

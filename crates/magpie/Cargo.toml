@@ -27,6 +27,7 @@ aviary-core = { path = "../aviary-core", features = ["testing"] }
 aviary-fakes = { path = "../../testing/fakes" }
 reqwest.workspace = true
 rustls.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

@@ -101,7 +101,15 @@ impl From<Error> for ApiError {
                 ApiError::unavailable("database unavailable", limits::UNAVAILABLE_RETRY_AFTER_S)
             }
             Error::Db(db) => {
-                tracing::error!(error = %db, "postgres error");
+                // the server's message names the constraint or column, never a value (the detail would)
+                let (sqlstate, message) = match &db {
+                    aviary_pg::Error::Db(e) => (
+                        e.code().map(|c| c.code().to_owned()),
+                        e.as_db_error().map(|d| d.message().to_owned()),
+                    ),
+                    _ => (None, None),
+                };
+                tracing::error!(error = %db, sqlstate = ?sqlstate, message = ?message, "postgres error");
                 ApiError::internal("database error")
             }
             Error::Internal(m) => {

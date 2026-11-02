@@ -159,8 +159,16 @@ impl Drop for Replica {
     }
 }
 
+/// Log lines of the replicas go to the test's output (shown for a failing test).
+fn init_logs() {
+    let _ = tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt().with_test_writer().with_max_level(tracing::Level::INFO).finish(),
+    );
+}
+
 /// Starts a replica on `db_url` (hermit at `hermit_url`).
 pub async fn replica_with(db_url: &str, tokens: &Tokens, hermit_url: &str, iv: Intervals) -> Replica {
+    init_logs();
     let readiness = Readiness::detached();
     let drain = Drain::new(readiness.clone());
     let cfg = Config {
