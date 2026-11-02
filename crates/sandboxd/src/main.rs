@@ -330,7 +330,7 @@ fn start() {
     }
 }
 
-/// Output of the CLI subcommands (`--version`, `budget`), before any thread starts.
+/// Output of the CLI subcommands (`--version`, `check-config`, `budget`), before any thread starts.
 fn cli_out(s: &str) {
     use std::io::Write as _;
     let mut o = std::io::stdout().lock();
@@ -347,6 +347,24 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("migrate-relay") {
         std::process::exit(relay::main(&args[2..]));
+    }
+    if args.get(1).map(String::as_str) == Some("check-config") {
+        // a host.json checked by the parser sandboxd starts with (fabric/host/gateway.sh runs it before installing)
+        let Some(p) = args.get(2) else {
+            cli_out("usage: sandboxd check-config <host.json>\n");
+            std::process::exit(2);
+        };
+        let r = std::fs::read(p)
+            .map_err(|e| e.to_string())
+            .and_then(|t| HostConfig::parse(&t).map(|_| ()).map_err(|e| e.msg.as_str().to_owned()));
+        match r {
+            Ok(()) => cli_out(&format!("{p}: ok\n")),
+            Err(e) => {
+                cli_out(&format!("{p}: {e}\n"));
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     if args.get(1).map(String::as_str) == Some("budget") {
         // a host.json's limits, or the defaults of a burst host

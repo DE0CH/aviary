@@ -28,14 +28,28 @@ here=$(cd "$(dirname "$0")" && pwd)
 
 for t in nft wg zstd curl ip cmp ss; do command -v $t >/dev/null || { echo "missing $t on this node" >&2; exit 1; }; done
 
+# jq checks host.json: the image's static copy beside this script, else the node's
+jq=$here/jq; [ -x "$jq" ] || jq=$(command -v jq) || { echo "missing jq on this node (the sandboxd image brings one)" >&2; exit 1; }
+
+bin=$here/../bin/sandboxd; [ -x "$bin" ] || bin=$here/sandboxd
+[ -x "$bin" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
+
+# host.json: the deployment's, as given; checked before anything on the node is written, so a ConfigMap sandboxd would
+# refuse leaves the node, the running sandboxd and its host.json as they are: a gateway's (top-level role hub and
+# gateway true), and accepted by the new binary's own parser (every address it needs, wgAddress in hostCidr, limits in
+# range, ...: the checks sandboxd starts with)
+src=${SBX_HOST_JSON:?the gateway host.json (hermit spec 14.2: ConfigMap hermit-gateway)}
+[ -s "$src" ] || { echo "missing $src" >&2; exit 1; }
+"$jq" -e '.gateway == true and .role == "hub"' "$src" >/dev/null \
+  || { echo "$src is not a gateway's host.json (\"role\": \"hub\", \"gateway\": true); nothing changed" >&2; exit 1; }
+"$bin" check-config "$src" >&2 || { echo "sandboxd would refuse $src (crates/sandboxd/docs/HOST.md \"host.json\"); nothing changed" >&2; exit 1; }
+for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f; nothing changed" >&2; exit 1; }; done
+
 if [ -x "$here/crane" ] && [ "$("$here/crane" version)" = "$CRANE_VERSION" ]; then
   install -m755 "$here/crane" /usr/local/bin/crane.new && mv /usr/local/bin/crane.new /usr/local/bin/crane
 elif [ "$(crane version 2>/dev/null)" != "$CRANE_VERSION" ]; then
   curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane
 fi
-
-# jq checks host.json: the image's static copy beside this script, else the node's
-jq=$here/jq; [ -x "$jq" ] || jq=$(command -v jq) || { echo "missing jq on this node (the sandboxd image brings one)" >&2; exit 1; }
 
 # systemd-networkd dropped the gateway's routes (the sandbox range dev wg0, table 51822) when it restarted on a node
 # (2026-10-21): keep it off routes and rules it didn't make (k3s/flannel's are of the same kind); sandboxd re-makes
@@ -43,25 +57,9 @@ jq=$here/jq; [ -x "$jq" ] || jq=$(command -v jq) || { echo "missing jq on this n
 mkdir -p /etc/systemd/networkd.conf.d
 printf '[Network]\nManageForeignRoutes=no\nManageForeignRoutingPolicyRules=no\n' > /etc/systemd/networkd.conf.d/50-sbx.conf
 
-bin=$here/../bin/sandboxd; [ -x "$bin" ] || bin=$here/sandboxd
-[ -x "$bin" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
-
 install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/log/sbx
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
-for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
 
-# host.json: the deployment's, as given; checked to be a gateway's (top-level role hub and gateway true) with every
-# address sandboxd needs
-src=${SBX_HOST_JSON:?the gateway host.json (hermit spec 14.2: ConfigMap hermit-gateway)}
-[ -s "$src" ] || { echo "missing $src" >&2; exit 1; }
-"$jq" -e '.gateway == true and .role == "hub"' "$src" >/dev/null \
-  || { echo "$src is not a gateway's host.json (\"role\": \"hub\", \"gateway\": true)" >&2; exit 1; }
-# the addresses sandboxd requires of a gateway (it compiles none in and refuses to start without them): checked
-# before anything is installed, so a ConfigMap missing one leaves the running sandboxd and its host.json as they are
-# shellcheck disable=SC2016 # $k is jq's
-missing=$("$jq" -r '[("name", "wgAddress", "hostCidr", "controlCidr", "sandboxCidr", "egressVip", "privateGateway",
-  "podCidr") as $k | select((.[$k] | type) != "string" or .[$k] == "") | $k] | join(", ")' "$src")
-[ -z "$missing" ] || { echo "$src lacks $missing (crates/sandboxd/docs/HOST.md \"host.json\"); nothing changed" >&2; exit 1; }
 # a change waits for a restart in a marker, so a later run restarts sandboxd even when an SBX_START=0 run installed it
 pending=/var/lib/sbx/restart-pending
 cmp -s "$src" /etc/sbx/host.json || touch "$pending"

@@ -54,7 +54,12 @@ fn sandboxes() {
     assert_eq!((m.image_ref, m.workspace), (None, None));
     let _: Listed = round_trip("listed.json");
     let a: Listed = round_trip("listed-alive.json");
-    assert_eq!(a.alive, Some(false));
+    assert_eq!((a.alive, a.sending, a.scratch_used), (Some(false), false, None));
+    let s: Listed = round_trip("listed-sending.json");
+    assert_eq!(
+        (s.alive, s.sending, s.scratch_used),
+        (Some(true), true, Some(5_033_164_800))
+    );
     let p: Spec = round_trip("spec-pids.json");
     assert_eq!(p.pids, Some(4096));
     let _: Sandboxes = round_trip("sandboxes.json");

@@ -22,9 +22,15 @@ migrate task makes them (spec, receive, send, `receive?wait=`).
 **The final scratch delta (GATE.md "WP-57", the short read).** With the quick check on the final delta (a control
 build of this tree without `--checksum`): 3 of 3 migrations lost writes, every one of the 16 pages read back an older
 counter on the target (e.g. 4292 where 4459 was written), `finalFiles` 0 (`mapcount-quick.jsonl`). With
-`--checksum` (aviary eedfbda): 0 faults in 11 of 11, `finalFiles` 1 (the counter file, 65536 bytes)
-(`mapcount-checksum.jsonl` and the first run). Stopped time (`stoppedMs`: from the checkpoint's return to SBXDONE)
+`--checksum` (aviary eedfbda): 0 faults in 10 of 10, `finalFiles` 1 (the counter file, 65536 bytes)
+(`mapcount-checksum.jsonl`; an eleventh, earlier run also had 0 faults, but its output was not kept, so it is not
+counted). `faults` is the number of fault lines the process logged on the target; `mig.sh` keeps only the first 3 of
+them on stderr, so a quick-check line with `faults: 16` shows 3 sample fault lines. Stopped time (`stoppedMs`: from the checkpoint's return to SBXDONE)
 with a near-empty scratch: 129-139 ms checksummed against 133-147 ms quick.
+
+These are manual runs: the automated guard in this repository is the argv unit test
+(`storage::tests::final_delta_compares_contents`). WP-40's real-host acceptance re-runs `mig.sh` with the mapping
+check (0 faults) and with a 4800 MiB fill (the stopped time) on the fabric AMI.
 
 **Added stopped time on a full scratch** (`scratch-4800mib.jsonl`): 4800 MiB of random data in the 5 GiB scratch,
 alternating builds on the same hosts: `--checksum` 15453 and 15785 ms stopped, the quick check 137 and 129 ms (and

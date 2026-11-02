@@ -104,6 +104,8 @@ impl HostSim {
                 cpu_usage: 0.0,
                 memory_current: 0,
                 alive: s.alive,
+                sending: false,
+                scratch_used: None,
             })
             .collect()
     }

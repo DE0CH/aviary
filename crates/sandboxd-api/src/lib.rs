@@ -408,6 +408,15 @@ pub struct Listed {
     /// once the sentry was killed (hermit spec 13.2 item 6). Absent from a sandboxd that does not report it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alive: Option<bool>,
+    /// A send of it (it is a migration's source) is in progress here, from the send's first scratch round until its
+    /// entry goes or the send leaves it running (hermit spec 13.10 step 6: a settle decides nothing while it is
+    /// set). Absent (false) otherwise, and from a sandboxd that does not report it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sending: bool,
+    /// Bytes in use on its scratch filesystem (the final scratch delta of a migration reads all of them, hermit
+    /// spec 13.10 `movable`). Absent from a sandboxd that does not report it, and for a receive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch_used: Option<u64>,
 }
 
 /// `GET /v1/sandboxes`.

@@ -182,6 +182,13 @@ jobs:
           file "$b" | tee /dev/stderr | grep -q "static"
           "$b" --version
           "$b" budget
+          # check-config (gateway.sh's check before it installs): a gateway's host.json passes, one whose wgAddress is
+          # outside hostCidr is refused (placeholder ranges)
+          g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.99.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
+          printf '%s' "$g" > "$RUNNER_TEMP/gw.json"
+          "$b" check-config "$RUNNER_TEMP/gw.json"
+          printf '%s' "$g" | sed 's/"wgAddress":"10.99.0.1"/"wgAddress":"10.95.0.1"/' > "$RUNNER_TEMP/gw-bad.json"
+          if "$b" check-config "$RUNNER_TEMP/gw-bad.json"; then echo "a wgAddress outside hostCidr passed" >&2; exit 1; fi
           cp "$b" dist/
       - name: images/sandboxd (the gateway installer; built and run here, pushing is the images job's)
         # a context of just the two files the Dockerfile copies (the checkout's target/ would make it gigabytes)

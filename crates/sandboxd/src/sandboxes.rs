@@ -23,6 +23,12 @@ const PORT_MIN: u16 = 7100;
 const PORT_MAX: u16 = 7199;
 /// the restore listens on 127.0.0.1:<port + this>; the relay on <overlay address>:<port>
 const RESTORE_PORT_OFFSET: u16 = 1000;
+/// The migrate-relay's own limit, seconds (relay.rs: the whole receive, from the relay's start to End delivered).
+const RELAY_TIMEOUT_S: u64 = 900;
+/// How long a restore may run once the relay delivered End (it loads what the stream already brought; measured
+/// 44-46 ms on a small sandbox): past this it is killed and the receive is `failed`, so a restore that hangs (on its
+/// gofer, a mount) never keeps a receive listed `receiving` (hermit spec 13.10 step 6 waits while it is).
+const RESTORE_AFTER_END_MS: u64 = 300_000;
 /// rsync rounds while the sandbox runs, before its memory is copied (stop early once a round copies little)
 const SCRATCH_LIVE_ROUNDS: usize = 3;
 const SCRATCH_SMALL_BYTES: u64 = 32 << 20;
@@ -47,6 +53,13 @@ pub struct Entry {
     /// a send's checkpoint stopped it here (the final scratch delta and the hand-over follow): listed `alive:false`
     /// from that moment, not after the next sample, so hermit never reads a stopped source as still running it
     stopped: bool,
+    /// a send of it runs here (from its first scratch round until the entry goes, or the send leaves it running):
+    /// listed `sending: true`, so hermit's settle decides nothing on the source while a send may still switch it
+    /// (hermit spec 13.10 step 6)
+    sending: bool,
+    /// bytes in use on its scratch filesystem (statvfs, read by the 10 s sampler), when `scratch_have`
+    scratch_used: u64,
+    scratch_have: bool,
 }
 // SAFETY: Entry is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl Zeroed for Entry {}
@@ -286,6 +299,9 @@ impl Sandboxes {
             cpu_have: false,
             alive: true,
             stopped: false,
+            sending: false,
+            scratch_used: 0,
+            scratch_have: false,
         })
     }
 
@@ -412,6 +428,12 @@ impl Sandboxes {
             if sl.entry.stopped {
                 sl.entry.alive = false;
             }
+            if sl.entry.state == RUNNING {
+                match scratch_used(sl.entry.spec.name.as_str()) {
+                    Some(u) => (sl.entry.scratch_used, sl.entry.scratch_have) = (u, true),
+                    None => sl.entry.scratch_have = false,
+                }
+            }
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
             let Ok(text) = read_file(p.as_str(), &mut b) else { continue };
@@ -446,8 +468,14 @@ impl Sandboxes {
             .kf64("cpuUsage", (e.cpu_rate * 1000.0).round() / 1000.0)
             .ku64("memoryCurrent", cur)
             .key("alive")
-            .bool(listed_alive(e))
-            .end();
+            .bool(listed_alive(e));
+        if e.sending {
+            w.key("sending").bool(true);
+        }
+        if e.scratch_have && e.state == RUNNING {
+            w.ku64("scratchUsed", e.scratch_used);
+        }
+        w.end();
     }
 
     /// The Listed[] array.
@@ -598,6 +626,9 @@ impl Sandboxes {
                 cpu_have: false,
                 alive: true,
                 stopped: false,
+                sending: false,
+                scratch_used: 0,
+                scratch_have: false,
             };
             self.save(&lk, &e, sc.big)
         })();
@@ -742,6 +773,9 @@ impl Sandboxes {
                 cpu_have: false,
                 alive: true,
                 stopped: false,
+                sending: false,
+                scratch_used: 0,
+                scratch_have: false,
             };
             self.save(&lk, &e, sc.big)?;
             let out = log_file(name, true)?;
@@ -769,7 +803,7 @@ impl Sandboxes {
             use std::os::fd::AsRawFd;
             let c = spawn(argv, &[], Io::Null, Io::Fd(out.as_raw_fd()), Io::Fd(err.as_raw_fd()))?;
             let relay = spawn(
-                &["/proc/self/exe", "migrate-relay", relay_at.as_str(), listen.as_str(), conf.as_str(), "900"],
+                &["/proc/self/exe", "migrate-relay", relay_at.as_str(), listen.as_str(), conf.as_str(), RELAY_TIMEOUT],
                 &[],
                 Io::Null,
                 Io::Fd(err.as_raw_fd()),
@@ -829,12 +863,15 @@ impl Sandboxes {
                 (m[i].pid, m[i].relay, m[i].name)
             };
             // the relay ends first: 0 = End delivered (the restore goes on), else the restore can't succeed (it may
-            // still wait for a stream that never comes)
-            let rc = if relay > 0 { proc::wait(relay, true).unwrap_or(-1) } else { 0 };
+            // still wait for a stream that never comes). Both waits are bounded: the relay by its own limit (and
+            // killed a minute past it), the restore after End by RESTORE_AFTER_END_MS.
+            let rc = if relay > 0 { wait_or_kill(relay, (RELAY_TIMEOUT_S + 60) * 1000).unwrap_or(-1) } else { 0 };
             if rc != 0 {
                 proc::kill(pid);
             }
-            let code = proc::wait(pid, true).unwrap_or(-1);
+            let restored = wait_or_kill(pid, RESTORE_AFTER_END_MS);
+            let timed_out = restored.is_none();
+            let code = restored.unwrap_or(-1);
             let code = if rc != 0 && code == 0 { -1 } else { code };
             {
                 self.migt()[i].active = false;
@@ -868,7 +905,11 @@ impl Sandboxes {
                             error = Str::lossy("deleted while receiving");
                         }
                     } else {
-                        let _ = write!(error, "restore exited {code}");
+                        if timed_out {
+                            let _ = write!(error, "the restore did not finish within {RESTORE_AFTER_END_MS} ms of End");
+                        } else {
+                            let _ = write!(error, "restore exited {code}");
+                        }
                         Log::error("sandbox receive failed").s("error", error.as_str()).s("sandbox", name).emit();
                         let ip = e.map(|e| e.spec.ip);
                         self.cleanup(&lk, name, ip.as_ref().map(super::fixed::Str::as_str));
@@ -973,6 +1014,9 @@ impl Sandboxes {
             Some(e) if e.state == RUNNING => e,
             _ => return Err(err!(404, "{name} is not running here")),
         };
+        // listed `sending` from here until the entry goes; a send that leaves it running clears it on the way out
+        self.set_sending(&lk, true);
+        let _sending = Sending { s: self, lk: &lk };
         let t0 = mono_ms();
         let mut stats = SendStats::default();
         // the scratch filesystem, while the sandbox runs (a failure here leaves it running, untouched)
@@ -1081,6 +1125,14 @@ impl Sandboxes {
             .j("stats", if jl == 0 { b"null" } else { &jb[..jl] })
             .emit();
         Ok(stats)
+    }
+
+    fn set_sending(&self, lk: &OpLock, on: bool) {
+        let mut t = self.table();
+        let sl = &mut t[lk.idx];
+        if sl.used {
+            sl.entry.sending = on;
+        }
     }
 
     /// The send's checkpoint returned: the sandbox no longer runs here (listed `alive:false` until its entry goes).
@@ -1283,6 +1335,59 @@ fn is_dir(p: &str) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_dir())
 }
 
+/// The relay's limit as its argument.
+const RELAY_TIMEOUT: &str = "900";
+const _: () = assert!(RELAY_TIMEOUT_S == 900, "RELAY_TIMEOUT is RELAY_TIMEOUT_S");
+
+/// Waits up to `ms` for child `pid`; past that it is killed (and reaped) and the answer is None.
+fn wait_or_kill(pid: i32, ms: u64) -> Option<i32> {
+    let until = mono_ms() + ms;
+    loop {
+        if let Some(c) = proc::wait(pid, false) {
+            return Some(c);
+        }
+        if mono_ms() >= until {
+            proc::kill(pid);
+            proc::wait(pid, true);
+            return None;
+        }
+        crate::util::sleep_ms(50);
+    }
+}
+
+/// Clears `sending` when a send returns with the entry still here (it left the sandbox running: 409).
+struct Sending<'a, 'b> {
+    s: &'a Sandboxes,
+    lk: &'b OpLock<'a>,
+}
+
+impl Drop for Sending<'_, '_> {
+    fn drop(&mut self) {
+        self.s.set_sending(self.lk, false);
+    }
+}
+
+/// Bytes in use on a sandbox's scratch filesystem (its loop-mounted ext4), or None when it is not mounted (the
+/// directory is then on its parent's filesystem) or statvfs fails.
+fn scratch_used(name: &str) -> Option<u64> {
+    let vfs = |p: &str| -> Option<libc::statvfs> {
+        let mut b = [0u8; 256];
+        let c = crate::fixed::cstr(p, &mut b)?;
+        // SAFETY: `c` is NUL-terminated and `st` is a valid out-parameter of statvfs.
+        unsafe {
+            let mut st: libc::statvfs = core::mem::zeroed();
+            (libc::statvfs(c.as_ptr(), &raw mut st) == 0).then_some(st)
+        }
+    };
+    let sd = crate::storage::scratch_dir(name);
+    let st = vfs(sd.as_str())?;
+    let parent = vfs(path!("/var/lib/sbx/scratch").as_str())?;
+    if st.f_fsid == parent.f_fsid {
+        return None;
+    }
+    Some(st.f_blocks.saturating_sub(st.f_bfree).saturating_mul(st.f_frsize))
+}
+
 /// What a list says of `alive`: a receive is alive (hermit judges a migration from both hosts); a running sandbox
 /// while its cgroup holds a process and no send has stopped it.
 fn listed_alive(e: &Entry) -> bool {
@@ -1307,6 +1412,32 @@ mod tests {
         assert!(!listed_alive(&e), "an empty cgroup");
         e.state = RECEIVING;
         assert!(listed_alive(&e), "a receive is alive");
+    }
+
+    /// A source while its send runs lists `sending: true` and its scratch in use, as sandboxd-api reads them; neither
+    /// is listed when not set (a receive has no scratch figure).
+    #[test]
+    fn a_source_lists_its_send_and_scratch() {
+        let st = br#"{"spec":{"name":"sbx-send1","ip":"10.98.250.23","image":"a18f79b442fee2d4bae0fc5da3b2d892f015af58446c3c4363863991b8d76eb5","env":{},"cpu":1,"memory":536870912},"state":"running","createdAt":"2026-11-02T02:13:58.974Z"}"#;
+        let mut e = Sandboxes::parse_state(st, "10.98.0.0/16").ok().unwrap();
+        let listed = |e: &Entry| -> sandboxd_api::Listed {
+            let mut out = [0u8; 1024];
+            let mut b = Buf::new(&mut out);
+            Sandboxes::write_listed(&mut W::new(&mut b), e);
+            assert!(!b.full);
+            let n = b.len;
+            serde_json::from_slice(&out[..n]).unwrap()
+        };
+        let l = listed(&e);
+        assert_eq!((l.sending, l.scratch_used, l.alive), (false, None, Some(true)));
+        (e.sending, e.scratch_used, e.scratch_have) = (true, 4_800 << 20, true);
+        let l = listed(&e);
+        assert_eq!((l.sending, l.scratch_used, l.alive), (true, Some(4_800 << 20), Some(true)));
+        e.stopped = true;
+        let l = listed(&e);
+        assert_eq!((l.sending, l.alive), (true, Some(false)), "stopped by its checkpoint, the send still runs");
+        e.state = RECEIVING;
+        assert_eq!(listed(&e).scratch_used, None);
     }
 
     #[test]

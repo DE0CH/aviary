@@ -70,5 +70,7 @@ why it fails, so the AMI workflow (hermit spec 14.3) cannot bake an AMI on every
 
 - `sandboxd` serves, configured by `/etc/sbx/host.json` (`SBX_CONFIG` to point elsewhere).
 - `sandboxd budget [host.json]` prints the memory budget for a configuration.
+- `sandboxd check-config <host.json>` checks a host.json with the parser sandboxd starts with (exit 1 and the reason
+  when it would refuse to start); `fabric/host/gateway.sh` runs it before installing anything.
 - `sandboxd migrate-relay …` is the target's end of a migration's scratch copy (started by sandboxd itself).
 - `sandboxd --version`.

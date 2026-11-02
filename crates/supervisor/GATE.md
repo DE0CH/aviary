@@ -178,8 +178,9 @@ quick check. **Fix in the gate:** `gate.sh send-scratch`'s final delta runs with
 scratch file on both hosts while both are stopped (`files_differing_after_final`, `compare_ms` in `send.json`;
 `migrate.sh` fails a run with a difference). **Done in sandboxd (WP-19, aviary eedfbda):** the same `--checksum` on the final delta, tested through sandboxd's API
 on two hosts (`crates/sandboxd/tests/real-host/`: with the quick check 3 of 3 migrations lost the counter's writes,
-with `--checksum` 0 of 11; stopped time 15.5-15.8 s with 4800 MiB of scratch in use against 129-137 ms quick,
-about 3.2 ms per MiB). As written for sandboxd's owner before that: the same `--checksum` on the final delta
+with `--checksum` 0 of 10; stopped time 15.5-15.8 s with 4800 MiB of scratch in use against 129-137 ms quick,
+about 3.2 ms per MiB; until the owner of hermit 13 narrows the checksum, hermit moves no sandbox with more than
+`migration.maxScratchMib` (512) in use). As written for sandboxd's owner before that: the same `--checksum` on the final delta
 (it reads the whole scratch on both hosts while stopped: here 105-191 ms for 17 MB against 100-187 ms with the
 quick check; it grows with the scratch's size, which this run did not measure beyond 17 MB), or the spec's fallback for the journal
 (supervisor 9.9: read into private memory and `pwrite` the slot), which covers the journal but not applications'

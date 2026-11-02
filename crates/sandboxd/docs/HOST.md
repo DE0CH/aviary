@@ -90,6 +90,9 @@ the node's IPv6; the egress VIP translation; the image source for burst hosts (:
   quotas nothing there and refuses a create whose folder is missing (409 `workspace missing`). No `~/.claude` bind
   (the supervisor mounts its FUSE filesystem on the pre-made `/home/sandbox/.claude`) and no `/etc/hosts` bind (the
   supervisor writes it).
+- Scratch in use: `Listed.scratchUsed` (bytes, statvfs of the scratch mount, read by the 10 s sampler; absent for a
+  receive or an unmounted scratch). hermit moves no sandbox above its `migration.maxScratchMib` (the final delta's
+  stopped time, "Scratch on migration").
 - Liveness: `Listed.alive` is `populated 1` in `/sys/fs/cgroup/sbx/<name>/cgroup.events`, read by the 10 s sampler
   (no runsc call); a sentry the host's memcg OOM-killed shows `alive:false` within 10 s. A receive is always alive.
 - Console: `GET /v1/sandboxes/<name>/log?tail=<bytes>` answers `text/plain`, the last bytes (at most 64 KiB) of
@@ -138,7 +141,8 @@ host disk, not memory, so it moves as files, with rsync, around the memory pre-c
    `<overlay address>:<port>`, the port hermit gets. The relay serves the source's connections one at a time: rsync
    (`rsync --daemon` in inetd mode, module `scratch`, chroot, overlay addresses only), the pre-copy stream (relayed
    record by record, except its End record, which it holds back), and `SBXDONE!`/`SBXFAIL!` from the source.
-2. **Send, sandbox running:** up to 3 rsync rounds of the scratch (`rsync -aHAX --numeric-ids --delete`), stopping
+2. **Send, sandbox running:** from here until its entry goes (or the send leaves it running) the source lists it
+   `sending: true`, so hermit's settle decides nothing on a source whose send may still switch. Up to 3 rsync rounds of the scratch (`rsync -aHAX --numeric-ids --delete`), stopping
    early once a round copies under 32 MiB and 2,000 files. A failure leaves the sandbox running (409).
 3. **Memory pre-copy** (`runsc checkpoint --migrate-to <relay>`). Its final step stops the sandbox and writes its
    dirty file data; the stream ends with End, which the relay keeps.
@@ -147,6 +151,12 @@ host disk, not memory, so it moves as files, with rsync, around the memory pre-c
    gofer closes the sandbox's files, so JuiceFS commits the last writes to `/workspace` for the target). Then
    `SBXDONE!`: the relay hands End to the restore. A failure here loses the sandbox (502); `SBXFAIL!` makes the
    target's restore fail at once.
+
+Every wait of a receive is bounded, so a target never lists a receive `receiving` for ever (hermit waits while it
+does): the relay's limit (900 s from its start) covers its rsync connections (an rsync daemon still running then is
+killed) and the stream (checked between reads; a restore that stops reading fails the relay's write after 120 s);
+sandboxd kills a relay a minute past that, and a restore that has not finished 300 s after End (it hangs on its gofer
+or a mount): the receive is then `failed`.
 5. **The upper directories on the way to the bind mounts** (`/tmp`, `/var/lib/docker`, `/workspace`,
    `/home/sandbox/.claude` and their parents) are made in `upper/` before the overlay is mounted, on every host:
    overlayfs caches a directory it found only in the image, and the bind mount pins it.

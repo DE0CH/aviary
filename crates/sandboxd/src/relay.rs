@@ -10,7 +10,9 @@
 //! - "SBXDONE!" from the source once its final delta (copied after the stream ended, i.e. while the sandbox is
 //!   stopped) is written: End goes to the restore, which then restores; "SBXFAIL!": the restore gets no End and fails.
 //!
-//! Exit 0 = End delivered after SBXDONE; otherwise non-zero (the restore then fails or is killed by sandboxd).
+//! Exit 0 = End delivered after SBXDONE; otherwise non-zero (the restore then fails or is killed by sandboxd). The
+//! whole receive is bounded by the timeout argument: an rsync connection or a stream still running at the deadline is
+//! cut (exit 3), and a restore that stops reading cannot hold the relay in a write (a write timeout).
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
@@ -187,7 +189,10 @@ pub fn main(args: &[String]) -> i32 {
             match crate::proc::spawn(&["rsync", "--daemon", cf.as_str()], &[], io, io, crate::proc::Io::Null) {
                 Ok(ch) => {
                     drop(c);
-                    crate::proc::wait(ch.pid, true);
+                    if !wait_until(ch.pid, deadline) {
+                        log("timed out (an rsync connection)");
+                        return 3;
+                    }
                 }
                 Err(_) => log("rsync --daemon did not start"),
             }
@@ -196,11 +201,11 @@ pub fn main(args: &[String]) -> i32 {
                 log("a second stream");
                 return 1;
             }
-            match relay(c, restore, buf) {
+            match relay(c, restore, buf, deadline) {
                 Ok(r) => held = Some(r),
                 Err(e) => {
                     log(e);
-                    return 1;
+                    return if e == TIMED_OUT { 3 } else { 1 };
                 }
             }
         } else if &tag == DONE || &tag == FAIL {
@@ -228,8 +233,25 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
+const TIMED_OUT: &str = "timed out (the stream)";
+
+/// Waits for child `pid` until `deadline`; false: it was still running then (killed and reaped).
+fn wait_until(pid: i32, deadline: Instant) -> bool {
+    loop {
+        if crate::proc::wait(pid, false).is_some() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            crate::proc::kill(pid);
+            crate::proc::wait(pid, true);
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Relays a pre-copy stream to the restore up to (not including) its End record; returns the restore connection.
-fn relay(mut src: TcpStream, restore: &str, buf: &mut [u8]) -> Result<TcpStream, &'static str> {
+fn relay(mut src: TcpStream, restore: &str, buf: &mut [u8], deadline: Instant) -> Result<TcpStream, &'static str> {
     let t0 = Instant::now();
     let mut dst = loop {
         match TcpStream::connect(restore) {
@@ -239,9 +261,13 @@ fn relay(mut src: TcpStream, restore: &str, buf: &mut [u8]) -> Result<TcpStream,
         }
     };
     let _ = dst.set_nodelay(true);
+    let _ = dst.set_write_timeout(Some(Duration::from_secs(120)));
     let _ = src.set_read_timeout(Some(Duration::from_secs(300)));
     let mut p = Parser::new();
     loop {
+        if Instant::now() >= deadline {
+            return Err(TIMED_OUT);
+        }
         let n = match src.read(buf) {
             Ok(0) => return Err("the stream ended before its End record (the source failed)"),
             Ok(n) => n,
