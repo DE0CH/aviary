@@ -304,6 +304,9 @@ mod tests {
         let capture = crate::log::Capture::new();
         let sub = crate::log::subscriber("test", None, capture.clone());
         let _guard = tracing::subscriber::set_default(sub);
+        // other tests hit the `request` span's callsite on threads with no subscriber; tracing caches a callsite's
+        // interest globally, so recompute it now that this thread's subscriber exists
+        tracing::callsite::rebuild_interest_cache();
         let given = "0190f3b2-7c1a-7d2e-9f00-0123456789ab";
         let app: Router = standard(
             Router::new().route(
