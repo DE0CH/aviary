@@ -3,8 +3,15 @@
 //! heartbeat (with its reconciliation, the backstop for a report lost against all odds).
 //!
 //! The supervisor may report `running` before hermit's ready reached the driver (it takes `start_turn` as soon as it
-//! boots): that report is the turn's ready too. A replay of an end already recorded is answered 204; any other
-//! transition magpie 8.1 does not allow is 409 `bad_transition` with the current state.
+//! boots): that report is the turn's ready too. For the same reason an end report is accepted from `admitted`,
+//! `preparing` and `starting` once `start_turn` was delivered (a supervisor that fails a start before running, such
+//! as its "Claude Code would not start" answer, supervisor 7.9); before the delivery no supervisor can know the turn
+//! and the end is 409 `bad_transition`. A replay of an end already recorded is answered 204; any other transition
+//! magpie 8.1 does not allow is 409 `bad_transition` with the current state.
+//!
+//! The heartbeat reconciles a `starting` turn whose `start_turn` was acknowledged as it does a running one (its
+//! `running` report may be the one lost): `turnId == T` is the running report, `lastTurn.id == T` its end, `idle`
+//! without the turn `run.error`.
 
 use aviary_pg::{Pool, Tx};
 use magpie_api::changes::{AskResolvedChange, ChangeBody};
@@ -156,6 +163,12 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
                 _ => running(t, &c, caller, &turn, &r).await,
             };
         };
+        if turn.state.is_waiting() || turn.state == State::Starting {
+            let (delivered, _) = start_turn_status(t, &turn).await?;
+            if !delivered {
+                return Err(bad_transition(turn.state));
+            }
+        }
         if let Some(uuid) = r.last_uuid.as_deref()
             && !line_stored(t, c.id, r.transcript_path.as_deref(), uuid).await?
         {
@@ -416,6 +429,68 @@ pub async fn ask_resolved(pool: &Pool, caller: &Sandbox, ask_id: &str, r: AskRes
     .await
 }
 
+/// Rules 1, 2 and the lost `running` report of a starting turn (magpie 8.5) for the active turn `turn`.
+async fn reconcile_active(t: &Tx<'_>, c: &Locked, caller: &Sandbox, hb: &Heartbeat, turn: &Turn) -> Result<()> {
+    let (_, acked) = start_turn_status(t, turn).await?;
+    let starting = turn.state == State::Starting && acked;
+    if !starting && !matches!(turn.state, State::Running | State::Stopping) {
+        return Ok(());
+    }
+    let last = hb.last_turn.as_ref();
+    // 1: the supervisor ended T and its end report never landed
+    if let Some(l) = last.filter(|l| l.id == turn.id && hb.turn_id != Some(turn.id)) {
+        let ending = Ending {
+            outcome: l.outcome,
+            error: match l.outcome {
+                TurnOutcome::Failed => Some(l.error.as_ref().map_or_else(
+                    || ErrorInfo::new(DataCode::RunError, "the supervisor reported a failure without an error"),
+                    |e| ErrorInfo::new(e.code.clone(), e.message.clone()),
+                )),
+                _ => None,
+            },
+            held: None,
+            usage: None,
+            duration_ms: None,
+            kill: None,
+        };
+        end::end(t, &c.person, turn, ending).await?;
+        if hb.state == HeartbeatState::Held {
+            t.execute(
+                "update conversations set run_state = 'held' where id = $1 and active_turn is null",
+                &[&c.id],
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+    // 0: a starting turn the supervisor runs, whose running report never landed
+    if starting && hb.turn_id == Some(turn.id) {
+        let r = TurnStateReport {
+            state: ReportedState::Running,
+            at: Timestamp::now(),
+            provider_session_id: None,
+            transcript_path: None,
+            exit_code: None,
+            error: None,
+            held: None,
+            tasks: None,
+            last_uuid: None,
+            usage: None,
+            duration_ms: None,
+        };
+        tracing::info!(turn = %turn.id, "heartbeat reconciled: running");
+        return running(t, c, caller, turn, &r).await;
+    }
+    // 2: the supervisor no longer knows T
+    if acked && hb.state == HeartbeatState::Idle && hb.turn_id.is_none() && last.is_none_or(|l| l.id != turn.id) {
+        let e = ErrorInfo::new(DataCode::RunError, "the sandbox no longer knows this turn");
+        return end::end(t, &c.person, turn, Ending::failed(e)).await;
+    }
+    if turn.state == State::Running {
+        push_running_deadline(t, turn.id).await?;
+    }
+    Ok(())
+}
 /// `POST /v1/sandbox/heartbeat`: `heartbeat_at`, a running turn's deadline, and the reconciliation of magpie 8.5.
 ///
 /// # Errors
@@ -452,47 +527,7 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
         )
         .await?;
         if let Some(turn) = active(t, c.id).await?.filter(|a| !a.state.is_ended()) {
-            if !matches!(turn.state, State::Running | State::Stopping) {
-                return Ok(());
-            }
-            let last = hb.last_turn.as_ref();
-            // 1: the supervisor ended T and its end report never landed
-            if let Some(l) = last.filter(|l| l.id == turn.id && hb.turn_id != Some(turn.id)) {
-                let ending = Ending {
-                    outcome: l.outcome,
-                    error: match l.outcome {
-                        TurnOutcome::Failed => Some(l.error.as_ref().map_or_else(
-                            || ErrorInfo::new(DataCode::RunError, "the supervisor reported a failure without an error"),
-                            |e| ErrorInfo::new(e.code.clone(), e.message.clone()),
-                        )),
-                        _ => None,
-                    },
-                    held: None,
-                    usage: None,
-                    duration_ms: None,
-                    kill: None,
-                };
-                end::end(t, &c.person, &turn, ending).await?;
-                if hb.state == HeartbeatState::Held {
-                    t.execute(
-                        "update conversations set run_state = 'held' where id = $1 and active_turn is null",
-                        &[&c.id],
-                    )
-                    .await?;
-                }
-                return Ok(());
-            }
-            // 2: the supervisor no longer knows T
-            let (_, acked) = start_turn_status(t, &turn).await?;
-            if acked && hb.state == HeartbeatState::Idle && hb.turn_id.is_none() && last.is_none_or(|l| l.id != turn.id)
-            {
-                let e = ErrorInfo::new(DataCode::RunError, "the sandbox no longer knows this turn");
-                return end::end(t, &c.person, &turn, Ending::failed(e)).await;
-            }
-            if turn.state == State::Running {
-                push_running_deadline(t, turn.id).await?;
-            }
-            return Ok(());
+            return reconcile_active(t, &c, caller, &hb, &turn).await;
         }
         // 3: a turn Claude Code started whose report never landed
         if let Some(id) = hb.turn_id {

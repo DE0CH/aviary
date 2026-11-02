@@ -6,3 +6,7 @@
 [[profile.default.overrides]]
 filter = 'package(magpie) & (test(/within_50_?ms/))'
 threads-required = 'num-cpus'
+
+# every test runs even after a failure, so one flaky test cannot hide the result of the rest (CI's evidence)
+[profile.default]
+fail-fast = false

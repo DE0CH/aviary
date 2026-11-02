@@ -4,7 +4,8 @@
 //!
 //! It appends `turn.ended` (whose projection makes the end rows, magpie 7.3 rule 8), records the outcome on the turn,
 //! cancels the turn's unacknowledged commands (a later supervisor of the conversation must not run an ended turn's
-//! `start_turn` or `interrupt`; a `kill` this end queues is kept), moves the conversation to `idle` (or `held`),
+//! `start_turn` or `interrupt`; a `kill` this end queues is kept, and served only to the supervisor of the turn's
+//! sandbox, [`super::commands`]), moves the conversation to `idle` (or `held`),
 //! and writes the `turn` and `conversation_upserted` changes (with `sandbox {ready}` when the preparing chip was
 //! showing).
 

@@ -6,7 +6,9 @@
 //!   retried heartbeat to land.
 //! - Lapsed driver claims: a waiting turn whose claim lapsed (its replica died) or that no driver claimed gets one.
 //! - Deadlines (magpie 8.8): `admitted`/`preparing` after 15 min → `sandbox.timeout`; `starting` with `start_turn`
-//!   unacknowledged 120 s after ready → `sandbox.unreachable` and `kill {watchdog}` (acknowledged: 30 s more);
+//!   unacknowledged 120 s after ready → `sandbox.unreachable` and `kill {watchdog}` (acknowledged: 30 s more, while
+//!   the heartbeat reconciles it, [`super::reports::heartbeat`], until 5 min of magpie-available time after the
+//!   acknowledgement; then `sandbox.unreachable` and `kill {watchdog}`, so no starting turn waits for ever);
 //!   `running` silent past its deadline → hermit is asked (`gone`, `releasing`, another sandbox or none →
 //!   `sandbox.lost`; alive per hermit → 90 s more, until 5 min of silence → `sandbox.unreachable`; hermit unreachable
 //!   → 90 s more, no turn is failed on missing evidence); `stopping` 30 s after the stop → `stop.forced` and
@@ -181,12 +183,30 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid) -> Result<bool> {
             }
             State::Starting => {
                 let (_, acked) = start_turn_status(t, &turn).await?;
-                if acked {
+                // an acknowledged start whose running report and heartbeats never showed it: 5 min, then the watchdog
+                let gave_up = acked && {
+                    let row = t
+                        .query_one(
+                            "select greatest((select acked_at from commands where conversation_id = $1 and cmd_seq = $2),
+                                             (select available_since from availability where id))
+                                    + make_interval(secs => $3) <= now()",
+                            &[&turn.conversation, &turn.start_cmd_seq, &secs(limits::SILENCE_MAX)],
+                        )
+                        .await?;
+                    row.get::<_, Option<bool>>(0).unwrap_or(false)
+                };
+                if acked && !gave_up {
                     t.execute(
                         "update turns set deadline = now() + make_interval(secs => $2) where id = $1",
                         &[&turn.id, &secs(limits::START_ACK_GRACE)],
                     )
                     .await?;
+                } else if acked {
+                    let e = err(
+                        DataCode::SandboxUnreachable,
+                        "the supervisor took the turn but never reported it running",
+                    );
+                    end::end(t, &c.person, &turn, Ending::failed(e).kill(KillReason::Watchdog)).await?;
                 } else {
                     let e = err(DataCode::SandboxUnreachable, "the supervisor never took the turn");
                     end::end(t, &c.person, &turn, Ending::failed(e).kill(KillReason::Watchdog)).await?;

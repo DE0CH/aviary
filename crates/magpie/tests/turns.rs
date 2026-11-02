@@ -269,6 +269,15 @@ impl Sup {
 
     /// Takes the turn's `start_turn` (and acks it), then reports running.
     async fn run(&self, turn: Uuid) {
+        self.take(turn).await;
+        let mut running = report(ReportedState::Running);
+        running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
+        running.transcript_path = Some("projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
+        self.calls().turn_state(turn, &running).await.unwrap();
+    }
+
+    /// Takes the turn's `start_turn` and acks it (no `running` report).
+    async fn take(&self, turn: Uuid) {
         let r = self.poll(0, 5_000).await;
         let start = r
             .commands
@@ -283,10 +292,6 @@ impl Sup {
             },
         )
         .await;
-        let mut running = report(ReportedState::Running);
-        running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
-        running.transcript_path = Some("projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
-        self.calls().turn_state(turn, &running).await.unwrap();
     }
 }
 
@@ -548,19 +553,36 @@ async fn another_replica_takes_over_a_dead_drivers_turn() {
     let conv = w.conversation().await;
     let turn = w.send(conv, "m1", "hi").await;
     assert!(w.state_is(turn, "preparing").await);
-    // replica a dies: its claim stays until it lapses, and nothing renews it
+    // the turn's driver runs on a replica that is then killed (its task aborted: no drain hands the claim back)
     w.a.start_drain();
+    w.sql(
+        "update turns set driver_until = now() - interval '1 second' where conversation_id = $1",
+        conv,
+    )
+    .await;
     let dead = "magpie-dead-replica";
-    w.pool()
-        .get()
-        .await
-        .unwrap()
-        .execute(
-            "update turns set driver = $2, driver_until = now() + interval '30 seconds' where id = $1",
-            &[&turn, &dead],
-        )
-        .await
-        .unwrap();
+    let dying = Driver {
+        pod: dead.to_owned(),
+        ..driver(&b)
+    };
+    let task = tokio::spawn(async move { magpie::turns::driver::drive(&dying, turn).await });
+    let driver_is = async |pod: &str| {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select driver, driver_until > now() from turns where id = $1", &[&turn])
+            .await
+            .map(|r| r.get::<_, Option<String>>(0).as_deref() == Some(pod) && r.get::<_, Option<bool>>(1) == Some(true))
+            .unwrap()
+    };
+    assert!(
+        common::eventually(Duration::from_secs(10), async || driver_is(dead).await).await,
+        "the doomed replica claimed the turn"
+    );
+    task.abort();
+    let _ = task.await;
+    assert!(driver_is(dead).await, "a killed replica's claim stays until it lapses");
     assert_eq!(
         sweeper::pass(&driver(&b)).await.unwrap(),
         0,
@@ -812,6 +834,40 @@ async fn a_start_turn_never_taken_fails_unreachable_and_kills() {
     sup.ack(cmds.commands[0].cmd_seq, AckResult::default()).await;
     sweeper::pass(&driver(&w.a)).await.unwrap();
     assert_eq!(w.turn(turn).await.0, "starting", "an acked start_turn gets 30 s more");
+    // and more again, but not for ever: 5 min after the ack with nothing heard, unreachable
+    w.sql(
+        "update turns set deadline = now() - interval '1 second' where conversation_id = $1",
+        conv,
+    )
+    .await;
+    sweeper::pass(&driver(&w.a)).await.unwrap();
+    assert_eq!(w.turn(turn).await.0, "starting");
+    w.sql(
+        "update commands set acked_at = now() - interval '6 minutes' where conversation_id = $1 and type = 'start_turn'",
+        conv,
+    )
+    .await;
+    w.sql0("update availability set available_since = now() - interval '1 hour'")
+        .await;
+    w.sql(
+        "update turns set deadline = now() - interval '1 second' where conversation_id = $1",
+        conv,
+    )
+    .await;
+    sweeper::pass(&driver(&w.a)).await.unwrap();
+    let (state, code_, _) = w.turn(turn).await;
+    assert_eq!(
+        (state.as_str(), code_.as_deref()),
+        ("failed", Some("sandbox.unreachable"))
+    );
+    assert!(
+        sup.poll(0, 0)
+            .await
+            .commands
+            .iter()
+            .any(|c| c.turn_id == Some(turn)
+                && matches!(c.body, CommandBody::Kill(k) if k.reason == KillReason::Watchdog))
+    );
     // unacked: unreachable, and a kill for whatever runs
     let conv2 = w.conversation().await;
     let t2 = w.send(conv2, "m1", "hi").await;
@@ -837,6 +893,27 @@ async fn a_start_turn_never_taken_fails_unreachable_and_kills() {
             .iter()
             .any(|c| matches!(c.body, CommandBody::StartTurn(_))),
         "the failed turn's start_turn is canceled"
+    );
+    // that sandbox goes before its supervisor took the kill: the next sandbox's supervisor never receives it
+    let gone = w.fake().live(conv2).unwrap().id;
+    w.fake().end(conv2, ReleaseReason::HostLost, "host lost");
+    assert!(
+        common::eventually(Duration::from_secs(10), async || w.fake().live(conv2).is_none()).await,
+        "hermit ended it"
+    );
+    let t3 = w.send(conv2, "m2", "again").await;
+    assert!(w.state_is(t3, "starting").await);
+    let sup3 = w.supervisor(conv2).await;
+    assert_ne!(sup3.sandbox, gone);
+    let cmds = sup3.poll(0, 0).await;
+    assert!(
+        !cmds.commands.iter().any(|c| matches!(c.body, CommandBody::Kill(_))),
+        "a kill of the gone sandbox's turn is not served: {cmds:?}"
+    );
+    assert!(
+        cmds.commands
+            .iter()
+            .any(|c| c.turn_id == Some(t3) && matches!(c.body, CommandBody::StartTurn(_)))
     );
 }
 
@@ -1079,6 +1156,41 @@ async fn heartbeats_reconcile_lost_reports() {
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.turn.as_ref().unwrap().origin, TurnOrigin::Agent);
     sup.report(t3, ReportedState::Completed).await.unwrap();
+    // a starting turn whose start_turn was acknowledged is reconciled too: its running report was lost ...
+    let t4 = w.send(conv, "m4", "hi").await;
+    assert!(w.state_is(t4, "starting").await);
+    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    assert_eq!(
+        w.turn(t4).await.0,
+        "starting",
+        "an unacknowledged start_turn is not the supervisor's yet"
+    );
+    sup.take(t4).await;
+    sup.heartbeat(Some(t4), HeartbeatState::Running, None).await;
+    assert_eq!(w.turn(t4).await.0, "running", "turnId == T is the running report");
+    sup.report(t4, ReportedState::Completed).await.unwrap();
+    // ... or both its reports were lost ...
+    let t5 = w.send(conv, "m5", "hi").await;
+    assert!(w.state_is(t5, "starting").await);
+    sup.take(t5).await;
+    sup.heartbeat(
+        None,
+        HeartbeatState::Idle,
+        Some(HeartbeatLastTurn {
+            id: t5,
+            outcome: TurnOutcome::Completed,
+            error: None,
+        }),
+    )
+    .await;
+    assert_eq!(w.turn(t5).await.0, "completed", "lastTurn.id == T ends it");
+    // ... or the supervisor restarted without it
+    let t6 = w.send(conv, "m6", "hi").await;
+    assert!(w.state_is(t6, "starting").await);
+    sup.take(t6).await;
+    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    let (s, c, _) = w.turn(t6).await;
+    assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.error")));
     // 4: held, then idle
     sup.heartbeat(None, HeartbeatState::Held, None).await;
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
@@ -1527,9 +1639,55 @@ async fn the_feed_ends_turns_and_recovers_from_an_expired_cursor() {
         .unwrap();
     assert_eq!(row.get::<_, Option<Uuid>>(0), Some(sandbox.id));
     assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("gone"));
-    // the follower continues from latest
-    let latest = w.fake().script().calls_to("sandbox_events").last().cloned().unwrap();
-    assert!(latest.query.unwrap().to_string().contains("latest") || head().await.is_some());
+    // the follower re-read hermit's head (`latest`), stored it as the cursor, and continues after it by number
+    let after_of = |c: &aviary_fakes::script::Call| {
+        c.query
+            .as_ref()
+            .and_then(|q| q.get("after"))
+            .and_then(|a| a.as_str())
+            .map(str::to_owned)
+    };
+    let calls = w.fake().script().calls_to("sandbox_events");
+    let recovery = calls
+        .iter()
+        .rposition(|c| after_of(c).as_deref() == Some("latest"))
+        .expect("the recovery asked for latest");
+    assert!(
+        calls[..recovery]
+            .iter()
+            .any(|c| after_of(c).is_some_and(|a| a != "latest")),
+        "a numeric cursor expired before the recovery"
+    );
+    let hermit_head =
+        w.a.app()
+            .hermit
+            .sandbox_events(hermit_api::sandbox::SandboxEventsQuery {
+                after: hermit_api::sandbox::Cursor::Latest,
+                limit: None,
+                wait_ms: None,
+            })
+            .await
+            .unwrap()
+            .head_seq;
+    assert!(
+        common::eventually(Duration::from_secs(10), async || head().await
+            == Some(i64::try_from(hermit_head).unwrap()))
+        .await,
+        "the cursor is the head hermit gave for latest"
+    );
+    let want = hermit_head.to_string();
+    assert!(
+        common::eventually(Duration::from_secs(10), async || {
+            w.fake()
+                .script()
+                .calls_to("sandbox_events")
+                .iter()
+                .skip(recovery + 1)
+                .any(|c| after_of(c).as_deref() == Some(want.as_str()))
+        })
+        .await,
+        "the next long-poll continues after that head by number"
+    );
 }
 
 #[tokio::test]
@@ -1760,4 +1918,163 @@ async fn a_send_attaches_the_persons_uploads_with_unique_workspace_names() {
         code(&me.send_turn(other, &again).await.unwrap_err()),
         ErrorCode::TooManyAttachments
     );
+}
+
+#[tokio::test]
+async fn a_reacquire_late_in_the_wait_gets_a_fresh_deadline() {
+    let w = World::new("turn_late_reacquire", None).await;
+    // the feed's path: a turn admitted 16 min ago (its sandbox was ready, start_turn unacknowledged) loses the sandbox
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "hi").await;
+    assert!(w.state_is(turn, "preparing").await);
+    w.fake().make_ready(conv);
+    assert!(w.state_is(turn, "starting").await);
+    let first = w.fake().live(conv).unwrap().id;
+    w.sql(
+        "update turns set created_at = now() - interval '16 minutes' where conversation_id = $1",
+        conv,
+    )
+    .await;
+    w.fake().end(conv, ReleaseReason::Recycle, "recycled");
+    assert!(
+        common::eventually(Duration::from_secs(10), async || w.turn(turn).await.0 == "preparing").await,
+        "the feed sent the turn back to preparing"
+    );
+    assert!(sweeper::pass(&driver(&w.a)).await.unwrap() >= 1);
+    assert!(
+        common::eventually(Duration::from_secs(10), async || {
+            w.fake().live(conv).is_some_and(|s| s.id != first)
+        })
+        .await,
+        "the sweeper's driver asked hermit for a new sandbox"
+    );
+    assert_eq!(w.turn(turn).await.0, "preparing", "not failed sandbox.timeout");
+    w.fake().make_ready(conv);
+    assert!(w.state_is(turn, "starting").await);
+}
+
+#[tokio::test]
+async fn a_driver_that_reacquires_near_its_deadline_keeps_waiting() {
+    let w = World::new("turn_reacquire_deadline", None).await;
+    let b = w.replica().await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "hi").await;
+    assert!(w.state_is(turn, "preparing").await);
+    let before = w.fake().live(conv).unwrap().id;
+    // admitted 14 min 57 s ago, due in 3 s: replica a stops, b's driver claims the turn with that deadline
+    w.a.start_drain();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    w.sql(
+        "update turns set driver = null, driver_until = null, created_at = now() - interval '897 seconds',
+                deadline = now() + interval '3 seconds'
+         where conversation_id = $1",
+        conv,
+    )
+    .await;
+    magpie::turns::driver::spawn(driver(&b), turn);
+    let b_pod = b.app().pod.clone();
+    assert!(
+        common::eventually(Duration::from_secs(5), async || {
+            let r = w
+                .pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one("select driver from turns where id = $1", &[&turn])
+                .await
+                .unwrap();
+            r.get::<_, Option<String>>(0).as_deref() == Some(b_pod.as_str())
+        })
+        .await,
+        "b claimed the turn"
+    );
+    w.fake().end(conv, ReleaseReason::HostLost, "host lost");
+    assert!(
+        common::eventually(Duration::from_secs(10), async || {
+            w.fake().live(conv).is_some_and(|s| s.id != before)
+        })
+        .await,
+        "the driver asked hermit for a new sandbox"
+    );
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let (state, code_, _) = w.turn(turn).await;
+    assert_eq!(
+        (state.as_str(), code_),
+        ("preparing", None),
+        "past the first deadline, the replacement's counts"
+    );
+    w.fake().make_ready(conv);
+    assert!(w.state_is(turn, "starting").await);
+}
+
+#[tokio::test]
+async fn an_end_before_running_needs_the_start_turn_delivered() {
+    let w = World::new("turn_early_end", None).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "hi").await;
+    assert!(w.state_is(turn, "preparing").await);
+    let sup = w.supervisor(conv).await;
+    let e = sup.report(turn, ReportedState::Failed).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadTransition, "no supervisor has the turn yet");
+    assert_eq!(w.turn(turn).await.0, "preparing");
+    // the supervisor took start_turn and could not start Claude Code (supervisor 7.9)
+    let r = sup.poll(0, 0).await;
+    assert!(r.commands.iter().any(|c| c.turn_id == Some(turn)));
+    let mut failed = report(ReportedState::Failed);
+    failed.error = Some(ReportError {
+        code: DataCode::RunError,
+        message: "Claude Code would not start".into(),
+    });
+    sup.calls().turn_state(turn, &failed).await.unwrap();
+    let (s, c, _) = w.turn(turn).await;
+    assert_eq!((s.as_str(), c.as_deref()), ("failed", Some("run.error")));
+}
+
+#[tokio::test]
+async fn a_cancel_and_a_command_poll_at_once_agree_on_the_delivery() {
+    let w = World::new("turn_cancel_race", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let first = w.send(conv, "m0", "hi").await;
+    assert!(w.state_is(first, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.run(first).await;
+    sup.report(first, ReportedState::Completed).await.unwrap();
+    for i in 0..40 {
+        let turn = w.send(conv, &format!("m{}", i + 1), "again").await;
+        let pigeon = w.a.pigeon();
+        let person = pigeon.person(ALICE);
+        let (polled, canceled) = tokio::join!(sup.poll(0, 0), person.cancel_turn(conv));
+        assert_eq!(canceled.unwrap().turn_id, Some(turn));
+        let delivered = polled
+            .commands
+            .iter()
+            .any(|c| c.turn_id == Some(turn) && matches!(c.body, CommandBody::StartTurn(_)));
+        let state = w.turn(turn).await.0;
+        if delivered {
+            // the supervisor runs it: the cancel must stop it with an interrupt, not end it at once
+            assert_eq!(
+                state, "stopping",
+                "round {i}: a delivered start_turn's turn ended at once"
+            );
+            let interrupts = sup.poll(0, 0).await;
+            assert!(
+                interrupts
+                    .commands
+                    .iter()
+                    .any(|c| c.turn_id == Some(turn) && matches!(c.body, CommandBody::Interrupt(_))),
+                "round {i}"
+            );
+            sup.report(turn, ReportedState::Canceled).await.unwrap();
+        } else {
+            assert_eq!(state, "canceled", "round {i}");
+            let later = sup.poll(0, 0).await;
+            assert!(
+                !later
+                    .commands
+                    .iter()
+                    .any(|c| c.turn_id == Some(turn) && matches!(c.body, CommandBody::StartTurn(_))),
+                "round {i}: a turn canceled at once never reaches the supervisor"
+            );
+        }
+    }
 }

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::end::{self, Ending};
-use super::{State, active, command, secs, start_turn_status};
+use super::{State, active, command, lock_start_turn, secs};
 use crate::changes;
 use crate::conversations::{Person, lock};
 use crate::error::{Error, Result};
@@ -51,7 +51,8 @@ pub async fn cancel(pool: &Pool, person: &Person, id: Uuid) -> Result<CancelResp
                 turn_id: Some(turn.id),
             });
         }
-        let (delivered, _) = start_turn_status(t, &turn).await?;
+        // the start_turn row's lock orders this decision with a command poll that delivers it at the same moment
+        let (delivered, _) = lock_start_turn(t, &turn).await?;
         if !delivered {
             end::end(t, &person.email, &turn, Ending::canceled()).await?;
             return Ok(CancelResponse {

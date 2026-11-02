@@ -1,6 +1,8 @@
 //! The supervisor's work queue (magpie 8.4): `GET /v1/sandbox/commands?after=&waitMs=` long-polls for the commands
 //! after `after` that are neither canceled nor acknowledged (a restarted supervisor polls with a smaller `after` and
-//! gets its unacknowledged commands again), and marks them delivered; `POST …/commands/{cmdSeq}/ack` records the
+//! gets its unacknowledged commands again), and marks them delivered. A `kill` queued for a turn of another sandbox
+//! (one that went away after the kill was queued) is canceled instead of served: its process died with that sandbox,
+//! and the caller's own generation must not be killed by it. `POST …/commands/{cmdSeq}/ack` records the
 //! result (a `title` ack names the conversation, magpie 9.4).
 //!
 //! Commands are stored as `type` and `payload` and served through the contract's types, so what reaches the
@@ -40,6 +42,13 @@ async fn look(app: Read<'_>, caller: &Sandbox, after: i64) -> Result<(Vec<Comman
         .ok_or_else(Error::not_found)?;
     caller::check(&row, caller)?;
     let head = u64::try_from(row.get::<_, i64>(4)).unwrap_or(0);
+    conn.execute(
+        "update commands set canceled_at = now()
+         where conversation_id = $1 and type = 'kill' and acked_at is null and canceled_at is null
+           and turn_id in (select id from turns where conversation_id = $1 and sandbox_id is distinct from $2)",
+        &[&caller.conversation, &caller.sandbox],
+    )
+    .await?;
     let rows = conn
         .query(
             "update commands set delivered_at = coalesce(delivered_at, now())

@@ -142,17 +142,17 @@ fn upload_id_of(path: &str) -> Option<Uuid> {
 /// 200 characters.
 #[must_use]
 pub fn safe_name(name: &str) -> String {
-    let mut s: String = name
+    // trimmed first, so no leading space hides a leading dot (and `.` / `..` become `_` / `__`)
+    let s: String = name
+        .trim()
         .chars()
         .map(|c| if c == '/' || c == '\0' { '_' } else { c })
         .collect();
     let dots = s.chars().take_while(|c| *c == '.').count();
-    if dots > 0 {
-        s = format!("{}{}", "_".repeat(dots), &s[dots..]);
-    }
-    let s = s.trim().to_owned();
+    let s = format!("{}{}", "_".repeat(dots), &s[dots..]);
     let s = if s.is_empty() { "file".to_owned() } else { s };
-    s.chars().take(limits::WORKSPACE_NAME_MAX_CHARS).collect()
+    let s: String = s.chars().take(limits::WORKSPACE_NAME_MAX_CHARS).collect();
+    s.trim_end().to_owned()
 }
 
 /// `name`, or `name (2).ext`, `name (3).ext`, … — the first not in `taken`, at most 200 characters.
@@ -490,6 +490,13 @@ mod tests {
         assert_eq!(safe_name(".bashrc"), "_bashrc");
         assert_eq!(safe_name("a\0b"), "a_b");
         assert_eq!(safe_name("   "), "file");
+        assert_eq!(safe_name(" .bashrc"), "_bashrc");
+        assert_eq!(safe_name(" .."), "__");
+        assert_eq!(safe_name(" . "), "_");
+        assert_eq!(safe_name("."), "_");
+        assert_eq!(safe_name(".."), "__");
+        assert_eq!(safe_name("\t../x"), "___x");
+        assert_eq!(safe_name("  Q3 report.pdf  "), "Q3 report.pdf");
         assert_eq!(safe_name(&"港".repeat(300)).chars().count(), 200);
         let mut taken = HashSet::new();
         assert_eq!(unique_name("a.pdf", &taken), "a.pdf");

@@ -307,14 +307,31 @@ pub async fn command(
 /// # Errors
 /// When a statement fails.
 pub async fn start_turn_status(db: &impl Db, turn: &Turn) -> Result<(bool, bool)> {
+    start_turn_row(db, turn, "").await
+}
+
+/// [`start_turn_status`] with the `start_turn` row locked (`for update`) until the transaction ends. The command
+/// poll marks a delivery without the conversation lock, so a writer that decides by the delivery (cancel, 8.6) takes
+/// this lock: the poll's update then waits for it and finds the command canceled, or the writer waits for the poll's
+/// and sees the delivery.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn lock_start_turn(tx: &Tx<'_>, turn: &Turn) -> Result<(bool, bool)> {
+    start_turn_row(tx, turn, " for update").await
+}
+
+async fn start_turn_row(db: &impl Db, turn: &Turn, lock: &str) -> Result<(bool, bool)> {
     let Some(seq) = turn.start_cmd_seq else {
         // an agent-started turn has no start_turn: the supervisor runs it
         return Ok((true, true));
     };
     let row = db
         .query_opt(
-            "select delivered_at is not null, acked_at is not null from commands
-             where conversation_id = $1 and cmd_seq = $2",
+            &format!(
+                "select delivered_at is not null, acked_at is not null from commands
+                 where conversation_id = $1 and cmd_seq = $2{lock}"
+            ),
             &[&turn.conversation, &seq],
         )
         .await?;

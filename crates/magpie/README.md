@@ -159,15 +159,28 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   - A sandbox that goes away (released or lost) before the supervisor acknowledged `start_turn` sends the turn back
     to preparing and gets a new sandbox (hermit spec 28, magpie item 1), in the driver's long-poll and in the feed;
     only `sandbox_busy` / `sandbox_failed` (a start that failed), a release of a conversation in Recently deleted,
-    or a sandbox lost after the acknowledgement fail it. A replacement's deadline is 15 min from the replacement.
+    or a sandbox lost after the acknowledgement fail it. A replacement's deadline is 15 min from the replacement
+    (`turns.deadline`, which the driver follows rather than counting from admission), and the replaced sandbox's
+    delivery of `start_turn` is cleared, so a cancel while the replacement starts ends the turn at once.
   - A `running` report may arrive while the turn is still `admitted`/`preparing` (the supervisor takes
-    `start_turn` as soon as it boots, before hermit's ready reaches the driver): it is the turn's ready too.
+    `start_turn` as soon as it boots, before hermit's ready reaches the driver): it is the turn's ready too. For the
+    same reason an end report (`completed`, `failed`, `canceled`) is accepted from `admitted`, `preparing` and
+    `starting` once `start_turn` was delivered, not only from `running`/`stopping` (8.1): a supervisor may fail a
+    start before running it (supervisor 7.9's "Claude Code would not start"). Before the delivery it is 409
+    `bad_transition`.
+  - The heartbeat reconciles a `starting` turn whose `start_turn` was acknowledged too (8.5 names only running and
+    stopping turns): `turnId == T` stands for the lost `running` report, `lastTurn.id == T` ends it, `idle` without
+    it is `run.error`. The sweeper's +30 s for an acknowledged start (8.8) stops 5 min of magpie-available time
+    after the acknowledgement: `sandbox.unreachable` and `kill {watchdog}`.
   - A cancel stops a turn whose `start_turn` a supervisor has received (`delivered_at` set) by `interrupt`, in any
     state; only an undelivered `start_turn` ends the turn `canceled` at once (8.6 names the states, not the
-    delivery, which is what decides whether Claude Code may already run it).
+    delivery, which is what decides whether Claude Code may already run it). The cancel reads the delivery with the
+    `start_turn` row locked, so a command poll delivering it at the same moment either comes first (the cancel
+    interrupts) or finds it canceled.
   - The end of a turn cancels every unacknowledged command of the turn except a `kill` (8.3 says "undelivered"): a
     delivered but unacknowledged `start_turn` or `interrupt` of an ended turn must not reach the conversation's next
-    supervisor, which polls from `after=0`.
+    supervisor, which polls from `after=0`. A `kill` is served only to the supervisor of its turn's sandbox; one
+    whose turn ran in another sandbox is canceled at the poll (that process died with its sandbox).
   - The `starting` and `stopping` deadlines count, like the running one, from the later of their start and
     `availability.available_since`, so an outage of magpie never fails a turn whose supervisor's ack or report was
     only waiting for magpie.

@@ -4,7 +4,8 @@
 //! calls hermit's get-or-start `PUT` (idempotent per conversation), then, while the sandbox starts, hermit's
 //! long-poll `GET …?waitMs=25000&afterVersion=<v>`, so the turn moves the moment hermit's state changes. No answer
 //! that says ready within 1 s of admission shows the preparing chip (`sandbox.preparing`). Errors and timeouts retry
-//! with backoff (0.5 s doubling to 10 s) until the turn's 15 min deadline.
+//! with backoff (0.5 s doubling to 10 s) until the turn's deadline (`turns.deadline`: admission + 15 min, and a fresh
+//! 15 min from a re-acquire, below).
 //!
 //! A replica that dies stops renewing; the sweeper of any replica then claims the turn ([`super::sweeper`]) and
 //! continues it from its state (hermit's `PUT` is idempotent). A drain hands its claims back at once. Every write of
@@ -177,15 +178,29 @@ pub fn gone_verdict(turn: &Turn, start_acked: bool, deleted: bool, release: Opti
 }
 
 /// Moves a turn whose sandbox went away before its `start_turn` was acknowledged back to preparing (the chip shows
-/// again); `driver` keeps the claim (the driver itself), `None` hands it to the sweeper.
+/// again); `driver` keeps the claim (the driver itself), `None` (the feed) leaves a live driver's claim alone and
+/// otherwise hands the turn to the sweeper. The replacement gets a fresh
+/// 15 min deadline, which the driver reads from the row. `start_turn` (unacknowledged) loses the delivery the lost
+/// sandbox's supervisor took, so a cancel while the replacement starts ends the turn at once (8.6), and the next
+/// supervisor still receives it.
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn reacquire(tx: &Tx<'_>, person: &str, c: &Conv, turn: &Turn, driver: Option<&str>) -> Result<()> {
+    if let Some(seq) = turn.start_cmd_seq {
+        tx.execute(
+            "update commands set delivered_at = null
+             where conversation_id = $1 and cmd_seq = $2 and acked_at is null and canceled_at is null",
+            &[&turn.conversation, &seq],
+        )
+        .await?;
+    }
     tx.execute(
         "update turns set state = 'preparing', sandbox_id = null, ready_at = null,
-                deadline = now() + make_interval(secs => $2), driver = $3,
-                driver_until = case when $3::text is null then null else now() + make_interval(secs => $4) end
+                deadline = now() + make_interval(secs => $2),
+                driver = case when $3::text is not null then $3 when driver_until > now() then driver end,
+                driver_until = case when $3::text is not null then now() + make_interval(secs => $4)
+                                    when driver_until > now() then driver_until end
          where id = $1",
         &[
             &turn.id,
@@ -232,6 +247,8 @@ struct Claimed {
     conversation: Uuid,
     person: String,
     created_at: OffsetDateTime,
+    /// `turns.deadline` at the claim (a re-acquire moves it; [`deadline_passes`] follows the row).
+    deadline: OffsetDateTime,
 }
 
 async fn claim(d: &Driver, turn: Uuid) -> Result<Option<Claimed>> {
@@ -245,14 +262,16 @@ async fn claim(d: &Driver, turn: Uuid) -> Result<Option<Claimed>> {
              where t.id = $1 and c.id = t.conversation_id and t.state in ('admitted', 'preparing')
                and not c.migrating and t.origin <> 'import'
                and (t.driver is null or t.driver_until is null or t.driver_until < now())
-             returning t.conversation_id, c.person, t.created_at",
-            &[&turn, &d.pod, &secs(limits::DRIVER_CLAIM)],
+             returning t.conversation_id, c.person, t.created_at,
+                       coalesce(t.deadline, t.created_at + make_interval(secs => $4))",
+            &[&turn, &d.pod, &secs(limits::DRIVER_CLAIM), &secs(limits::ADMIT_TIMEOUT)],
         )
         .await?;
     Ok(row.map(|r| Claimed {
         conversation: r.get(0),
         person: r.get(1),
         created_at: r.get(2),
+        deadline: r.get(3),
     }))
 }
 
@@ -286,6 +305,37 @@ fn until(at: OffsetDateTime) -> Duration {
     Duration::try_from(at - OffsetDateTime::now_utc()).unwrap_or(Duration::ZERO)
 }
 
+/// Resolves once the waiting turn's deadline has passed by the row (`turns.deadline`, re-read each time the last one
+/// read is reached, so a re-acquire's fresh deadline counts), or once the turn no longer waits.
+async fn deadline_passes(d: &Driver, turn: Uuid, mut at: OffsetDateTime) {
+    loop {
+        tokio::time::sleep(until(at)).await;
+        let row = async {
+            d.pool
+                .get()
+                .await?
+                .query_opt(
+                    "select deadline, deadline <= now() from turns
+                     where id = $1 and state in ('admitted', 'preparing')",
+                    &[&turn],
+                )
+                .await
+        }
+        .await;
+        match row {
+            Ok(Some(r)) => match (r.get::<_, Option<OffsetDateTime>>(0), r.get::<_, Option<bool>>(1)) {
+                (Some(dl), Some(false)) => at = dl,
+                _ => return,
+            },
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(turn = %turn, error = %e, "driver: deadline not read");
+                at = OffsetDateTime::now_utc() + limits::HERMIT_BACKOFF_MAX;
+            }
+        }
+    }
+}
+
 /// Drives `turn` until it is ready, has failed, or is no longer this replica's.
 ///
 /// # Errors
@@ -294,7 +344,6 @@ pub async fn drive(d: &Driver, turn: Uuid) -> Result<()> {
     let Some(c) = claim(d, turn).await? else {
         return Ok(());
     };
-    let deadline = c.created_at + limits::ADMIT_TIMEOUT;
     let preparing_at = c.created_at + limits::PREPARING_AFTER;
     let preparing = async {
         tokio::time::sleep(until(preparing_at)).await;
@@ -310,14 +359,8 @@ pub async fn drive(d: &Driver, turn: Uuid) -> Result<()> {
             tracing::info!(turn = %turn, "driver claim lost");
             Ok(())
         }
-        r = tokio::time::timeout(until(deadline), acquire(d, &c, turn)) => {
-            if let Ok(r) = r {
-                r
-            } else {
-                let e = ErrorInfo::new(DataCode::SandboxTimeout, "the sandbox was not ready within 15 minutes");
-                step_fail(d, c.conversation, turn, e).await
-            }
-        }
+        r = acquire(d, &c, turn) => r,
+        () = deadline_passes(d, turn, c.deadline) => step_timeout(d, c.conversation, turn).await,
         () = preparing => Ok(()),
     }
 }
@@ -587,6 +630,25 @@ async fn step_gone(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> R
         Ok(true)
     })?;
     Ok(if again { Next::Put(0) } else { Next::Done })
+}
+
+/// The deadline passed: `sandbox.timeout`, unless the row says otherwise (a re-acquire that moved it, or an end).
+async fn step_timeout(d: &Driver, conversation: Uuid, turn: Uuid) -> Result<()> {
+    waiting_step!(d, conversation, turn, |t, c, tr| {
+        let due: bool = t
+            .query_one(
+                "select coalesce(deadline <= now(), false) from turns where id = $1",
+                &[&tr.id],
+            )
+            .await?
+            .get(0);
+        if due {
+            let e = ErrorInfo::new(DataCode::SandboxTimeout, "the sandbox was not ready within 15 minutes");
+            end::end(t, &c.person, &tr, Ending::failed(e)).await?;
+        }
+        Ok(true)
+    })?;
+    Ok(())
 }
 
 async fn step_fail(d: &Driver, conversation: Uuid, turn: Uuid, e: ErrorInfo) -> Result<()> {
