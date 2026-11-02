@@ -6,5 +6,27 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+aviary-core = { path = "../aviary-core" }
+aviary-pg = { path = "../aviary-pg" }
+axum.workspace = true
+base64.workspace = true
+chrono-tz.workspace = true
+hermit-api = { path = "../hermit-api" }
+magpie-api = { path = "../magpie-api" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+aviary-core = { path = "../aviary-core", features = ["testing"] }
+aviary-fakes = { path = "../../testing/fakes" }
+reqwest.workspace = true
+rustls.workspace = true
+
 [lints]
 workspace = true

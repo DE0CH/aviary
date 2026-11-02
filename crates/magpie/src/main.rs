@@ -1,3 +1,102 @@
-//! magpie: conversations, events, turns, files and uploads.
+//! `magpie serve`: one replica (magpie 18). `magpie --version` prints the build.
 
-fn main() {}
+use std::process::ExitCode;
+use std::time::Duration;
+
+use aviary_core::{drain, env, log, ops, version};
+use magpie::app::{Config, Service};
+use magpie::{auth, limits};
+
+/// The API port (platform 3.1).
+const API_ADDR: std::net::SocketAddr =
+    std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 8080);
+
+/// hermit at its fixed endpoint name (magpie 1).
+const HERMIT_URL: &str = "http://hermit";
+
+fn build() -> version::Build {
+    version::Build::new("magpie")
+        .surface(magpie_api::SURFACE_PERSON, magpie_api::PROTOCOL_PERSON)
+        .surface(magpie_api::SURFACE_SANDBOX, magpie_api::PROTOCOL_SANDBOX)
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("--version") => {
+            let mut out = std::io::stdout().lock();
+            let _ = std::io::Write::write_all(&mut out, format!("{}\n", build().version_line()).as_bytes());
+            ExitCode::SUCCESS
+        }
+        Some("serve") => {
+            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                return ExitCode::FAILURE;
+            };
+            rt.block_on(serve())
+        }
+        _ => {
+            let mut err = std::io::stderr().lock();
+            let _ = std::io::Write::write_all(&mut err, b"usage: magpie serve | magpie --version\n");
+            ExitCode::from(2)
+        }
+    }
+}
+
+async fn serve() -> ExitCode {
+    let build = build();
+    log::init_in_pod(&build, log::Output::Stdout);
+    let cfg = Config {
+        database_url: env::required("MAGPIE_DATABASE_URL"),
+        callers: auth::callers_from_env(),
+        hermit_url: HERMIT_URL.to_owned(),
+        hermit_token: aviary_core::auth::outbound_token("MAGPIE", "HERMIT"),
+        pod: env::field("POD_NAME"),
+    };
+    let registry = ops::registry(&build);
+    let ops = ops::Ops::new(build, registry);
+    if let Err(e) = ops.spawn(ops::ADDR).await {
+        tracing::error!(error = %e, "cannot listen on the ops port");
+        return ExitCode::FAILURE;
+    }
+    let mut signals = match drain::Signals::os() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot install signal handlers");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut drain = drain::Drain::new(ops.readiness().clone());
+    let service = match Service::start(cfg, ops.readiness(), drain.draining()).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "start failed");
+            return ExitCode::FAILURE;
+        }
+    };
+    let listener = match tokio::net::TcpListener::bind(API_ADDR).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "cannot listen on the API port");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut draining = drain.draining();
+    let router = service.router();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { draining.wait().await })
+            .await
+    });
+    ops.readiness().started();
+    tracing::info!("magpie serving");
+    // held polls answer at once (they watch `draining`), the listener stops taking new connections, in-flight
+    // requests finish; then the claims, the leader lock and the pool
+    drain.hook("in-flight requests", limits::DRAIN_IN_FLIGHT, || async move {
+        let _ = server.await;
+    });
+    drain.hook("claims, jobs, pool", Duration::from_secs(10), || async move {
+        service.shutdown().await;
+    });
+    let outcome = drain.run(&mut signals).await;
+    drain::exit(outcome)
+}
