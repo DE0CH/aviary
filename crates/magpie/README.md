@@ -14,7 +14,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
 | `src/error.rs` | the one error type; Postgres unreachable answers 503 `unavailable` with `retry-after` |
-| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3; `0005_timeline.sql`: the projection's lookups) and `Db` |
+| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
 | `src/conversations/` | the Conversation object, the person row, the row lock; create, list, rename, delete, restore, purge |
 | `src/events/` | `events::append` (seq allocation), which calls the projection |
 | `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-10, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
@@ -113,25 +113,45 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   sandbox). A release already in flight when the restore commits still lands; the window is one hermit call
   (10 s at most); a turn caught by it fails `sandbox.lost` (magpie 8.8) and the next turn gets a new sandbox.
 - Timeline rows (WP-13):
-  - A row's block index counts the blocks of earlier lines of the same `message.id` that are not retracted; a line
-    with `meta.replaces` counts from the replaced line's position, so a rewritten line keeps its `(messageId,
-    blockIndex)` (magpie 7.3 rule 4 says only "counts earlier lines"). Retracted event seqs are kept in the
-    `retracted` table (events stay immutable).
+  - A row's block index counts the blocks of the lines of the same `message.id` that still count and stand before
+    it (magpie 7.3 rule 4 says only "counts earlier lines"). A line with `meta.replaces = R`, R a line of the same
+    message, stands where R stood (`line_pos`), so a rewritten line keeps its `(messageId, blockIndex)`. WP-12
+    writes the rewritten line before R's retract (at the end of an overwrite or rename-over; for a truncate when
+    its limbo flushes, up to 10 s later): while R still counts, the new line takes over R's rows in its own
+    transaction. R counts as gone from then on (it is recorded in `retracted`, beside the seqs retracts removed;
+    events stay immutable); R's row at the same block index and of the same kind (the same call for a tool row) is
+    updated in place at a new row seq and keeps its `row_id` (a tool row is rebuilt from the new line and R's later
+    events, so it keeps its result, snapshot and task), or keeps its version when nothing visible changed; a row of
+    R the new line has no block for, or of another kind, is deleted with a new epoch, as rule 9 would. R's retract
+    then touches no row. So no commit shows two rows with one `(messageId, blockIndex)` or two tool rows with one
+    `callId`. A `replaces` naming any other event is ignored.
+  - An event that changes nothing visible on its row (a repeated `task.status` progress report, an identical
+    `files.sent` or result) takes no row seq and writes no version: it is only added to the row's sources (a
+    rebuild reads it). magpie 7.3 says rules 5-7 update the row; an unchanged item is no update.
   - Rule 3 replaces the launch's result text with the notification's summary whenever the notification has one
-    (today's folding, `replaceLaunchToolResultContent`, does the same for every launch); a notification's
+    (today's folding, `replaceLaunchToolResultContent`, does the same for every launch); a launch whose output was
+    extracted keeps `blobId` and `bytes` (the link to its full output), with `truncated` set. A notification's
     `killed`/`stopped` is `task.status: stopped`, row status `canceled`. `meta.taskNotification` gained an optional
     `taskId` (magpie-api).
   - A failed `turn.ended` without an error makes an `error` row `run.error`; failed tool rows carry the turn's error.
   - A rebuilt tool row (rule 9) is made from its surviving source events in the order they first landed on it, and
     keeps its `row_id` and block index.
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
+    Each row records the derivation version it was made or last updated by (`rows.derivation`,
+    `rows::DERIVATION`, now 1): a release that changes the rules raises it and ships a job that rebuilds the rows
+    below it from their events (the importer and shares project with the same code, so they carry the version too).
   - M9: `minSeq` is 0 when the conversation has no rows; `after` entries carry `seqs` up to their own `seqEnd`;
     for an `after` page `hasOlder` means a row with `seqStart <= after` exists. `waitMs`/`liveAfter` without
     `after` answer 400. A held `after` poll also answers when the epoch changed (a retract that only deleted rows
     issues no row seq).
-  - Live frames: a `liveAfter` greater than the turn's last frame is taken as another turn's (reset); a block whose
+  - Live frames: frames are numbered per turn, so M9's `liveAfter` goes with `liveTurn` (the `LiveState.turnId` it
+    counts in; either alone answers 400; magpie-api `TimelineQuery.live_turn`). A `liveTurn` that is not the active
+    turn, or a `liveAfter` greater than the turn's last frame, answers `reset: true`; a block whose
     first frames are missing (a truncated unlogged table) or a delta past the block's end resets, and the block's
     text starts at that delta's offset; a frame of a block whose durable row exists is ignored.
+  - Migrations `0005_timeline.sql` and `0008_timeline_derivation.sql` create their indexes without `CONCURRENTLY`:
+    they run on the empty database magpie migrates at start, before the importer fills it (cutover 7). An index
+    added once the tables hold data goes in a migration of its own, `CONCURRENTLY`.
   - Search counts occurrences in the `user`/`assistant` rows an event made (events' `text` holds only those); its
     cursor is the event seq after which the next page starts.
 

@@ -168,6 +168,7 @@ async fn frames_build_the_live_state_and_the_durable_row_supersedes_them() {
             &TimelineQuery {
                 after: Some(1),
                 live_after: Some(3),
+                live_turn: Some(w.turn),
                 ..TimelineQuery::default()
             },
         )
@@ -179,13 +180,30 @@ async fn frames_build_the_live_state_and_the_durable_row_supersedes_them() {
         (l.n, l.blocks[0].offset, l.blocks[0].text.as_str(), l.blocks[0].done),
         (5, 15, "大橋", true)
     );
-    // a liveAfter beyond the turn's frames (another turn's): reset, whole blocks
+    // a liveAfter of another turn, even one lower than this turn's last frame: reset, whole blocks
+    let p = alice
+        .timeline(
+            w.id,
+            &TimelineQuery {
+                after: Some(1),
+                live_after: Some(3),
+                live_turn: Some(Uuid::new_v4()),
+                ..TimelineQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    let l = p.live.unwrap();
+    assert!(l.reset);
+    assert_eq!((l.blocks[0].offset, l.blocks[0].text.as_str()), (0, "今日港珠澳大橋"));
+    // a liveAfter beyond the turn's frames: reset, whole blocks
     let p = alice
         .timeline(
             w.id,
             &TimelineQuery {
                 after: Some(1),
                 live_after: Some(99),
+                live_turn: Some(w.turn),
                 ..TimelineQuery::default()
             },
         )
@@ -197,6 +215,7 @@ async fn frames_build_the_live_state_and_the_durable_row_supersedes_them() {
     let poll = {
         let pigeon = w.a.pigeon();
         let id = w.id;
+        let turn = w.turn;
         tokio::spawn(async move {
             pigeon
                 .person(ALICE)
@@ -205,6 +224,7 @@ async fn frames_build_the_live_state_and_the_durable_row_supersedes_them() {
                     &TimelineQuery {
                         after: Some(1),
                         live_after: Some(5),
+                        live_turn: Some(turn),
                         wait_ms: Some(20_000),
                         ..TimelineQuery::default()
                     },
@@ -277,6 +297,7 @@ async fn lost_frames_and_gaps_reset_and_the_cleanup_sweeps_ended_turns() {
     let q = TimelineQuery {
         after: Some(0),
         live_after: Some(2),
+        live_turn: Some(w.turn),
         ..TimelineQuery::default()
     };
     let l = alice.timeline(w.id, &q).await.unwrap().live.unwrap();
@@ -287,6 +308,7 @@ async fn lost_frames_and_gaps_reset_and_the_cleanup_sweeps_ended_turns() {
     let q = TimelineQuery {
         after: Some(0),
         live_after: Some(3),
+        live_turn: Some(w.turn),
         ..TimelineQuery::default()
     };
     assert!(alice.timeline(w.id, &q).await.unwrap().live.unwrap().reset);
@@ -324,6 +346,23 @@ async fn lost_frames_and_gaps_reset_and_the_cleanup_sweeps_ended_turns() {
     )
     .await
     .unwrap();
-    assert_eq!(magpie::live::cleanup(w.a.pool()).await.unwrap(), 3);
+    // another replica's pass holds one frame: this pass skips it and does not wait (skip locked)
+    let turn = w.turn;
+    let pool = w.a.pool().clone();
+    let swept = aviary_pg::tx!(&w.sql, |t| -> magpie::error::Result<(u64, Duration)> {
+        t.execute(
+            "select 1 from live_frames where turn_id = $1 and n = 4 for update",
+            &[&turn],
+        )
+        .await?;
+        let started = Instant::now();
+        let n = magpie::live::cleanup(&pool).await?;
+        Ok((n, started.elapsed()))
+    })
+    .await
+    .unwrap();
+    assert_eq!(swept.0, 2);
+    assert!(swept.1 < Duration::from_secs(2), "the pass waited on a locked frame");
+    assert_eq!(magpie::live::cleanup(w.a.pool()).await.unwrap(), 1);
     assert!(alice.live(w.id).await.unwrap().is_none());
 }

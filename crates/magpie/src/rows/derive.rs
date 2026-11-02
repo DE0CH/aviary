@@ -226,7 +226,9 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
                     tool_use_id: None,
                 });
             }
-            "tool_use" | "server_tool_use" => {
+            // a `server_tool_use` block's result comes back inside the same message, never as a `tool_result` line
+            // (rule 5), so only `tool_use` makes a row (rule 4 lists only it)
+            "tool_use" => {
                 let Some(id) = b.get("id").and_then(Value::as_str) else {
                     continue;
                 };
@@ -350,7 +352,8 @@ fn notification_state(status: &str) -> (TaskState, ToolStatus) {
 }
 
 /// Rule 3: a task notification folds onto its launching tool row: `task`, `status`, and the summary in place of
-/// the launch's own result text (today's history folding, done once at write time).
+/// the launch's own result text (today's history folding, done once at write time). A launch whose output was
+/// extracted keeps its `blobId` and `bytes` (the link to that full output), with `truncated` set.
 pub fn apply_notification(t: &mut ToolItem, n: &TaskNotification) {
     let (task_state, status) = notification_state(&n.status);
     let task_id = n
@@ -370,18 +373,21 @@ pub fn apply_notification(t: &mut ToolItem, n: &TaskNotification) {
     if let Some(summary) = &n.summary {
         let text = chars(summary, RESULT_PREVIEW_CHARS).to_owned();
         let bytes = u64::try_from(summary.len()).unwrap_or(u64::MAX);
-        let truncated = text.len() < summary.len();
+        let cut = text.len() < summary.len();
         match &mut t.result {
             Some(r) => {
                 r.text = text;
-                r.truncated = truncated;
-                r.bytes = bytes;
-                r.blob_id = None;
+                if r.blob_id.is_some() {
+                    r.truncated = true;
+                } else {
+                    r.truncated = cut;
+                    r.bytes = bytes;
+                }
             }
             None => {
                 t.result = Some(ToolResult {
                     text,
-                    truncated,
+                    truncated: cut,
                     bytes,
                     blob_id: None,
                     is_error: false,
@@ -426,9 +432,10 @@ pub fn apply_task(t: &mut ToolItem, s: &TaskStatus) {
     }
 }
 
-/// Rule 8 for one running tool row of the ended turn; `false` when the row stays as it is (a completed turn).
+/// Rule 8 for one running tool row of the ended turn; `false` when the row stays as it is (a completed turn, or a
+/// background launch whose task still runs: it stays running until its notification or task report).
 pub fn apply_turn_end(t: &mut ToolItem, e: &TurnEnded) -> bool {
-    if t.status != ToolStatus::Running {
+    if t.status != ToolStatus::Running || t.task.as_ref().is_some_and(|k| k.status == TaskState::Running) {
         return false;
     }
     match e.outcome {
@@ -573,5 +580,77 @@ mod tests {
         let rows = assistant(&line, &EventMeta::default(), 3);
         assert_eq!(rows.iter().map(|r| r.block_index).collect::<Vec<_>>(), vec![5, 6]);
         assert_eq!(block_count(&line), 4);
+    }
+
+    fn launch() -> ToolItem {
+        tool_from_line(
+            &json!({"message": {"id": "m", "content": [{"type": "tool_use", "id": "t", "name": "Bash"}]}}),
+            "t",
+            0,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_server_tool_use_block_makes_no_row() {
+        let line = json!({"type": "assistant", "message": {"id": "m", "content": [
+            {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}},
+            {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": []},
+            {"type": "text", "text": "found"}]}});
+        let rows = assistant(&line, &EventMeta::default(), 0);
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].item, RowItem::Assistant(_)));
+        assert_eq!(rows[0].block_index, 2);
+    }
+
+    #[test]
+    fn a_notification_keeps_the_link_to_an_extracted_launch_output() {
+        let mut t = launch();
+        apply_result(
+            &mut t,
+            &json!({"type": "tool_result", "tool_use_id": "t", "content":
+                {"$blob": {"blobId": "c1", "bytes": 48211, "kind": "text", "preview": "abc"}}}),
+        );
+        let n: TaskNotification =
+            serde_json::from_value(json!({"toolUseId": "t", "taskId": "k", "status": "completed", "summary": "done"}))
+                .unwrap();
+        apply_notification(&mut t, &n);
+        let r = t.result.unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.blob_id.as_deref(), r.bytes, r.truncated),
+            ("done", Some("c1"), 48211, true)
+        );
+        // a short stub launch result: the summary takes its place whole
+        let mut t = launch();
+        apply_result(
+            &mut t,
+            &json!({"type": "tool_result", "tool_use_id": "t", "content": "started"}),
+        );
+        apply_notification(&mut t, &n);
+        let r = t.result.unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.blob_id, r.bytes, r.truncated),
+            ("done", None, 4, false)
+        );
+    }
+
+    #[test]
+    fn a_running_background_launch_outlives_a_canceled_or_failed_turn() {
+        let ended = |outcome: &str| -> TurnEnded {
+            serde_json::from_value(json!({"turnId": uuid::Uuid::nil(), "outcome": outcome})).unwrap()
+        };
+        let mut t = launch();
+        let s: TaskStatus =
+            serde_json::from_value(json!({"taskId": "k", "toolUseId": "t", "event": "updated", "status": "running"}))
+                .unwrap();
+        apply_task(&mut t, &s);
+        for outcome in ["canceled", "failed"] {
+            assert!(!apply_turn_end(&mut t, &ended(outcome)));
+            assert_eq!(t.status, ToolStatus::Running);
+        }
+        // a plain running call does end with the turn
+        let mut t = launch();
+        assert!(apply_turn_end(&mut t, &ended("canceled")));
+        assert_eq!(t.status, ToolStatus::Canceled);
     }
 }

@@ -150,15 +150,23 @@ struct Building {
     changed: bool,
 }
 
-/// The live state of `turn` in `conversation` (`None` without stored frames). With `live_after`, blocks carry only
-/// text added after that frame; without it, from another turn (a `live_after` beyond the turn's last frame), after a
-/// `gap` frame past it, or when frames were lost (a truncated table), `reset: true` and every open block is sent
-/// whole from where its stored text starts.
+/// The live state of `turn` in `conversation` (`None` without stored frames). With `live_after` = `(turn, n)`, blocks
+/// carry only text added after frame `n`; without it, with another turn's (frames are numbered per turn), with an
+/// `n` beyond the turn's last frame, after a `gap` frame past it, or when frames were lost (a truncated table),
+/// `reset: true` and every open block is sent whole from where its stored text starts.
+///
+/// Only open blocks have frames: rule 4 deletes a block's frames when its durable row is written.
 ///
 /// # Errors
 /// When a statement fails.
 #[allow(clippy::too_many_lines)] // one pass over the frames, in frame order
-pub async fn state(db: &impl Db, conversation: Uuid, turn: Uuid, live_after: Option<u64>) -> Result<Option<LiveState>> {
+pub async fn state(
+    db: &impl Db,
+    conversation: Uuid,
+    turn: Uuid,
+    live_after: Option<(Uuid, u64)>,
+) -> Result<Option<LiveState>> {
+    let live_after = live_after.and_then(|(t, n)| (t == turn).then_some(n));
     let rows = db
         .query(
             "select n, message_id, block_index, op, block, name, byte_offset, text, status, after_row_seq
@@ -319,7 +327,8 @@ pub async fn get(pool: &Pool, conversation: Uuid, person: &str) -> Result<Option
     state(&conn, conversation, turn, None).await
 }
 
-/// The live cleanup (every replica): frames of turns that ended more than 60 s ago; the count deleted.
+/// The live cleanup (every replica, skip locked: replicas sweeping at once take disjoint frames and never wait on
+/// each other): frames of turns that ended more than 60 s ago; the count deleted.
 ///
 /// # Errors
 /// When the statement fails.
@@ -328,8 +337,10 @@ pub async fn cleanup(pool: &Pool) -> Result<u64> {
     let secs = i64::try_from(KEPT_AFTER_END.as_secs()).unwrap_or(60);
     Ok(conn
         .execute(
-            "delete from live_frames l using turns t
-             where t.id = l.turn_id and t.ended_at < now() - make_interval(secs => $1::bigint::double precision)",
+            "delete from live_frames where (turn_id, n) in (
+               select l.turn_id, l.n from live_frames l join turns t on t.id = l.turn_id
+               where t.ended_at < now() - make_interval(secs => $1::bigint::double precision)
+               for update of l skip locked)",
             &[&secs],
         )
         .await?)

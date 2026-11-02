@@ -91,7 +91,10 @@ struct Reference {
     row_head: i64,
     epoch: i64,
     retracted: HashSet<i64>,
+    /// Where a rewritten line stands (the seq of the first line of its chain of rewrites).
+    pos: std::collections::HashMap<i64, i64>,
     replaced: usize,
+    taken_over: usize,
 }
 
 impl Reference {
@@ -112,9 +115,13 @@ impl Reference {
     }
 
     fn update(&mut self, row_id: i64, item: ToolItem, sources: Vec<i64>) {
+        self.update_row(row_id, RowItem::Tool(item), sources);
+    }
+
+    fn update_row(&mut self, row_id: i64, item: RowItem, sources: Vec<i64>) {
         let s = self.issue(row_id);
         let r = self.rows.get_mut(&row_id).unwrap();
-        r.item = RowItem::Tool(item);
+        r.item = item;
         r.seq_end = s;
         r.seqs.push(s);
         r.sources = sources;
@@ -132,13 +139,19 @@ impl Reference {
     }
 
     fn touch(&mut self, seq: i64, id: &str, body: &EventBody, meta: &magpie_api::events::EventMeta) {
-        if let Some((row_id, mut t, mut sources)) = self.tool(id)
-            && derive::apply(&mut t, body, meta)
-        {
-            if !sources.contains(&seq) {
-                sources.push(seq);
+        if let Some((row_id, mut t, mut sources)) = self.tool(id) {
+            let before = t.clone();
+            if derive::apply(&mut t, body, meta) {
+                let new_source = !sources.contains(&seq);
+                if new_source {
+                    sources.push(seq);
+                }
+                if t != before {
+                    self.update(row_id, t, sources);
+                } else if new_source {
+                    self.rows.get_mut(&row_id).unwrap().sources = sources;
+                }
             }
-            self.update(row_id, t, sources);
         }
     }
 
@@ -194,19 +207,68 @@ impl Reference {
             }
             EventBody::CcAssistant(line) if !derive::sidechain(line, &meta) => {
                 let mid = derive::message_id(line).unwrap().to_owned();
-                let bound = meta.replaces.map_or(seq, |r| (r as i64).min(seq));
+                let replaced = meta.replaces.map(|r| r as i64).filter(|r| *r < seq);
+                // a rewrite of a line of the same message stands where that line stood, and takes over its rows
+                // while that line still counts
+                let mut old: Vec<RefRow> = Vec::new();
+                let mut bound = seq;
+                if let Some(r) = replaced
+                    && self.events.iter().any(|x| {
+                        x.seq == r && x.kind == "cc.assistant" && derive::message_id(&x.data) == Some(mid.as_str())
+                    })
+                {
+                    bound = self.pos.get(&r).copied().unwrap_or(r);
+                    self.pos.insert(seq, bound);
+                    if !self.retracted.contains(&r) {
+                        self.taken_over += 1;
+                        self.retracted.insert(r);
+                        old = self.rows.values().filter(|x| x.sources[0] == r).cloned().collect();
+                    }
+                }
                 let first: u32 = self
                     .events
                     .iter()
                     .filter(|x| {
                         x.kind == "cc.assistant"
-                            && x.seq < bound
+                            && self.pos.get(&x.seq).copied().unwrap_or(x.seq) < bound
                             && !self.retracted.contains(&x.seq)
                             && derive::message_id(&x.data) == Some(mid.as_str())
                     })
                     .map(|x| derive::block_count(&x.data))
                     .sum();
+                // the rebuild reads this event too
+                self.events.push(copy_ref(&e));
+                let mut replaced_rows = false;
                 for b in derive::assistant(line, &meta, first) {
+                    let bi = b.block_index as i32;
+                    let kind = b.item.kind().unwrap();
+                    if let Some(i) = old
+                        .iter()
+                        .position(|o| o.block_index == Some(bi) && o.kind == kind && o.tool_use_id == b.tool_use_id)
+                    {
+                        let o = old.remove(i);
+                        let (item, sources) = if o.kind == "tool" {
+                            let mut cand = o.clone();
+                            cand.sources = std::iter::once(seq).chain(o.sources.iter().skip(1).copied()).collect();
+                            match self.rebuild(&cand) {
+                                Some((t, kept)) => (RowItem::Tool(t), kept),
+                                None => (b.item.clone(), vec![seq]),
+                            }
+                        } else {
+                            (b.item.clone(), vec![seq])
+                        };
+                        if item == o.item {
+                            self.rows.get_mut(&o.row_id).unwrap().sources = sources;
+                        } else {
+                            self.update_row(o.row_id, item, sources);
+                        }
+                        continue;
+                    }
+                    if let Some(i) = old.iter().position(|o| o.block_index == Some(bi)) {
+                        let o = old.remove(i);
+                        self.rows.remove(&o.row_id);
+                        replaced_rows = true;
+                    }
                     let mut item = b.item;
                     let mut sources = vec![seq];
                     if let (Some(id), RowItem::Tool(t)) = (&b.tool_use_id, &mut item)
@@ -224,9 +286,18 @@ impl Reference {
                     let mut r = Self::new_row(item, e.turn_id, sources);
                     r.tool_use_id = b.tool_use_id;
                     r.message_id = Some(mid.clone());
-                    r.block_index = Some(b.block_index as i32);
+                    r.block_index = Some(bi);
                     self.insert(r);
                 }
+                for o in old {
+                    self.rows.remove(&o.row_id);
+                    replaced_rows = true;
+                }
+                if replaced_rows {
+                    self.epoch += 1;
+                    self.replaced += 1;
+                }
+                return;
             }
             EventBody::FilesSent(f) => self.touch(seq, &f.tool_use_id.clone(), &body, &meta),
             EventBody::TaskStatus(s) => {
@@ -332,6 +403,8 @@ struct Gen {
     tools: Vec<String>,
     tool_n: usize,
     cc_seqs: Vec<i64>,
+    /// `(message, seq)` of the assistant lines so far.
+    lines: Vec<(String, i64)>,
     next_seq: i64,
 }
 
@@ -345,6 +418,7 @@ impl Gen {
             tools: Vec::new(),
             tool_n: 0,
             cc_seqs: Vec::new(),
+            lines: Vec::new(),
             next_seq: first_seq,
         }
     }
@@ -392,6 +466,20 @@ impl Gen {
                     && let Some(old) = self.rng.pick(&self.cc_seqs).copied()
                 {
                     e.meta = Some(json!({"replaces": old}));
+                } else if self.rng.chance(20) {
+                    // Claude Code rewrote a line of this message (its retract may come later, or never)
+                    let same: Vec<i64> = self
+                        .lines
+                        .iter()
+                        .filter(|(m, _)| *m == self.message)
+                        .map(|(_, s)| *s)
+                        .collect();
+                    if let Some(old) = self.rng.pick(&same).copied() {
+                        e.meta = Some(json!({"replaces": old}));
+                    }
+                }
+                if e.meta.is_none() || e.meta.as_ref().is_some_and(|m| m.get("replaces").is_some()) {
+                    self.lines.push((self.message.clone(), self.next_seq));
                 }
                 e
             }
@@ -457,6 +545,18 @@ impl Gen {
     }
 }
 
+fn copy_ref(e: &RefEvent) -> RefEvent {
+    RefEvent {
+        seq: e.seq,
+        kind: e.kind.clone(),
+        data: e.data.clone(),
+        meta: e.meta.clone(),
+        turn_id: e.turn_id,
+        text: e.text.clone(),
+        viewer: e.viewer.clone(),
+    }
+}
+
 fn copy(e: &NewEvent, seq: i64) -> RefEvent {
     RefEvent {
         seq,
@@ -479,6 +579,7 @@ async fn incremental_projection_equals_the_reference_and_row_seqs_are_dense() {
     let alice = pigeon.person(ALICE);
     let mut total_rows = 0;
     let mut total_replaced = 0;
+    let mut total_taken_over = 0;
     for seed in 1..=30u64 {
         let id = ev::conversation(&pigeon, ALICE).await;
         // conversation.created is event 1
@@ -612,8 +713,13 @@ async fn incremental_projection_equals_the_reference_and_row_seqs_are_dense() {
         assert_eq!(replaced, reference.replaced, "seed {seed}");
         total_rows += stored.len();
         total_replaced += reference.replaced;
+        total_taken_over += reference.taken_over;
     }
     // the sequences exercised what they should
     assert!(total_rows > 300, "{total_rows} rows");
     assert!(total_replaced > 10, "{total_replaced} epoch changes");
+    assert!(
+        total_taken_over > 5,
+        "{total_taken_over} rewritten lines took over rows"
+    );
 }

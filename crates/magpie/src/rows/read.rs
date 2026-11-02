@@ -48,8 +48,8 @@ pub struct PageQuery {
     pub limit: i64,
     /// `after` only.
     pub wait: Duration,
-    /// `after` only.
-    pub live_after: Option<u64>,
+    /// `after` only: `(liveTurn, liveAfter)`.
+    pub live_after: Option<(Uuid, u64)>,
 }
 
 fn seq_param(v: u64, what: &str) -> Result<i64> {
@@ -58,7 +58,8 @@ fn seq_param(v: u64, what: &str) -> Result<i64> {
 
 impl PageQuery {
     /// Checks M9's query: exactly one of `tail=1`, `before`, `after`; `limit` 1-500 (default 40); `waitMs` and
-    /// `liveAfter` only with `after` (`waitMs` above 25,000 is held for 25,000).
+    /// `liveAfter` only with `after` (`waitMs` above 25,000 is held for 25,000); `liveAfter` and `liveTurn` together
+    /// (frames are numbered per turn, so a frame number means nothing without its turn).
     ///
     /// # Errors
     /// 400 `bad_request`.
@@ -74,14 +75,19 @@ impl PageQuery {
             return Err(Error::bad_request("limit must be 1-500"));
         }
         let after = matches!(window, Window::After(_));
-        if !after && (q.wait_ms.is_some() || q.live_after.is_some()) {
-            return Err(Error::bad_request("waitMs and liveAfter go with after"));
+        if !after && (q.wait_ms.is_some() || q.live_after.is_some() || q.live_turn.is_some()) {
+            return Err(Error::bad_request("waitMs, liveAfter and liveTurn go with after"));
         }
+        let live_after = match (q.live_turn, q.live_after) {
+            (Some(turn), Some(n)) => Some((turn, n)),
+            (None, None) => None,
+            _ => return Err(Error::bad_request("liveAfter and liveTurn go together")),
+        };
         Ok(Self {
             window,
             limit: i64::from(limit),
             wait: Duration::from_millis(q.wait_ms.unwrap_or(0)),
-            live_after: q.live_after,
+            live_after,
         })
     }
 }
@@ -314,7 +320,7 @@ pub async fn timeline(
 
 /// Whether a held `after` poll answers: something past `after`, live frames the reader has not seen, a new epoch.
 fn ready(p: &TimelinePage, q: &PageQuery, epoch: &str) -> bool {
-    !p.rows.is_empty() || p.epoch != epoch || p.live.as_ref().is_some_and(|l| Some(l.n) != q.live_after)
+    !p.rows.is_empty() || p.epoch != epoch || p.live.as_ref().is_some_and(|l| Some((l.turn_id, l.n)) != q.live_after)
 }
 
 /// M10: every prompt row.

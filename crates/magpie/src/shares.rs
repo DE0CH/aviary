@@ -543,6 +543,12 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
         )
         .await?;
         t.execute(
+            "insert into line_pos (conversation_id, seq, pos) select $1, seq, pos from line_pos
+             where conversation_id = $2 and seq <= $3",
+            &[&id, &sr.conversation, &sr.upto],
+        )
+        .await?;
+        t.execute(
             "insert into cc_retracted (conversation_id, uuid, seq) select $1, uuid, seq from cc_retracted
              where conversation_id = $2 and seq <= $3",
             &[&id, &sr.conversation, &sr.upto],

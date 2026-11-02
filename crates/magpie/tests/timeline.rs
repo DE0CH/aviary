@@ -417,6 +417,208 @@ async fn rule_9_retract_deletes_rebuilds_and_bumps_the_epoch_once() {
     assert!(p.rows.iter().all(|r| !matches!(r.item, RowItem::Tool(_))));
 }
 
+/// No two rows share a `(messageId, blockIndex)` and no two tool rows a `callId`.
+fn assert_unique(p: &TimelinePage, when: &str) {
+    let mut blocks = std::collections::HashSet::new();
+    let mut calls = std::collections::HashSet::new();
+    for r in &p.rows {
+        let key = match &r.item {
+            RowItem::Assistant(x) => Some((x.message_id.clone(), x.block_index)),
+            RowItem::Reasoning(x) => Some((x.message_id.clone(), x.block_index)),
+            RowItem::Tool(x) => {
+                assert!(
+                    calls.insert(x.call_id.clone()),
+                    "{when}: two rows of call {}",
+                    x.call_id
+                );
+                Some((x.message_id.clone(), x.block_index))
+            }
+            _ => None,
+        };
+        if let Some(k) = key {
+            assert!(blocks.insert(k.clone()), "{when}: two rows of {k:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_rewritten_line_takes_over_its_row_before_the_retract_lands() {
+    let db = common::fresh_db("replaces").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let seqs = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::user_sent("c1", "q"),
+            ev::assistant("m1", json!([ev::text("first")])),
+            ev::assistant("m1", json!([ev::tool_use("tu1", "Bash")])),
+            ev::results(&[("tu1", "out", false)]),
+            ev::assistant("m1", json!([ev::text("after")])),
+        ],
+    )
+    .await;
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 5));
+    let page = async || alice.timeline(id, &ev::tail(500)).await.unwrap();
+    // an overwrite: the rewritten line, then the old line's retract, in one transaction
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::with_meta(
+                ev::assistant("m1", json!([ev::text("first, edited")])),
+                json!({"replaces": seqs[1]}),
+            ),
+            ev::retract(&[seqs[1]]),
+        ],
+    )
+    .await;
+    let p = page().await;
+    assert_unique(&p, "after the overwrite");
+    assert_eq!(p.epoch, "1", "an in-place update is no replacement");
+    assert_eq!(p.rows.len(), 4);
+    assert_eq!(
+        (p.rows[1].seq_start, p.rows[1].seq_end),
+        (2, 6),
+        "the row keeps its identity"
+    );
+    match &p.rows[1].item {
+        RowItem::Assistant(x) => assert_eq!((x.block_index, x.text.as_str()), (0, "first, edited")),
+        other => panic!("{other:?}"),
+    }
+    // a truncate: the rewritten tool line lands now, its old line's retract waits in limbo (another commit)
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::with_meta(
+            ev::assistant("m1", json!([ev::tool_use("tu1", "Bash")])),
+            json!({"replaces": seqs[2]}),
+        ),
+    )
+    .await;
+    let p = page().await;
+    assert_unique(&p, "while the retract waits in limbo");
+    let tu = tool(&p.rows[2]);
+    assert_eq!(
+        (tu.status, tu.result.as_ref().map(|r| r.text.as_str()), tu.block_index),
+        (ToolStatus::Completed, Some("out"), 1),
+        "the row keeps its result"
+    );
+    assert_eq!(
+        epoch_and_head(&sql, id).await,
+        (1, 6),
+        "nothing visible changed: no row seq"
+    );
+    // a new line of the same message while the old line is unretracted counts it once
+    ev::append1(pool, ALICE, id, ev::assistant("m1", json!([ev::text("more")]))).await;
+    let p = page().await;
+    assert_unique(&p, "a later line of the message");
+    match &p.rows.last().unwrap().item {
+        RowItem::Assistant(x) => assert_eq!(x.block_index, 3),
+        other => panic!("{other:?}"),
+    }
+    // the limbo flush: the retract touches no row
+    ev::append1(pool, ALICE, id, ev::retract(&[seqs[2]])).await;
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 7));
+    let p = page().await;
+    assert_unique(&p, "after the flush");
+    assert_eq!(p.rows.len(), 5);
+    assert_eq!(tool(&p.rows[2]).status, ToolStatus::Completed);
+    // an `after` walk from 0 sees each identity once
+    let walk = alice.timeline(id, &ev::after(0, 500)).await.unwrap();
+    let mut latest = std::collections::BTreeMap::new();
+    for r in &walk.rows {
+        latest.insert(r.seq_start, r.clone());
+    }
+    let p = TimelinePage {
+        rows: latest.into_values().collect(),
+        ..walk
+    };
+    assert_unique(&p, "the after walk");
+    // a rewrite that turns a block into another kind replaces the row: a new epoch
+    let last = ev::append1(pool, ALICE, id, ev::assistant("m2", json!([ev::text("x")]))).await;
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::with_meta(
+            ev::assistant("m2", json!([ev::thinking("x")])),
+            json!({"replaces": last}),
+        ),
+    )
+    .await;
+    let p = page().await;
+    assert_unique(&p, "a changed kind");
+    assert_eq!(p.epoch, "2");
+    assert!(matches!(p.rows.last().unwrap().item, RowItem::Reasoning(_)));
+}
+
+#[tokio::test]
+async fn an_event_that_changes_nothing_takes_no_row_seq() {
+    let db = common::fresh_db("noop").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let pigeon = a.pigeon();
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(ev::assistant("m1", json!([ev::tool_use("tb", "Bash")])), turn),
+            ev::task_status("tb", "running"),
+        ],
+    )
+    .await;
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 2));
+    // the same progress report again, a repeated snapshot and result: no new version
+    ev::append1(pool, ALICE, id, ev::task_status("tb", "running")).await;
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 2));
+    ev::append1(pool, ALICE, id, ev::files_sent("tb", "out/a.txt")).await;
+    ev::append1(pool, ALICE, id, ev::files_sent("tb", "out/a.txt")).await;
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 3));
+    // a background launch outlives its canceled turn: it stays running until its notification
+    ev::append1(pool, ALICE, id, ev::turn_ended(turn, "canceled")).await;
+    let p = pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
+    let tb = tool(&p.rows[0]);
+    assert_eq!((tb.status, tb.error.is_none()), (ToolStatus::Running, true));
+    assert_eq!(epoch_and_head(&sql, id).await, (1, 3));
+    ev::append1(pool, ALICE, id, ev::notification("tb", "completed", "done")).await;
+    let p = pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(tool(&p.rows[0]).status, ToolStatus::Completed);
+    // the repeated result is still a source: a retract of the first leaves the result on the row
+    let r = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::results(&[("tb", "started", false)]),
+            ev::results(&[("tb", "started", false)]),
+        ],
+    )
+    .await;
+    let head = epoch_and_head(&sql, id).await.1;
+    ev::append1(pool, ALICE, id, ev::retract(&[r[0]])).await;
+    let p = pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(
+        tool(&p.rows[0]).result.as_ref().map(|x| x.text.as_str()),
+        Some("started")
+    );
+    assert_eq!(epoch_and_head(&sql, id).await, (2, head + 1));
+}
+
 /// A conversation with `turns` turns of 4 rows (prompt, reasoning, tool call, text) and 5 row seqs each (the tool
 /// row's result is its second version).
 async fn preload(pool: &aviary_pg::Pool, id: Uuid, turns: usize) {
@@ -526,6 +728,17 @@ async fn pages_are_exact_with_has_older_and_has_newer() {
             wait_ms: Some(10),
             ..Default::default()
         },
+        // a frame number means nothing without its turn
+        magpie_api::rows::TimelineQuery {
+            after: Some(1),
+            live_after: Some(3),
+            ..Default::default()
+        },
+        magpie_api::rows::TimelineQuery {
+            after: Some(1),
+            live_turn: Some(Uuid::new_v4()),
+            ..Default::default()
+        },
     ] {
         let e = alice.timeline(id, &bad).await.unwrap_err();
         assert_eq!(e.code(), Some(&ErrorCode::BadRequest), "{bad:?}");
@@ -581,7 +794,11 @@ async fn a_long_poll_on_one_replica_answers_within_50ms_of_a_commit_on_another()
     let pigeon = a.pigeon();
     let id = ev::conversation(&pigeon, ALICE).await;
     ev::append1(b.pool(), ALICE, id, ev::user_sent("c0", "hi")).await;
-    for round in 1..=5u64 {
+    // the bound is on the median of the rounds (a shared CI runner can stall one round), with every round well under
+    // the 1 s re-query that would otherwise answer
+    let rounds = 7u64;
+    let mut lags = Vec::new();
+    for round in 1..=rounds {
         let poll = {
             let pigeon = a.pigeon();
             tokio::spawn(async move {
@@ -599,21 +816,28 @@ async fn a_long_poll_on_one_replica_answers_within_50ms_of_a_commit_on_another()
         let (answered, p) = poll.await.unwrap();
         let lag = answered.saturating_duration_since(committed);
         assert!(
-            lag < Duration::from_millis(50),
+            lag < Duration::from_millis(250),
             "round {round}: answered {lag:?} after the commit"
         );
+        lags.push(lag);
         assert_eq!(p.rows.iter().map(|r| r.seq_end).collect::<Vec<_>>(), vec![round + 1]);
     }
+    lags.sort();
+    let median = lags[lags.len() / 2];
+    assert!(
+        median < Duration::from_millis(50),
+        "median wake-up {median:?} (all: {lags:?})"
+    );
     // nothing new: rows [] after waitMs
     let started = Instant::now();
     let p = pigeon
         .person(ALICE)
-        .timeline(id, &ev::after_wait(6, 400))
+        .timeline(id, &ev::after_wait(rounds + 1, 400))
         .await
         .unwrap();
     assert!(p.rows.is_empty());
     assert!(started.elapsed() >= Duration::from_millis(400));
-    assert_eq!(p.max_seq, 6);
+    assert_eq!(p.max_seq, rounds + 1);
 }
 
 #[tokio::test]

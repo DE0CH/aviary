@@ -44,6 +44,12 @@ pub fn meta_of(meta: Option<&Value>) -> EventMeta {
         .unwrap_or_default()
 }
 
+/// The version of the derivation (rules 1-10) a row was made or last updated by, stored in `rows.derivation`. A
+/// release that changes what an event makes of a row raises it and ships a job that rebuilds the rows below it
+/// from their events (the projection never re-derives stored rows by itself; magpie 7.3 changes them only on an
+/// event).
+pub const DERIVATION: i16 = 1;
+
 /// A new row.
 struct NewRow {
     item: RowItem,
@@ -89,8 +95,8 @@ impl Writer {
         let item = serde_json::to_value(&r.item)?;
         tx.execute(
             "insert into rows (conversation_id, row_id, seq_end, kind, at, turn_id, item, source_seqs, tool_use_id,
-                               message_id, block_index, is_prompt, seqs)
-             values ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, array[$2::bigint])",
+                               message_id, block_index, is_prompt, seqs, derivation)
+             values ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, array[$2::bigint], $12)",
             &[
                 &self.conversation,
                 &seq,
@@ -103,6 +109,7 @@ impl Writer {
                 &r.message_id,
                 &r.block_index,
                 &r.is_prompt,
+                &DERIVATION,
             ],
         )
         .await?;
@@ -122,15 +129,64 @@ impl Writer {
 
     /// A new version of tool row `row_id` with `item` and the given sources.
     async fn update(&mut self, tx: &Tx<'_>, row_id: i64, item: &ToolItem, sources: &[i64]) -> Result<()> {
+        self.update_row(tx, row_id, &RowItem::Tool(item.clone()), sources).await
+    }
+
+    /// A new version of row `row_id` (of the same kind) with `item` and the given sources.
+    async fn update_row(&mut self, tx: &Tx<'_>, row_id: i64, item: &RowItem, sources: &[i64]) -> Result<()> {
         let seq = self.next_seq(tx).await?;
-        let item = serde_json::to_value(RowItem::Tool(item.clone()))?;
+        let item = serde_json::to_value(item)?;
         tx.execute(
-            "update rows set item = $3, seq_end = $4, seqs = seqs || $4::bigint, source_seqs = $5
+            "update rows set item = $3, seq_end = $4, seqs = seqs || $4::bigint, source_seqs = $5, derivation = $6
              where conversation_id = $1 and row_id = $2",
-            &[&self.conversation, &row_id, &item, &seq, &sources],
+            &[&self.conversation, &row_id, &item, &seq, &sources, &DERIVATION],
         )
         .await?;
         self.issue(tx, seq, row_id).await
+    }
+
+    /// The sources of row `row_id` change and its item does not: no new version, no row seq (an event that
+    /// repeats what the row already shows is still a source a rebuild reads).
+    async fn set_sources(&self, tx: &Tx<'_>, row_id: i64, sources: &[i64]) -> Result<()> {
+        tx.execute(
+            "update rows set source_seqs = $3 where conversation_id = $1 and row_id = $2",
+            &[&self.conversation, &row_id, &sources],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Deletes row `row_id` (its seqs leave the timeline: the caller bumps the epoch).
+    async fn delete(&self, tx: &Tx<'_>, row_id: i64) -> Result<()> {
+        tx.execute(
+            "delete from rows where conversation_id = $1 and row_id = $2",
+            &[&self.conversation, &row_id],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// `epoch + 1` and a `timeline_replaced` change (rule 9: a visible row was deleted or rebuilt).
+    async fn replace_epoch(&mut self, tx: &Tx<'_>) -> Result<()> {
+        let row = tx
+            .query_one(
+                "update conversations set epoch = epoch + 1 where id = $1 returning epoch, person",
+                &[&self.conversation],
+            )
+            .await?;
+        let epoch: i64 = row.get(0);
+        let person: String = row.get(1);
+        changes::emit(
+            tx,
+            &person,
+            self.conversation,
+            &ChangeBody::TimelineReplaced {
+                epoch: epoch.to_string(),
+            },
+        )
+        .await?;
+        self.wrote = true;
+        Ok(())
     }
 }
 
@@ -173,11 +229,18 @@ async fn update_tool(
     let Some(mut row) = tool_row(tx, w.conversation, tool_use_id).await? else {
         return Ok(());
     };
+    let before = row.item.clone();
     if derive::apply(&mut row.item, body, meta) {
-        if !row.sources.contains(&ev.seq) {
+        let new_source = !row.sources.contains(&ev.seq);
+        if new_source {
             row.sources.push(ev.seq);
         }
-        w.update(tx, row.row_id, &row.item, &row.sources).await?;
+        if row.item != before {
+            w.update(tx, row.row_id, &row.item, &row.sources).await?;
+        } else if new_source {
+            // nothing visible changed (a repeated progress report, result or snapshot): no row seq
+            w.set_sources(tx, row.row_id, &row.sources).await?;
+        }
     }
     Ok(())
 }
@@ -320,73 +383,225 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
     Ok(())
 }
 
+/// A row made from the line a rewritten line replaces, as rule 4 finds it to take it over.
+struct OldRow {
+    row_id: i64,
+    kind: String,
+    item: RowItem,
+    sources: Vec<i64>,
+    tool_use_id: Option<String>,
+    block_index: Option<i32>,
+}
+
+/// The line a rewritten line of message `mid` replaces (`meta.replaces = seq`), when it is a line of the same
+/// message: `(still counts, where it stands)`. `None` for any other event (the `replaces` is ignored).
+async fn replaced_line(tx: &Tx<'_>, conversation: Uuid, seq: i64, mid: &str) -> Result<Option<(bool, i64)>> {
+    Ok(tx
+        .query_opt(
+            "select not exists (select 1 from retracted r where r.conversation_id = e.conversation_id and r.seq = e.seq),
+                    coalesce(p.pos, e.seq)
+             from events e
+             left join line_pos p on p.conversation_id = e.conversation_id and p.seq = e.seq
+             where e.conversation_id = $1 and e.seq = $2 and e.kind = 'cc.assistant'
+               and (e.data->'message'->>'id') = $3",
+            &[&conversation, &seq, &mid],
+        )
+        .await?
+        .map(|r| (r.get(0), r.get(1))))
+}
+
+/// The rows whose identifying event is `seq`, by block index.
+async fn rows_of(tx: &Tx<'_>, conversation: Uuid, seq: i64) -> Result<Vec<OldRow>> {
+    tx.query(
+        "select row_id, kind, item, source_seqs, tool_use_id, block_index from rows
+         where conversation_id = $1 and source_seqs[1] = $2 order by row_id",
+        &[&conversation, &seq],
+    )
+    .await?
+    .into_iter()
+    .map(|r| {
+        Ok(OldRow {
+            row_id: r.get(0),
+            kind: r.get(1),
+            item: serde_json::from_value(r.get(2))?,
+            sources: r.get(3),
+            tool_use_id: r.get(4),
+            block_index: r.get(5),
+        })
+    })
+    .collect()
+}
+
+/// Where a line of message `mid` stands, and the rows it takes over: `(position, rows of the replaced line,
+/// whether it takes them over)`. Its position is its own seq, or where the line it rewrites (`replaced`, a line of
+/// the same message) stood, recorded in `line_pos`; when that line still counts it is recorded in `retracted` and
+/// its rows are handed over.
+async fn place(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    seq: i64,
+    replaced: Option<i64>,
+    mid: &str,
+) -> Result<(i64, Vec<OldRow>, bool)> {
+    let Some(r) = replaced else {
+        return Ok((seq, Vec::new(), false));
+    };
+    let Some((counts, pos)) = replaced_line(tx, conversation, r, mid).await? else {
+        return Ok((seq, Vec::new(), false));
+    };
+    tx.execute(
+        "insert into line_pos (conversation_id, seq, pos) values ($1, $2, $3)",
+        &[&conversation, &seq, &pos],
+    )
+    .await?;
+    if !counts {
+        return Ok((pos, Vec::new(), false));
+    }
+    tx.execute(
+        "insert into retracted (conversation_id, seq) values ($1, $2) on conflict do nothing",
+        &[&conversation, &r],
+    )
+    .await?;
+    Ok((pos, rows_of(tx, conversation, r).await?, true))
+}
+
 /// Rule 4: one row per non-empty block of an assistant line; a tool row picks up a sent-file snapshot that came
 /// first; the block's live frames are deleted with the durable row's insert (magpie 7.5 supersede).
+///
+/// A line with `meta.replaces = R` (Claude Code rewrote line R: an overwrite, a rename-over, a truncate whose
+/// limbo is not yet flushed) is R's successor: when R is a line of the same message, the new line stands where R
+/// stood (`line_pos`; its blocks count there for the block index of every line). When R still counts, the new
+/// line takes over R's rows in this transaction, before R's retract lands: R counts as gone from now on (block
+/// indexes, rebuilds; it is recorded in `retracted`), a row of R at the same block index and of the same kind
+/// (the same call, for a tool row) is updated in place at a new row seq and keeps its `row_id` (a tool row keeps
+/// its later results, snapshots and task reports, rebuilt from them), or keeps its version when nothing visible
+/// changed; a row of R the new line has no block for is deleted (a new epoch, as rule 9). R's retract then touches
+/// no row. So no commit ever shows two rows with one `(messageId, blockIndex)` or two tool rows with one `callId`.
 async fn assistant(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, line: &Value, meta: &EventMeta) -> Result<()> {
     let Some(mid) = derive::message_id(line) else {
         return Ok(());
     };
-    // the blocks of earlier lines of the same message that still count (Claude Code writes one line per block); a
-    // line that replaces a retracted one (a rewrite put it back) counts from where that one stood
-    let bound = meta
+    let replaced = meta
         .replaces
         .and_then(|r| i64::try_from(r).ok())
-        .filter(|r| *r < ev.seq)
-        .unwrap_or(ev.seq);
+        .filter(|r| *r < ev.seq);
+    let (bound, old, takeover) = place(tx, w.conversation, ev.seq, replaced, mid).await?;
+    let mut old = old;
+    // the blocks of the message's lines that still count and stand before this one (Claude Code writes one line
+    // per block)
     let first: i64 = tx
         .query_one(
             "select coalesce(sum(case when jsonb_typeof(e.data->'message'->'content') = 'array'
                                       then jsonb_array_length(e.data->'message'->'content') else 1 end), 0)::bigint
              from events e
+             left join line_pos p on p.conversation_id = e.conversation_id and p.seq = e.seq
              where e.conversation_id = $1 and e.kind = 'cc.assistant' and (e.data->'message'->>'id') = $2
-               and e.seq < $3
+               and coalesce(p.pos, e.seq) < $3
                and not exists (select 1 from retracted r where r.conversation_id = e.conversation_id and r.seq = e.seq)",
             &[&w.conversation, &mid, &bound],
         )
         .await?
         .get(0);
     let first = u32::try_from(first).unwrap_or(u32::MAX);
-    for b in derive::assistant(line, meta, first) {
-        let mut item = b.item;
-        let mut sources = vec![ev.seq];
-        if let (Some(id), RowItem::Tool(t)) = (&b.tool_use_id, &mut item)
-            && let Some(sent) = tx
-                .query_opt(
-                    "select e.seq, e.data from events e
-                     where e.conversation_id = $1 and e.kind = 'files.sent' and (e.data->>'toolUseId') = $2
-                     order by e.seq desc limit 1",
-                    &[&w.conversation, id],
-                )
-                .await?
-        {
-            // rule 6's snapshot came before its tool row
-            let data: Value = sent.get(1);
-            if let EventBody::FilesSent(f) = body_of("files.sent", &data)? {
-                derive::apply_sent(t, &f);
-                sources.push(sent.get(0));
-            }
-        }
-        let block_index = i32::try_from(b.block_index).unwrap_or(i32::MAX);
-        w.insert(
-            tx,
-            NewRow {
-                item,
-                at: ev.event.at,
-                turn_id: ev.event.turn_id,
-                sources,
-                tool_use_id: b.tool_use_id,
-                message_id: Some(mid.to_owned()),
-                block_index: Some(block_index),
-                is_prompt: false,
-            },
+    let gone: Vec<i64> = if takeover {
+        tx.query(
+            "select seq from retracted where conversation_id = $1",
+            &[&w.conversation],
         )
-        .await?;
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    let mut replaced_rows = false;
+    for b in derive::assistant(line, meta, first) {
+        let block_index = i32::try_from(b.block_index).unwrap_or(i32::MAX);
+        let kind = b.item.kind().unwrap_or_default();
+        let same = old
+            .iter()
+            .position(|o| o.block_index == Some(block_index) && o.kind == kind && o.tool_use_id == b.tool_use_id);
+        if let Some(i) = same {
+            let o = old.remove(i);
+            let (item, sources) = match (&b.item, &b.tool_use_id) {
+                (RowItem::Tool(_), Some(id)) => {
+                    let mut sources = vec![ev.seq];
+                    sources.extend(o.sources.iter().skip(1).copied());
+                    match rebuild_tool(tx, w.conversation, id, b.block_index, &sources, &gone).await? {
+                        Some((t, kept)) => (RowItem::Tool(t), kept),
+                        None => (b.item.clone(), vec![ev.seq]),
+                    }
+                }
+                _ => (b.item.clone(), vec![ev.seq]),
+            };
+            if item == o.item {
+                w.set_sources(tx, o.row_id, &sources).await?;
+            } else {
+                w.update_row(tx, o.row_id, &item, &sources).await?;
+            }
+        } else {
+            if let Some(i) = old.iter().position(|o| o.block_index == Some(block_index)) {
+                // R's row at this index is of another kind or another call: it goes (a new epoch below)
+                let o = old.remove(i);
+                w.delete(tx, o.row_id).await?;
+                replaced_rows = true;
+            }
+            insert_block(tx, w, ev, mid, b).await?;
+        }
         tx.execute(
             "delete from live_frames where conversation_id = $1 and message_id = $2 and block_index = $3",
             &[&w.conversation, &mid, &block_index],
         )
         .await?;
     }
+    for o in old {
+        // a block of R that the rewritten line no longer has
+        w.delete(tx, o.row_id).await?;
+        replaced_rows = true;
+    }
+    if replaced_rows {
+        w.replace_epoch(tx).await?;
+    }
+    Ok(())
+}
+
+/// Rule 4's new row for one block.
+async fn insert_block(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, mid: &str, b: derive::BlockRow) -> Result<()> {
+    let mut item = b.item;
+    let mut sources = vec![ev.seq];
+    if let (Some(id), RowItem::Tool(t)) = (&b.tool_use_id, &mut item)
+        && let Some(sent) = tx
+            .query_opt(
+                "select e.seq, e.data from events e
+                 where e.conversation_id = $1 and e.kind = 'files.sent' and (e.data->>'toolUseId') = $2
+                 order by e.seq desc limit 1",
+                &[&w.conversation, id],
+            )
+            .await?
+    {
+        // rule 6's snapshot came before its tool row
+        let data: Value = sent.get(1);
+        if let EventBody::FilesSent(f) = body_of("files.sent", &data)? {
+            derive::apply_sent(t, &f);
+            sources.push(sent.get(0));
+        }
+    }
+    let block_index = i32::try_from(b.block_index).unwrap_or(i32::MAX);
+    w.insert(
+        tx,
+        NewRow {
+            item,
+            at: ev.event.at,
+            turn_id: ev.event.turn_id,
+            sources,
+            tool_use_id: b.tool_use_id,
+            message_id: Some(mid.to_owned()),
+            block_index: Some(block_index),
+            is_prompt: false,
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -435,35 +650,12 @@ async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>) -> Result<()> {
         };
         match rebuilt {
             Some((item, surviving)) => w.update(tx, row_id, &item, &surviving).await?,
-            None => {
-                tx.execute(
-                    "delete from rows where conversation_id = $1 and row_id = $2",
-                    &[&w.conversation, &row_id],
-                )
-                .await?;
-            }
+            None => w.delete(tx, row_id).await?,
         }
         changed = true;
     }
     if changed {
-        let row = tx
-            .query_one(
-                "update conversations set epoch = epoch + 1 where id = $1 returning epoch, person",
-                &[&w.conversation],
-            )
-            .await?;
-        let epoch: i64 = row.get(0);
-        let person: String = row.get(1);
-        changes::emit(
-            tx,
-            &person,
-            w.conversation,
-            &ChangeBody::TimelineReplaced {
-                epoch: epoch.to_string(),
-            },
-        )
-        .await?;
-        w.wrote = true;
+        w.replace_epoch(tx).await?;
     }
     Ok(())
 }
