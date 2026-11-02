@@ -1,0 +1,7 @@
+{"writeback_between": false, "first_rsync_files": 1, "mtime_changed_by_second_write": false, "final_rsync_files": 0, "src_len": 56, "dst_len": 0, "files_equal": false}
+{"writeback_between": false, "first_rsync_files": 1, "mtime_changed_by_second_write": false, "final_rsync_files": 0, "src_len": 56, "dst_len": 0, "files_equal": false}
+{"writeback_between": false, "first_rsync_files": 1, "mtime_changed_by_second_write": false, "final_rsync_files": 0, "src_len": 56, "dst_len": 0, "files_equal": false}
+{"writeback_between": true, "first_rsync_files": 1, "mtime_changed_by_second_write": true, "final_rsync_files": 1, "src_len": 56, "dst_len": 56, "files_equal": true}
+6.8.0-138-generic
+rsync  version 3.2.7  protocol version 31
+ext4

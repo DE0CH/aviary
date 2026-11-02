@@ -1,0 +1,1 @@
+{"name":"o92","mib":32,"dirty_mib":128,"runsc":"precopy-20261021.2","faults":0,"last_iteration":37,"receive":{"from":"[<host-ipv6>]:53840","bytes":324442722,"page_bytes":323903488,"zero_bytes":130453504,"file_bytes":524244,"rounds":2,"total_ms":839.996,"final_ms":128.86,"restore_ms":80.79}}

@@ -81,7 +81,7 @@ receive)
 send-scratch)
   host=$3 port=$4; sd=/var/lib/gate/scratch/$name; h=$host; [[ $h == *:* ]] && h="[$h]"; url="rsync://$h:$port/scratch/"
   ms() { date +%s%3N; }
-  rs() { rsync -aHAX --numeric-ids --delete --exclude=/lost+found --stats --timeout=120 --contimeout=10 "$sd/" "$url"; }
+  rs() { rsync -aHAX --numeric-ids --delete --exclude=/lost+found --stats --timeout=120 --contimeout=10 "$@" "$sd/" "$url"; }
   stat_of() { awk -F': ' '/^Number of regular files transferred:/{gsub(/,/,"",$2); f=$2} /^Total transferred file size:/{gsub(/[,a-z ]/,"",$2); b=$2} END{printf "{\"files\":%d,\"bytes\":%d", f, b}'; }
   live="["
   for i in 1 2 3; do  # SCRATCH_LIVE_ROUNDS; stop once a round is small (< 32 MiB and < 2,000 files)
@@ -95,14 +95,22 @@ send-scratch)
   "${RUNSC[@]}" checkpoint --migrate-to "[$host]:$port" --migrate-downtime "${5:-100ms}" --migrate-max-rounds 20 "$name" >&2
   t2=$(ms)
   "${RUNSC[@]}" delete -force "$name" 2>/dev/null & dp=$!
-  o=$(rs); fin=$(echo "$o" | stat_of); t3=$(ms)
+  # The final delta compares contents (--checksum), not size and mtime: a write through a MAP_SHARED mapping to a page
+  # that is already dirty does not change the file's mtime, so the quick check skips the file (WP-57, mmap-rsync.sh).
+  # FINAL_QUICK=1 keeps sandboxd's quick check (to reproduce that).
+  fx=(--checksum); [ -n "${FINAL_QUICK:-}" ] && fx=()
+  o=$(rs "${fx[@]}"); fin=$(echo "$o" | stat_of); t3=$(ms)
   wait $dp || true
+  # Every scratch file, source against destination, while both are stopped (before SBXDONE starts the restore)
+  sh_of() { (cd "$1" && find . -type f ! -path './lost+found/*' -print0 | sort -z | xargs -0 -r sha256sum); }
+  diff_files=$(diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate/scratch/$name") | awk '/^</{print $3}' | sort -u | paste -sd, -)
+  t3b=$(ms)
   ok=$(python3 -c "
 import socket,sys
 c=socket.create_connection(('$host',$port),10); c.settimeout(30); c.sendall(b'SBXDONE!')
 print(c.recv(2).decode())")
   t4=$(ms)
-  echo "{\"live_rounds\":$live,\"checkpoint_ms\":$((t2-t1)),\"final_rsync\":$fin,\"ms\":$((t3-t2))},\"done_reply\":\"$ok\",\"stopped_until_done_ms\":$((t4-t2))}"
+  echo "{\"live_rounds\":$live,\"checkpoint_ms\":$((t2-t1)),\"final_rsync\":$fin,\"ms\":$((t3-t2)),\"checksum\":$([ ${#fx[@]} = 0 ] && echo false || echo true)},\"files_differing_after_final\":\"$diff_files\",\"compare_ms\":$((t3b-t3)),\"done_reply\":\"$ok\",\"stopped_until_done_ms\":$((t4-t2))}"
   ;;
 receive-relay)
   port=$3; dir=/run/gate/ckpt/in-$name; rm -rf "$dir"; mkdir -p /var/log/gate

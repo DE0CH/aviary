@@ -4,7 +4,7 @@
 # sandbox image unpacked as a rootfs, and a tmpfs for checkpoint images. Run as root.
 # Usage: host-setup.sh <sandbox image ref> [release tag]
 set -euo pipefail
-IMAGE=${1:?image}; GV=${2:-precopy-20261021.2}
+IMAGE=${1:?image}; GV=${2:-precopy-20261102.1}
 export DEBIAN_FRONTEND=noninteractive
 apt-get -qq update || true
 apt-get -qq install -y jq zstd python3 strace >/dev/null

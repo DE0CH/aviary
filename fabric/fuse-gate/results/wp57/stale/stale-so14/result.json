@@ -1,0 +1,1 @@
+{"name":"so14","mib":32,"dirty_mib":128,"runsc":"precopy-20261021.2","faults":0,"last_iteration":34,"receive":{"from":"[<host-ipv6>]:47884","bytes":187274731,"page_bytes":186753024,"zero_bytes":612184064,"file_bytes":510168,"rounds":2,"total_ms":506.236,"final_ms":86.326,"restore_ms":80.308}}

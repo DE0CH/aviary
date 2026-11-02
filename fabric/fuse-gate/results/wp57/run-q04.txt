@@ -1,0 +1,18 @@
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+FetchSpec failed: loading container: file does not exist
+{"layout":"scratch","runsc_extra":"","hold":1,"mode":"fuse","send_ms":1081,"total_ms":899696,"release_to_turn_done_ms":557,"migrate_start_us":1793637940190000}
+
+{"uniques":0,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793637940190000,"requests_before":0,"max_unique_before":null,"requests_after":0,"min_unique_after":null,"increasing":true}]}
+FAIL: no driver summary within 120 s of the release;the blocked append never returned;a transcript differs from magpie's copy;

@@ -1,0 +1,1 @@
+{"name":"sn23","mib":32,"dirty_mib":128,"runsc":"precopy-20261102.1","faults":0,"last_iteration":37,"receive":{"from":"[<host-ipv6>]:41572","bytes":573901195,"page_bytes":573362176,"zero_bytes":261718016,"file_bytes":520302,"rounds":1,"final_page_bytes":62152704,"final_zero_bytes":108785664,"total_ms":1056.665,"final_ms":199.9,"restore_ms":68.423}}

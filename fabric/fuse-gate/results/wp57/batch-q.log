@@ -1,0 +1,13 @@
+q01 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q02 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q03 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q04 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=1 FAIL: no driver summary within 120 s of the release;the blocked append never returned;a transcript differs from magpie's copy;
+q05 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q06 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q07 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q08 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q09 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q10 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q11 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+q12 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+done

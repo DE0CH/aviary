@@ -1,0 +1,11 @@
+{"msg":"migrate-relay: timed out"}
+2026/11/02 16:45:40 [39216] connect from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39216] rsync allowed access on module scratch from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39216] rsync to scratch/ from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39216] receiving file list
+2026/11/02 16:45:40 [39216] sent 460 bytes  received 17235017 bytes  total size 17228582
+2026/11/02 16:45:40 [39219] connect from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39219] rsync allowed access on module scratch from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39219] rsync to scratch/ from UNDETERMINED (<host-ipv6>)
+2026/11/02 16:45:40 [39219] receiving file list
+2026/11/02 16:45:40 [39219] sent 289 bytes  received 1387 bytes  total size 17228773

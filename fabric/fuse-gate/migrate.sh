@@ -10,6 +10,9 @@
 # HOLD=0: no hold, no blocked append, no probe (a control: migration with nothing held in the supervisor).
 # HOLD=2: the matched control: the same 3 x 1 MiB append process and the probe as HOLD=1, but the fake magpie does
 #   not hold (the append completes before the checkpoint; nothing is held in the supervisor across it).
+# HOLD=3: HOLD=2 plus a process that rewrites DIRTY_MIB (default 125) MiB of its memory throughout (stale.py --dirty),
+#   so the last memory round is about as large as with the hold (WP-57: separates "requests held across the
+#   checkpoint" from "a final round with about 125 MB more pages").
 # MODE=local: Claude Code's HOME on the sandbox's /tmp (no FUSE in its path; a control). RESTORE_DEBUG=1: the target
 #   restores with runsc --debug and the faults it logs are collected (debug-faults.txt).
 # GATE_RUNSC_EXTRA: extra runsc flags on both hosts (an experiment, e.g. --systrap-disable-syscall-patching).
@@ -47,6 +50,7 @@ x sh -c "echo start > ~/.claude/blocked.jsonl; echo probe > ~/.claude/keeper-pro
 sleep 2.5
 if [ "$hold" != 0 ]; then
   [ "$hold" = 1 ] && r touch /run/magpie-ctl/hold
+  [ "$hold" = 3 ] && job dirty "python3 /media/stale.py --dirty ${DIRTY_MIB:-125}"
   job blocked "python3 /media/killtest.py append-existing /home/sandbox/.claude/blocked.jsonl 3 1048576 > /tmp/blocked.json"
 fi
 sleep 8
@@ -111,6 +115,7 @@ fi
 [ -s "$out/blocked.json" ] && { jq -e .exact "$out/blocked.json" >/dev/null || fail+=("the blocked append is not exact"); }
 [ "$mode" = local ] || jq -e '[.files[] | select(.path|endswith(".jsonl")) | .equal_to_magpie] | all' "$out/report.json" >/dev/null || fail+=("a transcript differs from magpie's copy")
 python3 ./uniques.py "$out/ops.tsv" "${t0}000" > "$out/uniques.json" || fail+=("unique check failed: $(cat "$out/uniques.json")")
+[ "$layout" = scratch ] && { d=$(jq -r '.files_differing_after_final // ""' "$out/send.json" 2>/dev/null); [ -n "$d" ] && fail+=("scratch files differ from the source after the final delta: $d"); }
 [ -s "$out/exits.log" ] && fail+=("an in-sandbox process exited: $(tr '\n' ';' < "$out/exits.log")")
 # a thread that panicked or a request read incompletely does not end a process; the supervisor's log says so
 grep -E 'panicked|short read|exited status' "$out/supervisor.log" > "$out/supervisor-faults.txt" && fail+=("the supervisor logged a fault: $(head -n 3 "$out/supervisor-faults.txt" | tr '\n' ';')")
@@ -121,6 +126,6 @@ cat "$out/times.json" "$out/receive.json"; echo; [ -s "$out/send.json" ] && cat 
 jq -c '{turns: [.turns[].result], exit}' "$out/drive.json" 2>/dev/null; jq -c '{exact, writes}' "$out/blocked.json" 2>/dev/null; cat "$out/probe.json"
 grep -P '\tINTERRUPT\t' "$out/ops.tsv" | cut -f2,5
 jq -c '{uniques, replayed_lines, repeat_count, boundaries}' "$out/uniques.json"
-"${SSH[@]}" "cd /root/gate && ./gate.sh rm $name"
+"${SSH[@]}" "cd /root/gate && ./gate.sh rm $name; rm -rf /run/gate/ckpt/in-$name"
 if [ -s "$out/failures.txt" ] && [ "$(wc -c < "$out/failures.txt")" -gt 1 ]; then echo "FAIL: $(tr '\n' ';' < "$out/failures.txt")"; exit 1; fi
 echo PASS
