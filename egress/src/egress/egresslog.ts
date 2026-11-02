@@ -2,7 +2,10 @@
 // written in order, in batches (every second, at 200 rows, and at once for a model row: its cost counts toward the
 // budget). A database outage never stops a request (aviary platform spec 17.2 item 8): unwritten rows stay in memory,
 // at most MAX_BUFFERED, the oldest non-model row dropped first when full (counted) and never a model row, and are
-// written in order once the database is back.
+// written in order once the database is back. A row Postgres refuses as data (SQLSTATE class 22 or 23) is a bad row,
+// not an outage: it is found by writing its batch row by row, dropped and counted, and the rows after it go on. Rows
+// are cleaned in add() first (port 1-65535 or null, no NUL in text, lengths capped), so a sandbox's odd request (a
+// CONNECT to port 99999999999, a model name with \u0000) never reaches that path in practice.
 import type { Db } from "./db.ts";
 import { logError, log } from "../common/log.ts";
 
@@ -37,6 +40,45 @@ const COLS = ["at", "conversation_id", "sandbox_id", "kind", "method", "host", "
 export const MAX_BUFFERED = 50_000;
 const BATCH = 500;
 
+/** Text columns and their caps (characters). */
+const TEXT_CAPS = { method: 32, host: 300, path: 2000, decision: 64, model: 200, person: 320, request: 64 } as const;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INT4_MAX = 2_147_483_647;
+
+const text = (v: string | null | undefined, cap: number): string | null => (typeof v === "string" ? v.replace(/\u0000/g, "").slice(0, cap) : null);
+const int = (v: number | null | undefined, max = INT4_MAX): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max ? v : null);
+const big = (v: number | null | undefined): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null);
+
+/** A row Postgres accepts whatever a sandbox sent: an out-of-range number is null, text has no NUL and is capped. */
+export function cleanRow(r: EgressRow): EgressRow {
+  const at = r.at instanceof Date && !Number.isNaN(r.at.getTime()) ? r.at : new Date();
+  return {
+    at,
+    conversation_id: typeof r.conversation_id === "string" && UUID.test(r.conversation_id) ? r.conversation_id : null,
+    sandbox_id: typeof r.sandbox_id === "string" && UUID.test(r.sandbox_id) ? r.sandbox_id : null,
+    kind: r.kind,
+    method: text(r.method, TEXT_CAPS.method),
+    host: text(r.host, TEXT_CAPS.host) || "-",
+    port: typeof r.port === "number" && Number.isInteger(r.port) && r.port >= 1 && r.port <= 65535 ? r.port : null,
+    path: text(r.path, TEXT_CAPS.path),
+    status: int(r.status, 999),
+    decision: text(r.decision, TEXT_CAPS.decision) || "-",
+    bytes_up: big(r.bytes_up),
+    bytes_down: big(r.bytes_down),
+    ms: int(r.ms),
+    cost_usd: typeof r.cost_usd === "number" && Number.isFinite(r.cost_usd) ? r.cost_usd : null,
+    model: text(r.model, TEXT_CAPS.model),
+    person: text(r.person, TEXT_CAPS.person),
+    request: text(r.request, TEXT_CAPS.request),
+  };
+}
+
+/** Postgres refused the data itself (data exception 22, integrity 23): retrying the same row can never succeed. */
+export function isDataError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  return typeof code === "string" && /^2[23][0-9A-Z]{3}$/.test(code);
+}
+
 export class EgressLog {
   readonly #db: Db;
   readonly #max: number;
@@ -48,6 +90,8 @@ export class EgressLog {
   #running: Promise<void> | null = null;
   #failing = false;
   written = 0;
+  /** rows Postgres refused as data (also counted in `dropped` by kind) */
+  rejected = 0;
   readonly dropped: Record<string, number> = {};
 
   constructor(db: Db, max = MAX_BUFFERED) {
@@ -60,8 +104,8 @@ export class EgressLog {
     return this.#buf.length + this.#inflight.length;
   }
 
-  add(row: EgressRow): void {
-    row.at ??= new Date();
+  add(raw: EgressRow): void {
+    const row = cleanRow(raw);
     this.#buf.push(row);
     if (this.buffered > this.#max) {
       const i = this.#buf.findIndex((r) => r.kind !== "model");
@@ -111,31 +155,59 @@ export class EgressLog {
 
   #queued: Promise<void> | null = null;
 
+  async #insert(rows: EgressRow[]): Promise<void> {
+    const vals: unknown[] = [];
+    const tuples = rows.map((r, i) => {
+      for (const c of COLS) vals.push(r[c] ?? null);
+      return `(${COLS.map((_, j) => `$${i * COLS.length + j + 1}`).join(",")})`;
+    });
+    await this.#db.query(`insert into egress_log (${COLS.join(",")}) values ${tuples.join(",")}`, vals);
+  }
+
+  #writing(): void {
+    if (this.#failing) {
+      this.#failing = false;
+      log("egress log writing again", { buffered: this.buffered });
+    }
+  }
+
+  /** The database is away: `rows` go back in front, in order, and the next try is in 1 s. */
+  #outage(rows: EgressRow[], e: unknown): void {
+    this.#buf = [...rows, ...this.#buf];
+    this.#inflight = [];
+    if (!this.#failing) logError("egress log insert", e, { buffered: this.buffered });
+    this.#failing = true;
+    this.#schedule(1000);
+  }
+
   async #drainBuffer(): Promise<void> {
     while (this.#buf.length) {
       this.#inflight = this.#buf.splice(0, BATCH);
       const rows = this.#inflight;
-      const vals: unknown[] = [];
-      const tuples = rows.map((r, i) => {
-        for (const c of COLS) vals.push(c === "path" && r.path ? r.path.slice(0, 2000) : (r[c] ?? null));
-        return `(${COLS.map((_, j) => `$${i * COLS.length + j + 1}`).join(",")})`;
-      });
       try {
-        await this.#db.query(`insert into egress_log (${COLS.join(",")}) values ${tuples.join(",")}`, vals);
+        await this.#insert(rows);
         this.written += rows.length;
         this.#inflight = [];
-        if (this.#failing) {
-          this.#failing = false;
-          log("egress log writing again", { buffered: this.buffered });
-        }
+        this.#writing();
+        continue;
       } catch (e) {
-        this.#buf = [...rows, ...this.#buf];
-        this.#inflight = [];
-        if (!this.#failing) logError("egress log insert", e, { buffered: this.buffered });
-        this.#failing = true;
-        this.#schedule(1000);
-        return;
+        if (!isDataError(e)) return this.#outage(rows, e);
       }
+      // a bad row in the batch: write it row by row, drop what Postgres refuses as data
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i]!;
+        try {
+          await this.#insert([r]);
+          this.written++;
+        } catch (e) {
+          if (!isDataError(e)) return this.#outage(rows.slice(i), e);
+          this.dropped[r.kind] = (this.dropped[r.kind] ?? 0) + 1;
+          this.rejected++;
+          logError("egress log row refused", e, { kind: r.kind, decision: r.decision, status: r.status, request: r.request });
+        }
+      }
+      this.#inflight = [];
+      this.#writing();
     }
   }
 

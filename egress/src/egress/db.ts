@@ -1,6 +1,8 @@
 // egress's own database `egress` (aviary platform spec 17.2 item 5, DESIGN 5.4): `egress_log` and `budget_state`, with
 // migrations of these tables only, under egress's own advisory lock. Never edit a shipped migration: add the next one.
+import { createHash } from "node:crypto";
 import pg from "pg";
+import { log } from "../common/log.ts";
 
 export type Db = pg.Pool;
 
@@ -47,27 +49,48 @@ export function connect(url: string | undefined): Db {
   return pool;
 }
 
-/** Applies the missing migrations (two replicas starting at once apply each exactly once) and verifies the schema
- * is this build's: a database migrated by a newer build is a start failure. */
-export async function migrate(db: Db): Promise<void> {
+/** sha256 (hex) of a migration's SQL, recorded with it: a recorded migration whose SQL changed is a start failure. */
+export function migrationSha(sql: string): string {
+  return createHash("sha256").update(sql).digest("hex");
+}
+
+/** Applies the missing migrations (two replicas starting at once apply each exactly once). A database at a newer
+ * migration than this build knows is accepted (aviary-pg's rule: migrations are expand-only within a release, so an
+ * older build works on a newer schema; a rollback or an old pod restarting mid-rollout serves). An edited history is
+ * a start failure: a recorded migration this build knows whose sha256 differs from this build's. Returns what it
+ * applied. */
+export async function migrate(db: Db, migrations: readonly string[] = MIGRATIONS): Promise<number[]> {
   const c = await db.connect();
+  const applied: number[] = [];
   try {
     await c.query("select pg_advisory_lock($1)", [MIGRATION_LOCK]);
     await c.query("create table if not exists egress_migrations (version int primary key, applied_at timestamptz not null default now())");
-    const { rows } = await c.query<{ v: number | null }>("select max(version) as v from egress_migrations");
-    const have = rows[0]?.v ?? 0;
-    if (have > MIGRATIONS.length) throw new Error(`egress database is at migration ${have}, this build knows ${MIGRATIONS.length}`);
-    for (let v = have + 1; v <= MIGRATIONS.length; v++) {
+    // expand-only: rows recorded before the column existed get their sha256 filled in by the first build that knows it
+    await c.query("alter table egress_migrations add column if not exists sha256 text");
+    const { rows } = await c.query<{ version: number; sha256: string | null }>("select version, sha256 from egress_migrations order by version");
+    const have = new Map(rows.map((r) => [r.version, r.sha256]));
+    const newest = rows.at(-1)?.version ?? 0;
+    for (const [v, sha] of have) {
+      if (v > migrations.length) continue;
+      const mine = migrationSha(migrations[v - 1]!);
+      if (sha === null) await c.query("update egress_migrations set sha256 = $2 where version = $1", [v, mine]);
+      else if (sha !== mine) throw new Error(`egress migration ${v} was edited: the database recorded sha256 ${sha}, this build has ${mine}`);
+    }
+    if (newest > migrations.length) log("egress database is at a newer migration than this build knows; serving (expand-only)", { database: newest, build: migrations.length });
+    for (let v = 1; v <= migrations.length; v++) {
+      if (have.has(v)) continue;
       await c.query("begin");
       try {
-        await c.query(MIGRATIONS[v - 1]!);
-        await c.query("insert into egress_migrations (version) values ($1)", [v]);
+        await c.query(migrations[v - 1]!);
+        await c.query("insert into egress_migrations (version, sha256) values ($1, $2)", [v, migrationSha(migrations[v - 1]!)]);
         await c.query("commit");
+        applied.push(v);
       } catch (e) {
         await c.query("rollback");
         throw e;
       }
     }
+    return applied;
   } finally {
     await c.query("select pg_advisory_unlock($1)", [MIGRATION_LOCK]).catch(() => {});
     c.release();

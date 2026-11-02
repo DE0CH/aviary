@@ -111,7 +111,7 @@ export async function main(): Promise<void> {
       notReady.delete("migrations");
       break;
     } catch (e) {
-      if (/this build knows/.test(String((e as Error).message))) {
+      if (/was edited/.test(String((e as Error).message))) {
         logError("egress start", e);
         process.exit(2);
       }

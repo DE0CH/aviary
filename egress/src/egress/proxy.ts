@@ -39,6 +39,9 @@ const DRAIN_KINDS: DrainKind[] = ["model", "tunnel", "fixed", "tools"];
 export const FIXED_BODY_MAX = 64 * 1024 * 1024;
 /** A magpie or hermit upstream silent this long ends the request (above the 25-30 s long-polls). */
 const FIXED_IDLE_MS = 120_000;
+/** 3.11.4: an upstream silent this long ends a model call (socket inactivity; the model route has no total timeout, a
+ * stream that keeps sending runs as long as the client waits). */
+const MODEL_IDLE_MS = 120_000;
 /** The tools route's request timeout when its config names none (3.11.4: at least 180 s). */
 const TOOLS_TIMEOUT_MS = 180_000;
 /** The client `Aviary-*` headers that reach magpie, hermit and tools unchanged (gateway-api headers::FORWARDED). */
@@ -70,6 +73,8 @@ export interface EgressOptions {
   env?: Record<string, string | undefined>;
   /** Tests only: where `magpie` and `hermit` are (always http://magpie and http://hermit in a deployment). */
   internal?: { magpie: string; hermit: string };
+  /** Tests only: a shorter idle timeout on the model upstream. */
+  modelIdleMs?: number;
   /** Tests only: shorter drain bounds. */
   drainBounds?: Partial<Record<DrainKind, number>>;
 }
@@ -579,14 +584,17 @@ export class Egress {
             finish(ures.statusCode ?? null);
           });
         });
-        if (!isModel) {
+        if (isModel) {
+          const ms = this.#o.modelIdleMs ?? MODEL_IDLE_MS;
+          out.setTimeout(ms, () => out.destroy(new Error("upstream idle")));
+        } else {
           const ms = (route.timeoutSeconds ?? 0) * 1000 || TOOLS_TIMEOUT_MS;
           out.setTimeout(ms, () => out.destroy(new Error("upstream timeout")));
         }
         out.on("error", (e) => {
           logError("egress route upstream", e, { route: route.name, request: caller.request, conversation: caller.claims.conversationId, person_key: personKey(caller.claims.person) });
           if (!res.headersSent) {
-            if (/timeout/.test(e.message)) this.#json(res, 504, "upstream_timeout", `${route.name} did not answer in time`);
+            if (/timeout|idle/.test(e.message)) this.#json(res, 504, "upstream_timeout", `${route.name} did not answer in time`);
             else this.#json(res, 502, "upstream_unreachable", `${route.name} could not be reached`);
           } else res.destroy();
           finish(res.statusCode);
@@ -921,8 +929,10 @@ export class Egress {
     return new Promise((resolve) => this.server.listen(port, host, () => resolve((this.server.address() as { port: number }).port)));
   }
 
-  /** 3.11.6: stop accepting connections, close idle kept-alive ones, answer everything after this with
-   * `Connection: close`, let in-flight work finish within its kind's bound, cut and count what is left. */
+  /** 3.11.6: stop accepting connections, close the kept-alive ones idle now, answer everything after this with
+   * `Connection: close` (a new request on a kept-alive connection, e.g. one whose answer began before the drain, is
+   * served), let in-flight work finish within its kind's bound, cut and count what is left. Connections that go idle
+   * later are not closed under the client (a request already on its way would be reset); they go at the end. */
   async drain(): Promise<Record<DrainKind, number>> {
     this.draining = true;
     const bounds = { ...DRAIN_BOUNDS_MS, ...this.#o.drainBounds };
@@ -932,7 +942,6 @@ export class Egress {
     const t0 = Date.now();
     await new Promise<void>((resolve) => {
       const tick = () => {
-        this.server.closeIdleConnections();
         const elapsed = Date.now() - t0;
         for (const w of [...this.#work]) {
           if (elapsed >= bounds[w.kind]) {

@@ -134,6 +134,20 @@ before(async () => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      // x-stall plays an upstream that goes quiet: "head" never answers, "mid" sends the head and one event then
+      // nothing, "drip" sends an event every 200 ms for 1.5 s then ends, "end:<ms>" sends the head and ends after ms
+      const stall = String(req.headers["x-stall"] ?? "");
+      if (stall === "head") return;
+      if (stall) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: ping\ndata: {}\n\n");
+        if (stall === "drip") {
+          const iv = setInterval(() => res.write("event: ping\ndata: {}\n\n"), 200);
+          setTimeout(() => (clearInterval(iv), res.end()), 1500);
+        }
+        if (stall.startsWith("end:")) setTimeout(() => res.end(), Number(stall.slice(4)));
+        return;
+      }
       if (p === "/simple/foo/") {
         res.writeHead(200, { "content-type": "text/html" });
         return res.end(`<!DOCTYPE html><html><body><a href="http://127.0.0.1:${upPort}/files/packages/foo-1.0-py3-none-any.whl#sha256=${wheelSha}">foo-1.0-py3-none-any.whl</a></body></html>`);
@@ -197,6 +211,7 @@ before(async () => {
 });
 
 after(async () => {
+  up.closeAllConnections();
   await egress.drain();
   await egress.log.close(1000);
   tokens.stop();
@@ -240,6 +255,8 @@ function http(path: string, o: { headers?: Record<string, string>; method?: stri
     const r = request({ host: "127.0.0.1", port: o.port ?? port, path, method: o.method ?? "GET", headers: o.headers, agent: o.agent }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
+      res.on("error", reject);
+      res.on("aborted", () => reject(new Error("the answer was cut")));
       res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body, reused: r.reusedSocket }));
     });
     r.on("error", reject);
@@ -310,12 +327,11 @@ test("tokens: hermit's hst1 codec, the source address, expiry, kid and signature
   for (const bad of ["", "hst1", "hst1.07.AA.AA", "hst2.7.AA.AA", token + ".x", token.replace("hst1.7.", "hst1.7.!")]) assert.deepEqual(keys.verify(bad, now, "192.0.2.9"), { error: "malformed" }, bad);
 });
 
-test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuses a valid token, a new kid is learnt", async () => {
+test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuses a valid token, a new kid is learnt, an empty key set is a failed fetch", async () => {
   const h = new FakeHermit("lb");
   const url = await h.listen();
   let clock = Date.now();
-  const slept: number[] = [];
-  const st = new SandboxTokens(hermitGetter(url, "lb"), { now: () => clock, sleep: async (ms) => void (slept.push(ms), (clock += ms)) });
+  const st = new SandboxTokens(hermitGetter(url, "lb"), { now: () => clock });
   try {
     assert.equal(await st.refreshKeys(false), true);
     const a = h.token();
@@ -357,22 +373,25 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
     const k2 = signingKey(masterKey(2));
     h.keys.push(k2);
     let fetches = h.keyFetches;
-    slept.length = 0;
+    let t0 = Date.now();
     assert.ok("claims" in (await st.verify(h.token({ key: k2 }).token, "127.0.0.1")));
     assert.equal(h.keyFetches, fetches + 1);
-    assert.deepEqual(slept, [], "no wait");
     const k3 = signingKey(masterKey(3));
     h.keys.push(k3);
     fetches = h.keyFetches;
-    assert.ok("claims" in (await st.verify(h.token({ key: k3 }).token, "127.0.0.1")), "a new kid within 10 s of the last unknown-kid refetch waits for its turn, then is learnt");
+    const tok3 = h.token({ key: k3 }).token;
+    clock += 9_000;
+    assert.deepEqual(await st.verify(tok3, "127.0.0.1"), { error: "unknown_kid" }, "within 10 s of the last unknown-kid refetch: 403 at once");
+    assert.equal(h.keyFetches, fetches, "no refetch inside the window");
+    clock += 1_000;
+    assert.ok("claims" in (await st.verify(tok3, "127.0.0.1")), "the retry after the 10 s mark refetches and is admitted");
     assert.equal(h.keyFetches, fetches + 1);
-    assert.deepEqual(slept, [10_000], "at most every 10 s");
 
-    // a hermit key rotation: the refetch lands on a replica that does not publish the new kid yet, the next one does
+    // a hermit key rotation: the refetch lands on a replica that does not publish the new kid yet: 403 after that one
+    // refetch; a retry inside the window is refused at once; the retry after it refetches and is admitted
     const k4 = signingKey(masterKey(4));
     clock += 20_000;
     fetches = h.keyFetches;
-    slept.length = 0;
     const tok4 = h.token({ key: k4 }).token;
     const orig = h.server.listeners("request")[0] as (...a: unknown[]) => void;
     let calls = 0;
@@ -381,17 +400,40 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
       if (req.url === "/v1/sandbox-token-keys" && ++calls === 2) h.keys.push(k4);
       orig(req, res);
     });
-    assert.ok("claims" in (await st.verify(tok4, "127.0.0.1")), "learnt on the second refetch");
+    assert.deepEqual(await st.verify(tok4, "127.0.0.1"), { error: "unknown_kid" }, "one refetch, without the kid: 403");
+    assert.equal(h.keyFetches, fetches + 1);
+    assert.deepEqual(await st.verify(tok4, "127.0.0.1"), { error: "unknown_kid" }, "a retry inside the window: 403 at once");
+    assert.equal(h.keyFetches, fetches + 1);
+    clock += 10_000;
+    assert.ok("claims" in (await st.verify(tok4, "127.0.0.1")), "learnt by the retry's refetch");
     assert.equal(h.keyFetches, fetches + 2);
-    assert.deepEqual(slept, [10_000], "the second refetch 10 s after the first");
 
-    // a kid hermit never publishes: two refetches, then the definitive 403
+    // a kid hermit never publishes: concurrent requests share one refetch, then the definitive 403; nobody waits more
     clock += 20_000;
     fetches = h.keyFetches;
     const bogus = h.token({ key: signingKey(masterKey(99)) }).token;
+    t0 = Date.now();
     const [x, y] = await Promise.all([st.verify(bogus, "127.0.0.1"), st.verify(bogus, "127.0.0.1")]);
     assert.deepEqual([x, y], [{ error: "unknown_kid" }, { error: "unknown_kid" }]);
-    assert.equal(h.keyFetches, fetches + 2, "concurrent requests share the refetches");
+    assert.equal(h.keyFetches, fetches + 1, "concurrent requests share the one refetch");
+    assert.ok(Date.now() - t0 < 1000, "the wait is that one fetch");
+
+    // hermit answers 200 with no usable key (an empty list, or only keys of another alg or length): a failed fetch,
+    // the last set kept, never a 403 for a valid token
+    const valid = h.token({ key: k2 }).token;
+    const saved = [...h.keys];
+    for (const body of ['{"keys":[]}', '{"keys":[{"kid":9,"alg":"RS256","publicKey":"AAAA"},{"kid":10,"alg":"Ed25519","publicKey":"AAAA"}]}']) {
+      h.server.removeAllListeners("request");
+      h.server.on("request", (req, res) => {
+        if (req.url === "/v1/sandbox-token-keys") return void res.writeHead(200, { "content-type": "application/json" }).end(body);
+        orig(req, res);
+      });
+      assert.equal(await st.refreshKeys(false), false, `${body}: a failed fetch`);
+      assert.ok("claims" in (await st.verify(valid, "127.0.0.1")), `${body}: the last set kept`);
+    }
+    h.server.removeAllListeners("request");
+    h.server.on("request", orig);
+    h.keys.splice(0, h.keys.length, ...saved);
   } finally {
     st.stop();
     h.close();
@@ -410,6 +452,18 @@ test("token keys: the last set hermit published is stored, and a start while her
     assert.equal(await a.refreshKeys(false), true);
     for (let i = 0; i < 50 && !(await store.load()); i++) await sleep(20);
     assert.ok(await store.load(), "saved after the fetch");
+    const good = await store.load();
+    const orig = h.server.listeners("request")[0] as (...a: unknown[]) => void;
+    h.server.removeAllListeners("request");
+    h.server.on("request", (req, res) => {
+      if (req.url === "/v1/sandbox-token-keys") return void res.writeHead(200, { "content-type": "application/json" }).end('{"keys":[]}');
+      orig(req, res);
+    });
+    assert.equal(await a.refreshKeys(false), false, "an empty key set is a failed fetch");
+    await sleep(100);
+    assert.equal(await store.load(), good, "and is never stored over the last good set");
+    h.server.removeAllListeners("request");
+    h.server.on("request", orig);
     const tok = h.token();
     h.outage = "reset";
     const b = new SandboxTokens(hermitGetter(url, "ks"), { store });
@@ -971,36 +1025,185 @@ test("the log buffer: bounded, the oldest non-model row dropped first, never a m
   }
 });
 
+test("egress_log: a CONNECT to port 99999999999 and a model name with NUL are logged cleaned; the rows after them are written", async () => {
+  const d = await freshEgressDb("egress_poison");
+  const e = new Egress(options({ db: d.db, cacheDir: join(tmp, "cache-poison") }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const c = await connectVia("example.com:99999999999", undefined, p);
+    assert.equal(c.status, 407, "no credential: deny:auth, logged");
+    c.sock.destroy();
+    const f = await http("http://allowed.test:99999999999/x", { port: p, headers: pa() });
+    assert.equal(f.status, 403);
+    const m = await http("http://model/v1/messages", { port: p, method: "POST", headers: { ...pa(), "content-type": "application/json" }, body: '{"model":"x\\u0000y"}' });
+    assert.equal(m.status, 400, "deny:model");
+    await http("http://allowed.test:" + upPort + "/plain/after", { port: p, headers: pa() });
+    await e.log.flush();
+    assert.equal(e.log.buffered, 0, "nothing stuck in memory");
+    assert.equal(e.log.rejected, 0);
+    const got = (await d.db.query("select kind, host, port, model, decision from egress_log order by id")).rows;
+    assert.deepEqual(got.map((r) => [r.kind, r.port, r.decision]), [["connect", null, "deny:auth"], ["http", null, "deny:port"], ["model", null, "deny:model"], ["http", upPort, "allow"]]);
+    assert.equal(got[2].model, "xy", "NUL stripped");
+  } finally {
+    await e.drain();
+    await d.drop();
+  }
+});
+
+test("egress_log: a row Postgres refuses as data is dropped and counted; its batch and the rows after it are written, in order", async () => {
+  const d = await freshEgressDb("egress_refused");
+  try {
+    await d.db.query("alter table egress_log add constraint test_poison check (host <> 'poison')");
+    const log = new EgressLog(d.db);
+    log.add({ kind: "connect", host: "a", decision: "allow" });
+    log.add({ kind: "http", host: "poison", decision: "allow" });
+    log.add({ kind: "model", host: "b", decision: "allow", cost_usd: 1 });
+    await log.flush();
+    log.add({ kind: "connect", host: "c", decision: "allow" });
+    await log.flush();
+    assert.equal(log.buffered, 0);
+    assert.equal(log.rejected, 1);
+    assert.deepEqual(log.dropped, { http: 1 });
+    assert.deepEqual((await d.db.query("select host from egress_log order by id")).rows.map((r) => r.host), ["a", "b", "c"]);
+  } finally {
+    await d.drop();
+  }
+});
+
+test("egress_log rows are cleaned: ports outside 1-65535, NUL in text, long text, bad uuids", async () => {
+  const { cleanRow, isDataError } = await import("../src/egress/egresslog.ts");
+  for (const port of [0, -1, 65536, 99999999999, 1.5, NaN]) assert.equal(cleanRow({ kind: "connect", host: "h", decision: "allow", port }).port, null, String(port));
+  assert.equal(cleanRow({ kind: "connect", host: "h", decision: "allow", port: 443 }).port, 443);
+  const r = cleanRow({ kind: "model", host: "\u0000", decision: "deny:\u0000model", model: "m".repeat(500) + "\u0000", path: "/p\u0000", person: "a\u0000@b", request: "r\u0000", method: "PO\u0000ST", conversation_id: "nope", sandbox_id: randomUUID() });
+  assert.equal(r.host, "-");
+  assert.equal(r.decision, "deny:model");
+  assert.equal(r.model!.length, 200);
+  assert.equal(r.path, "/p");
+  assert.equal(r.person, "a@b");
+  assert.equal(r.method, "POST");
+  assert.equal(r.request, "r");
+  assert.equal(r.conversation_id, null);
+  assert.match(r.sandbox_id!, /^[0-9a-f-]{36}$/);
+  assert.equal(isDataError({ code: "22003" }), true);
+  assert.equal(isDataError({ code: "23514" }), true);
+  assert.equal(isDataError({ code: "08006" }), false);
+  assert.equal(isDataError(new Error("Connection terminated")), false);
+});
+
+test("egress migrations: a database at a newer migration than this build serves; an edited migration is a start failure", async () => {
+  const { MIGRATIONS, migrate } = await import("../src/egress/db.ts");
+  const d = await freshEgressDb("egress_migr");
+  try {
+    // a newer build ran one more (expand-only) migration
+    assert.deepEqual(await migrate(d.db, [...MIGRATIONS, "create table newer_thing (id int)"]), [MIGRATIONS.length + 1]);
+    assert.deepEqual(await migrate(d.db), [], "this (older) build starts on the newer schema");
+    // rows recorded by a build before sha256 was recorded get it filled in, then checked
+    await d.db.query("update egress_migrations set sha256 = null where version = 1");
+    assert.deepEqual(await migrate(d.db), []);
+    assert.equal((await d.db.query("select count(*)::int as n from egress_migrations where sha256 is null")).rows[0].n, 0);
+    const edited = [...MIGRATIONS];
+    edited[1] = edited[1] + "\n-- edited";
+    await assert.rejects(migrate(d.db, edited), /egress migration 2 was edited/);
+  } finally {
+    await d.drop();
+  }
+});
+
 // ---- the drain --------------------------------------------------------------------------------------------------
 
-test("drain: no new connections, idle ones closed, answers carry Connection: close, work past its bound is cut and counted", async () => {
-  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-drain"), drainBounds: { fixed: 1500, model: 1500, tunnel: 1500, tools: 1500 } }));
+test("drain: no new connections, idle ones closed, answers carry Connection: close, each kind cut at its own bound and counted", async () => {
+  const bounds = { fixed: 1000, tunnel: 1800, tools: 2600, model: 3400 };
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-drain"), drainBounds: bounds }));
   const p = await e.listen(0, "127.0.0.1");
   const idleAgent = new Agent({ keepAlive: true, maxSockets: 1 });
   assert.equal((await http("http://magpie/v1/sandbox/x", { port: p, headers: pa(), agent: idleAgent })).status, 200);
   const idleSock = [...Object.values(idleAgent.freeSockets).flat()][0]!;
   const idleClosed = new Promise<void>((r) => idleSock.once("close", () => r()));
   const short = http("http://magpie/v1/sandbox/poll?ms=700", { port: p, headers: pa() });
-  const long = http("http://magpie/v1/sandbox/poll?ms=5000", { port: p, headers: pa() }).then(
-    (r) => r.status,
-    () => "cut",
-  );
+  // one piece of work of each kind that outlives its bound; each resolves with when it was cut
+  let t0 = 0;
+  const cutAt = (pr: Promise<unknown>) => pr.then(() => "answered", () => Date.now() - t0);
+  const fixed = cutAt(http("http://magpie/v1/sandbox/poll?ms=20000", { port: p, headers: pa() }));
+  const tools = cutAt(http("http://tools/mcp", { port: p, method: "POST", headers: { ...pa(), "x-stall": "head", "content-type": "application/json" }, body: "{}" }));
+  const model = cutAt(http("http://model/v1/messages", { port: p, method: "POST", headers: { ...pa(), "x-stall": "mid", "content-type": "application/json" }, body: '{"model":"vendor/claude-x"}' }));
+  const tun = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
+  assert.equal(tun.status, 200);
+  const tunnel = new Promise<number>((r) => tun.sock.once("close", () => r(Date.now() - t0)));
+
+  // a model answer that began before the drain (its head has no Connection: close) and ends during it: the client's
+  // next request on that kept-alive connection is served, answered with Connection: close
+  const ka = netConnect(p, "127.0.0.1");
+  let kaBuf = "";
+  ka.on("data", (d) => (kaBuf += d.toString("latin1")));
+  const until = async (re: RegExp, what: string) => {
+    for (let i = 0; i < 100 && !re.test(kaBuf); i++) await sleep(20);
+    assert.match(kaBuf, re, what);
+  };
+  const body = '{"model":"vendor/claude-x"}';
+  ka.write(`POST http://model/v1/messages HTTP/1.1\r\nHost: model\r\nProxy-Authorization: ${basic(sb.token)}\r\nX-Stall: end:600\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+  await until(/^HTTP\/1\.1 200[^]*\r\n\r\n/, "the model answer's head");
+  assert.doesNotMatch(kaBuf.slice(0, kaBuf.indexOf("\r\n\r\n")), /connection: close/i);
+
   await sleep(200);
-  assert.deepEqual(e.inFlight(), { model: 0, tunnel: 0, fixed: 2, tools: 0 });
-  const t0 = Date.now();
+  assert.deepEqual(e.inFlight(), { model: 2, tunnel: 1, fixed: 2, tools: 1 });
+  t0 = Date.now();
   const drained = e.drain();
   await sleep(50);
   await assert.rejects(new Promise((resolve, reject) => netConnect(p, "127.0.0.1").on("connect", resolve).on("error", reject)), "a new connection is refused");
   await idleClosed;
+
+  await until(/\r\n0\r\n\r\n$/, "the model answer ended");
+  kaBuf = "";
+  ka.write(`GET http://magpie/v1/sandbox/x HTTP/1.1\r\nHost: magpie\r\nProxy-Authorization: ${basic(sb.token)}\r\n\r\n`);
+  await until(/^HTTP\/1\.1 200[^]*\r\n\r\n/, "a new request on the kept-alive connection is served");
+  assert.match(kaBuf.slice(0, kaBuf.indexOf("\r\n\r\n")), /\r\nconnection: close/i, "with Connection: close");
+  await new Promise<void>((r) => (ka.destroyed ? r() : ka.once("close", () => r())));
+
   const s = await short;
   assert.equal(s.status, 200, "an answer within its bound arrives");
   assert.equal(s.headers.connection, "close");
   const cut = await drained;
-  assert.equal(await long, "cut");
-  assert.deepEqual(cut, { model: 0, tunnel: 0, fixed: 1, tools: 0 });
-  assert.ok(Date.now() - t0 >= 1400 && Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
-  assert.match(e.metrics().join("\n"), /egress_drain_cut_total\{kind="fixed"\} 1/);
+  assert.deepEqual(cut, { model: 1, tunnel: 1, fixed: 1, tools: 1 });
+  const at = { fixed: await fixed, tunnel: await tunnel, tools: await tools, model: await model };
+  for (const k of ["fixed", "tunnel", "tools", "model"] as const) {
+    assert.equal(typeof at[k], "number", `${k} was cut`);
+    const ms = at[k] as number;
+    assert.ok(ms >= bounds[k] - 50 && ms < bounds[k] + 600, `${k} cut at ${ms} ms, its bound is ${bounds[k]} ms`);
+  }
+  const m = e.metrics().join("\n");
+  for (const k of ["fixed", "tunnel", "tools", "model"]) assert.match(m, new RegExp(`egress_drain_cut_total\\{kind="${k}"\\} 1`));
   idleAgent.destroy();
+});
+
+test("model route: an upstream silent for the idle timeout is cut (504 before the head, the stream ended after it); a stream that keeps sending has no total timeout", async () => {
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-idle"), modelIdleMs: 500 }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const ids: string[] = [];
+    const hdr = (stall: string) => {
+      ids.push(uuidv7());
+      return { ...pa(), "x-stall": stall, "content-type": "application/json", "aviary-request": ids.at(-1)! };
+    };
+    const body = '{"model":"vendor/claude-x"}';
+    let t0 = Date.now();
+    const head = await http("http://model/v1/messages", { port: p, method: "POST", headers: hdr("head"), body });
+    assert.equal(head.status, 504);
+    assert.equal(JSON.parse(head.body).code, "upstream_timeout");
+    assert.ok(Date.now() - t0 >= 450 && Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
+    t0 = Date.now();
+    await assert.rejects(http("http://model/v1/messages", { port: p, method: "POST", headers: hdr("mid"), body }), "a stream gone quiet is ended");
+    assert.ok(Date.now() - t0 >= 450 && Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
+    t0 = Date.now();
+    const drip = await http("http://model/v1/messages", { port: p, method: "POST", headers: hdr("drip"), body });
+    assert.equal(drip.status, 200);
+    assert.ok(Date.now() - t0 >= 1400, "1.5 s of events, three times the idle timeout, all relayed");
+    assert.ok(drip.body.split("event: ping").length - 1 >= 7);
+    const got = await rows(e.log);
+    const mine = ids.map((id) => got.find((r) => r.request === id));
+    assert.deepEqual(mine.map((r) => r?.status), [504, 200, 200]);
+  } finally {
+    await e.drain();
+  }
 });
 
 // ---- the in-cluster API -----------------------------------------------------------------------------------------
