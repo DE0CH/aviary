@@ -1,6 +1,7 @@
 # FUSE gate results (WP-07, 2026-11-02)
 
-Raw outputs of every run that `crates/supervisor/GATE.md` quotes, failed runs included. Files over 32 KiB are
+Raw outputs of every run that `crates/supervisor/GATE.md` quotes (kept here, outside the crate, because the
+source rules keep deployment and runtime names out of `crates/`; the outputs contain them), failed runs included. Files over 32 KiB are
 gzipped; host addresses are replaced by `<host-ip>`, `<public-ip>` and `<host-ipv6>`.
 
 - `aws/` — two throwaway `m7i.xlarge`, eu-central-1a (items 1, 3, 4; items 2 and 6 repeated):

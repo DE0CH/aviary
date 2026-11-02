@@ -4,15 +4,16 @@ Gate before the supervisor is built beyond a spike (supervisor spec 2 and 22, it
 2026-11-02 with the spike in `spikes/fuse-gate` (throwaway, its own Cargo workspace) and the host scripts in
 `fabric/fuse-gate` (runtime install, bundle, migration, syscall inventory; they live outside this crate because
 the source rules keep the runtime's name out of `crates/supervisor`). Every run's raw outputs, failed runs
-included: `spikes/fuse-gate/results/` (README there). This is the gate's second run; the first one
-(`results/run1-hetzner/`, Hetzner only) is superseded by it.
+included: `fabric/fuse-gate/results/` (README there; `results/…` below means that directory, kept outside this
+crate for the same rule). This is the gate's second run; the first one (`results/run1-hetzner/`, Hetzner only) is
+superseded by it.
 
 ## Verdict
 
 **Not a plain pass. Three measured facts are negative against the spec text as it stood, and one failure is
 unexplained:**
 
-1. **Negative: a checkpoint resends every request in flight** (item 3). The spec said "gVisor's FUSE has no resend"
+1. **Negative: a checkpoint resends every request in flight** (item 3). The spec said "the runtime's FUSE has no resend"
    (9.9) and "every write is stored once ... across a migration" (22.4). Measured: the sentry queues
    `FUSE_INTERRUPT`, forgets the request and sends it again after the restore under a new `unique` (so a new
    `opId`), in every one of the 72 AWS migrations with a held write. Under magpie's append rule the resend of an
@@ -336,7 +337,7 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
 1. **Hosts.** Items 1, 3 and 4 (and repeats of 2 and 6) ran on two throwaway `m7i.xlarge` in eu-central-1a, the
    fabric's instance type and region, from Canonical's Ubuntu 24.04 (the base of the fabric's AMI) with the same
    runsc release, flags, bundle shape and image, not from the fabric's AMI itself: they were launched in Deyao's own
-   AWS account (the session holds no keys for YYC's account, and two m7i.xlarge there would take 8 of
+   AWS account (the session holds no keys for the fabric's account, and two m7i.xlarge there would take 8 of
    the 16-vCPU quota the scaler needs for staff sandboxes). Items 2, 9 and 10 ran on Hetzner cx33/cpx32 runners (the
    items do not depend on the host; 2 and 6 were repeated on AWS with the same results).
 2. magpie is a fake inside the sandbox on loopback; the round trip to magpie in the cluster (item 6) is not measured.
