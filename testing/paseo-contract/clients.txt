@@ -1,0 +1,32 @@
+# Paseo client builds that may be connected (pigeon spec 18.1, cutover 13.1): DE0CH/claudecodeui commits.
+#
+#   <commit> <web|ios|web,ios> <commit date>
+#
+# web: the commit of a web bundle image served within the Access session lifetime (720 h), read from the deployment's
+#      image pin history. ios: the source commit of a build uploaded to TestFlight (the head_sha of each iOS workflow
+#      run whose upload step succeeded).
+# Earlier web images (before 2026-10-26) served the CloudCLI web UI, which has no Paseo client; they are not listed.
+# New builds are appended by .github/workflows/clients.yml (a repository_dispatch from the app's workflows); a build
+# leaves the file only when no connection with its version has been seen for 30 days. Oldest first: the last line is
+# the newest build, whose schema is exported to schema/<commit>.json.
+a93e3e695bd10f570f90a952d3e8572ba074e1a4 web      2026-10-26
+77febf7e0fdebe3e2a874e71208d82a1182a58ce ios      2026-10-26
+3051e217e784e1752396f3bb8b9a0c1396822fce web,ios  2026-10-27
+8876947704b6f4d5218f463634b9f6f3b89a008c web      2026-10-27
+0a7d4213543366aaf1d555733edb67a348a79351 ios      2026-10-27
+cfc6f7289e68b03794b1d11cd65053ce209d3118 ios      2026-10-27
+5c82a2812aae5bff01d34a09716af38ea79922ab web,ios  2026-10-27
+e4bd5771f5b745b7243d37d66d8a799d779f1f51 web,ios  2026-10-27
+7ccde223a2044a0bd953d01be511e76cd95966c0 web,ios  2026-10-27
+14ee1d5b91e6053a03feb9e91585c44580937faa web      2026-10-28
+f6c3f17e9e893a15944bda5b6ecc5acd9cef759c ios      2026-10-28
+6b16b24dd3406734529522ed60abb5de4519e08b web      2026-10-28
+1d9c4eb46fd8e215d72f23f63333f16de05c7f4d web      2026-10-28
+fe62bc33df017bd2dc610e69239c52fb2e3c4471 web,ios  2026-10-28
+a52836eaad3801f8ca7b1a3b1964ab333dfd01d3 web,ios  2026-10-28
+90a2603695b0550c6529fca4bd3449dad95b80cc web      2026-10-29
+f572bd246e2916dfe2d9d8978d9cd5d22fb80e09 web      2026-10-29
+140ed04178da91b5d62e424334f1184b732be212 web      2026-10-29
+9780d1861b0f085c556eae6ed59bfb5acdc4965f ios      2026-10-29
+3de3f5d8771bc5df24aaa95ba317bdbb2bd4d005 web      2026-10-29
+488a7736ef2c3783388fde060621c3d1df8e8f47 web      2026-11-02

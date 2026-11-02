@@ -1,0 +1,70 @@
+# Adds a Paseo client build to testing/paseo-contract/clients.txt (pigeon spec 17.1 step 9, 18.1). The app's workflows
+# in DE0CH/claudecodeui send a repository_dispatch of type paseo-client with {"commit": "<40 hex>", "kind": "web"|"ios"}
+# after each web bundle build and each TestFlight upload. The line is committed to main with a plain push (never
+# forced), the newest client's JSON Schema is re-exported, and the contract suite runs against the new list (a push
+# made with this workflow's token starts no other workflow, so the suite runs here).
+name: clients
+
+on:
+  repository_dispatch:
+    types: [paseo-client]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "claudecodeui commit (40 hex)"
+        required: true
+      kind:
+        description: "web or ios"
+        required: true
+        type: choice
+        options: [web, ios]
+
+concurrency:
+  group: clients
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  append:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      COMMIT: ${{ github.event.client_payload.commit || inputs.commit }}
+      KIND: ${{ github.event.client_payload.kind || inputs.kind }}
+    defaults:
+      run:
+        working-directory: testing/paseo-contract
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: testing/paseo-contract/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: append the client (the script checks the hash, the kind and that the commit is a Paseo build)
+        run: node append-client.mjs "$COMMIT" "$KIND"
+      - name: export the newest client's schema
+        run: node export-schema.mjs
+      - name: commit and push to main
+        run: |
+          git add clients.txt schema
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "paseo-contract: client claudecodeui ${COMMIT:0:12} (${KIND})"
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then exit 0; fi
+            git pull --rebase origin main
+          done
+          echo "could not push after 5 attempts" >&2
+          exit 1
+      - name: contract suite against the new client list
+        run: npm test

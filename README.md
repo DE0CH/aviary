@@ -12,7 +12,8 @@ pigeon, magpie, hermit and the sandbox supervisor: an AI chat runtime with Claud
 Shared crates: `aviary-core` (the service runtime), `aviary-pg` (Postgres), and the contract crates `magpie-api`,
 `hermit-api`, `supervisor-api`, `gateway-api`, `sandboxd-api` (the only coupling between services). `sandboxd` is the
 per-host sandbox daemon. `testing/` holds the fakes, the mock model, the reference gateway, the conformance suites and
-the end-to-end harness. The endpoint names and conventions for implementers of another hermit or gateway are in
+the end-to-end harness, and `testing/paseo-contract` (Node) checks Paseo frames against every supported app build
+([its README](testing/paseo-contract/README.md)). The endpoint names and conventions for implementers of another hermit or gateway are in
 [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 ## Building

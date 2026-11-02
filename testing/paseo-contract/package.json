@@ -1,0 +1,33 @@
+{
+  "name": "aviary-paseo-contract",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Validates every Paseo frame pigeon emits against every supported client build (pigeon spec 18.1)",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "paseo": {
+    "repository": "https://github.com/DE0CH/claudecodeui.git",
+    "client": "488a7736ef2c3783388fde060621c3d1df8e8f47"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "validate": "node validate-frames.mjs",
+    "export-schema": "node export-schema.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.27.3",
+    "semver": "7.7.4",
+    "zod": "4.4.3",
+    "zod-aot": "0.20.4"
+  },
+  "overrides": {
+    "@jridgewell/sourcemap-codec": "1.5.5",
+    "acorn": "8.16.0",
+    "get-tsconfig": "4.14.0",
+    "picomatch": "4.0.5",
+    "unplugin": "3.0.0"
+  }
+}
