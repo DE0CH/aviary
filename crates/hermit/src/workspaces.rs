@@ -7,9 +7,20 @@
 //! workspace as the sandbox sees it (`/workspace/out/x`): `RESOLVE_BENEATH` refuses every absolute link, and such a
 //! path answers 400 `bad_path` (a known gap of 3.8, recorded for the spec owner).
 //!
-//! Every filesystem call has a time limit ([`FS_TIMEOUT`], [`LIST_TIMEOUT`], [`READ_TIMEOUT`]): a FUSE mount that
-//! hangs instead of failing is a broken mount (503 `workspace_unavailable`, retry-after 2, and a start hands over),
-//! never a request that waits for ever. At most one `stat` of the mount is outstanding per replica.
+//! Every filesystem call has a time limit. A `stat`, `mkdir`, `open` or `rename` with no answer in [`FS_TIMEOUT`] is a
+//! hung mount (15.6: 503 `workspace_unavailable`, retry-after 2, and a start hands over). At most one `stat` of the
+//! mount runs per replica: callers that arrive while it runs share its answer, and once it is older than
+//! [`FS_TIMEOUT`] the mount is hung and every check fails at once until it returns. A listing slower than
+//! [`LIST_TIMEOUT`] or a read chunk slower than [`READ_TIMEOUT`] is a slow call, not a hung mount: 503 (the listing)
+//! or a body that ends with an error (the read), and the mount's health is left to the `stat`. A listing still running
+//! is joined by the next request for the same folder (never a second scan of it), and its answer is kept briefly for
+//! the retry. A read holds one of [`MAX_READS`] permits from before its `open` until its last chunk (or its blocked
+//! thread) returns; a client that takes no chunk for [`READ_IDLE`] loses the body.
+//!
+//! A clone is made under a temporary name in `ws/` ([`CLONE_PREFIX`]) and renamed into place with
+//! `RENAME_NOREPLACE` (`JuiceFS` 1.4.1 supports the flag: `pkg/meta/base.go` `Rename`), so `ws/<wid>` is never a
+//! partial tree: a failed, timed-out or abandoned clone removes its temporary tree, and the probe sweeps the ones a
+//! dead replica left (older than [`CLONE_STALE`]).
 //!
 //! The CLI is behind [`JfsCli`] so the tests run the store on a plain directory with an in-memory quota table; no
 //! configuration selects it.
@@ -19,18 +30,20 @@ use std::ffi::OsString;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
+use futures_util::FutureExt as _;
+use futures_util::future::{BoxFuture, Shared};
 use hermit_api::Timestamp;
 use hermit_api::error::{self, codes};
 use hermit_api::workspaces::{
     Amount, ByteRange, ENTRIES_PAGE, Entries, Entry, EntryType, FileContent, FileMeta, Workspace,
 };
-use rustix::fs::{FileType, Mode, OFlags, ResolveFlags};
+use rustix::fs::{FileType, Mode, OFlags, RenameFlags, ResolveFlags};
 use rustix::io::Errno;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use crate::fabric::{Fut, StoreHealth, WorkspaceError, Workspaces};
@@ -48,10 +61,23 @@ pub const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 pub const CLONE_TIMEOUT: Duration = Duration::from_mins(15);
 /// A `stat`, `mkdir` or `open` on the mount: longer and the mount is taken as hung (15.6).
 pub const FS_TIMEOUT: Duration = Duration::from_secs(2);
-/// One page of a listing (`readdir` and a `stat` per entry).
+/// One page of a listing (`readdir` of the folder and a `stat` per entry of the page): longer answers 503, and the
+/// scan goes on for the retry.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+/// A finished listing that nobody waited for is kept this long for the retry.
+pub const LIST_KEEP: Duration = Duration::from_secs(30);
 /// One 64 KiB chunk of a file read (a cold chunk comes from the object store).
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// A read waits this long for one of the [`MAX_READS`] permits, then answers 503.
+pub const READ_WAIT: Duration = Duration::from_secs(5);
+/// A client that takes no chunk of a file for this long loses the body (and its read permit).
+pub const READ_IDLE: Duration = Duration::from_secs(60);
+/// A clone's temporary name in `ws/`: `.clone-<wid>-<unix seconds>`.
+pub const CLONE_PREFIX: &str = ".clone-";
+/// A temporary clone tree older than this belongs to no running clone ([`CLONE_TIMEOUT`] kills every clone).
+pub const CLONE_STALE: Duration = Duration::from_mins(30);
+/// The probe sweeps stale temporary clone trees at most this often.
+pub const SWEEP_EVERY: Duration = Duration::from_hours(1);
 const CHUNK: usize = 64 * 1024;
 const GIB: u64 = 1 << 30;
 
@@ -70,9 +96,6 @@ pub enum CliError {
     /// The call met EACCES/EPERM on an entry (`rmr` of a tree with a root-owned entry, 15.4).
     #[error("permission denied: {0}")]
     PermissionDenied(String),
-    /// The destination exists (`clone` to a path another clone made meanwhile).
-    #[error("exists: {0}")]
-    Exists(String),
     #[error("{0}")]
     Failed(String),
 }
@@ -142,10 +165,9 @@ impl JuiceCli {
         let msg = fatal.map_or_else(|| stderr.trim().to_owned(), str::to_owned);
         let msg = crate::db::clip(&msg, 300);
         let lower = msg.to_ascii_lowercase();
+        // (a clone's target always is a fresh temporary name: "exists" is the rename's EEXIST, never CLI text)
         if lower.contains("permission denied") || lower.contains("operation not permitted") {
             Err(CliError::PermissionDenied(msg))
-        } else if lower.contains("file exists") || lower.contains("already exists") {
-            Err(CliError::Exists(msg))
         } else {
             Err(CliError::Failed(format!("juicefs {}: {msg}", verb(&args))))
         }
@@ -276,8 +298,31 @@ pub struct JuiceFs {
     usage: Mutex<HashMap<Uuid, (Instant, Option<Quota>)>>,
     reads: Arc<Semaphore>,
     health: Mutex<StoreHealth>,
-    /// A `stat` of the mount has not answered yet (a hung FUSE mount keeps its thread; no second one is started).
-    stat_pending: Arc<AtomicBool>,
+    /// The `stat` of the mount now running, if one is (shared by every check meanwhile; a hung one keeps its thread).
+    stat: Arc<Mutex<Option<StatFlight>>>,
+    /// Listings running (or finished and not yet collected), by workspace and folder.
+    listings: Arc<Mutex<HashMap<(Uuid, String), ListFlight>>>,
+    flights: AtomicU64,
+    last_sweep: Mutex<Option<Instant>>,
+    sweeping: Arc<AtomicBool>,
+}
+
+/// `stat /jfs/ws`'s answer: whether it is a directory, or the error's text; `Err` outside when the thread panicked.
+type StatAnswer = Result<Result<bool, String>, String>;
+
+struct StatFlight {
+    id: u64,
+    started: Instant,
+    answer: Shared<BoxFuture<'static, StatAnswer>>,
+}
+
+/// A listing's answer and when it was ready.
+type ListAnswer = (Result<Entries, WorkspaceError>, Instant);
+
+struct ListFlight {
+    id: u64,
+    cursor: Option<String>,
+    answer: Shared<BoxFuture<'static, ListAnswer>>,
 }
 
 impl std::fmt::Debug for JuiceFs {
@@ -333,7 +378,11 @@ impl JuiceFs {
             usage: Mutex::new(HashMap::new()),
             reads: Arc::new(Semaphore::new(MAX_READS)),
             health: Mutex::new(StoreHealth::default()),
-            stat_pending: Arc::new(AtomicBool::new(false)),
+            stat: Arc::new(Mutex::new(None)),
+            listings: Arc::new(Mutex::new(HashMap::new())),
+            flights: AtomicU64::new(0),
+            last_sweep: Mutex::new(None),
+            sweeping: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -383,29 +432,128 @@ impl JuiceFs {
 
     /// The mount check of 15.6: `stat /jfs/ws` within [`FS_TIMEOUT`]. `ENOTCONN`/`EIO` (a broken FUSE mount), a
     /// missing `ws` (nothing mounted) or no answer make every workspace call of this replica answer 503 and its
-    /// starts hand over. While a `stat` hangs, the next checks fail at once instead of starting another.
+    /// starts hand over. One `stat` runs at a time: a check while it runs waits for its answer (within what is left
+    /// of its [`FS_TIMEOUT`]); once it is older than that, the mount is hung and the check fails at once.
     async fn check(&self) -> Result<(), WorkspaceError> {
         let root = self.ws_root();
-        if self.stat_pending.swap(true, Ordering::SeqCst) {
-            return Err(self.not_mounted(format!("{}: the last stat has not answered", root.display())));
-        }
-        let pending = self.stat_pending.clone();
-        let r = root.clone();
-        let res = self
-            .blocking("stat of the workspace store", FS_TIMEOUT, move || {
-                let m = std::fs::metadata(&r);
-                pending.store(false, Ordering::SeqCst);
-                m
-            })
-            .await?;
-        match res {
-            Ok(m) if m.is_dir() => {
+        let (answer, started) = {
+            let mut slot = self.stat.lock().unwrap_or_else(PoisonError::into_inner);
+            match &*slot {
+                Some(f) if f.started.elapsed() >= FS_TIMEOUT => {
+                    let secs = f.started.elapsed().as_secs();
+                    drop(slot);
+                    return Err(self.not_mounted(format!(
+                        "{}: the stat started {secs} s ago has not answered",
+                        root.display()
+                    )));
+                }
+                Some(f) => (f.answer.clone(), f.started),
+                None => {
+                    let id = self.flights.fetch_add(1, Ordering::Relaxed);
+                    let (r, done) = (root.clone(), self.stat.clone());
+                    let h = tokio::task::spawn_blocking(move || {
+                        let m = std::fs::metadata(&r).map(|m| m.is_dir()).map_err(|e| e.to_string());
+                        let mut slot = done.lock().unwrap_or_else(PoisonError::into_inner);
+                        if slot.as_ref().is_some_and(|f| f.id == id) {
+                            *slot = None;
+                        }
+                        m
+                    });
+                    let answer = async move { h.await.map_err(|e| e.to_string()) }.boxed().shared();
+                    let started = Instant::now();
+                    *slot = Some(StatFlight {
+                        id,
+                        started,
+                        answer: answer.clone(),
+                    });
+                    (answer, started)
+                }
+            }
+        };
+        let left = FS_TIMEOUT.saturating_sub(started.elapsed());
+        match tokio::time::timeout(left, answer).await {
+            Err(_) => Err(self.not_mounted(format!(
+                "stat of the workspace store: no answer in {} s",
+                FS_TIMEOUT.as_secs()
+            ))),
+            Ok(Err(e)) => Err(unavailable(e)),
+            Ok(Ok(Ok(true))) => {
                 self.health.lock().unwrap_or_else(PoisonError::into_inner).unmounted = None;
                 Ok(())
             }
-            Ok(_) => Err(self.not_mounted("ws is not a directory".into())),
-            Err(e) => Err(self.not_mounted(format!("{}: {e}", root.display()))),
+            Ok(Ok(Ok(false))) => Err(self.not_mounted("ws is not a directory".into())),
+            Ok(Ok(Err(e))) => Err(self.not_mounted(format!("{}: {e}", root.display()))),
         }
+    }
+
+    /// One page of folder `path` of workspace `wid`. A listing of the same folder still running is joined (same
+    /// cursor) or makes this one wait its turn (503); one slower than [`LIST_TIMEOUT`] answers 503 and goes on, and
+    /// its answer is kept [`LIST_KEEP`] for the retry.
+    async fn listing(&self, wid: Uuid, path: &str, cursor: Option<&str>) -> Result<Entries, WorkspaceError> {
+        let key = (wid, path.to_owned());
+        let (id, answer) = {
+            let mut all = self.listings.lock().unwrap_or_else(PoisonError::into_inner);
+            // finished answers nobody came back for
+            all.retain(|_, f| f.answer.peek().is_none_or(|(_, at)| at.elapsed() < LIST_KEEP));
+            match all.get(&key) {
+                Some(f) if f.cursor.as_deref() == cursor => (f.id, f.answer.clone()),
+                Some(f) if f.answer.peek().is_none() => {
+                    return Err(unavailable("a listing of this folder is still running"));
+                }
+                _ => {
+                    let id = self.flights.fetch_add(1, Ordering::Relaxed);
+                    let dir = self.dir(wid);
+                    let (p, c) = (path.to_owned(), cursor.map(str::to_owned));
+                    let h = tokio::task::spawn_blocking(move || (Self::list(&dir, &p, c.as_deref()), Instant::now()));
+                    let answer = async move {
+                        h.await
+                            .unwrap_or_else(|e| (Err(unavailable(e.to_string())), Instant::now()))
+                    }
+                    .boxed()
+                    .shared();
+                    // the scan runs to its end even when nobody waits, so its answer is there for the retry
+                    tokio::spawn(answer.clone());
+                    all.insert(
+                        key.clone(),
+                        ListFlight {
+                            id,
+                            cursor: cursor.map(str::to_owned),
+                            answer: answer.clone(),
+                        },
+                    );
+                    (id, answer)
+                }
+            }
+        };
+        match tokio::time::timeout(LIST_TIMEOUT, answer).await {
+            Ok((res, _)) => {
+                let mut all = self.listings.lock().unwrap_or_else(PoisonError::into_inner);
+                if all.get(&key).is_some_and(|f| f.id == id) {
+                    all.remove(&key);
+                }
+                res
+            }
+            Err(_) => Err(unavailable(format!(
+                "the listing took longer than {} s; it goes on, and a retry gets its answer",
+                LIST_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+
+    /// Starts a sweep of abandoned clone trees in the background, at most every [`SWEEP_EVERY`] and one at a time.
+    fn maybe_sweep(&self) {
+        {
+            let mut last = self.last_sweep.lock().unwrap_or_else(PoisonError::into_inner);
+            if last.is_some_and(|t| t.elapsed() < SWEEP_EVERY) || self.sweeping.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
+        let (root, cli, sweeping) = (self.ws_root(), self.cli.clone(), self.sweeping.clone());
+        tokio::spawn(async move {
+            sweep_clones(root, cli).await;
+            sweeping.store(false, Ordering::SeqCst);
+        });
     }
 
     async fn quota(&self, wid: Uuid) -> Result<Option<Quota>, WorkspaceError> {
@@ -520,19 +668,35 @@ impl JuiceFs {
         } else {
             Self::open_beneath(&root, path, OFlags::RDONLY | OFlags::DIRECTORY, true)?
         };
-        let mut all: Vec<(Vec<u8>, Entry)> = Vec::new();
+        // the names first (one readdir), then a stat for the page's entries only: a folder of 100 000 entries costs
+        // 1 001 stats per page, not 100 000
+        let mut names: Vec<Vec<u8>> = Vec::new();
         let d = rustix::fs::Dir::read_from(&fd).map_err(|e| path_error(e, true))?;
         for item in d {
             let item = item.map_err(|e| unavailable(format!("readdir: {e}")))?;
-            let name = item.file_name().to_bytes().to_vec();
-            if name == b"." || name == b".." {
+            let name = item.file_name().to_bytes();
+            if name == b"." || name == b".." || cursor.is_some_and(|c| name <= c.as_bytes()) {
                 continue;
             }
-            if cursor.is_some_and(|c| name.as_slice() <= c.as_bytes()) {
+            names.push(name.to_vec());
+        }
+        let more = names.len() > ENTRIES_PAGE;
+        if more {
+            names.select_nth_unstable(ENTRIES_PAGE);
+            names.truncate(ENTRIES_PAGE);
+        }
+        names.sort_unstable();
+        // the cursor is the page's last name even when that entry went away before its stat
+        let next_cursor = more
+            .then(|| names.last().map(|n| String::from_utf8_lossy(n).into_owned()))
+            .flatten();
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            let Ok(cname) = std::ffi::CString::new(name.clone()) else {
                 continue;
-            }
+            };
             // an entry removed between readdir and stat is left out
-            let Ok(st) = rustix::fs::statat(&fd, item.file_name(), rustix::fs::AtFlags::SYMLINK_NOFOLLOW) else {
+            let Ok(st) = rustix::fs::statat(&fd, cname.as_c_str(), rustix::fs::AtFlags::SYMLINK_NOFOLLOW) else {
                 continue;
             };
             let kind = match FileType::from_raw_mode(st.st_mode) {
@@ -545,27 +709,20 @@ impl JuiceFs {
                 st.st_mtime.saturating_mul(1000) + i64::try_from(st.st_mtime_nsec / 1_000_000).unwrap_or(0),
             )
             .unwrap_or_else(Timestamp::now);
-            all.push((
-                name.clone(),
-                Entry {
-                    name: String::from_utf8_lossy(&name).into_owned(),
-                    kind,
-                    size: if kind == EntryType::Dir {
-                        0
-                    } else {
-                        u64::try_from(st.st_size).unwrap_or(0)
-                    },
-                    mtime,
+            entries.push(Entry {
+                name: String::from_utf8_lossy(&name).into_owned(),
+                kind,
+                size: if kind == EntryType::Dir {
+                    0
+                } else {
+                    u64::try_from(st.st_size).unwrap_or(0)
                 },
-            ));
+                mtime,
+            });
         }
-        all.sort_by(|a, b| a.0.cmp(&b.0));
-        let more = all.len() > ENTRIES_PAGE;
-        all.truncate(ENTRIES_PAGE);
-        let next_cursor = more.then(|| all.last().map(|(_, e)| e.name.clone())).flatten();
         Ok(Entries {
             path: path.to_owned(),
-            entries: all.into_iter().map(|(_, e)| e).collect(),
+            entries,
             next_cursor,
         })
     }
@@ -583,35 +740,129 @@ impl JuiceFs {
     }
 }
 
-/// Streams `len` bytes of `file` from its current offset in 64 KiB chunks, holding `permit` until the end.
-fn stream(file: tokio::fs::File, len: u64, permit: tokio::sync::OwnedSemaphorePermit) -> axum::body::Body {
-    use tokio::io::AsyncReadExt as _;
-    let s = futures_util::stream::unfold(
-        (file, len, permit, vec![0u8; CHUNK]),
-        |(mut file, left, permit, mut buf)| async move {
-            if left == 0 {
-                return None;
-            }
+/// Streams `len` bytes of `file` from its current offset in 64 KiB chunks. A task reads each chunk on a blocking
+/// thread that owns the file and `permit` while it runs (a read that hangs keeps its permit until it returns) and
+/// hands it over a channel of one: a chunk with no answer in [`READ_TIMEOUT`] ends the body with an error, and a
+/// client that takes no chunk for [`READ_IDLE`] loses the body; either way the permit goes back.
+fn stream(file: std::fs::File, len: u64, permit: OwnedSemaphorePermit) -> axum::body::Body {
+    let (tx, rx) = tokio::sync::mpsc::channel::<io::Result<axum::body::Bytes>>(1);
+    tokio::spawn(async move {
+        let mut held = Some((file, permit, vec![0u8; CHUNK]));
+        let mut left = len;
+        while left > 0 {
+            let Some((mut file, permit, mut buf)) = held.take() else {
+                break;
+            };
             let want = usize::try_from(left.min(CHUNK as u64)).unwrap_or(CHUNK);
-            let read = tokio::time::timeout(READ_TIMEOUT, file.read(&mut buf[..want]))
-                .await
-                .unwrap_or_else(|_| {
-                    Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "workspace read: no answer in 30 s",
-                    ))
-                });
-            match read {
-                Ok(0) => None,
-                Ok(n) => {
+            let h = tokio::task::spawn_blocking(move || {
+                use std::io::Read as _;
+                let r = file.read(&mut buf[..want]);
+                (r, file, permit, buf)
+            });
+            let item = match tokio::time::timeout(READ_TIMEOUT, h).await {
+                Ok(Ok((Ok(0), ..))) => break,
+                Ok(Ok((Ok(n), file, permit, buf))) => {
+                    left -= n as u64;
                     let chunk = axum::body::Bytes::copy_from_slice(&buf[..n]);
-                    Some((Ok::<_, io::Error>(chunk), (file, left - n as u64, permit, buf)))
+                    held = Some((file, permit, buf));
+                    Ok(chunk)
                 }
-                Err(e) => Some((Err(e), (file, 0, permit, buf))),
+                Ok(Ok((Err(e), ..))) => Err(e),
+                Ok(Err(e)) => Err(io::Error::other(e.to_string())),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("workspace read: no answer in {} s", READ_TIMEOUT.as_secs()),
+                )),
+            };
+            let last = item.is_err();
+            if tx.send_timeout(item, READ_IDLE).await.is_err() || last {
+                break;
             }
-        },
-    );
+        }
+    });
+    let s = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) });
     axum::body::Body::from_stream(s)
+}
+
+/// `rename(from, to)` that never replaces `to` (`RENAME_NOREPLACE`; a filesystem without the flag gets a plain
+/// rename, which still refuses a non-empty `to`).
+fn rename_noreplace(from: &Path, to: &Path) -> Result<(), Errno> {
+    match rustix::fs::renameat_with(rustix::fs::CWD, from, rustix::fs::CWD, to, RenameFlags::NOREPLACE) {
+        Err(Errno::INVAL | Errno::NOSYS) => rustix::fs::rename(from, to),
+        other => other,
+    }
+}
+
+/// Removes a clone's temporary tree when the clone does not finish (an error, a timeout, a dropped request), unless
+/// [`TempTree::keep`] was called: best effort, in the background.
+struct TempTree {
+    cli: Arc<dyn JfsCli>,
+    path: Option<PathBuf>,
+}
+
+impl TempTree {
+    fn keep(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TempTree {
+    fn drop(&mut self) {
+        let Some(path) = self.path.take() else {
+            return;
+        };
+        let cli = self.cli.clone();
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                match cli.rmr(&path).await {
+                    Ok(()) => tracing::info!(path = %path.display(), "unfinished clone removed"),
+                    Err(e) => tracing::info!(path = %path.display(), error = %e, "unfinished clone not removed (the sweep retries)"),
+                }
+            });
+        }
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The temporary clone trees in `ws_root` older than [`CLONE_STALE`] (by the time in their name).
+fn stale_clones(ws_root: &Path, now: u64) -> io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(ws_root)? {
+        let e = e?;
+        let name = e.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix(CLONE_PREFIX)) else {
+            continue;
+        };
+        let Some(at) = rest.rsplit_once('-').and_then(|(_, t)| t.parse::<u64>().ok()) else {
+            continue;
+        };
+        if now.saturating_sub(at) > CLONE_STALE.as_secs() {
+            out.push(e.path());
+        }
+    }
+    Ok(out)
+}
+
+/// Removes the temporary trees of clones that ended with their replica (no request left to remove them).
+async fn sweep_clones(ws_root: PathBuf, cli: Arc<dyn JfsCli>) {
+    let scan = tokio::task::spawn_blocking(move || stale_clones(&ws_root, unix_now()));
+    let stale = match tokio::time::timeout(LIST_TIMEOUT, scan).await {
+        Ok(Ok(Ok(v))) => v,
+        Ok(Ok(Err(e))) => return tracing::info!(error = %e, "clone sweep: ws/ not read"),
+        Ok(Err(e)) => return tracing::info!(error = %e, "clone sweep: ws/ not read"),
+        Err(_) => return tracing::info!("clone sweep: ws/ not read in time"),
+    };
+    for path in stale {
+        match cli.rmr(&path).await {
+            Ok(()) => tracing::warn!(path = %path.display(), "an abandoned clone's tree removed"),
+            Err(e) => tracing::info!(path = %path.display(), error = %e, "an abandoned clone's tree not removed"),
+        }
+    }
 }
 
 impl Workspaces for JuiceFs {
@@ -654,12 +905,7 @@ impl Workspaces for JuiceFs {
     ) -> Fut<'a, Result<Entries, WorkspaceError>> {
         Box::pin(async move {
             self.check().await?;
-            let dir = self.dir(wid);
-            let (path, cursor) = (path.to_owned(), cursor.map(str::to_owned));
-            self.blocking("a workspace listing", LIST_TIMEOUT, move || {
-                Self::list(&dir, &path, cursor.as_deref())
-            })
-            .await?
+            self.listing(wid, path, cursor).await
         })
     }
 
@@ -671,19 +917,19 @@ impl Workspaces for JuiceFs {
     ) -> Fut<'a, Result<FileContent, WorkspaceError>> {
         Box::pin(async move {
             self.check().await?;
-            let permit = self
-                .reads
-                .clone()
-                .acquire_owned()
+            let permit = tokio::time::timeout(READ_WAIT, self.reads.clone().acquire_owned())
                 .await
+                .map_err(|_| unavailable(format!("{MAX_READS} file reads are running on this replica")))?
                 .map_err(|e| unavailable(e.to_string()))?;
             let dir = self.dir(wid);
             let p = path.to_owned();
-            let (file, st) = self
+            // the permit goes into the open's thread and comes back with the file: an open that hangs keeps it
+            let (opened, permit) = self
                 .blocking("open of a workspace file", FS_TIMEOUT, move || {
-                    Self::open_file(&dir, &p)
+                    (Self::open_file(&dir, &p), permit)
                 })
-                .await??;
+                .await?;
+            let (file, st) = opened?;
             let size = u64::try_from(st.st_size).unwrap_or(0);
             let served = match range {
                 Some(r) => Some(r.resolve(size).ok_or_else(|| api(error::range_not_satisfiable(size)))?),
@@ -698,14 +944,20 @@ impl Workspaces for JuiceFs {
                 etag: FileMeta::etag_for(size, mtime_ns),
                 served,
             };
-            let mut file = tokio::fs::File::from_std(file);
-            if let Some((first, _)) = served {
-                use tokio::io::AsyncSeekExt as _;
-                tokio::time::timeout(FS_TIMEOUT, file.seek(io::SeekFrom::Start(first)))
-                    .await
-                    .map_err(|_| self.not_mounted("seek in a workspace file: no answer in 2 s".into()))?
-                    .map_err(|e| unavailable(format!("seek: {e}")))?;
-            }
+            let (file, permit) = match served {
+                Some((first, _)) => {
+                    let (sought, file, permit) = self
+                        .blocking("seek in a workspace file", FS_TIMEOUT, move || {
+                            use std::io::Seek as _;
+                            let mut file = file;
+                            (file.seek(io::SeekFrom::Start(first)), file, permit)
+                        })
+                        .await?;
+                    sought.map_err(|e| unavailable(format!("seek: {e}")))?;
+                    (file, permit)
+                }
+                None => (file, permit),
+            };
             let len = meta.content_length();
             Ok(FileContent::streamed(meta, stream(file, len, permit)))
         })
@@ -720,15 +972,31 @@ impl Workspaces for JuiceFs {
             if self.created_at(wid).await?.is_some() {
                 return Err(api(error::api(409, codes::EXISTS, "the workspace exists")));
             }
-            // the check above and the clone are not one step: a clone that made the target meanwhile wins, and this
-            // one answers what it would have answered a moment later
+            // the copy is made under a temporary name and renamed into place without replacing anything: ws/<wid> is
+            // never a partial tree, and a clone that made the target meanwhile wins (this one answers what it would
+            // have answered a moment later)
+            let tmp = self.ws_root().join(format!("{CLONE_PREFIX}{wid}-{}", unix_now()));
+            let guard = TempTree {
+                cli: self.cli.clone(),
+                path: Some(tmp.clone()),
+            };
             self.cli
-                .clone_tree(&self.dir(from), &self.dir(wid))
+                .clone_tree(&self.dir(from), &tmp)
                 .await
-                .map_err(|e| match e {
-                    CliError::Exists(_) => api(error::api(409, codes::EXISTS, "the workspace exists")),
-                    other => unavailable(other.to_string()),
-                })?;
+                .map_err(|e| unavailable(e.to_string()))?;
+            let target = self.dir(wid);
+            let renamed = self
+                .blocking("rename of a clone into place", FS_TIMEOUT, move || {
+                    rename_noreplace(&tmp, &target)
+                })
+                .await?;
+            match renamed {
+                Ok(()) => guard.keep(),
+                Err(Errno::EXIST | Errno::NOTEMPTY) => {
+                    return Err(api(error::api(409, codes::EXISTS, "the workspace exists")));
+                }
+                Err(e) => return Err(unavailable(format!("rename of a clone into ws/{wid}: {e}"))),
+            }
             // the copy gets its own quota (a directory quota is not copied with the tree)
             self.set_quota(wid).await?;
             let created = self.created_at(wid).await?.unwrap_or_else(Timestamp::now);
@@ -744,7 +1012,7 @@ impl Workspaces for JuiceFs {
                 let refused = match self.cli.rmr(&dir).await {
                     Ok(()) => None,
                     Err(CliError::PermissionDenied(m)) => Some(m),
-                    Err(CliError::Failed(m) | CliError::Exists(m)) => return Err(unavailable(m)),
+                    Err(CliError::Failed(m)) => return Err(unavailable(m)),
                 };
                 // an entry the ownership fix-up missed leaves the tree in place (15.4)
                 let refused = match refused {
@@ -777,7 +1045,9 @@ impl Workspaces for JuiceFs {
 
     fn probe(&self) -> Fut<'_, StoreHealth> {
         Box::pin(async {
-            let _ = self.check().await;
+            if self.check().await.is_ok() {
+                self.maybe_sweep();
+            }
             self.health()
         })
     }
@@ -814,13 +1084,27 @@ mod tests {
         }
     }
 
-    // a FUSE call that hangs (here: a sleep) is a broken mount after the limit, and a stat still outstanding is
-    // not joined by another
-    #[tokio::test]
-    async fn a_hung_filesystem_call_is_a_broken_mount() {
+    fn temp_store() -> (PathBuf, JuiceFs) {
         let root = std::env::temp_dir().join(format!("hermit-hung-{}", Uuid::new_v4().simple()));
         std::fs::create_dir_all(root.join("ws")).unwrap();
         let s = JuiceFs::new(&root, Arc::new(NoCli), 1, 1000);
+        (root, s)
+    }
+
+    fn flight(s: &JuiceFs, started: Instant, answer: BoxFuture<'static, StatAnswer>) -> u64 {
+        let id = s.flights.fetch_add(1, Ordering::Relaxed);
+        *s.stat.lock().unwrap() = Some(StatFlight {
+            id,
+            started,
+            answer: answer.shared(),
+        });
+        id
+    }
+
+    // a FUSE call that hangs (here: a sleep) is a broken mount after the limit
+    #[tokio::test]
+    async fn a_hung_filesystem_call_is_a_broken_mount() {
+        let (root, s) = temp_store();
         let t = Instant::now();
         let e = s
             .blocking("a test call", Duration::from_millis(100), || {
@@ -836,12 +1120,122 @@ mod tests {
         assert!(s.health().unmounted.is_some());
         let api: hermit_api::error::ApiError = e.into();
         assert_eq!(api.status().as_u16(), 503);
-        // a stat that has not answered: the next check fails at once
-        s.stat_pending.store(true, Ordering::SeqCst);
+        // a stat older than FS_TIMEOUT that has not answered: the mount is hung, the next check fails at once
+        let long_ago = Instant::now().checked_sub(FS_TIMEOUT + Duration::from_secs(1)).unwrap();
+        flight(&s, long_ago, futures_util::future::pending().boxed());
+        let t = Instant::now();
         assert!(matches!(s.check().await, Err(WorkspaceError::NotMounted(_))));
-        s.stat_pending.store(false, Ordering::SeqCst);
+        assert!(t.elapsed() < Duration::from_millis(200));
+        // one that started just now and never answers: the check waits out FS_TIMEOUT, then the mount is hung
+        flight(&s, Instant::now(), futures_util::future::pending().boxed());
+        let t = Instant::now();
+        assert!(matches!(s.check().await, Err(WorkspaceError::NotMounted(_))));
+        assert!(t.elapsed() >= FS_TIMEOUT.checked_sub(Duration::from_millis(50)).unwrap());
+        *s.stat.lock().unwrap() = None;
         s.check().await.unwrap();
         assert_eq!(s.health().unmounted, None, "a mount that answers again is fine again");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // a stat that is simply still running is shared by every check that arrives meanwhile: none fails, and no
+    // second stat starts
+    #[tokio::test]
+    async fn checks_during_a_healthy_stat_share_its_answer() {
+        let (root, s) = temp_store();
+        let id = flight(
+            &s,
+            Instant::now(),
+            async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Ok(Ok(true))
+            }
+            .boxed(),
+        );
+        let t = Instant::now();
+        let all = futures_util::future::join_all((0..50).map(|_| s.check())).await;
+        assert!(all.iter().all(Result::is_ok), "{all:?}");
+        assert!(t.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            s.stat.lock().unwrap().as_ref().map(|f| f.id),
+            Some(id),
+            "no second stat was started"
+        );
+        assert_eq!(s.health().unmounted, None);
+        // and real stats run one at a time, shared under concurrency
+        *s.stat.lock().unwrap() = None;
+        let all = futures_util::future::join_all((0..200).map(|_| s.check())).await;
+        assert!(all.iter().all(Result::is_ok), "{all:?}");
+        assert_eq!(s.health().unmounted, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // a slow listing is not a hung mount: 503 without marking the mount, the scan is joined by the retry (same
+    // cursor), and a listing of the same folder from elsewhere waits its turn
+    #[tokio::test]
+    async fn a_slow_listing_answers_503_and_leaves_the_mount_alone() {
+        let (root, s) = temp_store();
+        let wid = Uuid::new_v4();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let answer = async move {
+            let _ = rx.await;
+            (
+                Ok(Entries {
+                    path: String::new(),
+                    entries: vec![],
+                    next_cursor: None,
+                }),
+                Instant::now(),
+            )
+        }
+        .boxed()
+        .shared();
+        tokio::spawn(answer.clone());
+        s.listings.lock().unwrap().insert(
+            (wid, String::new()),
+            ListFlight {
+                id: 99,
+                cursor: None,
+                answer,
+            },
+        );
+        let e = s.listing(wid, "", Some("b")).await.unwrap_err();
+        assert!(
+            matches!(&e, WorkspaceError::Unavailable(m) if m.contains("still running")),
+            "{e:?}"
+        );
+        let t = Instant::now();
+        let e = s.listing(wid, "", None).await.unwrap_err();
+        assert!(t.elapsed() >= LIST_TIMEOUT.checked_sub(Duration::from_millis(50)).unwrap());
+        assert!(
+            matches!(&e, WorkspaceError::Unavailable(m) if m.contains("goes on")),
+            "{e:?}"
+        );
+        assert_eq!(s.health().unmounted, None, "a slow listing is not a broken mount");
+        // the scan finishes with nobody waiting; the retry gets its answer, not a new scan
+        tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let page = s.listing(wid, "", None).await.unwrap();
+        assert_eq!(page.entries.len(), 0);
+        assert!(s.listings.lock().unwrap().is_empty(), "the collected answer is gone");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stale_clone_trees_are_found_by_the_time_in_their_name() {
+        let root = std::env::temp_dir().join(format!("hermit-sweep-{}", Uuid::new_v4().simple()));
+        let now = 2_000_000_000;
+        let (old, fresh) = (Uuid::new_v4(), Uuid::new_v4());
+        for n in [
+            format!("{CLONE_PREFIX}{old}-{}", now - CLONE_STALE.as_secs() - 1),
+            format!("{CLONE_PREFIX}{fresh}-{}", now - 60),
+            format!("{CLONE_PREFIX}garbage"),
+            Uuid::new_v4().to_string(),
+        ] {
+            std::fs::create_dir_all(root.join(n)).unwrap();
+        }
+        let found = stale_clones(&root, now).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].to_string_lossy().contains(&old.to_string()));
         let _ = std::fs::remove_dir_all(&root);
     }
 

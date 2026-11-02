@@ -17,7 +17,7 @@ use std::time::Duration;
 use aviary_core::auth::Caller;
 use common::{Harness, STAFF, eventually};
 use hermit::fabric::{Fut, WorkspaceError, Workspaces};
-use hermit::workspaces::{CliError, JfsCli, JuiceFs, Quota};
+use hermit::workspaces::{CLONE_PREFIX, CLONE_STALE, CliError, JfsCli, JuiceFs, MAX_READS, Quota, READ_WAIT};
 use hermit_api::workspaces::{ByteRange, ENTRIES_PAGE, EntryType};
 use serde_json::json;
 use uuid::Uuid;
@@ -32,6 +32,8 @@ struct FakeCli {
     sets: Mutex<Vec<String>>,
     log: Mutex<Vec<String>>,
     refuse_rmr: AtomicBool,
+    /// `clone` copies the tree, then fails (a `juicefs clone` killed midway).
+    fail_clone: AtomicBool,
     hook: Mutex<Option<Hook>>,
 }
 
@@ -128,14 +130,11 @@ impl JfsCli for Cli {
     fn clone_tree<'a>(&'a self, from: &'a Path, to: &'a Path) -> Fut<'a, Result<(), CliError>> {
         Box::pin(async move {
             self.note("clone");
-            // juicefs answers "file exists" for a target that is there
-            copy_tree(from, to).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    CliError::Exists(e.to_string())
-                } else {
-                    CliError::Failed(e.to_string())
-                }
-            })
+            copy_tree(from, to).map_err(|e| CliError::Failed(e.to_string()))?;
+            if self.fake.fail_clone.load(Ordering::SeqCst) {
+                return Err(CliError::Failed("juicefs clone: no answer in 900 s".into()));
+            }
+            Ok(())
         })
     }
 
@@ -183,6 +182,22 @@ impl Store {
     fn ws(&self, wid: Uuid) -> PathBuf {
         self.root.join("ws").join(wid.to_string())
     }
+
+    /// Every name in `ws/`, sorted.
+    fn ws_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(self.root.join("ws"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+}
+
+fn sorted(ids: &[Uuid]) -> Vec<String> {
+    let mut v: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    v.sort();
+    v
 }
 
 fn code(e: WorkspaceError) -> (u16, String) {
@@ -552,12 +567,133 @@ async fn a_clone_that_loses_the_race_to_its_target_answers_exists() {
     s.jfs.ensure(from).await.unwrap();
     // another clone makes the target between this one's check and its `juicefs clone`
     let target = s.ws(wid);
-    *s.cli.hook.lock().unwrap() = Some(Box::new(move |_| {
-        std::fs::create_dir(&target).unwrap();
+    *s.cli.hook.lock().unwrap() = Some(Box::new(move |what| {
+        if what == "clone" {
+            std::fs::create_dir(&target).unwrap();
+        }
         String::new()
     }));
     let e = s.jfs.clone_workspace(wid, from).await.unwrap_err();
     assert_eq!(code(e), (409, "exists".to_owned()));
+    // the target is the other clone's, untouched; this clone's temporary copy is removed
+    assert!(s.ws(wid).is_dir());
+    assert!(
+        eventually(Duration::from_secs(5), || async {
+            s.ws_names() == sorted(&[from, wid])
+        })
+        .await,
+        "{:?}",
+        s.ws_names()
+    );
+}
+
+// a clone that fails midway (killed at its timeout, or its request dropped) leaves no tree: not at ws/<wid>, which
+// never holds a partial copy, and not under its temporary name
+#[tokio::test]
+async fn a_clone_that_fails_midway_leaves_no_tree() {
+    let s = store();
+    let (from, wid) = (Uuid::new_v4(), Uuid::new_v4());
+    s.jfs.ensure(from).await.unwrap();
+    std::fs::write(s.ws(from).join("a"), b"abc").unwrap();
+    s.cli.fail_clone.store(true, Ordering::SeqCst);
+    let (st, _) = code(s.jfs.clone_workspace(wid, from).await.unwrap_err());
+    assert_eq!(st, 503);
+    assert!(!s.ws(wid).exists());
+    assert!(
+        eventually(Duration::from_secs(5), || async { s.ws_names() == sorted(&[from]) }).await,
+        "{:?}",
+        s.ws_names()
+    );
+    assert!(!s.cli.quotas.lock().unwrap().contains_key(&format!("/ws/{wid}")));
+    // the same id then clones fine (no 409 over a partial tree)
+    s.cli.fail_clone.store(false, Ordering::SeqCst);
+    s.jfs.clone_workspace(wid, from).await.unwrap();
+    assert_eq!(std::fs::read(s.ws(wid).join("a")).unwrap(), b"abc");
+    assert_eq!(s.ws_names(), sorted(&[from, wid]));
+}
+
+// a replica that died mid-clone left a temporary tree: the probe removes it once it is older than any clone can run
+#[tokio::test]
+async fn the_probe_sweeps_trees_of_abandoned_clones() {
+    let s = store();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let old = s.root.join("ws").join(format!(
+        "{CLONE_PREFIX}{}-{}",
+        Uuid::new_v4(),
+        now - CLONE_STALE.as_secs() - 60
+    ));
+    let running = s
+        .root
+        .join("ws")
+        .join(format!("{CLONE_PREFIX}{}-{now}", Uuid::new_v4()));
+    std::fs::create_dir_all(old.join("d")).unwrap();
+    std::fs::create_dir_all(&running).unwrap();
+    assert!(s.jfs.probe().await.unmounted.is_none());
+    assert!(eventually(Duration::from_secs(5), || async { !old.exists() }).await);
+    assert!(running.exists(), "a clone that may still run is left alone");
+}
+
+// ordinary concurrency on a healthy mount (the files panel's parallel reads, the replica probe) never answers 503
+// and never marks the mount broken
+#[tokio::test]
+async fn concurrent_calls_on_a_healthy_mount_all_answer() {
+    let s = store();
+    let wid = Uuid::new_v4();
+    s.jfs.ensure(wid).await.unwrap();
+    for i in 0..20 {
+        std::fs::write(s.ws(wid).join(format!("f{i}")), vec![b'x'; 1000 + i]).unwrap();
+    }
+    let jfs = &s.jfs;
+    let lists = (0..60).map(|_| async { jfs.entries(wid, "", None).await.map(|e| e.entries.len()) });
+    let reads = (0..60).map(|i| async move {
+        let c = jfs.file(wid, &format!("f{}", i % 20), None).await?;
+        Ok::<_, WorkspaceError>(bytes(c).await.len())
+    });
+    let probes = (0..20).map(|_| s.jfs.probe());
+    let (lists, reads, probes) = futures_util::future::join3(
+        futures_util::future::join_all(lists),
+        futures_util::future::join_all(reads),
+        futures_util::future::join_all(probes),
+    )
+    .await;
+    for r in &lists {
+        assert_eq!(r.as_ref().map_err(|e| format!("{e:?}")), Ok(&20));
+    }
+    for (i, r) in reads.iter().enumerate() {
+        assert_eq!(r.as_ref().map_err(|e| format!("{e:?}")), Ok(&(1000 + i % 20)));
+    }
+    assert!(probes.iter().all(|h| h.unmounted.is_none()));
+    assert_eq!(s.jfs.health().unmounted, None);
+}
+
+// 64 downloads that stall hold every read permit: the next read answers 503 after READ_WAIT instead of waiting for
+// ever, and the permits come back when those bodies go
+#[tokio::test]
+async fn stalled_downloads_never_hang_the_next_read() {
+    let s = store();
+    let wid = Uuid::new_v4();
+    s.jfs.ensure(wid).await.unwrap();
+    std::fs::write(s.ws(wid).join("big"), vec![7u8; 512 * 1024]).unwrap();
+    let mut stalled = Vec::new();
+    for _ in 0..MAX_READS {
+        stalled.push(s.jfs.file(wid, "big", None).await.unwrap());
+    }
+    let started = std::time::Instant::now();
+    let busy = s.jfs.file(wid, "big", None).await.map(drop).unwrap_err();
+    assert!(started.elapsed() >= READ_WAIT.checked_sub(Duration::from_millis(50)).unwrap());
+    let (status, msg) = code(busy);
+    assert_eq!(status, 503);
+    assert!(msg.contains("file reads are running"), "{msg}");
+    assert_eq!(s.jfs.health().unmounted, None, "busy is not broken");
+    drop(stalled);
+    let c = tokio::time::timeout(Duration::from_secs(2), s.jfs.file(wid, "big", None))
+        .await
+        .expect("the permits came back")
+        .unwrap();
+    assert_eq!(bytes(c).await.len(), 512 * 1024);
 }
 
 /// A store whose mount check never answers (a hung FUSE mount); everything else is the store's.
