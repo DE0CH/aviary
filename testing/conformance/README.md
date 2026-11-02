@@ -3,13 +3,15 @@
 `aviary-conformance` checks an implementation of an aviary contract from the outside (platform spec 8);
 `test-gateway` is the reference implementation of the sandbox gateway contract (platform 3.11, 7.3) and the oracle
 the gateway suite is tested against. Both are in the `ghcr.io/de0ch/aviary-testing:<sha12>` image
-(`images/aviary-testing`; the container's command names the binary).
+(`images/aviary-testing`; the container's command names the binary, e.g. `aviary-conformance gateway …`; see the
+deviations). The image is built and run in CI but not pushed yet: WP-28's publish job pushes it.
 
 ```
 aviary-conformance hermit  --target http://hermit --tokens tokens.json [--capabilities pause,snapshot]
                            [--token-command '<prints the token of {sandboxId} {conversationId}>']
 aviary-conformance gateway --proxy http://gw:3128 --api http://gw:8082 --sandbox-ip <source address>
-                           --serve-fakes :80 --tokens tokens.json --signing-key <kid:base64url | @file>
+                           --serve-fakes :80 [--serve-hermit-fakes :8081] --tokens tokens.json
+                           --signing-key <kid:base64url | @file>
                            [--sigterm '<sends SIGTERM to the replica under test>'] [--self-host <vip or name>]…
 aviary-conformance model   --target http://model --token <pigeon pair token>
                            [--proxy http://gw:3128 --sandbox-token <token>]
@@ -23,15 +25,19 @@ The suite serves fakes of `magpie`, `hermit`, `tools` and the model upstream on 
 (`magpie`, `hermit`, `tools`; any other host is the model upstream), so the gateway's upstreams must reach
 `--serve-fakes` (Docker network aliases, Services, or local addresses with the gateway sending `Host: <name>`). The
 fake hermit publishes the public half of `--signing-key` and answers liveness as each check sets it; the suite mints
-its own sandbox tokens with that key, presented from `--sandbox-ip`.
+its own sandbox tokens with that key, presented from `--sandbox-ip`. With `--serve-hermit-fakes`, hermit also answers
+alone on that listener (whatever the `Host`); point the gateway's hermit upstream there, and the outage's first phase
+closes it so the gateway's connects are refused. Without it hermit shares `--serve-fakes`, and that phase can only
+accept each connection and reset it.
 
 `tokens.json`: `{"gatewayToMagpie", "gatewayToHermit", "gatewayToTools", "gatewayToModel", "pigeonToGateway",
 "hermitToGateway"}`: the pair tokens the gateway presents to the fakes, the model credential it presents upstream
 (`x-api-key` or `Authorization: Bearer`), and the bearers its in-cluster API accepts.
 
 Phases: a warm-up until a valid token is admitted (up to 60 s, so the suite and the gateway may start in either
-order); every check that needs hermit up, concurrently; hermit's outage (3 min: connections dropped, answers held past
-the gateway's 1 s timeout, 503); the drain (`--sigterm`), which ends the replica. Checks, by name:
+order); every check that needs hermit up, concurrently (but `credential.new-kid` after `credential.unknown-kid`, 12 s
+past the last key-set fetch the fake saw); hermit's outage (3 min: connections refused, answers held past the
+gateway's 1 s timeout, 503); the drain (`--sigterm`), which ends the replica. Checks, by name:
 
 | Check | Platform 8.2 row |
 |---|---|
@@ -47,9 +53,9 @@ the gateway's 1 s timeout, 503); the drain (`--sigterm`), which ends the replica
 | `transport.long-poll` | a 25 s magpie long-poll not cut |
 | `limits.64mib`, `limits.64mib-plus-one`, `limits.upload-cap` | 64 MiB delivered, 64 MiB + 1 → 413 `too_large`, 40 × 1 MiB on one kept-alive connection all delivered |
 | `self-host` | a `--self-host` is neither refused like an internet host nor forwarded (skipped without `--self-host`) |
-| `internet.denied` | an unlisted host and `CONNECT` refused, not forwarded |
+| `internet.denied` | an unlisted host and `CONNECT` refused, not forwarded (the "and logged" half is not checked: each implementation logs in its own way; `conformance.sh` checks test-gateway's log line) |
 | `api.ops-summary` | platform 15.3's shape with hermit's bearer (owners are emails), 401 without |
-| `drain` | with a 60 s model stream, a 25 s long-poll and an idle kept-alive connection open: the stream completes, the long-poll answers with `Connection: close`, the idle connection is closed, a new connection is refused (skipped without `--sigterm`) |
+| `drain` | with a 60 s model stream, a 25 s long-poll and an idle kept-alive connection open: the stream completes, the long-poll answers with `Connection: close`, the idle connection is closed, the next request on another kept-alive connection is answered with `Connection: close` (200 or 503) or finds it closed, a new connection is refused (skipped without `--sigterm`). That nothing was cut (`<gw>_drain_cut_total`) is not visible from outside; `conformance.sh` checks test-gateway's metrics and its `cut=[]` log |
 
 `--quick` (hidden) shortens the slow checks for the suite's own tests; a pass with it proves nothing.
 
@@ -80,7 +86,9 @@ http://magpie] [--hermit http://hermit] [--tools http://tools] [--model http://m
 [--ops-summary <json>]`, with the credentials from the environment: `GATEWAY_TOKEN_MAGPIE`, `GATEWAY_TOKEN_HERMIT`,
 `GATEWAY_TOKEN_TOOLS`, `GATEWAY_MODEL_KEY` (sent as `x-api-key`), `GATEWAY_ACCEPT_PIGEON`, `GATEWAY_ACCEPT_HERMIT`.
 `/readyz` is 503 `token-keys` until hermit's key set has been fetched once. A self host serves no local paths (404);
-`CONNECT` and every other host are 403 `not_allowed` (the harness has no internet). Upstream requests carry `Host:
+`CONNECT` and every other host are 403 `not_allowed` (the harness has no internet) and logged (`internet request
+refused`). A `magpie` or `hermit` upstream silent for 120 s (before its head: 504 `upstream_timeout`; between body
+frames: the body is cut) ends the request; `tools` has 190 s, `model` no bound. Upstream requests carry `Host:
 <fixed name>` for `magpie`, `hermit` and `tools`. The library's `Faults` seed four mistakes (client `Aviary-*`
 headers kept, a failed liveness lookup refusing, the upload cap counting fixed names, a drain cutting streams); the
 binary never sets them, and `tests/gateway.rs` checks that the suite fails each.
@@ -88,7 +96,7 @@ binary never sets them, and `tests/gateway.rs` checks that the suite fails each.
 ## Where it runs
 
 - `ci.yml` `test`: `tests/gateway.rs` (the suite passes against test-gateway in-process and fails on each seeded
-  fault), `tests/hermit.rs` (fake-hermit with every hook: nothing skipped), `tests/model.rs` (mock-model directly and
+  fault), `tests/hermit.rs` (fake-hermit with every hook: nothing skipped), `tests/fakes.rs` (hermit's own listener refuses connects in the outage), `tests/model.rs` (mock-model directly and
   through test-gateway's proxy with fake-hermit).
 - `ci.yml` `conformance`: `.github/ci/conformance.sh`, the static binaries with the contract's own durations; JUnit
   XML and logs in the `conformance` artifact.
@@ -106,6 +114,13 @@ binary never sets them, and `tests/gateway.rs` checks that the suite fails each.
   through the gateway, so a gateway that strips it makes magpie refuse every supervisor write. The lease grants no
   identity: magpie checks it against hermit's current sandbox. `headers::FORWARDED` keeps it, and `route.magpie`
   sends one and requires it to reach magpie unchanged.
+- **The testing image has no argv[0] entrypoint.** Platform 5.2 says one image whose entrypoint picks the binary
+  by an argv[0] symlink; `images/aviary-testing` instead puts every binary on PATH under its own name with no
+  entrypoint, so the container command names it: jarvis3's `chat.yml` (platform 17.3) runs
+  `aviary-conformance gateway …` and `aviary-conformance model …` explicitly. Same result, no dispatcher binary.
+- **Liveness errors without a separate hermit listener.** Without `--serve-hermit-fakes` the outage's "refused"
+  phase is an accepted connection reset before any answer, not ECONNREFUSED (the fakes share one port). CI passes
+  the flag, so test-gateway is checked against real refused connects.
 - **A new request on a kept-alive connection during the drain is served** with `Connection: close` (3.11.6 step 2),
   not refused with 503 `unavailable` (3.11.5's last sentence): the drain section is the specific rule.
 - **"The next request on the busy keep-alive connection carries `Connection: close`"** is checked as the answer to the

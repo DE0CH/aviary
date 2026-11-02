@@ -324,8 +324,11 @@ async fn run_suite(o: Options, fakes: Fakes, report: &Report) {
         report.check("credential.bad-signature", credential_bad_signature(&s)),
         report.check("credential.expired", credential_expired(&s)),
         report.check("credential.wrong-source", credential_wrong_source(&s)),
-        report.check("credential.unknown-kid", credential_unknown_kid(&s)),
-        report.check("credential.new-kid", credential_new_kid(&s)),
+        // in order: the unknown kid's refetch starts the gateway's 10 s between refetches, which new-kid waits out
+        async {
+            report.check("credential.unknown-kid", credential_unknown_kid(&s)).await;
+            report.check("credential.new-kid", credential_new_kid(&s)).await;
+        },
         report.check("liveness.revoked", liveness_revoked(&s)),
         report.check("liveness.unknown-sandbox", liveness_unknown(&s)),
         report.check("route.magpie", route_magpie(&s)),
@@ -477,6 +480,9 @@ async fn credential_wrong_source(s: &Suite) -> Outcome {
     refused_with(s, "credential.wrong-source", &Suite::sign(&s.o.signing_key, &c)?).await
 }
 
+/// The least time a gateway may leave between two key-set fetches (3.11.2).
+const KEY_REFETCH_MIN: Duration = Duration::from_secs(10);
+
 fn other_key(kid: u32, fill: u8) -> MasterKey {
     MasterKey::new(kid, [fill; 32])
 }
@@ -488,10 +494,10 @@ async fn credential_unknown_kid(s: &Suite) -> Outcome {
 }
 
 async fn credential_new_kid(s: &Suite) -> Outcome {
-    // a key published after the gateway's last fetch: the first token naming it makes the gateway refetch (at most
-    // every 10 s, so wait that long past the start)
-    let wait = Duration::from_secs(12).saturating_sub(s.started.elapsed());
-    tokio::time::sleep(wait).await;
+    // a key published after the gateway's last fetch: the first token naming it makes the gateway refetch, which it
+    // may do at most every 10 s, so wait that long (and a margin) past the last fetch the fakes saw
+    let last = s.fakes.last_key_fetch().unwrap_or(s.started);
+    tokio::time::sleep_until((last + KEY_REFETCH_MIN + Duration::from_secs(2)).into()).await;
     let key = other_key(s.o.signing_key.kid.wrapping_add(1).max(2), 0x3c);
     s.fakes.publish_key(public_key(&key)?);
     let c = s.claims(Some(Live::Live));
@@ -1153,7 +1159,7 @@ async fn hermit_outage(s: &Suite) -> Outcome {
     let mut refusals = Vec::new();
     let mut requests = 0u32;
     for phase in [Outage::Refuse, Outage::Hang, Outage::Unavailable] {
-        s.fakes.set_outage(phase);
+        s.fakes.set_outage(phase)?;
         let end = Instant::now() + third;
         while Instant::now() < end {
             for (which, sbx) in [("seen", &seen_before), ("never seen", &never_seen)] {
@@ -1171,7 +1177,7 @@ async fn hermit_outage(s: &Suite) -> Outcome {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
-    s.fakes.set_outage(Outage::Up);
+    s.fakes.set_outage(Outage::Up)?;
     ensure!(
         refusals.is_empty(),
         "{} of {requests} requests failed during hermit's outage, first: {}",
@@ -1181,28 +1187,69 @@ async fn hermit_outage(s: &Suite) -> Outcome {
     Ok(())
 }
 
+/// A connection that has finished one request and is kept alive.
+async fn kept_alive(s: &Suite, sbx: &Sbx, case: &str) -> Result<Conn, String> {
+    let mut c = s.conn().await?;
+    let res = c
+        .send(proxy::request(
+            "GET",
+            "http://magpie/v1/sandbox/x",
+            Some(&sbx.credential),
+            &[(CASE, case)],
+            empty(),
+        ))
+        .await?;
+    let st = res.status();
+    let _ = proxy::read_body(res.into_body(), Duration::from_secs(10)).await;
+    if st != StatusCode::OK {
+        return Err(format!("{case}: the kept-alive connection's first request: {st}"));
+    }
+    Ok(c)
+}
+
+/// The next request on a kept-alive connection once the drain has begun: served with `Connection: close` (200, or
+/// 503 refused), or the connection is already closed.
+async fn next_after_signal(next: &mut Conn, sbx: &Sbx) -> Result<(), String> {
+    let next_req = proxy::request(
+        "GET",
+        "http://magpie/v1/sandbox/x",
+        Some(&sbx.credential),
+        &[(CASE, "drain.next")],
+        empty(),
+    );
+    match tokio::time::timeout(Duration::from_secs(20), next.send(next_req)).await {
+        Err(_) => Err("the next request on a kept-alive connection got no answer in 20 s".to_owned()),
+        // closed by the drain before or while it was sent
+        Ok(Err(_)) => Ok(()),
+        Ok(Ok(res)) => {
+            let close = res
+                .headers()
+                .get(hyper::header::CONNECTION)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.eq_ignore_ascii_case("close"));
+            let st = res.status();
+            let _ = proxy::read_body(res.into_body(), Duration::from_secs(10)).await;
+            if !close {
+                Err(format!(
+                    "the next request on a kept-alive connection was answered {st} without Connection: close"
+                ))
+            } else if st != StatusCode::OK && st != StatusCode::SERVICE_UNAVAILABLE {
+                Err(format!("the next request on a kept-alive connection was answered {st}"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 async fn drain(s: &Suite) -> Outcome {
     let Some(sigterm) = &s.o.sigterm else {
         return Err(Problem::Skip("no --sigterm given".into()));
     };
     let sbx = s.sandbox()?;
-    // an idle kept-alive connection
-    let mut idle = s.conn().await?;
-    let res = idle
-        .send(proxy::request(
-            "GET",
-            "http://magpie/v1/sandbox/x",
-            Some(&sbx.credential),
-            &[(CASE, "drain.idle")],
-            empty(),
-        ))
-        .await?;
-    ensure!(
-        res.status() == StatusCode::OK,
-        "idle connection's request: {}",
-        res.status()
-    );
-    let _ = proxy::read_body(res.into_body(), Duration::from_secs(10)).await;
+    // an idle kept-alive connection, and another that sends its next request after the signal
+    let mut idle = kept_alive(s, &sbx, "drain.idle").await?;
+    let mut next = kept_alive(s, &sbx, "drain.next").await?;
 
     // a busy one: a long-poll in flight
     let poll_ms = s.o.durations.long_poll.as_millis();
@@ -1244,6 +1291,10 @@ async fn drain(s: &Suite) -> Outcome {
         sigterm().await.map_err(|e| format!("--sigterm: {e}"))?;
         // the idle connection is closed, and a new connection is refused
         let idle_closed = idle.wait_closed(Duration::from_secs(10)).await;
+        // the next request on a kept-alive connection, once the drain has begun (the idle one is closed): served
+        // with `Connection: close` (3.11.6 step 2) or refused with 503 and `Connection: close`, or the connection
+        // is already closed
+        let next_ok = next_after_signal(&mut next, &sbx).await;
         let t = Instant::now();
         let mut refused = false;
         while t.elapsed() < Duration::from_secs(10) {
@@ -1253,10 +1304,10 @@ async fn drain(s: &Suite) -> Outcome {
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Ok::<_, String>((idle_closed, refused))
+        Ok::<_, String>((idle_closed, refused, next_ok))
     };
     let (streamed, after) = tokio::join!(stream, after);
-    let (idle_closed, refused) = after?;
+    let (idle_closed, refused, next_ok) = after?;
     let (poll_status, poll_close, poll_complete) = long_poll.await.map_err(|e| e.to_string())??;
     let mut problems = Vec::new();
     if let Err(Problem::Fail(m)) = streamed {
@@ -1273,6 +1324,9 @@ async fn drain(s: &Suite) -> Outcome {
     }
     if !refused {
         problems.push("a new connection to the draining replica was accepted".into());
+    }
+    if let Err(m) = next_ok {
+        problems.push(m);
     }
     ensure!(problems.is_empty(), "{}", problems.join("; "));
     Ok(())

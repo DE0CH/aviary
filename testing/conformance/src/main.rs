@@ -58,6 +58,11 @@ enum Suite {
         /// Where the fakes listen (`:80`); the gateway's upstreams must reach them.
         #[arg(long, default_value = ":80")]
         serve_fakes: String,
+        /// Serve hermit alone here too (`:8081`) and point the gateway's hermit upstream at it: the outage's
+        /// refuse phase then closes this listener, so the gateway's connects are refused (ECONNREFUSED). Without
+        /// it, hermit answers on --serve-fakes by `Host` and that phase resets each connection after accept.
+        #[arg(long)]
+        serve_hermit_fakes: Option<String>,
         /// JSON: {"gatewayToMagpie", "gatewayToHermit", "gatewayToTools", "gatewayToModel", "pigeonToGateway",
         /// "hermitToGateway"}.
         #[arg(long)]
@@ -154,6 +159,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             api,
             sandbox_ip,
             serve_fakes,
+            serve_hermit_fakes,
             tokens,
             signing_key,
             sigterm,
@@ -175,6 +181,11 @@ async fn main() -> anyhow::Result<ExitCode> {
                 .await
                 .context("--serve-fakes")?;
             let _served = fakes.serve(listener)?;
+            if let Some(a) = &serve_hermit_fakes {
+                fakes
+                    .serve_hermit(fakes::listen_addr(a).map_err(anyhow::Error::msg)?)
+                    .context("--serve-hermit-fakes")?;
+            }
             let proxy = proxy::resolve(&proxy_url).await.map_err(anyhow::Error::msg)?;
             let o = gateway::Options {
                 proxy,

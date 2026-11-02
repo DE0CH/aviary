@@ -144,6 +144,10 @@ pub struct Config {
     pub drain: DrainBounds,
     /// The per-connection cap on internet uploads (YYC's `maxUploadBytes`); never applied to fixed names.
     pub upload_cap: u64,
+    /// How long a `magpie` or `hermit` upstream may stay silent: for its response head, and between two body frames
+    /// (3.11.4's idle timeout, [`limits::IDLE_TIMEOUT`]); then the request ends (504 `upstream_timeout` before the
+    /// head, a cut body after it). `tools` has its own timeout; `model` has none.
+    pub upstream_idle: Duration,
     pub faults: Faults,
 }
 
@@ -225,6 +229,10 @@ struct Metrics {
 
 impl Metrics {
     fn register(&self, registry: &mut Registry) {
+        // every kind exported from the start, at 0: a drain that cut nothing shows it
+        for kind in Kind::ALL {
+            let _ = self.drain_cut.get_or_create(&KindLabel { kind });
+        }
         registry.register(
             "drain_cut",
             "Requests still open at their drain bound, cut",
@@ -1032,6 +1040,20 @@ async fn forward(
                 );
             }
         }
+    } else if kind == Kind::Fixed {
+        match tokio::time::timeout(inner.cfg.upstream_idle, sent).await {
+            Ok(r) => r,
+            Err(_) => {
+                return refuse(
+                    inner,
+                    &ApiError::new(
+                        StatusCode::GATEWAY_TIMEOUT,
+                        "upstream_timeout",
+                        format!("{} did not answer", name.as_str()),
+                    ),
+                );
+            }
+        }
     } else {
         sent.await
     };
@@ -1079,7 +1101,13 @@ async fn forward(
 
     let (rparts, rbody) = res.into_parts();
     let named = connection_named(&rparts.headers);
-    let mut resp = Response::new(relay(rbody, guard, inner.inflight.kinds[kind.index()].cut.subscribe()));
+    let idle = (kind == Kind::Fixed).then_some(inner.cfg.upstream_idle);
+    let mut resp = Response::new(relay(
+        rbody,
+        guard,
+        inner.inflight.kinds[kind.index()].cut.subscribe(),
+        idle,
+    ));
     *resp.status_mut() = rparts.status;
     for (k, v) in &rparts.headers {
         if !hop_by_hop(k) && !named.iter().any(|n| n == k.as_str()) {
@@ -1091,9 +1119,17 @@ async fn forward(
 
 /// The upstream's body, streamed frame by frame as it comes; it holds the request's in-flight guard until it ends,
 /// and ends with an error (the client sees the connection cut) when the drain cuts its kind.
-fn relay(body: Incoming, guard: InflightGuard, cut: watch::Receiver<bool>) -> Body {
-    let stream = futures_util::stream::unfold(Some((body, guard, cut)), |state| async move {
+/// Relays an upstream body, ending it when the drain cuts its kind or, with `idle`, when the upstream sends no frame
+/// for that long.
+fn relay(body: Incoming, guard: InflightGuard, cut: watch::Receiver<bool>, idle: Option<Duration>) -> Body {
+    let stream = futures_util::stream::unfold(Some((body, guard, cut)), move |state| async move {
         let (mut body, guard, mut cut) = state?;
+        let silent = async {
+            match idle {
+                Some(d) => tokio::time::sleep(d).await,
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
             biased;
             cut_ok = async { cut.wait_for(|c| *c).await.is_ok() } => {
@@ -1103,6 +1139,11 @@ fn relay(body: Incoming, guard: InflightGuard, cut: watch::Receiver<bool>) -> Bo
                 }
                 // the sender is gone only with the gateway itself
                 let e: BoxError = "gateway stopped".into();
+                Some((Err(e), None))
+            }
+            () = silent => {
+                tracing::warn!(idle = ?idle, "upstream silent past the idle timeout, cutting");
+                let e: BoxError = "upstream idle timeout".into();
                 Some((Err(e), None))
             }
             f = body.frame() => match f {

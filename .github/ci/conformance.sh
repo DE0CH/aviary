@@ -28,15 +28,21 @@ JSON
 echo "1:$(tok)" > "$work/signing-key"
 
 fakes=127.0.0.1:18080
+hermit_fakes=127.0.0.1:18081 # hermit alone: its outage closes this port, so connects are refused
 "$bin/test-gateway" --proxy-listen 127.0.0.1:13128 --api-listen 127.0.0.1:18082 --ops-listen 127.0.0.1:19090 \
-  --magpie "http://$fakes" --hermit "http://$fakes" --tools "http://$fakes" --model "http://$fakes" \
+  --magpie "http://$fakes" --hermit "http://$hermit_fakes" --tools "http://$fakes" --model "http://$fakes" \
   --self-host 192.0.2.10 --self-host egress > "$out/test-gateway.log" 2>&1 &
 gw=$!
+# scrape its metrics until it exits: the last scrape is from inside the drain
+( while kill -0 "$gw" 2>/dev/null; do
+    curl -sf http://127.0.0.1:19090/metrics > "$work/metrics.tmp" && mv "$work/metrics.tmp" "$out/test-gateway.metrics"
+    sleep 0.5
+  done ) &
 
 status=0
 "$bin/aviary-conformance" --junit "$out/gateway.xml" gateway \
   --proxy http://127.0.0.1:13128 --api http://127.0.0.1:18082 --sandbox-ip 127.0.0.1 \
-  --serve-fakes "$fakes" --tokens "$work/tokens.json" --signing-key "@$work/signing-key" \
+  --serve-fakes "$fakes" --serve-hermit-fakes "$hermit_fakes" --tokens "$work/tokens.json" --signing-key "@$work/signing-key" \
   --sigterm "kill -TERM $gw" --self-host 192.0.2.10 --self-host egress || status=1
 
 # the drained gateway exits 0 with log `drained`
@@ -45,6 +51,18 @@ timeout 30 tail --pid="$gw" -f /dev/null || true
 wait "$gw" || gw_exit=$?
 if [ "$gw_exit" -ne 0 ] || ! grep -q '"drained"' "$out/test-gateway.log"; then
   echo "test-gateway did not drain cleanly (exit $gw_exit)"; status=1
+fi
+# nothing was cut at a drain bound: the log says cut=[], and <gw>_drain_cut_total{kind} is exported with no cut
+if ! grep '"gateway drained"' "$out/test-gateway.log" | grep -q '"cut":"\[\]"'; then
+  echo "test-gateway's drain cut requests: $(grep '"gateway drained"' "$out/test-gateway.log")"; status=1
+fi
+if [ "$(grep -cE '^test_gateway_drain_cut_total\{kind="[A-Za-z_]+"\} 0$' "$out/test-gateway.metrics" 2>/dev/null)" != 3 ]; then
+  echo "test-gateway does not export test_gateway_drain_cut_total{kind} at 0 for its three kinds:"
+  grep drain_cut "$out/test-gateway.metrics" || true; status=1
+fi
+# the internet request the suite sent was refused and logged
+if ! grep '"internet request refused"' "$out/test-gateway.log" | grep -q 'unlisted.invalid'; then
+  echo "test-gateway did not log the refused internet request"; status=1
 fi
 
 "$bin/mock-model" --listen 127.0.0.1:18090 > "$out/mock-model.log" 2>&1 &

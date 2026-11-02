@@ -3,7 +3,10 @@
 //! under test reaches them at its configured upstreams (Docker network aliases, Services, or local addresses).
 //!
 //! - **hermit** publishes the suite's token keys, answers liveness as each check sets it, serves `/v1/sandbox/**`,
-//!   and can be taken down ([`Outage`]: connections dropped, answers held past the gateway's 1 s timeout, 503).
+//!   and can be taken down ([`Outage`]: connections refused, answers held past the gateway's 1 s timeout, 503).
+//!   Given a listener of its own ([`Fakes::serve_hermit`]), hermit answers there whatever the `Host`, and the
+//!   refuse phase closes that listener so connects are refused (ECONNREFUSED); on the shared listener it can only
+//!   accept and reset the connection.
 //! - **magpie** counts request bodies (`{"bytes": n}`) and holds `GET /v1/sandbox/poll?ms=` that long.
 //! - **tools** answers `/mcp` after `?delayMs=`.
 //! - **model** serves the models route and the Messages API: a JSON reply, or an SSE stream whose length the
@@ -15,7 +18,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use aviary_fakes::serve::{ConnKill, Served, serve_on};
@@ -78,7 +81,8 @@ pub enum Live {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outage {
     Up,
-    /// The connection is closed with no answer.
+    /// Connects are refused (hermit's own listener is closed); on the shared listener, the connection is reset
+    /// after accept with no answer.
     Refuse,
     /// Answers 503 after 5 s (past the gateway's 1 s timeout).
     Hang,
@@ -118,11 +122,32 @@ struct St {
     expected: Expected,
     keys: Mutex<Vec<TokenKey>>,
     key_fetches: AtomicU64,
+    last_key_fetch: Mutex<Option<Instant>>,
     liveness: Mutex<HashMap<Uuid, Sbx>>,
     liveness_lookups: Mutex<HashMap<Uuid, u64>>,
     outage: Mutex<Outage>,
+    hermit_own: Mutex<Option<OwnListener>>,
     seen: Mutex<Vec<Seen>>,
     first_byte: Mutex<HashMap<String, Instant>>,
+}
+
+/// hermit's own listener: its address, and the server while hermit is not refusing.
+#[derive(Debug)]
+struct OwnListener {
+    addr: SocketAddr,
+    served: Option<Served>,
+}
+
+fn bind_reusable(addr: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()?
+    } else {
+        tokio::net::TcpSocket::new_v6()?
+    };
+    // rebinding after the refuse phase: the accepted connections' TIME_WAIT must not hold the port
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    socket.listen(1024)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -144,9 +169,11 @@ impl Fakes {
                 expected,
                 keys: Mutex::new(keys),
                 key_fetches: AtomicU64::new(0),
+                last_key_fetch: Mutex::new(None),
                 liveness: Mutex::new(HashMap::new()),
                 liveness_lookups: Mutex::new(HashMap::new()),
                 outage: Mutex::new(Outage::Up),
+                hermit_own: Mutex::new(None),
                 seen: Mutex::new(Vec::new()),
                 first_byte: Mutex::new(HashMap::new()),
             }),
@@ -162,6 +189,30 @@ impl Fakes {
         serve_on(listener, router)
     }
 
+    /// Serves hermit alone on a listener of its own at `addr` (port 0: any), which [`Outage::Refuse`] closes so a
+    /// connect is refused. Returns the bound address. Must run inside the runtime.
+    ///
+    /// # Errors
+    /// When `addr` cannot be bound.
+    pub fn serve_hermit(&self, addr: SocketAddr) -> std::io::Result<SocketAddr> {
+        let listener = bind_reusable(addr)?;
+        let addr = listener.local_addr()?;
+        let served = self.hermit_router(listener)?;
+        *lock(&self.st.hermit_own) = Some(OwnListener {
+            addr,
+            served: Some(served),
+        });
+        Ok(addr)
+    }
+
+    fn hermit_router(&self, listener: tokio::net::TcpListener) -> std::io::Result<Served> {
+        // a weak handle: the server lives in `St`, which it must not keep alive
+        let router = Router::new()
+            .fallback(dispatch_hermit)
+            .with_state(Arc::downgrade(&self.st));
+        serve_on(listener, router)
+    }
+
     /// Publishes one more key (a rotation).
     pub fn publish_key(&self, key: TokenKey) {
         lock(&self.st.keys).push(key);
@@ -171,6 +222,12 @@ impl Fakes {
     #[must_use]
     pub fn key_fetches(&self) -> u64 {
         self.st.key_fetches.load(Ordering::SeqCst)
+    }
+
+    /// When the key set was last fetched.
+    #[must_use]
+    pub fn last_key_fetch(&self) -> Option<Instant> {
+        *lock(&self.st.last_key_fetch)
     }
 
     /// Sets what liveness answers for `sandbox`.
@@ -198,9 +255,25 @@ impl Fakes {
         lock(&self.st.liveness_lookups).get(&sandbox).copied().unwrap_or(0)
     }
 
-    /// Takes hermit down or brings it back.
-    pub fn set_outage(&self, o: Outage) {
+    /// Takes hermit down or brings it back. With hermit's own listener, [`Outage::Refuse`] closes it (and every
+    /// connection on it) and any other value opens it again.
+    ///
+    /// # Errors
+    /// When hermit's own listener cannot be bound again.
+    pub fn set_outage(&self, o: Outage) -> Result<(), String> {
         *lock(&self.st.outage) = o;
+        let mut own = lock(&self.st.hermit_own);
+        let Some(own) = own.as_mut() else {
+            return Ok(());
+        };
+        if o == Outage::Refuse {
+            // dropping the server aborts its accept loop and its connections: the port refuses connects
+            own.served = None;
+        } else if own.served.is_none() {
+            let listener = bind_reusable(own.addr).map_err(|e| format!("hermit's listener {}: {e}", own.addr))?;
+            own.served = Some(self.hermit_router(listener).map_err(|e| e.to_string())?);
+        }
+        Ok(())
     }
 
     /// The requests recorded for a case.
@@ -281,9 +354,20 @@ fn query_u64(pq: &str, key: &str) -> Option<u64> {
         .and_then(|(_, v)| v.parse().ok())
 }
 
+async fn dispatch_hermit(State(st): State<Weak<St>>, req: Request) -> Response {
+    match st.upgrade() {
+        Some(st) => handle(st, Some(Name::Hermit), req).await,
+        None => error(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+    }
+}
+
 async fn dispatch(State(st): State<Arc<St>>, req: Request) -> Response {
+    handle(st, None, req).await
+}
+
+async fn handle(st: Arc<St>, forced: Option<Name>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let name = which(&parts.headers);
+    let name = forced.unwrap_or_else(|| which(&parts.headers));
     let pq = parts.uri.path_and_query().map_or("/", |p| p.as_str()).to_owned();
     let path = parts.uri.path().to_owned();
     let case = parts.headers.get(CASE).and_then(|v| v.to_str().ok()).map(str::to_owned);
@@ -356,6 +440,7 @@ async fn dispatch(State(st): State<Arc<St>>, req: Request) -> Response {
 fn hermit(st: &St, method: &axum::http::Method, path: &str) -> Response {
     if method == axum::http::Method::GET && path == gateway_api::SANDBOX_TOKEN_KEYS {
         st.key_fetches.fetch_add(1, Ordering::SeqCst);
+        *lock(&st.last_key_fetch) = Some(Instant::now());
         return axum::Json(TokenKeys {
             keys: lock(&st.keys).clone(),
         })

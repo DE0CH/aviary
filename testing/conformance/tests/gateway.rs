@@ -19,6 +19,10 @@ fn token(name: &str) -> String {
 
 /// Runs the suite (only `only`, all when empty) against a test-gateway with `faults`.
 async fn run(faults: Faults, only: &[&str]) -> Report {
+    run_with(faults, only, gateway_api::limits::IDLE_TIMEOUT).await
+}
+
+async fn run_with(faults: Faults, only: &[&str], upstream_idle: std::time::Duration) -> Report {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let tokens = Tokens {
         gateway_to_magpie: token("magpie"),
@@ -36,13 +40,15 @@ async fn run(faults: Faults, only: &[&str]) -> Report {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = format!("http://{}", listener.local_addr().unwrap());
     let served = fakes.serve(listener).unwrap();
+    // hermit on a listener of its own, so the outage's refuse phase really refuses connects
+    let hermit_up = format!("http://{}", fakes.serve_hermit("127.0.0.1:0".parse().unwrap()).unwrap());
 
     let cfg = Config {
         proxy_listen: "127.0.0.1:0".parse().unwrap(),
         api_listen: "127.0.0.1:0".parse().unwrap(),
         upstreams: Upstreams {
             magpie: up.clone(),
-            hermit: up.clone(),
+            hermit: hermit_up,
             tools: up.clone(),
             model: up.clone(),
         },
@@ -61,6 +67,7 @@ async fn run(faults: Faults, only: &[&str]) -> Report {
         ops_summary: test_gateway::default_ops_summary(),
         drain: DrainBounds::default(),
         upload_cap: test_gateway::UPLOAD_CAP,
+        upstream_idle,
         faults,
     };
     let mut registry = prometheus_client::registry::Registry::default();
@@ -165,4 +172,25 @@ async fn a_drain_cutting_a_stream_fails() {
     )
     .await;
     assert!(failed(&report, "drain"), "{:#?}", report.results());
+}
+
+/// test-gateway's own idle bound on `magpie` and `hermit` (3.11.4): an upstream silent past it ends the request with
+/// 504, here made shorter than the suite's long-poll.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_silent_magpie_past_the_idle_timeout_is_ended() {
+    let report = run_with(
+        Faults::default(),
+        &["transport.long-poll"],
+        std::time::Duration::from_secs(1),
+    )
+    .await;
+    let r = report
+        .results()
+        .into_iter()
+        .find(|r| r.name == "transport.long-poll")
+        .unwrap();
+    match &r.outcome {
+        Err(Problem::Fail(m)) => assert!(m.contains("504"), "{m}"),
+        other => panic!("{other:?}"),
+    }
 }

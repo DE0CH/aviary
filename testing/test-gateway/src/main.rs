@@ -84,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
         ops_summary,
         drain: test_gateway::DrainBounds::default(),
         upload_cap: test_gateway::UPLOAD_CAP,
+        upstream_idle: gateway_api::limits::IDLE_TIMEOUT,
         faults: test_gateway::Faults::default(),
     };
     let running = std::sync::Arc::new(test_gateway::start(cfg, &mut registry).await?);

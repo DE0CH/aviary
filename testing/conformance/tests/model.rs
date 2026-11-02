@@ -71,6 +71,7 @@ async fn mock_model_through_the_reference_gateway_passes() {
         ops_summary: test_gateway::default_ops_summary(),
         drain: test_gateway::DrainBounds::default(),
         upload_cap: test_gateway::UPLOAD_CAP,
+        upstream_idle: gateway_api::limits::IDLE_TIMEOUT,
         faults: test_gateway::Faults::default(),
     };
     let mut registry = prometheus_client::registry::Registry::default();
