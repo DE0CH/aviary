@@ -1,0 +1,8 @@
+{"layout":"tmpfs","runsc_extra":"","hold":3,"mode":"fuse","send_ms":659,"total_ms":743,"release_to_turn_done_ms":576,"migrate_start_us":1793641134846000}
+{"from":"[<host-ipv6>]:54220","bytes":525425581,"page_bytes":524783616,"zero_bytes":64229376,"file_bytes":623167,"rounds":2,"final_page_bytes":15417344,"final_zero_bytes":1249280,"total_ms":647.059,"final_ms":65.2,"restore_ms":75.211}
+
+{"turns":["success","success"],"exit":0}
+{"exact":true,"writes":[{"i":0,"returned":1048576,"ms":6.9},{"i":1,"returned":1048576,"ms":5.1},{"i":2,"returned":1048576,"ms":3.8}]}
+{"start": 1793641136.342, "stat_s": 0.002, "read_s": 0.001}
+{"uniques":670,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793641134846000,"requests_before":659,"max_unique_before":1318,"requests_after":11,"min_unique_after":1320,"increasing":true}]}
+PASS

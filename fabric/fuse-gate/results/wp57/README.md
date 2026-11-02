@@ -18,7 +18,17 @@ run. Host addresses are replaced by `<host-ipv6>`; files over 32 KiB are gzipped
   the copy keeps `len` 0 where the source has 56. With a writeback (fsync) between the writes the second write
   updates the mtime and the file is copied.
 - `mig-t01/`: one scratch-layout hold-on run with the checksummed final delta (`gate.sh send-scratch` now);
-  `mig-q01`…`mig-q12/`, `batch-q.log`, `run-q*.txt`: 12 hold-on runs with `FINAL_QUICK=1` (sandboxd's quick-check
-  final delta) and the new source/destination comparison (`files_differing_after_final` in `send.json`). `mig-q04`
-  failed before any page reached the target: `runsc checkpoint --migrate-to` ended without output and the
-  destination saw an incomplete stream (`runsc-target.log`); nothing in the kernel log (no OOM).
+  `mig-q01`…`mig-q12/`, `batch-q.log`, `run-q*.txt` and `mig-r01`…`mig-r12/`, `batch-r.log`, `run-r*.txt`: hold-on
+  runs with `FINAL_QUICK=1` (sandboxd's quick-check final delta) and the source/destination comparison
+  (`files_differing_after_final` in `send.json`). `mig-q04` failed before the restore: the comparison found a
+  differing file and, through a `set -e` bug in the comparison (`diff` exits 1), ended `send-scratch` without output
+  and before `SBXDONE`, so the destination saw an incomplete stream; the bug was fixed before `mig-r*`, `mig-w*` and
+  `mig-x*` (the `x` batch never hit it: its comparisons found no difference).
+- `mapcount/`: `fabric/fuse-gate/mapcount-mig.sh` (`sandbox/mapcount.py` writes a counter through a `MAP_SHARED`
+  mapping of a scratch file inside the sandbox; scratch layout) with `FINAL_QUICK=1` (`mapcount-mq1`…`mq6`: every
+  run lost writes, 16 fault lines each, `./mc/counter` differing) and with the checksummed final delta
+  (`mapcount-mc1`…`mc6`: none).
+- `mig-w001`…`mig-w200/`, `batch-w.log`, `run-w*.txt` (tmpfs layout) and `mig-x001`…`mig-x200/`, `batch-x.log`,
+  `run-x*.txt` (scratch layout): the acceptance batches on `precopy-20261102.1`, `migrate-batch.sh` with
+  `HOLDS="1 2 1 3"` (hold-on, matched control, hold-on, memory control); `migrations.json` is `migsummary.py`'s table
+  of every `mig-*` here (its `scratch hold=1` group also holds `t01`, `q*` and `r*`).

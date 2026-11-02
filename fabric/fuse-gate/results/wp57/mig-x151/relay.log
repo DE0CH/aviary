@@ -1,0 +1,11 @@
+relay exit 0
+2026/11/02 19:23:03 [566671] connect from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:03 [566671] rsync allowed access on module scratch from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:03 [566671] rsync to scratch/ from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:03 [566671] receiving file list
+2026/11/02 19:23:03 [566671] sent 460 bytes  received 17452841 bytes  total size 17446567
+2026/11/02 19:23:04 [566674] connect from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:04 [566674] rsync allowed access on module scratch from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:04 [566674] rsync to scratch/ from UNDETERMINED (<host-ipv6>)
+2026/11/02 19:23:04 [566674] receiving file list
+2026/11/02 19:23:04 [566674] sent 44 bytes  received 1482 bytes  total size 17446567

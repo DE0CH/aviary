@@ -42,6 +42,9 @@ gzipped (`uniques.py` and `migsummary.py` read the unzipped files: `zcat` them f
   - `setup-trials/` (`mig-t01`…`t08`): runs that failed on the scripts' own IPv6 bugs (the rsync URL, the relay's
     IPv4-only listen address) and on a leftover relay from a killed run, before any migration happened; kept because
     every run is kept.
+- `wp57/` — WP-57 (the SIGSEGV and the short read after a restore), two throwaway Hetzner cx33 in fsn1: the FUSE-free
+  stale-memory reproduction on the old and the new fork release, the mapped-file reproduction of the scratch move,
+  and the acceptance batches on `precopy-20261102.1` (its own README lists every file).
 - `aws-recheck.txt` — every committed migration re-checked with round 3's fail rules (Claude Code's exit, supervisor
   faults, `exits.log`): `mig-s09`, counted as passed, fails on two supervisor faults (GATE.md deviation 8).
 - `run1-hetzner/` — the gate's first run (Hetzner cx33, hel1 → fsn1). Superseded by the above; kept as it was. Its

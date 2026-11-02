@@ -1,0 +1,1 @@
+{"lines": 675, "uniques": 675, "replayed_lines": 0, "repeats": [], "repeat_count": 0, "interrupts": [], "boundaries": [{"boundary_us": 1793646141625000, "requests_before": 664, "max_unique_before": 1328, "requests_after": 11, "min_unique_after": 1330, "increasing": true}], "resends": [], "reply_errors": 0, "shortreads": [], "ok": true}

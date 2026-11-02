@@ -1,0 +1,20 @@
+0
+  PID STAT %CPU COMMAND
+    1 Ss    0.0 tini
+    2 S     0.1 init.sh
+    8 S     0.0 init.sh
+    9 S     0.0 fuse-gate
+   10 S     0.0 init.sh
+   11 S     0.0 init.sh
+   12 Sl    0.6 fuse-gate
+   14 S     0.8 fuse-gate
+   17 S     0.9 init.sh
+   18 Sl    1.5 fuse-gate
+  132 S     0.0 init.sh
+  134 S     0.2 sh
+  136 R    91.3 python3
+  284 S    33.3 sleep
+  285 Ss   50.0 sh
+  286 R     100 ps
+0
+1793647897.783196241

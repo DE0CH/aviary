@@ -1,0 +1,1 @@
+{"name":"mq1","final_quick":"1","faults":16,"send":{"live_rounds":[{"files":6,"bytes":16973913,"ms":122}],"checkpoint_ms":84,"final_rsync":{"files":0,"bytes":0,"ms":97,"checksum":false},"files_differing_after_final":"./mc/counter","compare_ms":310,"done_reply":"OK","stopped_until_done_ms":443}}

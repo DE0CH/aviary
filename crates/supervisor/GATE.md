@@ -45,6 +45,15 @@ stood, two faults after a restore are unexplained (handed to WP-57), and the tom
    3, `mig-s09` fails as well (7 of the 72 hold-on AWS migrations fail). Owned by WP-57; supervisor 9.9 records the
    reader's check.
 
+**WP-57 (2026-11-02): both faults are explained and fixed** (section "WP-57" below). Item 4 is the fork's: the final,
+stopped round of a pre-copy migration did not resend pages that had been sent earlier and were then freed or found
+zero, so the target kept their old bytes and handed them out as fresh memory; fixed in the fork release
+`precopy-20261102.1`. Item 5 is the scratch move's (the gate's copy of sandboxd's `send_locked`, and sandboxd
+itself): rsync's quick check cannot see a write made through a shared mapping, and the INTERRUPT read during the stop
+was such a write; the gate's final delta now compares contents. On `precopy-20261102.1` with the hold: 0 lost
+processes and 0 short reads in 100 tmpfs and 100 scratch migrations, with the matched control and the memory control
+alongside (0 failures in either).
+
 **The corrections are handed back to the design of record** (text changed on 2026-11-02, marked "WP-07 gate"):
 supervisor spec 2.5, 8.2, 9.1 (the gate's path findings are provisional until WP-22's re-run under 6.1-6.4), 9.3
 (INIT 7.31; the resend rule keyed on the calling thread and the refused reply; `bootId` per connection, stored
@@ -58,6 +67,110 @@ migration acceptance and WP-40 wait for; `magpie-api`'s `OffsetMismatch` doc (do
 Items that pass as specified: 1, 4, 5, 6 (the mount's own share and the 87 MiB cold resume), 9, 10. Item 2 passes
 except the tombstone rewrite, which Claude Code 2.1.304 was not made to do in seven triggers (not reproduced; see
 item 2). 9 and the path table it feeds are provisional (deviation 4).
+
+## WP-57: the two faults after a restore (2026-11-02)
+
+Hosts: two throwaway Hetzner Cloud cx33 in fsn1 (`runsc cpu-features` identical to round 3's), Ubuntu 24.04, kernel
+6.8.0-138-generic, deleted after the run; outputs in `fabric/fuse-gate/results/wp57/` (its README lists every file).
+Not run on the fabric's AMI in the fabric's account (no production AWS use in this run): that batch is left to the
+operator phase (WP-40).
+
+### The SIGSEGV (verdict 4): the final pre-copy round left freed pages with their old bytes
+
+**Cause (from the fork's code, `pkg/sentry/pgalloc/save_restore.go` `SaveTo`, and measured below).** The final
+round, while the sandbox is stopped, sent only the dirty pages that were still committed (non-zero). A page that was
+sent with non-zero bytes in a live round and then freed (`munmap`, `MADV_DONTNEED`: the sentry decommits it, which
+marks it dirty) or found all zero by the save's scan before the stop was dirty but not committed, so it was not sent
+again. The target restores the main memory file from the received file as it is (`LoadOpts.ContentsPresent`: no
+page is loaded, nothing is zeroed), so those offsets kept the old bytes while the target's allocator recorded them as
+free, and free pages are handed out as zero memory without being zeroed. A process that later mapped fresh memory
+(an allocator growing, `calloc` of a fresh mapping, a new buffer for a released request) got another process's or
+its own old data where it relied on zeroes: garbage pointers, which on x86-64 are mostly non-canonical, so the fault
+is a general protection fault that reports address 0 (the sentry's "fault addr: 0x0", Bun's "Segmentation fault at
+address 0x0"; Claude's inference from the signal info, consistent with both logs). The fault comes when the
+process next allocates, which in the gate is when the hold is released and the held requests are answered (the 4.0-4.7
+s after the restore in `d07` and `d11`).
+
+**Why the hold made it more likely.** The stream now reports what the source sent while stopped
+(`final_page_bytes`, `final_zero_bytes` in `receive.json`); the zero ranges are the pages the old release did not
+send. In the 200 tmpfs migrations below, the final round's zero ranges were 5.3-9.5 MB (median 7.2 MB) with the
+hold, 0.7-3.5 MB (median 1.1 MB) in the matched control (`HOLD=2`) and 1.2-5.9 MB (median 2.5 MB) in the memory
+control (`HOLD=3`, 125 MiB rewritten throughout, final round 4.6-89.5 MB of pages): the hold frees the most memory
+around the stop, so more freed pages were left stale.
+
+**Reproduction without FUSE** (`fabric/fuse-gate/stale-mig.sh`, `sandbox/stale.py`: a program that maps fresh memory
+in mappings of 32 MiB, 2 MiB, 64 KiB and 4 KiB, checks each is all zero, fills and unmaps it, and checks a page it
+overwrote with zeroes and a page after `MADV_DONTNEED`; a second process rewrites 128 MiB throughout; tmpfs layout):
+
+| Release | Runs | Runs with memory read back wrong after the restore | What was wrong |
+|---|---|---|---|
+| `precopy-20261021.2` (the gate's) | 20 | 4 (so02, so06, so12, so17) | 8 fresh mappings (4 KiB, 64 KiB, 2 MiB) not zero, first bytes 15, 16, 72, 82, 133 (old fill bytes and text); one page overwritten with zeroes read back with the old fill byte |
+| `precopy-20261102.1` | 40 | 0 | final round's zero ranges 48.1-121.3 MB |
+
+0 of 40 at the old rate (4 of 20) happens by chance with probability 0.8^40 = 0.00013.
+
+**Fix**: DE0CH/gvisor `1635a240b` ("Pre-copy: the final save sends dirty pages that are no longer committed as
+zeroes"), released as `precopy-20261102.1` by the fork's release workflow (tag `precopy-*` on `main`, the same path as
+`precopy-20261021.2`): such pages are sent as zero ranges, which the target punches out of the received file. Its
+test `TestPrecopyContentsPresentAfterZeroing` (pgalloc) sends a live round, then zeroes, decommits and frees pages,
+saves, restores with `ContentsPresent` and checks those offsets and a fresh allocation are zero.
+
+### The short read (verdict 5): the scratch move's quick check skipped the journal
+
+**Cause.** When the checkpoint stops the sandbox, the sentry abandons the held requests and queues their
+`FUSE_INTERRUPT`s (item 3). A worker thread blocked in `read(2)` of `/dev/fuse` can take one before it stops: the
+sentry copies the 56-byte request into the slot through the journal's `MAP_SHARED` mapping, on the source, while the
+sandbox is stopping, and the read's result (56) is saved with the thread. The scratch move then copies the scratch
+dir with rsync's quick check (size and mtime). A write through a shared mapping to a page that is already dirty does
+not change the file's mtime (the kernel updates it only when a clean page is first written), and the journal's pages
+were dirty from the worker zeroing `len` before each read, so the final delta skipped the journal: `final_rsync` was
+0 files and 0 bytes in `mig-s06` and `mig-s09` (as in every scratch run), and the target's journal kept `len` 0 where
+the restored thread's read had returned 56. `fabric/fuse-gate/mmap-rsync.sh` shows the mechanism on a gate host
+(`results/wp57/mmap-rsync.txt`): after a second write through the mapping the mtime is unchanged, the second rsync
+transfers 0 files and the copy holds `len` 0 against the source's 56; with a writeback between the two writes the
+mtime changes and the file is copied. Inside a sandbox (`fabric/fuse-gate/mapcount-mig.sh`, `sandbox/mapcount.py`: a
+process writes a counter through a `MAP_SHARED` mapping of a scratch file and checks it every millisecond; scratch
+layout, `gate.sh send-scratch`): with sandboxd's quick check (`FINAL_QUICK=1`) all 6 runs lost writes (each of the 16
+pages read back an older counter on the target, e.g. 3920 where 4002 was written; `files_differing_after_final`:
+`./mc/counter`); with the checksummed final delta 0 of 6. In the gate's own hold-on runs with the quick check
+(`mig-q*`, `mig-r*`, 24 runs) the INTERRUPT race was not hit again: 0 short reads; `q04` stopped at the comparison
+(below): the comparison found a differing file and a `set -e` bug in it ended `send-scratch` before `SBXDONE`, so the
+target never restored (fixed; which file differed was not recorded).
+
+This is not the fork's and not the INTERRUPT's alone: every scratch file written through a shared mapping after the
+last live round is copied in an older state (a request read into a slot after it, an application's mapped file such
+as SQLite's `-shm`), and sandboxd's `sync_scratch` (`crates/sandboxd/src/storage.rs`, `last = true`) has the same
+quick check. **Fix in the gate:** `gate.sh send-scratch`'s final delta runs with `--checksum` and then compares every
+scratch file on both hosts while both are stopped (`files_differing_after_final`, `compare_ms` in `send.json`;
+`migrate.sh` fails a run with a difference). **Open for sandboxd's owner:** the same `--checksum` on the final delta
+(it reads the whole scratch on both hosts while stopped: here 105-191 ms for 17 MB against 100-187 ms with the
+quick check; it grows with the scratch's size, which this run did not measure beyond 17 MB), or the spec's fallback for the journal
+(supervisor 9.9: read into private memory and `pwrite` the slot), which covers the journal but not applications'
+mapped files.
+
+### Acceptance batches on `precopy-20261102.1`
+
+`migrate-batch.sh` with `HOLDS="1 2 1 3"` (hold-on, matched control, hold-on, memory control on the same two hosts,
+alternating), every run's outputs kept (`results/wp57/mig-w*`, `mig-x*`, `batch-w.log`, `batch-x.log`,
+`migrations.json`):
+
+| Layout | Configuration | Runs | Failed | Lost a process | Short reads | Final round: pages / zero ranges | Pause (ms) |
+|---|---|---|---|---|---|---|---|
+| tmpfs | hold on | 100 | 0 | 0 | 0 | 0.1-0.3 MB / 5.3-9.5 MB | 164.0-278.7 (median 188.5) |
+| tmpfs | matched control `HOLD=2` | 50 | 0 | 0 | 0 | 0-0.2 MB / 0.7-3.5 MB | 106.6-161.2 (median 131.4) |
+| tmpfs | memory control `HOLD=3` | 50 | 0 | 0 | 0 | 4.6-89.5 MB / 1.2-5.9 MB | 128.7-259.4 (median 171.6) |
+| scratch | hold on | 100 | 0 | 0 | 0 | 0.07-0.4 MB / 5.4-9.3 MB | 1024.9-2009.2 (median 1105.9) |
+| scratch | matched control `HOLD=2` | 50 | 0 | 0 | 0 | 0-0.2 MB / 0-3.1 MB | 1010.2-1812.5 (median 1048.2) |
+| scratch | memory control `HOLD=3` | 50 | 0 | 0 | 0 | 3.6-88.8 MB / 1.0-6.9 MB | 1038.8-1808.2 (median 1120.6) |
+
+The scratch pauses include the diagnostic comparison of every scratch file on both hosts while stopped (`compare_ms`,
+mean 331 ms) and the checksummed final delta (105-191 ms, mean 119 ms, for these 17 MB of scratch; the quick-check
+final deltas of `mig-q*` and `mig-r*` took 100-187 ms); without the comparison they are about 330 ms shorter. Every
+scratch run's comparison found no differing file. The checksummed final delta transferred a file in 8 of the 100
+hold-on runs (`x019`, `x073`, `x117`, `x121`, `x127`, `x169`, `x171`, `x199`) and in none of the 100 controls.
+
+At the gate's rate (6 of 72 hold-on AWS runs lost a process; 7 of 72 failed), 0 in 100 happens by chance with
+probability (66/72)^100 = 0.00017 for each layout.
 
 ## Setup
 

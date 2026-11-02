@@ -1,0 +1,13 @@
+r01 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r02 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r03 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r04 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r05 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r06 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r07 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r08 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r09 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r10 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r11 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+r12 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+done

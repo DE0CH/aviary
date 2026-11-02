@@ -122,7 +122,7 @@ send-scratch)
   wait $dp || true
   # Every scratch file, source against destination, while both are stopped (before SBXDONE starts the restore)
   sh_of() { (cd "$1" && find . -type f ! -path './lost+found/*' -print0 | sort -z | xargs -0 -r sha256sum); }
-  diff_files=$(diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate${TARGET_SIDE:+/$TARGET_SIDE}/scratch/$name") | awk '/^</{print $3}' | sort -u | paste -sd, -)
+  diff_files=$( { diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate${TARGET_SIDE:+/$TARGET_SIDE}/scratch/$name") || true; } | awk '/^</{print $3}' | sort -u | paste -sd, -)
   t3b=$(ms)
   ok=$(python3 -c "
 import socket,sys
