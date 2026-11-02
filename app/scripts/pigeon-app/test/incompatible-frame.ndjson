@@ -1,0 +1,1 @@
+{"case": "seeded incompatible frame: hello.rejected with a reason no client knows (the workflow's self-test of the frame check)", "dir": "out", "frame": {"type": "hello.rejected", "reason": "switch_in_progress", "accepts": []}}
