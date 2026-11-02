@@ -249,7 +249,8 @@ pub async fn activity(core: &Arc<Core>, ctx: &Ctx, body: &ActivityReport) -> Res
         } else {
             ActivityReplyState::Ready
         },
-        release: pending.and_then(|p| {
+        // a release a PUT cancelled is not offered to the supervisor
+        release: pending.filter(|p| !p.cancelled).and_then(|p| {
             Some(PendingRelease {
                 reason: p.reason,
                 code: p.reason.call_code()?,

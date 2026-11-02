@@ -126,6 +126,7 @@ impl App {
             draining,
             tasks: TaskSet::default(),
             sweep_lock: tokio::sync::Mutex::new(()),
+            claims: Arc::default(),
         });
         let leader = Arc::new(Leader::start_many(
             &pool,

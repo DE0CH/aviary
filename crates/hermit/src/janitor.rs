@@ -70,7 +70,11 @@ pub async fn pass(core: &Arc<Core>) -> Result<Pass, aviary_pg::Error> {
     )
     .await?
     {
-        if r.release_pending.as_ref().is_some_and(|p| p.force) {
+        // a forced or lost release already pending is never replaced by this one
+        if r.release_pending
+            .as_ref()
+            .is_some_and(|p| sandboxes::ReleaseKind::of(p) != sandboxes::ReleaseKind::Soft)
+        {
             continue;
         }
         sandboxes::request(core, r.id, ReleaseReason::Lifetime, true, None).await?;
@@ -116,7 +120,11 @@ pub async fn pass(core: &Arc<Core>) -> Result<Pass, aviary_pg::Error> {
         )
         .await?
         {
-            if !cat.allowed(&r.person) && !r.release_pending.as_ref().is_some_and(|p| p.force) {
+            let stronger = r
+                .release_pending
+                .as_ref()
+                .is_some_and(|p| sandboxes::ReleaseKind::of(p) != sandboxes::ReleaseKind::Soft);
+            if !cat.allowed(&r.person) && !stronger {
                 sandboxes::request(core, r.id, ReleaseReason::NotAllowed, true, None).await?;
                 out.not_allowed.push(r.id);
             }

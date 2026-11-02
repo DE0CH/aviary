@@ -65,16 +65,36 @@ impl ReleaseKind {
             Self::Soft
         }
     }
+
+    /// Lost > Forced > Soft: a release is never replaced by a weaker kind.
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Soft => 0,
+            Self::Forced => 1,
+            Self::Lost => 2,
+        }
+    }
+}
+
+/// Whether a pending release `old` stays when `new` is asked (13.12): a stronger kind always stays (a forced one is
+/// never replaced by a soft one, a lost one by a forced one), and so does the same ask again (the janitor's retry
+/// keeps what became of it). Otherwise `new` replaces it.
+#[must_use]
+pub fn keeps(old: &Pending, new: &Pending) -> bool {
+    let (ko, kn) = (ReleaseKind::of(old), ReleaseKind::of(new));
+    ko.rank() > kn.rank() || (ko == kn && old.reason == new.reason)
 }
 
 enum PutStep {
     Answer(PutSandbox),
     /// A releasing sandbox (or one a forced release is about to end): wait for it to be `gone`, then try again.
     WaitGone(Uuid),
-    /// A ready sandbox whose soft release a task is asking its supervisor about now: the `PUT` cancelled it on the
-    /// row; wait for the task to settle (refused: the sandbox stays and is answered 200; agreed: it goes and a new
-    /// one starts), then try again.
-    WaitRelease(Uuid),
+    /// A ready sandbox whose soft release a task is asking (or may have asked) its supervisor about: the `PUT`
+    /// marked it cancelled on the row; wait for the task to settle (refused: the sandbox stays and is answered 200;
+    /// agreed: it goes and a new one starts), then try again. `true`: this `PUT` took the release claim (a sent
+    /// release no task runs) and spawns the task.
+    WaitRelease(Uuid, bool),
     /// A new row with this replica's start claim (spawn the start).
     Started(PutSandbox, Uuid, bool),
 }
@@ -120,7 +140,10 @@ pub async fn put(core: &Arc<Core>, cid: Uuid, body: &PutSandboxRequest) -> Resul
                 let left = still_releasing(core, waited_since)?;
                 wait_row(core, cid, id, left, |r| r.status == SandboxState::Gone).await;
             }
-            PutStep::WaitRelease(id) => {
+            PutStep::WaitRelease(id, took) => {
+                if took {
+                    tasks::run(core, Claim::adopt(core, id, Kind::Release));
+                }
                 let left = still_releasing(core, waited_since)?;
                 wait_row(core, cid, id, left, |r| {
                     r.task.as_deref() != Some(Kind::Release.as_str()) || r.status != SandboxState::Ready
@@ -163,6 +186,7 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
     let (cpu, memory) = (s.cpu, i64::try_from(cfg.memory_bytes).unwrap_or(i64::MAX));
     let kid = i16::try_from(core.keys.newest()).unwrap_or(i16::MAX);
     let owner = person.to_owned();
+    let c = core.clone();
     let res = aviary_pg::tx!(&core.pool, |t| -> Result<PutStep, PutError> {
         let live = t
             .query_opt("select * from sandboxes where conversation_id = $1 and status <> 'gone' for update", &[&cid])
@@ -178,23 +202,30 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
                 // a forced or lost release is ending this sandbox: never hand it out
                 _ if pending.is_some_and(|k| k != ReleaseKind::Soft) => return Ok(PutStep::WaitGone(row.id)),
                 SandboxState::Ready | SandboxState::Starting | SandboxState::Paused | SandboxState::Unknown => {
-                    // a pending soft release not yet answered is cancelled by the use (3.6.2, 13.12), also while a
-                    // task is asking the supervisor now: the task sees the cancellation, and this PUT waits for its
-                    // answer, since a supervisor that already agreed is going away
-                    let cancel = pending == Some(ReleaseKind::Soft);
-                    let in_flight = row.status == SandboxState::Ready && row.task.as_deref() == Some(Kind::Release.as_str());
+                    // a pending soft release not yet answered is cancelled by the use (3.6.2, 13.12). One no task
+                    // runs and none sent is cleared. One a task runs, or one already sent, may be out at the
+                    // supervisor: it is marked cancelled, never cleared, so the task (or the takeover) stays if the
+                    // supervisor refuses and goes if it agreed, and this PUT waits for that answer
+                    let soft = pending == Some(ReleaseKind::Soft);
+                    let release_task = row.task.as_deref() == Some(Kind::Release.as_str());
+                    let sent = row.release_pending.as_ref().is_some_and(|p| p.sent);
+                    let mark = soft && (release_task || sent);
+                    let clear = soft && !mark;
                     let r = t
                         .query_one(
                             "update sandboxes set last_active_at = greatest(last_active_at, now()),
                                reserved_until = now() + $2::bigint * interval '1 millisecond',
-                               release_pending = case when $3 then null else release_pending end
+                               release_pending = case when $3 then null
+                                 when $4 then jsonb_set(release_pending, '{cancelled}', 'true') else release_pending end
                              where id = $1 returning *",
-                            &[&row.id, &reserve, &cancel],
+                            &[&row.id, &reserve, &clear, &mark],
                         )
                         .await?;
                     let row = SandboxRow::from_row(&r)?;
-                    if in_flight {
-                        return Ok(PutStep::WaitRelease(row.id));
+                    if mark && row.status == SandboxState::Ready {
+                        // a sent release no task runs: this PUT runs it (the supervisor is asked again)
+                        let took = !release_task && tasks::take_in(t, &c, row.id, Kind::Release).await?;
+                        return Ok(PutStep::WaitRelease(row.id, took));
                     }
                     let sbx = row.to_sandbox();
                     return Ok(PutStep::Answer(if row.status == SandboxState::Ready {
@@ -325,7 +356,8 @@ pub async fn release_conversation(
 
 /// Asks for a release of sandbox `id` (13.12): records `release_pending` and, unless another task holds the row,
 /// takes the `release` claim and runs the release. A start or migration that holds the row performs it when it
-/// ends. A forced release replaces a pending soft one; a soft one never weakens a forced one. Idempotent.
+/// ends. A stronger kind replaces a weaker one and is never replaced by it (Lost > Forced > Soft, [`keeps`]).
+/// Idempotent.
 ///
 /// # Errors
 /// A database error.
@@ -346,6 +378,8 @@ pub async fn request(
         deadline_at: deadline,
         asked_at: Timestamp::now(),
         refusals: 0,
+        sent: false,
+        cancelled: false,
     };
     let c = core.clone();
     let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
@@ -359,11 +393,16 @@ pub async fn request(
             return Ok(false);
         };
         let row = SandboxRow::from_row(&r)?;
-        let keep_old = row.release_pending.as_ref().is_some_and(|old| {
-            let (ko, kn) = (ReleaseKind::of(old), ReleaseKind::of(&pending));
-            kn == ReleaseKind::Soft && ko != ReleaseKind::Soft || (ko == kn && old.reason == pending.reason)
-        });
+        let keep_old = row.release_pending.as_ref().is_some_and(|old| keeps(old, &pending));
         if !keep_old {
+            let mut pending = pending.clone();
+            // a soft release that replaces a soft one already sent keeps that fact: the supervisor may have agreed
+            if let Some(old) = &row.release_pending
+                && ReleaseKind::of(old) == ReleaseKind::Soft
+                && ReleaseKind::of(&pending) == ReleaseKind::Soft
+            {
+                pending.sent = old.sent;
+            }
             let v = serde_json::to_value(&pending).unwrap_or_default();
             t.execute("update sandboxes set release_pending = $2 where id = $1", &[&id, &v])
                 .await?;
@@ -438,6 +477,10 @@ async fn release_pass(core: &Arc<Core>, claim: &Claim) -> Result<Pass, aviary_pg
         return Ok(Pass::Done);
     };
     let reason = p.reason;
+    if ReleaseKind::of(&p) == ReleaseKind::Soft && p.cancelled && !p.sent && row.status != SandboxState::Releasing {
+        // a PUT cancelled it before it was sent: nothing to undo
+        return drop_cancelled(core, claim, &p).await;
+    }
     match ReleaseKind::of(&p) {
         ReleaseKind::Lost => {
             destroy_and_gone(
@@ -487,12 +530,107 @@ async fn release_pass(core: &Arc<Core>, claim: &Claim) -> Result<Pass, aviary_pg
     Ok(Pass::Done)
 }
 
-/// Whether the row still carries `p`, the soft release this task is running (a `PUT` clears it; a forced one
-/// replaces it).
-async fn still_pending(core: &Core, id: Uuid, p: &Pending) -> Result<bool, aviary_pg::Error> {
-    Ok(db::load(&core.pool, id)
+/// The row's pending release, read under this replica's claim (`None`: the claim is not ours any more).
+async fn owned_pending(core: &Core, claim: &Claim) -> Result<Option<Option<Pending>>, aviary_pg::Error> {
+    let r = core
+        .pool
+        .get()
         .await?
-        .is_some_and(|r| r.release_pending.as_ref() == Some(p)))
+        .query_opt(
+            "select release_pending from sandboxes where id = $1 and task = $2 and task_owner = $3",
+            &[&claim.id, &claim.kind.as_str(), &claim.owner],
+        )
+        .await?;
+    let Some(r) = r else {
+        claim.mark_lost();
+        return Ok(None);
+    };
+    let v: Option<serde_json::Value> = r.try_get(0)?;
+    Ok(Some(v.and_then(|v| serde_json::from_value(v).ok())))
+}
+
+/// Before the soft release `p` is sent: under the claim, the row must still carry the same ask, not cancelled
+/// before it was ever sent; it is then marked `sent`, so a takeover knows the supervisor may have agreed. `None`:
+/// do not send (the claim is gone, or the row changed: [`Pass::Again`] runs what it carries now).
+async fn mark_sent(core: &Core, claim: &Claim, p: &Pending) -> Result<Option<Pending>, aviary_pg::Error> {
+    if !claim.held() {
+        return Ok(None);
+    }
+    let (id, owner, kind, mine) = (claim.id, claim.owner.clone(), claim.kind.as_str(), p.clone());
+    let now = aviary_pg::tx!(&core.pool, |t| -> Result<Option<Option<Pending>>, aviary_pg::Error> {
+        let Some(r) = t
+            .query_opt(
+                "select release_pending from sandboxes where id = $1 and task = $2 and task_owner = $3 for update",
+                &[&id, &kind, &owner],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let v: Option<serde_json::Value> = r.try_get(0)?;
+        let now: Option<Pending> = v.and_then(|v| serde_json::from_value(v).ok());
+        let Some(mut q) = now.filter(|q| q.same_ask(&mine) && (q.sent || !q.cancelled)) else {
+            return Ok(Some(None));
+        };
+        if !q.sent {
+            q.sent = true;
+            t.execute(
+                "update sandboxes set release_pending = jsonb_set(release_pending, '{sent}', 'true') where id = $1",
+                &[&id],
+            )
+            .await?;
+        }
+        Ok(Some(Some(q)))
+    })
+    .await?;
+    match now {
+        None => {
+            claim.mark_lost();
+            Ok(None)
+        }
+        Some(q) => Ok(q),
+    }
+}
+
+/// A soft release a `PUT` cancelled before it was sent: cleared with the claim.
+async fn drop_cancelled(core: &Core, claim: &Claim, p: &Pending) -> Result<Pass, aviary_pg::Error> {
+    let (id, owner, kind, mine) = (claim.id, claim.owner.clone(), claim.kind.as_str(), p.clone());
+    let done = aviary_pg::tx!(&core.pool, |t| -> Result<Option<bool>, aviary_pg::Error> {
+        let Some(r) = t
+            .query_opt(
+                "select release_pending from sandboxes where id = $1 and task = $2 and task_owner = $3 for update",
+                &[&id, &kind, &owner],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let v: Option<serde_json::Value> = r.try_get(0)?;
+        let now: Option<Pending> = v.and_then(|v| serde_json::from_value(v).ok());
+        if !now
+            .as_ref()
+            .is_some_and(|q| q.same_ask(&mine) && q.cancelled && !q.sent)
+        {
+            // it changed meanwhile: run what the row carries now
+            return Ok(Some(false));
+        }
+        t.execute(
+            "update sandboxes set release_pending = null, task = null, task_owner = null, task_until = null
+             where id = $1",
+            &[&id],
+        )
+        .await?;
+        Ok(Some(true))
+    })
+    .await?;
+    match done {
+        None => {
+            claim.mark_lost();
+            Ok(Pass::Done)
+        }
+        Some(true) => Ok(Pass::Done),
+        Some(false) => Ok(Pass::Again),
+    }
 }
 
 async fn soft(core: &Arc<Core>, claim: &Claim, row: SandboxRow, p: &Pending) -> Result<Pass, aviary_pg::Error> {
@@ -519,9 +657,9 @@ async fn soft(core: &Arc<Core>, claim: &Claim, row: SandboxRow, p: &Pending) -> 
                 return Ok(Pass::Done);
             }
         }
-        // cancelled by a PUT or replaced by a forced release meanwhile: never send a stale soft release
-        if !still_pending(core, row.id, p).await? {
-            return Ok(Pass::Again);
+        // cancelled by a PUT before it was sent, or replaced meanwhile: never send a stale soft release
+        if mark_sent(core, claim, p).await?.is_none() {
+            return Ok(if claim.held() { Pass::Again } else { Pass::Done });
         }
         outcome = supervisor_client::release(core, &row, p.reason, false, deadline).await;
         if !matches!(outcome, Released::Failed(_)) {
@@ -553,21 +691,39 @@ async fn soft(core: &Arc<Core>, claim: &Claim, row: SandboxRow, p: &Pending) -> 
         }
         Released::Busy(state) => refused(core, claim, &row, p, &state).await,
         Released::Failed(why) => {
+            // a forced or lost release that replaced this one while it was out runs now (nobody else will)
+            let Some(now) = owned_pending(core, claim).await? else {
+                return Ok(Pass::Done);
+            };
+            if now.as_ref().is_some_and(|q| ReleaseKind::of(q) != ReleaseKind::Soft) {
+                return Ok(Pass::Again);
+            }
             if core.providers.fabric.gateway_settled()
                 && !supervisor_client::alive_twice(core, &row, core.timings.health_gap).await
             {
                 tracing::info!(sandbox = %row.id, error = %why, "release: the supervisor is gone");
+                // the release the row carries now names how it ends (one asked during the health checks too)
+                let Some(now) = owned_pending(core, claim).await? else {
+                    return Ok(Pass::Done);
+                };
+                let q = now.as_ref().unwrap_or(p);
                 destroy_and_gone(
                     core,
                     claim,
                     &row,
-                    p.reason,
-                    p.note.clone(),
-                    p.code(),
-                    &format!("released ({}); the supervisor did not answer", p.reason),
+                    q.reason,
+                    q.note.clone(),
+                    q.code(),
+                    &format!("released ({}); the supervisor did not answer", q.reason),
                 )
                 .await?;
                 return Ok(Pass::Done);
+            }
+            if owned_pending(core, claim)
+                .await?
+                .is_some_and(|q| q.is_some_and(|q| ReleaseKind::of(&q) != ReleaseKind::Soft))
+            {
+                return Ok(Pass::Again);
             }
             // nothing decided: the pending release stays and is retried by the janitor
             tracing::info!(sandbox = %row.id, error = %why, "release: no answer; retried later");
@@ -578,8 +734,8 @@ async fn soft(core: &Arc<Core>, claim: &Claim, row: SandboxRow, p: &Pending) -> 
 }
 
 /// The supervisor refused the soft release `p` (409). Under the claim, the row's pending release is re-read: if it
-/// is still `p`, it is cleared (kept for `requested`); a soft one that replaced it, or none (a `PUT` cancelled it),
-/// is left as it is; a forced one that replaced it is run now ([`Pass::Again`]), since nobody else will.
+/// is still `p`, it is cleared (kept for `requested`, unless a `PUT` cancelled it); a soft one that replaced it is
+/// left as it is; a forced one that replaced it is run now ([`Pass::Again`]), since nobody else will.
 async fn refused(
     core: &Arc<Core>,
     claim: &Claim,
@@ -589,6 +745,8 @@ async fn refused(
 ) -> Result<Pass, aviary_pg::Error> {
     let mut kept = p.clone();
     kept.refusals += 1;
+    // refused: nothing is out at the supervisor any more
+    kept.sent = false;
     let kept = (p.reason == ReleaseReason::Requested).then(|| serde_json::to_value(&kept).unwrap_or_default());
     let data = serde_json::json!({"reason": p.reason.as_str(), "state": state});
     let (id, owner, host, mine, reason) = (row.id, claim.owner.clone(), row.host.clone(), p.clone(), p.reason);
@@ -607,8 +765,12 @@ async fn refused(
         if now.as_ref().is_some_and(|q| ReleaseKind::of(q) != ReleaseKind::Soft) {
             return Ok(Pass::Again);
         }
-        let next = if now.as_ref() == Some(&mine) {
-            kept.clone()
+        let next = if now.as_ref().is_some_and(|q| q.same_ask(&mine)) {
+            if now.as_ref().is_some_and(|q| q.cancelled) {
+                None
+            } else {
+                kept.clone()
+            }
         } else {
             now.map(|q| serde_json::to_value(&q).unwrap_or_default())
         };
@@ -675,13 +837,58 @@ pub async fn destroy_and_gone(
     code: ReleaseCode,
     message: &str,
 ) -> Result<(), aviary_pg::Error> {
-    if !claim.held() {
+    destroy_and_record(
+        core,
+        claim,
+        row,
+        Ending {
+            reason,
+            note: note.as_deref(),
+            code,
+            message,
+        },
+        None,
+    )
+    .await
+}
+
+/// How a sandbox ends ([`destroy_and_record`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Ending<'a> {
+    pub reason: ReleaseReason,
+    pub note: Option<&'a str>,
+    pub code: ReleaseCode,
+    pub message: &'a str,
+}
+
+/// A failed start's `sandbox_starts` row, written in the same transaction as the `gone`.
+#[derive(Clone, Debug)]
+pub struct FailedStart {
+    pub ms: i32,
+}
+
+/// [`destroy_and_gone`], also recording a failed start. The destroy runs only under [`Claim::guard`] (10.3: a
+/// destroy runs only under the claim; 20.2 step 5: a replica whose claims were handed back makes no effect), and
+/// the failed start is written only with the guarded `gone`.
+///
+/// # Errors
+/// A database error.
+pub async fn destroy_and_record(
+    core: &Core,
+    claim: &Claim,
+    row: &SandboxRow,
+    end: Ending<'_>,
+    start: Option<FailedStart>,
+) -> Result<(), aviary_pg::Error> {
+    let Some(_effect) = claim.guard(core).await? else {
         return Ok(());
-    }
+    };
     destroy(core, row).await;
     let (id, owner, kind) = (row.id, claim.owner.clone(), claim.kind.as_str());
-    let (reason_s, code_s, msg) = (txt(reason), txt(code), db::message(message));
-    let note = note.map(|n| db::clip(&n, 200));
+    let (reason, code) = (end.reason, end.code);
+    let (reason_s, code_s, msg) = (txt(reason), txt(code), db::message(end.message));
+    let note = end.note.map(|n| db::clip(n, 200));
+    let (cid, person, host) = (row.conversation_id, row.person.clone(), row.host.clone());
     let gone = aviary_pg::tx!(&core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
         let n = t
             .execute(
@@ -694,6 +901,14 @@ pub async fn destroy_and_gone(
             .await?;
         if n == 0 {
             return Ok(None);
+        }
+        if let Some(f) = &start {
+            t.execute(
+                "insert into sandbox_starts (ok, ms, sandbox_id, conversation_id, person, host, reason, error)
+                 values (false, $1, $2, $3, $4, $5, $6, $7)",
+                &[&f.ms, &id, &cid, &person, &host, &reason_s, &msg],
+            )
+            .await?;
         }
         Ok(Some(bump(t, id).await?))
     })
@@ -771,10 +986,43 @@ mod tests {
             deadline_at: Timestamp::now(),
             asked_at: Timestamp::now(),
             refusals: 0,
+            sent: false,
+            cancelled: false,
         };
         assert_eq!(ReleaseKind::of(&p(ReleaseReason::Idle, false)), ReleaseKind::Soft);
         assert_eq!(ReleaseKind::of(&p(ReleaseReason::Deleted, true)), ReleaseKind::Forced);
         assert_eq!(ReleaseKind::of(&p(ReleaseReason::HostLost, false)), ReleaseKind::Lost);
         assert_eq!(ReleaseKind::of(&p(ReleaseReason::Unhealthy, true)), ReleaseKind::Lost);
+    }
+
+    #[test]
+    fn a_release_is_never_replaced_by_a_weaker_kind() {
+        let p = |reason, force| Pending {
+            reason,
+            note: None,
+            force,
+            deadline_at: Timestamp::now(),
+            asked_at: Timestamp::now(),
+            refusals: 0,
+            sent: false,
+            cancelled: false,
+        };
+        let soft = p(ReleaseReason::Idle, false);
+        let forced = p(ReleaseReason::Lifetime, true);
+        let deleted = p(ReleaseReason::Deleted, true);
+        let lost = p(ReleaseReason::HostLost, false);
+        // Lost > Forced > Soft
+        assert!(keeps(&lost, &forced), "a forced release replaced a lost one");
+        assert!(keeps(&lost, &deleted));
+        assert!(keeps(&lost, &soft));
+        assert!(keeps(&forced, &soft));
+        assert!(!keeps(&forced, &lost), "a lost release may replace a forced one");
+        assert!(!keeps(&soft, &forced));
+        assert!(!keeps(&soft, &lost));
+        // the same ask again keeps what became of it; another reason of the same kind replaces it
+        assert!(keeps(&forced, &p(ReleaseReason::Lifetime, true)));
+        assert!(!keeps(&forced, &deleted));
+        assert!(keeps(&soft, &p(ReleaseReason::Idle, false)));
+        assert!(!keeps(&soft, &p(ReleaseReason::Pool, false)));
     }
 }

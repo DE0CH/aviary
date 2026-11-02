@@ -53,12 +53,27 @@ pub struct Pending {
     pub asked_at: Timestamp,
     #[serde(default)]
     pub refusals: u32,
+    /// A soft release the release task sent (or was about to send) to the supervisor: written under the claim
+    /// before the call, so a takeover knows the supervisor may have agreed.
+    #[serde(default)]
+    pub sent: bool,
+    /// A soft release a `PUT` cancelled while it may be out (3.6.2, 13.12): kept on the row instead of cleared, so
+    /// the release task stays if the supervisor refuses and goes if it agreed; a takeover of a sent one asks the
+    /// supervisor again before keeping the sandbox.
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 impl Pending {
     #[must_use]
     pub fn code(&self) -> ReleaseCode {
         self.reason.code().unwrap_or(ReleaseCode::SandboxReleased)
+    }
+
+    /// The same ask (`sent`, `cancelled`, `refusals` and the deadline are what became of it).
+    #[must_use]
+    pub fn same_ask(&self, o: &Self) -> bool {
+        self.reason == o.reason && self.force == o.force && self.note == o.note && self.asked_at == o.asked_at
     }
 }
 

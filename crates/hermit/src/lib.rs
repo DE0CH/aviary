@@ -141,6 +141,8 @@ pub struct Core {
     /// Held by a sweep pass and by the drain's hand-back, so a pass in flight when the drain starts cannot claim a
     /// row after the claims were handed back.
     pub sweep_lock: tokio::sync::Mutex<()>,
+    /// This replica's live claims and the gate of their side effects ([`tasks::Claims`]).
+    pub claims: Arc<tasks::Claims>,
 }
 
 impl std::fmt::Debug for Core {

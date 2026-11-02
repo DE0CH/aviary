@@ -393,7 +393,7 @@ impl Start {
             if self.phase_since.elapsed() >= wait {
                 return Step::Fail(Fail::new(ReleaseReason::NoHostInTime, "no host became ready in time"));
             }
-            if OffsetDateTime::now_utc() > row.start_deadline {
+            if OffsetDateTime::now_utc() > row.start_deadline || self.forced_pending(row.id).await {
                 return Step::Next;
             }
             tokio::time::sleep(self.core.timings.host_poll).await;
@@ -454,9 +454,16 @@ impl Start {
                 Step::Next
             }
             Err(CreateError::IpInUse(other)) if !self.ip_retry_done => {
+                // a destroy runs only under the claim (10.3): a replica whose claim moved leaves it to the new owner
+                let effect = match self.claim.guard(&self.core).await {
+                    Ok(Some(g)) => g,
+                    Ok(None) => return Step::Stop,
+                    Err(e) => return e.into(),
+                };
                 self.ip_retry_done = true;
                 tracing::info!(sandbox = %row.id, stale = %other, "address in use by a stale sandbox: destroying it");
                 let _ = self.core.providers.fabric.destroy(Some(&spec.host), None, &other).await;
+                drop(effect);
                 Step::Next
             }
             Err(CreateError::Unreachable(why)) if self.create_tries + 1 < CREATE_TRIES => {
@@ -500,16 +507,20 @@ impl Start {
                 return Step::Next;
             }
             // a release asked meanwhile is seen by the main loop
-            if let Ok(Some(now)) = db::load(&self.core.pool, row.id).await
-                && now
-                    .release_pending
-                    .as_ref()
-                    .is_some_and(|p| ReleaseKind::of(p) != ReleaseKind::Soft)
-            {
+            if self.forced_pending(row.id).await {
                 return Step::Next;
             }
             tokio::time::sleep(self.core.timings.health_poll).await;
         }
+    }
+
+    /// Whether a forced or lost release is pending on the row now (a wait ends early: the main loop ends the start).
+    async fn forced_pending(&self, id: Uuid) -> bool {
+        db::load(&self.core.pool, id).await.ok().flatten().is_some_and(|now| {
+            now.release_pending
+                .as_ref()
+                .is_some_and(|p| ReleaseKind::of(p) != ReleaseKind::Soft)
+        })
     }
 
     async fn ready(&mut self, row: &SandboxRow, h: &supervisor_api::control::Health) -> Step {
@@ -582,26 +593,30 @@ impl Start {
         self.fail_with(row, f, code).await
     }
 
-    /// Ends the start: destroys whatever was created, records the failed start, `gone`.
+    /// Ends the start: destroys whatever was created, records the failed start, `gone`. Nothing happens unless
+    /// the claim is still this replica's (the destroy runs under [`Claim::guard`]; the failed start is written with
+    /// the guarded `gone`).
     async fn fail_with(&self, row: &SandboxRow, f: Fail, code: ReleaseCode) -> Step {
-        tracing::info!(sandbox = %row.id, reason = %f.reason, error = %f.message, "sandbox start failed");
+        if !self.claim.held() {
+            return Step::Stop;
+        }
         let ms_total = i32::try_from(((OffsetDateTime::now_utc() - row.created_at).whole_milliseconds()).max(0))
             .unwrap_or(i32::MAX);
-        let (id, cid, person, host) = (row.id, row.conversation_id, row.person.clone(), row.host.clone());
-        let (reason_s, err) = (txt(f.reason), db::message(&f.message));
-        if let Ok(c) = self.core.pool.get().await {
-            let _ = c
-                .execute(
-                    "insert into sandbox_starts (ok, ms, sandbox_id, conversation_id, person, host, reason, error)
-                     values (false, $1, $2, $3, $4, $5, $6, $7)",
-                    &[&ms_total, &id, &cid, &person, &host, &reason_s, &err],
-                )
-                .await;
-        }
-        if let Err(e) =
-            sandboxes::destroy_and_gone(&self.core, &self.claim, row, f.reason, f.note, code, &f.message).await
-        {
-            tracing::warn!(sandbox = %id, error = %e, "start failure not recorded (the takeover resumes it)");
+        let end = sandboxes::Ending {
+            reason: f.reason,
+            note: f.note.as_deref(),
+            code,
+            message: &f.message,
+        };
+        let start = Some(sandboxes::FailedStart { ms: ms_total });
+        match sandboxes::destroy_and_record(&self.core, &self.claim, row, end, start).await {
+            Ok(()) if self.claim.held() => {
+                tracing::info!(sandbox = %row.id, reason = %f.reason, error = %f.message, "sandbox start failed");
+            }
+            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!(sandbox = %row.id, error = %e, "start failure not recorded (the takeover resumes it)");
+            }
         }
         Step::Stop
     }

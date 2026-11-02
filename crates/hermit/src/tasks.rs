@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use aviary_pg::Tx;
@@ -43,6 +43,50 @@ impl Kind {
     }
 }
 
+/// The live claims of this replica and the gate of their side effects, so the drain's hand-back reaches every
+/// running task at once (20.2 step 5: results are written only while this replica holds the claim).
+///
+/// A task makes a side effect that no single guarded write covers (a sandboxd `DELETE`, a failed start's record)
+/// only under [`Claim::guard`]: the gate held for reading, the claim checked in memory and renewed by a guarded
+/// write. [`hand_back`] marks every claim lost first, then takes the gate for writing, so it waits for an effect
+/// already under way (whose claim was still this replica's) and no effect starts after it.
+#[derive(Debug, Default)]
+pub struct Claims {
+    live: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    next: AtomicU64,
+    effects: tokio::sync::RwLock<()>,
+}
+
+impl Claims {
+    fn register(&self, lost: Arc<AtomicBool>) -> u64 {
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).insert(n, lost);
+        n
+    }
+
+    fn forget(&self, n: u64) {
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).remove(&n);
+    }
+
+    /// Marks every live claim lost: each task stops at its next step.
+    pub fn lose_all(&self) {
+        for l in self.live.lock().unwrap_or_else(PoisonError::into_inner).values() {
+            l.store(true, Ordering::Release);
+        }
+    }
+
+    /// How many claims this replica holds in memory.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// A claim this replica holds, renewed in the background while it lives.
 #[derive(Debug)]
 pub struct Claim {
@@ -51,11 +95,14 @@ pub struct Claim {
     pub owner: String,
     lost: Arc<AtomicBool>,
     renewer: AbortHandle,
+    claims: Arc<Claims>,
+    serial: u64,
 }
 
 impl Drop for Claim {
     fn drop(&mut self) {
         self.renewer.abort();
+        self.claims.forget(self.serial);
     }
 }
 
@@ -94,13 +141,48 @@ impl Claim {
             }
         })
         .abort_handle();
+        let serial = core.claims.register(lost.clone());
         Self {
             id,
             kind,
             owner: core.pod.clone(),
             lost,
             renewer,
+            claims: core.claims.clone(),
+            serial,
         }
+    }
+
+    /// The gate for a side effect under this claim (a sandboxd call that ends or replaces a sandbox, a record no
+    /// guarded write covers): `None` when the claim is not this replica's any more, else a guard to hold for the
+    /// whole effect and its guarded write. The claim is renewed by a guarded write first, so its lease covers the
+    /// effect, and [`hand_back`] waits for the guard.
+    ///
+    /// # Errors
+    /// A database error (the effect is not made).
+    pub async fn guard<'a>(
+        &self,
+        core: &'a Core,
+    ) -> Result<Option<tokio::sync::RwLockReadGuard<'a, ()>>, aviary_pg::Error> {
+        let g = core.claims.effects.read().await;
+        if !self.held() {
+            return Ok(None);
+        }
+        let n = core
+            .pool
+            .get()
+            .await?
+            .execute(
+                "update sandboxes set task_until = now() + $4::bigint * interval '1 millisecond'
+                 where id = $1 and task = $2 and task_owner = $3",
+                &[&self.id, &self.kind.as_str(), &self.owner, &core.claim_ms()],
+            )
+            .await?;
+        if n == 0 {
+            self.mark_lost();
+            return Ok(None);
+        }
+        Ok(Some(g))
     }
 
     /// `false` once a renewal found the claim taken or cleared: the task stops at its next step.
@@ -300,13 +382,17 @@ pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary
 /// Drain step 3: hands back every claim this replica holds (`task_until = now()`, owner cleared so a later write of
 /// one of its tasks finds nothing); another replica's sweep resumes them. The tasks are not stopped here: a call
 /// they already sent finishes (step 5, [`TaskSet::settle`]) and its result is dropped, and the new owner repeats
-/// the idempotent step. Retried a few times: a claim not handed back lapses on its own 15 s after its last renewal.
+/// the idempotent step. Every live claim is marked lost first, so no task starts a side effect after this, and an
+/// effect already under [`Claim::guard`] finishes before the claims move. Retried a few times: a claim not handed
+/// back lapses on its own 15 s after its last renewal.
 ///
 /// # Errors
 /// The last database error.
 pub async fn hand_back(core: &Core) -> Result<u64, aviary_pg::Error> {
     // a sweep pass in flight finishes first; the next ones see the drain
     let _pass = core.sweep_lock.lock().await;
+    core.claims.lose_all();
+    let _effects = core.claims.effects.write().await;
     let mut last = None;
     for attempt in 0..3u32 {
         if attempt > 0 {

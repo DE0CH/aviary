@@ -34,7 +34,11 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   cancelling a pending soft release (one no task has sent, and one whose supervisor is being asked: refused -> 200
   the same sandbox, agreed -> 202 a new one), a `PUT` during a 10 s forced release (503s, then a new ready sandbox,
   never a `gone` the driver would fail the turn on), a forced release asked while a soft one is refused (ends the
-  sandbox, reason `deleted`), a late forced release still asking the supervisor, the pool victim (least recently
+  sandbox, reason `deleted`), a forced release asked while a soft call fails (run at once, not left to the
+  janitor), a cancelled soft release whose release replica died asked again before the sandbox is kept (agreed ->
+  a new sandbox, refused -> the same one), a forced release ending a start that waits for a host at its next poll,
+  a start whose create fails after the drain handed its claim back (the new owner's sandbox is not destroyed and no
+  failed start is recorded), a late forced release still asking the supervisor, the pool victim (least recently
   active, a refusing one skipped, `pool_full` otherwise), the silence rule (`ok:true, ready:false` alive; never
   while the gateway settles), a start killed in each phase in turn (`capacity`, `workspace`, `placing`, `host`,
   `image`, `creating`, `supervisor`) finished by another replica (one create, the same token, one start row,
@@ -73,11 +77,18 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   from the supervisor takes longer than the 5 s. (magpie's `PUT` timeout is 2.5 s, so in practice magpie's own
   timeout ends the wait and it retries; the result is the same.)
 - **A `PUT` during a soft release a task is already asking the supervisor about** (13.12: "a `PUT` cancels it while
-  not yet answered 200") clears `release_pending` on the row and waits for the supervisor's answer instead of
-  answering 200 at once: refused, it answers 200 with the same sandbox; agreed, the sandbox goes and the `PUT`
-  starts a new one (202). The supervisor's answer cannot be taken back, so a 200 at once could hand magpie a sandbox
-  that is about to be destroyed (the A20 race). The release task re-reads `release_pending` before it sends and
-  after a 409 or 200.
+  not yet answered 200") marks `release_pending` `cancelled` on the row (never clears it while a release task runs
+  it or after it was `sent`) and waits for the supervisor's answer instead of answering 200 at once: refused, it
+  answers 200 with the same sandbox and the release is cleared; agreed, the sandbox goes and the `PUT` starts a new
+  one (202). The supervisor's answer cannot be taken back, so a 200 at once could hand magpie a sandbox that is
+  about to be destroyed (the A20 race). The release task marks the release `sent` under its claim before the call
+  and re-reads `release_pending` after a 409, a 200 or a failed call. A takeover of a cancelled release that was
+  `sent` asks the supervisor again before it keeps the sandbox (the old replica may have died after a 200); one
+  cancelled before it was sent is cleared. A soft release that a `PUT` cancelled is not offered in the activity
+  reply. A pending soft release no task runs and none sent is still cleared outright.
+- **Release precedence** (13.12): Lost > Forced > Soft. A pending release is never replaced by a weaker kind (a
+  forced one never replaces a pending lost one, so a sandbox on a dead host is destroyed at once with
+  `sandbox_lost`); the janitor's lifetime and not-allowed steps skip any row whose pending release is not soft.
 - **The long-poll holds a `releasing` sandbox** as it holds a `starting` one (3.6.3 names only `starting`): answered
   at once, magpie's loop, which waits for `ready` or `gone`, would spin until the destroy.
 - **A forced release's `deadlineAt`** is written when the row enters `releasing` (13.12 forced step 1), not when the
@@ -85,12 +96,16 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   to end the turn; only a row already `releasing` when a takeover resumes it skips the call once its deadline passed.
 - **Drain step 5** (20.2): the claims are handed back without stopping the tasks; the "in-flight requests and calls"
   hook waits up to 35 s for both the API server's requests and the tasks' supervisor and sandboxd calls already
-  sent, at once rather than one after the other (the 90 s grace holds preStop 10 s + 10 + 35 + 5 s). A task whose
-  call returns finds its claim gone at its next guarded write and stops; the new owner repeats the idempotent step.
-  What is still running at 35 s is stopped.
-- **A forced or lost release asked for a starting sandbox** ends the start at its next step (destroying what was
-  made), rather than only once it reaches `ready` (11.2 step 6): a deleted conversation or a person who left has
-  nothing to start for. A soft release (`requested`) still waits for `ready` and an idle point.
+  sent, at once rather than one after the other (the 90 s grace holds preStop 10 s + 10 + 35 + 5 s). The hand-back
+  marks every live claim of the replica lost in memory first, so each task stops at its next step, and a side
+  effect no single guarded write covers (a sandboxd `DELETE`, a failed start's record) runs only under
+  `Claim::guard`: a read hold on the replica's effects gate plus a guarded renewal of the claim. The hand-back takes
+  that gate for writing, so it waits for an effect already under way and none starts after it; a failed start's
+  `sandbox_starts` row is written in the same transaction as its guarded `gone`. A task whose call returns finds its
+  claim gone and stops; the new owner repeats the idempotent step. What is still running at 35 s is stopped.
+- **A forced or lost release asked for a starting sandbox** ends the start at its next step or poll (the host and
+  supervisor waits re-read the row each poll), destroying what was made, rather than only once it reaches `ready`
+  (11.2 step 6): a deleted conversation or a person who left has nothing to start for. A soft release (`requested`) still waits for `ready` and an idle point.
 - **The workspace step's hand-over** to another replica on a broken local mount (11.2 step 2, 15.6) is not built:
   the core retries `ensure` 3 times 2 s apart, then fails `workspace_unavailable`. The hand-over needs the JuiceFS
   store's own "broken here" signal (WP-20), which `WorkspaceError::Unavailable` is the place for.

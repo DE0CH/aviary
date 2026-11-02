@@ -192,6 +192,8 @@ pub struct FakeFabric {
     pub settled: AtomicBool,
     /// A create that fails with this class.
     pub fail_create: Mutex<Option<String>>,
+    /// Only the create call with this number (1 = the first since the fabric was made) fails, with this class.
+    pub fail_create_call: Mutex<Option<(u32, String)>>,
     /// This many creates fail as unreachable (a transport error) before the next ones work.
     pub unreachable_creates: AtomicU32,
     /// Placement waits here (a start held in `placing`, or in `host` while it polls).
@@ -219,6 +221,7 @@ impl FakeFabric {
             launch: Mutex::new(Launch::Full),
             settled: AtomicBool::new(true),
             fail_create: Mutex::new(None),
+            fail_create_call: Mutex::new(None),
             unreachable_creates: AtomicU32::new(0),
             place_gate: Gate::default(),
             place_error: AtomicBool::new(false),
@@ -293,7 +296,7 @@ impl Fabric for FakeFabric {
 
     fn create<'a>(&'a self, spec: &'a CreateSpec) -> Fut<'a, Result<(), CreateError>> {
         Box::pin(async move {
-            self.creates.fetch_add(1, Ordering::SeqCst);
+            let call = self.creates.fetch_add(1, Ordering::SeqCst) + 1;
             while self.hold_create.load(Ordering::SeqCst) {
                 let n = self.create_gate.notified();
                 if !self.hold_create.load(Ordering::SeqCst) {
@@ -308,7 +311,13 @@ impl Fabric for FakeFabric {
             {
                 return Err(CreateError::Unreachable("connection refused (fake)".into()));
             }
-            if let Some(class) = self.fail_create.lock().unwrap().clone() {
+            let this_call = self
+                .fail_create_call
+                .lock()
+                .unwrap()
+                .clone()
+                .and_then(|(n, class)| (n == call).then_some(class));
+            if let Some(class) = this_call.or_else(|| self.fail_create.lock().unwrap().clone()) {
                 return Err(CreateError::Failed {
                     class,
                     message: "the fake fabric was told to fail".into(),
