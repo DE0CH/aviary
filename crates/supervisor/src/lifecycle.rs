@@ -99,6 +99,10 @@ pub struct AttachContext {
     pub boot: crate::boot::BootEnv,
     /// The agent's cgroup, if the runtime offers one (5.2).
     pub cgroup: Option<std::path::PathBuf>,
+    /// The lifecycle, for [`Lifecycle::admit`] (weak: the lifecycle holds the agent).
+    pub lifecycle: std::sync::Weak<Lifecycle>,
+    /// The activity reports, for the driver's events (generation exits).
+    pub activity: Option<Arc<crate::hermit::activity::Activity>>,
 }
 
 impl std::fmt::Debug for AttachContext {
@@ -141,6 +145,14 @@ pub trait Agent: Send + Sync + 'static {
     /// The open asks for `GET /v1/state`'s `run.asks[]`.
     fn asks(&self) -> Vec<serde_json::Value> {
         Vec::new()
+    }
+    /// The `SendUserFile` hook's files (13): stored with magpie, or the reason they were not.
+    fn send_user_file(
+        &self,
+        _req: supervisor_api::local::SendUserFileRequest,
+        _fds: Vec<std::os::fd::OwnedFd>,
+    ) -> BoxFuture<'_, Result<supervisor_api::local::SendUserFileReply, String>> {
+        Box::pin(async { Err("no Claude Code driver in this build".to_owned()) })
     }
 }
 

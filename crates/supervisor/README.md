@@ -2,14 +2,14 @@
 
 The in-sandbox supervisor and its keeper (supervisor spec; platform R12, R32-R35). One supervisor per sandbox, one
 sandbox per conversation. Built in three packages: WP-21 (this state of the crate: the process model, the lifecycle,
-hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code driver).
+hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code driver, `src/cc/`).
 
 ## Binaries
 
 | Binary | What |
 |---|---|
 | `supervisor-keeper` (`src/bin/keeper.rs`) | PID 1 (the image's entrypoint, no arguments, no environment read). Starts `supervisor run` with its own environment and restarts it (0.1, 0.2, 0.5, 1, 2, 5 s; reset after 60 s up); is the parent of everything the supervisor starts; owns their stdin pipes; keeps the `/dev/fuse` fd; reaps; remembers the last 64 exits; on SIGTERM waits 20 s for the supervisor, then SIGKILLs everything. One thread, `poll(2)`, every buffer allocated before the loop. |
-| `supervisor` (`src/bin/supervisor.rs`) | `supervisor run` (the start sequence of 4.3), `supervisor --version`, and `sandbox-secret <KEY>` when called by that name (a symlink). |
+| `supervisor` (`src/bin/supervisor.rs`) | `supervisor run` (the start sequence of 4.3), `supervisor hook send-user-file` (Claude Code's `SendUserFile` hook, 13), `supervisor --version`, and `sandbox-secret <KEY>` when called by that name (a symlink). |
 
 ## Modules
 
@@ -30,6 +30,10 @@ hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code drive
 | `fuse::remote` | 9.5, 19, 20: the lease, 16 calls at once, 30 s attempts, the retry rule (general outage vs one stuck op), INTERRUPT before any attempt |
 | `fuse::{journal, dispatch}` | 9.3, 9.9, 9.10: the `MAP_SHARED` journal (requests read straight into a slot, the short-read check, the kept results of the resend rule), the workers, every opcode, the resend rule, the replay, the repair, the lease loop after `lease_lost` |
 | `fuse` (`FuseFs`) | 4.3 step 6, 9.3: the `Filesystem` the binary mounts: a fresh `/dev/fuse` connection (`mount(2)`, the new `bootId` stored atomically, then `PUT_FD`) or the keeper's (`GET_FD`, the stored `bootId` or exit 75 `boot_id_unreadable`) |
+| `cc::{launch, managed, stream, control, prompt, tasks, report, run}` | 6, 7, 8.2, 10, 11, 12.2: argv and environment, the managed files, the stdout tail and parser, control messages, the user message, the task tracker and hold, the ordered reports, the run state machine and the driver (`cc::run::Driver`, the `Agent`) |
+| `uploads` | 12.1: blobs into `/workspace/uploads` as the agent |
+| `sent_files` | 13: the hook process, `agent.sock`'s descriptor-passing acceptor, the snapshot upload |
+| `model` | 14, 17.3: the models route and the title call |
 | `start` | 4.3, 4.7: the start sequence, `/etc/hosts` and apt's proxy file, the re-attach check, SIGTERM |
 
 ## The seams for WP-22 and WP-23
@@ -55,14 +59,18 @@ client and exit stream, the boot environment, the agent cgroup), and the release
   before `attach`.
 - `Agent::tasks()`/`asks()` (default empty) fill `GET /v1/state`'s `run.tasks[]`/`run.asks[]`: WP-23 implements them.
 - The driver's `stop(deadline)` and `end_turn(deadline)` must end by their deadline: under SIGTERM the release has
-  18 s in all (`lifecycle::ReleaseTimes`). Until those packages land, the binary runs with
-`IdleAgent` (the binary mounts the real `fuse::FuseFs` since WP-22).
+  18 s in all (`lifecycle::ReleaseTimes`).
+- The driver's view of the filesystem is `cc::Transcript` (`set_turn`, `set_main_transcript`, `wait_stored(uuids)`
+  for 8.2, the heartbeat's `cc` facts and its `heartbeat_ok`, the lease after a re-take), implemented for
+  `fuse::FuseFs` in `cc/mod.rs`. `AttachContext` carries the lifecycle (weak, for `Lifecycle::admit`) and the activity
+  reports (generation exits).
 
 What WP-23 wires to the FUSE layer (`fuse::Hooks`, `FuseFs::core()`): `lease_lost` (SIGKILL the generation, no more
 reports for its turn; the binary already turns health `ready: false` and back on `lease_regained`), `write_stuck` (the
 turn `failed` with `cc.write_stuck`, the generation ended), `forked` (stop the agent), `Core::set_turn` (every write's
 `turnId`), `Core::set_main_transcript` (from the `running` report), and `Remote::record_ok` on each successful
-heartbeat (the stuck rule's evidence that magpie answers other calls).
+heartbeat (the stuck rule's evidence that magpie answers other calls). The binary wires all of these to the driver
+(`Driver::lease_lost`, `Driver::write_stuck`, `Driver::forked`).
 
 ## Tests
 
@@ -213,3 +221,55 @@ heartbeat (the stuck rule's evidence that magpie answers other calls).
 18. **Every call to hermit is bounded by `HERMIT_TIMEOUT` (10 s)** (the client's default is 30 s), and each attempt
     of a release's final `released` report by what is left of the release's deadline: a hermit that holds the
     request never keeps the release past it.
+
+## The Claude Code driver (WP-23)
+
+`cc::run::Driver` keeps one run state behind a lock never held across an `await`: stdout lines (tailed from the
+generation's file with inotify and a 250 ms poll), keeper exits, commands and a 1 s tick change it and return the
+effects (stdin lines through the generation's ordered writer, reports, signals). Every state change is put into
+`run.json` together with the stdout offset of the line that caused it. Reports go through `cc::report::Reporter`:
+one ordered queue (turn states, agent turns, asks, acks; an end report first waits for the turn's uuids through
+`Transcript::wait_stored`), task events in 250 ms batches, retried at 0.5 s doubling to 10 s until the lease is lost.
+
+Tests (`src/cc/run/tests.rs`): a real keeper, fake hermit and magpie behind the reference gateway, the mock model,
+and a scripted fake `claude` (the lib test binary again, `cc::run::tests::fake_claude`, behind a wrapper script whose
+fd 3 is the generation's stdout): a turn and the generation reused across turns, failed results, interrupt, kill
+(stop and watchdog), the 15 s interrupt grace, a crash (`run.exited` with the stderr tail) and the crash loop, agent
+turns and a `start_turn` during one, the hold, supersede, `stop_tasks` and a task that ends and wakes the agent, an
+ask relayed and answered (and `no_such_ask`), upload materialisation (replacing a model's file, a symlinked
+`uploads` refused, a full workspace), the tags and image block of the prompt, titles through the model route, an
+unknown command type, a restart replaying a `written` prompt exactly once (the keeper had it, or not), a restart
+whose generation died, a magpie outage on the report route, the hook's descriptors over `agent.sock` (symlinks and
+paths outside `/workspace` refused) and a forced release during a turn (`sandbox.lost`). The reporter's retry is
+checked over a 20 min outage on paused time (`src/cc/report.rs`).
+
+### Deviations from the spec text (WP-23)
+
+1. **The stdin `msg_id`** is the first 16 bytes of SHA-256(`SUPERVISOR_OP_NS` ‖ `bootId` ‖ "stdin" ‖ `cmdSeq`),
+   not a UUIDv5: the same determinism without adding uuid's `v5` feature (and `sha1`) to the dependency graph.
+2. **Initialisation** waits only for the `initialize` control response (30 s). `system`/`init` is taken whenever it
+   comes (in stream-json input mode it may follow the first user message); a different `session_id` there replaces
+   the expected one for the next state report, as 7.2 says.
+3. **Agent turns** open on an `assistant` message, a `stream_event` or a `user` message carrying a
+   `<task-notification>`; a bare `user` line (a tool result, the interrupt marker written after a `result`) does not
+   open one, so it can never leave a turn without a result.
+4. **Commands after a restart** are polled from the lowest unacked `delivered` entry (minus 1), not from `cmd_after`
+   alone: `cmd_after` advances past a received command, and magpie only re-sends commands above `after`.
+5. **The crash loop** counts exits the supervisor did not cause (any three in 60 s), not only exits before a
+   completed initialisation: a generation that initialises and then dies on resume is the same budget loop.
+6. **`ScheduleWakeup`'s fire time** is read from `delaySeconds`/`delay_seconds`/`seconds`/`delay`, `delayMs`/`delay_ms`
+   or `at`/`fireAt`/`fire_at`/`time` (2.1.304's input shape is not in the inventory); an input with none of them
+   gives the pseudo-task no `until`, so only the silence ceiling ends it.
+7. **The hook opens paths component by component** with `O_NOFOLLOW` from an fd of `/workspace` instead of
+   `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`, which not every sandbox runtime implements; the guarantee is the same.
+8. **A refused hook** is answered 502 `upstream_failed` with the reason as `message` (13 names no status).
+9. **A turn ended by a generation exit** reports no `lastUuid` (the generation writes nothing more; naming a line it
+   never wrote would make magpie answer `transcript_pending` for ever).
+10. **The extension table** of 13 moved into `magpie_api::mime` (pigeon uses it too).
+
+### Open items (WP-23)
+
+- Gate item 7 (`--setting-sources=` ignores `/workspace/.claude/settings.json` and `/workspace/CLAUDE.md`) and items
+  8 and 13 need the real Claude Code 2.1.304 binary against the mock model; they run with WP-22's re-run of the gate
+  on the real build and in the image smoke (WP-24).
+- The soak's synthetic turns with 1 MiB lines (WP-21 deviation 6) and `nightly.yml` (WP-28).

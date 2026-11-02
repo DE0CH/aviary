@@ -3,7 +3,8 @@
 //!
 //! - `GET /v1/secrets/{key}`: asks hermit at that moment (no cache); 200 `{"key","value"}` or 404 `not_granted`.
 //!   The key is logged, never the value, and no value is written to disk or an environment.
-//! - `POST /v1/hooks/send-user-file`: the `SendUserFile` hook, with its descriptors (WP-23); 501 until then.
+//! - `POST /v1/hooks/send-user-file`: the `SendUserFile` hook, with its descriptors, handed to the driver
+//!   ([`crate::lifecycle::Agent::send_user_file`]); 502 `upstream_failed` with the reason when the files were not kept.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -20,12 +21,30 @@ use supervisor_api::server::LocalServer;
 use crate::hermit::Hermit;
 
 /// The local socket's server.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Local {
     pub hermit: Hermit,
+    pub agent: std::sync::Arc<dyn crate::lifecycle::Agent>,
+}
+
+impl std::fmt::Debug for Local {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Local").finish_non_exhaustive()
+    }
 }
 
 impl LocalServer for Local {
+    async fn send_user_file(
+        &self,
+        _ctx: Ctx,
+        body: supervisor_api::local::SendUserFileRequest,
+        fds: Vec<std::os::fd::OwnedFd>,
+    ) -> Answer<supervisor_api::local::SendUserFileReply> {
+        self.agent.send_user_file(body, fds).await.map_err(|reason| {
+            aviary_core::http::ApiError::new(axum::http::StatusCode::BAD_GATEWAY, "upstream_failed", reason)
+        })
+    }
+
     async fn secret(&self, _ctx: Ctx, key: String) -> Answer<SecretValue> {
         if !valid_secret_key(&key) {
             return Err(hermit_api::error::api(

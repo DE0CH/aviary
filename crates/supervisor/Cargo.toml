@@ -26,6 +26,8 @@ fault-injection = []
 aviary-core = { path = "../aviary-core" }
 axum.workspace = true
 base64.workspace = true
+futures-util.workspace = true
+gateway-api = { path = "../gateway-api" }
 hermit-api = { path = "../hermit-api" }
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1"] }
@@ -46,7 +48,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 aviary-fakes = { path = "../../testing/fakes" }
-gateway-api = { path = "../gateway-api" }
+mock-model = { path = "../../testing/mock-model" }
 prometheus-client.workspace = true
 test-gateway = { path = "../../testing/test-gateway" }
 tokio = { workspace = true, features = ["test-util"] }

@@ -2,6 +2,7 @@
 //!
 //! - `supervisor run`: the supervisor, started by the keeper (exit 0 after a release, 70 on an internal error);
 //! - `sandbox-secret <KEY>` (a symlink to this binary): a secret from hermit, through the supervisor;
+//! - `supervisor hook send-user-file`: Claude Code's `SendUserFile` hook (supervisor 13);
 //! - `supervisor --version`.
 
 use std::sync::Arc;
@@ -9,9 +10,9 @@ use std::sync::Arc;
 use aviary_core::log;
 use aviary_core::version::Build;
 use supervisor::boot::BootEnv;
+use supervisor::cc::run::{Driver, DriverConfig};
 use supervisor::fuse::{Config as FuseConfig, FuseFs, Hooks};
 use supervisor::hermit::Hermit;
-use supervisor::lifecycle::IdleAgent;
 use supervisor::start::{EXIT_INTERNAL, Paths, Start};
 
 fn build() -> Build {
@@ -29,6 +30,7 @@ fn main() {
     }
     let code = match args.get(1).map(String::as_str) {
         Some("run") => run(),
+        Some("hook") if args.get(2).map(String::as_str) == Some("send-user-file") => supervisor::sent_files::hook_cli(),
         Some("--version") => {
             use std::io::Write as _;
             let _ = writeln!(std::io::stdout(), "{}", build().version_line());
@@ -36,7 +38,10 @@ fn main() {
         }
         _ => {
             use std::io::Write as _;
-            let _ = writeln!(std::io::stderr(), "usage: supervisor run | supervisor --version");
+            let _ = writeln!(
+                std::io::stderr(),
+                "usage: supervisor run | supervisor hook send-user-file | supervisor --version"
+            );
             2
         }
     };
@@ -76,28 +81,43 @@ fn run() -> i32 {
                 return EXIT_INTERNAL;
             }
         };
-        let fs = FuseFs::new(FuseConfig::sandbox(), supervisor::magpie::client(http.clone()));
+        let hermit = Hermit::new(http.clone());
+        let magpie = supervisor::magpie::client(http.clone());
+        let fs = FuseFs::new(FuseConfig::sandbox(), magpie.clone());
+        let agent = Driver::new(
+            DriverConfig::sandbox(),
+            magpie.clone(),
+            supervisor::model::Model::new(http),
+            hermit.clone(),
+            fs.clone(),
+        );
         let start = Start {
             paths,
             boot,
             build,
-            hermit: Hermit::new(http.clone()),
-            magpie: supervisor::magpie::client(http),
+            hermit,
+            magpie,
             keeper: supervisor::keeper::Client::new(std::path::Path::new(supervisor::keeper::RUN_DIR)),
-            // WP-23 replaces the agent (and adds its hooks: the generation killed on lease_lost, cc.write_stuck)
-            agent: Arc::new(IdleAgent::default()),
+            agent: agent.clone(),
             fs: fs.clone(),
             control,
         };
         let (running, done) = start.spawn();
         let (lost, regained) = (running.lifecycle.clone(), running.lifecycle.clone());
+        let (a1, a2, a3) = (agent.clone(), agent.clone(), agent.clone());
         fs.set_hooks(Hooks {
-            // 9.5 item 7: unready while unleased, ready again with the new lease (no exit, no restart)
-            lease_lost: Arc::new(move || lost.set_ready(|r| r.lease = false)),
+            // 9.5 item 7: unready while unleased (the generation killed, no more reports for its turn), ready again
+            // with the new lease (no exit, no restart)
+            lease_lost: Arc::new(move || {
+                lost.set_ready(|r| r.lease = false);
+                a1.lease_lost();
+            }),
             lease_regained: Arc::new(move |l| {
                 regained.set_lease_epoch(l.epoch);
                 regained.set_ready(|r| r.lease = true);
             }),
+            write_stuck: Arc::new(move |s| a2.write_stuck(&s.what, &s.message)),
+            forked: Arc::new(move |m| a3.forked(&m)),
             ..Hooks::default()
         });
         done.await.unwrap_or(EXIT_INTERNAL)

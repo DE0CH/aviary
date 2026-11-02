@@ -67,6 +67,8 @@ pub struct RunPart {
     pub interrupt_sent_at: Option<String>,
     pub pending_uuids: Vec<String>,
     pub last_uuid: Option<String>,
+    /// A person's turn written while an agent turn ran (7.5).
+    pub queued_turn_id: Option<String>,
 }
 
 impl Default for RunPart {
@@ -79,6 +81,7 @@ impl Default for RunPart {
             interrupt_sent_at: None,
             pending_uuids: Vec::new(),
             last_uuid: None,
+            queued_turn_id: None,
         }
     }
 }
@@ -103,6 +106,8 @@ pub struct TaskState {
     /// `event` or `static`.
     pub source: String,
     pub until: Option<String>,
+    /// Started inside a subagent or workflow.
+    pub nested: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

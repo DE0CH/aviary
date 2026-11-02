@@ -484,13 +484,16 @@ impl Start {
             );
             tokio::spawn(guard.run(Arc::new(GuardLink {
                 agent: agent.clone(),
-                activity,
+                activity: activity.clone(),
             })));
         } else {
             tracing::warn!("memory guard off: the parent is not the keeper as PID 1");
         }
-        let local = Arc::new(Local { hermit: hermit.clone() });
-        if let Err(e) = serve_unix(&paths.agent_socket, 0o666, local_router(local)) {
+        let local = Arc::new(Local {
+            hermit: hermit.clone(),
+            agent: agent.clone(),
+        });
+        if let Err(e) = crate::sent_files::serve_with_fds(&paths.agent_socket, 0o666, local_router(local)) {
             tracing::error!(error = %e, "agent socket");
         }
         let docker = Docker::new(
@@ -585,6 +588,8 @@ impl Start {
                     exits: exits.clone(),
                     boot: boot.clone(),
                     cgroup,
+                    lifecycle: Arc::downgrade(&lifecycle),
+                    activity: Some(activity.clone()),
                 })
                 .await;
         };
