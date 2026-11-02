@@ -18,6 +18,7 @@ pub mod fanout;
 pub mod http;
 pub mod jobs;
 pub mod limits;
+pub mod live;
 pub mod rows;
 pub mod stats;
 pub mod turns;

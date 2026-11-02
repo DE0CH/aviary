@@ -3,7 +3,8 @@
 //!
 //! The caller holds the conversation row lock (`select … for update`, [`crate::conversations::lock`]): the lock
 //! serialises writers per conversation, so `head_seq` is contiguous from 1, gap-free and never reused (magpie 4).
-//! WP-13 adds the kinds' own rules (tool links, retracts); this module is the seam the other packages call.
+//! The kinds' rules (rows, retracts) are the projection's ([`crate::rows`]); this module is the seam the other packages
+//! call.
 
 use aviary_pg::Tx;
 use magpie_api::events::EventBody;

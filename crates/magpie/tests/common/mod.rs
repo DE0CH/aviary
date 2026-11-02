@@ -4,6 +4,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 
 pub mod cc;
+pub mod ev;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

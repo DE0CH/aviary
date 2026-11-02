@@ -131,6 +131,60 @@ impl Fanout {
     }
 }
 
+impl Fanout {
+    /// The long-poll loop over several watches: `query` answers `(done, value)`; the loop returns the first done
+    /// value, or the last value when `wait` has passed or the replica drains. Waiters on every `(channel, key)` are
+    /// made before the first query; the loop re-queries at any of their notifications, every `requery`, and after
+    /// a LISTEN reconnect. No database connection is held between queries.
+    ///
+    /// # Errors
+    /// `query`'s error.
+    pub async fn hold_until<T, F, Fut>(
+        &self,
+        keys: &[(&str, &str)],
+        wait: Duration,
+        draining: &Draining,
+        mut query: F,
+    ) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<(bool, T)>>,
+    {
+        let wait = wait.min(limits::WAIT_MAX);
+        let mut waiters: Vec<Waiter> = keys.iter().map(|(c, k)| self.waiter(c, k)).collect();
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut draining = draining.clone();
+        let _held = Held::new(self.held.clone());
+        loop {
+            let (done, v) = query().await?;
+            let now = tokio::time::Instant::now();
+            if done || now >= deadline || draining.is_draining() {
+                return Ok(v);
+            }
+            let pause = (deadline - now).min(self.requery);
+            tokio::select! {
+                () = any_changed(&mut waiters) => {}
+                () = tokio::time::sleep(pause) => {}
+                () = draining.wait() => {}
+            }
+        }
+    }
+}
+
+/// Resolves when any of `waiters` sees a change (never, for none).
+async fn any_changed(waiters: &mut [Waiter]) {
+    let mut futs: Vec<_> = waiters.iter_mut().map(|w| Box::pin(w.changed())).collect();
+    std::future::poll_fn(move |cx| {
+        for f in &mut futs {
+            if f.as_mut().poll(cx).is_ready() {
+                return std::task::Poll::Ready(());
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await;
+}
+
 /// Counts a held poll while it lives.
 struct Held(Arc<AtomicI64>);
 

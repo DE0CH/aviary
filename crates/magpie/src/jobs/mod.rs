@@ -4,8 +4,9 @@
 //! takeover mid-pass is safe. Before each pass a leader job confirms the lock ([`aviary_pg::Leader::confirm`]); the
 //! outbox, whose pass can run for minutes with hermit unreachable, confirms it again before each item.
 //!
-//! WP-11's jobs: purge, outbox, retention; WP-12's: the limbo sweeper. The others of magpie 15 (hermit feed, blob GC, blob uploader,
-//! availability tick, limbo flush, live cleanup, turn sweeper) are added here by their packages.
+//! WP-11's jobs: purge, outbox, retention; WP-12's: the limbo sweeper; WP-13's live cleanup runs on every replica.
+//! The others of magpie 15 (hermit feed, blob GC, blob uploader, availability tick, turn sweeper) are added here by
+//! their packages.
 
 pub mod outbox;
 pub mod retention;
@@ -42,6 +43,26 @@ where
                 continue;
             }
             match pass().await {
+                Ok(what) if what.is_empty() => {}
+                Ok(what) => tracing::info!(job = name, what = %what, "job pass"),
+                Err(e) => tracing::warn!(job = name, error = %e, "job pass failed"),
+            }
+        }
+    })
+}
+
+/// A job every replica runs (no leader lock): `pass` every `every`.
+fn every_replica<F, Fut>(name: &'static str, every: Duration, pool: Pool, pass: F) -> JoinHandle<()>
+where
+    F: Fn(Pool) -> Fut + Send + 'static,
+    Fut: Future<Output = crate::error::Result<String>> + Send,
+{
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match pass(pool.clone()).await {
                 Ok(what) if what.is_empty() => {}
                 Ok(what) => tracing::info!(job = name, what = %what, "job pass"),
                 Err(e) => tracing::warn!(job = name, error = %e, "job pass failed"),
@@ -104,6 +125,19 @@ impl Jobs {
                 })
             }
         }));
+        tasks.push(every_replica(
+            "live cleanup",
+            crate::live::CLEANUP_EVERY,
+            pool.clone(),
+            |p| async move {
+                let n = crate::live::cleanup(&p).await?;
+                Ok(if n == 0 {
+                    String::new()
+                } else {
+                    format!("{n} live frames deleted")
+                })
+            },
+        ));
         Self { leader, tasks }
     }
 

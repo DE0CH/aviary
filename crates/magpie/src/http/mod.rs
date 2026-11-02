@@ -12,6 +12,10 @@ pub mod creations;
 pub mod ops;
 #[allow(clippy::missing_errors_doc)]
 pub mod sandbox_cc;
+#[allow(clippy::missing_errors_doc)]
+pub mod sandbox_live;
+#[allow(clippy::missing_errors_doc)]
+pub mod timeline;
 
 use aviary_core::http::ApiError;
 

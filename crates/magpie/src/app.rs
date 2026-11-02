@@ -16,7 +16,9 @@ use axum::Router;
 use magpie_api::Admitted;
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
+use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery};
+use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
     CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery,
     LeaseResponse,
@@ -77,6 +79,16 @@ impl Magpie {
     #[must_use]
     pub fn read(&self) -> Read<'_> {
         Read {
+            pool: &self.pool,
+            fanout: &self.fanout,
+            draining: &self.draining,
+        }
+    }
+
+    /// What M9 needs.
+    #[must_use]
+    pub fn reader(&self) -> crate::rows::read::Reader<'_> {
+        crate::rows::read::Reader {
             pool: &self.pool,
             fanout: &self.fanout,
             draining: &self.draining,
@@ -248,6 +260,26 @@ impl Server for Magpie {
 
     async fn purge_conversation(&self, ctx: Ctx, id: Uuid) -> Answer<()> {
         http::conversations::purge(self, ctx, id).await
+    }
+
+    async fn timeline(&self, ctx: Ctx, id: Uuid, query: TimelineQuery) -> Answer<TimelinePage> {
+        http::timeline::timeline(self, ctx, id, query).await
+    }
+
+    async fn live(&self, ctx: Ctx, id: Uuid) -> Answer<Option<LiveState>> {
+        http::timeline::live(self, ctx, id).await
+    }
+
+    async fn prompts(&self, ctx: Ctx, id: Uuid) -> Answer<PromptsResponse> {
+        http::timeline::prompts(self, ctx, id).await
+    }
+
+    async fn search(&self, ctx: Ctx, id: Uuid, query: SearchQuery) -> Answer<SearchResponse> {
+        http::timeline::search(self, ctx, id, query).await
+    }
+
+    async fn live_frames(&self, ctx: Ctx, turn_id: Uuid, body: LiveFramesRequest) -> Answer<()> {
+        http::sandbox_live::frames(self, ctx, turn_id, body).await
     }
 
     async fn changes(&self, ctx: Ctx, query: ChangesQuery) -> Answer<ChangesResponse> {
