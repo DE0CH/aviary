@@ -162,7 +162,10 @@ impl Drop for Replica {
 /// Log lines of the replicas go to the test's output (shown for a failing test).
 fn init_logs() {
     let _ = tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt().with_test_writer().with_max_level(tracing::Level::INFO).finish(),
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::INFO)
+            .finish(),
     );
 }
 
