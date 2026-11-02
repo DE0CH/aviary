@@ -1,0 +1,18 @@
+{
+  "default": "example/model-large-1017",
+  "small": "example/model-large-1017",
+  "title": "example/model-small-0901",
+  "contextTokens": 200000,
+  "models": [
+    {
+      "id": "example/model-large-1017",
+      "label": "Large",
+      "reasoning": "medium"
+    },
+    {
+      "id": "example/model-small-0901",
+      "label": "Small",
+      "reasoning": null
+    }
+  ]
+}

@@ -1037,6 +1037,18 @@ dependencies = [
 [[package]]
 name = "gateway-api"
 version = "0.0.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "hermit-api",
+ "proptest",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "generic-array"
