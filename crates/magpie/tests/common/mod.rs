@@ -338,6 +338,12 @@ impl Drop for CutProxy {
 
 impl CutProxy {
     pub async fn start(target: SocketAddr) -> Self {
+        Self::start_with_latency(target, Duration::ZERO).await
+    }
+
+    /// A proxy that also adds `latency` before each request it forwards (data from the client after a pause), as a
+    /// bucket that far away would.
+    pub async fn start_with_latency(target: SocketAddr, latency: Duration) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let state = Arc::new(Mutex::new(ProxyState::default()));
@@ -359,9 +365,32 @@ impl CutProxy {
                     }
                 }
                 let conn = tokio::spawn(async move {
-                    if let Ok(mut outbound) = TcpStream::connect(target).await {
+                    let Ok(mut outbound) = TcpStream::connect(target).await else {
+                        return;
+                    };
+                    if latency.is_zero() {
                         let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                        return;
                     }
+                    let (mut ri, mut wi) = inbound.into_split();
+                    let (mut ro, mut wo) = outbound.into_split();
+                    let up = async move {
+                        let mut buf = vec![0u8; 64 * 1024];
+                        let mut last: Option<tokio::time::Instant> = None;
+                        loop {
+                            let n = tokio::io::AsyncReadExt::read(&mut ri, &mut buf).await?;
+                            if n == 0 {
+                                return wo.shutdown().await;
+                            }
+                            if last.is_none_or(|l| l.elapsed() > Duration::from_millis(2)) {
+                                tokio::time::sleep(latency).await;
+                            }
+                            wo.write_all(&buf[..n]).await?;
+                            last = Some(tokio::time::Instant::now());
+                        }
+                    };
+                    let down = tokio::io::copy(&mut ro, &mut wi);
+                    let _ = tokio::join!(up, down);
                 });
                 st.lock().unwrap().conns.push(conn);
             }

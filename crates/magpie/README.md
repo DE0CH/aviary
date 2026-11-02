@@ -83,7 +83,7 @@ review's truncate, rewrite, truncate, original-bytes sequence); `tests/ccfs_clau
 transcripts from the FUSE gate, product text replaced by same-length placeholders, replayed in the shape of the
 gate's recorded calls with every prompt a person turn's echo, with pinned event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
 `.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
-for a 1 MiB image line). The scanner, extraction and classification have unit and property tests in the crate.
+for a 1 MiB image line; an 87 MB transcript from a cold bucket in under 5 s). The scanner, extraction and classification have unit and property tests in the crate.
 
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
 `tests/blobs.rs` (staged blobs served before the uploader stores them, a bucket outage, the GC's rules and the
@@ -273,7 +273,9 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - Every lines operation works in bounded batches (6.6): reads and seeks take 256 lines at a time through
   `cc_lines_off`; a truncate deletes its suffix and puts it in limbo in one statement; new lines are inserted 512 at
   a time, their limbo candidates fetched and the taken ones deleted in one statement each; an overwrite reads only
-  the lines it touches; a promotion and a rename-over walk the file in batches with set-based updates. Measured
+  the lines it touches; a promotion walks the file in keyset batches of 256 with one set-based update each; a
+  rename-over is one set-based statement (the pool of the target's classified lines and limbo, ranked per sha256
+  with `row_number`, joined to the source's unclassified lines), so its memory is Postgres's, not magpie's. Measured
   (`a_large_transcript_reads_and_rewrites_in_bounded_time`, debug build): 30,000 lines read in 0.7 s, `truncate(0)`
   in 0.3 s, the rewrite of the whole file in 1 MiB writes in under 3 s. The cost left is per event (an event and
   its row are made one at a time: about 8 ms each in a debug build, so a 1 MiB write of 2,000 new event lines takes
@@ -306,20 +308,49 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - A read's first batch of lines is made before the answer starts (a sha mismatch or a missing blob there answers
   500 / 503); a later failure, or the file changing while it streams, ends the body early. Every reconstructed
   line's sha256 is checked in a debug build and inside a transaction; one in 1,000 in a release build's reads.
-  Blobs of a batch are read from staging in one query; the read cache, the 16-blob prefetch and bucket reads come
-  with WP-15's store, and with them the 87 MB read target.
+  Blobs of a batch are read from staging in one query, the rest from the bucket 16 at a time
+  (`blobs::fetch_stored`, `limits::BLOB_FETCH_CONCURRENCY`), and the next batch's blobs are fetched while the
+  current one is sent (`limits::CC_READ_AHEAD`); no database connection is held while the bucket answers.
+  `ccfs_perf.rs` measures 6.11's target in a release build: an 87.5 MB transcript (400 blobs, 52 MB, every one only
+  in the bucket, read by a replica with an empty cache, the bucket behind a proxy that adds 30 ms to each request)
+  streams in 1.28-1.56 s (the shared build runner, 2026-11-02; one GET at a time it would need at least 400 x 30 ms
+  = 12 s, Claude's arithmetic).
 - The lease asks hermit only when its feed's record does not name the caller as `starting` or `ready`; hermit's 404
   is "no sandbox" (`not_current_sandbox`), any other failure or 2 s without an answer 503.
-- The 2.1.304 acceptance replays the real binary's transcripts from the FUSE gate through the routes, in the shape
-  of the gate's recorded calls; the real binary against a mock Messages API through a FUSE supervisor is the e2e
-  harness's (WP-28). The latency figures are measured at the client over loopback HTTP (they include the round
+- Recorded deviation: the 2.1.304 acceptance replays the real binary's transcripts from the FUSE gate through the
+  routes, in the shape of the gate's recorded calls (the gate's `calls.log` records no truncate sizes or bytes, so
+  an exact op-by-op replay is not possible); the real binary against a mock Messages API through a FUSE supervisor
+  and magpie, with person turns, is carried to the e2e harness (WP-28) and blocks magpie 20's release gate, as does
+  an end-to-end stale append with `append=1` (the supervisor sends `append=0` today, so `offset_mismatch` and the
+  repair path are exercised only by magpie's own tests). The latency figures are measured at the client over loopback HTTP (they include the round
   trip), with a 2-node synchronously replicated Postgres in CI at `min_wal_size=1GB`, `max_wal_size=2GB` and its WAL
   warmed first (segments written once and recycled, as on a cluster that has run for a while). Those two settings
   are a required parameter of `magpie-pg` (handed to WP-32): creating a new 16 MiB segment file costs one write
   about 150-200 ms, and Postgres's defaults (80MB / 1GB) recycle too few segments for a burst of image lines.
   Measured on the shared build runner (2026-11-02): at the defaults on a fresh cluster, p50 7.9-9.7 ms for a 10 KiB
   append and p99 129-134 ms for a 1 MiB image line (inside the bound, with little margin); at 1GB / 2GB warmed,
-  p50 9.4 ms and p99 47-53 ms.
+  p50 9.4 ms and p99 47-53 ms; with 500 samples of the 1 MiB line (the p99 is the 5th slowest), p99 53.1 ms. The
+  link to production is WP-32's: its acceptance includes a manifest check that `magpie-pg`'s
+  `postgresql.parameters` carry both values.
+- An echo of a person's prompt is remembered by its sha256 for the conversation's life (`cc_echoes`, migration
+  `0011_cc_echoes.sql`; copied with a share's state, removed with the conversation): once a truncate's limbo is
+  flushed (its turn ended, or 10 s of quiet) the table is what keeps a rewritten echo internal, so it neither takes a
+  later person turn's echo nor becomes a `cc.user` prompt. A line with the uuid of a retracted line is never taken as
+  the running turn's echo (it is that line again, with `meta.replaces`).
+- `set_main_transcript` checks the path is `projects/-workspace/<providerSessionId>.jsonl` (6.2 "checked to equal
+  that form"; 400 `bad_request` otherwise, so a subagent's transcript can never become the main one). When the main
+  path changes (a new provider session), the old file is treated as renamed away: its lines keep their events and
+  enter `moved` limbo, so the same lines at the new path make no new events, and it is no longer protected.
+- A rename applies the main-transcript rules around a kind change: a main transcript renamed to a byte-file name
+  puts its lines in `moved` limbo before it is stored as pages, and a byte file renamed over the main transcript is
+  stored as lines first (at its old path, unclassified) and then goes through the rename-over matching and the
+  promotion, so the old transcript's dropped lines are retracted at once (6.6).
+- Bucket down (6.13): rule 0 compares a line the range covers whole by its sha256 and length, so the sentry's resend
+  after a checkpoint answers without the bucket; appends and truncates at a line start or inside a line without
+  blobs need no bucket either. A gap is left: a write, truncate or overwrite that cuts a line whose blob has left
+  staging, and a kind change on rename, reconstruct that line from its blobs and answer 503 while the bucket is
+  unreachable (the supervisor retries; `tests/blobs.rs` `a_resend_and_a_truncate_at_a_plain_line_need_no_bucket`
+  pins both sides).
 - An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
   its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.

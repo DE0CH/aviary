@@ -13,10 +13,14 @@
 //! classified a second time; lines an overwrite or a rename-over drops are retracted at once. Only the main
 //! transcript has visible events, so only its lines are put in limbo or retracted.
 //!
+//! A line once classified as the echo of a person's prompt is also remembered by its sha256 for the conversation's
+//! life (`cc_echoes`), so writing it again after its limbo was flushed is internal again (6.5).
+//!
 //! Every operation works on the lines it touches in bounded batches: a read seeks with `cc_lines_off` and takes
 //! [`limits::CC_READ_BATCH`] lines at a time, a truncate removes its suffix (into limbo) in one statement, new lines
 //! are inserted in batches with their limbo matches fetched and deleted in one statement each, and a promotion walks
-//! the file in batches (6.6: never the whole suffix in memory, no statement per line beyond the events themselves).
+//! the file in batches, and a rename-over matches the files in one set-based statement (6.6: never the whole suffix in
+//! memory, no statement per line beyond the events themselves).
 
 use std::collections::{HashMap, VecDeque};
 
@@ -345,20 +349,65 @@ fn event_data(stub: &[u8], spans: &[(usize, Sha)], meta: &HashMap<Sha, blobs::Me
     serde_json::from_slice(&out).ok()
 }
 
-/// Makes the event (or the internal effect) of a main-transcript line; its event seq.
+/// Whether `sha` is a line once classified as the echo of a person's prompt in `conversation` (6.5).
+async fn was_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha) -> Result<bool> {
+    Ok(tx
+        .query_opt(
+            "select 1 from cc_echoes where scope = $1 and sha256 = $2",
+            &[&conversation, &sha.as_slice()],
+        )
+        .await?
+        .is_some())
+}
+
+/// Whether a line with `uuid` was retracted in `conversation` (it was in the transcript before).
+async fn was_retracted(tx: &Tx<'_>, conversation: Uuid, uuid: Option<&str>) -> Result<bool> {
+    let Some(uuid) = uuid else {
+        return Ok(false);
+    };
+    Ok(limbo::replaced(tx, conversation, uuid).await?.is_some())
+}
+
+/// The uuid of a line's event data.
+fn uuid_of(data: Option<&Value>) -> Option<&str> {
+    data.and_then(|d| d.get("uuid")).and_then(Value::as_str)
+}
+
+/// The class of a main-transcript line with sha256 `sha` and event data `data`.
+///
+/// A line once classified as the echo of a person's prompt is remembered by its sha256 for the conversation's life
+/// (`cc_echoes`), so writing it again after its limbo was flushed (a truncate whose turn ended, a rewrite retried past
+/// the 10 s debounce) is internal again: it neither takes a later turn's echo nor becomes a prompt event. A line with
+/// the uuid of a retracted line is a line written again, never the echo of the turn now running (6.5).
+async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> Result<Class> {
+    let pending = op.turn.is_some_and(|t| t.echo_pending);
+    let class = classify::classify(data, Context { echo_pending: pending });
+    let prompt_like = match &class {
+        Class::Echo => true,
+        Class::Event(e) => e.is_prompt,
+        _ => false,
+    };
+    if prompt_like && was_echo(tx, op.conv.id, sha).await? {
+        return Ok(Class::Internal);
+    }
+    if class == Class::Echo && was_retracted(tx, op.conv.id, uuid_of(data)).await? {
+        return Ok(classify::classify(data, Context { echo_pending: false }));
+    }
+    Ok(class)
+}
+
+/// Makes the event (or the internal effect) of a main-transcript line with sha256 `sha`; its event seq.
 async fn apply(
     tx: &Tx<'_>,
     op: &mut Op<'_>,
+    sha: &Sha,
     stub: &[u8],
     spans: &[(usize, Sha)],
     meta: &HashMap<Sha, blobs::Meta>,
     w: Option<&mut Writer>,
 ) -> Result<Option<i64>> {
     let data = event_data(stub, spans, meta);
-    let cx = Context {
-        echo_pending: op.turn.is_some_and(|t| t.echo_pending),
-    };
-    match classify::classify(data.as_ref(), cx) {
+    match class_of(tx, op, sha, data.as_ref()).await? {
         Class::Internal => Ok(None),
         Class::Echo => {
             if let Some(t) = op.turn.as_mut() {
@@ -366,6 +415,11 @@ async fn apply(
                     .await?;
                 t.echo_pending = false;
             }
+            tx.execute(
+                "insert into cc_echoes (scope, sha256) values ($1, $2) on conflict do nothing",
+                &[&op.conv.id, &sha.as_slice()],
+            )
+            .await?;
             Ok(None)
         }
         Class::Title(title) => {
@@ -540,7 +594,7 @@ async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], sha
             // makes a new event
             let shas: Vec<Sha> = old.spans.iter().map(|s| s.1).collect();
             let meta = blobs::meta(tx, &shas).await?;
-            let event_seq = apply(tx, op, &old.stub, &old.spans, &meta, Some(&mut *w)).await?;
+            let event_seq = apply(tx, op, &old.sha, &old.stub, &old.spans, &meta, Some(&mut *w)).await?;
             Row {
                 ord: w.ord,
                 start_off: w.off,
@@ -601,7 +655,7 @@ async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], sha
             // a line set aside comes back as it was: its event, its own turn (6.3), never classified again (6.5)
             Some(e) => (e.event_seq, e.turn_id, true),
             None if w.main => (
-                apply(tx, op, &x.stub, &x.spans, &meta, Some(&mut *w)).await?,
+                apply(tx, op, &sha, &x.stub, &x.spans, &meta, Some(&mut *w)).await?,
                 op.turn_id(),
                 true,
             ),
@@ -823,7 +877,7 @@ pub async fn truncate(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, size: i64) -> 
     Ok(())
 }
 
-/// The whole file's bytes (a kind change on rename, rule 0's compare, tests).
+/// The whole file's bytes (a kind change on rename, tests).
 ///
 /// # Errors
 /// As [`bytes_of`].
@@ -834,25 +888,39 @@ pub async fn read_all(tx: &Tx<'_>, op: &mut Op<'_>, f: &File) -> Result<Vec<u8>>
     Ok(b)
 }
 
-/// Bytes `[from, to)` of the file (`to` <= its size).
+/// Whether bytes `[from, from + data.len())` of the file (inside it) are exactly `data` (rule 0, 6.6). A line the range
+/// covers whole is compared by its sha256 and length, so a resend after a checkpoint needs no blob bytes and answers
+/// while the bucket is down (6.13); only a line the range cuts is reconstructed (its blobs, when it has any, staged or
+/// fetched).
 ///
 /// # Errors
-/// As [`bytes_of`].
-pub async fn read_range(tx: &Tx<'_>, op: &mut Op<'_>, f: &File, from: i64, to: i64) -> Result<Vec<u8>> {
+/// As [`bytes_of`] for a line the range cuts.
+pub async fn holds(tx: &Tx<'_>, op: &mut Op<'_>, f: &File, from: i64, data: &[u8]) -> Result<bool> {
+    let to = from + n64(data.len());
     let tail_start = f.size - n64(f.tail.len());
-    let (base, mut out) = if from < tail_start {
-        let rows = rows_between(tx, f.id, from, to).await?;
-        let base = rows.first().map_or(tail_start, |r| r.start_off);
-        (base, bytes_of(tx, op, &rows).await?)
-    } else {
-        (tail_start, Vec::new())
-    };
-    if to > tail_start {
-        out.extend_from_slice(&f.tail);
+    if from < tail_start {
+        for r in rows_between(tx, f.id, from, to.min(tail_start)).await? {
+            let end = r.start_off + r.len;
+            let (lo, hi) = (r.start_off.max(from), end.min(to));
+            let piece = &data[nus(lo - from)..nus(hi - from)];
+            let same = if lo == r.start_off && hi == end {
+                extract::sha(piece) == r.sha
+            } else {
+                let line = bytes_of(tx, op, std::slice::from_ref(&r)).await?;
+                line[nus(lo - r.start_off)..nus(hi - r.start_off)] == *piece
+            };
+            if !same {
+                return Ok(false);
+            }
+        }
     }
-    let lo = nus(from - base).min(out.len());
-    let hi = nus(to - base).min(out.len());
-    Ok(out[lo..hi].to_vec())
+    if to > tail_start {
+        let lo = from.max(tail_start);
+        if f.tail[nus(lo - tail_start)..nus(to - tail_start)] != data[nus(lo - from)..] {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Stores `bytes` as the whole content of an empty lines file (a byte file renamed to a lines name).
@@ -940,7 +1008,7 @@ pub async fn promote(tx: &Tx<'_>, op: &mut Op<'_>, file: i64) -> Result<()> {
                 }
                 credited = Some(row.turn_id);
             }
-            let seq = apply(tx, op, &row.stub, &row.spans, &meta, None).await?;
+            let seq = apply(tx, op, &row.sha, &row.stub, &row.spans, &meta, None).await?;
             ups.push((row.ord, seq, None));
         }
         moved.commit(tx).await?;
@@ -951,18 +1019,32 @@ pub async fn promote(tx: &Tx<'_>, op: &mut Op<'_>, file: i64) -> Result<()> {
 }
 
 /// Sets the main transcript path (the supervisor's `running` report, magpie 8.5; the importer), promoting the lines
-/// already written there in the same transaction (6.2). The conversation is locked by the caller.
+/// already written there in the same transaction (6.2). The conversation is locked by the caller and its
+/// `provider_session_id` is set: `path` must be `projects/-workspace/<provider_session_id>.jsonl`. When the main path
+/// changes, the file at the old one becomes an ordinary lines file, as a rename away from the main path does: its
+/// lines keep their events and enter `moved` limbo, so a file at the new path with the same lines makes no new events.
 ///
 /// # Errors
-/// A statement error.
+/// 400 `bad_request` when `path` is not the conversation's provider session's transcript; a statement error.
 pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) -> Result<()> {
     let row = tx
         .query_one(
-            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model
+            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, provider_session_id
              from conversations where id = $1",
             &[&conversation],
         )
         .await?;
+    let session: Option<String> = row.get(7);
+    let valid = session.as_deref().is_some_and(|sid| {
+        !sid.is_empty()
+            && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            && path == format!("projects/-workspace/{sid}.jsonl")
+    });
+    if !valid {
+        return Err(Error::bad_request(
+            "transcriptPath is not projects/-workspace/<providerSessionId>.jsonl",
+        ));
+    }
     let current: Option<String> = row.get(1);
     if current.as_deref() == Some(path) {
         return Ok(());
@@ -972,6 +1054,12 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
         &[&conversation, &path],
     )
     .await?;
+    if let Some(old) = &current
+        && let Some(f) = super::load_file(tx, conversation, old).await?
+        && f.kind == super::Kind::Lines
+    {
+        limbo::put_moved(tx, conversation, f.id).await?;
+    }
     let Some(f) = super::load_file(tx, conversation, path).await? else {
         return Ok(());
     };
@@ -1007,76 +1095,46 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
 /// path the target's other events are retracted at once and the source's remaining lines are classified (the
 /// promotion that follows).
 ///
+/// The matching is one set-based statement, so its memory is Postgres's (sorts spill to disk), never the file's lines
+/// in magpie: the target's classified lines (in file order) then its `truncated` limbo (oldest first) form the pool;
+/// entries whose event a source line already has are kept by that line; the k-th unclassified source line with a
+/// sha256 takes the k-th remaining pool entry with that sha256. What it returns is the pool's events no source line
+/// took (the ones to retract).
+///
 /// # Errors
 /// A statement error.
 pub async fn rename_over(tx: &Tx<'_>, op: &mut Op<'_>, source: &File, target: &File) -> Result<()> {
     let target_main = op.conv.is_main(&target.path);
-    let rows = tx
+    let dropped: Vec<i64> = tx
         .query(
-            "select sha256, event_seq, turn_id from cc_lines where file_id = $1 and classified order by ord",
-            &[&target.id],
+            "with lim as (delete from cc_limbo where scope = $3 and reason = 'truncated' and file_id = $2
+                          returning id, sha256, event_seq, turn_id),
+                  pool as (select sha256, event_seq, turn_id, 0 as src, ord as k from cc_lines
+                            where file_id = $2 and classified
+                           union all
+                           select sha256, event_seq, turn_id, 1, id from lim),
+                  held as (select event_seq from cc_lines where file_id = $1 and event_seq is not null),
+                  free as (select sha256, event_seq, turn_id,
+                                  row_number() over (partition by sha256 order by src, k) as rn
+                             from pool p
+                            where p.event_seq is null or not exists (select 1 from held h where h.event_seq = p.event_seq)),
+                  want as (select ord, sha256, row_number() over (partition by sha256 order by ord) as rn
+                             from cc_lines where file_id = $1 and not classified),
+                  upd as (update cc_lines c set event_seq = f.event_seq, turn_id = coalesce(f.turn_id, c.turn_id),
+                                 classified = true
+                            from want w join free f on f.sha256 = w.sha256 and f.rn = w.rn
+                           where c.file_id = $1 and c.ord = w.ord
+                          returning c.event_seq)
+             select f.event_seq from free f
+              where f.event_seq is not null
+                and not exists (select 1 from upd u where u.event_seq = f.event_seq)",
+            &[&source.id, &target.id, &op.conv.id],
         )
-        .await?;
-    let mut targets: Vec<limbo::Entry> = rows
+        .await?
         .iter()
-        .filter_map(|r| {
-            let sha: Vec<u8> = r.get(0);
-            Some(limbo::Entry {
-                sha: Sha::try_from(sha.as_slice()).ok()?,
-                event_seq: r.get(1),
-                turn_id: r.get(2),
-            })
-        })
+        .map(|r| r.get(0))
         .collect();
-    targets.extend(limbo::take_all_truncated(tx, op.conv.id, target.id).await?);
-    let mut pool: HashMap<Sha, VecDeque<limbo::Entry>> = HashMap::new();
-    for e in &targets {
-        pool.entry(e.sha).or_default().push_back(*e);
-    }
-    let src = tx
-        .query(
-            "select ord, sha256, event_seq, classified from cc_lines where file_id = $1 order by ord",
-            &[&source.id],
-        )
-        .await?;
-    let mut taken = std::collections::HashSet::new();
-    let mut ups = Vec::new();
-    for r in &src {
-        let ord: i64 = r.get(0);
-        let sha: Vec<u8> = r.get(1);
-        let Ok(sha) = Sha::try_from(sha.as_slice()) else {
-            continue;
-        };
-        let has: Option<i64> = r.get(2);
-        let classified: bool = r.get(3);
-        let Some(q) = pool.get_mut(&sha) else {
-            continue;
-        };
-        match has {
-            Some(seq) => {
-                if let Some(i) = q.iter().position(|e| e.event_seq == Some(seq)) {
-                    q.remove(i);
-                    taken.insert(seq);
-                }
-            }
-            None if !classified => {
-                if let Some(e) = q.pop_front() {
-                    if let Some(seq) = e.event_seq {
-                        taken.insert(seq);
-                    }
-                    ups.push((ord, e.event_seq, e.turn_id));
-                }
-            }
-            None => {}
-        }
-    }
-    set_classified(tx, source.id, &ups).await?;
     if target_main {
-        let dropped: Vec<i64> = targets
-            .iter()
-            .filter_map(|t| t.event_seq)
-            .filter(|s| !taken.contains(s))
-            .collect();
         limbo::retract(tx, op.conv.id, op.turn_id(), dropped).await?;
     }
     Ok(())

@@ -64,6 +64,12 @@ pub const LEASE_HERMIT_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CC_SHA_SAMPLE: u64 = 1000;
 /// A file read streams lines in batches of this many.
 pub const CC_READ_BATCH: i64 = 256;
+/// Blobs fetched from the bucket at a time by one request (a read batch, a write's [`crate::error::Error::NeedBlobs`];
+/// magpie 6.11).
+pub const BLOB_FETCH_CONCURRENCY: usize = 16;
+/// Batches of a streamed file read made ahead of the one being sent (magpie 6.11: the next batch's blobs are fetched
+/// while the current one streams).
+pub const CC_READ_AHEAD: usize = 2;
 /// A read that answers at once is made again at most this many times when the file changed under it (6.11).
 pub const CC_READ_RETRIES: u32 = 3;
 

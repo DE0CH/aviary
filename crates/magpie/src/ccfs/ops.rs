@@ -59,7 +59,7 @@ pub async fn write(app: &Magpie, caller: &Caller, q: &CcWriteQuery, data: &[u8])
         if let Some(f) = file.as_ref().filter(|f| f.kind != Kind::Dir && end <= f.size) {
             let same = data.is_empty()
                 || match f.kind {
-                    Kind::Lines => lines::read_range(t, &mut op, f, offset, end).await? == data,
+                    Kind::Lines => lines::holds(t, &mut op, f, offset, data).await?,
                     _ => pages::read(t, f.id, f.size, offset, end).await? == data,
                 };
             if same {
@@ -187,16 +187,20 @@ async fn remove(t: &Tx<'_>, op: &mut Op<'_>, f: &File) -> Result<()> {
     Ok(())
 }
 
-/// The main-transcript rules of a file whose path changed from `from` to `f.path` (6.2).
-async fn main_rules(t: &Tx<'_>, op: &mut Op<'_>, f: &File, from: &str) -> Result<()> {
-    if f.kind != Kind::Lines {
-        return Ok(());
-    }
-    let (was, is) = (op.conv.is_main(from), op.conv.is_main(&f.path));
-    if was && !is {
+/// The main-transcript rule of a file leaving the main path, before its path or kind changes (6.2): a lines file at
+/// the main path whose new path `to` is another puts its classified lines in `moved` limbo, whatever kind its new name
+/// gives it (a file renamed to a byte-file name is stored again as pages, and its lines must still be matched).
+async fn leave_main(t: &Tx<'_>, op: &mut Op<'_>, f: &File, to: &str) -> Result<()> {
+    if f.kind == Kind::Lines && op.conv.is_main(&f.path) && !op.conv.is_main(to) {
         lines::moved_away(t, op, f.id).await?;
     }
-    if is && !was {
+    Ok(())
+}
+
+/// The main-transcript rule of a file whose path changed from `from` to `f.path`, after the change (6.2): a lines file
+/// that arrives at the main path is promoted.
+async fn reach_main(t: &Tx<'_>, op: &mut Op<'_>, f: &File, from: &str) -> Result<()> {
+    if f.kind == Kind::Lines && op.conv.is_main(&f.path) && !op.conv.is_main(from) {
         lines::promote(t, op, f.id).await?;
     }
     Ok(())
@@ -249,7 +253,9 @@ pub async fn rename(app: &Magpie, caller: &Caller, b: &CcRename) -> Result<CcVer
             }
             for mut f in load_under(t, scope, &b.from).await? {
                 let old = f.path.clone();
-                f.path = format!("{}{}", b.to, &old[b.from.len()..]);
+                let new_path = format!("{}{}", b.to, &old[b.from.len()..]);
+                leave_main(t, op, &f, &new_path).await?;
+                f.path = new_path;
                 if old == b.from {
                     f.version = version;
                 } else {
@@ -262,26 +268,29 @@ pub async fn rename(app: &Magpie, caller: &Caller, b: &CcRename) -> Result<CcVer
                     &[&f.id, &f.path, &f.version],
                 )
                 .await?;
-                main_rules(t, op, &f, &old).await?;
+                reach_main(t, op, &f, &old).await?;
             }
         } else {
+            let old = source.path.clone();
+            leave_main(t, op, &source, &b.to).await?;
+            let new_kind = kind_of(&b.to);
+            if new_kind != source.kind {
+                // stored again in the new form while it still has its old path: lines it gets are not classified
+                // here (unless that path is the main one), so a rename over the main transcript matches them against
+                // the target's lines and the promotion below classifies only the rest
+                convert(t, op, &mut source, new_kind).await?;
+                version = version.max(source.version + 1);
+            }
             if let Some(target) = &target {
                 if target.kind == Kind::Lines && source.kind == Kind::Lines {
                     lines::rename_over(t, op, &source, target).await?;
                 }
                 remove(t, op, target).await?;
             }
-            let new_kind = kind_of(&b.to);
-            let old = source.path.clone();
             source.path.clone_from(&b.to);
-            if new_kind != source.kind {
-                convert(t, op, &mut source, new_kind).await?;
-                // a byte file stored again as lines at the main path was classified as it was written
-                version = version.max(source.version + 1);
-            }
             source.version = version;
             save_file(t, &source).await?;
-            main_rules(t, op, &source, &old).await?;
+            reach_main(t, op, &source, &old).await?;
         }
         CcVersion {
             version: u64_of(version),

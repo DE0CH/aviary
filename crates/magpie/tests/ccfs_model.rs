@@ -1,7 +1,8 @@
 //! magpie 20's `lines.rs` reference model: random sequences of appends (split at any byte, torn tails), torn-tail
 //! repairs, tombstone removals, whole-file rewrites, overwrites, truncates, compaction rename-overs, set-asides with
-//! a fresh file, renames away from and back onto the main path, the main path being set late (promotion), and person
+//! a fresh file, renames away from and back onto the main path, the main path being set late (promotion), person
 //! turns (each writes its prompt, the echo of `user.sent`, and ends the turn before it, flushing that turn's limbo),
+//! and whole-file rewrites whose limbo is flushed before they land (the next person turn writes the old lines again),
 //! run against magpie with a plain byte vector as the oracle. After every step the reconstructed file equals the
 //! model and the visible events equal the classification of the model's lines (echoes left out) plus the events
 //! waiting in limbo; at the end (limbo flushed) each event belongs to exactly one main-transcript line and nothing is
@@ -104,6 +105,9 @@ enum Step {
     /// A person's turn (when the main path is known): the earlier turn ends (its limbo flushed), this one's prompt
     /// (its echo) and these pool lines are appended in its writes.
     PersonTurn(Vec<usize>),
+    /// A whole-file rewrite whose truncate's limbo is flushed before the rewrite lands (the truncate's turn ends), the
+    /// rewrite and then a person's turn as [`Step::PersonTurn`] in the next turn.
+    RewriteNextTurn(Vec<usize>),
 }
 
 fn step() -> impl Strategy<Value = Step> {
@@ -121,6 +125,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => proptest::collection::vec(0usize..40, 0..2).prop_map(Step::AwayAndBack),
         1 => Just(Step::SetMain),
         2 => proptest::collection::vec(0usize..40, 0..3).prop_map(Step::PersonTurn),
+        1 => proptest::collection::vec(0usize..40, 0..3).prop_map(Step::RewriteNextTurn),
     ]
 }
 
@@ -205,13 +210,21 @@ impl Case<'_> {
         let p = main_path();
         self.n += 1;
         match step {
-            Step::PersonTurn(idx) => {
+            Step::PersonTurn(idx) | Step::RewriteNextTurn(idx) => {
                 if !self.main_known {
                     return;
                 }
                 let sql = POOL.get().unwrap();
+                let rewrite = matches!(step, Step::RewriteNextTurn(_));
+                if rewrite {
+                    self.s.truncate(&p, 0).await.unwrap();
+                }
                 flush_turn(sql, self.s.conversation, self.turn).await;
                 self.turn = Some(person_turn(sql, self.s).await);
+                if rewrite {
+                    let old = self.model.clone();
+                    self.write_chunks(&p, 0, &old, 1 << 20).await;
+                }
                 let echo = line(&json!({"type": "user", "uuid": format!("echo{}", self.n),
                     "message": {"role": "user", "content": format!("typed {}", self.n)}}));
                 // a torn tail before it gets Claude Code's `\n` first, so the prompt is a line of its own

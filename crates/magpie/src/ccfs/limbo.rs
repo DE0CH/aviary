@@ -193,32 +193,6 @@ pub async fn drop_moved(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<()> {
     Ok(())
 }
 
-/// Takes every `truncated` limbo entry of `file` out (a rename-over replacing it matches them itself), earliest first.
-///
-/// # Errors
-/// When the statement fails.
-pub async fn take_all_truncated(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<Vec<Entry>> {
-    let rows = tx
-        .query(
-            "with d as (delete from cc_limbo where scope = $1 and reason = 'truncated' and file_id = $2
-                        returning id, sha256, event_seq, turn_id)
-             select sha256, event_seq, turn_id from d order by id",
-            &[&scope, &file],
-        )
-        .await?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| {
-            let sha: Vec<u8> = r.get(0);
-            Some(Entry {
-                sha: Sha::try_from(sha.as_slice()).ok()?,
-                event_seq: r.get(1),
-                turn_id: r.get(2),
-            })
-        })
-        .collect())
-}
-
 /// Appends one `retract` event for `seqs` (the conversation is locked) and records the retracted lines' uuids so a
 /// later line with the same uuid carries `meta.replaces` (6.7). Events are never deleted.
 ///
@@ -266,10 +240,14 @@ pub async fn replaced(tx: &Tx<'_>, conversation: Uuid, uuid: &str) -> Result<Opt
 /// # Errors
 /// When a statement fails.
 pub async fn flush_file(tx: &Tx<'_>, scope: Uuid, file: i64, turn: Option<Uuid>) -> Result<usize> {
-    let seqs: Vec<i64> = take_all_truncated(tx, scope, file)
+    let seqs: Vec<i64> = tx
+        .query(
+            "delete from cc_limbo where scope = $1 and reason = 'truncated' and file_id = $2 returning event_seq",
+            &[&scope, &file],
+        )
         .await?
-        .into_iter()
-        .filter_map(|e| e.event_seq)
+        .iter()
+        .filter_map(|r| r.get::<_, Option<i64>>(0))
         .collect();
     let n = seqs.len();
     retract(tx, scope, turn, seqs).await?;

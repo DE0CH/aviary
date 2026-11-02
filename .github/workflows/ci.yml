@@ -119,11 +119,11 @@ jobs:
           lines=$(.github/ci/s3.sh versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
           echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
           echo "$lines" >> "$GITHUB_ENV"
-      - name: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms for a 1 MiB image line
+      - name: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms for a 1 MiB image line, an 87 MB read under 5 s
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-        run: cargo test --release --locked -p magpie --test ccfs_perf -- --ignored --nocapture
+        run: cargo test --release --locked -p magpie --test ccfs_perf -- --ignored --nocapture --test-threads=1
       - name: four 40 MP image uploads at once stay under 1 GiB of RSS (magpie 18.2's pod limit)
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"

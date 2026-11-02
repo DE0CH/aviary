@@ -514,6 +514,71 @@ async fn cc_writes_that_add_blobs_keep_working_while_the_bucket_is_unreachable()
 }
 
 #[tokio::test]
+async fn a_resend_and_a_truncate_at_a_plain_line_need_no_bucket() {
+    let db = common::fresh_db("ccrule0").await;
+    let t = common::Tokens::new();
+    let bucket = common::test_bucket(&db.url).await;
+    let s3: std::net::SocketAddr = bucket.endpoint.trim_start_matches("http://").parse().unwrap();
+    let proxy = common::CutProxy::start(s3).await;
+    let mut via_proxy = bucket.clone();
+    via_proxy.endpoint = format!("http://{}", proxy.addr);
+    let r = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::fast(), via_proxy.clone()).await;
+    let sb = common::cc::Sandbox::leased(&r, ALICE).await;
+    sb.mkdirs("projects/-workspace").await;
+    // an image line (its blob uploaded, out of staging) and two plain lines
+    let noise: Vec<u8> = (0..4096u32).flat_map(|i| blobs::sha256(&i.to_le_bytes())).collect();
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, noise);
+    let image = format!(
+        "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"{b64}\"}}}}]}}}}\n"
+    );
+    let plain = b"{\"type\":\"attachment\",\"n\":1}\n{\"type\":\"attachment\",\"n\":2}\n".to_vec();
+    let path = "projects/-workspace/side.jsonl";
+    let all = [image.as_bytes(), &plain].concat();
+    let v = sb.write(path, 0, &all).await.unwrap();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || {
+            r.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one("select count(*) from blob_staging", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+                == 0
+        })
+        .await,
+        "staging did not drain"
+    );
+    // a second replica (nothing in its read cache) with the bucket cut
+    let r2 = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::fast(), via_proxy).await;
+    let mut sb2 = common::cc::Sandbox::new(&r2, sb.conversation, sb.id, ALICE);
+    sb2.lease = sb.lease;
+    proxy.cut();
+    // rule 0: the same bytes again (the sentry's resend after a checkpoint), whole and from the image line alone, by
+    // the lines' sha256: no change, no bucket
+    assert_eq!(sb2.write(path, 0, &all).await.unwrap(), v);
+    assert_eq!(sb2.write(path, 0, image.as_bytes()).await.unwrap(), v);
+    // a resend that cuts the plain lines compares their stubs; one that cuts the image line needs its blob (6.13 gap)
+    assert_eq!(sb2.write(path, image.len() as u64 + 3, &plain[3..20]).await.unwrap(), v);
+    let e = sb2.write(path, 10, &image.as_bytes()[10..40]).await.unwrap_err();
+    assert_eq!(common::cc::code(&e), "unavailable");
+    // a truncate inside a plain line and at a line start: no bucket
+    let cut = image.len() + 10;
+    assert_eq!(sb2.truncate(path, cut as u64).await.unwrap().size, cut as u64);
+    assert_eq!(
+        sb2.truncate(path, image.len() as u64).await.unwrap().size,
+        image.len() as u64
+    );
+    // a truncate inside the image line needs its blob: 503 until the bucket is back
+    let e = sb2.truncate(path, 100).await.unwrap_err();
+    assert_eq!(common::cc::code(&e), "unavailable");
+    proxy.restore();
+    assert_eq!(sb2.truncate(path, 100).await.unwrap().size, 100);
+    assert_eq!(sb2.read(path).await.unwrap(), image.as_bytes()[..100]);
+}
+
+#[tokio::test]
 async fn a_hanging_bucket_pins_no_request_connection() {
     // the bucket accepts connections and never answers: uploads and the uploader hang in their PUTs (60 s each),
     // holding their blob locks; cc writes and every other request keep their latency, past the pool's 5 s timeout

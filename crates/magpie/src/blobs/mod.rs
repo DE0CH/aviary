@@ -427,21 +427,57 @@ impl<'p> Bytes<'p> {
 }
 
 /// Fetches the bytes of blobs stored in the bucket, outside any transaction (the cc store's reads of blobs a
-/// transaction needs, [`Error::NeedBlobs`]).
+/// transaction needs, [`Error::NeedBlobs`], and the read path's batches): their rows in one statement on a connection
+/// returned before the bucket is called, then [`limits::BLOB_FETCH_CONCURRENCY`] objects at a time (magpie 6.11).
 ///
 /// # Errors
 /// 404 for a blob the bucket lost, 503 when it cannot be reached; a statement error.
 pub async fn fetch_stored(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
-    let mut out = HashMap::with_capacity(shas.len());
-    for sha in shas {
-        let conn = app.pool.get().await?;
-        let Some(r) = row(&conn, sha).await? else {
-            return Err(Error::Internal(format!("blob {} has no row", hex(sha))));
-        };
-        drop(conn);
-        out.insert(*sha, app.blobs.stored_bytes(&app.pool, &r).await?.to_vec());
+    use futures_util::{StreamExt as _, TryStreamExt as _};
+    if shas.is_empty() {
+        return Ok(HashMap::new());
     }
-    Ok(out)
+    let keys: Vec<&[u8]> = shas.iter().map(<[u8; 32]>::as_slice).collect();
+    let rows = app
+        .pool
+        .get()
+        .await?
+        .query(
+            "select sha256, size, kind, encoding, mime, width, height, stored from blobs where sha256 = any($1)",
+            &[&keys],
+        )
+        .await?;
+    let mut found: HashMap<Sha, BlobRow> = HashMap::with_capacity(rows.len());
+    for r in &rows {
+        let sha: Vec<u8> = r.get(0);
+        let Ok(sha) = Sha::try_from(sha.as_slice()) else {
+            continue;
+        };
+        found.insert(
+            sha,
+            BlobRow {
+                sha,
+                size: r.get(1),
+                kind: r.get(2),
+                encoding: r.get(3),
+                mime: r.get(4),
+                width: r.get(5),
+                height: r.get(6),
+                stored: r.get(7),
+            },
+        );
+    }
+    if let Some(sha) = shas.iter().find(|s| !found.contains_key(*s)) {
+        return Err(Error::Internal(format!("blob {} has no row", hex(sha))));
+    }
+    futures_util::stream::iter(found.into_values())
+        .map(|r| async move {
+            let b = app.blobs.stored_bytes(&app.pool, &r).await?;
+            Ok::<_, Error>((r.sha, b.to_vec()))
+        })
+        .buffer_unordered(limits::BLOB_FETCH_CONCURRENCY)
+        .try_collect()
+        .await
 }
 
 #[cfg(test)]

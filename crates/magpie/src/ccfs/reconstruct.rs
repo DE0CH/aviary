@@ -1,7 +1,8 @@
 //! The read path (magpie 6.11): `GET /v1/sandbox/cc/tree` and `GET /v1/sandbox/cc/file`.
 //!
 //! A lines file streams: lines in batches in file order (found through `cc_lines_off`), each reconstructed from its
-//! stub and blobs (staged bytes, else the bucket's), its sha256 checked on every line in a debug build and on one in
+//! stub and blobs (staged bytes, else the bucket's: 16 at a time, the next batch's fetched while the current one is
+//! sent, no database connection held while the bucket answers), its sha256 checked on every line in a debug build and on one in
 //! [`limits::CC_SHA_SAMPLE`] in a release build. The first batch is made before the answer starts, so a mismatch or
 //! a missing blob there answers 500 / 503; a later one ends the body early (the supervisor's read fails rather than
 //! seeing wrong bytes). The file's version is compared at the end: a file changed while it streamed ends the body
@@ -86,9 +87,9 @@ pub async fn tree(app: &Magpie, caller: &Caller) -> Result<CcTree> {
     })
 }
 
-/// The bytes of blobs `shas`: staged, else from the bucket.
-async fn blob_bytes(app: &Magpie, db: &impl Db, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
-    let mut got = blobs::staging::read(db, shas).await?;
+/// The bytes of blobs `shas`: staged, else from the bucket (no connection held while the bucket is called).
+async fn blob_bytes(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
+    let mut got = blobs::staging::read(&app.pool.get().await?, shas).await?;
     let missing: Vec<Sha> = shas.iter().filter(|s| !got.contains_key(*s)).copied().collect();
     if !missing.is_empty() {
         got.extend(blobs::fetch_stored(app, &missing).await?);
@@ -96,34 +97,60 @@ async fn blob_bytes(app: &Magpie, db: &impl Db, shas: &[Sha]) -> Result<HashMap<
     Ok(got)
 }
 
-/// One batch of a lines file from `off`: its bytes from `off` (cut to `to`) and where the next batch starts.
-async fn batch(app: &Magpie, db: &impl Db, f: &File, off: i64, to: i64) -> Result<(Vec<u8>, Option<i64>)> {
+/// One batch of a lines file from `off` (up to `to`): its lines, and where the next batch starts (`None`: this is
+/// the last, which carries the tail).
+#[derive(Debug)]
+struct Batch {
+    off: i64,
+    rows: Vec<Row>,
+    next: Option<i64>,
+}
+
+/// The lines of the batch from `off`.
+async fn plan(db: &impl Db, f: &File, off: i64, to: i64) -> Result<Batch> {
     let tail_start = f.size - n64(f.tail.len());
-    let mut out = Vec::new();
-    let mut base = off;
-    if off < tail_start {
-        let rows: Vec<Row> = rows_from(db, f.id, off, Some(limits::CC_READ_BATCH))
+    let rows: Vec<Row> = if off < tail_start {
+        rows_from(db, f.id, off, Some(limits::CC_READ_BATCH))
             .await?
             .into_iter()
             .take_while(|r| r.start_off < to)
-            .collect();
-        if let Some(first) = rows.first() {
-            base = first.start_off;
-            let mut shas: Vec<Sha> = rows.iter().flat_map(|r| r.spans.iter().map(|s| s.1)).collect();
-            shas.sort_unstable();
-            shas.dedup();
-            let bytes = blob_bytes(app, db, &shas).await?;
-            for r in &rows {
-                let line =
-                    extract::splice(&r.stub, &r.spans, |s| bytes.get(s).map(Vec::as_slice)).map_err(Error::Internal)?;
-                check_sha(&line, r)?;
-                out.extend_from_slice(&line);
-            }
-            let next = rows.last().map(|r| r.start_off + r.len);
-            if let Some(n) = next.filter(|n| *n < tail_start && *n < to) {
-                let lo = nus(off - base);
-                return Ok((out.split_off(lo.min(out.len())), Some(n)));
-            }
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let next = rows
+        .last()
+        .map(|r| r.start_off + r.len)
+        .filter(|n| *n < tail_start && *n < to);
+    Ok(Batch { off, rows, next })
+}
+
+/// A batch's bytes from its offset (cut to `to`): its lines reconstructed (their blobs staged, else fetched from the
+/// bucket), and the tail when it is the last.
+async fn render(app: &Magpie, f: &File, b: Batch, to: i64) -> Result<(Vec<u8>, Option<i64>)> {
+    let tail_start = f.size - n64(f.tail.len());
+    let Batch { off, rows, next } = b;
+    let mut out = Vec::new();
+    let mut base = off;
+    if let Some(first) = rows.first() {
+        base = first.start_off;
+        let mut shas: Vec<Sha> = rows.iter().flat_map(|r| r.spans.iter().map(|s| s.1)).collect();
+        shas.sort_unstable();
+        shas.dedup();
+        let bytes = if shas.is_empty() {
+            HashMap::new()
+        } else {
+            blob_bytes(app, &shas).await?
+        };
+        for r in &rows {
+            let line =
+                extract::splice(&r.stub, &r.spans, |s| bytes.get(s).map(Vec::as_slice)).map_err(Error::Internal)?;
+            check_sha(&line, r)?;
+            out.extend_from_slice(&line);
+        }
+        if next.is_some() {
+            let lo = nus(off - base);
+            return Ok((out.split_off(lo.min(out.len())), next));
         }
     }
     if to > tail_start {
@@ -153,8 +180,11 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     };
     // the file's row and its lines (or pages) are separate statements: a write committed between them would mix two
     // versions, so a read that answers at once checks the version afterwards and reads again
+    drop(conn);
     let mut attempt = 0;
     let (f, start, end, body) = loop {
+        // a connection per step, none held while blobs come from the bucket (6.11)
+        let conn = app.pool.get().await?;
         let f = load_file(&conn, caller.conversation, &q.path)
             .await?
             .filter(|f| f.kind != Kind::Dir)
@@ -168,13 +198,18 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
         } else if start >= end {
             (Vec::new(), None)
         } else {
-            batch(&app, &conn, &f, start, end).await?
+            let b = plan(&conn, &f, start, end).await?;
+            drop(conn);
+            render(&app, &f, b, end).await?
         };
         if let Some(next) = next {
             // a streamed read compares the version at its end (`stream`)
             break (f, start, end, Err((first, next)));
         }
-        let now = conn
+        let now = app
+            .pool
+            .get()
+            .await?
             .query_opt("select version from cc_files where id = $1", &[&f.id])
             .await?
             .map(|r| r.get::<_, i64>(0));
@@ -193,7 +228,6 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     let body = match body {
         Ok(bytes) => Body::from(bytes),
         Err((first, next)) => {
-            drop(conn);
             let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(4);
             let _ = tx.send(Ok(Bytes::from(first))).await;
             tokio::spawn(stream(app.clone(), f, next, end, tx));
@@ -218,39 +252,69 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     Ok(res)
 }
 
+/// The batches after the first, in order: each batch's lines are read as soon as the one before is planned, and
+/// [`limits::CC_READ_AHEAD`] batches have their blobs fetched at once, so the next batch's blobs come from the bucket
+/// while the current one is sent (6.11).
 async fn stream(
     app: Arc<Magpie>,
     f: File,
-    mut off: i64,
+    off: i64,
     end: i64,
     tx: mpsc::Sender<std::result::Result<Bytes, std::io::Error>>,
 ) {
+    use futures_util::{StreamExt as _, TryStreamExt as _};
+    let f = Arc::new(f);
+    let plans = futures_util::stream::try_unfold(Some(off), {
+        let (app, f) = (app.clone(), f.clone());
+        move |at| {
+            let (app, f) = (app.clone(), f.clone());
+            async move {
+                let Some(at) = at else {
+                    return Ok::<_, Error>(None);
+                };
+                let b = plan(&app.pool.get().await?, &f, at, end).await?;
+                let next = b.next;
+                Ok(Some((b, next)))
+            }
+        }
+    });
+    let mut batches = plans
+        .map_ok(|b| {
+            let (app, f) = (app.clone(), f.clone());
+            async move { render(&app, &f, b, end).await }
+        })
+        .try_buffered(limits::CC_READ_AHEAD)
+        .boxed();
     loop {
         let r = async {
-            let conn = app.pool.get().await?;
-            let (bytes, next) = batch(&app, &conn, &f, off, end).await?;
+            let Some((bytes, next)) = batches.try_next().await? else {
+                return Ok(None);
+            };
             if next.is_none() {
                 // a file that changed while it streamed ends early rather than hand out a mix of two versions
-                let row = conn
+                let row = app
+                    .pool
+                    .get()
+                    .await?
                     .query_opt("select version from cc_files where id = $1", &[&f.id])
                     .await?;
                 if row.map(|r| r.get::<_, i64>(0)) != Some(f.version) {
                     return Err(Error::Internal("the file changed while it was read".into()));
                 }
             }
-            Ok::<_, Error>((bytes, next))
+            Ok::<_, Error>(Some((bytes, next)))
         }
         .await;
         match r {
-            Ok((bytes, next)) => {
+            Ok(Some((bytes, next))) => {
                 if tx.send(Ok(Bytes::from(bytes))).await.is_err() {
                     return;
                 }
-                match next {
-                    Some(n) => off = n,
-                    None => return,
+                if next.is_none() {
+                    return;
                 }
             }
+            Ok(None) => return,
             Err(e) => {
                 tracing::warn!(error = %e, "cc file read ended early");
                 let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;

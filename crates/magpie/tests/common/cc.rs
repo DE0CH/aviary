@@ -49,13 +49,27 @@ pub async fn hermit_names(pool: &aviary_pg::Pool, conversation: Uuid, sandbox: O
         .unwrap();
 }
 
-/// Sets the main transcript path directly (tests that do not exercise the promotion).
+/// Sets the main transcript path directly, with the provider session id it names (tests that do not exercise the
+/// `running` report).
 pub async fn set_main(pool: &aviary_pg::Pool, conversation: Uuid, path: &str) {
+    try_set_main(pool, conversation, path).await.unwrap();
+}
+
+/// [`set_main`], its error returned.
+pub async fn try_set_main(pool: &aviary_pg::Pool, conversation: Uuid, path: &str) -> magpie::error::Result<()> {
+    let sid = path
+        .strip_prefix("projects/-workspace/")
+        .and_then(|p| p.strip_suffix(".jsonl"))
+        .unwrap_or(path);
     aviary_pg::tx!(pool, |t| -> magpie::error::Result<()> {
+        t.execute(
+            "update conversations set provider_session_id = $2 where id = $1",
+            &[&conversation, &sid],
+        )
+        .await?;
         magpie::ccfs::lines::set_main_transcript(t, conversation, path).await
     })
     .await
-    .unwrap();
 }
 
 /// Starts a person-origin turn (its `user.sent` echo not matched yet) as the conversation's active turn, the earlier

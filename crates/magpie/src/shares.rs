@@ -88,6 +88,12 @@ async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<(&str, i64)>) 
         &[&from, &to],
     )
     .await?;
+    // which lines were a person's prompt echo travels with them (6.5)
+    t.execute(
+        "insert into cc_echoes (scope, sha256) select $2, sha256 from cc_echoes where scope = $1 on conflict do nothing",
+        &[&from, &to],
+    )
+    .await?;
     if let Some(path) = cut_path {
         // the cut file ends where its first left-out line began
         t.execute(
@@ -123,6 +129,8 @@ async fn copy_refs(t: &Tx<'_>, from: Uuid, to: Uuid, owner_kind: &str) -> Result
 async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid) -> Result<()> {
     t.execute("delete from cc_files where scope = $1", &[&snapshot]).await?;
     t.execute("delete from cc_limbo where scope = $1", &[&snapshot]).await?;
+    t.execute("delete from cc_echoes where scope = $1", &[&snapshot])
+        .await?;
     t.execute("delete from cc_ops where scope = $1", &[&snapshot]).await?;
     t.execute("delete from blob_refs where owner = $1", &[&snapshot])
         .await?;

@@ -882,6 +882,95 @@ async fn a_persons_prompt_echo_is_never_a_prompt_again() {
 }
 
 #[tokio::test]
+async fn an_echo_rewritten_after_its_limbo_flushed_is_still_no_prompt() {
+    let (db, _r, mut s) = setup("cc_echo_flushed").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let names = |v: Vec<(i64, String, Option<String>)>| v.into_iter().map(|e| (e.1, e.2)).collect::<Vec<_>>();
+    // turn 1 writes its echo and a reply, then truncates; the turn ends (limbo flushed) before the rewrite lands
+    let t1 = person_turn(&sql, &mut s).await;
+    let content = [prompt("p1", "hello"), assistant("a1", "hi")].concat();
+    s.write(&p, 0, &content).await.unwrap();
+    s.truncate(&p, 0).await.unwrap();
+    assert_eq!(flush_turn(&sql, conv, Some(t1)).await, 1, "a1 is retracted");
+    // turn 2 (a person's) rewrites the old lines, then appends its own prompt's echo
+    let t2 = person_turn(&sql, &mut s).await;
+    s.write(&p, 0, &content).await.unwrap();
+    let p2 = prompt("p2", "and then");
+    s.write(&p, content.len() as u64, &p2).await.unwrap();
+    assert_eq!(
+        names(visible(&sql, conv).await),
+        vec![("cc.assistant".to_owned(), Some("a1".to_owned()))],
+        "p1 is internal again and p2 is turn 2's echo"
+    );
+    let conn = sql.get().await.unwrap();
+    let matched: bool = conn
+        .query_one("select echo_matched from turns where id = $1", &[&t2])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched, "p2 matched turn 2's echo");
+    let prompts: i64 = conn
+        .query_one(
+            "select count(*) from events where conversation_id = $1 and kind = 'cc.user'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(prompts, 0);
+
+    // again one turn later, with turn 2's echo among the old lines
+    s.truncate(&p, 0).await.unwrap();
+    assert_eq!(flush_turn(&sql, conv, Some(t2)).await, 1);
+    let t3 = person_turn(&sql, &mut s).await;
+    let all = [content.clone(), p2.clone()].concat();
+    s.write(&p, 0, &all).await.unwrap();
+    let p3 = prompt("p3", "third");
+    s.write(&p, all.len() as u64, &p3).await.unwrap();
+    assert_eq!(names(visible(&sql, conv).await).len(), 1, "only the reply, once");
+    let matched: bool = conn
+        .query_one("select echo_matched from turns where id = $1", &[&t3])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched, "p3 matched turn 3's echo");
+
+    // a prompt typed in the terminal (an event) retracted and written again in a person turn is that prompt again,
+    // not the turn's echo
+    let t4 = person_turn(&sql, &mut s).await;
+    flush_turn(&sql, conv, Some(t3)).await;
+    let cut = s.read(&p).await.unwrap().len();
+    // turn 4's echo is matched already, so its next prompt line is a cc.user prompt event
+    let typed = prompt("q1", "typed in the terminal");
+    conn.execute("update turns set echo_matched = true where id = $1", &[&t4])
+        .await
+        .unwrap();
+    s.write(&p, cut as u64, &typed).await.unwrap();
+    let before = names(visible(&sql, conv).await);
+    assert!(before.contains(&("cc.user".to_owned(), Some("q1".to_owned()))));
+    s.truncate(&p, cut as u64).await.unwrap();
+    flush_turn(&sql, conv, Some(t4)).await;
+    let t5 = person_turn(&sql, &mut s).await;
+    s.write(&p, cut as u64, &typed).await.unwrap();
+    let p5 = prompt("p5", "fifth");
+    s.write(&p, (cut + typed.len()) as u64, &p5).await.unwrap();
+    assert_eq!(
+        names(visible(&sql, conv).await),
+        before,
+        "q1 is back as itself, p5 is the echo"
+    );
+    let matched: bool = conn
+        .query_one("select echo_matched from turns where id = $1", &[&t5])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched);
+}
+
+#[tokio::test]
 async fn the_end_of_a_turn_flushes_only_its_own_limbo() {
     let (db, _r, mut s) = setup("cc_flush_turn").await;
     let sql = common::sql(&db.url);
@@ -1024,4 +1113,98 @@ async fn a_large_transcript_reads_and_rewrites_in_bounded_time() {
     assert!(read < Duration::from_secs(10), "read {read:?}");
     assert!(truncate < Duration::from_secs(3), "truncate {truncate:?}");
     assert!(rewrite < Duration::from_secs(60), "rewrite {rewrite:?}");
+}
+
+#[tokio::test]
+async fn renames_between_kinds_keep_the_main_transcripts_events_right() {
+    let (db, _r, s) = setup("cc_rename_kinds").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let names = |v: &[(i64, String, Option<String>)]| v.iter().map(|e| e.2.clone().unwrap()).collect::<Vec<_>>();
+    let content = [assistant("a1", "one"), assistant("a2", "two")].concat();
+    s.write(&p, 0, &content).await.unwrap();
+    let before = visible(&sql, conv).await;
+    assert_eq!(names(&before), ["a1", "a2"]);
+
+    // the main transcript renamed to a byte-file name (pages): its lines still enter moved limbo, so the same bytes
+    // written again at the main path make no new events
+    let old = format!("projects/-workspace/{}.json.old", common::cc::SID);
+    s.rename(&p, &old).await.unwrap();
+    assert_eq!(s.read(&old).await.unwrap(), content);
+    s.write(&p, 0, &content).await.unwrap();
+    assert_eq!(visible(&sql, conv).await, before, "the same events, no copies");
+
+    // a byte file renamed over the main transcript: matched like a rename-over (a1 keeps its event), the dropped
+    // line's event (a2) retracted at once, the new line (a9) classified
+    let tmp = format!("projects/-workspace/{}.tmp", common::cc::SID);
+    let next = [assistant("a1", "one"), assistant("a9", "nine")].concat();
+    s.write(&tmp, 0, &next).await.unwrap();
+    s.rename(&tmp, &p).await.unwrap();
+    assert_eq!(s.read(&p).await.unwrap(), next);
+    let after = visible(&sql, conv).await;
+    assert_eq!(names(&after), ["a1", "a9"]);
+    assert_eq!(after[0].0, before[0].0, "a1 kept its event");
+}
+
+#[tokio::test]
+async fn the_main_transcript_is_the_provider_sessions_path() {
+    let (db, _r, s) = setup("cc_main_path").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    // a path other than projects/-workspace/<providerSessionId>.jsonl is refused (a subagent's transcript, another
+    // session's), and nothing changes
+    let set = |path: String| {
+        let sql = sql.clone();
+        async move {
+            let path: &str = &path;
+            aviary_pg::tx!(&sql, |t| -> magpie::error::Result<()> {
+                t.execute(
+                    "update conversations set provider_session_id = $2 where id = $1",
+                    &[&conv, &common::cc::SID],
+                )
+                .await?;
+                magpie::ccfs::lines::set_main_transcript(t, conv, path).await
+            })
+            .await
+        }
+    };
+    for bad in [
+        format!("projects/-workspace/{}/subagents/agent-1.jsonl", common::cc::SID),
+        "projects/-workspace/22222222-2222-4333-8444-555555555555.jsonl".to_owned(),
+        format!("projects/-other/{}.jsonl", common::cc::SID),
+    ] {
+        let e = set(bad.clone()).await.unwrap_err();
+        assert!(e.is(&magpie_api::errors::ErrorCode::BadRequest), "{bad}: {e}");
+    }
+    let main: Option<String> = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one("select main_transcript from conversations where id = $1", &[&conv])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(main, None);
+    set(p.clone()).await.unwrap();
+
+    // a changed main path (a new provider session): the old file keeps its events, is no longer protected, and the
+    // same lines at the new path make no new events
+    let content = [assistant("a1", "one"), assistant("a2", "two")].concat();
+    s.write(&p, 0, &content).await.unwrap();
+    let before = visible(&sql, conv).await;
+    assert_eq!(before.len(), 2);
+    let other = "projects/-workspace/33333333-2222-4333-8444-555555555555.jsonl".to_owned();
+    set_main(&sql, conv, &other).await;
+    s.write(&other, 0, &content).await.unwrap();
+    assert_eq!(visible(&sql, conv).await, before);
+    s.unlink(&p).await.unwrap();
+    s.write(&other, content.len() as u64, &assistant("a3", "three"))
+        .await
+        .unwrap();
+    assert_eq!(visible(&sql, conv).await.len(), 3);
+    let e = s.unlink(&other).await.unwrap_err();
+    assert_eq!(code(&e), "protected");
 }
