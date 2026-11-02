@@ -14,7 +14,7 @@ import { logError } from "../common/log.ts";
 import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetStatus } from "../common/budget.ts";
 import { DiskCache } from "./cache.ts";
 import { EgressLog, type EgressRow } from "./egresslog.ts";
-import { Identities, tokenFrom, type SandboxId } from "./identity.ts";
+import { Identities, relayTokenFrom, tokenFrom, type SandboxId } from "./identity.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard, GuardError, normHost } from "./netguard.ts";
 import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
@@ -48,6 +48,8 @@ export interface EgressOptions {
   budget?: () => Promise<BudgetStatus | null>;
   /** product.locale: the language of the budget message */
   locale?: string;
+  /** Whether an email is a user of this instance (config users); a relay token of anyone else is refused. */
+  isUser?: (email: string) => boolean;
 }
 
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]);
@@ -64,6 +66,8 @@ export const denyText = (host: string): string =>
 
 export class Egress {
   readonly server: Server;
+  /** The relay listener (docs/CLAUDE-CODE.md, "Relay"): only `/x/<relay route>/…`, only with a person's relay token. */
+  readonly relayServer: Server;
   readonly log: EgressLog;
   readonly cache: DiskCache;
   readonly ids: Identities;
@@ -104,10 +108,20 @@ export class Egress {
         else res.destroy();
       });
     });
-    this.server.on("connection", (s: Socket) => {
-      this.#sockets.add(s);
-      s.on("close", () => this.#sockets.delete(s));
+    this.relayServer = createServer((req, res) => {
+      this.counters.requests++;
+      this.#onRelay(req, res).catch((e) => {
+        logError("egress relay request", e, { url: safeUrl(req.url) });
+        if (!res.headersSent) text(res, 502, "egress: upstream error\n");
+        else res.destroy();
+      });
     });
+    for (const srv of [this.server, this.relayServer]) {
+      srv.on("connection", (s: Socket) => {
+        this.#sockets.add(s);
+        s.on("close", () => this.#sockets.delete(s));
+      });
+    }
     this.server.on("upgrade", (req: IncomingMessage, sock: Duplex, head: Buffer) => {
       this.#onUpgrade(req, sock, head).catch((e) => {
         logError("egress wire", e);
@@ -458,7 +472,16 @@ export class Egress {
 
   // ---- credential-injecting routes -----------------------------------------------------------------------
 
-  async #route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  /** The relay listener: an origin-form `/x/<route>/…` request to a route flagged relay, nothing else (no proxying,
+   * no mirror, no CONNECT). */
+  async #onRelay(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const raw = req.url || "/";
+    const m = /^\/x\/([^/?]+)/.exec(raw);
+    if (!m || !this.#o.routes.some((r) => r.name === m[1] && r.relay === true)) return text(res, 404, "egress: not found\n");
+    return this.#route(req, res, raw, true);
+  }
+
+  async #route(req: IncomingMessage, res: ServerResponse, path: string, relay = false): Promise<void> {
     const t0 = Date.now();
     const m = /^\/x\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(path);
     const route = m ? this.#o.routes.find((r) => r.name === m[1]) : undefined;
@@ -467,13 +490,24 @@ export class Egress {
     const up = new URL(route.upstream);
     const isModel = route.model === true;
     const row: EgressRow = { kind: isModel ? "model" : "inject", method: req.method ?? "GET", host: up.hostname, path: rest, decision: "allow" };
-    const sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
-    if (!sb) {
-      text(res, 401, "egress: authentication required\n");
-      return this.#deny(row, "deny:auth", 401);
+    // a sandbox by its egress token on the proxy port; a person by their relay token on the relay listener (#onRelay)
+    let sb: SandboxId | null = null;
+    if (relay) {
+      const who = await this.ids.relay(relayTokenFrom(req.headers));
+      if (!who || !(this.#o.isUser?.(who.owner) ?? false)) {
+        text(res, 401, JSON.stringify({ type: "error", error: { type: "authentication_error", message: "egress: unknown or revoked relay token" } }), { "content-type": "application/json" });
+        return this.#deny(row, "deny:auth", 401);
+      }
+      row.owner = who.owner;
+    } else {
+      sb = await this.#sandbox(req, tokenFrom(req.headers, "authorization") || tokenFrom(req.headers, "proxy-authorization"));
+      if (!sb) {
+        text(res, 401, "egress: authentication required\n");
+        return this.#deny(row, "deny:auth", 401);
+      }
+      row.sandbox_id = sb.sandboxId;
+      row.conversation_id = sb.conversationId;
     }
-    row.sandbox_id = sb.sandboxId;
-    row.conversation_id = sb.conversationId;
     if (route.allowPaths?.length && !route.allowPaths.some((p) => rest.startsWith(p))) {
       text(res, 403, `egress: path ${rest} is not allowed on route ${route.name}\n`);
       return this.#deny(row, "deny:path", 403);
@@ -521,7 +555,7 @@ export class Egress {
       }
       const passed = route.keepAuth ? new Set([...CALLER_AUTH].filter((h) => h !== "authorization")) : CALLER_AUTH;
       const headers: OutgoingHttpHeaders = { ...forwardHeaders(req.headers, new Set([...passed, ...IDENTITY])), ...injected, host: up.host, "accept-encoding": "identity" };
-      if (route.identity) {
+      if (route.identity && sb) {
         headers["x-jarvis-conversation"] = sb.conversationId ?? "";
         headers["x-jarvis-sandbox"] = sb.sandboxId;
       }
@@ -600,15 +634,24 @@ export class Egress {
     return new Promise((resolve) => this.server.listen(port, host, () => resolve((this.server.address() as { port: number }).port)));
   }
 
+  listenRelay(port: number, host = "::"): Promise<number> {
+    return new Promise((resolve) => this.relayServer.listen(port, host, () => resolve((this.relayServer.address() as { port: number }).port)));
+  }
+
   /** Stop accepting, let open requests and tunnels finish for up to graceMs, then cut the rest and flush the log. */
   async drain(graceMs: number): Promise<void> {
     this.draining = true;
     await new Promise<void>((resolve) => {
-      this.server.close(() => resolve());
+      let open = this.relayServer.listening ? 2 : 1;
+      const closed = () => void (--open === 0 && resolve());
+      this.server.close(closed);
+      if (this.relayServer.listening) this.relayServer.close(closed);
       this.server.closeIdleConnections();
+      this.relayServer.closeIdleConnections();
       const until = Date.now() + graceMs;
       const tick = setInterval(() => {
         this.server.closeIdleConnections();
+        this.relayServer.closeIdleConnections();
         if (this.#sockets.size === 0 || Date.now() >= until) {
           clearInterval(tick);
           for (const s of this.#sockets) s.destroy();

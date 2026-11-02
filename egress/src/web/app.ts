@@ -5,12 +5,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isUser } from "../common/config.ts";
 import { logError } from "../common/log.ts";
-import { sha256hex } from "../common/tokens.ts";
+import { newToken, sha256hex } from "../common/tokens.ts";
 import type { WebDeps } from "./ctx.ts";
+import { randomUUID } from "node:crypto";
 import { bad, HttpError, notFound, readJson, sendJson } from "./http.ts";
 import { OPS_PAGE } from "./ops-page.ts";
 import { OpsSnapshot } from "./ops.ts";
 import { noteSandboxDemand, type SandboxManager } from "./sandbox.ts";
+
+/** Live relay tokens one person may hold at once. */
+const RELAY_TOKENS_MAX = 10;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -58,7 +62,7 @@ export class WebApp {
    * `POST /internal/cc/touch {conversation}` (it is in use: its idle time
    * starts again), `POST /internal/cc/release {conversation}` (the conversation was deleted), `POST /internal/cc/warm
    * {owner, conversation?}` (the user is typing; #warm), `POST /internal/cc/view-as {…}` (an admin viewing as someone;
-   * #viewAs).
+   * #viewAs), `POST /internal/cc/relay-tokens {owner, action, …}` (a person's relay tokens; #relayTokens).
    */
   async #claudeCodeInternal(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     checkCcToken(req);
@@ -66,6 +70,7 @@ export class WebApp {
     const b = await readJson(req);
     if (path === "/internal/cc/warm") return this.#warm(res, b);
     if (path === "/internal/cc/view-as") return this.#viewAs(res, b);
+    if (path === "/internal/cc/relay-tokens") return this.#relayTokens(res, b);
     const conv = String(b.conversation || "");
     if (!UUID_RE.test(conv)) throw bad("conversation must be a uuid");
     if (path === "/internal/cc/sandbox") {
@@ -103,6 +108,44 @@ export class WebApp {
     const hinted = !rows.length && !this.draining;
     if (hinted) await noteSandboxDemand(this.deps.db, owner);
     return sendJson(res, 200, { ok: true, hinted });
+  }
+
+  /**
+   * A person's relay tokens (docs/CLAUDE-CODE.md, "Relay"), for their own Claude Code to call the model routes flagged
+   * relay through egress's relay listener. `action` list → {tokens: [{id, label, createdAt, lastUsedAt}]} (live ones);
+   * create {label?} → {id, token} (the token is shown once: only its sha256 is kept); revoke {id} → {ok}. The UI router
+   * calls this for the signed-in person only.
+   */
+  async #relayTokens(res: ServerResponse, b: Record<string, unknown>): Promise<void> {
+    const owner = String(b.owner || "").trim().toLowerCase();
+    if (!owner || owner.startsWith("@") || !isUser(this.deps.config, owner)) throw new HttpError(403, "not a user of this instance");
+    const db = this.deps.db;
+    const action = String(b.action || "");
+    if (action === "list") {
+      const { rows } = await db.query(
+        `select id, label, created_at as "createdAt", last_used_at as "lastUsedAt" from relay_tokens
+          where owner = $1 and revoked_at is null order by created_at desc`,
+        [owner],
+      );
+      return sendJson(res, 200, { tokens: rows });
+    }
+    if (action === "create") {
+      const label = String(b.label ?? "").trim().slice(0, 80) || null;
+      const { rows } = await db.query<{ n: number }>("select count(*)::int as n from relay_tokens where owner = $1 and revoked_at is null", [owner]);
+      if ((rows[0]?.n ?? 0) >= RELAY_TOKENS_MAX) throw new HttpError(409, `at most ${RELAY_TOKENS_MAX} relay tokens: revoke one first`);
+      const id = randomUUID();
+      const token = `jrelay_${newToken()}`;
+      await db.query("insert into relay_tokens (id, owner, token_hash, label) values ($1, $2, $3, $4)", [id, owner, sha256hex(token), label]);
+      return sendJson(res, 200, { id, token });
+    }
+    if (action === "revoke") {
+      const id = String(b.id || "");
+      if (!UUID_RE.test(id)) throw bad("id must be a uuid");
+      const r = await db.query("update relay_tokens set revoked_at = now() where id = $1 and owner = $2 and revoked_at is null", [id, owner]);
+      if (!r.rowCount) throw notFound();
+      return sendJson(res, 200, { ok: true });
+    }
+    throw bad("action must be list, create or revoke");
   }
 
   /**

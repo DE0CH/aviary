@@ -3,10 +3,11 @@
 //
 // Env: DATABASE_URL, JARVIS_CONFIG, JARVIS_CACHE_DIR (default /var/cache/jarvis-egress), EGRESS_SELF_HOSTS (comma
 // list; default egress, egress.<POD_NAMESPACE>.svc, egress.<POD_NAMESPACE>.svc.cluster.local), EGRESS_BLOCK_CIDRS
-// (extra refused ranges, e.g. the node's own /64), and every variable a route's inject names (OPENROUTER_API_KEY).
+// (extra refused ranges, e.g. the node's own /64), EGRESS_RELAY_PORT (the relay listener, docs/CLAUDE-CODE.md
+// "Relay"), and every variable a route's inject names (OPENROUTER_API_KEY).
 import { createServer } from "node:http";
 import { BudgetGate } from "../common/budget.ts";
-import { allowedModels, loadConfig, reasoningPlan } from "../common/config.ts";
+import { allowedModels, isUser, loadConfig, reasoningPlan } from "../common/config.ts";
 import { connect, migrate } from "../common/db.ts";
 import { log } from "../common/log.ts";
 import { HostPolicy } from "./allowlist.ts";
@@ -43,8 +44,12 @@ export async function main(): Promise<void> {
     // re-read at most every 0.5 s (both egress pods see each other's model costs that soon)
     budget: ((g) => () => g.status())(new BudgetGate(db, config.budget, 500)),
     locale: config.product.locale,
+    isUser: (email) => isUser(config, email),
   });
   const port = await egress.listen(Number(process.env.PORT || 3128));
+  // the relay listener (docs/CLAUDE-CODE.md, "Relay"): only when a route is flagged relay and EGRESS_RELAY_PORT is set
+  const relayOn = config.egress.routes.some((r) => r.relay) && !!process.env.EGRESS_RELAY_PORT;
+  const relayPort = relayOn ? await egress.listenRelay(Number(process.env.EGRESS_RELAY_PORT)) : null;
 
   const health = createServer((req, res) => {
     if (req.url === "/healthz") {
@@ -73,7 +78,7 @@ export async function main(): Promise<void> {
     res.writeHead(404).end();
   });
   health.listen(Number(process.env.HEALTH_PORT || 9090), "::");
-  log("egress listening", { port, selfHosts });
+  log("egress listening", { port, relayPort, selfHosts });
   // provider "vm": this pod's address, for the hub's translation of the egress VIP (sandbox-vm.ts reads kv egress_pod:*)
   const podIp = process.env.POD_IP;
   const podKey = `egress_pod:${(process.env.HOSTNAME || "egress").replace(/[^a-z0-9-]/gi, "")}`;

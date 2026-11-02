@@ -353,7 +353,8 @@ export class OpsSnapshot {
                  (select x.owner from sandboxes x where x.conversation_id = o.conversation_id order by x.created_at desc limit 1) as owner
             from ops_events o where o.kind = 'sandbox_start' and not o.ok and o.at > ${win})
          union all
-         (select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail, s.owner
+         (select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail,
+                 coalesce(e.owner, s.owner) as owner
             from egress_log e left join sandboxes s on s.id = e.sandbox_id
            where e.at > ${win} and e.kind in ('model', 'inject') and (e.status >= 400 or e.decision like 'deny%') and ${NOT_NOISE.replace(/\b(kind|status)\b/g, "e.$1")})
          union all
@@ -427,8 +428,9 @@ export class OpsSnapshot {
       budgetStatus(db, cfg),
       db.query(`select ${sums} from egress_log e where e.kind = 'model' and e.at >= $1`, args),
       db.query(
-        // a model call's person: its sandbox's owner, or for calls of the old chat UI (before schema 9) its conversation's
-        `select coalesce(s.owner, c.owner, '(unknown)') as owner, ${sums}
+        // a model call's person: a relay call's own (docs/CLAUDE-CODE.md "Relay"), its sandbox's owner, or for calls of
+        // the old chat UI (before schema 9) its conversation's
+        `select coalesce(e.owner, s.owner, c.owner, '(unknown)') as owner, ${sums}
            from egress_log e left join sandboxes s on s.id = e.sandbox_id left join conversations c on c.id = e.conversation_id
           where e.kind = 'model' and e.at >= $1 group by 1 order by month desc, "sinceBudget" desc`,
         args,
@@ -440,7 +442,7 @@ export class OpsSnapshot {
       ),
       db.query(
         `select to_char(date_trunc('day', e.at at time zone $1), 'YYYY-MM-DD') as day, coalesce(sum(e.cost_usd), 0)::float as usd,
-                count(*)::int as calls, count(distinct coalesce(s.owner, ''))::int as people
+                count(*)::int as calls, count(distinct coalesce(e.owner, s.owner, ''))::int as people
            from egress_log e left join sandboxes s on s.id = e.sandbox_id
           where e.kind = 'model' and e.at > now() - interval '14 days' group by 1 order by 1 desc`,
         [tz],
@@ -460,7 +462,7 @@ export class OpsSnapshot {
           group by 1, 2, 3 order by n desc limit 20`,
       ),
       db.query(
-        `select e.at, e.kind, e.host, e.path, e.status, e.decision, s.owner, e.conversation_id as "conversationId"
+        `select e.at, e.kind, e.host, e.path, e.status, e.decision, coalesce(e.owner, s.owner) as owner, e.conversation_id as "conversationId"
            from egress_log e left join sandboxes s on s.id = e.sandbox_id
           where e.at > now() - interval '24 hours' and (e.status >= 400 or e.decision like 'deny%')
           order by e.id desc limit 30`,

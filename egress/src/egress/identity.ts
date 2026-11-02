@@ -1,5 +1,6 @@
-// Who is calling egress: a sandbox, by its egress token (Basic "sbx:<token>" or Bearer). Lookups are cached for a few
-// seconds; a released sandbox's token stops working within that time.
+// Who is calling egress: a sandbox, by its egress token (Basic "sbx:<token>" or Bearer), or on the relay listener a
+// person, by their relay token (Bearer or x-api-key). Lookups are cached for a few seconds; a released sandbox's token
+// and a revoked relay token stop working within that time.
 import type { IncomingHttpHeaders } from "node:http";
 import type { Db } from "../common/db.ts";
 import { bearerOf, sha256hex } from "../common/tokens.ts";
@@ -25,10 +26,23 @@ export function tokenFrom(headers: IncomingHttpHeaders, which: "proxy-authorizat
   return bearerOf(v);
 }
 
+/** A relay token's holder (docs/CLAUDE-CODE.md, "Relay"). */
+export interface RelayId {
+  tokenId: string;
+  owner: string;
+}
+
+/** A relay call's token: `Authorization: Bearer` (Claude Code's ANTHROPIC_AUTH_TOKEN) or `x-api-key` (ANTHROPIC_API_KEY). */
+export function relayTokenFrom(headers: IncomingHttpHeaders): string {
+  const k = headers["x-api-key"];
+  return bearerOf(headers.authorization) || (Array.isArray(k) ? k[0] : k) || "";
+}
+
 export class Identities {
   readonly #db: Db;
   readonly #ttlMs: number;
   readonly #sandboxes = new Map<string, { at: number; v: SandboxId | null }>();
+  readonly #relays = new Map<string, { at: number; v: RelayId | null }>();
   constructor(db: Db, ttlMs = 5000) {
     this.#db = db;
     this.#ttlMs = ttlMs;
@@ -45,6 +59,23 @@ export class Identities {
     );
     const v = rows[0] ? { sandboxId: rows[0].id, conversationId: rows[0].conversation_id, ip: rows[0].ip ?? null } : null;
     this.#remember(this.#sandboxes, key, v);
+    return v;
+  }
+
+  async relay(token: string): Promise<RelayId | null> {
+    if (!token) return null;
+    const key = sha256hex(token);
+    const hit = this.#relays.get(key);
+    if (hit && Date.now() - hit.at < this.#ttlMs) return hit.v;
+    // last_used_at moves at most once a minute (the token page shows it)
+    const { rows } = await this.#db.query<{ id: string; owner: string }>(
+      `update relay_tokens set last_used_at = case when last_used_at is null or last_used_at < now() - interval '1 minute'
+              then now() else last_used_at end
+        where token_hash = $1 and revoked_at is null returning id, owner`,
+      [key],
+    );
+    const v = rows[0] ? { tokenId: rows[0].id, owner: rows[0].owner } : null;
+    this.#remember(this.#relays, key, v);
     return v;
   }
 

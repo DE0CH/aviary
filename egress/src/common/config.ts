@@ -31,6 +31,9 @@ export interface EgressRoute {
    * `X-Jarvis-Sandbox` (its id), replacing any the caller sent (an upstream that acts on the conversation's files: the
    * UI's sent-file snapshots, docs/CLAUDE-CODE.md "Sent files") */
   identity?: boolean;
+  /** also served on egress's relay listener to a person's own Claude Code, authenticated by their relay token
+   * (docs/CLAUDE-CODE.md, "Relay"); model routes only, so ZDR, the model list and the budget apply as in a sandbox */
+  relay?: boolean;
   inject: Record<string, string>;
   allowPaths?: string[];
 }
@@ -300,6 +303,9 @@ export function parseConfig(raw: unknown): ChatConfig {
   for (const m of c.models as ModelEntry[]) {
     if (m.reasoning !== undefined && !REASONING_EFFORTS.has(m.reasoning)) throw new Error(`config: models[${m.id}].reasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
     if (m.contextWindow !== undefined && !(Number.isInteger(m.contextWindow) && m.contextWindow > 0)) throw new Error(`config: models[${m.id}].contextWindow must be a positive integer`);
+  }
+  for (const r of (c.egress?.routes ?? []) as EgressRoute[]) {
+    if (r.relay && (r.model !== true || r.identity || r.keepAuth)) throw new Error(`config: egress route ${r.name}: relay needs a model route without identity or keepAuth`);
   }
   if (c.titleReasoning !== undefined && !REASONING_EFFORTS.has(c.titleReasoning)) throw new Error(`config: titleReasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
   let budget: BudgetConfig | undefined;

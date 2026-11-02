@@ -19,9 +19,11 @@ export interface EgressRow {
   cost_usd?: number | null;
   /** kind model: the model the request asked for */
   model?: string | null;
+  /** a relay call's person (docs/CLAUDE-CODE.md, "Relay"); a sandbox's calls leave it null (sandboxes.owner) */
+  owner?: string | null;
 }
 
-const COLS = ["conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model"] as const;
+const COLS = ["conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model", "owner"] as const;
 
 export class EgressLog {
   readonly #db: Db;

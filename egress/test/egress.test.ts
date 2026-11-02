@@ -21,6 +21,7 @@ import { freshDb } from "./pg.ts";
 let t: Awaited<ReturnType<typeof freshDb>>;
 let egress: Egress;
 let port: number;
+let relayPort: number;
 let up: Server;
 let upPort: number;
 const upHits: Record<string, number> = {};
@@ -118,7 +119,7 @@ before(async () => {
     }),
     maxUploadBytes: 256 * 1024,
     routes: [
-      { name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
+      { name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, relay: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
       { name: "sent-files", upstream: `http://127.0.0.1:${upPort}/sent`, identity: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
     ],
     cacheDir: join(tmp, "cache"),
@@ -134,8 +135,10 @@ before(async () => {
     aptHosts: ["apt.test"],
     env: { REAL_KEY: "sk-real" },
     identities: new Identities(t.db, 50),
+    isUser: (email) => email.endsWith("@yyc.test"),
   });
   port = await egress.listen(0, "127.0.0.1");
+  relayPort = await egress.listenRelay(0, "127.0.0.1");
 });
 
 after(async () => {
@@ -171,9 +174,9 @@ function connectVia(target: string, auth?: string): Promise<{ status: number; he
   });
 }
 
-function http(path: string, o: { headers?: Record<string, string>; method?: string; body?: string } = {}): Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }> {
+function http(path: string, o: { headers?: Record<string, string>; method?: string; body?: string; port?: number } = {}): Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }> {
   return new Promise((resolve, reject) => {
-    const r = request({ host: "127.0.0.1", port, path, method: o.method ?? "GET", headers: o.headers }, (res) => {
+    const r = request({ host: "127.0.0.1", port: o.port ?? port, path, method: o.method ?? "GET", headers: o.headers }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
       res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
@@ -632,3 +635,47 @@ async function fakeDns(a: Record<string, string>): Promise<{ port: number; queri
   state.port = sock.address().port;
   return state;
 }
+
+test("relay listener: a person's relay token reaches the relay route with ZDR forced, logged under that person", async () => {
+  const add = (token: string, owner: string, revoked = false) =>
+    t.db.query("insert into relay_tokens (id, owner, token_hash, revoked_at) values ($1, $2, $3, $4)", [randomUUID(), owner, sha256hex(token), revoked ? new Date() : null]);
+  await add("relay-ok", "staff@yyc.test");
+  await add("relay-revoked", "staff@yyc.test", true);
+  await add("relay-not-user", "someone@else.test");
+  const send = (headers: Record<string, string>, path = "/x/claude/v1/messages", p = relayPort) =>
+    http(path, { port: p, method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ model: "claude-x", provider: { zdr: false } }) });
+
+  const before = (await rows()).length;
+  const ok = await send({ authorization: "Bearer relay-ok" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(ok.body).echo.provider, { zdr: true, data_collection: "deny" });
+  assert.equal(upLastHeaders.authorization, "Bearer sk-real", "the route's own key upstream, never the relay token");
+  // Claude Code's ANTHROPIC_API_KEY arrives as x-api-key: accepted, and not passed upstream
+  assert.equal((await send({ "x-api-key": "relay-ok" })).status, 200);
+  assert.equal(upLastHeaders["x-api-key"], undefined);
+
+  for (const [what, h] of [["no token", {}], ["unknown", { authorization: "Bearer nope" }], ["revoked", { authorization: "Bearer relay-revoked" }],
+    ["not a user", { authorization: "Bearer relay-not-user" }], ["a sandbox token", { authorization: `Bearer ${sbToken}` }]] as const) {
+    const r = await send(h as Record<string, string>);
+    assert.equal(r.status, 401, what);
+    assert.equal(JSON.parse(r.body).error.type, "authentication_error", what);
+  }
+  // a relay token is no sandbox token on the proxy port
+  assert.equal((await send({ authorization: "Bearer relay-ok" }, "/x/claude/v1/messages", port)).status, 401);
+  // the relay listener serves relay routes only: no other route, no mirror, no forward proxying
+  assert.equal((await send({ authorization: "Bearer relay-ok" }, "/x/sent-files/snapshot")).status, 404);
+  assert.equal((await http("/mirror/pypi/simple/foo/", { port: relayPort, headers: { authorization: "Bearer relay-ok" } })).status, 404);
+  assert.equal((await http("http://allowed.test/", { port: relayPort, headers: { authorization: "Bearer relay-ok" } })).status, 404);
+
+  const mine = (await rows()).slice(before).filter((x) => x.kind === "model");
+  const allowed = mine.filter((x) => x.decision === "allow");
+  assert.equal(allowed.length, 2);
+  for (const x of allowed) {
+    assert.equal(x.owner, "staff@yyc.test");
+    assert.equal(x.sandbox_id, null);
+    assert.equal(x.model, "claude-x");
+  }
+  assert.equal(mine.filter((x) => x.decision === "deny:auth").length, 6);
+  const used = await t.db.query("select last_used_at from relay_tokens where owner = 'staff@yyc.test' and revoked_at is null");
+  assert.ok(used.rows[0].last_used_at, "last_used_at is set");
+});

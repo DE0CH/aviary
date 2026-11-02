@@ -125,4 +125,13 @@ comment on table blob_grants is 'unused since schema 10: the old chat UI is reti
   // the UI no longer prepends a note after a sandbox release, so web no longer remembers each conversation's last
   // sandbox id (it existed only for that note)
   `delete from kv where key like 'cc_sandbox:%';`,
+  // relay tokens (docs/CLAUDE-CODE.md, "Relay"): a person's own Claude Code (on their computer) calls a relay route
+  // through egress's relay listener with one of these (only its sha256 is kept); egress_log.owner is the person of such
+  // a call (a sandbox's calls take theirs from sandboxes.owner)
+  `
+create table relay_tokens (id uuid primary key, owner text not null, token_hash text not null unique, label text,
+  created_at timestamptz not null default now(), last_used_at timestamptz, revoked_at timestamptz);
+create index relay_tokens_owner on relay_tokens (owner, created_at desc);
+alter table egress_log add column owner text;
+`,
 ];

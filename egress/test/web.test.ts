@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { parseConfig } from "../src/common/config.ts";
+import { sha256hex } from "../src/common/tokens.ts";
 import type { WebDeps } from "../src/web/ctx.ts";
 import { janitorPass } from "../src/web/janitor.ts";
 import { startWeb, type WebServer } from "../src/web/main.ts";
@@ -237,4 +238,27 @@ test("drain: not ready, but the calls in flight are answered", async () => {
   } finally {
     web.app.draining = false;
   }
+});
+
+test("/internal/cc/relay-tokens: a person creates, lists and revokes their own relay tokens; only the hash is kept", async () => {
+  const rt = (body: Record<string, unknown>) => cc("/internal/cc/relay-tokens", body);
+  assert.equal((await cc("/internal/cc/relay-tokens", { owner: A, action: "list" }, "wrong")).status, 401);
+  assert.equal((await rt({ owner: "eve@example.org", action: "list" })).status, 403);
+  assert.equal((await rt({ owner: A, action: "nope" })).status, 400);
+  const made = await rt({ owner: A.toUpperCase(), action: "create", label: "Mac" });
+  assert.equal(made.status, 200);
+  assert.match(made.json.token, /^jrelay_[A-Za-z0-9_-]{43}$/);
+  const stored = await pg.db.query("select owner, token_hash, label from relay_tokens where id = $1", [made.json.id]);
+  assert.deepEqual(stored.rows[0], { owner: A, token_hash: sha256hex(made.json.token), label: "Mac" });
+  const list = await rt({ owner: A, action: "list" });
+  assert.deepEqual(list.json.tokens.map((x: { id: string; label: string }) => [x.id, x.label]), [[made.json.id, "Mac"]]);
+  assert.equal(JSON.stringify(list.json).includes(made.json.token), false, "a list never shows the token");
+  assert.deepEqual((await rt({ owner: B, action: "list" })).json.tokens, []);
+  // someone else can't revoke it
+  assert.equal((await rt({ owner: B, action: "revoke", id: made.json.id })).status, 404);
+  assert.equal((await rt({ owner: A, action: "revoke", id: made.json.id })).status, 200);
+  assert.deepEqual((await rt({ owner: A, action: "list" })).json.tokens, []);
+  assert.equal((await rt({ owner: A, action: "revoke", id: made.json.id })).status, 404);
+  for (let i = 0; i < 10; i++) assert.equal((await rt({ owner: A, action: "create" })).status, 200);
+  assert.equal((await rt({ owner: A, action: "create" })).status, 409);
 });
